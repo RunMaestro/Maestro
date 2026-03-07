@@ -17,6 +17,9 @@ import * as path from 'path';
 const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 vi.mock('electron', () => ({
+	app: {
+		getPath: vi.fn((name: string) => `/mock-user-data/${name}`),
+	},
 	ipcMain: {
 		handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
 			registeredHandlers.set(channel, handler);
@@ -122,6 +125,8 @@ describe('Cue IPC Handlers', () => {
 				'cue:readYaml',
 				'cue:writeYaml',
 				'cue:validateYaml',
+				'cue:savePipelineLayout',
+				'cue:loadPipelineLayout',
 			];
 
 			for (const channel of expectedChannels) {
@@ -318,6 +323,48 @@ describe('Cue IPC Handlers', () => {
 				valid: false,
 				errors: ['YAML parse error: bad indentation'],
 			});
+		});
+	});
+
+	describe('cue:savePipelineLayout', () => {
+		it('should write layout to JSON file', async () => {
+			const layout = {
+				pipelines: [{ id: 'p1', name: 'Pipeline 1', color: '#06b6d4', nodes: [], edges: [] }],
+				selectedPipelineId: 'p1',
+				viewport: { x: 0, y: 0, zoom: 1 },
+			};
+
+			const handler = registerAndGetHandler('cue:savePipelineLayout');
+			await handler(null, { layout });
+			expect(fs.writeFileSync).toHaveBeenCalledWith(
+				expect.stringContaining('cue-pipeline-layout.json'),
+				JSON.stringify(layout, null, 2),
+				'utf-8'
+			);
+		});
+	});
+
+	describe('cue:loadPipelineLayout', () => {
+		it('should return layout when file exists', async () => {
+			const layout = {
+				pipelines: [{ id: 'p1', name: 'Pipeline 1', color: '#06b6d4', nodes: [], edges: [] }],
+				selectedPipelineId: 'p1',
+				viewport: { x: 100, y: 200, zoom: 1.5 },
+			};
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(layout));
+
+			const handler = registerAndGetHandler('cue:loadPipelineLayout');
+			const result = await handler(null);
+			expect(result).toEqual(layout);
+		});
+
+		it('should return null when file does not exist', async () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			const handler = registerAndGetHandler('cue:loadPipelineLayout');
+			const result = await handler(null);
+			expect(result).toBeNull();
 		});
 	});
 });

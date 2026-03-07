@@ -30,6 +30,7 @@ import type {
 	CuePipeline,
 	PipelineNode,
 	PipelineEdge as PipelineEdgeType,
+	PipelineLayoutState,
 	TriggerNodeData,
 	AgentNodeData,
 	CueEventType,
@@ -324,20 +325,96 @@ function CuePipelineEditorInner({
 	const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 	const [validationErrors, setValidationErrors] = useState<string[]>([]);
 	const savedStateRef = useRef<string>(''); // JSON snapshot for dirty tracking
-	// TODO: auto-save after 5 seconds of no changes
+	const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// Load pipelines from existing graph sessions on mount
+	// Debounced layout persistence (positions + viewport)
+	const persistLayout = useCallback(() => {
+		if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+		layoutSaveTimerRef.current = setTimeout(() => {
+			const viewport = reactFlowInstance.getViewport();
+			const layout: PipelineLayoutState = {
+				pipelines: pipelineState.pipelines,
+				selectedPipelineId: pipelineState.selectedPipelineId,
+				viewport,
+			};
+			window.maestro.cue
+				.savePipelineLayout(layout as unknown as Record<string, unknown>)
+				.catch(() => {});
+		}, 500);
+	}, [pipelineState, reactFlowInstance]);
+
+	// Clean up debounce timer on unmount
 	useEffect(() => {
-		if (graphSessions && graphSessions.length > 0) {
-			const pipelines = graphSessionsToPipelines(graphSessions, sessions);
-			if (pipelines.length > 0) {
-				setPipelineState({ pipelines, selectedPipelineId: pipelines[0].id });
-				savedStateRef.current = JSON.stringify(pipelines);
-				setIsDirty(false);
+		return () => {
+			if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+		};
+	}, []);
+
+	// Load pipelines from saved layout (positions) merged with live graph data
+	useEffect(() => {
+		const loadLayout = async () => {
+			let savedLayout: PipelineLayoutState | null = null;
+			try {
+				savedLayout = (await window.maestro.cue.loadPipelineLayout()) as PipelineLayoutState | null;
+			} catch {
+				// No saved layout
 			}
-		}
+
+			if (graphSessions && graphSessions.length > 0) {
+				const livePipelines = graphSessionsToPipelines(graphSessions, sessions);
+
+				if (savedLayout && savedLayout.pipelines && livePipelines.length > 0) {
+					// Merge: live data takes precedence for node existence, saved provides positions
+					const savedPositions = new Map<string, { x: number; y: number }>();
+					for (const sp of savedLayout.pipelines) {
+						for (const node of sp.nodes) {
+							savedPositions.set(`${sp.id}:${node.id}`, node.position);
+						}
+					}
+
+					const mergedPipelines = livePipelines.map((pipeline) => ({
+						...pipeline,
+						nodes: pipeline.nodes.map((node) => {
+							const savedPos = savedPositions.get(`${pipeline.id}:${node.id}`);
+							return savedPos ? { ...node, position: savedPos } : node;
+						}),
+					}));
+
+					setPipelineState({
+						pipelines: mergedPipelines,
+						selectedPipelineId: savedLayout.selectedPipelineId ?? mergedPipelines[0]?.id ?? null,
+					});
+					savedStateRef.current = JSON.stringify(mergedPipelines);
+
+					// Restore viewport if available
+					if (savedLayout.viewport) {
+						setTimeout(() => {
+							reactFlowInstance.setViewport(savedLayout!.viewport!);
+						}, 100);
+					}
+				} else if (livePipelines.length > 0) {
+					setPipelineState({ pipelines: livePipelines, selectedPipelineId: livePipelines[0].id });
+					savedStateRef.current = JSON.stringify(livePipelines);
+				}
+			} else if (savedLayout && savedLayout.pipelines && savedLayout.pipelines.length > 0) {
+				// No live data but we have saved layout
+				setPipelineState({
+					pipelines: savedLayout.pipelines,
+					selectedPipelineId: savedLayout.selectedPipelineId,
+				});
+				savedStateRef.current = JSON.stringify(savedLayout.pipelines);
+
+				if (savedLayout.viewport) {
+					setTimeout(() => {
+						reactFlowInstance.setViewport(savedLayout!.viewport!);
+					}, 100);
+				}
+			}
+			setIsDirty(false);
+		};
+
+		loadLayout();
 		// Only run on mount
-		 
 	}, []);
 
 	// Track dirty state when pipelines change
@@ -402,6 +479,7 @@ function CuePipelineEditorInner({
 			savedStateRef.current = JSON.stringify(pipelineState.pipelines);
 			setIsDirty(false);
 			setSaveStatus('success');
+			persistLayout();
 			setTimeout(() => setSaveStatus('idle'), 2000);
 		} catch {
 			setSaveStatus('error');
@@ -690,6 +768,7 @@ function CuePipelineEditorInner({
 		(changes) => {
 			// Apply position/selection changes from React Flow back to pipeline state
 			const updatedRFNodes = applyNodeChanges(changes, nodes);
+			const hasPositionChange = changes.some((c) => c.type === 'position' && c.dragging === false);
 			setPipelineState((prev) => {
 				const newPipelines = prev.pipelines.map((pipeline) => ({
 					...pipeline,
@@ -703,8 +782,12 @@ function CuePipelineEditorInner({
 				}));
 				return { ...prev, pipelines: newPipelines };
 			});
+			// Debounce-save layout when a drag ends
+			if (hasPositionChange) {
+				persistLayout();
+			}
 		},
-		[nodes]
+		[nodes, persistLayout]
 	);
 
 	const onEdgesChange: OnEdgesChange = useCallback(

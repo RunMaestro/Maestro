@@ -92,6 +92,18 @@ export interface CuePipelineState {
 	selectedPipelineId: string | null;
 }
 
+export interface PipelineViewport {
+	x: number;
+	y: number;
+	zoom: number;
+}
+
+export interface PipelineLayoutState {
+	pipelines: CuePipeline[];
+	selectedPipelineId: string | null;
+	viewport?: PipelineViewport;
+}
+
 /** Returns the first unused color from the palette, cycling if all used. */
 export function getNextPipelineColor(existingPipelines: CuePipeline[]): string {
 	const usedColors = new Set(existingPipelines.map((p) => p.color));

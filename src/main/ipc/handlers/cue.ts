@@ -9,13 +9,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import * as yaml from 'js-yaml';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { validateCueConfig } from '../../cue/cue-yaml-loader';
 import { CUE_YAML_FILENAME } from '../../cue/cue-types';
 import type { CueEngine } from '../../cue/cue-engine';
 import type { CueGraphSession, CueRunResult, CueSessionStatus } from '../../cue/cue-types';
+import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 
 const LOG_CONTEXT = '[Cue]';
 
@@ -190,6 +191,34 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					const message = err instanceof Error ? err.message : String(err);
 					return { valid: false, errors: [`YAML parse error: ${message}`] };
 				}
+			}
+		)
+	);
+
+	const layoutFilePath = path.join(app.getPath('userData'), 'cue-pipeline-layout.json');
+
+	// Save pipeline layout (node positions, viewport, selected pipeline)
+	ipcMain.handle(
+		'cue:savePipelineLayout',
+		withIpcErrorLogging(
+			handlerOpts('savePipelineLayout'),
+			async (options: { layout: PipelineLayoutState }): Promise<void> => {
+				fs.writeFileSync(layoutFilePath, JSON.stringify(options.layout, null, 2), 'utf-8');
+			}
+		)
+	);
+
+	// Load saved pipeline layout
+	ipcMain.handle(
+		'cue:loadPipelineLayout',
+		withIpcErrorLogging(
+			handlerOpts('loadPipelineLayout'),
+			async (): Promise<PipelineLayoutState | null> => {
+				if (!fs.existsSync(layoutFilePath)) {
+					return null;
+				}
+				const content = fs.readFileSync(layoutFilePath, 'utf-8');
+				return JSON.parse(content) as PipelineLayoutState;
 			}
 		)
 	);
