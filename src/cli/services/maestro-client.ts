@@ -3,6 +3,7 @@
 
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
+import { readSessions } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
@@ -129,6 +130,24 @@ export class MaestroClient {
 			}
 		});
 	}
+}
+
+/**
+ * Resolve session ID from CLI options.
+ * Uses the provided --session value, or falls back to the first available session.
+ */
+export function resolveSessionId(options: { session?: string }): string {
+	if (options.session) {
+		return options.session;
+	}
+
+	const sessions = readSessions();
+	if (sessions.length === 0) {
+		console.error('Error: No sessions found. Create a session in Maestro first.');
+		process.exit(1);
+	}
+
+	return sessions[0].id;
 }
 
 /**
