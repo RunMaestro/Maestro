@@ -57,7 +57,7 @@ export const TriggerNode = memo(function TriggerNode({
 				flexDirection: 'row',
 				alignItems: 'center',
 				padding: '0 6px',
-				cursor: 'default',
+				cursor: 'grab',
 				transition: 'border-color 0.15s, box-shadow 0.15s',
 			}}
 		>
@@ -71,7 +71,7 @@ export const TriggerNode = memo(function TriggerNode({
 					cursor: 'grab',
 					color: `${color}80`,
 					flexShrink: 0,
-					padding: '4px 2px',
+					padding: '4px 6px',
 					borderRadius: 4,
 				}}
 				title="Drag to move"
@@ -130,7 +130,7 @@ export const TriggerNode = memo(function TriggerNode({
 				)}
 			</div>
 
-			{/* Gear icon */}
+			{/* Gear icon - placed before connector to avoid overlap */}
 			<div
 				onClick={(e) => {
 					e.stopPropagation();
@@ -143,7 +143,8 @@ export const TriggerNode = memo(function TriggerNode({
 					cursor: 'pointer',
 					color: selected ? color : `${color}60`,
 					flexShrink: 0,
-					padding: '4px 2px',
+					padding: '4px 4px',
+					marginRight: 6,
 					borderRadius: 4,
 					transition: 'color 0.15s',
 				}}
@@ -159,9 +160,12 @@ export const TriggerNode = memo(function TriggerNode({
 				position={Position.Right}
 				style={{
 					backgroundColor: color,
-					borderColor: `${color}60`,
-					width: 8,
-					height: 8,
+					border: '3px solid #1e1e2e',
+					boxShadow: `0 0 0 2px ${color}`,
+					width: 16,
+					height: 16,
+					zIndex: 10,
+					right: -8,
 				}}
 			/>
 		</div>
