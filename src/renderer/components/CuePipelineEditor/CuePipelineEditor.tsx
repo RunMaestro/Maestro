@@ -6,7 +6,7 @@
  * connecting them, and managing named pipelines with distinct colors.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
 	Background,
 	Controls,
@@ -23,7 +23,7 @@ import ReactFlow, {
 	type Connection,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Zap, Bot } from 'lucide-react';
+import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
 	CuePipelineState,
@@ -44,6 +44,8 @@ import { PipelineSelector } from './PipelineSelector';
 import { getNextPipelineColor } from './pipelineColors';
 import { NodeConfigPanel } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
+import { graphSessionsToPipelines } from './utils/yamlToPipeline';
+import { pipelinesToYaml } from './utils/pipelineToYaml';
 
 interface CueGraphSession {
 	sessionId: string;
@@ -53,6 +55,7 @@ interface CueGraphSession {
 		name: string;
 		event: string;
 		enabled: boolean;
+		prompt?: string;
 		source_session?: string | string[];
 		fan_out?: string[];
 	}>;
@@ -62,6 +65,7 @@ interface SessionInfo {
 	id: string;
 	name: string;
 	toolType: string;
+	projectRoot?: string;
 }
 
 export interface CuePipelineEditorProps {
@@ -241,7 +245,68 @@ function convertToReactFlowEdges(
 	return edges;
 }
 
-function CuePipelineEditorInner({ sessions, onSwitchToSession, theme }: CuePipelineEditorProps) {
+/** Validates pipeline graph before save. Returns array of error messages. */
+function validatePipelines(pipelines: CuePipeline[]): string[] {
+	const errors: string[] = [];
+
+	for (const pipeline of pipelines) {
+		const triggers = pipeline.nodes.filter((n) => n.type === 'trigger');
+		const agents = pipeline.nodes.filter((n) => n.type === 'agent');
+
+		if (triggers.length === 0 && agents.length === 0) continue; // Empty pipeline, skip
+
+		if (triggers.length === 0) {
+			errors.push(`"${pipeline.name}": needs at least one trigger`);
+		}
+		if (agents.length === 0) {
+			errors.push(`"${pipeline.name}": needs at least one agent`);
+		}
+
+		// Check for disconnected agents (no incoming edge)
+		const targetsWithIncoming = new Set(pipeline.edges.map((e) => e.target));
+		for (const agent of agents) {
+			if (!targetsWithIncoming.has(agent.id)) {
+				const name = (agent.data as AgentNodeData).sessionName;
+				errors.push(`"${pipeline.name}": agent "${name}" has no incoming connection`);
+			}
+		}
+
+		// Check for cycles via topological sort
+		const adjList = new Map<string, string[]>();
+		const inDegree = new Map<string, number>();
+		for (const node of pipeline.nodes) {
+			adjList.set(node.id, []);
+			inDegree.set(node.id, 0);
+		}
+		for (const edge of pipeline.edges) {
+			adjList.get(edge.source)?.push(edge.target);
+			inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+		}
+		const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
+		let visited = 0;
+		while (queue.length > 0) {
+			const id = queue.shift()!;
+			visited++;
+			for (const neighbor of adjList.get(id) ?? []) {
+				const newDeg = (inDegree.get(neighbor) ?? 1) - 1;
+				inDegree.set(neighbor, newDeg);
+				if (newDeg === 0) queue.push(neighbor);
+			}
+		}
+		if (visited < pipeline.nodes.length) {
+			errors.push(`"${pipeline.name}": contains a cycle`);
+		}
+	}
+
+	return errors;
+}
+
+function CuePipelineEditorInner({
+	sessions,
+	graphSessions,
+	onSwitchToSession,
+	theme,
+}: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
 	const [pipelineState, setPipelineState] = useState<CuePipelineState>({
@@ -253,6 +318,117 @@ function CuePipelineEditorInner({ sessions, onSwitchToSession, theme }: CuePipel
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+	// Save/load state
+	const [isDirty, setIsDirty] = useState(false);
+	const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+	const [validationErrors, setValidationErrors] = useState<string[]>([]);
+	const savedStateRef = useRef<string>(''); // JSON snapshot for dirty tracking
+	// TODO: auto-save after 5 seconds of no changes
+
+	// Load pipelines from existing graph sessions on mount
+	useEffect(() => {
+		if (graphSessions && graphSessions.length > 0) {
+			const pipelines = graphSessionsToPipelines(graphSessions, sessions);
+			if (pipelines.length > 0) {
+				setPipelineState({ pipelines, selectedPipelineId: pipelines[0].id });
+				savedStateRef.current = JSON.stringify(pipelines);
+				setIsDirty(false);
+			}
+		}
+		// Only run on mount
+		 
+	}, []);
+
+	// Track dirty state when pipelines change
+	useEffect(() => {
+		const currentSnapshot = JSON.stringify(pipelineState.pipelines);
+		if (savedStateRef.current && currentSnapshot !== savedStateRef.current) {
+			setIsDirty(true);
+			setValidationErrors([]);
+		}
+	}, [pipelineState.pipelines]);
+
+	const handleSave = useCallback(async () => {
+		// Validate before save
+		const errors = validatePipelines(pipelineState.pipelines);
+		setValidationErrors(errors);
+		if (errors.length > 0) return;
+
+		setSaveStatus('saving');
+		try {
+			const yamlContent = pipelinesToYaml(pipelineState.pipelines);
+
+			// Find unique project roots from sessions involved in pipelines
+			const sessionNames = new Set<string>();
+			for (const pipeline of pipelineState.pipelines) {
+				for (const node of pipeline.nodes) {
+					if (node.type === 'agent') {
+						sessionNames.add((node.data as AgentNodeData).sessionName);
+					}
+				}
+			}
+
+			const projectRoots = new Set<string>();
+			for (const session of sessions) {
+				if (session.projectRoot && sessionNames.has(session.name)) {
+					projectRoots.add(session.projectRoot);
+				}
+			}
+
+			// If no specific project roots found, use first session's project root
+			if (projectRoots.size === 0 && sessions.length > 0) {
+				const firstWithRoot = sessions.find((s) => s.projectRoot);
+				if (firstWithRoot?.projectRoot) {
+					projectRoots.add(firstWithRoot.projectRoot);
+				}
+			}
+
+			// Write YAML and refresh sessions
+			for (const root of projectRoots) {
+				await window.maestro.cue.writeYaml(root, yamlContent);
+			}
+
+			// Refresh all sessions involved
+			for (const session of sessions) {
+				if (
+					session.projectRoot &&
+					(projectRoots.has(session.projectRoot) || sessionNames.has(session.name))
+				) {
+					await window.maestro.cue.refreshSession(session.id, session.projectRoot);
+				}
+			}
+
+			savedStateRef.current = JSON.stringify(pipelineState.pipelines);
+			setIsDirty(false);
+			setSaveStatus('success');
+			setTimeout(() => setSaveStatus('idle'), 2000);
+		} catch {
+			setSaveStatus('error');
+			setTimeout(() => setSaveStatus('idle'), 3000);
+		}
+	}, [pipelineState.pipelines, sessions]);
+
+	const handleDiscard = useCallback(async () => {
+		try {
+			const data = await window.maestro.cue.getGraphData();
+			if (data && data.length > 0) {
+				const pipelines = graphSessionsToPipelines(data, sessions);
+				setPipelineState({
+					pipelines,
+					selectedPipelineId: pipelines.length > 0 ? pipelines[0].id : null,
+				});
+				savedStateRef.current = JSON.stringify(pipelines);
+			} else {
+				setPipelineState({ pipelines: [], selectedPipelineId: null });
+				savedStateRef.current = '[]';
+			}
+			setIsDirty(false);
+			setValidationErrors([]);
+		} catch {
+			// Error reloading - keep current state
+		}
+	}, [sessions]);
 
 	const createPipeline = useCallback(() => {
 		setPipelineState((prev) => {
@@ -734,8 +910,109 @@ function CuePipelineEditorInner({ sessions, onSwitchToSession, theme }: CuePipel
 						<Bot size={12} />
 						Agents
 					</button>
+
+					{/* Discard Changes */}
+					{isDirty && (
+						<button
+							onClick={handleDiscard}
+							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
+							style={{
+								backgroundColor: 'transparent',
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+								cursor: 'pointer',
+								transition: 'all 0.15s',
+							}}
+							title="Discard changes and reload from YAML"
+						>
+							<RotateCcw size={12} />
+							Discard
+						</button>
+					)}
+
+					{/* Save */}
+					<button
+						onClick={handleSave}
+						disabled={saveStatus === 'saving'}
+						className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
+						style={{
+							backgroundColor:
+								saveStatus === 'success'
+									? '#22c55e20'
+									: saveStatus === 'error'
+										? '#ef444420'
+										: isDirty
+											? `${theme.colors.accent}20`
+											: 'transparent',
+							color:
+								saveStatus === 'success'
+									? '#22c55e'
+									: saveStatus === 'error'
+										? '#ef4444'
+										: isDirty
+											? theme.colors.accent
+											: theme.colors.textDim,
+							border: `1px solid ${
+								saveStatus === 'success'
+									? '#22c55e'
+									: saveStatus === 'error'
+										? '#ef4444'
+										: isDirty
+											? theme.colors.accent
+											: theme.colors.border
+							}`,
+							cursor: saveStatus === 'saving' ? 'wait' : 'pointer',
+							transition: 'all 0.15s',
+							position: 'relative',
+						}}
+						title={isDirty ? 'Save pipeline to YAML' : 'No unsaved changes'}
+					>
+						{saveStatus === 'success' ? (
+							<Check size={12} />
+						) : saveStatus === 'error' ? (
+							<AlertTriangle size={12} />
+						) : (
+							<Save size={12} />
+						)}
+						{saveStatus === 'saving'
+							? 'Saving...'
+							: saveStatus === 'success'
+								? 'Saved'
+								: saveStatus === 'error'
+									? 'Error'
+									: 'Save'}
+						{isDirty && saveStatus === 'idle' && (
+							<span
+								style={{
+									width: 6,
+									height: 6,
+									borderRadius: '50%',
+									backgroundColor: theme.colors.accent,
+									position: 'absolute',
+									top: 2,
+									right: 2,
+								}}
+							/>
+						)}
+					</button>
 				</div>
 			</div>
+
+			{/* Validation errors */}
+			{validationErrors.length > 0 && (
+				<div
+					className="px-4 py-2 text-xs flex items-center gap-2 flex-wrap"
+					style={{ backgroundColor: '#ef444415', borderBottom: `1px solid #ef4444` }}
+				>
+					<AlertTriangle size={12} style={{ color: '#ef4444', flexShrink: 0 }} />
+					{validationErrors.map((err, i) => (
+						<span key={i} style={{ color: '#ef4444' }}>
+							{err}
+							{i < validationErrors.length - 1 ? ';' : ''}
+						</span>
+					))}
+				</div>
+			)}
 
 			{/* Canvas area with drawers */}
 			<div className="flex-1 relative overflow-hidden">

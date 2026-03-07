@@ -33,6 +33,7 @@ interface CueGraphSession {
 		name: string;
 		event: string;
 		enabled: boolean;
+		prompt?: string;
 		source_session?: string | string[];
 		fan_out?: string[];
 	}>;
@@ -327,7 +328,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
 
 	const sessionInfoList = useMemo(
-		() => allSessions.map((s) => ({ id: s.id, name: s.name, toolType: s.toolType })),
+		() =>
+			allSessions.map((s) => ({
+				id: s.id,
+				name: s.name,
+				toolType: s.toolType,
+				projectRoot: s.projectRoot,
+			})),
 		[allSessions]
 	);
 
