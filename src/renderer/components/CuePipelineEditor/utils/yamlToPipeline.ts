@@ -15,8 +15,34 @@ import type {
 	EdgeMode,
 } from '../../../../shared/cue-pipeline-types';
 import { getNextPipelineColor } from '../../../../shared/cue-pipeline-types';
-import type { CueSubscription, CueGraphSession } from '../../../../main/cue/cue-types';
-import type { SessionInfo } from '../../../../shared/types';
+import type { CueSubscription } from '../../../../main/cue/cue-types';
+
+/** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
+interface GraphSessionInput {
+	sessionId: string;
+	sessionName: string;
+	toolType: string;
+	subscriptions: Array<{
+		name: string;
+		event: string;
+		enabled: boolean;
+		prompt?: string;
+		interval_minutes?: number;
+		watch?: string;
+		source_session?: string | string[];
+		fan_out?: string[];
+		filter?: Record<string, string | number | boolean>;
+		repo?: string;
+		poll_minutes?: number;
+	}>;
+}
+
+/** Minimal session info needed for pipeline reconstruction */
+interface PipelineSessionInfo {
+	id: string;
+	name: string;
+	toolType: string;
+}
 
 /** Layout constants for auto-positioning nodes */
 const LAYOUT = {
@@ -118,7 +144,7 @@ function triggerLabel(eventType: CueEventType): string {
  */
 function getOrCreateAgentNode(
 	sessionName: string,
-	sessions: SessionInfo[],
+	sessions: PipelineSessionInfo[],
 	nodeMap: Map<string, PipelineNode>,
 	position: { x: number; y: number }
 ): PipelineNode {
@@ -155,7 +181,7 @@ function getOrCreateAgentNode(
  */
 export function subscriptionsToPipelines(
 	subscriptions: CueSubscription[],
-	sessions: SessionInfo[]
+	sessions: PipelineSessionInfo[]
 ): CuePipeline[] {
 	const groups = groupSubscriptionsByPipeline(subscriptions);
 	const pipelines: CuePipeline[] = [];
@@ -331,7 +357,7 @@ export function subscriptionsToPipelines(
 function findTargetSession(
 	sub: CueSubscription,
 	allSubs: CueSubscription[],
-	sessions: SessionInfo[]
+	sessions: PipelineSessionInfo[]
 ): string | null {
 	// For chain subscriptions, the target is the session that the next chain link
 	// references as source_session
@@ -404,15 +430,15 @@ function getChainIndex(name: string): number {
  * and converts them into pipeline structures.
  */
 export function graphSessionsToPipelines(
-	graphSessions: CueGraphSession[],
-	allSessions: SessionInfo[]
+	graphSessions: GraphSessionInput[],
+	allSessions: PipelineSessionInfo[]
 ): CuePipeline[] {
 	// Collect all subscriptions across all graph sessions
 	const allSubscriptions: CueSubscription[] = [];
 
 	for (const gs of graphSessions) {
 		for (const sub of gs.subscriptions) {
-			allSubscriptions.push(sub);
+			allSubscriptions.push(sub as CueSubscription);
 		}
 	}
 
