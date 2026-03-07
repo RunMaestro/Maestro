@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	X,
@@ -18,9 +18,25 @@ import { useCue } from '../hooks/useCue';
 import type { CueSessionStatus, CueRunResult } from '../hooks/useCue';
 import { CueYamlEditor } from './CueYamlEditor';
 import { CueHelpContent } from './CueHelpModal';
-import { CueGraphView } from './CueGraphView';
+// Kept for reference - visual pipeline editor replaces this
+// import { CueGraphView } from './CueGraphView';
+import { CuePipelineEditor } from './CuePipelineEditor';
+import { useSessionStore } from '../stores/sessionStore';
 
 type CueModalTab = 'dashboard' | 'graph';
+
+interface CueGraphSession {
+	sessionId: string;
+	sessionName: string;
+	toolType: string;
+	subscriptions: Array<{
+		name: string;
+		event: string;
+		enabled: boolean;
+		source_session?: string | string[];
+		fan_out?: string[];
+	}>;
+}
 
 interface CueModalProps {
 	theme: Theme;
@@ -307,6 +323,24 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		stopAll,
 	} = useCue();
 
+	const allSessions = useSessionStore((state) => state.sessions);
+	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
+
+	const sessionInfoList = useMemo(
+		() => allSessions.map((s) => ({ id: s.id, name: s.name, toolType: s.toolType })),
+		[allSessions]
+	);
+
+	const [graphSessions, setGraphSessions] = useState<CueGraphSession[]>([]);
+
+	const handleSwitchToSession = useCallback(
+		(id: string) => {
+			setActiveSessionId(id);
+			onClose();
+		},
+		[setActiveSessionId, onClose]
+	);
+
 	const isEnabled = sessions.some((s) => s.enabled);
 
 	const handleToggle = useCallback(() => {
@@ -340,6 +374,21 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Tab state
 	const [activeTab, setActiveTab] = useState<CueModalTab>('dashboard');
+
+	// Fetch graph data when Graph tab is active
+	useEffect(() => {
+		if (activeTab !== 'graph') return;
+		let cancelled = false;
+		window.maestro.cue
+			.getGraphData()
+			.then((data: CueGraphSession[]) => {
+				if (!cancelled) setGraphSessions(data);
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [activeTab]);
 
 	// Help modal state
 	const [showHelp, setShowHelp] = useState(false);
@@ -596,7 +645,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								)}
 							</div>
 						) : (
-							<CueGraphView theme={theme} onClose={onClose} />
+							<CuePipelineEditor
+								sessions={sessionInfoList}
+								graphSessions={graphSessions}
+								onSwitchToSession={handleSwitchToSession}
+								onClose={onClose}
+								theme={theme}
+							/>
 						)}
 					</div>
 				</div>,

@@ -39,12 +39,36 @@ vi.mock('../../../renderer/components/CueYamlEditor', () => ({
 		isOpen ? <div data-testid="cue-yaml-editor">YAML Editor Mock</div> : null,
 }));
 
-// Mock CueGraphView
+// Mock CueGraphView (kept for reference - replaced by CuePipelineEditor)
 vi.mock('../../../renderer/components/CueGraphView', () => ({
-	CueGraphView: ({ theme, onClose }: { theme: unknown; onClose: () => void }) => (
-		<div data-testid="cue-graph-view">Graph View Mock</div>
-	),
+	CueGraphView: () => null,
 }));
+
+// Mock CuePipelineEditor
+vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
+	CuePipelineEditor: () => <div data-testid="cue-pipeline-editor">Pipeline Editor Mock</div>,
+}));
+
+// Mock sessionStore
+vi.mock('../../../renderer/stores/sessionStore', () => ({
+	useSessionStore: (selector: (state: unknown) => unknown) => {
+		const mockState = {
+			sessions: [],
+			setActiveSessionId: vi.fn(),
+		};
+		return selector(mockState);
+	},
+}));
+
+// Mock window.maestro.cue.getGraphData
+const mockGetGraphData = vi.fn().mockResolvedValue([]);
+if (!window.maestro) {
+	(window as unknown as Record<string, unknown>).maestro = {};
+}
+if (!(window.maestro as Record<string, unknown>).cue) {
+	(window.maestro as Record<string, unknown>).cue = {};
+}
+(window.maestro.cue as Record<string, unknown>).getGraphData = mockGetGraphData;
 
 // Mock useCue hook
 const mockEnable = vi.fn().mockResolvedValue(undefined);
@@ -351,7 +375,7 @@ describe('CueModal', () => {
 
 			fireEvent.click(screen.getByText('Graph'));
 
-			expect(screen.getByTestId('cue-graph-view')).toBeInTheDocument();
+			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
 			// Dashboard content should not be visible
 			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
 		});
@@ -361,12 +385,12 @@ describe('CueModal', () => {
 
 			// Switch to graph
 			fireEvent.click(screen.getByText('Graph'));
-			expect(screen.getByTestId('cue-graph-view')).toBeInTheDocument();
+			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
 
 			// Switch back to dashboard
 			fireEvent.click(screen.getByText('Dashboard'));
 			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
-			expect(screen.queryByTestId('cue-graph-view')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
 		});
 	});
 
