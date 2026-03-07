@@ -267,7 +267,7 @@ function generateSessionData(
 		sessions.push({
 			id: `session-${i}`,
 			content: `# Session ${i} Content\n\n- [ ] Task ${i}.1\n- [x] Task ${i}.2\n- [ ] Task ${i}.3\n\nContent specific to session ${i}.`,
-			folderPath: `/projects/project-${i}/Auto Run Docs`,
+			folderPath: `/projects/project-${i}/.maestro/playbooks`,
 		});
 	}
 	return sessions;

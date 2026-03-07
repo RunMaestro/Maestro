@@ -1,7 +1,7 @@
 /**
  * Tests for useCueAutoDiscovery hook
  *
- * This hook auto-discovers maestro-cue.yaml files when sessions are loaded,
+ * This hook auto-discovers .maestro/cue.yaml files when sessions are loaded,
  * created, or removed. It gates all operations on the maestroCue encore feature.
  */
 

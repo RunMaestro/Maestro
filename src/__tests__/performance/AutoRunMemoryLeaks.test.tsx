@@ -882,7 +882,7 @@ describe('AutoRun Memory Leak Detection', () => {
 				for (const sessionId of sessions) {
 					const props = createDefaultProps({
 						sessionId,
-						folderPath: `/projects/${sessionId}/Auto Run Docs`,
+						folderPath: `/projects/${sessionId}/.maestro/playbooks`,
 						content: `# ${sessionId} Content cycle ${cycle}`,
 					});
 
@@ -894,7 +894,7 @@ describe('AutoRun Memory Leak Detection', () => {
 
 					// Add some cache entries
 					imageCache.set(
-						`/projects/${sessionId}/Auto Run Docs:images/img${cycle}.png`,
+						`/projects/${sessionId}/.maestro/playbooks:images/img${cycle}.png`,
 						`data${cycle}`
 					);
 

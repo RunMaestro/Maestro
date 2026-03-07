@@ -213,7 +213,7 @@ describe('CueModal', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 			fireEvent.click(screen.getByText('Dashboard'));
 
-			expect(screen.getByText(/No sessions have a maestro-cue.yaml file/)).toBeInTheDocument();
+			expect(screen.getByText(/No sessions have a cue config file/)).toBeInTheDocument();
 		});
 
 		it('should render sessions with status indicators', () => {

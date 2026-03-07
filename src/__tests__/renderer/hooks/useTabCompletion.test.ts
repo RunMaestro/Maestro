@@ -370,15 +370,15 @@ describe('useTabCompletion', () => {
 
 		it('quotes paths that contain spaces', () => {
 			const session = createMockSession({
-				fileTree: [{ name: 'Auto Run Docs', type: 'folder', children: [] }],
+				fileTree: [{ name: 'My Folder', type: 'folder', children: [] }],
 			});
 			const { result } = renderHook(() => useTabCompletion(session));
 
-			const suggestions = result.current.getSuggestions('mv Scripts/Loop/ A');
+			const suggestions = result.current.getSuggestions('mv Scripts/Loop/ M');
 			const folderSuggestion = suggestions.find((s) => s.type === 'folder');
 
-			expect(folderSuggestion?.displayText).toBe('"Auto Run Docs/"');
-			expect(folderSuggestion?.value).toBe('mv Scripts/Loop/ "Auto Run Docs/"');
+			expect(folderSuggestion?.displayText).toBe('"My Folder/"');
+			expect(folderSuggestion?.value).toBe('mv Scripts/Loop/ "My Folder/"');
 		});
 
 		it('handles path-based completion (cd src/c)', () => {

@@ -256,7 +256,7 @@ describe('CueYamlEditor', () => {
 
 			await waitFor(() => {
 				const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
-				expect(editor.value).toContain('# maestro-cue.yaml');
+				expect(editor.value).toContain('# .maestro/cue.yaml');
 			});
 		});
 
@@ -267,7 +267,7 @@ describe('CueYamlEditor', () => {
 
 			await waitFor(() => {
 				const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
-				expect(editor.value).toContain('# maestro-cue.yaml');
+				expect(editor.value).toContain('# .maestro/cue.yaml');
 			});
 		});
 	});
@@ -471,7 +471,7 @@ describe('CueYamlEditor', () => {
 
 			// Should include the file path
 			const prompt = mockBuildSpawnConfig.mock.calls[0][0].prompt;
-			expect(prompt).toContain('/test/project/maestro-cue.yaml');
+			expect(prompt).toContain('/test/project/.maestro/cue.yaml');
 			expect(prompt).toContain('Run code review');
 		});
 

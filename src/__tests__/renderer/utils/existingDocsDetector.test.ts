@@ -48,35 +48,35 @@ describe('existingDocsDetector', () => {
 	});
 
 	describe('AUTO_RUN_FOLDER_NAME', () => {
-		it('equals "Auto Run Docs"', () => {
-			expect(AUTO_RUN_FOLDER_NAME).toBe('Auto Run Docs');
+		it('equals ".maestro/playbooks"', () => {
+			expect(AUTO_RUN_FOLDER_NAME).toBe('.maestro/playbooks');
 		});
 	});
 
 	describe('getAutoRunFolderPath', () => {
-		it('appends Auto Run Docs folder to project path', () => {
+		it('appends playbooks folder to project path', () => {
 			const result = getAutoRunFolderPath('/path/to/project');
-			expect(result).toBe('/path/to/project/Auto Run Docs');
+			expect(result).toBe('/path/to/project/.maestro/playbooks');
 		});
 
 		it('handles trailing slash in project path', () => {
 			const result = getAutoRunFolderPath('/path/to/project/');
-			expect(result).toBe('/path/to/project/Auto Run Docs');
+			expect(result).toBe('/path/to/project/.maestro/playbooks');
 		});
 
 		it('handles empty path', () => {
 			const result = getAutoRunFolderPath('');
-			expect(result).toBe('/Auto Run Docs');
+			expect(result).toBe('/.maestro/playbooks');
 		});
 
 		it('handles home directory paths', () => {
 			const result = getAutoRunFolderPath('/Users/user/Projects/myapp');
-			expect(result).toBe('/Users/user/Projects/myapp/Auto Run Docs');
+			expect(result).toBe('/Users/user/Projects/myapp/.maestro/playbooks');
 		});
 
 		it('handles Windows-style paths', () => {
 			const result = getAutoRunFolderPath('C:/Users/user/Projects');
-			expect(result).toBe('C:/Users/user/Projects/Auto Run Docs');
+			expect(result).toBe('C:/Users/user/Projects/.maestro/playbooks');
 		});
 	});
 
@@ -90,7 +90,7 @@ describe('existingDocsDetector', () => {
 			const result = await hasExistingAutoRunDocs('/path/to/project');
 
 			expect(result).toBe(true);
-			expect(mockAutorunApi.listDocs).toHaveBeenCalledWith('/path/to/project/Auto Run Docs');
+			expect(mockAutorunApi.listDocs).toHaveBeenCalledWith('/path/to/project/.maestro/playbooks');
 		});
 
 		it('returns false when no documents exist', async () => {
@@ -143,7 +143,7 @@ describe('existingDocsDetector', () => {
 			const result = await hasExistingAutoRunDocs('/path/to/project/');
 
 			expect(result).toBe(true);
-			expect(mockAutorunApi.listDocs).toHaveBeenCalledWith('/path/to/project/Auto Run Docs');
+			expect(mockAutorunApi.listDocs).toHaveBeenCalledWith('/path/to/project/.maestro/playbooks');
 		});
 	});
 
@@ -160,12 +160,12 @@ describe('existingDocsDetector', () => {
 			expect(result[0]).toEqual({
 				name: 'phase-1',
 				filename: 'phase-1.md',
-				path: '/path/to/project/Auto Run Docs/phase-1.md',
+				path: '/path/to/project/.maestro/playbooks/phase-1.md',
 			});
 			expect(result[1]).toEqual({
 				name: 'phase-2',
 				filename: 'phase-2.md',
-				path: '/path/to/project/Auto Run Docs/phase-2.md',
+				path: '/path/to/project/.maestro/playbooks/phase-2.md',
 			});
 		});
 
@@ -372,7 +372,7 @@ describe('existingDocsDetector', () => {
 			await hasExistingAutoRunDocs('/Users/developer/Projects/my-awesome-app');
 
 			expect(mockAutorunApi.listDocs).toHaveBeenCalledWith(
-				'/Users/developer/Projects/my-awesome-app/Auto Run Docs'
+				'/Users/developer/Projects/my-awesome-app/.maestro/playbooks'
 			);
 		});
 	});

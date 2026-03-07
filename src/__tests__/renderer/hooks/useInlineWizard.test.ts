@@ -30,7 +30,7 @@ vi.mock('../../../renderer/services/wizardIntentParser', () => ({
 vi.mock('../../../renderer/utils/existingDocsDetector', () => ({
 	hasExistingAutoRunDocs: vi.fn(),
 	getExistingAutoRunDocs: vi.fn(),
-	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/Auto Run Docs`),
+	getAutoRunFolderPath: vi.fn((projectPath: string) => `${projectPath}/.maestro/playbooks`),
 }));
 
 vi.mock('../../../renderer/services/inlineWizardConversation', () => ({
@@ -62,12 +62,12 @@ vi.mock('../../../renderer/services/inlineWizardDocumentGeneration', () => ({
 				filename: 'Phase-01-Setup.md',
 				content: '# Phase 01\n\n- [ ] Task 1',
 				taskCount: 1,
-				savedPath: '/test/project/Auto Run Docs/Test-Project/Phase-01-Setup.md',
+				savedPath: '/test/project/.maestro/playbooks/Test-Project/Phase-01-Setup.md',
 			},
 		],
 		rawOutput: 'test output',
 		subfolderName: 'Test-Project',
-		subfolderPath: '/test/project/Auto Run Docs/Test-Project',
+		subfolderPath: '/test/project/.maestro/playbooks/Test-Project',
 	}),
 	// By default, return the chunk as-is (pass-through for tests)
 	extractDisplayTextFromChunk: vi.fn().mockImplementation((chunk: string) => chunk),
@@ -161,7 +161,7 @@ describe('useInlineWizard', () => {
 
 				expect(result.current.isWizardActive).toBe(true);
 				expect(result.current.wizardMode).toBe('ask');
-				expect(mockListDocs).toHaveBeenCalledWith('/test/project/Auto Run Docs');
+				expect(mockListDocs).toHaveBeenCalledWith('/test/project/.maestro/playbooks');
 			});
 
 			it('should set mode to "new" when no existing docs', async () => {
@@ -488,8 +488,8 @@ describe('useInlineWizard', () => {
 					);
 				});
 
-				// Should fall back to projectPath/Auto Run Docs
-				expect(result.current.state.autoRunFolderPath).toBe('/my/project/Auto Run Docs');
+				// Should fall back to projectPath/.maestro/playbooks
+				expect(result.current.state.autoRunFolderPath).toBe('/my/project/.maestro/playbooks');
 			});
 
 			it('should check for existing docs in configured folder', async () => {
@@ -922,7 +922,7 @@ describe('useInlineWizard', () => {
 							filename: 'Phase-01-Setup.md',
 							content: '# Phase 01\n\n- [ ] Task 1',
 							taskCount: 1,
-							savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+							savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 						},
 					],
 					rawOutput: 'test output',
@@ -981,7 +981,7 @@ describe('useInlineWizard', () => {
 					agentType: 'claude-code',
 					directoryPath: '/test/project',
 					projectName: 'Test Project',
-					autoRunFolderPath: '/test/project/Auto Run Docs',
+					autoRunFolderPath: '/test/project/.maestro/playbooks',
 				})
 			);
 		});
@@ -1120,7 +1120,7 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1157,13 +1157,13 @@ describe('useInlineWizard', () => {
 						filename: 'Phase-01-Setup.md',
 						content: '# Phase 01\n\n- [ ] Task 1',
 						taskCount: 1,
-						savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+						savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 					});
 					config.callbacks?.onDocumentComplete?.({
 						filename: 'Phase-02-Build.md',
 						content: '# Phase 02\n\n- [ ] Task 2',
 						taskCount: 1,
-						savedPath: '/test/project/Auto Run Docs/Phase-02-Build.md',
+						savedPath: '/test/project/.maestro/playbooks/Phase-02-Build.md',
 					});
 					return {
 						success: true,
@@ -1172,13 +1172,13 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 							{
 								filename: 'Phase-02-Build.md',
 								content: '# Phase 02\n\n- [ ] Task 2',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-02-Build.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-02-Build.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1222,7 +1222,7 @@ describe('useInlineWizard', () => {
 								filename: 'Phase-01-Setup.md',
 								content: '# Phase 01\n\n- [ ] Task 1',
 								taskCount: 1,
-								savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+								savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 							},
 						],
 						rawOutput: 'test output',
@@ -1343,7 +1343,7 @@ describe('useInlineWizard', () => {
 							filename: 'Phase-01-Setup.md',
 							content: '# Phase 01\n\n- [ ] Task 1',
 							taskCount: 1,
-							savedPath: '/test/project/Auto Run Docs/Phase-01-Setup.md',
+							savedPath: '/test/project/.maestro/playbooks/Phase-01-Setup.md',
 						},
 					],
 					rawOutput: 'test output',

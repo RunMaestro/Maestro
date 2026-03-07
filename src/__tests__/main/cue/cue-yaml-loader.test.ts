@@ -44,10 +44,44 @@ describe('cue-yaml-loader', () => {
 	});
 
 	describe('loadCueConfig', () => {
-		it('returns null when file does not exist', () => {
+		it('returns null when neither canonical nor legacy file exists', () => {
 			mockExistsSync.mockReturnValue(false);
 			const result = loadCueConfig('/projects/test');
 			expect(result).toBeNull();
+		});
+
+		it('loads from canonical .maestro/cue.yaml path first', () => {
+			// Canonical path exists
+			mockExistsSync.mockImplementation((p: string) => String(p).includes('.maestro/cue.yaml'));
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: canonical-sub
+    event: time.interval
+    prompt: From canonical
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].name).toBe('canonical-sub');
+		});
+
+		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
+			// Only legacy path exists
+			mockExistsSync.mockImplementation(
+				(p: string) => String(p).includes('maestro-cue.yaml') && !String(p).includes('.maestro/')
+			);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: legacy-sub
+    event: time.interval
+    prompt: From legacy
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].name).toBe('legacy-sub');
 		});
 
 		it('parses a valid YAML config with subscriptions and settings', () => {
@@ -159,10 +193,14 @@ subscriptions:
 	});
 
 	describe('watchCueYaml', () => {
-		it('watches the correct file path', () => {
+		it('watches both canonical and legacy file paths', () => {
 			watchCueYaml('/projects/test', vi.fn());
+			// Should watch both .maestro/cue.yaml (canonical) and maestro-cue.yaml (legacy)
 			expect(chokidar.watch).toHaveBeenCalledWith(
-				expect.stringContaining('maestro-cue.yaml'),
+				expect.arrayContaining([
+					expect.stringContaining('.maestro/cue.yaml'),
+					expect.stringContaining('maestro-cue.yaml'),
+				]),
 				expect.objectContaining({ persistent: true, ignoreInitial: true })
 			);
 		});

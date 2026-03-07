@@ -42,7 +42,7 @@ vi.mock('../../../renderer/utils/sessionValidation', () => ({
 }));
 
 vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: 'Auto Run Docs',
+	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
 }));
 
 // ============================================================================
@@ -141,7 +141,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
 		unifiedClosedTabHistory: [],
-		autoRunFolderPath: '/test/project/Auto Run Docs',
+		autoRunFolderPath: '/test/project/.maestro/playbooks',
 		...overrides,
 	} as Session;
 }
@@ -447,7 +447,7 @@ describe('useSessionCrud', () => {
 			});
 
 			expect(useSessionStore.getState().sessions[0].autoRunFolderPath).toBe(
-				'/test/project/Auto Run Docs'
+				'/test/project/.maestro/playbooks'
 			);
 		});
 

@@ -111,7 +111,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: tab.id }],
 		unifiedClosedTabHistory: [],
-		autoRunFolderPath: '/test/project/Auto Run Docs',
+		autoRunFolderPath: '/test/project/.maestro/playbooks',
 		terminalTabs: [],
 		activeTerminalTabId: null,
 		...overrides,

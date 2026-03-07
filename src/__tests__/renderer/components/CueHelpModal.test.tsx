@@ -60,7 +60,7 @@ describe('CueHelpContent', () => {
 
 		it('should render Getting Started section', () => {
 			expect(screen.getByText('Getting Started')).toBeInTheDocument();
-			expect(screen.getByText(/maestro-cue.yaml/)).toBeInTheDocument();
+			expect(screen.getByText(/\.maestro\/cue\.yaml/)).toBeInTheDocument();
 		});
 
 		it('should render minimal YAML example', () => {

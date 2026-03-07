@@ -106,7 +106,7 @@ CONTENT:
 			projectName: 'Test Project',
 			conversationHistory: [],
 			mode: 'new',
-			autoRunFolderPath: '/remote/path/Auto Run Docs',
+			autoRunFolderPath: '/remote/path/.maestro/playbooks',
 			sessionSshRemoteConfig: {
 				enabled: true,
 				remoteId: 'test-remote-id',
@@ -115,7 +115,7 @@ CONTENT:
 
 		// Verify writeDoc was called with sshRemoteId
 		expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
-			expect.stringContaining('/remote/path/Auto Run Docs'), // folder path
+			expect.stringContaining('/remote/path/.maestro/playbooks'), // folder path
 			'Phase-01-Test.md', // filename
 			expect.stringContaining('# Test Phase'), // content
 			'test-remote-id' // sshRemoteId (CRITICAL CHECK)
@@ -147,7 +147,7 @@ CONTENT:
 			projectName: 'Test Project',
 			conversationHistory: [],
 			mode: 'new',
-			autoRunFolderPath: '/local/path/Auto Run Docs',
+			autoRunFolderPath: '/local/path/.maestro/playbooks',
 		});
 
 		// Verify writeDoc was called WITHOUT sshRemoteId (undefined)

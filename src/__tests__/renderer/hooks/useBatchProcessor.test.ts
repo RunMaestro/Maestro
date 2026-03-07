@@ -648,7 +648,7 @@ describe('useBatchProcessor hook', () => {
 			.fn()
 			.mockResolvedValue({ success: true, content: '# Tasks\n- [ ] Task 1\n- [ ] Task 2' });
 		mockWriteDoc = vi.fn().mockResolvedValue({ success: true });
-		mockCreateWorkingCopy = vi.fn().mockResolvedValue({ workingCopyPath: 'Runs/tasks-run-1.md' });
+		mockCreateWorkingCopy = vi.fn().mockResolvedValue({ workingCopyPath: 'runs/tasks-run-1.md' });
 		mockStatus = vi.fn().mockResolvedValue({ stdout: '' });
 		mockBranch = vi.fn().mockResolvedValue({ stdout: 'main' });
 		mockBroadcastAutoRunState = vi.fn();
@@ -1535,7 +1535,7 @@ describe('useBatchProcessor hook', () => {
 
 	describe('reset on completion', () => {
 		it('should create working copy when resetOnCompletion is enabled', async () => {
-			// Note: Reset-on-completion now uses working copies in /Runs/ directory
+			// Note: Reset-on-completion now uses working copies in /runs/ directory
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy.
 			const sessions = [createMockSession()];
@@ -4063,7 +4063,7 @@ describe('useBatchProcessor hook', () => {
 
 	describe('reset-on-completion in loop mode', () => {
 		it('should create working copy when document has resetOnCompletion enabled', async () => {
-			// Note: Reset-on-completion now uses working copies in /Runs/ directory
+			// Note: Reset-on-completion now uses working copies in /runs/ directory
 			// instead of modifying the original document. This preserves the original
 			// and allows the agent to work on a copy each loop iteration.
 			const sessions = [createMockSession()];

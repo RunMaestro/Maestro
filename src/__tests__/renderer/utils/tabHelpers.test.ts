@@ -1548,7 +1548,7 @@ describe('tabHelpers', () => {
 			expect(session.aiTabs).toHaveLength(1);
 			expect(session.activeTabId).toBe(tabId);
 			expect(tabId).toBe('mock-generated-id'); // Uses mocked generateId
-			expect(session.autoRunFolderPath).toBe('/path/to/project/Auto Run Docs');
+			expect(session.autoRunFolderPath).toBe('/path/to/project/.maestro/playbooks');
 		});
 
 		it('creates a session with merged logs in the tab', () => {
@@ -1719,7 +1719,7 @@ describe('tabHelpers', () => {
 			expect(session.closedTabHistory).toEqual([]);
 			expect(session.shellCwd).toBe('/project');
 			expect(session.fileTreeAutoRefreshInterval).toBe(180);
-			expect(session.autoRunFolderPath).toBe('/project/Auto Run Docs');
+			expect(session.autoRunFolderPath).toBe('/project/.maestro/playbooks');
 		});
 
 		it('creates shell log with merged context message', () => {

@@ -67,7 +67,7 @@ vi.mock('../../../shared/formatters', () => ({
 }));
 
 vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: 'Auto Run Docs',
+	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
 }));
 
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
@@ -1812,7 +1812,7 @@ describe('useWizardHandlers', () => {
 			expect(newSession.name).toBe('My Project');
 			expect(newSession.toolType).toBe('claude-code');
 			expect(newSession.cwd).toBe('/projects/my-app');
-			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/Auto Run Docs');
+			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/.maestro/playbooks');
 			expect(newSession.autoRunSelectedFile).toBe('phase-1');
 
 			// Should have been set as active
@@ -1884,7 +1884,7 @@ describe('useWizardHandlers', () => {
 				expect.objectContaining({
 					documents: expect.arrayContaining([expect.objectContaining({ filename: 'phase-1' })]),
 				}),
-				expect.stringContaining('Auto Run Docs')
+				expect.stringContaining('.maestro/playbooks')
 			);
 		});
 
@@ -1950,7 +1950,7 @@ describe('useWizardHandlers', () => {
 						expect.objectContaining({ filename: 'phase-3' }),
 					]),
 				}),
-				expect.stringContaining('Auto Run Docs')
+				expect.stringContaining('.maestro/playbooks')
 			);
 
 			// Should have exactly 3 documents in the batch

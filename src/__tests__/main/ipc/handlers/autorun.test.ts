@@ -664,7 +664,7 @@ describe('autorun IPC handlers', () => {
 	});
 
 	describe('autorun:deleteFolder', () => {
-		it('should remove the Auto Run Docs folder', async () => {
+		it('should remove the playbooks folder', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => true,
 			} as any);
@@ -674,7 +674,7 @@ describe('autorun IPC handlers', () => {
 			const result = await handler!({} as any, '/test/project');
 
 			expect(result.success).toBe(true);
-			expect(fs.rm).toHaveBeenCalledWith(path.join('/test/project', 'Auto Run Docs'), {
+			expect(fs.rm).toHaveBeenCalledWith(path.join('/test/project', '.maestro/playbooks'), {
 				recursive: true,
 				force: true,
 			});
@@ -700,7 +700,7 @@ describe('autorun IPC handlers', () => {
 			const result = await handler!({} as any, '/test/project');
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Auto Run Docs path is not a directory');
+			expect(result.error).toContain('Path is not a directory');
 		});
 
 		it('should return error for invalid project path', async () => {
@@ -1389,14 +1389,14 @@ describe('autorun IPC handlers', () => {
 				const result = await handler!({} as any, '/remote/folder', 'doc1', 1, 'ssh-remote-1');
 
 				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/doc1-\d+-loop-1$/);
+				expect(result.workingCopyPath).toMatch(/^runs\/doc1-\d+-loop-1$/);
 				expect(result.originalPath).toBe('doc1');
 
 				// Verify remote operations were called
 				expect(mockReadFileRemote).toHaveBeenCalledWith('/remote/folder/doc1.md', sampleSshRemote);
-				expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder/Runs', sampleSshRemote, true);
+				expect(mockMkdirRemote).toHaveBeenCalledWith('/remote/folder/runs', sampleSshRemote, true);
 				expect(mockWriteFileRemote).toHaveBeenCalledWith(
-					expect.stringContaining('/remote/folder/Runs/doc1-'),
+					expect.stringContaining('/remote/folder/runs/doc1-'),
 					'# Source Content',
 					sampleSshRemote
 				);
@@ -1425,12 +1425,12 @@ describe('autorun IPC handlers', () => {
 				);
 
 				expect(result.success).toBe(true);
-				expect(result.workingCopyPath).toMatch(/^Runs\/subdir\/nested-doc-\d+-loop-2$/);
+				expect(result.workingCopyPath).toMatch(/^runs\/subdir\/nested-doc-\d+-loop-2$/);
 				expect(result.originalPath).toBe('subdir/nested-doc');
 
 				// Verify remote mkdir creates the correct subdirectory
 				expect(mockMkdirRemote).toHaveBeenCalledWith(
-					'/remote/folder/Runs/subdir',
+					'/remote/folder/runs/subdir',
 					sampleSshRemote,
 					true
 				);

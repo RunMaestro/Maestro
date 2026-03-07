@@ -192,12 +192,12 @@ vi.mock('../../../../renderer/components/Wizard/services/phaseGenerator', () => 
 		}),
 		saveDocuments: vi.fn().mockResolvedValue({
 			success: true,
-			paths: ['/test/path/Auto Run Docs/Phase-01-Initial-Setup.md'],
+			paths: ['/test/path/.maestro/playbooks/Phase-01-Initial-Setup.md'],
 		}),
 		isGenerationInProgress: vi.fn().mockReturnValue(false),
 		abort: vi.fn(),
 	},
-	AUTO_RUN_FOLDER_NAME: 'Auto Run Docs',
+	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
 }));
 
 // Mock theme
@@ -1635,7 +1635,7 @@ describe('Wizard Integration Tests', () => {
 			// Verify autorun.listDocs was called with sshRemoteId
 			await waitFor(() => {
 				expect(mockMaestro.autorun.listDocs).toHaveBeenCalledWith(
-					'/home/user/project/Auto Run Docs',
+					'/home/user/project/.maestro/playbooks',
 					'my-ssh-remote'
 				);
 			});

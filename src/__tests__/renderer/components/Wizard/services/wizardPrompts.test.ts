@@ -556,8 +556,8 @@ describe('wizardPrompts', () => {
 			};
 			const prompt = generateSystemPrompt(config);
 
-			// Should contain default Auto Run folder path: agentPath/Auto Run Docs
-			expect(prompt).toContain('/Users/test/project/Auto Run Docs');
+			// Should contain default Auto Run folder path: agentPath/.maestro/playbooks
+			expect(prompt).toContain('/Users/test/project/.maestro/playbooks');
 		});
 
 		it('should use custom Auto Run folder path when provided', () => {

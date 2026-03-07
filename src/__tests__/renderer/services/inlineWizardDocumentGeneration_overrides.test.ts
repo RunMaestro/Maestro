@@ -53,7 +53,7 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 			projectName: 'Test Project',
 			conversationHistory: [],
 			mode: 'new',
-			autoRunFolderPath: '/test/project/Auto Run Docs',
+			autoRunFolderPath: '/test/project/.maestro/playbooks',
 			sessionCustomPath: '/custom/path/opencode',
 			sessionCustomArgs: '--custom',
 			sessionCustomEnvVars: { TEST: 'true' },
@@ -104,7 +104,7 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 			projectName: 'Test Project',
 			conversationHistory: [],
 			mode: 'new',
-			autoRunFolderPath: '/test/project/Auto Run Docs',
+			autoRunFolderPath: '/test/project/.maestro/playbooks',
 		});
 
 		// Give it a moment to start spawning

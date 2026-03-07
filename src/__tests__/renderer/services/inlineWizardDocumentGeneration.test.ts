@@ -427,7 +427,7 @@ CONTENT:
 				{ id: '2', role: 'assistant', content: 'I can help with that', timestamp: Date.now() },
 			],
 			mode: 'new',
-			autoRunFolderPath: '/project/root/Auto Run Docs',
+			autoRunFolderPath: '/project/root/.maestro/playbooks',
 			...overrides,
 		});
 
@@ -438,10 +438,10 @@ CONTENT:
 
 			const prompt = generateDocumentPrompt(config);
 
-			// The prompt should contain the custom path, not the default 'Auto Run Docs'
+			// The prompt should contain the custom path, not the default '.maestro/playbooks'
 			expect(prompt).toContain('/custom/autorun/path');
 			// Should NOT contain the hardcoded pattern with directoryPath + default folder
-			expect(prompt).not.toContain('/project/root/Auto Run Docs');
+			expect(prompt).not.toContain('/project/root/.maestro/playbooks');
 		});
 
 		it('should use external autoRunFolderPath when different from directoryPath', () => {
@@ -472,13 +472,13 @@ CONTENT:
 		it('should handle autoRunFolderPath that is inside directoryPath', () => {
 			const config = createTestConfig({
 				directoryPath: '/project/root',
-				autoRunFolderPath: '/project/root/Auto Run Docs',
+				autoRunFolderPath: '/project/root/.maestro/playbooks',
 			});
 
 			const prompt = generateDocumentPrompt(config);
 
 			// Should still work correctly when path is inside project
-			expect(prompt).toContain('/project/root/Auto Run Docs');
+			expect(prompt).toContain('/project/root/.maestro/playbooks');
 		});
 
 		it('should include project name in the prompt', () => {
@@ -530,7 +530,7 @@ CONTENT:
 			expect(prompt).toContain('Existing Documents');
 		});
 
-		it('should NOT contain hardcoded Auto Run Docs when custom path is configured', () => {
+		it('should NOT contain hardcoded .maestro/playbooks when custom path is configured', () => {
 			const config = createTestConfig({
 				directoryPath: '/my/project',
 				autoRunFolderPath: '/completely/different/path',
@@ -540,7 +540,7 @@ CONTENT:
 
 			// The combined pattern should be replaced with custom path
 			// Check that we don't have the default path in write instructions
-			expect(prompt).not.toMatch(/\/my\/project\/Auto Run Docs/);
+			expect(prompt).not.toMatch(/\/my\/project\/\.maestro\/playbooks/);
 			expect(prompt).toContain('/completely/different/path');
 		});
 

@@ -61,7 +61,12 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 }));
 
 vi.mock('../../../main/cue/cue-types', () => ({
-	CUE_YAML_FILENAME: 'maestro-cue.yaml',
+	CUE_YAML_FILENAME: 'maestro-cue.yaml', // legacy name kept in cue-types for compat
+}));
+
+vi.mock('../../../shared/maestro-paths', () => ({
+	CUE_CONFIG_PATH: '.maestro/cue.yaml',
+	MAESTRO_DIR: '.maestro',
 }));
 
 import { registerCueHandlers } from '../../../main/ipc/handlers/cue';
@@ -254,8 +259,8 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:readYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBe('subscriptions: []');
-			expect(fs.existsSync).toHaveBeenCalledWith('/projects/test/maestro-cue.yaml');
-			expect(fs.readFileSync).toHaveBeenCalledWith('/projects/test/maestro-cue.yaml', 'utf-8');
+			expect(fs.existsSync).toHaveBeenCalledWith('/projects/test/.maestro/cue.yaml');
+			expect(fs.readFileSync).toHaveBeenCalledWith('/projects/test/.maestro/cue.yaml', 'utf-8');
 		});
 
 		it('should return null when file does not exist', async () => {
@@ -275,7 +280,7 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content });
 			expect(fs.writeFileSync).toHaveBeenCalledWith(
-				'/projects/test/maestro-cue.yaml',
+				'/projects/test/.maestro/cue.yaml',
 				content,
 				'utf-8'
 			);

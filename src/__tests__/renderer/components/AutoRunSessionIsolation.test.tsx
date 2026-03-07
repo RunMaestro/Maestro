@@ -209,7 +209,7 @@ describe('AutoRun Session Isolation', () => {
 
 			const propsA = createDefaultProps({
 				sessionId: 'session-a',
-				folderPath: '/projects/session-a/Auto Run Docs',
+				folderPath: '/projects/session-a/.maestro/playbooks',
 				selectedFile: 'Phase 1',
 				content: sessionAContent,
 			});
@@ -226,7 +226,7 @@ describe('AutoRun Session Isolation', () => {
 			// Now switch to Session B - the content should reset to Session B's content
 			const propsB = createDefaultProps({
 				sessionId: 'session-b',
-				folderPath: '/projects/session-b/Auto Run Docs',
+				folderPath: '/projects/session-b/.maestro/playbooks',
 				selectedFile: 'Phase 1',
 				content: sessionBContent,
 			});
@@ -650,7 +650,7 @@ describe('AutoRun Folder Path Isolation', () => {
 	it('different sessions can have different folder paths', async () => {
 		const propsA = createDefaultProps({
 			sessionId: 'session-a',
-			folderPath: '/projects/alpha/Auto Run Docs',
+			folderPath: '/projects/alpha/.maestro/playbooks',
 			selectedFile: 'Phase 1',
 			content: 'Alpha project content',
 		});
@@ -663,7 +663,7 @@ describe('AutoRun Folder Path Isolation', () => {
 		// Switch to session B with different folder
 		const propsB = createDefaultProps({
 			sessionId: 'session-b',
-			folderPath: '/projects/beta/Auto Run Docs',
+			folderPath: '/projects/beta/.maestro/playbooks',
 			selectedFile: 'Phase 1',
 			content: 'Beta project content',
 		});
