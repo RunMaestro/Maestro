@@ -123,7 +123,7 @@ export interface XTerminalProps {
 // ============================================================================
 
 export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XTerminal(
-	{ sessionId, theme, fontFamily, fontSize = 14, onData, onResize, onTitleChange },
+	{ sessionId, theme, fontFamily, fontSize = 12, onData, onResize, onTitleChange },
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -178,7 +178,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				const container = containerRef.current;
 				if (!fitAddon || !term) return;
 				// Apply deferred WebGL load now that the container is visible
-				if (pendingWebglLoadRef.current && container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+				if (
+					pendingWebglLoadRef.current &&
+					container &&
+					container.offsetWidth > 0 &&
+					container.offsetHeight > 0
+				) {
 					pendingWebglLoadRef.current();
 					pendingWebglLoadRef.current = null;
 				}
@@ -386,11 +391,16 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	}, [fontFamily, fontSize]);
 
 	return (
-		<div style={{ width: '100%', height: '100%', paddingLeft: '8px', boxSizing: 'border-box' }}>
-			<div
-				ref={containerRef}
-				style={{ width: '100%', height: '100%', overflow: 'hidden' }}
-			/>
+		<div
+			style={{
+				width: '100%',
+				height: '100%',
+				paddingLeft: '8px',
+				boxSizing: 'border-box',
+				backgroundColor: theme.colors.bgMain,
+			}}
+		>
+			<div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />
 		</div>
 	);
 });
