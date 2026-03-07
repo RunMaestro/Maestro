@@ -7,7 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, HistoryEntry } from '../../shared/types';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -106,6 +106,22 @@ export function createDirectorNotesApi() {
 		// Generate AI synopsis
 		generateSynopsis: (options: SynopsisOptions): Promise<SynopsisResult> =>
 			ipcRenderer.invoke('director-notes:generateSynopsis', options),
+
+		/**
+		 * Subscribe to new history entries as they are added in real-time.
+		 * Returns a cleanup function to unsubscribe.
+		 */
+		onHistoryEntryAdded: (
+			callback: (entry: HistoryEntry, sourceSessionId: string) => void
+		): (() => void) => {
+			const handler = (_event: unknown, entry: HistoryEntry, sessionId: string) => {
+				callback(entry, sessionId);
+			};
+			ipcRenderer.on('history:entryAdded', handler);
+			return () => {
+				ipcRenderer.removeListener('history:entryAdded', handler);
+			};
+		},
 	};
 }
 
