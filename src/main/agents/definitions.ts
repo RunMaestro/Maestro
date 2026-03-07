@@ -215,7 +215,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyArgs: ['--agent', 'plan'], // Read-only/plan mode
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection (e.g., 'ollama/qwen3:8b')
 		imageArgs: (imagePath: string) => ['-f', imagePath], // Image/file attachment: opencode run -f /path/to/image.png -- "prompt"
-		noPromptSeparator: true, // OpenCode doesn't need '--' before prompt - yargs handles positional args
+		// Use '--' separator before prompt to prevent yargs from misinterpreting
+		// leading '---' (YAML frontmatter in slash command prompts) as flags (#527)
 		// Default env vars: enable YOLO mode (allow all permissions including external_directory)
 		// Disable the question tool via both methods:
 		// - "question": "deny" in permission block (per OpenCode GitHub issue workaround)
