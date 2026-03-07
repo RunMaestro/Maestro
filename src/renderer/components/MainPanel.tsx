@@ -489,9 +489,9 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 			if (hasTerminalTabs) {
 				// Always update the snapshot so we have the latest when this session becomes non-active.
 				mountedTerminalSessionsRef.current.set(activeSession.id, activeSession);
-				setMountedTerminalSessionIds((prev) =>
-					prev.includes(activeSession.id) ? prev : [...prev, activeSession.id]
-				);
+				setMountedTerminalSessionIds((prev) => {
+					return prev.includes(activeSession.id) ? prev : [...prev, activeSession.id];
+				});
 			} else if (mountedTerminalSessionsRef.current.has(activeSession.id)) {
 				// Last terminal tab was closed — remove from mounted set.
 				mountedTerminalSessionsRef.current.delete(activeSession.id);
@@ -1815,7 +1815,7 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 									     scrollback buffer. Visibility is controlled via CSS display, not mount/unmount. */}
 									{mountedTerminalSessionIds.map((sessionId) => {
 										const isCurrentSession = sessionId === activeSession.id;
-										const session = isCurrentSession
+												const session = isCurrentSession
 											? activeSession
 											: mountedTerminalSessionsRef.current.get(sessionId);
 										if (!session) return null;

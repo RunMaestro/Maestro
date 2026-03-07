@@ -133,6 +133,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const lastSearchQueryRef = useRef<string>('');
+	// Deferred WebGL load: resolved when the async import completes but the container was hidden.
+	// Applied on the next visible resize or explicit refresh() call.
+	const pendingWebglLoadRef = useRef<(() => void) | null>(null);
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -172,7 +175,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			refresh() {
 				const fitAddon = fitAddonRef.current;
 				const term = terminalRef.current;
+				const container = containerRef.current;
 				if (!fitAddon || !term) return;
+				// Apply deferred WebGL load now that the container is visible
+				if (pendingWebglLoadRef.current && container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+					pendingWebglLoadRef.current();
+					pendingWebglLoadRef.current = null;
+				}
 				fitAddon.fit();
 				term.refresh(0, term.rows - 1);
 			},
@@ -195,6 +204,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// Calling fit() or refresh() on a zero-size WebGL canvas clears the GPU
 			// framebuffer, wiping the terminal content when the user navigates away.
 			if (container.offsetWidth === 0 || container.offsetHeight === 0) return;
+
+			// Apply deferred WebGL load if the container just became visible
+			if (pendingWebglLoadRef.current) {
+				pendingWebglLoadRef.current();
+				pendingWebglLoadRef.current = null;
+			}
 
 			fitAddon.fit();
 			// Force repaint now that we've confirmed the container is visible.
@@ -234,26 +249,40 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.loadAddon(unicode11Addon);
 		term.unicode.activeVersion = '11';
 
-		// Attempt WebGL renderer with canvas fallback
+		// Attempt WebGL renderer with canvas fallback.
+		// The async import may resolve while the container is still hidden (display:none → 0×0).
+		// Calling term.loadAddon(webglAddon) on a hidden canvas causes WebGL context creation to
+		// fail, leaving the terminal in a broken rendering state. Guard against this by deferring
+		// the load until the container is visible; pendingWebglLoadRef is applied on the next
+		// visible resize or explicit refresh() call.
 		let webglAddon: import('@xterm/addon-webgl').WebglAddon | null = null;
+
+		const tryLoadWebgl = (WebglAddon: typeof import('@xterm/addon-webgl').WebglAddon) => {
+			const container = containerRef.current;
+			if (!container || container.offsetWidth === 0 || container.offsetHeight === 0) {
+				// Container is hidden — defer until it becomes visible
+				pendingWebglLoadRef.current = () => tryLoadWebgl(WebglAddon);
+				return;
+			}
+			pendingWebglLoadRef.current = null;
+			try {
+				webglAddon = new WebglAddon();
+				webglAddon.onContextLoss(() => {
+					console.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
+					webglAddon?.dispose();
+					webglAddon = null;
+					// Force a full repaint so the fallback canvas renderer draws from the internal buffer.
+					term.refresh(0, term.rows - 1);
+				});
+				term.loadAddon(webglAddon);
+			} catch (err) {
+				console.warn('[XTerminal] WebGL addon failed to load, using canvas renderer:', err);
+			}
+		};
+
 		import('@xterm/addon-webgl')
 			.then(({ WebglAddon }) => {
-				try {
-					webglAddon = new WebglAddon();
-					webglAddon.onContextLoss(() => {
-						console.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
-						webglAddon?.dispose();
-						webglAddon = null;
-						// The WebGL addon just disposed; xterm.js now uses its fallback canvas renderer.
-						// Force a full repaint so the fallback renderer draws from the internal buffer.
-						// Without this, the terminal can remain blank if context loss fires after the
-						// isVisible refresh call (context loss is async from the GPU).
-						term.refresh(0, term.rows - 1);
-					});
-					term.loadAddon(webglAddon);
-				} catch (err) {
-					console.warn('[XTerminal] WebGL addon failed to load, using canvas renderer:', err);
-				}
+				tryLoadWebgl(WebglAddon);
 			})
 			.catch((err) => {
 				console.warn('[XTerminal] WebGL addon import failed, using canvas renderer:', err);
