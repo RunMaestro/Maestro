@@ -691,7 +691,7 @@ describe('autorun IPC handlers', () => {
 			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
-		it('should return error if path is not a directory', async () => {
+		it('should skip non-directory paths without error', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => false,
 			} as any);
@@ -699,8 +699,9 @@ describe('autorun IPC handlers', () => {
 			const handler = handlers.get('autorun:deleteFolder');
 			const result = await handler!({} as any, '/test/project');
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Path is not a directory');
+			// Both canonical and legacy are non-directories, so nothing to delete
+			expect(result.success).toBe(true);
+			expect(fs.rm).not.toHaveBeenCalled();
 		});
 
 		it('should return error for invalid project path', async () => {
