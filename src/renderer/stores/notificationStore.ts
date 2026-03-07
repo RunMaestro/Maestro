@@ -265,7 +265,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
 			const notifBody = prefix + firstSentence;
 
-			window.maestro.notification.show(notifTitle, notifBody).catch((err) => {
+			window.maestro.notification.show(notifTitle, notifBody, toast.sessionId, toast.tabId).catch((err) => {
 				console.error('[notificationStore] Failed to show OS notification:', err);
 			});
 		}

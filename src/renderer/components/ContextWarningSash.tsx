@@ -24,7 +24,7 @@ export interface ContextWarningSashProps {
  * - Dismiss button that hides the warning until usage increases 10%+ or crosses threshold
  */
 export const ContextWarningSash = memo(function ContextWarningSash({
-	theme: _theme,
+	theme,
 	contextUsage,
 	yellowThreshold,
 	redThreshold,
@@ -32,6 +32,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 	onSummarizeClick,
 	tabId,
 }: ContextWarningSashProps) {
+	const isLight = theme.mode === 'light';
 	const tabKey = tabId ?? '__default__';
 	const [dismissedByTab, setDismissedByTab] = useState<
 		Record<string, { usage: number; level: 'yellow' | 'red' }>
@@ -77,18 +78,26 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 
 	const isRed = warningLevel === 'red';
 
-	// Color values from spec
+	// Color values — light mode needs darker text/icon colors for contrast
 	const backgroundColor = isRed
-		? 'rgba(239, 68, 68, 0.15)' // red-500 with low opacity
-		: 'rgba(234, 179, 8, 0.15)'; // yellow-500 with low opacity
+		? isLight
+			? 'rgba(239, 68, 68, 0.12)'
+			: 'rgba(239, 68, 68, 0.15)'
+		: isLight
+			? 'rgba(234, 179, 8, 0.12)'
+			: 'rgba(234, 179, 8, 0.15)';
 
 	const borderColor = isRed ? 'rgba(239, 68, 68, 0.5)' : 'rgba(234, 179, 8, 0.5)';
 
 	const textColor = isRed
-		? '#fca5a5' // red-300
-		: '#fde047'; // yellow-300
+		? isLight
+			? '#991b1b' // red-800
+			: '#fca5a5' // red-300
+		: isLight
+			? '#854d0e' // yellow-800
+			: '#fde047'; // yellow-300
 
-	const iconColor = isRed ? '#ef4444' : '#eab308';
+	const iconColor = isRed ? (isLight ? '#dc2626' : '#ef4444') : isLight ? '#ca8a04' : '#eab308';
 	const buttonBgColor = isRed ? '#ef4444' : '#eab308';
 
 	return (

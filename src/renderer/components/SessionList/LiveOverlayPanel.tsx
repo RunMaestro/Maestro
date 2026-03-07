@@ -58,7 +58,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 		<div
 			ref={containerRef}
 			className="absolute top-full left-0 pt-2 z-50 outline-none"
-			style={{ width: '280px' }}
+			style={{ width: '280px', maxHeight: 'calc(100vh - 120px)' }}
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				if (tunnelStatus === 'connected') {
@@ -71,7 +71,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 			}}
 		>
 			<div
-				className="rounded-lg shadow-2xl overflow-hidden"
+				className="rounded-lg shadow-2xl overflow-y-auto scrollbar-thin"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
@@ -89,7 +89,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						) : (
 							<span>
 								{' '}
-								Scan the QR code on your local network, or enable remote access to control Maestro
+								Scan the QR code on your local network, or enable remote control to control Maestro
 								from anywhere.
 							</span>
 						)}
@@ -104,7 +104,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								className="text-[10px] uppercase font-bold"
 								style={{ color: theme.colors.textDim }}
 							>
-								Remote Access
+								Remote Control
 							</div>
 							{cloudflaredInstalled === false && (
 								<div className="text-[9px] text-yellow-500 mt-1">Install cloudflared to enable</div>
@@ -127,8 +127,8 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								!cloudflaredInstalled
 									? 'cloudflared not installed'
 									: tunnelStatus === 'connected'
-										? 'Disable remote access'
-										: 'Enable remote access'
+										? 'Disable remote control'
+										: 'Enable remote control'
 							}
 						>
 							<div
@@ -155,7 +155,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							className="mt-2 p-2 rounded text-[10px]"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
-							<div className="font-medium mb-1">To enable remote access:</div>
+							<div className="font-medium mb-1">To enable remote control:</div>
 							<div className="opacity-70 font-mono">brew install cloudflared</div>
 							<button
 								type="button"

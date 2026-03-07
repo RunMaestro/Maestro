@@ -119,6 +119,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
 		unifiedClosedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

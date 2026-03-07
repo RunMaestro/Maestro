@@ -153,7 +153,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					name,
 					workingDir,
 					agentId as ToolType,
-					currentSessions
+					currentSessions,
+					sessionSshRemoteConfig?.enabled ? sessionSshRemoteConfig.remoteId : null
 				);
 				if (!validation.valid) {
 					console.error(`Session validation failed: ${validation.error}`);
@@ -245,6 +246,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					closedTabHistory: [],
 					filePreviewTabs: [],
 					activeFileTabId: null,
+					terminalTabs: [],
+					activeTerminalTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 					unifiedClosedTabHistory: [],
 					nudgeMessage,

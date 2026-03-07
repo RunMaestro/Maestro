@@ -41,6 +41,10 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const CueModal = lazy(() => import('./components/CueModal').then((m) => ({ default: m.CueModal })));
+const CueYamlEditor = lazy(() =>
+	import('./components/CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
+);
 
 // SymphonyContributionData type moved to useSymphonyContribution hook
 
@@ -91,6 +95,7 @@ import {
 	useAutoRunHandlers,
 	// Tab handlers
 	useTabHandlers,
+	useTerminalTabHandlers,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -135,6 +140,7 @@ import {
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
+import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -326,6 +332,14 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Maestro Cue Modal
+		cueModalOpen,
+		setCueModalOpen,
+		// Maestro Cue YAML Editor (standalone)
+		cueYamlEditorOpen,
+		cueYamlEditorSessionId,
+		cueYamlEditorProjectRoot,
+		closeCueYamlEditor,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -366,8 +380,6 @@ function MaestroConsoleInner() {
 		setChatRawTextMode,
 		showHiddenFiles: _showHiddenFiles,
 		setShowHiddenFiles: _setShowHiddenFiles,
-		terminalWidth: _terminalWidth,
-		setTerminalWidth: _setTerminalWidth,
 		logLevel,
 		logViewerSelectedLevels,
 		setLogViewerSelectedLevels,
@@ -414,6 +426,15 @@ function MaestroConsoleInner() {
 		setSuppressWindowsWarning,
 		encoreFeatures,
 	} = settings;
+
+	// Reset modal-open flags when their Encore Feature toggle is disabled
+	useEffect(() => {
+		if (!encoreFeatures.symphony) setSymphonyModalOpen(false);
+	}, [encoreFeatures.symphony, setSymphonyModalOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.usageStats) setUsageDashboardOpen(false);
+	}, [encoreFeatures.usageStats, setUsageDashboardOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
@@ -745,6 +766,9 @@ function MaestroConsoleInner() {
 	// --- SESSION RESTORATION (extracted hook, Phase 2E) ---
 	const { initialLoadComplete } = useSessionRestoration();
 
+	// --- CUE AUTO-DISCOVERY (gated by Encore Feature) ---
+	useCueAutoDiscovery(sessions, encoreFeatures);
+
 	// --- TAB HANDLERS (extracted hook) ---
 	const {
 		activeTab,
@@ -791,6 +815,27 @@ function MaestroConsoleInner() {
 		handleAtBottomChange,
 		handleDeleteLog,
 	} = useTabHandlers();
+
+	// --- TERMINAL TAB HANDLERS ---
+	const {
+		handleOpenTerminalTab,
+		handleSelectTerminalTab,
+		handleCloseTerminalTab,
+	} = useTerminalTabHandlers();
+
+	// Opens the rename modal for a terminal tab (1-arg wrapper for useMainPanelProps)
+	const handleRequestTerminalTabRename = useCallback(
+		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			const tab = session.terminalTabs?.find((t) => t.id === tabId);
+			if (!tab) return;
+			setRenameTabId(tabId);
+			setRenameTabInitialName(tab.name ?? '');
+			setRenameTabModalOpen(true);
+		},
+		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
+	);
 
 	// --- GROUP CHAT HANDLERS (extracted from App.tsx Phase 2B) ---
 	const {
@@ -869,6 +914,7 @@ function MaestroConsoleInner() {
 		handleOpenMarketplace,
 		handleEditAgent,
 		handleOpenCreatePRSession,
+		handleConfigureCue,
 		handleStartTour,
 		handleSetLightboxImage,
 		handleCloseLightbox,
@@ -1504,6 +1550,35 @@ function MaestroConsoleInner() {
 		[setActiveSessionId]
 	);
 
+	// Deep link navigation handler — processes maestro:// URLs from OS notifications,
+	// external apps, and CLI commands
+	useEffect(() => {
+		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+			if (deepLink.action === 'focus') {
+				// Window already brought to foreground by main process
+				return;
+			}
+			if (deepLink.action === 'session' && deepLink.sessionId) {
+				const targetExists = sessionsRef.current.some((s) => s.id === deepLink.sessionId);
+				if (!targetExists) return;
+				handleToastSessionClick(deepLink.sessionId, deepLink.tabId);
+				return;
+			}
+			if (deepLink.action === 'group' && deepLink.groupId) {
+				// Find first session in group and navigate to it
+				const groupSession = sessionsRef.current.find((s) => s.groupId === deepLink.groupId);
+				if (groupSession) {
+					handleToastSessionClick(groupSession.id);
+				}
+				// Expand the group if it's collapsed
+				setGroups((prev) =>
+					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
+				);
+			}
+		});
+		return unsubscribe;
+	}, [handleToastSessionClick, setGroups]);
+
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions } = useSortedSessions({
@@ -1721,6 +1796,7 @@ function MaestroConsoleInner() {
 				message: prDetails.title,
 				actionUrl: prDetails.url,
 				actionLabel: prDetails.url,
+				sessionId: session?.id,
 			});
 			// Add history entry with PR details
 			if (session) {
@@ -1768,10 +1844,13 @@ function MaestroConsoleInner() {
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Clear activeFileTabId when selecting an AI tab
+			// Clear activeFileTabId and activeTerminalTabId when selecting an AI tab.
+			// Also reset inputMode to 'ai' in case we're coming from terminal mode.
 			setSessions((prev) =>
 				prev.map((s) =>
-					s.id === activeSession.id ? { ...s, activeTabId: tabId, activeFileTabId: null } : s
+					s.id === activeSession.id
+						? { ...s, activeTabId: tabId, activeFileTabId: null, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
 				)
 			);
 		},
@@ -1780,9 +1859,14 @@ function MaestroConsoleInner() {
 	const handleUtilityFileTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs)
+			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
+			// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
 			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSession.id ? { ...s, activeFileTabId: tabId } : s))
+				prev.map((s) =>
+					s.id === activeSession.id
+						? { ...s, activeFileTabId: tabId, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
+				)
 			);
 		},
 		[activeSession]
@@ -1959,6 +2043,7 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setCueModalOpen,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -2006,12 +2091,21 @@ function MaestroConsoleInner() {
 		// Close current tab (Cmd+W) - works with both file and AI tabs
 		handleCloseCurrentTab,
 
+		// Terminal tab handlers for keyboard shortcuts (Phase 9)
+		handleOpenTerminalTab,
+		handleSelectTerminalTab,
+		handleCloseTerminalTab,
+		mainPanelRef,
+
 		// Session bookmark toggle
 		toggleBookmark,
 
 		// Auto-scroll AI mode toggle
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+
+		// Unread agents filter toggle
+		toggleShowUnreadAgentsOnly: useUIStore.getState().toggleShowUnreadAgentsOnly,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are
@@ -2180,6 +2274,12 @@ function MaestroConsoleInner() {
 		activeFileTab,
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
+
+		// Terminal tab callbacks (Phase 8)
+		handleOpenTerminalTab,
+		handleTerminalTabSelect: handleSelectTerminalTab,
+		handleTerminalTabClose: handleCloseTerminalTab,
+		handleTerminalTabRename: handleRequestTerminalTabRename,
 		handleFileTabEditModeChange,
 		handleFileTabEditContentChange,
 		handleFileTabScrollPositionChange,
@@ -2283,6 +2383,7 @@ function MaestroConsoleInner() {
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
+		handleConfigureCue,
 		openWizardModal,
 		handleStartTour,
 
@@ -2551,7 +2652,7 @@ function MaestroConsoleInner() {
 					setAboutModalOpen={setAboutModalOpen}
 					setLogViewerOpen={setLogViewerOpen}
 					setProcessMonitorOpen={setProcessMonitorOpen}
-					setUsageDashboardOpen={setUsageDashboardOpen}
+					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
@@ -2586,6 +2687,7 @@ function MaestroConsoleInner() {
 					hasActiveSessionCapability={hasActiveSessionCapability}
 					onOpenMergeSession={handleQuickActionsOpenMergeSession}
 					onOpenSendToAgent={handleQuickActionsOpenSendToAgent}
+					onQuickCreateWorktree={handleQuickCreateWorktree}
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
 					canSummarizeActiveTab={
@@ -2626,15 +2728,18 @@ function MaestroConsoleInner() {
 					getDocumentTaskCount={getDocumentTaskCount}
 					onAutoRunRefresh={handleAutoRunRefresh}
 					onOpenMarketplace={handleOpenMarketplace}
-					onOpenSymphony={() => setSymphonyModalOpen(true)}
+					onOpenSymphony={encoreFeatures.symphony ? () => setSymphonyModalOpen(true) : undefined}
 					onOpenDirectorNotes={
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
+					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
 					onFileTabSelect={handleUtilityFileTabSelect}
+					onTerminalTabSelect={handleSelectTerminalTab}
 					onNamedSessionSelect={handleNamedSessionSelect}
 					filteredFileTree={filteredFileTree}
 					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
@@ -2790,7 +2895,7 @@ function MaestroConsoleInner() {
 				)}
 
 				{/* --- SYMPHONY MODAL (lazy-loaded) --- */}
-				{symphonyModalOpen && (
+				{encoreFeatures.symphony && symphonyModalOpen && (
 					<Suspense fallback={null}>
 						<SymphonyModal
 							theme={theme}
@@ -2820,6 +2925,34 @@ function MaestroConsoleInner() {
 						/>
 					</Suspense>
 				)}
+
+				{/* --- MAESTRO CUE MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.maestroCue && cueModalOpen && (
+					<Suspense fallback={null}>
+						<CueModal
+							theme={theme}
+							onClose={() => setCueModalOpen(false)}
+							cueShortcutKeys={shortcuts.maestroCue?.keys}
+						/>
+					</Suspense>
+				)}
+
+				{/* --- MAESTRO CUE YAML EDITOR (standalone, lazy-loaded) --- */}
+				{encoreFeatures.maestroCue &&
+					cueYamlEditorOpen &&
+					cueYamlEditorSessionId &&
+					cueYamlEditorProjectRoot && (
+						<Suspense fallback={null}>
+							<CueYamlEditor
+								key={cueYamlEditorSessionId}
+								isOpen={true}
+								onClose={closeCueYamlEditor}
+								projectRoot={cueYamlEditorProjectRoot}
+								sessionId={cueYamlEditorSessionId}
+								theme={theme}
+							/>
+						</Suspense>
+					)}
 
 				{/* --- GIST PUBLISH MODAL --- */}
 				{/* Supports both file preview tabs and tab context gist publishing */}

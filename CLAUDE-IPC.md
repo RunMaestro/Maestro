@@ -43,6 +43,7 @@ The `window.maestro` API exposes the following namespaces:
 - `history` - Per-agent execution history (see History API below)
 - `cli` - CLI activity detection for playbook runs
 - `tempfile` - Temporary file management for batch processing
+- `cue` - Maestro Cue event-driven automation (see Cue API below)
 
 ## Analytics & Visualization
 
@@ -73,6 +74,40 @@ window.maestro.history = {
 ```
 
 **AI Context Integration**: Use `getFilePath(sessionId)` to get the path to an agent's history file. This file can be passed directly to AI agents as context, giving them visibility into past completed tasks, decisions, and work patterns.
+
+## Cue API
+
+Maestro Cue event-driven automation engine. Gated behind the `maestroCue` Encore Feature flag.
+
+```typescript
+window.maestro.cue = {
+  // Query engine state
+  getStatus: () => Promise<CueSessionStatus[]>,
+  getActiveRuns: () => Promise<CueRunResult[]>,
+  getActivityLog: (limit?) => Promise<CueRunResult[]>,
+
+  // Engine controls
+  enable: () => Promise<void>,
+  disable: () => Promise<void>,
+
+  // Run management
+  stopRun: (runId) => Promise<boolean>,
+  stopAll: () => Promise<void>,
+
+  // Session config management
+  refreshSession: (sessionId, projectRoot) => Promise<void>,
+
+  // YAML config file operations
+  readYaml: (projectRoot) => Promise<string | null>,
+  writeYaml: (projectRoot, content) => Promise<void>,
+  validateYaml: (content) => Promise<{ valid: boolean; errors: string[] }>,
+
+  // Real-time updates
+  onActivityUpdate: (callback) => () => void,  // Returns unsubscribe function
+};
+```
+
+**Events:** `cue:activityUpdate` is pushed from main process on subscription triggers, run completions, config reloads, and config removals.
 
 ## Power Management
 

@@ -397,6 +397,7 @@ export async function* runPlaybook(
 					},
 					gitBranch,
 					groupName,
+					groupId: session.groupId,
 					autoRunFolder: folderPath,
 					loopNumber: loopIteration + 1, // 1-indexed
 					documentName: docEntry.filename,

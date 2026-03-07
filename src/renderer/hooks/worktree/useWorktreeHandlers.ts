@@ -353,6 +353,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						worktreeSession,
 					]);
 
+				// Auto-focus the new worktree session
+				useSessionStore.getState().setActiveSessionId(worktreeSession.id);
+
 				notifyToast({
 					type: 'success',
 					title: 'Worktree Created',
@@ -441,6 +444,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				}),
 				worktreeSession,
 			]);
+
+			// Auto-focus the new worktree session
+			useSessionStore.getState().setActiveSessionId(worktreeSession.id);
 
 			notifyToast({
 				type: 'success',

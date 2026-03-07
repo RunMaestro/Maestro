@@ -22,7 +22,8 @@ export interface SessionCategories {
 
 export function useSessionCategories(
 	sessionFilter: string,
-	sortedSessions: Session[]
+	sortedSessions: Session[],
+	showUnreadAgentsOnly = false
 ): SessionCategories {
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
@@ -67,13 +68,19 @@ export function useSessionCategories(
 
 	// Consolidated session categorization and sorting - computed in a single pass
 	const sessionCategories = useMemo(() => {
-		// Step 1: Filter sessions based on search query
+		// Step 1: Filter sessions based on search query and unread filter
 		const query = sessionFilter?.toLowerCase() ?? '';
 		const filtered: Session[] = [];
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
+
+			// Apply unread agents filter (also keep busy/working agents visible)
+			if (showUnreadAgentsOnly) {
+				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
+				if (!hasUnread && s.state !== 'busy') continue;
+			}
 
 			if (!query) {
 				filtered.push(s);
@@ -150,7 +157,7 @@ export function useSessionCategories(
 			sortedUngroupedParent,
 			sortedGrouped,
 		};
-	}, [sessionFilter, sessions, worktreeChildrenByParentId]);
+	}, [sessionFilter, showUnreadAgentsOnly, sessions, worktreeChildrenByParentId]);
 
 	const sortedGroups = useMemo(
 		() => [...groups].sort((a, b) => compareSessionNames(a.name, b.name)),

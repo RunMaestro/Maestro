@@ -167,6 +167,8 @@ const createMockSession = (overrides: Partial<Session> & { wizardState?: any } =
 		closedTabHistory: [],
 		shellCwd: '/Users/test/project',
 		busySource: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...sessionOverrides,
 	};
 };

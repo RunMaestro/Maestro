@@ -297,6 +297,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				session,
 				gitBranch,
 				groupName,
+				groupId: session.groupId,
+				activeTabId: session.activeTabId,
 				autoRunFolder: folderPath,
 				loopNumber: loopIteration, // Already 1-indexed from caller
 				documentName: filename,

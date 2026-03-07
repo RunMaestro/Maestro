@@ -16,6 +16,7 @@ import {
 	type ConfirmModalData,
 	type RenameInstanceModalData,
 	type LightboxData,
+	type CueYamlEditorData,
 } from '../../../renderer/stores/modalStore';
 import type { Session } from '../../../renderer/types';
 
@@ -447,6 +448,8 @@ describe('modalStore', () => {
 				'symphony',
 				'updateCheck',
 				'windowsWarning',
+				'cueModal',
+				'cueYamlEditor',
 			];
 
 			// Open and close each to verify they all work
@@ -1118,6 +1121,56 @@ describe('modalStore', () => {
 			});
 
 			expect(result.current.quitConfirmModalOpen).toBe(false);
+		});
+	});
+
+	describe('integration: cue YAML editor modal flow', () => {
+		it('openCueYamlEditor opens modal with session data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(true);
+
+			const data = state.getData('cueYamlEditor') as CueYamlEditorData;
+			expect(data.sessionId).toBe('sess-123');
+			expect(data.projectRoot).toBe('/projects/my-app');
+		});
+
+		it('closeCueYamlEditor closes modal and clears data', () => {
+			const actions = getModalActions();
+
+			actions.openCueYamlEditor('sess-123', '/projects/my-app');
+			actions.closeCueYamlEditor();
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('cueYamlEditor')).toBe(false);
+			expect(state.getData('cueYamlEditor')).toBeUndefined();
+		});
+
+		it('useModalActions exposes cueYamlEditor reactive state', () => {
+			const { result } = renderHook(() => useModalActions());
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
+
+			act(() => {
+				result.current.openCueYamlEditor('sess-456', '/projects/other');
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(true);
+			expect(result.current.cueYamlEditorSessionId).toBe('sess-456');
+			expect(result.current.cueYamlEditorProjectRoot).toBe('/projects/other');
+
+			act(() => {
+				result.current.closeCueYamlEditor();
+			});
+
+			expect(result.current.cueYamlEditorOpen).toBe(false);
+			expect(result.current.cueYamlEditorSessionId).toBeNull();
+			expect(result.current.cueYamlEditorProjectRoot).toBeNull();
 		});
 	});
 });

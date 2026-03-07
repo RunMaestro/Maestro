@@ -986,6 +986,32 @@ describe('RightPanel', () => {
 			expect(setActiveRightTab).toHaveBeenCalledWith('history');
 		});
 
+		it('should show "View history" link when on files tab during batch run', () => {
+			useUIStore.setState({ activeRightTab: 'files' });
+			const setActiveRightTab = vi.fn();
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
+			render(<RightPanel {...props} />);
+
+			const link = screen.getByText('View history');
+			expect(link).toBeInTheDocument();
+			fireEvent.click(link);
+			expect(setActiveRightTab).toHaveBeenCalledWith('history');
+		});
+
 		it('should not show "View history" link when on history tab during batch run', () => {
 			useUIStore.setState({ activeRightTab: 'history' });
 			const currentSessionBatchState: BatchRunState = {

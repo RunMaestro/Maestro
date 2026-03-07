@@ -11,6 +11,7 @@ vi.mock('react-syntax-highlighter', () => ({
 }));
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
+	vs: {},
 }));
 
 // Mock lucide-react icons
@@ -22,6 +23,7 @@ vi.mock('lucide-react', () => ({
 
 const mockTheme = {
 	id: 'test-theme',
+	mode: 'dark',
 	colors: {
 		bgMain: '#1a1a2e',
 		bgActivity: '#16213e',

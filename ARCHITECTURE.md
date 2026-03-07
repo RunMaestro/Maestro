@@ -18,6 +18,7 @@ Deep technical documentation for Maestro's architecture and design patterns. For
 - [Achievement System](#achievement-system)
 - [AI Tab System](#ai-tab-system)
 - [File Preview Tab System](#file-preview-tab-system)
+- [Terminal Tab System](#terminal-tab-system)
 - [Execution Queue](#execution-queue)
 - [Navigation History](#navigation-history)
 - [Group Chat System](#group-chat-system)
@@ -1113,6 +1114,54 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 | `useTabHandlers.ts`          | Tab operation hooks including `handleOpenFileTab`                                                   |
 | `tabStore.ts`                | Zustand selectors for tab state (`selectUnifiedTabs`, `selectActiveTab`)                            |
 | `useDebouncedPersistence.ts` | Persists file tabs across sessions                                                                  |
+
+---
+
+## Terminal Tab System
+
+Persistent PTY-backed terminal tabs that integrate into the unified tab bar alongside AI and file tabs. Built on xterm.js for full terminal emulation with ANSI support.
+
+### Features
+
+- **Persistent PTY**: Each tab spawns a dedicated PTY via `process:spawnTerminalTab` IPC — the shell stays alive between tab switches
+- **xterm.js rendering**: Full terminal emulation via `XTerminal.tsx` (wraps `@xterm/xterm`); raw PTY data passes through unchanged
+- **Multi-tab**: Multiple independent shells per agent; tabs are closable and renameable
+- **State persistence**: `terminalTabs` array saved with the session; PTYs are re-spawned on restore
+- **Spawn failure UX**: `state === 'exited' && pid === 0` shows an error overlay with a Retry button
+- **Exit message**: PTY exit writes a yellow ANSI banner and new-terminal hint to the xterm buffer
+
+### Terminal Tab Interface
+
+```typescript
+interface TerminalTab {
+	id: string;            // Unique tab ID (UUID)
+	name: string;          // Display name (custom or auto "Terminal N")
+	shellType: string;     // Shell binary (e.g., "zsh", "bash")
+	cwd: string;           // Working directory
+	pid: number;           // PTY process ID (0 = not yet spawned)
+	state: 'idle' | 'running' | 'exited';
+	exitCode: number | null;
+	createdAt: number;
+}
+```
+
+### Session Fields
+
+```typescript
+// In Session interface
+terminalTabs: TerminalTab[];          // Array of terminal tabs
+activeTerminalTabId: string | null;   // Active terminal tab (null if not in terminal mode)
+```
+
+### Key Files
+
+| File                        | Purpose                                                              |
+| --------------------------- | -------------------------------------------------------------------- |
+| `XTerminal.tsx`             | xterm.js wrapper; handles PTY data I/O and terminal lifecycle        |
+| `TerminalView.tsx`          | Layout container; manages tab selection and spawn/exit state         |
+| `terminalTabHelpers.ts`     | CRUD helpers (`createTerminalTab`, `addTerminalTab`, `closeTerminalTab`, etc.) |
+| `tabStore.ts`               | Zustand selectors for terminal tab state                             |
+| `src/main/ipc/handlers/process.ts` | `process:spawnTerminalTab` IPC handler with SSH support       |
 
 ---
 

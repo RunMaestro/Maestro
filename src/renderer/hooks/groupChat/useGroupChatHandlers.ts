@@ -344,9 +344,14 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 
 			// Start moderator if not running
-			const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
-			if (moderatorSessionId) {
-				setGroupChats((prev) => prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c)));
+			// Fixes MAESTRO-B2: handle case where group chat was deleted between operations
+			try {
+				const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
+				if (moderatorSessionId) {
+					setGroupChats((prev) => prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c)));
+				}
+			} catch (error) {
+				console.warn(`Failed to start moderator for group chat ${id}:`, error);
 			}
 
 			// Focus the input after the component renders

@@ -72,6 +72,11 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
   - **Command Terminal** - Main window in terminal/shell mode
   - **System Log Viewer** - Special view for system logs (`LogViewer.tsx`)
 
+### Automation
+
+- **Cue** — Event-driven automation system (Maestro Cue), gated as an Encore Feature. Watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `maestro-cue.yaml` per project.
+- **Cue Modal** — Dashboard for managing Cue subscriptions and viewing activity (`CueModal.tsx`)
+
 ### Agent States (color-coded)
 
 - **Green** - Ready/idle
@@ -131,9 +136,10 @@ src/
 │   ├── preload.ts          # Secure IPC bridge
 │   ├── process-manager.ts  # Process spawning (PTY + child_process)
 │   ├── agent-*.ts          # Agent detection, capabilities, session storage
+│   ├── cue/               # Maestro Cue event-driven automation engine
 │   ├── parsers/            # Per-agent output parsers + error patterns
 │   ├── storage/            # Per-agent session storage implementations
-│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, etc.)
+│   ├── ipc/handlers/       # IPC handler modules (stats, git, playbooks, cue, etc.)
 │   └── utils/              # Utilities (execFile, ssh-spawn-wrapper, etc.)
 │
 ├── renderer/               # React frontend (desktop)
@@ -202,6 +208,10 @@ src/
 | Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                   |
 | Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler |
 | Modify history components    | `src/renderer/components/History/`                                                                                                    |
+| Add Cue event type           | `src/main/cue/cue-types.ts`, `src/main/cue/cue-engine.ts`                                                                             |
+| Add Cue template variable    | `src/shared/templateVariables.ts`, `src/main/cue/cue-executor.ts`                                                                     |
+| Modify Cue modal             | `src/renderer/components/CueModal.tsx`                                                                                                |
+| Configure Cue engine         | `src/main/cue/cue-engine.ts`, `src/main/ipc/handlers/cue.ts`                                                                          |
 
 ---
 

@@ -107,6 +107,7 @@ program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.action(send);
 
 program.parse();

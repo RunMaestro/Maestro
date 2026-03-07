@@ -2,7 +2,7 @@
  * LogViewer.tsx Test Suite
  *
  * Tests for the LogViewer component which displays Maestro system logs with:
- * - Log level filtering (debug, info, warn, error, toast)
+ * - Log level filtering (debug, info, warn, error, toast, autorun, cue)
  * - Search functionality
  * - Expand/collapse log details
  * - Export and clear logs
@@ -43,7 +43,7 @@ const mockTheme: Theme = {
 const createMockLog = (
 	overrides: Partial<{
 		timestamp: number;
-		level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
+		level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue';
 		message: string;
 		context?: string;
 		data?: unknown;
@@ -228,6 +228,8 @@ describe('LogViewer', () => {
 				expect(screen.getByRole('button', { name: 'WARN' })).toBeInTheDocument();
 				expect(screen.getByRole('button', { name: 'ERROR' })).toBeInTheDocument();
 				expect(screen.getByRole('button', { name: 'TOAST' })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'AUTORUN' })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'CUE' })).toBeInTheDocument();
 			});
 		});
 
@@ -313,6 +315,45 @@ describe('LogViewer', () => {
 
 			await waitFor(() => {
 				expect(screen.getByRole('button', { name: 'TOAST' })).not.toBeDisabled();
+			});
+		});
+
+		it('should always enable cue level regardless of logLevel', async () => {
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} logLevel="error" />);
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: 'CUE' })).not.toBeDisabled();
+			});
+		});
+
+		it('should filter cue logs by level when CUE toggle clicked', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ level: 'cue', message: 'Cue event fired' }),
+				createMockLog({ level: 'info', message: 'Info message' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Cue event fired')).toBeInTheDocument();
+				expect(screen.getByText('Info message')).toBeInTheDocument();
+			});
+
+			// Click CUE to disable it
+			const cueButton = screen.getByRole('button', { name: 'CUE' });
+			fireEvent.click(cueButton);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Cue event fired')).not.toBeInTheDocument();
+				// Info should still be visible
+				expect(screen.getByText('Info message')).toBeInTheDocument();
+			});
+
+			// Click CUE to re-enable it
+			fireEvent.click(cueButton);
+
+			await waitFor(() => {
+				expect(screen.getByText('Cue event fired')).toBeInTheDocument();
 			});
 		});
 
@@ -1061,6 +1102,83 @@ describe('LogViewer', () => {
 				expect(screen.getByText('Toast message')).toBeInTheDocument();
 				// Should not have any agent pill text
 				expect(screen.queryByText('Test Agent')).not.toBeInTheDocument();
+			});
+		});
+
+		it('should display agent pill for cue entries with context', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: '[CUE] "On PR Opened" triggered (pull_request.opened)',
+					context: 'My Cue Agent',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('My Cue Agent')).toBeInTheDocument();
+			});
+		});
+
+		it('should render cue agent pill with teal color', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: '[CUE] "Deploy Check" triggered (push)',
+					context: 'Cue Session',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const agentPill = screen.getByText('Cue Session');
+				expect(agentPill).toBeInTheDocument();
+				expect(agentPill.closest('span')).toHaveStyle({
+					backgroundColor: 'rgba(6, 182, 212, 0.2)',
+					color: '#06b6d4',
+				});
+			});
+		});
+
+		it('should not show context badge for cue entries (uses agent pill instead)', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: 'Cue triggered',
+					context: 'CueContext',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				// The context should appear as an agent pill, not as a context badge
+				const contextElement = screen.getByText('CueContext');
+				expect(contextElement).toBeInTheDocument();
+				// Verify it's styled as an agent pill (teal), not a context badge (accent color)
+				expect(contextElement.closest('span')).toHaveStyle({ color: '#06b6d4' });
+			});
+		});
+
+		it('should render cue level pill with teal color', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({
+					level: 'cue',
+					message: 'Cue level test',
+				}),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const levelPill = screen.getByText('cue');
+				expect(levelPill).toBeInTheDocument();
+				expect(levelPill).toHaveStyle({
+					color: '#06b6d4',
+					backgroundColor: 'rgba(6, 182, 212, 0.15)',
+				});
 			});
 		});
 

@@ -51,7 +51,7 @@ interface QuickActionsModalProps {
 	setAboutModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
+	setUsageDashboardOpen?: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setGitDiffPreview: (diff: string | null) => void;
@@ -91,6 +91,8 @@ interface QuickActionsModalProps {
 	onOpenSendToAgent?: () => void;
 	// Remote control
 	onToggleRemoteControl?: () => void;
+	// Worktree creation (from command palette)
+	onQuickCreateWorktree?: (session: Session) => void;
 	// Worktree PR creation
 	onOpenCreatePR?: (session: Session) => void;
 	// Summarize and continue
@@ -118,6 +120,9 @@ interface QuickActionsModalProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
+	onConfigureCue?: (session: Session) => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -187,6 +192,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		hasActiveSessionCapability,
 		onOpenMergeSession,
 		onOpenSendToAgent,
+		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
 		canSummarizeActiveTab,
@@ -205,6 +211,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenLastDocumentGraph,
 		onOpenSymphony,
 		onOpenDirectorNotes,
+		onOpenMaestroCue,
+		onConfigureCue,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 	} = props;
@@ -695,15 +703,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
-		{
-			id: 'usageDashboard',
-			label: 'Usage Dashboard',
-			shortcut: shortcuts.usageDashboard,
-			action: () => {
-				setUsageDashboardOpen(true);
-				setQuickActionOpen(false);
-			},
-		},
+		...(setUsageDashboardOpen
+			? [
+					{
+						id: 'usageDashboard',
+						label: 'Usage Dashboard',
+						shortcut: shortcuts.usageDashboard,
+						action: () => {
+							setUsageDashboardOpen(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(activeSession && hasActiveSessionCapability?.('supportsSessionStorage')
 			? [
 					{
@@ -829,6 +841,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 										error instanceof Error ? error.message : 'Failed to open repository in browser',
 								});
 							}
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Create Worktree - for git repos (resolves parent if already in a worktree)
+		...(activeSession && activeSession.isGitRepo && onQuickCreateWorktree
+			? [
+					{
+						id: 'createWorktree',
+						label: 'Create Worktree',
+						subtext: activeSession.parentSessionId
+							? `New worktree under ${sessions.find((s) => s.id === activeSession.parentSessionId)?.name || 'parent'}`
+							: 'Create a new git worktree branch',
+						action: () => {
+							// If in a worktree child, resolve to parent session
+							const targetSession = activeSession.parentSessionId
+								? sessions.find((s) => s.id === activeSession.parentSessionId) || activeSession
+								: activeSession;
+							onQuickCreateWorktree(targetSession);
 							setQuickActionOpen(false);
 						},
 					},
@@ -1030,6 +1062,35 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'View unified history and AI synopsis across all sessions',
 						action: () => {
 							onOpenDirectorNotes();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Maestro Cue - event-driven automation dashboard
+		...(onOpenMaestroCue
+			? [
+					{
+						id: 'maestro-cue',
+						label: 'Maestro Cue',
+						shortcut: shortcuts.maestroCue,
+						subtext: 'Event-driven automation dashboard',
+						action: () => {
+							onOpenMaestroCue();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Configure Maestro Cue YAML for active agent
+		...(onConfigureCue && activeSession
+			? [
+					{
+						id: 'configure-cue',
+						label: `Configure Maestro Cue: ${activeSession.name}`,
+						subtext: 'Open YAML editor for event-driven automation',
+						action: () => {
+							onConfigureCue(activeSession);
 							setQuickActionOpen(false);
 						},
 					},

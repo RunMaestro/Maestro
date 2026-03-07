@@ -189,6 +189,12 @@ export interface UseMainPanelPropsDeps {
 	activeFileTab: FilePreviewTab | null;
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
+
+	// Terminal tab callbacks (Phase 8)
+	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
+	handleTerminalTabSelect: (tabId: string) => void;
+	handleTerminalTabClose: (tabId: string) => void;
+	handleTerminalTabRename: (tabId: string) => void;
 	handleFileTabEditModeChange: (tabId: string, editMode: boolean) => void;
 	handleFileTabEditContentChange: (
 		tabId: string,
@@ -367,6 +373,11 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			activeFileTab: deps.activeFileTab,
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
+			// Terminal tab callbacks (Phase 8)
+			onNewTerminalTab: deps.handleOpenTerminalTab,
+			onTerminalTabSelect: deps.handleTerminalTabSelect,
+			onTerminalTabClose: deps.handleTerminalTabClose,
+			onTerminalTabRename: deps.handleTerminalTabRename,
 			onFileTabEditModeChange: deps.handleFileTabEditModeChange,
 			onFileTabEditContentChange: deps.handleFileTabEditContentChange,
 			onFileTabScrollPositionChange: deps.handleFileTabScrollPositionChange,
@@ -569,6 +580,11 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.activeFileTab,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
+			// Terminal tab (Phase 8)
+			deps.handleOpenTerminalTab,
+			deps.handleTerminalTabSelect,
+			deps.handleTerminalTabClose,
+			deps.handleTerminalTabRename,
 			deps.handleFileTabEditModeChange,
 			deps.handleFileTabEditContentChange,
 			deps.handleFileTabScrollPositionChange,

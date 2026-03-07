@@ -317,6 +317,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 						session,
 						gitBranch,
+						groupId: session.groupId,
+						activeTabId: targetTab.id,
 						conductorProfile: deps.conductorProfile,
 					});
 
@@ -387,6 +389,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {
 						session,
 						gitBranch,
+						groupId: session.groupId,
+						activeTabId: targetTab.id,
 						conductorProfile: deps.conductorProfile,
 					});
 
@@ -397,6 +401,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 							session,
 							gitBranch,
+							groupId: session.groupId,
+							activeTabId: targetTab.id,
 							conductorProfile: deps.conductorProfile,
 						});
 						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;

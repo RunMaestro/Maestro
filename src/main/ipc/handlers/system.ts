@@ -240,7 +240,18 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (!fsSync.existsSync(absolutePath)) {
 			throw new Error(`Path does not exist: ${absolutePath}`);
 		}
-		await shell.trashItem(absolutePath);
+		try {
+			await shell.trashItem(absolutePath);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// User or system cancelled the trash operation — not a real error
+			// Fixes MAESTRO-A4
+			if (message.includes('aborted') || message.includes('cancelled') || message.includes('canceled')) {
+				logger.debug(`Trash operation cancelled for ${absolutePath}`, 'Shell');
+				return;
+			}
+			throw error;
+		}
 	});
 
 	// Shell operations - reveal item in system file manager (Finder on macOS, Explorer on Windows)
@@ -263,11 +274,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		}
 		const absolutePath = path.resolve(itemPath);
 		if (!fsSync.existsSync(absolutePath)) {
-			throw new Error(`Path does not exist: ${absolutePath}`);
+			// Path doesn't exist — log and return gracefully since many callers
+			// fire-and-forget without catching. Fixes MAESTRO-B3
+			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
+			return;
 		}
 		const errorMessage = await shell.openPath(absolutePath);
 		if (errorMessage) {
-			throw new Error(errorMessage);
+			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
 	});
 

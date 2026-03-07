@@ -515,7 +515,7 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.filePreviewTabs).toEqual([]);
 	});
 
-	it('builds unifiedTabOrder from aiTabs when missing', async () => {
+	it('builds unifiedTabOrder from aiTabs only when terminalTabs is missing', async () => {
 		const session = createMockSession({ unifiedTabOrder: undefined as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
@@ -524,7 +524,10 @@ describe('restoreSession — Runtime state reset', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
+		// When unifiedTabOrder is undefined and terminalTabs is missing,
+		// restoration builds order from AI tabs only — no default terminal tab is created.
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
+		expect(restored!.terminalTabs).toHaveLength(0);
 	});
 
 	it('resets closedTabHistory to empty', async () => {
@@ -903,6 +906,41 @@ describe('Session & Group loading effect', () => {
 		expect(useSessionStore.getState().sessionsLoaded).toBe(true);
 	});
 
+	it('restores session with terminal tabs correctly', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'Dev Server',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/projects/app',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+			],
+		});
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0].terminalTabs).toHaveLength(1);
+		expect(sessions[0].terminalTabs[0].id).toBe('tt-1');
+		expect(sessions[0].terminalTabs[0].name).toBe('Dev Server');
+		expect(sessions[0].activeTerminalTabId).toBe('tt-1');
+	});
+
 	it('fires fetchGitInfoInBackground for SSH sessions after load', async () => {
 		const sshSession = createMockSession({
 			id: 'ssh-1',
@@ -989,5 +1027,288 @@ describe('Session & Group loading effect', () => {
 		// Both should have state reset
 		expect(sessions[0].state).toBe('idle');
 		expect(sessions[1].state).toBe('idle');
+	});
+});
+
+// ============================================================================
+// restoreSession — Terminal tab persistence
+// ============================================================================
+
+describe('restoreSession — Terminal tab persistence', () => {
+	it('preserves terminal tab metadata (name, shellType, cwd, createdAt) across restart', async () => {
+		const createdAt = 1700000000000;
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'My Dev Server',
+					shellType: 'zsh',
+					pid: 12345,
+					cwd: '/projects/myapp',
+					createdAt,
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs.find((t) => t.id === 'tt-1');
+		expect(termTab).toBeDefined();
+		expect(termTab!.name).toBe('My Dev Server');
+		expect(termTab!.shellType).toBe('zsh');
+		expect(termTab!.cwd).toBe('/projects/myapp');
+		expect(termTab!.createdAt).toBe(createdAt);
+	});
+
+	it('resets terminal tab runtime state (pid, state, exitCode) on restore', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'bash',
+					pid: 9999,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'busy' as const,
+					exitCode: 1,
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.pid).toBe(0);
+		expect(termTab.state).toBe('idle');
+		expect(termTab.exitCode).toBeUndefined();
+	});
+
+	it('preserves activeTerminalTabId across restart', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-active',
+					name: 'Active Tab',
+					shellType: 'zsh',
+					pid: 100,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: 'tt-active',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeTerminalTabId).toBe('tt-active');
+	});
+
+	it('sets activeTerminalTabId to null when undefined', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+				},
+			],
+			activeTerminalTabId: undefined,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('does NOT create a default terminal tab when terminalTabs is empty', async () => {
+		const session = createMockSession({
+			terminalTabs: [],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Terminal tabs are created on demand, not by restoration
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('does NOT create a default terminal tab when terminalTabs is missing (migration)', async () => {
+		const session = createMockSession({
+			terminalTabs: undefined as any,
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Migration only ensures the array exists — it does not add a default tab
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
+	});
+
+	it('preserves existing unifiedTabOrder without adding a terminal ref when migrating empty terminalTabs', async () => {
+		const session = createMockSession({
+			terminalTabs: [],
+			activeTerminalTabId: null,
+			unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// No terminal ref should be added since no terminal tab was created
+		const termRef = restored!.unifiedTabOrder.find((r) => r.type === 'terminal');
+		expect(termRef).toBeUndefined();
+		// AI tab should still be present
+		const aiRef = restored!.unifiedTabOrder.find((r) => r.type === 'ai');
+		expect(aiRef).toBeDefined();
+	});
+
+	it('resets exited terminal tab state on restore', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 200,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'exited' as const,
+					exitCode: 1,
+				},
+			],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.state).toBe('idle');
+		expect(termTab.exitCode).toBeUndefined();
+		expect(termTab.pid).toBe(0);
+	});
+
+	it('preserves multiple terminal tabs with all metadata intact', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: 'Backend',
+					shellType: 'zsh',
+					pid: 100,
+					cwd: '/projects/backend',
+					createdAt: 1000000,
+					state: 'idle' as const,
+				},
+				{
+					id: 'tt-2',
+					name: 'Frontend',
+					shellType: 'bash',
+					pid: 200,
+					cwd: '/projects/frontend',
+					createdAt: 2000000,
+					state: 'exited' as const,
+					exitCode: 1,
+				},
+			],
+			activeTerminalTabId: 'tt-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'terminal' as const, id: 'tt-1' },
+				{ type: 'terminal' as const, id: 'tt-2' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.terminalTabs).toHaveLength(2);
+
+		const tab1 = restored!.terminalTabs.find((t) => t.id === 'tt-1');
+		expect(tab1!.name).toBe('Backend');
+		expect(tab1!.cwd).toBe('/projects/backend');
+		expect(tab1!.pid).toBe(0); // Runtime state reset
+
+		const tab2 = restored!.terminalTabs.find((t) => t.id === 'tt-2');
+		expect(tab2!.name).toBe('Frontend');
+		expect(tab2!.state).toBe('idle'); // Runtime state reset
+		expect(tab2!.exitCode).toBeUndefined(); // Runtime state reset
+	});
+
+	it('preserves scrollTop and searchQuery on terminal tabs', async () => {
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'tt-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/home/user',
+					createdAt: Date.now(),
+					state: 'idle' as const,
+					scrollTop: 2000,
+					searchQuery: 'webpack',
+				},
+			],
+			activeTerminalTabId: null,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		const termTab = restored!.terminalTabs[0];
+		expect(termTab.scrollTop).toBe(2000);
+		expect(termTab.searchQuery).toBe('webpack');
 	});
 });

@@ -185,6 +185,9 @@ interface LoadingState {
 /** Default local ignore patterns (used when no user-configured patterns are provided) */
 export const LOCAL_IGNORE_DEFAULTS = ['node_modules', '__pycache__'];
 
+/** Files that should always appear in the file tree regardless of ignore patterns */
+const ALWAYS_VISIBLE_FILES = new Set(['.maestro', 'maestro-cue.yaml']);
+
 /** Options for local (non-SSH) file tree loading */
 export interface LocalFileTreeOptions {
 	/** Glob patterns to ignore. When provided, replaces LOCAL_IGNORE_DEFAULTS. */
@@ -350,8 +353,8 @@ async function loadFileTreeRecursive(
 			}
 			seen.add(entry.name);
 
-			// Skip entries that match ignore patterns
-			if (shouldIgnore(entry.name, state.ignorePatterns)) {
+			// Skip entries that match ignore patterns (but never hide always-visible files)
+			if (!ALWAYS_VISIBLE_FILES.has(entry.name) && shouldIgnore(entry.name, state.ignorePatterns)) {
 				continue;
 			}
 

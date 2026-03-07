@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Star, FileText } from 'lucide-react';
-import type { AITab, FilePreviewTab, Theme, Shortcut, ToolType } from '../types';
+import { Search, Star, FileText, Terminal } from 'lucide-react';
+import type { AITab, FilePreviewTab, TerminalTab, Theme, Shortcut, ToolType } from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { useListNavigation } from '../hooks';
@@ -25,6 +25,7 @@ interface NamedSession {
 type ListItem =
 	| { type: 'open'; tab: AITab }
 	| { type: 'file'; tab: FilePreviewTab }
+	| { type: 'terminal'; tab: TerminalTab }
 	| { type: 'named'; session: NamedSession };
 
 interface TabSwitcherModalProps {
@@ -32,15 +33,21 @@ interface TabSwitcherModalProps {
 	tabs: AITab[];
 	/** File preview tabs to include in "Open Tabs" view */
 	fileTabs?: FilePreviewTab[];
+	/** Terminal tabs to include in "Open Tabs" view */
+	terminalTabs?: TerminalTab[];
 	activeTabId: string;
 	/** Currently active file tab ID (if a file tab is active) */
 	activeFileTabId?: string | null;
+	/** Currently active terminal tab ID (if a terminal tab is active) */
+	activeTerminalTabId?: string | null;
 	projectRoot: string; // The initial project directory (used for Claude session storage)
 	agentId?: string;
 	shortcut?: Shortcut;
 	onTabSelect: (tabId: string) => void;
 	/** Handler to select a file tab */
 	onFileTabSelect?: (tabId: string) => void;
+	/** Handler to select a terminal tab */
+	onTerminalTabSelect?: (tabId: string) => void;
 	onNamedSessionSelect: (
 		agentSessionId: string,
 		projectPath: string,
@@ -169,6 +176,7 @@ function ContextGauge({
 type ViewMode = 'open' | 'all-named' | 'starred';
 
 const EMPTY_FILE_TABS: FilePreviewTab[] = [];
+const EMPTY_TERMINAL_TABS: TerminalTab[] = [];
 
 /**
  * Tab Switcher Modal - Quick navigation between AI and file tabs with fuzzy search.
@@ -180,13 +188,16 @@ export function TabSwitcherModal({
 	theme,
 	tabs,
 	fileTabs = EMPTY_FILE_TABS,
+	terminalTabs = EMPTY_TERMINAL_TABS,
 	activeTabId,
 	activeFileTabId,
+	activeTerminalTabId,
 	projectRoot,
 	agentId = 'claude-code',
 	shortcut,
 	onTabSelect,
 	onFileTabSelect,
+	onTerminalTabSelect,
 	onNamedSessionSelect,
 	onClose,
 	colorBlindMode,
@@ -317,6 +328,11 @@ export function TabSwitcherModal({
 				items.push({ type: 'file' as const, tab });
 			}
 
+			// Add terminal tabs
+			for (const tab of terminalTabs) {
+				items.push({ type: 'terminal' as const, tab });
+			}
+
 			// Sort alphabetically by display name
 			items.sort((a, b) => {
 				const nameA =
@@ -324,13 +340,17 @@ export function TabSwitcherModal({
 						? getTabDisplayName(a.tab).toLowerCase()
 						: a.type === 'file'
 							? a.tab.name.toLowerCase()
-							: '';
+							: a.type === 'terminal'
+								? (a.tab.name || 'Terminal').toLowerCase()
+								: '';
 				const nameB =
 					b.type === 'open'
 						? getTabDisplayName(b.tab).toLowerCase()
 						: b.type === 'file'
 							? b.tab.name.toLowerCase()
-							: '';
+							: b.type === 'terminal'
+								? (b.tab.name || 'Terminal').toLowerCase()
+								: '';
 				return nameA.localeCompare(nameB);
 			});
 
@@ -421,7 +441,7 @@ export function TabSwitcherModal({
 
 			return items;
 		}
-	}, [viewMode, tabs, fileTabs, namedSessions, openTabSessionIds, projectRoot]);
+	}, [viewMode, tabs, fileTabs, terminalTabs, namedSessions, openTabSessionIds, projectRoot]);
 
 	// Filter items based on search query
 	const filteredItems = useMemo(() => {
@@ -441,6 +461,9 @@ export function TabSwitcherModal({
 				// For file tabs, search by name and extension
 				displayName = item.tab.name;
 				searchableId = item.tab.extension + ' ' + item.tab.path;
+			} else if (item.type === 'terminal') {
+				displayName = item.tab.name || 'Terminal';
+				searchableId = item.tab.shellType + ' ' + item.tab.cwd;
 			} else {
 				displayName = item.session.sessionName;
 				searchableId = item.session.agentSessionId;
@@ -470,6 +493,8 @@ export function TabSwitcherModal({
 					onTabSelect(item.tab.id);
 				} else if (item.type === 'file') {
 					onFileTabSelect?.(item.tab.id);
+				} else if (item.type === 'terminal') {
+					onTerminalTabSelect?.(item.tab.id);
 				} else {
 					onNamedSessionSelect(
 						item.session.agentSessionId,
@@ -596,7 +621,7 @@ export function TabSwitcherModal({
 							color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
 						}}
 					>
-						Open Tabs ({tabs.length + fileTabs.length})
+						Open Tabs ({tabs.length + fileTabs.length + terminalTabs.length})
 					</button>
 					<button
 						onClick={() => handleViewModeChange('all-named')}
@@ -839,6 +864,78 @@ export function TabSwitcherModal({
 										}}
 									>
 										File
+									</div>
+								</button>
+							);
+						} else if (item.type === 'terminal') {
+							// Terminal tab
+							const { tab } = item;
+							const isActive = tab.id === activeTerminalTabId;
+							const displayName = tab.name || 'Terminal';
+
+							return (
+								<button
+									key={tab.id}
+									ref={isSelected ? selectedItemRef : null}
+									onClick={() => handleSelectByIndex(i)}
+									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									style={{
+										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+									}}
+								>
+									{/* Number Badge */}
+									{showNumber ? (
+										<div
+											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
+										>
+											{numberBadge}
+										</div>
+									) : (
+										<div className="flex-shrink-0 w-5 h-5" />
+									)}
+
+									{/* Terminal Icon - shows active indicator or terminal icon */}
+									<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+										{isActive ? (
+											<div
+												className="w-2 h-2 rounded-full"
+												style={{ backgroundColor: theme.colors.success }}
+											/>
+										) : (
+											<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										)}
+									</div>
+
+									{/* Terminal Info */}
+									<div className="flex flex-col flex-1 min-w-0">
+										<div className="flex items-center gap-2">
+											<span className="font-medium truncate">{displayName}</span>
+											<span
+												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
+												style={{
+													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+													color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+												}}
+											>
+												{tab.shellType}
+											</span>
+										</div>
+										<div className="flex items-center gap-3 text-[10px] opacity-60 truncate">
+											<span className="truncate">{tab.cwd}</span>
+										</div>
+									</div>
+
+									{/* Terminal indicator */}
+									<div
+										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										style={{
+											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+										}}
+									>
+										Terminal
 									</div>
 								</button>
 							);

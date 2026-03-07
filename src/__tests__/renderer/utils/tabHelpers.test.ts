@@ -101,6 +101,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [],
 		unifiedClosedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	};
 }
@@ -656,6 +658,20 @@ describe('tabHelpers', () => {
 			expect(result!.session).not.toBe(session);
 			expect(result!.session.activeFileTabId).toBeNull();
 			expect(result!.session.activeTabId).toBe('tab-1');
+		});
+
+		it('switches inputMode to ai when selecting an AI tab from terminal mode', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				inputMode: 'terminal',
+			});
+
+			const result = setActiveTab(session, 'tab-1');
+
+			expect(result!.session).not.toBe(session);
+			expect(result!.session.inputMode).toBe('ai');
 		});
 	});
 
@@ -1377,6 +1393,50 @@ describe('tabHelpers', () => {
 			const result3 = navigateToUnifiedTabByIndex(session, 3);
 			expect(result3!.type).toBe('file');
 			expect(result3!.id).toBe('file-2');
+		});
+
+		it('resets inputMode to ai when navigating from terminal tab to AI tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				terminalTabs: [{ id: 'term-1', name: null, shellType: 'zsh', pid: 1234, cwd: '/tmp', createdAt: 0, state: 'idle' }],
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabByIndex(session, 1);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.session.inputMode).toBe('ai');
+			expect(result!.session.activeTerminalTabId).toBeNull();
+		});
+
+		it('resets inputMode to ai when navigating from terminal tab to file tab', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [],
+				filePreviewTabs: [fileTab],
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				terminalTabs: [{ id: 'term-1', name: null, shellType: 'zsh', pid: 1234, cwd: '/tmp', createdAt: 0, state: 'idle' }],
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabByIndex(session, 1);
+
+			expect(result!.type).toBe('file');
+			expect(result!.session.inputMode).toBe('ai');
+			expect(result!.session.activeTerminalTabId).toBeNull();
 		});
 	});
 

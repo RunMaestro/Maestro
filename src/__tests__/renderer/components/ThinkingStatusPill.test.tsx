@@ -57,6 +57,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		fileTree: [],
 		fileExplorerExpanded: [],
 		messageQueue: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	};
 }

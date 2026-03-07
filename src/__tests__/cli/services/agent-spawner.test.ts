@@ -1075,6 +1075,42 @@ Some text with [x] in it that's not a checkbox
 			}
 		});
 
+		it('should include read-only args for Claude when readOnlyMode is true', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				readOnlyMode: true,
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			// Should include Claude's read-only args from centralized definitions
+			expect(args).toContain('--permission-mode');
+			expect(args).toContain('plan');
+			// Should still have base args
+			expect(args).toContain('--print');
+			expect(args).toContain('--dangerously-skip-permissions');
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('should not include read-only args when readOnlyMode is false', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				readOnlyMode: false,
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			expect(args).not.toContain('--permission-mode');
+			expect(args).not.toContain('plan');
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
 		it('should generate unique session-id for each spawn', async () => {
 			// First spawn
 			const promise1 = spawnAgent('claude-code', '/project', 'prompt1');

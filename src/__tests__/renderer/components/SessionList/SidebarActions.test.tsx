@@ -22,6 +22,7 @@ const mockTheme: Theme = {
 
 const defaultShortcuts = {
 	toggleSidebar: { keys: ['Cmd', 'B'], label: 'Toggle Sidebar' },
+	filterUnreadAgents: { keys: ['Meta', 'Shift', 'u'], label: 'Filter Unread Agents' },
 } as any;
 
 function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = {}) {
@@ -30,9 +31,12 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 		leftSidebarOpen: true,
 		hasNoSessions: false,
 		shortcuts: defaultShortcuts,
+		showUnreadAgentsOnly: false,
+		hasUnreadAgents: false,
 		addNewSession: vi.fn(),
 		openWizard: vi.fn(),
 		setLeftSidebarOpen: vi.fn(),
+		toggleShowUnreadAgentsOnly: vi.fn(),
 		...overrides,
 	};
 }
@@ -109,5 +113,23 @@ describe('SidebarActions', () => {
 		const expandBtn = screen.getByTitle(/Expand Sidebar/);
 		fireEvent.click(expandBtn);
 		expect(setLeftSidebarOpen).toHaveBeenCalledWith(true);
+	});
+
+	it('renders unread agents filter button', () => {
+		render(<SidebarActions {...createProps()} />);
+		expect(screen.getByTitle(/Filter unread agents/)).toBeTruthy();
+	});
+
+	it('calls toggleShowUnreadAgentsOnly when unread filter button is clicked', () => {
+		const toggleShowUnreadAgentsOnly = vi.fn();
+		render(<SidebarActions {...createProps({ toggleShowUnreadAgentsOnly })} />);
+
+		fireEvent.click(screen.getByTitle(/Filter unread agents/));
+		expect(toggleShowUnreadAgentsOnly).toHaveBeenCalledOnce();
+	});
+
+	it('shows active state when showUnreadAgentsOnly is true', () => {
+		render(<SidebarActions {...createProps({ showUnreadAgentsOnly: true })} />);
+		expect(screen.getByTitle(/Showing unread agents only/)).toBeTruthy();
 	});
 });

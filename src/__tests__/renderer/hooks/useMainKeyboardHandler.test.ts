@@ -1,6 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -1393,60 +1394,19 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
-		describe('Cmd+0 (jump to last tab)', () => {
-			it('should jump to last tab in unified order', () => {
+		describe('Cmd+0 (font size reset takes priority over goToLastTab)', () => {
+			it('should reset font size instead of jumping to last tab', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				const mockSession = {
-					id: 'session-1',
-					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
-					activeTabId: 'ai-tab-1',
-					filePreviewTabs: [
-						{ id: 'file-tab-2', path: '/test/file2.ts', name: 'file2', extension: '.ts' },
-					],
-					activeFileTabId: null,
-					unifiedTabOrder: ['ai-tab-1', 'file-tab-2'],
-					inputMode: 'ai',
-				};
-				const mockNavigateToLastUnifiedTab = vi.fn().mockReturnValue({
-					session: { ...mockSession, activeFileTabId: 'file-tab-2' },
-				});
-				const mockSetSessions = vi.fn((updater: unknown) => {
-					if (typeof updater === 'function') {
-						(updater as (prev: unknown[]) => unknown[])([mockSession]);
-					}
-				});
-
-				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
-					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToLastTab',
-					navigateToLastUnifiedTab: mockNavigateToLastUnifiedTab,
-					setSessions: mockSetSessions,
-					activeSession: mockSession,
-				});
-
-				act(() => {
-					window.dispatchEvent(
-						new KeyboardEvent('keydown', {
-							key: '0',
-							metaKey: true,
-							bubbles: true,
-						})
-					);
-				});
-
-				expect(mockNavigateToLastUnifiedTab).toHaveBeenCalledWith(mockSession);
-				expect(mockSetSessions).toHaveBeenCalled();
-			});
-
-			it('should not execute when showUnreadOnly is active', () => {
-				const { result } = renderHook(() => useMainKeyboardHandler());
+				// Set font size to non-default
+				useSettingsStore.setState({ fontSize: 20 });
 
 				const mockNavigateToLastUnifiedTab = vi.fn();
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToLastTab',
 					navigateToLastUnifiedTab: mockNavigateToLastUnifiedTab,
-					showUnreadOnly: true,
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
 				});
 
 				act(() => {
@@ -1459,8 +1419,9 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Should NOT be called when showUnreadOnly is active
+				// Font size reset takes priority - goToLastTab should NOT fire
 				expect(mockNavigateToLastUnifiedTab).not.toHaveBeenCalled();
+				expect(useSettingsStore.getState().fontSize).toBe(14);
 			});
 		});
 
@@ -1789,6 +1750,190 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('font size shortcuts', () => {
+		beforeEach(() => {
+			// Reset font size to default before each test
+			useSettingsStore.setState({ fontSize: 14 });
+		});
+
+		it('should increase font size with Cmd+=', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '=',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(useSettingsStore.getState().fontSize).toBe(16);
+		});
+
+		it('should increase font size with Cmd++', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '+',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useSettingsStore.getState().fontSize).toBe(16);
+		});
+
+		it('should decrease font size with Cmd+-', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '-',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(useSettingsStore.getState().fontSize).toBe(12);
+		});
+
+		it('should reset font size to default (14) with Cmd+0', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			// Set font size to something other than default
+			useSettingsStore.setState({ fontSize: 20 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '0',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(useSettingsStore.getState().fontSize).toBe(14);
+		});
+
+		it('should not exceed maximum font size (24)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			useSettingsStore.setState({ fontSize: 24 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '=',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useSettingsStore.getState().fontSize).toBe(24);
+		});
+
+		it('should not go below minimum font size (10)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			useSettingsStore.setState({ fontSize: 10 });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '-',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useSettingsStore.getState().fontSize).toBe(10);
+		});
+
+		it('should work when modal is open (font size is a benign viewing preference)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => true,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '=',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useSettingsStore.getState().fontSize).toBe(16);
+		});
+
+		it('should not trigger with Alt modifier (avoids conflict with session jump)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '=',
+						metaKey: true,
+						altKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// Font size should remain unchanged with Alt held
+			expect(useSettingsStore.getState().fontSize).toBe(14);
 		});
 	});
 });

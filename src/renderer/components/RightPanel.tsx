@@ -132,7 +132,7 @@ export const RightPanel = memo(
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
-		const filteredFileTree = useFileExplorerStore((s) => s.flatFileList);
+		const filteredFileTree = useFileExplorerStore((s) => s.filteredFileTree);
 		const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
 		const lastGraphFocusFile = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 		const setFileTreeFilter = useFileExplorerStore((s) => s.setFileTreeFilter);
@@ -715,8 +715,8 @@ export const RightPanel = memo(
 										{currentSessionBatchState.maxLoops ?? '∞'}
 									</span>
 								)}
-								{/* View history link - only shown on auto-run tab */}
-								{activeRightTab === 'autorun' && (
+								{/* View history link - shown on all tabs except history */}
+								{activeRightTab !== 'history' && (
 									<button
 										className="text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
 										style={{

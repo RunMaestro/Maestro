@@ -83,7 +83,6 @@ const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
-const mockSetTerminalWidth = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
@@ -155,8 +154,6 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
-		terminalWidth: 100,
-		setTerminalWidth: mockSetTerminalWidth,
 		logLevel: 'info',
 		setLogLevel: mockSetLogLevel,
 		maxLogBuffer: 5000,
@@ -207,7 +204,7 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		customAICommands: [],
 		setCustomAICommands: mockSetCustomAICommands,
 		// Encore features
-		encoreFeatures: { directorNotes: false },
+		encoreFeatures: { directorNotes: false, usageStats: true, symphony: true },
 		setEncoreFeatures: mockSetEncoreFeatures,
 		// Conductor profile settings
 		conductorProfile: '',
@@ -273,6 +270,9 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setUseNativeTitleBar: vi.fn(),
 		autoHideMenuBar: false,
 		setAutoHideMenuBar: vi.fn(),
+		// Symphony registry URLs
+		symphonyRegistryUrls: [],
+		setSymphonyRegistryUrls: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -726,39 +726,6 @@ describe('SettingsModal', () => {
 
 			const mediumButton = screen.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
-		});
-	});
-
-	describe('Display tab - Terminal width buttons', () => {
-		it('should call setTerminalWidth with 80', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '80' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(80);
-		});
-
-		it('should call setTerminalWidth with 100', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Find the terminal width 100 button (not font size)
-			const buttons = screen.getAllByText('100');
-			const terminalWidthButton = buttons[0]; // First one is terminal width
-			fireEvent.click(terminalWidthButton);
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(100);
 		});
 	});
 
@@ -1998,36 +1965,6 @@ describe('SettingsModal', () => {
 		});
 	});
 
-	describe('Terminal width 120 and 160 buttons', () => {
-		it('should call setTerminalWidth with 120', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '120' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(120);
-		});
-
-		it('should call setTerminalWidth with 160', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '160' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(160);
-		});
-	});
-
 	describe('Max output lines 100 button', () => {
 		it('should call setMaxOutputLines with 100', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
@@ -2070,143 +2007,6 @@ describe('SettingsModal', () => {
 			// JetBrains Mono is in the list, so it should be available
 			const options = fontSelect.querySelectorAll('option');
 			expect(options.length).toBeGreaterThan(0);
-		});
-	});
-
-	describe('WakaTime CLI status', () => {
-		it('should not check CLI when WakaTime is disabled', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).not.toHaveBeenCalled();
-		});
-
-		it('should check CLI when WakaTime is enabled', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalled();
-		});
-
-		it('should show auto-install message when CLI is not available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.getByText('WakaTime CLI is being installed automatically...')
-			).toBeInTheDocument();
-		});
-
-		it('should retry CLI check after 3 seconds when first check returns unavailable', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli)
-				.mockResolvedValueOnce({ available: false })
-				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// First check should have been called
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-
-			// Advance to trigger retry
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// Second check should have been called
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(2);
-		});
-
-		it('should not retry CLI check when first check returns available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-
-			// Advance past retry timeout
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// Should still be 1 — no retry needed
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
-		});
-
-		it('should not show auto-install message when CLI is available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.queryByText('WakaTime CLI is being installed automatically...')
-			).not.toBeInTheDocument();
-		});
-
-		it('should retry on error and update status after retry succeeds', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli)
-				.mockRejectedValueOnce(new Error('Network error'))
-				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
-
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Should show the auto-install message after error
-			expect(
-				screen.getByText('WakaTime CLI is being installed automatically...')
-			).toBeInTheDocument();
-
-			// Advance to trigger retry
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(3000);
-			});
-
-			// After retry succeeds, message should disappear
-			expect(
-				screen.queryByText('WakaTime CLI is being installed automatically...')
-			).not.toBeInTheDocument();
 		});
 	});
 
@@ -2333,12 +2133,14 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: true,
+				usageStats: true,
+				symphony: true,
 			});
 		});
 
 		it('should call setEncoreFeatures with false when toggling DN off', async () => {
 			mockSetEncoreFeatures.mockClear();
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true, usageStats: true, symphony: true } };
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
@@ -2357,12 +2159,148 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
+				usageStats: true,
+				symphony: true,
 			});
+		});
+
+		it('should show Usage & Stats feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Enable stats collection')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Usage & Stats toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const usSection = screen.getByText('Usage & Stats').closest('button');
+			expect(usSection).toBeInTheDocument();
+			fireEvent.click(usSection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: false,
+				symphony: true,
+			});
+		});
+
+		it('should show Maestro Symphony feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Registry Sources')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: false,
+			});
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked on', async () => {
+			mockSetEncoreFeatures.mockClear();
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: false, usageStats: true, symphony: false } };
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: true,
+			});
+		});
+
+		it('should hide Symphony registry settings when symphony is disabled', async () => {
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: false, usageStats: true, symphony: false } };
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
 
 		describe("with Director's Notes enabled", () => {
 			beforeEach(() => {
-				mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+				mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true, usageStats: true, symphony: true } };
 			});
 
 			it('should render provider dropdown with detected available agents', async () => {

@@ -22,6 +22,7 @@ import {
 	ESTIMATED_ROW_HEIGHT_SIMPLE,
 } from './History';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -57,9 +58,14 @@ export const HistoryPanel = React.memo(
 		},
 		ref
 	) {
+		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
+			? ['AUTO', 'USER', 'CUE']
+			: ['AUTO', 'USER'];
+
 		const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			new Set(['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
 		);
 		const [isLoading, setIsLoading] = useState(true);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
@@ -146,6 +152,21 @@ export const HistoryPanel = React.memo(
 			},
 			[session.id]
 		);
+
+		// Sync activeFilters when cue feature is toggled
+		useEffect(() => {
+			setActiveFilters((prev) => {
+				if (maestroCueEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
+				if (!maestroCueEnabled && prev.has('CUE')) {
+					const next = new Set(prev);
+					next.delete('CUE');
+					return next;
+				}
+				return prev;
+			});
+		}, [maestroCueEnabled]);
 
 		// Toggle a filter
 		const toggleFilter = (type: HistoryEntryType) => {
@@ -443,36 +464,55 @@ export const HistoryPanel = React.memo(
 		return (
 			<div className="flex flex-col h-full">
 				{/* Filter Pills + Activity Graph + Help Button */}
-				<div className="flex items-start gap-3 mb-4 pt-2">
-					{/* Left-justified filter pills */}
-					<HistoryFilterToggle
-						activeFilters={activeFilters}
-						onToggleFilter={toggleFilter}
-						theme={theme}
-					/>
-
-					{/* Activity graph — lookback period also filters the entry list */}
-					<ActivityGraph
-						entries={historyEntries}
-						theme={theme}
-						referenceTime={graphReferenceTime}
-						onBarClick={handleGraphBarClickVirtualized}
-						lookbackHours={graphLookbackHours}
-						onLookbackChange={handleLookbackChange}
-					/>
-
-					{/* Help button */}
-					<button
-						onClick={() => setHelpModalOpen(true)}
-						className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
-						style={{
-							color: theme.colors.textDim,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-						title="History panel help"
+				<div className="flex flex-col gap-2 mb-4 pt-2">
+					<div
+						className={`flex items-start gap-3${visibleTypes.length > 2 ? ' justify-center' : ''}`}
 					>
-						<HelpCircle className="w-3.5 h-3.5" />
-					</button>
+						{/* Filter pills — centered when graph is on its own row */}
+						<HistoryFilterToggle
+							activeFilters={activeFilters}
+							onToggleFilter={toggleFilter}
+							theme={theme}
+							visibleTypes={visibleTypes}
+						/>
+
+						{/* Activity graph inline when only 2 types (no CUE) */}
+						{visibleTypes.length <= 2 && (
+							<ActivityGraph
+								entries={historyEntries}
+								theme={theme}
+								referenceTime={graphReferenceTime}
+								onBarClick={handleGraphBarClickVirtualized}
+								lookbackHours={graphLookbackHours}
+								onLookbackChange={handleLookbackChange}
+							/>
+						)}
+
+						{/* Help button */}
+						<button
+							onClick={() => setHelpModalOpen(true)}
+							className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="History panel help"
+						>
+							<HelpCircle className="w-3.5 h-3.5" />
+						</button>
+					</div>
+
+					{/* Activity graph on its own row when 3 types (CUE enabled) */}
+					{visibleTypes.length > 2 && (
+						<ActivityGraph
+							entries={historyEntries}
+							theme={theme}
+							referenceTime={graphReferenceTime}
+							onBarClick={handleGraphBarClickVirtualized}
+							lookbackHours={graphLookbackHours}
+							onLookbackChange={handleLookbackChange}
+						/>
+					)}
 				</div>
 
 				{/* Search Filter */}

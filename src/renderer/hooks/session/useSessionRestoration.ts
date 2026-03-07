@@ -274,11 +274,44 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
+			// Migration: ensure terminalTabs exists (may be empty — terminals are created on demand)
+			if (!correctedSession.terminalTabs) {
+				correctedSession = {
+					...correctedSession,
+					terminalTabs: [],
+					activeTerminalTabId: null,
+					// When unifiedTabOrder is undefined (legacy session), build it from AI+file tabs only.
+					unifiedTabOrder: correctedSession.unifiedTabOrder ?? [
+						...correctedSession.aiTabs.map((tab) => ({
+							type: 'ai' as const,
+							id: tab.id,
+						})),
+						...(correctedSession.filePreviewTabs || []).map((tab) => ({
+							type: 'file' as const,
+							id: tab.id,
+						})),
+					],
+				};
+			}
+
+			// Migration: ensure activeTerminalTabId is null if undefined
+			if (correctedSession.activeTerminalTabId === undefined) {
+				correctedSession = { ...correctedSession, activeTerminalTabId: null };
+			}
+
 			// Reset all tab states to idle - processes don't survive app restart
 			const resetAiTabs = correctedSession.aiTabs.map((tab) => ({
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+			}));
+
+			// Reset terminal tab runtime state - PTY processes don't survive app restart
+			const resetTerminalTabs = (correctedSession.terminalTabs || []).map((tab) => ({
+				...tab,
+				pid: 0,
+				state: 'idle' as const,
+				exitCode: undefined,
 			}));
 
 			return {
@@ -307,10 +340,16 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				closedTabHistory: [],
 				filePreviewTabs: correctedSession.filePreviewTabs || [],
 				activeFileTabId: correctedSession.activeFileTabId ?? null,
+				terminalTabs: resetTerminalTabs,
+				activeTerminalTabId: correctedSession.activeTerminalTabId ?? null,
 				unifiedTabOrder: correctedSession.unifiedTabOrder || [
 					...resetAiTabs.map((tab) => ({ type: 'ai' as const, id: tab.id })),
 					...(correctedSession.filePreviewTabs || []).map((tab) => ({
 						type: 'file' as const,
+						id: tab.id,
+					})),
+					...resetTerminalTabs.map((tab) => ({
+						type: 'terminal' as const,
 						id: tab.id,
 					})),
 				],

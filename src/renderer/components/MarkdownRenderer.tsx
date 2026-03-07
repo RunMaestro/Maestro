@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { getSyntaxStyle } from '../utils/syntaxTheme';
 import { Clipboard, Loader2, ImageOff } from 'lucide-react';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -185,7 +185,7 @@ const CodeBlockWithCopy = memo(
 				</button>
 				<SyntaxHighlighter
 					language={language}
-					style={vscDarkPlus}
+					style={getSyntaxStyle(theme.mode)}
 					customStyle={{
 						margin: '0.5em 0',
 						padding: '1em',

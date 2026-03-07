@@ -97,6 +97,11 @@ vi.mock('lucide-react', () => ({
 			📂
 		</span>
 	),
+	Link: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="link-icon" className={className} style={style}>
+			🔗
+		</span>
+	),
 	FileText: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="file-text-icon" className={className} style={style}>
 			📄
@@ -1276,6 +1281,75 @@ describe('TabBar', () => {
 				vi.advanceTimersByTime(1600);
 			});
 			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+		});
+
+		it('copies deep link to clipboard when Copy Deep Link clicked', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: 'Tab 1',
+					agentSessionId: 'abc123-xyz789',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					sessionId="session-42"
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			fireEvent.click(screen.getByText('Copy Deep Link'));
+
+			expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+				'maestro://session/session-42/tab/tab-1'
+			);
+			expect(screen.getByText('Copied!')).toBeInTheDocument();
+
+			act(() => {
+				vi.advanceTimersByTime(1600);
+			});
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
+		});
+
+		it('does not show Copy Deep Link when sessionId not provided', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: 'Tab 1',
+					agentSessionId: 'abc123',
+				}),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(screen.queryByText('Copy Deep Link')).not.toBeInTheDocument();
 		});
 
 		it('calls onTabStar when star button clicked', async () => {

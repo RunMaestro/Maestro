@@ -5,7 +5,6 @@ import {
 	Trash2,
 	Copy,
 	Check,
-	ArrowDown,
 	Eye,
 	FileText,
 	RotateCcw,
@@ -37,9 +36,6 @@ import { safeClipboardWrite } from '../utils/clipboard';
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
 
-/** Type-safe string extraction — returns null for non-strings */
-const safeStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-
 /** Handle command values that may be strings or string arrays (Codex uses arrays) */
 const safeCommand = (v: unknown): string | null => {
 	if (typeof v === 'string') return v;
@@ -47,13 +43,6 @@ const safeCommand = (v: unknown): string | null => {
 		return v.join(' ');
 	}
 	return null;
-};
-
-/** Truncate a value to max length with ellipsis, returns null for non-strings */
-const truncateStr = (v: unknown, max: number): string | null => {
-	const s = safeStr(v);
-	if (!s) return null;
-	return s.length > max ? s.substring(0, max) + '\u2026' : s;
 };
 
 /** Summarize TodoWrite todos array — shows in-progress task and progress count */
@@ -65,6 +54,48 @@ const summarizeTodos = (v: unknown): string | null => {
 	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
 	if (!label) return `${todos.length} tasks`;
 	return `${label} (${completed}/${todos.length})`;
+};
+
+/** Max length for tool detail summary */
+const TOOL_DETAIL_MAX = 120;
+
+/**
+ * Summarize tool input generically — no per-tool extractors needed.
+ * Walks all values in the input object and picks the most informative string-like
+ * value to display. Special-cases arrays (todos, commands) and falls back to
+ * joining short key=value pairs.
+ */
+const summarizeToolInput = (input: Record<string, unknown>): string | null => {
+	// Special case: TodoWrite todos array
+	const todosResult = summarizeTodos(input.todos);
+	if (todosResult) return todosResult;
+
+	// Collect displayable string values (skip huge blobs)
+	const parts: string[] = [];
+	for (const [key, val] of Object.entries(input)) {
+		if (val === undefined || val === null || val === '') continue;
+		// Command arrays (Codex)
+		const cmd = safeCommand(val);
+		if (cmd) {
+			parts.push(cmd.length > TOOL_DETAIL_MAX ? cmd.substring(0, TOOL_DETAIL_MAX) + '\u2026' : cmd);
+			continue;
+		}
+		// Arrays: show count
+		if (Array.isArray(val)) {
+			parts.push(`${key}: [${val.length}]`);
+			continue;
+		}
+		// Objects: skip (too noisy)
+		if (typeof val === 'object') continue;
+		// Booleans/numbers: show as key=value
+		if (typeof val === 'boolean' || typeof val === 'number') {
+			parts.push(`${key}=${val}`);
+			continue;
+		}
+	}
+	if (parts.length === 0) return null;
+	const joined = parts.join('  ');
+	return joined.length > TOOL_DETAIL_MAX ? joined.substring(0, TOOL_DETAIL_MAX) + '\u2026' : joined;
 };
 
 // ============================================================================
@@ -545,23 +576,7 @@ const LogItemComponent = memo(
 							const toolInput = log.metadata?.toolState?.input as
 								| Record<string, unknown>
 								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
+							const toolDetail = toolInput ? summarizeToolInput(toolInput) : null;
 
 							return (
 								<div
@@ -958,46 +973,6 @@ const LogItemComponent = memo(
 
 LogItemComponent.displayName = 'LogItemComponent';
 
-// ============================================================================
-// ElapsedTimeDisplay - Separate component for elapsed time
-// ============================================================================
-
-// Separate component for elapsed time to prevent re-renders of the entire list
-const ElapsedTimeDisplay = memo(
-	({ thinkingStartTime, textColor }: { thinkingStartTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor((Date.now() - thinkingStartTime) / 1000)
-		);
-
-		useEffect(() => {
-			// Update every second
-			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor((Date.now() - thinkingStartTime) / 1000));
-			}, 1000);
-
-			return () => clearInterval(interval);
-		}, [thinkingStartTime]);
-
-		// Format elapsed time as mm:ss or hh:mm:ss
-		const formatElapsedTime = (seconds: number): string => {
-			const hours = Math.floor(seconds / 3600);
-			const minutes = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (hours > 0) {
-				return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-			}
-			return `${minutes}:${secs.toString().padStart(2, '0')}`;
-		};
-
-		return (
-			<span className="text-sm font-mono" style={{ color: textColor }}>
-				{formatElapsedTime(elapsedSeconds)}
-			</span>
-		);
-	}
-);
-
 interface TerminalOutputProps {
 	session: Session;
 	theme: Theme;
@@ -1077,7 +1052,6 @@ export const TerminalOutput = memo(
 			onShowErrorDetails,
 			onFileSaved,
 			autoScrollAiMode,
-			setAutoScrollAiMode,
 			userMessageAlignment = 'right',
 			onOpenInTab,
 		} = props;
@@ -1130,8 +1104,6 @@ export const TerminalOutput = memo(
 
 		// New message indicator state
 		const [isAtBottom, setIsAtBottom] = useState(true);
-		const [hasNewMessages, setHasNewMessages] = useState(false);
-		const [newMessageCount, setNewMessageCount] = useState(0);
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
@@ -1153,7 +1125,7 @@ export const TerminalOutput = memo(
 		const hasRestoredScrollRef = useRef(false);
 
 		// Get active tab ID for resetting state on tab switch
-		const activeTabId = session.inputMode === 'ai' ? session.activeTabId : null;
+		const activeTabId = session.activeTabId;
 
 		// Copy text to clipboard with notification
 		const copyToClipboard = useCallback(async (text: string) => {
@@ -1288,44 +1260,51 @@ export const TerminalOutput = memo(
 
 		// Create ANSI converter with theme-aware colors
 		const ansiConverter = useMemo(() => {
+			const c = theme.colors;
 			return new Convert({
-				fg: theme.colors.textMain,
-				bg: theme.colors.bgMain,
+				fg: c.textMain,
+				bg: c.bgMain,
 				newline: false,
 				escapeXML: true,
 				stream: false,
 				colors: {
-					0: theme.colors.textMain, // black -> textMain
-					1: theme.colors.error, // red -> error
-					2: theme.colors.success, // green -> success
-					3: theme.colors.warning, // yellow -> warning
-					4: theme.colors.accent, // blue -> accent
-					5: theme.colors.accentDim, // magenta -> accentDim
-					6: theme.colors.accent, // cyan -> accent
-					7: theme.colors.textDim, // white -> textDim
+					0: c.ansiBlack ?? c.textMain,
+					1: c.ansiRed ?? c.error,
+					2: c.ansiGreen ?? c.success,
+					3: c.ansiYellow ?? c.warning,
+					4: c.ansiBlue ?? c.accent,
+					5: c.ansiMagenta ?? c.accentDim,
+					6: c.ansiCyan ?? c.accent,
+					7: c.ansiWhite ?? c.textDim,
+					8: c.ansiBrightBlack ?? c.textDim,
+					9: c.ansiBrightRed ?? c.error,
+					10: c.ansiBrightGreen ?? c.success,
+					11: c.ansiBrightYellow ?? c.warning,
+					12: c.ansiBrightBlue ?? c.accent,
+					13: c.ansiBrightMagenta ?? c.accentText,
+					14: c.ansiBrightCyan ?? c.accentText,
+					15: c.ansiBrightWhite ?? c.textMain,
 				},
 			});
 		}, [theme]);
 
 		// PERF: Memoize active tab lookup to avoid O(n) .find() on every render
 		const activeTab = useMemo(
-			() => (session.inputMode === 'ai' ? getActiveTab(session) : undefined),
-			[session.inputMode, session.aiTabs, session.activeTabId]
+			() => getActiveTab(session),
+			[session.aiTabs, session.activeTabId]
 		);
 
 		// PERF: Memoize activeLogs to provide stable reference for collapsedLogs dependency
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
 		const activeLogs = useMemo(
-			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
-			[session.inputMode, activeTab?.logs, session.shellLogs]
+			(): LogEntry[] => activeTab?.logs ?? [],
+			[activeTab?.logs]
 		);
 
 		// In AI mode, collapse consecutive non-user entries into single response blocks
 		// This provides a cleaner view where each user message gets one response
 		// Tool and thinking entries are kept separate (not collapsed)
 		const collapsedLogs = useMemo(() => {
-			// Only collapse in AI mode
-			if (session.inputMode !== 'ai') return activeLogs;
-
 			const result: LogEntry[] = [];
 			let currentResponseGroup: LogEntry[] = [];
 
@@ -1362,7 +1341,7 @@ export const TerminalOutput = memo(
 			flushResponseGroup();
 
 			return result;
-		}, [activeLogs, session.inputMode]);
+		}, [activeLogs]);
 
 		// PERF: Debounce search query to avoid filtering on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
@@ -1392,8 +1371,6 @@ export const TerminalOutput = memo(
 
 			// Clear new message indicator when user scrolls to bottom
 			if (atBottom) {
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				// Resume auto-scroll when user scrolls back to bottom
 				setAutoScrollPaused(false);
 				// Save read state for current tab
@@ -1437,9 +1414,6 @@ export const TerminalOutput = memo(
 		// Restore read state when switching tabs
 		useEffect(() => {
 			if (!activeTabId) {
-				// Terminal mode - just reset
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				setIsAtBottom(true);
 				lastLogCountRef.current = filteredLogs.length;
 				return;
@@ -1453,19 +1427,13 @@ export const TerminalOutput = memo(
 				// Tab was visited before - check for new messages since last read
 				const unreadCount = currentCount - savedReadCount;
 				if (unreadCount > 0) {
-					setHasNewMessages(true);
-					setNewMessageCount(unreadCount);
 					setIsAtBottom(false);
 				} else {
-					setHasNewMessages(false);
-					setNewMessageCount(0);
 					setIsAtBottom(true);
 				}
 			} else {
 				// First visit to this tab - mark all as read
 				tabReadStateRef.current.set(activeTabId, currentCount);
-				setHasNewMessages(false);
-				setNewMessageCount(0);
 				setIsAtBottom(true);
 			}
 
@@ -1489,10 +1457,7 @@ export const TerminalOutput = memo(
 				}
 
 				if (!actuallyAtBottom) {
-					const newCount = currentCount - lastLogCountRef.current;
-					setHasNewMessages(true);
-					setNewMessageCount((prev) => prev + newCount);
-					// Also update isAtBottom state to match reality
+					// Update isAtBottom state to match reality
 					setIsAtBottom(false);
 				} else {
 					// At bottom, update read state
@@ -1521,9 +1486,8 @@ export const TerminalOutput = memo(
 			if (!container) return;
 
 			const shouldAutoScroll = () =>
-				session.inputMode === 'terminal' ||
-				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused) ||
-				(session.inputMode === 'ai' && isAtBottomRef.current);
+				(autoScrollAiMode && !autoScrollPaused) ||
+				isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1567,7 +1531,7 @@ export const TerminalOutput = memo(
 			});
 
 			return () => observer.disconnect();
-		}, [session.inputMode, autoScrollAiMode, autoScrollPaused]);
+		}, [autoScrollAiMode, autoScrollPaused]);
 
 		// Restore scroll position when component mounts or initialScrollTop changes
 		// Uses requestAnimationFrame to ensure DOM is ready
@@ -1614,9 +1578,9 @@ export const TerminalOutput = memo(
 			[filteredLogs]
 		);
 
-		// Computed values for rendering
-		const isTerminal = session.inputMode === 'terminal';
-		const isAIMode = session.inputMode === 'ai';
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
+		const isTerminal = false;
+		const isAIMode = true;
 
 		// Memoized prose styles - applied once at container level instead of per-log-item
 		// IMPORTANT: Scoped to .terminal-output to avoid CSS conflicts with other prose containers (e.g., AutoRun panel)
@@ -1625,7 +1589,6 @@ export const TerminalOutput = memo(
 			[theme]
 		);
 
-		const isAutoScrollActive = autoScrollAiMode && !autoScrollPaused;
 
 		return (
 			<div
@@ -1635,8 +1598,7 @@ export const TerminalOutput = memo(
 				aria-label="Terminal output"
 				className="terminal-output flex-1 flex flex-col overflow-hidden transition-colors outline-none relative"
 				style={{
-					backgroundColor:
-						session.inputMode === 'ai' ? theme.colors.bgMain : theme.colors.bgActivity,
+					backgroundColor: theme.colors.bgMain,
 				}}
 				onKeyDown={(e) => {
 					// Cmd+F to open search
@@ -1777,38 +1739,8 @@ export const TerminalOutput = memo(
 						/>
 					))}
 
-					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
-					{session.state === 'busy' &&
-						session.inputMode === 'terminal' &&
-						session.busySource === 'terminal' && (
-							<div
-								className="flex flex-col items-center justify-center gap-2 py-6 mx-6 my-4 rounded-xl border"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<div className="flex items-center gap-3">
-									<div
-										className="w-2 h-2 rounded-full animate-pulse"
-										style={{ backgroundColor: theme.colors.warning }}
-									/>
-									<span className="text-sm" style={{ color: theme.colors.textMain }}>
-										{session.statusMessage || 'Executing command...'}
-									</span>
-									{session.thinkingStartTime && (
-										<ElapsedTimeDisplay
-											thinkingStartTime={session.thinkingStartTime}
-											textColor={theme.colors.textDim}
-										/>
-									)}
-								</div>
-							</div>
-						)}
-
-					{/* Queued items section - only show in AI mode, filtered to active tab */}
-					{session.inputMode === 'ai' &&
-						session.executionQueue &&
+					{/* Queued items section - filtered to active tab */}
+					{session.executionQueue &&
 						session.executionQueue.length > 0 && (
 							<QueuedItemsList
 								executionQueue={session.executionQueue}
@@ -1823,64 +1755,7 @@ export const TerminalOutput = memo(
 				</div>
 
 				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
-				{/* Visible when: has content AND (not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin)) */}
-				{session.inputMode === 'ai' &&
-					setAutoScrollAiMode &&
-					filteredLogs.length > 0 &&
-					(!isAtBottom || isAutoScrollActive) && (
-						<button
-							onClick={() => {
-								if (isAutoScrollActive && isAtBottom) {
-									// Currently pinned at bottom — unpin
-									setAutoScrollAiMode(false);
-								} else {
-									// Not pinned — jump to bottom and pin
-									setAutoScrollPaused(false);
-									setAutoScrollAiMode(true);
-									setHasNewMessages(false);
-									setNewMessageCount(0);
-									if (scrollContainerRef.current) {
-										scrollContainerRef.current.scrollTo({
-											top: scrollContainerRef.current.scrollHeight,
-											behavior: 'smooth',
-										});
-									}
-								}
-							}}
-							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
-							style={{
-								backgroundColor: isAutoScrollActive
-									? theme.colors.accent
-									: hasNewMessages
-										? theme.colors.accent
-										: theme.colors.bgSidebar,
-								color: isAutoScrollActive
-									? theme.colors.accentForeground
-									: hasNewMessages
-										? theme.colors.accentForeground
-										: theme.colors.textDim,
-								border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
-								animation:
-									hasNewMessages && !isAutoScrollActive
-										? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-										: undefined,
-							}}
-							title={
-								isAutoScrollActive
-									? 'Auto-scroll ON (click to unpin)'
-									: hasNewMessages
-										? 'New messages (click to pin to bottom)'
-										: 'Scroll to bottom (click to pin)'
-							}
-						>
-							<ArrowDown className="w-4 h-4" />
-							{newMessageCount > 0 && !isAutoScrollActive && (
-								<span className="text-xs font-bold">
-									{newMessageCount > 99 ? '99+' : newMessageCount}
-								</span>
-							)}
-						</button>
-					)}
+
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (

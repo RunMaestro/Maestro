@@ -114,7 +114,7 @@ export function useSymphonyContribution(
 				gitRefsCacheTime = Date.now();
 			}
 
-			// Create initial tab
+			// Create initial tabs
 			const initialTab: AITab = {
 				id: initialTabId,
 				agentSessionId: null,
@@ -172,6 +172,8 @@ export function useSymphonyContribution(
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
+				terminalTabs: [],
+				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
 				// Custom agent config

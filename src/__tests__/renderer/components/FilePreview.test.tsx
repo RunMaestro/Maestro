@@ -49,6 +49,7 @@ vi.mock('react-syntax-highlighter', () => ({
 }));
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vscDarkPlus: {},
+	vs: {},
 }));
 
 // Mock unist-util-visit
@@ -164,6 +165,7 @@ vi.mock('../../../shared/gitUtils', () => ({
 }));
 
 const mockTheme = {
+	mode: 'dark',
 	colors: {
 		bgMain: '#1a1a2e',
 		bgActivity: '#16213e',

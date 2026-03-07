@@ -125,17 +125,17 @@ describe('LiveOverlayPanel', () => {
 	// -----------------------------------------------------------------------
 	// Remote Access
 	// -----------------------------------------------------------------------
-	describe('remote access', () => {
-		it('renders Remote Access section', () => {
+	describe('remote control', () => {
+		it('renders Remote Control section', () => {
 			render(<LiveOverlayPanel {...createDefaultProps()} />);
-			expect(screen.getByText('Remote Access')).toBeTruthy();
+			expect(screen.getByText('Remote Control')).toBeTruthy();
 		});
 
 		it('calls handleTunnelToggle when toggle button is clicked', () => {
 			const handleTunnelToggle = vi.fn();
 			render(<LiveOverlayPanel {...createDefaultProps({ handleTunnelToggle })} />);
 
-			const toggleBtn = screen.getByTitle('Enable remote access');
+			const toggleBtn = screen.getByTitle('Enable remote control');
 			fireEvent.click(toggleBtn);
 			expect(handleTunnelToggle).toHaveBeenCalledOnce();
 		});
@@ -155,7 +155,7 @@ describe('LiveOverlayPanel', () => {
 
 		it('disables toggle when tunnel is starting', () => {
 			render(<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'starting' })} />);
-			const toggleBtn = screen.getByTitle('Enable remote access');
+			const toggleBtn = screen.getByTitle('Enable remote control');
 			expect(toggleBtn).toBeDisabled();
 		});
 
@@ -180,7 +180,7 @@ describe('LiveOverlayPanel', () => {
 
 		it('shows disconnect title when tunnel is connected', () => {
 			render(<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'connected' })} />);
-			expect(screen.getByTitle('Disable remote access')).toBeTruthy();
+			expect(screen.getByTitle('Disable remote control')).toBeTruthy();
 		});
 	});
 

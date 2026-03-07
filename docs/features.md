@@ -1,6 +1,6 @@
 ---
 title: Features
-description: Explore Maestro's power features including Git Worktrees, Auto Run, Group Chat, and Remote Access.
+description: Explore Maestro's power features including Git Worktrees, Auto Run, Group Chat, and Remote Control.
 icon: sparkles
 ---
 
@@ -9,9 +9,9 @@ icon: sparkles
 - 🌳 **[Git Worktrees](./git-worktrees)** - Run AI agents in parallel on isolated branches. Create worktree sub-agents from the git branch menu, each operating in their own directory. Work interactively in the main repo while sub-agents process tasks independently — then create PRs with one click. True parallel development without conflicts.
 - 🤖 **[Auto Run & Playbooks](./autorun-playbooks)** - File-system-based task runner that processes markdown checklists through AI agents. Create Playbooks (collections of Auto Run documents) for repeatable workflows, run in loops, and track progress with full history. Each task gets its own AI session for clean conversation context.
 - 🏪 **[Playbook Exchange](./playbook-exchange)** - Browse and import community-contributed playbooks directly into your Auto Run folder. Categories, search, and one-click import get you started with proven workflows for security audits, code reviews, documentation, and more.
-- 🎵 **[Maestro Symphony](./symphony)** - Contribute to open source by donating AI tokens. Browse registered projects, select GitHub issues, and let Maestro clone, process Auto Run docs, and create PRs automatically. Distributed computing for AI-assisted development.
+- 🎵 **[Maestro Symphony](./symphony)** - Contribute to open source by donating AI tokens. Browse registered projects, select GitHub issues, and let Maestro clone, process Auto Run docs, and create PRs automatically. Distributed computing for AI-assisted development. _(Encore Feature — enable in Settings > Encore Features)_
 - 💬 **[Group Chat](./group-chat)** - Coordinate multiple AI agents in a single conversation. A moderator AI orchestrates discussions, routing questions to the right agents and synthesizing their responses for cross-project questions and architecture discussions.
-- 🌐 **[Remote Access](./remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
+- 🌐 **[Remote Control](./remote-control)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
 - 🔗 **[SSH Remote Execution](./ssh-remote-execution)** - Run AI agents on remote hosts via SSH. Leverage powerful cloud VMs, access tools not installed locally, or work with projects requiring specific environments — all while controlling everything from your local Maestro instance.
 - 💻 **[Command Line Interface](./cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
@@ -34,7 +34,7 @@ icon: sparkles
 - 🎨 **[Beautiful Themes](https://github.com/RunMaestro/Maestro/blob/main/THEMES.md)** - 17 built-in themes across dark (Dracula, Monokai, Nord, Tokyo Night, Catppuccin Mocha, Gruvbox Dark), light (GitHub, Solarized, One Light, Gruvbox Light, Catppuccin Latte, Ayu Light), and vibe (Pedurple, Maestro's Choice, Dre Synth, InQuest) categories, plus a fully customizable theme builder.
 - ⏱️ **[WakaTime Integration](./configuration#wakatime-integration)** - Automatic time tracking via WakaTime with optional per-file write activity tracking across all supported agents.
 - 💰 **Cost Tracking** - Real-time token usage and cost tracking per session and globally.
-- 📊 **[Usage Dashboard](./usage-dashboard)** - Comprehensive analytics for tracking AI usage patterns. View aggregated statistics, compare agent performance, analyze activity heatmaps, and export data to CSV. Access via `Opt+Cmd+U` / `Alt+Ctrl+U`.
+- 📊 **[Usage Dashboard](./usage-dashboard)** - Comprehensive analytics for tracking AI usage patterns. View aggregated statistics, compare agent performance, analyze activity heatmaps, and export data to CSV. Access via `Opt+Cmd+U` / `Alt+Ctrl+U`. _(Encore Feature — enable in Settings > Encore Features)_
 - 🎬 **[Director's Notes](./director-notes)** - Bird's-eye view of all agent activity in a unified timeline. Aggregate history from every agent, search and filter entries, and generate AI-powered synopses of recent work. Access via `Cmd+Shift+O` / `Ctrl+Shift+O`. _(Encore Feature — enable in Settings > Encore Features)_
 - 🏆 **[Achievements](./achievements)** - Level up from Apprentice to Titan of the Baton based on cumulative Auto Run time. 11 conductor-themed ranks to unlock.
 

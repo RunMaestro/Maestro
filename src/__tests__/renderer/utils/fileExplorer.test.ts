@@ -271,6 +271,26 @@ describe('fileExplorer utils', () => {
 			expect(result[0].name).toBe('main.py');
 		});
 
+		it('always shows .maestro folder even when it matches ignore patterns', async () => {
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([
+					{ name: '.maestro', isFile: false, isDirectory: true },
+					{ name: 'node_modules', isFile: false, isDirectory: true },
+					{ name: 'src', isFile: false, isDirectory: true },
+				])
+				.mockResolvedValue([]); // Empty for folder recursion
+
+			// Use ignore patterns that would match .maestro (e.g., dotfile glob)
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				ignorePatterns: ['node_modules', '.*'],
+			});
+
+			// .maestro should be present, node_modules should be filtered
+			expect(result.find((n) => n.name === '.maestro')).toBeDefined();
+			expect(result.find((n) => n.name === 'node_modules')).toBeUndefined();
+			expect(result.find((n) => n.name === 'src')).toBeDefined();
+		});
+
 		it('sorts folders before files', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
@@ -454,6 +474,26 @@ describe('fileExplorer utils', () => {
 			// .git should NOT be ignored — SSH uses its own ignorePatterns, not localOptions
 			expect(result).toHaveLength(2);
 			expect(result.find((n) => n.name === '.git')).toBeDefined();
+			expect(result.find((n) => n.name === 'src')).toBeDefined();
+		});
+
+		it('always shows maestro-cue.yaml even when it matches ignore patterns', async () => {
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+				{ name: 'maestro-cue.yaml', isFile: true, isDirectory: false },
+				{ name: 'other.yaml', isFile: true, isDirectory: false },
+				{ name: 'src', isFile: false, isDirectory: true },
+			]);
+			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]);
+
+			// Use ignore patterns that would match yaml files
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				ignorePatterns: ['*.yaml'],
+			});
+
+			// maestro-cue.yaml should survive despite matching *.yaml
+			expect(result.find((n) => n.name === 'maestro-cue.yaml')).toBeDefined();
+			// other.yaml should be filtered out
+			expect(result.find((n) => n.name === 'other.yaml')).toBeUndefined();
 			expect(result.find((n) => n.name === 'src')).toBeDefined();
 		});
 

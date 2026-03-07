@@ -7,7 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, HistoryEntry } from '../../shared/types';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -35,7 +35,7 @@ export interface PaginatedUnifiedHistoryResult {
  */
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | null; // null = both
+	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -47,7 +47,7 @@ export interface UnifiedHistoryOptions {
  */
 export interface UnifiedHistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -106,6 +106,22 @@ export function createDirectorNotesApi() {
 		// Generate AI synopsis
 		generateSynopsis: (options: SynopsisOptions): Promise<SynopsisResult> =>
 			ipcRenderer.invoke('director-notes:generateSynopsis', options),
+
+		/**
+		 * Subscribe to new history entries as they are added in real-time.
+		 * Returns a cleanup function to unsubscribe.
+		 */
+		onHistoryEntryAdded: (
+			callback: (entry: HistoryEntry, sourceSessionId: string) => void
+		): (() => void) => {
+			const handler = (_event: unknown, entry: HistoryEntry, sessionId: string) => {
+				callback(entry, sessionId);
+			};
+			ipcRenderer.on('history:entryAdded', handler);
+			return () => {
+				ipcRenderer.removeListener('history:entryAdded', handler);
+			};
+		},
 	};
 }
 

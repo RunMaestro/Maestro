@@ -18,7 +18,7 @@
 
 import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
 
@@ -377,7 +377,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 				// Standard syntax-highlighted code block
 				return React.createElement(SyntaxHighlighter, {
 					language,
-					style: vscDarkPlus,
+					style: getSyntaxStyle(theme.mode),
 					customStyle: {
 						margin: '0.5em 0',
 						padding: '1em',

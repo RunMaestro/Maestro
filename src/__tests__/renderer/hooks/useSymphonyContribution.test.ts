@@ -504,7 +504,7 @@ describe('useSymphonyContribution', () => {
 			expect(session.aiTabs[0].saveToHistory).toBe(true);
 		});
 
-		it('creates unified tab order with the initial AI tab', async () => {
+		it('creates unified tab order with only the initial AI tab (no default terminal tab)', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
 
@@ -513,9 +513,13 @@ describe('useSymphonyContribution', () => {
 			});
 
 			const session = useSessionStore.getState().sessions[0];
+			// New sessions start with only an AI tab — terminal tabs are created on demand
 			expect(session.unifiedTabOrder).toHaveLength(1);
-			expect(session.unifiedTabOrder[0].type).toBe('ai');
-			expect(session.unifiedTabOrder[0].id).toBe(session.activeTabId);
+			const aiRef = session.unifiedTabOrder.find((r) => r.type === 'ai');
+			const termRef = session.unifiedTabOrder.find((r) => r.type === 'terminal');
+			expect(aiRef).toBeDefined();
+			expect(aiRef!.id).toBe(session.activeTabId);
+			expect(termRef).toBeUndefined();
 		});
 
 		it('initializes session with expected default fields', async () => {

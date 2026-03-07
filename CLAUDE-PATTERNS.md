@@ -348,15 +348,24 @@ When adding a new Encore Feature, gate **all** access points:
 6. **Hamburger menu** — Make the setter optional, conditionally render the menu item in `SessionList.tsx`
 7. **Command palette** — Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
 
-### Reference Implementation: Director's Notes
+### Reference Implementations
 
-Director's Notes is the first Encore Feature and serves as the canonical example:
+**Director's Notes** — First Encore Feature, canonical example:
 
 - **Flag:** `encoreFeatures.directorNotes` in `EncoreFeatureFlags`
 - **App.tsx gating:** Modal render wrapped in `{encoreFeatures.directorNotes && directorNotesOpen && (…)}`, callback passed as `encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined`
 - **Keyboard shortcut:** `ctx.encoreFeatures?.directorNotes` guard in `useMainKeyboardHandler.ts`
 - **Hamburger menu:** `setDirectorNotesOpen` made optional in `SessionList.tsx`, button conditionally rendered with `{setDirectorNotesOpen && (…)}`
 - **Command palette:** `onOpenDirectorNotes` already conditionally renders in `QuickActionsModal.tsx` — passing `undefined` from App.tsx is sufficient
+
+**Maestro Cue** — Event-driven automation, second Encore Feature:
+
+- **Flag:** `encoreFeatures.maestroCue` in `EncoreFeatureFlags`
+- **App.tsx gating:** Cue modal, hooks (`useCue`, `useCueAutoDiscovery`), and engine lifecycle gated on `encoreFeatures.maestroCue`
+- **Keyboard shortcut:** `ctx.encoreFeatures?.maestroCue` guard in `useMainKeyboardHandler.ts`
+- **Hamburger menu:** `setMaestroCueOpen` made optional in `SessionList.tsx`
+- **Command palette:** `onOpenMaestroCue` conditionally renders in `QuickActionsModal.tsx`
+- **Session list:** Cue status indicator (Zap icon) gated on `maestroCueEnabled`
 
 When adding a new Encore Feature, mirror this pattern across all access points.
 

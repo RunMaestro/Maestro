@@ -20,6 +20,7 @@ import {
 	Loader2,
 	ExternalLink,
 	FolderOpen,
+	Link,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
@@ -27,11 +28,14 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getRevealLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { buildSessionDeepLink } from '../../shared/deep-link-urls';
 
 interface TabBarProps {
 	tabs: AITab[];
 	activeTabId: string;
 	theme: Theme;
+	/** The Maestro session/agent ID that owns these tabs */
+	sessionId?: string;
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
@@ -87,6 +91,8 @@ interface TabProps {
 	tabId: string;
 	isActive: boolean;
 	theme: Theme;
+	/** The Maestro session/agent ID that owns these tabs */
+	sessionId?: string;
 	canClose: boolean;
 	/** Stable callback - receives tabId as first argument */
 	onSelect: (tabId: string) => void;
@@ -197,6 +203,7 @@ const Tab = memo(function Tab({
 	tabId,
 	isActive,
 	theme,
+	sessionId,
 	canClose,
 	onSelect,
 	onClose,
@@ -231,7 +238,7 @@ const Tab = memo(function Tab({
 }: TabProps) {
 	const [isHovered, setIsHovered] = useState(false);
 	const [overlayOpen, setOverlayOpen] = useState(false);
-	const [showCopied, setShowCopied] = useState(false);
+	const [showCopied, setShowCopied] = useState<'sessionId' | 'deepLink' | false>(false);
 	const [overlayPosition, setOverlayPosition] = useState<{
 		top: number;
 		left: number;
@@ -311,11 +318,23 @@ const Tab = memo(function Tab({
 			e.stopPropagation();
 			if (tab.agentSessionId) {
 				safeClipboardWrite(tab.agentSessionId);
-				setShowCopied(true);
+				setShowCopied('sessionId');
 				setTimeout(() => setShowCopied(false), 1500);
 			}
 		},
 		[tab.agentSessionId]
+	);
+
+	const handleCopyDeepLink = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			if (sessionId) {
+				safeClipboardWrite(buildSessionDeepLink(sessionId, tabId));
+				setShowCopied('deepLink');
+				setTimeout(() => setShowCopied(false), 1500);
+			}
+		},
+		[sessionId, tabId]
 	);
 
 	const handleStarClick = useCallback(
@@ -692,7 +711,19 @@ const Tab = memo(function Tab({
 										title={`Full ID: ${tab.agentSessionId}`}
 									>
 										<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										{showCopied ? 'Copied!' : 'Copy Session ID'}
+										{showCopied === 'sessionId' ? 'Copied!' : 'Copy Session ID'}
+									</button>
+								)}
+
+								{sessionId && (
+									<button
+										onClick={handleCopyDeepLink}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+										title={buildSessionDeepLink(sessionId, tabId)}
+									>
+										<Link className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										{showCopied === 'deepLink' ? 'Copied!' : 'Copy Deep Link'}
 									</button>
 								)}
 
@@ -1508,6 +1539,7 @@ function TabBarInner({
 	tabs,
 	activeTabId,
 	theme,
+	sessionId,
 	onTabSelect,
 	onTabClose,
 	onNewTab,
@@ -1946,6 +1978,7 @@ function TabBarInner({
 										tabId={tab.id}
 										isActive={isActive}
 										theme={theme}
+										sessionId={sessionId}
 										canClose={canClose}
 										onSelect={onTabSelect}
 										onClose={onTabClose}
@@ -2065,6 +2098,7 @@ function TabBarInner({
 									tabId={tab.id}
 									isActive={isActive}
 									theme={theme}
+									sessionId={sessionId}
 									canClose={canClose}
 									onSelect={onTabSelect}
 									onClose={onTabClose}

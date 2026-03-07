@@ -13,7 +13,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
 import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { getSyntaxStyle } from '../utils/syntaxTheme';
 import {
 	FileCode,
 	Eye,
@@ -933,7 +933,7 @@ export const FilePreview = React.memo(
 						return (
 							<SyntaxHighlighter
 								language={lang}
-								style={vscDarkPlus}
+								style={getSyntaxStyle(theme.mode)}
 								customStyle={{
 									margin: '0.5em 0',
 									padding: '1em',
@@ -2454,7 +2454,7 @@ export const FilePreview = React.memo(
 							)}
 							<SyntaxHighlighter
 								language={language}
-								style={vscDarkPlus}
+								style={getSyntaxStyle(theme.mode)}
 								customStyle={{
 									margin: 0,
 									padding: '24px',

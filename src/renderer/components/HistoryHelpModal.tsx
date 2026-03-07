@@ -10,10 +10,12 @@ import {
 	User,
 	Eye,
 	Layers,
+	Zap,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryHelpModalProps {
 	theme: Theme;
@@ -24,6 +26,8 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 	theme,
 	onClose,
 }: HistoryHelpModalProps) {
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+
 	return (
 		<Modal
 			theme={theme}
@@ -108,6 +112,26 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 								include success/failure indicators and human validation status.
 							</p>
 						</div>
+						{maestroCueEnabled && (
+							<div className="flex items-start gap-3">
+								<span
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+									style={{
+										backgroundColor: '#06b6d420',
+										color: '#06b6d4',
+										border: '1px solid #06b6d440',
+									}}
+								>
+									<Zap className="w-2.5 h-2.5" />
+									CUE
+								</span>
+								<p>
+									Entries created by Maestro Cue automations. These are triggered by events such as
+									file changes, time intervals, agent completions, GitHub activity, or pending
+									tasks. Each entry records the trigger name and event type.
+								</p>
+							</div>
+						)}
 					</div>
 				</section>
 

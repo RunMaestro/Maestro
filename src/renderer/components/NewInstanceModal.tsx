@@ -147,8 +147,16 @@ export function NewInstanceModal({
 		if (!name || !expandedDir || !selectedAgent) {
 			return { valid: true }; // Don't show errors until fields are filled
 		}
-		return validateNewSession(name, expandedDir, selectedAgent as ToolType, existingSessions);
-	}, [instanceName, workingDir, selectedAgent, existingSessions, homeDir]);
+		const sshConfig = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
+		const sshRemoteId = sshConfig?.enabled ? sshConfig?.remoteId : null;
+		return validateNewSession(
+			name,
+			expandedDir,
+			selectedAgent as ToolType,
+			existingSessions,
+			sshRemoteId
+		);
+	}, [instanceName, workingDir, selectedAgent, existingSessions, homeDir, agentSshRemoteConfigs]);
 
 	// Check if SSH remote is enabled for the selected agent or pending config
 	// When no agent is selected, check the _pending_ config (user may select SSH before choosing agent)
@@ -421,11 +429,14 @@ export function NewInstanceModal({
 		const expandedWorkingDir = expandTilde(workingDir.trim());
 
 		// Validate before creating
+		const sshConfig = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
+		const sshRemoteId = sshConfig?.enabled ? sshConfig?.remoteId : null;
 		const result = validateNewSession(
 			name,
 			expandedWorkingDir,
 			selectedAgent as ToolType,
-			existingSessions
+			existingSessions,
+			sshRemoteId
 		);
 		if (!result.valid) return;
 

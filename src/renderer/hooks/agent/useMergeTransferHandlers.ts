@@ -186,6 +186,8 @@ export function useMergeTransferHandlers(
 					message: `"${result.sourceSessionName || 'Current Session'}" → "${
 						result.targetSessionName || 'Selected Session'
 					}"${tokenInfo}.${savedInfo}`,
+					sessionId: result.targetSessionId,
+					tabId: result.targetTabId,
 				});
 
 				// Clear the merge state for the source tab
@@ -220,6 +222,7 @@ export function useMergeTransferHandlers(
 				type: 'success',
 				title: 'Context Transferred',
 				message: `Created "${sessionName}" with transferred context`,
+				sessionId,
 			});
 
 			// Show desktop notification for visibility when app is not focused
@@ -474,6 +477,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 							session: targetSession,
 							gitBranch,
+							groupId: targetSession.groupId,
+							activeTabId: newTabId,
 							conductorProfile,
 						});
 						effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;

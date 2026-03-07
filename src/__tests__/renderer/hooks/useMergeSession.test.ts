@@ -76,6 +76,8 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 			activeTimeMs: 0,
 			executionQueue: [],
 			closedTabHistory: [],
+			terminalTabs: [],
+			activeTerminalTabId: null,
 		},
 		tabId: 'merged-tab-id',
 	})),
@@ -137,6 +139,8 @@ function createMockSession(
 		aiTabs: tabs || [defaultTab],
 		activeTabId: (tabs || [defaultTab])[0].id,
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	};
 }
 

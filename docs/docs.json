@@ -52,11 +52,9 @@
 							"history",
 							"context-management",
 							"document-graph",
-							"usage-dashboard",
-							"symphony",
 							"git-worktrees",
 							"group-chat",
-							"remote-access",
+							"remote-control",
 							"ssh-remote-execution",
 							"configuration"
 						]
@@ -74,7 +72,17 @@
 					{
 						"group": "Encore Features",
 						"icon": "flask",
-						"pages": ["encore-features", "director-notes"]
+						"pages": [
+							"encore-features",
+							"director-notes",
+							"usage-dashboard",
+							"symphony",
+							"maestro-cue",
+							"maestro-cue-configuration",
+							"maestro-cue-events",
+							"maestro-cue-advanced",
+							"maestro-cue-examples"
+						]
 					},
 					{
 						"group": "Providers & CLI",
@@ -82,7 +90,7 @@
 					},
 					{
 						"group": "Integrations",
-						"pages": ["mcp-server"],
+						"pages": ["mcp-server", "deep-links"],
 						"icon": "plug"
 					},
 					{

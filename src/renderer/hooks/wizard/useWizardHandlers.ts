@@ -32,6 +32,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab, createTab } from '../../utils/tabHelpers';
+import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -1057,6 +1058,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				runAllDocuments,
 			} = wizardState;
 
 			if (!selectedAgent || !directoryPath) {
@@ -1106,6 +1108,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			const initialTabId = generateId();
 			const currentDefaults = useSettingsStore.getState();
+			const initialTerminalTab = createTerminalTab(currentDefaults.defaultShell || 'zsh', directoryPath, null);
 			const initialTab: AITab = {
 				id: initialTabId,
 				agentSessionId: null,
@@ -1167,7 +1170,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
+				terminalTabs: [initialTerminalTab],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: initialTabId },
+					{ type: 'terminal' as const, id: initialTerminalTab.id },
+				],
 				unifiedClosedTabHistory: [],
 				autoRunFolderPath,
 				autoRunSelectedFile,
@@ -1201,25 +1209,24 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			setActiveFocus('main');
 			setTimeout(() => inputRef.current?.focus(), 100);
 
-			const firstDocWithTasks = generatedDocuments.find((doc) => doc.taskCount > 0);
-			if (firstDocWithTasks && autoRunFolderPath) {
+			const docsWithTasks = generatedDocuments.filter((doc) => doc.taskCount > 0);
+			if (docsWithTasks.length > 0 && autoRunFolderPath) {
+				const docsToRun = runAllDocuments ? docsWithTasks : [docsWithTasks[0]];
 				const batchConfig: BatchRunConfig = {
-					documents: [
-						{
-							id: generateId(),
-							filename: firstDocWithTasks.filename.replace(/\.md$/, ''),
-							resetOnCompletion: false,
-							isDuplicate: false,
-						},
-					],
+					documents: docsToRun.map((doc) => ({
+						id: generateId(),
+						filename: doc.filename.replace(/\.md$/, ''),
+						resetOnCompletion: false,
+						isDuplicate: false,
+					})),
 					prompt: DEFAULT_BATCH_PROMPT,
 					loopEnabled: false,
 				};
 
 				setTimeout(() => {
 					console.log(
-						'[Wizard] Auto-starting batch run with first document:',
-						firstDocWithTasks.filename
+						`[Wizard] Auto-starting batch run with ${docsToRun.length} document(s):`,
+						docsToRun.map((d) => d.filename).join(', ')
 					);
 					startBatchRun(newId, batchConfig, autoRunFolderPath);
 				}, 500);

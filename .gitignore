@@ -6,6 +6,8 @@ Work\ Trees/
 community-data/
 .mcp.json
 specs/
+.maestro/
+maestro-cue.yaml
 
 # Tests
 coverage/

@@ -671,6 +671,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							...s,
 							state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 							busySource: anyAiTabBusy ? s.busySource : undefined,
+							// Always append to shellLogs: runCommand exit events are not routed through
+							// terminal tabs, so they must be recorded here until fully migrated.
 							shellLogs: [...s.shellLogs, exitLog],
 						};
 					})
@@ -1043,6 +1045,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								...s,
 								state: newState,
 								busySource: newBusySource,
+								// Always append to shellLogs: runCommand exit events are not routed through
+								// terminal tabs, so they must be recorded here until fully migrated.
 								shellLogs: [...s.shellLogs, exitLog],
 							};
 						}

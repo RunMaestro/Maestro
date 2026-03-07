@@ -180,8 +180,12 @@ export function DirectorNotesModal({
 				aria-modal="true"
 				aria-labelledby="director-notes-title"
 				tabIndex={-1}
-				className="w-[1200px] max-w-[95vw] h-[85vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
+					width: '80vw',
+					maxWidth: 1400,
+					height: '85vh',
+					maxHeight: 900,
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
 				}}

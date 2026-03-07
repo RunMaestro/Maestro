@@ -34,6 +34,7 @@ vi.mock('electron', () => ({
 		openExternal: vi.fn(),
 		openPath: vi.fn(),
 		showItemInFolder: vi.fn(),
+		trashItem: vi.fn(),
 	},
 	BrowserWindow: {
 		getFocusedWindow: vi.fn(),
@@ -612,6 +613,46 @@ describe('system IPC handlers', () => {
 		});
 	});
 
+	describe('shell:trashItem', () => {
+		it('should trash item successfully', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.trashItem).mockResolvedValue();
+
+			const handler = handlers.get('shell:trashItem');
+			await handler!({} as any, '/path/to/file.txt');
+
+			expect(shell.trashItem).toHaveBeenCalledWith('/path/to/file.txt');
+		});
+
+		it('should throw error for empty path', async () => {
+			const handler = handlers.get('shell:trashItem');
+			await expect(handler!({} as any, '')).rejects.toThrow('Invalid path');
+		});
+
+		it('should throw error for non-existent path', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(false);
+			const handler = handlers.get('shell:trashItem');
+			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow('Path does not exist');
+		});
+
+		it('should handle aborted operation gracefully', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.trashItem).mockRejectedValue(new Error('Operation was aborted'));
+
+			const handler = handlers.get('shell:trashItem');
+			// Should not throw — aborted operations are expected
+			await expect(handler!({} as any, '/path/to/file.txt')).resolves.toBeUndefined();
+		});
+
+		it('should rethrow unexpected errors', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.trashItem).mockRejectedValue(new Error('Permission denied'));
+
+			const handler = handlers.get('shell:trashItem');
+			await expect(handler!({} as any, '/path/to/file.txt')).rejects.toThrow('Permission denied');
+		});
+	});
+
 	describe('shell:openPath', () => {
 		it('should open file in default application', async () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(true);
@@ -629,25 +670,21 @@ describe('system IPC handlers', () => {
 			await expect(handler!({} as any, '')).rejects.toThrow('Invalid path');
 		});
 
-		it('should throw error for non-existent path', async () => {
+		it('should return gracefully for non-existent path', async () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 
 			const handler = handlers.get('shell:openPath');
-
-			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow(
-				'Path does not exist'
-			);
+			// Should not throw — logs warning and returns gracefully
+			await expect(handler!({} as any, '/non/existent/path')).resolves.toBeUndefined();
 		});
 
-		it('should throw error when shell.openPath returns error message', async () => {
+		it('should log warning when shell.openPath returns error message', async () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(true);
 			vi.mocked(shell.openPath).mockResolvedValue('No application found');
 
 			const handler = handlers.get('shell:openPath');
-
-			await expect(handler!({} as any, '/path/to/file.xyz')).rejects.toThrow(
-				'No application found'
-			);
+			// Should not throw — logs warning instead
+			await expect(handler!({} as any, '/path/to/file.xyz')).resolves.toBeUndefined();
 		});
 	});
 

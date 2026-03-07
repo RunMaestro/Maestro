@@ -423,6 +423,7 @@ describe('useFileExplorerEffects', () => {
 			renderHook(() => useFileExplorerEffects(deps));
 
 			expect(flattenTree).toHaveBeenCalledWith(tree, new Set(['src']));
+			expect(useFileExplorerStore.getState().filteredFileTree).toEqual(tree);
 			expect(useFileExplorerStore.getState().flatFileList).toEqual(flatResult);
 		});
 
@@ -437,6 +438,7 @@ describe('useFileExplorerEffects', () => {
 			const deps = createDeps();
 			renderHook(() => useFileExplorerEffects(deps));
 
+			expect(useFileExplorerStore.getState().filteredFileTree).toEqual([]);
 			expect(useFileExplorerStore.getState().flatFileList).toEqual([]);
 		});
 

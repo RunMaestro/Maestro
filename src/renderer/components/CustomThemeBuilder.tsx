@@ -576,7 +576,7 @@ export function CustomThemeBuilder({
 								colorKey={key}
 								label={label}
 								description={description}
-								value={customThemeColors[key]}
+								value={customThemeColors[key] ?? ''}
 								onChange={handleColorChange}
 								theme={theme}
 							/>

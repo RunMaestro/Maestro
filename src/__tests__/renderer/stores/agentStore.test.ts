@@ -65,6 +65,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: defaultTab.id }],
 		unifiedClosedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }
@@ -118,6 +120,7 @@ vi.mock('../../../prompts', () => ({
 	maestroSystemPrompt: 'Mock system prompt for {{CWD}}',
 	autorunSynopsisPrompt: '',
 	imageOnlyDefaultPrompt: 'Describe this image',
+	commitCommandPrompt: '',
 }));
 
 // Mock substituteTemplateVariables — pass through the template as-is for simplicity

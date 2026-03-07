@@ -98,10 +98,6 @@ export interface UseSettingsReturn {
 	showHiddenFiles: boolean;
 	setShowHiddenFiles: (value: boolean) => void;
 
-	// Terminal settings
-	terminalWidth: number;
-	setTerminalWidth: (value: number) => void;
-
 	// Logging settings
 	logLevel: string;
 	setLogLevel: (value: string) => void;
@@ -290,6 +286,10 @@ export interface UseSettingsReturn {
 	// Encore Features - optional features disabled by default
 	encoreFeatures: EncoreFeatureFlags;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
+
+	// Symphony registry URLs (additional user-configured registries)
+	symphonyRegistryUrls: string[];
+	setSymphonyRegistryUrls: (value: string[]) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;

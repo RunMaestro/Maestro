@@ -81,7 +81,8 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Hello world',
-			undefined
+			undefined,
+			{ readOnlyMode: undefined }
 		);
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 
@@ -128,7 +129,8 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Continue from before',
-			'session-xyz-789'
+			'session-xyz-789',
+			{ readOnlyMode: undefined }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -153,7 +155,8 @@ describe('send command', () => {
 			'claude-code',
 			'/custom/project/path',
 			'Do something',
-			undefined
+			undefined,
+			{ readOnlyMode: undefined }
 		);
 	});
 
@@ -173,7 +176,30 @@ describe('send command', () => {
 
 		expect(detectCodex).toHaveBeenCalled();
 		expect(detectClaude).not.toHaveBeenCalled();
-		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined);
+		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
+			readOnlyMode: undefined,
+		});
+	});
+
+	it('should pass readOnlyMode when --read-only flag is set', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectClaude).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'Read-only response',
+			agentSessionId: 'session-ro',
+		});
+
+		await send('agent-abc', 'Analyze this code', { readOnly: true });
+
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'Analyze this code',
+			undefined,
+			{ readOnlyMode: true }
+		);
 	});
 
 	it('should exit with error when agent ID is not found', async () => {

@@ -23,6 +23,8 @@ import {
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useSettings } from '../../hooks';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
 
 /** Page size for progressive loading */
@@ -63,13 +65,18 @@ function daysToLookbackHours(days: number): number | null {
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab({ theme, onResumeSession, fileTree, onFileClick }, ref) {
 		const { directorNotesSettings } = useSettings();
+		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
+			? ['AUTO', 'USER', 'CUE']
+			: ['AUTO', 'USER'];
+
 		const [entries, setEntries] = useState<UnifiedHistoryEntry[]>([]);
 		const [isLoading, setIsLoading] = useState(true);
 		const [isLoadingMore, setIsLoadingMore] = useState(false);
 		const [hasMore, setHasMore] = useState(true);
 		const [totalEntries, setTotalEntries] = useState(0);
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			new Set(['AUTO', 'USER'])
+			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
@@ -85,6 +92,126 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const listRef = useRef<HTMLDivElement>(null);
 		const loadingMoreRef = useRef(false); // Guard against concurrent loads
 		const searchInputRef = useRef<HTMLInputElement>(null);
+
+		// --- Live agent activity from Zustand (primitive selectors for efficient re-renders) ---
+		const activeAgentCount = useSessionStore(
+			(s) => s.sessions.filter((sess) => sess.state === 'busy').length
+		);
+		const totalQueuedItems = useSessionStore((s) =>
+			s.sessions.reduce((sum, sess) => sum + (sess.executionQueue?.length || 0), 0)
+		);
+
+		// Merge live counts into history stats for the stats bar
+		const enrichedStats = useMemo<HistoryStats | null>(() => {
+			if (!historyStats) return null;
+			return {
+				...historyStats,
+				activeAgentCount,
+				totalQueuedItems,
+			};
+		}, [historyStats, activeAgentCount, totalQueuedItems]);
+
+		// --- Real-time streaming of new history entries ---
+		const pendingEntriesRef = useRef<UnifiedHistoryEntry[]>([]);
+		const rafIdRef = useRef<number | null>(null);
+
+		// Stable ref for session names — avoids making the streaming effect depend on session state
+		const sessionsRef = useRef(useSessionStore.getState().sessions);
+		useEffect(() => {
+			return useSessionStore.subscribe((s) => {
+				sessionsRef.current = s.sessions;
+			});
+		}, []);
+
+		useEffect(() => {
+			const flushPending = () => {
+				rafIdRef.current = null;
+				const batch = pendingEntriesRef.current;
+				if (batch.length === 0) return;
+				pendingEntriesRef.current = [];
+
+				// Dedupe within the batch itself
+				const seen = new Set<string>();
+				const uniqueBatch: UnifiedHistoryEntry[] = [];
+				for (const entry of batch) {
+					if (!seen.has(entry.id)) {
+						seen.add(entry.id);
+						uniqueBatch.push(entry);
+					}
+				}
+
+				setEntries((prev) => {
+					const existingIds = new Set(prev.map((e) => e.id));
+					const newEntries = uniqueBatch.filter((e) => !existingIds.has(e.id));
+					if (newEntries.length === 0) return prev;
+
+					// Update total count to match actual additions
+					setTotalEntries((t) => t + newEntries.length);
+
+					// Incrementally update stats counters from deduplicated entries
+					setHistoryStats((prevStats) => {
+						if (!prevStats) return prevStats;
+						let newAuto = 0;
+						let newUser = 0;
+						for (const entry of newEntries) {
+							if (entry.type === 'AUTO') newAuto++;
+							else if (entry.type === 'USER') newUser++;
+						}
+						return {
+							...prevStats,
+							autoCount: prevStats.autoCount + newAuto,
+							userCount: prevStats.userCount + newUser,
+							totalCount: prevStats.totalCount + newAuto + newUser,
+						};
+					});
+
+					const merged = [...newEntries, ...prev];
+					merged.sort((a, b) => b.timestamp - a.timestamp);
+					return merged;
+				});
+
+				// Update graph entries for ActivityGraph
+				setGraphEntries((prev) => {
+					const existingIds = new Set(prev.map((e) => e.id));
+					const newEntries = uniqueBatch.filter((e) => !existingIds.has(e.id));
+					if (newEntries.length === 0) return prev;
+					const merged = [...newEntries, ...prev];
+					merged.sort((a, b) => b.timestamp - a.timestamp);
+					return merged;
+				});
+			};
+
+			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded(
+				(rawEntry, sourceSessionId) => {
+					// Check if entry is within lookback window
+					if (lookbackHours !== null) {
+						const cutoff = Date.now() - lookbackHours * 60 * 60 * 1000;
+						if (rawEntry.timestamp < cutoff) return;
+					}
+
+					const enriched = {
+						...rawEntry,
+						sourceSessionId,
+						agentName: sessionsRef.current.find((s) => s.id === sourceSessionId)?.name,
+					} as UnifiedHistoryEntry;
+
+					pendingEntriesRef.current.push(enriched);
+
+					// Coalesce into a single frame update
+					if (rafIdRef.current === null) {
+						rafIdRef.current = requestAnimationFrame(flushPending);
+					}
+				}
+			);
+
+			return () => {
+				cleanup();
+				if (rafIdRef.current !== null) {
+					cancelAnimationFrame(rafIdRef.current);
+				}
+				pendingEntriesRef.current = [];
+			};
+		}, [lookbackHours]);
 
 		useImperativeHandle(
 			ref,
@@ -201,6 +328,21 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				return true;
 			});
 		}, [entries, activeFilters, searchQuery]);
+
+		// Sync activeFilters when cue feature is toggled
+		useEffect(() => {
+			setActiveFilters((prev) => {
+				if (maestroCueEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
+				if (!maestroCueEnabled && prev.has('CUE')) {
+					const next = new Set(prev);
+					next.delete('CUE');
+					return next;
+				}
+				return prev;
+			});
+		}, [maestroCueEnabled]);
 
 		// Toggle filter
 		const toggleFilter = useCallback((type: HistoryEntryType) => {
@@ -400,6 +542,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						activeFilters={activeFilters}
 						onToggleFilter={toggleFilter}
 						theme={theme}
+						visibleTypes={visibleTypes}
 					/>
 					<ActivityGraph
 						entries={graphEntries}
@@ -439,8 +582,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					onScroll={handleScroll}
 				>
 					{/* Stats bar — scrolls with entries */}
-					{!isLoading && historyStats && historyStats.totalCount > 0 && (
-						<HistoryStatsBar stats={historyStats} theme={theme} />
+					{!isLoading && enrichedStats && enrichedStats.totalCount > 0 && (
+						<HistoryStatsBar stats={enrichedStats} theme={theme} />
 					)}
 
 					{isLoading ? (

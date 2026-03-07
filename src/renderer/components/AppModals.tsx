@@ -75,6 +75,8 @@ import { QuitConfirmModal } from './QuitConfirmModal';
 import { NewInstanceModal, EditAgentModal } from './NewInstanceModal';
 import { RenameSessionModal } from './RenameSessionModal';
 import { RenameTabModal } from './RenameTabModal';
+import { TerminalTabRenameModal } from './TerminalTabRenameModal';
+import { getTerminalTabDisplayName } from '../utils/terminalTabHelpers';
 
 // Group Modal Components
 import { CreateGroupModal } from './CreateGroupModal';
@@ -484,6 +486,15 @@ export const AppSessionModals = memo(function AppSessionModals({
 	onCloseRenameTabModal,
 	onRenameTab,
 }: AppSessionModalsProps) {
+	// Determine if the rename modal is for a terminal tab or an AI tab
+	const terminalTabs = activeSession?.terminalTabs ?? [];
+	const renamingTerminalTab = renameTabId
+		? terminalTabs.find((t) => t.id === renameTabId)
+		: null;
+	const renamingTerminalTabIndex = renamingTerminalTab
+		? terminalTabs.findIndex((t) => t.id === renameTabId)
+		: -1;
+
 	return (
 		<>
 			{/* --- NEW INSTANCE MODAL --- */}
@@ -525,14 +536,26 @@ export const AppSessionModals = memo(function AppSessionModals({
 				/>
 			)}
 
-			{/* --- RENAME TAB MODAL --- */}
-			{renameTabModalOpen && renameTabId && (
+			{/* --- RENAME TAB MODAL (AI tabs) --- */}
+			{renameTabModalOpen && renameTabId && !renamingTerminalTab && (
 				<RenameTabModal
 					theme={theme}
 					initialName={renameTabInitialName}
 					agentSessionId={activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.agentSessionId}
 					onClose={onCloseRenameTabModal}
 					onRename={onRenameTab}
+				/>
+			)}
+
+			{/* --- RENAME TERMINAL TAB MODAL --- */}
+			{renameTabModalOpen && renamingTerminalTab && (
+				<TerminalTabRenameModal
+					theme={theme}
+					isOpen={true}
+					currentName={renamingTerminalTab.name ?? null}
+					defaultName={getTerminalTabDisplayName(renamingTerminalTab, renamingTerminalTabIndex)}
+					onSave={onRenameTab}
+					onClose={onCloseRenameTabModal}
 				/>
 			)}
 		</>
@@ -795,7 +818,7 @@ export interface AppUtilityModalsProps {
 	setAboutModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
+	setUsageDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
@@ -839,6 +862,7 @@ export interface AppUtilityModalsProps {
 	) => boolean;
 	onOpenMergeSession: () => void;
 	onOpenSendToAgent: () => void;
+	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
 	canSummarizeActiveTab: boolean;
@@ -861,6 +885,10 @@ export interface AppUtilityModalsProps {
 
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
+	onConfigureCue?: (session: Session) => void;
 
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
@@ -910,6 +938,7 @@ export interface AppUtilityModalsProps {
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
 	onFileTabSelect?: (tabId: string) => void;
+	onTerminalTabSelect?: (tabId: string) => void;
 	onNamedSessionSelect: (
 		agentSessionId: string,
 		projectPath: string,
@@ -1045,6 +1074,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	hasActiveSessionCapability,
 	onOpenMergeSession,
 	onOpenSendToAgent,
+	onQuickCreateWorktree,
 	onOpenCreatePR,
 	onSummarizeAndContinue,
 	canSummarizeActiveTab,
@@ -1063,6 +1093,9 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenSymphony,
 	// Director's Notes
 	onOpenDirectorNotes,
+	// Maestro Cue
+	onOpenMaestroCue,
+	onConfigureCue,
 	// Auto-scroll
 	autoScrollAiMode,
 	setAutoScrollAiMode,
@@ -1100,6 +1133,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onCloseTabSwitcher,
 	onTabSelect,
 	onFileTabSelect,
+	onTerminalTabSelect,
 	onNamedSessionSelect,
 	colorBlindMode,
 	// FileSearchModal
@@ -1206,6 +1240,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					hasActiveSessionCapability={hasActiveSessionCapability}
 					onOpenMergeSession={onOpenMergeSession}
 					onOpenSendToAgent={onOpenSendToAgent}
+					onQuickCreateWorktree={onQuickCreateWorktree}
 					onOpenCreatePR={onOpenCreatePR}
 					onSummarizeAndContinue={onSummarizeAndContinue}
 					canSummarizeActiveTab={canSummarizeActiveTab}
@@ -1221,6 +1256,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
+					onOpenMaestroCue={onOpenMaestroCue}
+					onConfigureCue={onConfigureCue}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 				/>
@@ -1314,13 +1351,16 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					theme={theme}
 					tabs={activeSession.aiTabs}
 					fileTabs={activeSession.filePreviewTabs}
+					terminalTabs={activeSession.terminalTabs}
 					activeTabId={activeSession.activeTabId}
 					activeFileTabId={activeSession.activeFileTabId}
+					activeTerminalTabId={activeSession.activeTerminalTabId}
 					projectRoot={activeSession.projectRoot}
 					agentId={activeSession.toolType}
 					shortcut={tabShortcuts.tabSwitcher}
 					onTabSelect={onTabSelect}
 					onFileTabSelect={onFileTabSelect}
+					onTerminalTabSelect={onTerminalTabSelect}
 					onNamedSessionSelect={onNamedSessionSelect}
 					onClose={onCloseTabSwitcher}
 					colorBlindMode={colorBlindMode}
@@ -1911,7 +1951,7 @@ export interface AppModalsProps {
 	setAboutModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
+	setUsageDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
@@ -1953,6 +1993,7 @@ export interface AppModalsProps {
 	) => boolean;
 	onOpenMergeSession: () => void;
 	onOpenSendToAgent: () => void;
+	onQuickCreateWorktree: (session: Session) => void;
 	onOpenCreatePR: (session: Session) => void;
 	onSummarizeAndContinue: () => void;
 	canSummarizeActiveTab: boolean;
@@ -1997,12 +2038,16 @@ export interface AppModalsProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
+	onConfigureCue?: (session: Session) => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
 	onFileTabSelect?: (tabId: string) => void;
+	onTerminalTabSelect?: (tabId: string) => void;
 	onNamedSessionSelect: (
 		agentSessionId: string,
 		projectPath: string,
@@ -2325,6 +2370,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		hasActiveSessionCapability,
 		onOpenMergeSession,
 		onOpenSendToAgent,
+		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
 		canSummarizeActiveTab,
@@ -2364,12 +2410,16 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenSymphony,
 		// Director's Notes
 		onOpenDirectorNotes,
+		// Maestro Cue
+		onOpenMaestroCue,
+		onConfigureCue,
 		// Auto-scroll
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 		onCloseTabSwitcher,
 		onTabSelect,
 		onFileTabSelect,
+		onTerminalTabSelect,
 		onNamedSessionSelect,
 		filteredFileTree,
 		fileExplorerExpanded,
@@ -2632,6 +2682,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				hasActiveSessionCapability={hasActiveSessionCapability}
 				onOpenMergeSession={onOpenMergeSession}
 				onOpenSendToAgent={onOpenSendToAgent}
+				onQuickCreateWorktree={onQuickCreateWorktree}
 				onOpenCreatePR={onOpenCreatePR}
 				onSummarizeAndContinue={onSummarizeAndContinue}
 				canSummarizeActiveTab={canSummarizeActiveTab}
@@ -2670,12 +2721,15 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenMarketplace={onOpenMarketplace}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
+				onOpenMaestroCue={onOpenMaestroCue}
+				onConfigureCue={onConfigureCue}
 				autoScrollAiMode={autoScrollAiMode}
 				setAutoScrollAiMode={setAutoScrollAiMode}
 				tabSwitcherOpen={tabSwitcherOpen}
 				onCloseTabSwitcher={onCloseTabSwitcher}
 				onTabSelect={onTabSelect}
 				onFileTabSelect={onFileTabSelect}
+				onTerminalTabSelect={onTerminalTabSelect}
 				onNamedSessionSelect={onNamedSessionSelect}
 				colorBlindMode={colorBlindMode}
 				fuzzyFileSearchOpen={fuzzyFileSearchOpen}

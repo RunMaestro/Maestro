@@ -235,6 +235,8 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => ({
 	messageQueue: [],
 	changedFiles: [],
 	fileTreeAutoRefreshInterval: 0,
+	terminalTabs: [],
+	activeTerminalTabId: null,
 	...overrides,
 });
 

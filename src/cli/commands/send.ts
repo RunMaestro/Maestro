@@ -8,6 +8,7 @@ import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
+	readOnly?: boolean;
 }
 
 interface SendResponse {
@@ -119,7 +120,9 @@ export async function send(
 	}
 
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session);
+	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session, {
+		readOnlyMode: options.readOnly,
+	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));

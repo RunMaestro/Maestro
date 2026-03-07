@@ -90,6 +90,9 @@ interface SessionListProps {
 	// Tour props
 	startTour?: () => void;
 
+	// Maestro Cue
+	onConfigureCue?: (session: Session) => void;
+
 	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
 	onNewGroupChat?: () => void;
@@ -124,6 +127,7 @@ function SessionListInner(props: SessionListProps) {
 	const contextWarningRedThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
@@ -191,6 +195,7 @@ function SessionListInner(props: SessionListProps) {
 		onQuickCreateWorktree,
 		onOpenWorktreeConfig,
 		onDeleteWorktree,
+		onConfigureCue,
 		showSessionJumpNumbers = false,
 		visibleSessions = [],
 		openWizard,
@@ -223,6 +228,8 @@ function SessionListInner(props: SessionListProps) {
 		});
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
+	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
+	const toggleShowUnreadAgentsOnly = useUIStore((s) => s.toggleShowUnreadAgentsOnly);
 	const [menuOpen, setMenuOpen] = useState(false);
 
 	// Live overlay state (extracted hook)
@@ -364,6 +371,39 @@ function SessionListInner(props: SessionListProps) {
 	// when only branch data changes (we only need file counts here)
 	const { getFileCount } = useGitFileStatus();
 
+	// Cue subscription counts per session (only when Maestro Cue is enabled)
+	const [cueSessionMap, setCueSessionMap] = useState<Map<string, number>>(new Map());
+	useEffect(() => {
+		if (!maestroCueEnabled) {
+			setCueSessionMap(new Map());
+			return;
+		}
+		let cancelled = false;
+		const fetchCueStatus = async () => {
+			try {
+				const statuses = await window.maestro.cue.getStatus();
+				if (cancelled) return;
+				const map = new Map<string, number>();
+				for (const s of statuses) {
+					if (s.enabled && s.subscriptionCount > 0) {
+						map.set(s.sessionId, s.subscriptionCount);
+					}
+				}
+				setCueSessionMap(map);
+			} catch {
+				// Cue API may not be available
+			}
+		};
+		fetchCueStatus();
+		const unsubscribe = window.maestro.cue.onActivityUpdate(() => fetchCueStatus());
+		const interval = setInterval(fetchCueStatus, 30_000);
+		return () => {
+			cancelled = true;
+			unsubscribe();
+			clearInterval(interval);
+		};
+	}, [maestroCueEnabled]);
+
 	const {
 		sortedWorktreeChildrenByParentId,
 		sortedSessionIndexById,
@@ -377,7 +417,15 @@ function SessionListInner(props: SessionListProps) {
 		sortedUngroupedParentSessions,
 		sortedFilteredSessions,
 		sortedGroups,
-	} = useSessionCategories(sessionFilter, sortedSessions);
+	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly);
+
+	const hasUnreadAgents = useMemo(
+		() =>
+			sessions.some(
+				(s) => !s.parentSessionId && (s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy')
+			),
+		[sessions]
+	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders
 	// These Maps store stable function references keyed by session/editing ID
@@ -463,6 +511,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					cueSubscriptionCount={cueSessionMap.get(session.id)}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -525,6 +574,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										cueSubscriptionCount={cueSessionMap.get(child.id)}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -660,7 +710,7 @@ function SessionListInner(props: SessionListProps) {
 								</button>
 							)}
 							{/* Global LIVE Toggle */}
-							<div className="ml-2 relative" ref={liveOverlayRef} data-tour="remote-control">
+							<div className="ml-2 relative z-10" ref={liveOverlayRef} data-tour="remote-control">
 								<button
 									onClick={() => {
 										if (!isLiveMode) {
@@ -714,7 +764,7 @@ function SessionListInner(props: SessionListProps) {
 							</div>
 						</div>
 						{/* Hamburger Menu */}
-						<div className="relative" ref={menuRef} data-tour="hamburger-menu">
+						<div className="relative z-10" ref={menuRef} data-tour="hamburger-menu">
 							<button
 								onClick={() => setMenuOpen(!menuOpen)}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -731,7 +781,7 @@ function SessionListInner(props: SessionListProps) {
 									style={{
 										backgroundColor: theme.colors.bgSidebar,
 										border: `1px solid ${theme.colors.border}`,
-										maxHeight: 'calc(100vh - 90px)',
+										maxHeight: 'calc(100vh - 120px)',
 									}}
 								>
 									<HamburgerMenuContent
@@ -764,7 +814,7 @@ function SessionListInner(props: SessionListProps) {
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
-									maxHeight: 'calc(100vh - 90px)',
+									maxHeight: 'calc(100vh - 120px)',
 								}}
 							>
 								<HamburgerMenuContent
@@ -1181,9 +1231,12 @@ function SessionListInner(props: SessionListProps) {
 				leftSidebarOpen={leftSidebarOpen}
 				hasNoSessions={sessions.length === 0}
 				shortcuts={shortcuts}
+				showUnreadAgentsOnly={showUnreadAgentsOnly}
+				hasUnreadAgents={hasUnreadAgents}
 				addNewSession={addNewSession}
 				openWizard={openWizard}
 				setLeftSidebarOpen={setLeftSidebarOpen}
+				toggleShowUnreadAgentsOnly={toggleShowUnreadAgentsOnly}
 			/>
 
 			{/* Session Context Menu */}
@@ -1234,6 +1287,11 @@ function SessionListInner(props: SessionListProps) {
 						onCreateGroupAndMove
 							? () => onCreateGroupAndMove(contextMenuSession.id)
 							: createNewGroup
+					}
+					onConfigureCue={
+						onConfigureCue && maestroCueEnabled
+							? () => onConfigureCue(contextMenuSession)
+							: undefined
 					}
 				/>
 			)}

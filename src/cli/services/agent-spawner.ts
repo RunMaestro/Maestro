@@ -10,6 +10,7 @@ import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import { getAgentDefinition } from '../../main/agents/definitions';
 
 // Claude Code default command and arguments (same as Electron app)
 const CLAUDE_DEFAULT_COMMAND = 'claude';
@@ -229,7 +230,8 @@ export function getCodexCommand(): string {
 async function spawnClaudeAgent(
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	readOnlyMode?: boolean
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		// Note: CLI agent spawner doesn't have access to settingsStore with global shell env vars.
@@ -237,8 +239,19 @@ async function spawnClaudeAgent(
 		// Global shell env vars are primarily used by the desktop app's process manager.
 		const env = buildExpandedEnv();
 
-		// Build args: base args + session handling + prompt
+		// Build args: base args + session handling + read-only + prompt
 		const args = [...CLAUDE_ARGS];
+
+		// Apply read-only mode args from centralized agent definitions
+		if (readOnlyMode) {
+			const def = getAgentDefinition('claude-code');
+			if (def?.readOnlyArgs) {
+				args.push(...def.readOnlyArgs);
+			}
+			if (def?.readOnlyEnvOverrides) {
+				Object.assign(env, def.readOnlyEnvOverrides);
+			}
+		}
 
 		if (agentSessionId) {
 			// Resume an existing session (e.g., for synopsis generation)
@@ -385,7 +398,8 @@ function mergeUsageStats(
 async function spawnCodexAgent(
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	readOnlyMode?: boolean
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		// Note: CLI agent spawner doesn't have access to settingsStore with global shell env vars.
@@ -394,6 +408,17 @@ async function spawnCodexAgent(
 		const env = buildExpandedEnv();
 
 		const args = [...CODEX_ARGS];
+
+		// Apply read-only mode args from centralized agent definitions
+		if (readOnlyMode) {
+			const def = getAgentDefinition('codex');
+			if (def?.readOnlyArgs) {
+				args.push(...def.readOnlyArgs);
+			}
+			if (def?.readOnlyEnvOverrides) {
+				Object.assign(env, def.readOnlyEnvOverrides);
+			}
+		}
 		args.push('-C', cwd);
 
 		if (agentSessionId) {
@@ -482,20 +507,33 @@ async function spawnCodexAgent(
 }
 
 /**
+ * Options for spawning an agent via CLI
+ */
+export interface SpawnAgentOptions {
+	/** Resume an existing agent session */
+	agentSessionId?: string;
+	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
+	readOnlyMode?: boolean;
+}
+
+/**
  * Spawn an agent with a prompt and return the result
  */
 export async function spawnAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
+	const readOnly = options?.readOnlyMode;
+
 	if (toolType === 'codex') {
-		return spawnCodexAgent(cwd, prompt, agentSessionId);
+		return spawnCodexAgent(cwd, prompt, agentSessionId, readOnly);
 	}
 
 	if (toolType === 'claude-code') {
-		return spawnClaudeAgent(cwd, prompt, agentSessionId);
+		return spawnClaudeAgent(cwd, prompt, agentSessionId, readOnly);
 	}
 
 	return {

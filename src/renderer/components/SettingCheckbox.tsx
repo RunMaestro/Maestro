@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Theme } from '../types';
 import type { LucideIcon } from 'lucide-react';
+import { ToggleSwitch } from './ui/ToggleSwitch';
 
 export interface SettingCheckboxProps {
 	/** The icon to display next to the section label */
@@ -62,24 +63,7 @@ export function SettingCheckbox({
 						</div>
 					)}
 				</div>
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						onChange(!checked);
-					}}
-					className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
-					style={{
-						backgroundColor: checked ? theme.colors.accent : theme.colors.bgActivity,
-					}}
-					role="switch"
-					aria-checked={checked}
-				>
-					<span
-						className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-							checked ? 'translate-x-5' : 'translate-x-0.5'
-						}`}
-					/>
-				</button>
+				<ToggleSwitch checked={checked} onChange={onChange} theme={theme} ariaLabel={title} />
 			</div>
 		</div>
 	);

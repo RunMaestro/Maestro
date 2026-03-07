@@ -54,6 +54,8 @@ const createMockSessions = (): Session[] => [
 		fileTree: [],
 		fileExplorerExpanded: [],
 		agentSessionId: 'claude-123',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	},
 	{
 		id: 'session-2',
@@ -71,6 +73,8 @@ const createMockSessions = (): Session[] => [
 		isGitRepo: false,
 		fileTree: [],
 		fileExplorerExpanded: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	},
 ];
 

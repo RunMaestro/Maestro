@@ -192,6 +192,10 @@ class Logger extends EventEmitter {
 					// Auto Run logs for workflow tracking (orange in LogViewer)
 					console.info(message, entry.data || '');
 					break;
+				case 'cue':
+					// Cue event-driven automation logs (teal in LogViewer)
+					console.info(message, entry.data || '');
+					break;
 			}
 		} catch {
 			// Silently ignore EPIPE errors - console is disconnected
@@ -259,6 +263,17 @@ class Logger extends EventEmitter {
 		this.addLog({
 			timestamp: Date.now(),
 			level: 'autorun',
+			message,
+			context,
+			data,
+		});
+	}
+
+	cue(message: string, context?: string, data?: unknown): void {
+		// Cue logs are always logged (event-driven automation tracking)
+		this.addLog({
+			timestamp: Date.now(),
+			level: 'cue',
 			message,
 			context,
 			data,
