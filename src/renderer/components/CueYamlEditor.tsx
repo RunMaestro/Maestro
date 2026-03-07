@@ -9,7 +9,7 @@ import type { Theme } from '../types';
 
 const CUE_TEAL = '#06b6d4';
 
-const YAML_TEMPLATE = `# maestro-cue.yaml
+const YAML_TEMPLATE = `# .maestro/cue.yaml
 # Define event-driven subscriptions for your agents.
 #
 # subscriptions:
@@ -287,7 +287,7 @@ export function CueYamlEditor({
 		aiResponseRef.current = '';
 
 		const isFirstMessage = chatMessages.length === 0;
-		const yamlPath = `${projectRoot}/maestro-cue.yaml`;
+		const yamlPath = `${projectRoot}/.maestro/cue.yaml`;
 
 		// First message gets system prompt + file path; follow-ups are just the user text
 		const prompt = isFirstMessage
@@ -409,7 +409,7 @@ export function CueYamlEditor({
 	return (
 		<Modal
 			theme={theme}
-			title={`Edit maestro-cue.yaml${session?.name ? ` — ${session.name}` : ''}`}
+			title={`Edit .maestro/cue.yaml${session?.name ? ` — ${session.name}` : ''}`}
 			priority={MODAL_PRIORITIES.CUE_YAML_EDITOR}
 			onClose={handleClose}
 			width={1200}

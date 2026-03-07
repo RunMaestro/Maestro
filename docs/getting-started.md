@@ -31,7 +31,7 @@ Press `Cmd+Shift+N` / `Ctrl+Shift+N` to launch the **Onboarding Wizard**, which 
 
 ![Wizard Document Generation](./screenshots/wizard-doc-generation.png)
 
-The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `Auto Run Docs/` to keep them organized separately from documents you create later.
+The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `.maestro/playbooks/` to keep them organized separately from documents you create later.
 
 ### Introductory Tour
 

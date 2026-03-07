@@ -80,14 +80,14 @@ subscriptions:
     prompt: prompts/step-1.md
     enabled: true
 
-# Session B config (separate maestro-cue.yaml):
+# Session B config (separate .maestro/cue.yaml):
 # subscriptions:
 #   - name: "Step 2"
 #     event: agent.completed
 #     source_session: "session-a"
 #     prompt: prompts/step-2.md
 
-# Session C config (separate maestro-cue.yaml):
+# Session C config (separate .maestro/cue.yaml):
 # subscriptions:
 #   - name: "Step 3"
 #     event: agent.completed

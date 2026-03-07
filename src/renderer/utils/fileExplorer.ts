@@ -186,7 +186,7 @@ interface LoadingState {
 export const LOCAL_IGNORE_DEFAULTS = ['node_modules', '__pycache__'];
 
 /** Files that should always appear in the file tree regardless of ignore patterns */
-const ALWAYS_VISIBLE_FILES = new Set(['.maestro', 'maestro-cue.yaml']);
+const ALWAYS_VISIBLE_FILES = new Set(['.maestro']);
 
 /** Options for local (non-SSH) file tree loading */
 export interface LocalFileTreeOptions {

@@ -13,17 +13,31 @@ import {
 	type CueSubscription,
 	type CueSettings,
 	DEFAULT_CUE_SETTINGS,
-	CUE_YAML_FILENAME,
 } from './cue-types';
+import { CUE_CONFIG_PATH, LEGACY_CUE_CONFIG_PATH } from '../../shared/maestro-paths';
 
 /**
- * Loads and parses a maestro-cue.yaml file from the given project root.
- * Returns null if the file doesn't exist. Throws on malformed YAML.
+ * Resolve the cue config file path, preferring .maestro/cue.yaml
+ * with fallback to legacy maestro-cue.yaml.
+ * Returns null if neither exists.
+ */
+export function resolveCueConfigPath(projectRoot: string): string | null {
+	const canonical = path.join(projectRoot, CUE_CONFIG_PATH);
+	if (fs.existsSync(canonical)) return canonical;
+	const legacy = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
+	if (fs.existsSync(legacy)) return legacy;
+	return null;
+}
+
+/**
+ * Loads and parses a cue config file from the given project root.
+ * Checks .maestro/cue.yaml first, then falls back to maestro-cue.yaml.
+ * Returns null if neither file exists. Throws on malformed YAML.
  */
 export function loadCueConfig(projectRoot: string): CueConfig | null {
-	const filePath = path.join(projectRoot, CUE_YAML_FILENAME);
+	const filePath = resolveCueConfigPath(projectRoot);
 
-	if (!fs.existsSync(filePath)) {
+	if (!filePath) {
 		return null;
 	}
 
@@ -115,10 +129,12 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
  * Debounces by 1 second.
  */
 export function watchCueYaml(projectRoot: string, onChange: () => void): () => void {
-	const filePath = path.join(projectRoot, CUE_YAML_FILENAME);
+	// Watch both canonical and legacy paths
+	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
+	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-	const watcher = chokidar.watch(filePath, {
+	const watcher = chokidar.watch([canonicalPath, legacyPath], {
 		persistent: true,
 		ignoreInitial: true,
 	});

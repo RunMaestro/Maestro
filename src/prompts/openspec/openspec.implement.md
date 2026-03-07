@@ -21,7 +21,7 @@ The user input may contain:
 1. **Locate the OpenSpec change** in `openspec/changes/<change-id>/`
 2. **Read the `tasks.md`** file (and optionally `proposal.md` for context)
 3. **Generate Auto Run documents** using the format below
-4. **Save to `Auto Run Docs/`** folder
+4. **Save to `.maestro/playbooks/`** folder
 
 ## Critical Requirements
 
@@ -87,11 +87,11 @@ Preserve any markers from the original tasks.md:
 
 ## Output Format
 
-Create each document as a file in the `Auto Run Docs/` folder with this naming pattern:
+Create each document as a file in the `.maestro/playbooks/` folder with this naming pattern:
 
 ```
-Auto Run Docs/OpenSpec-<change-id>-Phase-01-[Description].md
-Auto Run Docs/OpenSpec-<change-id>-Phase-02-[Description].md
+.maestro/playbooks/OpenSpec-<change-id>-Phase-01-[Description].md
+.maestro/playbooks/OpenSpec-<change-id>-Phase-02-[Description].md
 ```
 
 ## Execution Steps
@@ -116,7 +116,7 @@ Auto Run Docs/OpenSpec-<change-id>-Phase-02-[Description].md
    - Include OpenSpec context in each document
 
 5. **Save the documents**:
-   - Files go to `Auto Run Docs/` folder
+   - Files go to `.maestro/playbooks/` folder
    - Filename pattern: `OpenSpec-<change-id>-Phase-XX-[Description].md`
 
 ## Now Execute

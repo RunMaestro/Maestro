@@ -33,7 +33,7 @@ test.describe('Auto Run Editing', () => {
 	test.beforeEach(async () => {
 		// Create a temporary project directory
 		testProjectDir = path.join(os.tmpdir(), `maestro-test-project-${Date.now()}`);
-		testAutoRunFolder = path.join(testProjectDir, 'Auto Run Docs');
+		testAutoRunFolder = path.join(testProjectDir, '.maestro/playbooks');
 		fs.mkdirSync(testAutoRunFolder, { recursive: true });
 
 		// Create test markdown files

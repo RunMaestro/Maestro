@@ -254,7 +254,7 @@ export function pipelinesToYaml(pipelines: CuePipeline[], settings?: Partial<Cue
 				} else {
 					record.prompt = sub.prompt;
 					comments.push(
-						`# NOTE: Prompt for "${sub.name}" is ${sub.prompt.length} chars - consider saving to prompts/${sub.name}.md`
+						`# NOTE: Prompt for "${sub.name}" is ${sub.prompt.length} chars - consider saving to .maestro/prompts/${sub.name}.md`
 					);
 				}
 			}

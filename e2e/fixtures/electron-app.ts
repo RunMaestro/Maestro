@@ -360,7 +360,7 @@ export const helpers = {
 	 * Create an Auto Run test folder with sample documents
 	 */
 	createAutoRunTestFolder(basePath: string): string {
-		const autoRunFolder = path.join(basePath, 'Auto Run Docs');
+		const autoRunFolder = path.join(basePath, '.maestro/playbooks');
 		fs.mkdirSync(autoRunFolder, { recursive: true });
 
 		// Create sample documents
@@ -496,7 +496,7 @@ More content for the second phase.
 	 * Create an Auto Run test folder with batch processing test documents
 	 */
 	createBatchTestFolder(basePath: string): string {
-		const autoRunFolder = path.join(basePath, 'Auto Run Docs');
+		const autoRunFolder = path.join(basePath, '.maestro/playbooks');
 		fs.mkdirSync(autoRunFolder, { recursive: true });
 
 		// Create documents with varying task counts
@@ -647,8 +647,8 @@ All tasks complete in this document.
 	 * Create test folders for multiple sessions with unique content
 	 */
 	createMultiSessionTestFolders(basePath: string): { session1: string; session2: string } {
-		const session1Path = path.join(basePath, 'session1', 'Auto Run Docs');
-		const session2Path = path.join(basePath, 'session2', 'Auto Run Docs');
+		const session1Path = path.join(basePath, 'session1', '.maestro/playbooks');
+		const session2Path = path.join(basePath, 'session2', '.maestro/playbooks');
 
 		fs.mkdirSync(session1Path, { recursive: true });
 		fs.mkdirSync(session2Path, { recursive: true });

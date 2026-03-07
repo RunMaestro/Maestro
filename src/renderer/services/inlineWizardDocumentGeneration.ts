@@ -16,10 +16,13 @@ import { logger } from '../utils/logger';
 import { wizardDocumentGenerationPrompt, wizardInlineIterateGenerationPrompt } from '../../prompts';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 
+import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+
 /**
  * Auto Run folder name constant.
+ * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
  */
-export const AUTO_RUN_FOLDER_NAME = 'Auto Run Docs';
+export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
 
 /**
  * Generation timeout in milliseconds (20 minutes).

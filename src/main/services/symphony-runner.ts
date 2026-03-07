@@ -9,6 +9,7 @@ import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { execFileNoThrow } from '../utils/execFile';
 import type { DocumentReference } from '../../shared/symphony-types';
+import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 
 const LOG_CONTEXT = '[SymphonyRunner]';
 
@@ -165,7 +166,7 @@ async function setupAutoRunDocs(
 	localPath: string,
 	documentPaths: DocumentReference[]
 ): Promise<string> {
-	const autoRunPath = path.posix.join(localPath, 'Auto Run Docs');
+	const autoRunPath = path.posix.join(localPath, PLAYBOOKS_DIR);
 	await fs.mkdir(autoRunPath, { recursive: true });
 
 	for (const doc of documentPaths) {

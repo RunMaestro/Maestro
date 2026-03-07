@@ -38,7 +38,7 @@ src/renderer/components/Wizard/
 3. **Conversation** → AI asks clarifying questions, builds confidence score (0-100)
 4. **Phase Review** → View/edit generated Phase 1 document, choose to start tour
 
-When confidence reaches 80+ and agent signals "ready", user proceeds to Phase Review where Auto Run documents are generated and saved to `Auto Run Docs/Initiation/`. The `Initiation/` subfolder keeps wizard-generated documents separate from user-created playbooks.
+When confidence reaches 80+ and agent signals "ready", user proceeds to Phase Review where Auto Run documents are generated and saved to `.maestro/playbooks/initiation/`. The `initiation/` subfolder keeps wizard-generated documents separate from user-created playbooks.
 
 ### Triggering the Wizard
 
@@ -179,7 +179,7 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 
 - Multiple wizards can run in different tabs simultaneously
 - Wizard state is **per-tab** (`AITab.wizardState`), not per-agent
-- Documents written to unique subfolder under Auto Run folder (e.g., `Auto Run Docs/Project-Name/`)
+- Documents written to unique subfolder under playbooks folder (e.g., `.maestro/playbooks/project-name/`)
 - On completion, tab renamed to "Project: {SubfolderName}"
 - Final AI message summarizes generated docs and next steps
 - Same `agentSessionId` preserved for context continuity

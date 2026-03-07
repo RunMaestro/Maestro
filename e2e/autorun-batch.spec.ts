@@ -33,7 +33,7 @@ test.describe('Auto Run Batch Processing', () => {
 	test.beforeEach(async () => {
 		// Create a temporary project directory
 		testProjectDir = path.join(os.tmpdir(), `maestro-batch-test-${Date.now()}`);
-		testAutoRunFolder = path.join(testProjectDir, 'Auto Run Docs');
+		testAutoRunFolder = path.join(testProjectDir, '.maestro/playbooks');
 		fs.mkdirSync(testAutoRunFolder, { recursive: true });
 
 		// Create test markdown files with tasks

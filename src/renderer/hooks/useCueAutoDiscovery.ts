@@ -3,7 +3,7 @@ import type { Session, EncoreFeatureFlags } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 
 /**
- * useCueAutoDiscovery — auto-discovers maestro-cue.yaml files for sessions.
+ * useCueAutoDiscovery — auto-discovers .maestro/cue.yaml files for sessions.
  *
  * Integration points:
  * 1. After sessions are restored on app launch, refreshes all sessions

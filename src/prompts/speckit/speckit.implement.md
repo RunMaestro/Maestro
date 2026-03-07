@@ -20,7 +20,7 @@ The user input may contain:
 1. **Locate the Spec Kit feature** in `specs/<feature-name>/`
 2. **Read the `tasks.md`** file (and optionally `specification.md` for context)
 3. **Generate Auto Run documents** using the format below
-4. **Save to `Auto Run Docs/`** folder
+4. **Save to `.maestro/playbooks/`** folder
 
 ## Critical Requirements
 
@@ -87,11 +87,11 @@ Preserve any markers from the original tasks.md:
 
 ## Output Format
 
-Create each document as a file in the `Auto Run Docs/` folder with this naming pattern:
+Create each document as a file in the `.maestro/playbooks/` folder with this naming pattern:
 
 ```
-Auto Run Docs/SpecKit-<feature-name>-Phase-01-[Description].md
-Auto Run Docs/SpecKit-<feature-name>-Phase-02-[Description].md
+.maestro/playbooks/SpecKit-<feature-name>-Phase-01-[Description].md
+.maestro/playbooks/SpecKit-<feature-name>-Phase-02-[Description].md
 ```
 
 ## Execution Steps
@@ -116,7 +116,7 @@ Auto Run Docs/SpecKit-<feature-name>-Phase-02-[Description].md
    - Include Spec Kit context in each document
 
 5. **Save the documents**:
-   - Files go to `Auto Run Docs/` folder
+   - Files go to `.maestro/playbooks/` folder
    - Filename pattern: `SpecKit-<feature-name>-Phase-XX-[Description].md`
 
 ## Now Execute

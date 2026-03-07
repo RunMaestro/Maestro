@@ -1030,7 +1030,7 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 				style={{ color: theme.colors.textDim }}
 			>
 				<span className="text-sm">
-					No Cue subscriptions found. Create a maestro-cue.yaml in a project to see the graph.
+					No Cue subscriptions found. Create .maestro/cue.yaml in a project to see the graph.
 				</span>
 			</div>
 		);

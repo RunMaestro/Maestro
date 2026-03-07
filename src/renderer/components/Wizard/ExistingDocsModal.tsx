@@ -1,7 +1,7 @@
 /**
  * ExistingDocsModal.tsx
  *
- * Modal displayed when the wizard detects existing Auto Run documents
+ * Modal displayed when the wizard detects existing playbook documents
  * in the selected project directory. Offers the user two choices:
  * 1. Delete the existing docs and start fresh
  * 2. Continue building on the existing planning documents
@@ -28,7 +28,7 @@ interface ExistingDocsModalProps {
 }
 
 /**
- * ExistingDocsModal - Choice dialog for existing Auto Run documents
+ * ExistingDocsModal - Choice dialog for existing playbook documents
  */
 export function ExistingDocsModal({
 	theme,
@@ -60,7 +60,7 @@ export function ExistingDocsModal({
 			blocksLowerLayers: true,
 			capturesFocus: true,
 			focusTrap: 'strict',
-			ariaLabel: 'Existing Auto Run Documents Found',
+			ariaLabel: 'Existing Playbook Documents Found',
 			onEscape: () => onCancelRef.current(),
 		});
 		layerIdRef.current = id;
@@ -95,10 +95,10 @@ export function ExistingDocsModal({
 		setDeleteError(null);
 
 		try {
-			// Delete the entire Auto Run Docs folder
+			// Delete the playbooks folder
 			const deleteResult = await window.maestro.autorun.deleteFolder(directoryPath);
 			if (!deleteResult.success) {
-				throw new Error(deleteResult.error || 'Failed to delete Auto Run Docs folder');
+				throw new Error(deleteResult.error || 'Failed to delete playbooks folder');
 			}
 
 			// Success - notify parent
@@ -155,7 +155,7 @@ export function ExistingDocsModal({
 					>
 						This project already has{' '}
 						<span className="font-semibold" style={{ color: theme.colors.accent }}>
-							{documentCount} Auto Run document{documentCount !== 1 ? 's' : ''}
+							{documentCount} playbook document{documentCount !== 1 ? 's' : ''}
 						</span>{' '}
 						from a previous planning session.
 					</p>
@@ -249,7 +249,7 @@ export function ExistingDocsModal({
 										{isDeleting ? 'Deleting Documents...' : 'Delete & Start Fresh'}
 									</div>
 									<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-										Remove all existing Auto Run documents and start the planning process from
+										Remove all existing playbook documents and start the planning process from
 										scratch.
 									</div>
 								</div>

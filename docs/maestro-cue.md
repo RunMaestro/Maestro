@@ -29,11 +29,11 @@ A few examples of what you can automate with Cue:
 2. Navigate to the **Encore Features** tab
 3. Toggle **Maestro Cue** on
 
-Once enabled, Maestro automatically scans all your active agents for `maestro-cue.yaml` files in their project roots. The Cue engine starts immediately — no restart required.
+Once enabled, Maestro automatically scans all your active agents for `.maestro/cue.yaml` files in their project roots. The Cue engine starts immediately — no restart required.
 
 ## Quick Start
 
-Create a file called `maestro-cue.yaml` in the root of any project that has an active Maestro agent:
+Create a file called `.maestro/cue.yaml` in your project (inside the `.maestro/` directory at the project root):
 
 ```yaml
 subscriptions:
@@ -62,7 +62,7 @@ Open the Cue dashboard to monitor and manage all automation activity.
 
 ### Sessions Table
 
-The primary view shows all agents that have a `maestro-cue.yaml` file:
+The primary view shows all agents that have a `.maestro/cue.yaml` file:
 
 <!-- ![Cue Modal sessions table](./screenshots/cue-modal-sessions.png) -->
 
@@ -99,7 +99,7 @@ Built-in reference guide accessible from the modal header. Covers configuration 
 
 ## Configuration File
 
-Cue is configured via a `maestro-cue.yaml` file placed in your project root (the same directory where your agent runs). See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
+Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. See the [Configuration Reference](./maestro-cue-configuration) for the complete YAML schema.
 
 ## Event Types
 
@@ -172,5 +172,5 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 - **Use the YAML editor** — The inline editor validates your config in real-time, catching errors before they reach the engine
 - **Check the Activity Log** — If a subscription isn't firing, the activity log shows failures with error details
 - **Prompt files vs inline** — For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
-- **Hot reload** — The engine watches `maestro-cue.yaml` for changes and reloads automatically — no need to restart Maestro
+- **Hot reload** — The engine watches `.maestro/cue.yaml` for changes and reloads automatically — no need to restart Maestro
 - **Template variables** — Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it

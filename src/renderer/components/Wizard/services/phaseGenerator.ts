@@ -144,10 +144,13 @@ interface ParsedDocument {
 	phase: number;
 }
 
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
+
 /**
- * Default Auto Run folder name
+ * Default Auto Run folder name.
+ * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
  */
-export const AUTO_RUN_FOLDER_NAME = 'Auto Run Docs';
+export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
 
 /**
  * Sanitize a filename to prevent path traversal attacks.

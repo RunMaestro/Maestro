@@ -1,22 +1,23 @@
 ---
 title: Cue Configuration Reference
-description: Complete YAML schema reference for maestro-cue.yaml configuration files.
+description: Complete YAML schema reference for .maestro/cue.yaml configuration files.
 icon: file-code
 ---
 
-Cue is configured via a `maestro-cue.yaml` file placed in your project root — the same directory where your Maestro agent runs. The engine watches this file for changes and hot-reloads automatically.
+Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` directory at your project root. The engine watches this file for changes and hot-reloads automatically.
 
 ## File Location
 
 ```
 your-project/
-├── maestro-cue.yaml    # Cue configuration
+├── .maestro/
+│   └── cue.yaml        # Cue configuration
 ├── src/
 ├── package.json
 └── ...
 ```
 
-Maestro discovers this file automatically when the Cue Encore Feature is enabled. Each agent that has a `maestro-cue.yaml` in its project root gets its own independent Cue engine instance.
+Maestro discovers this file automatically when the Cue Encore Feature is enabled. Each agent that has a `.maestro/cue.yaml` in its project root gets its own independent Cue engine instance.
 
 ## Full Schema
 

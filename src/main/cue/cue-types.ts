@@ -118,3 +118,9 @@ export interface CueGraphSession {
 
 /** Default filename for Cue configuration */
 export const CUE_YAML_FILENAME = 'maestro-cue.yaml';
+
+/**
+ * @deprecated Import CUE_CONFIG_PATH from shared/maestro-paths instead.
+ * Kept for backwards compat references that check legacy location.
+ */
+export const LEGACY_CUE_YAML_FILENAME = CUE_YAML_FILENAME;

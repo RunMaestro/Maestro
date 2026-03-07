@@ -42,7 +42,7 @@ Auto Run supports running multiple documents in sequence:
 2. Click **+ Add Docs** to add more documents to the queue
 3. Drag to reorder documents as needed
 4. Configure options per document:
-   - **Reset on Completion** - Creates a working copy in `Runs/` subfolder instead of modifying the original. The original document is never touched, and working copies (e.g., `TASK-1735192800000-loop-1.md`) serve as audit logs.
+   - **Reset on Completion** - Creates a working copy in `runs/` subfolder instead of modifying the original. The original document is never touched, and working copies (e.g., `TASK-1735192800000-loop-1.md`) serve as audit logs.
    - **Duplicate** - Add the same document multiple times
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents

@@ -12,8 +12,8 @@ import * as path from 'path';
 import { app, ipcMain } from 'electron';
 import * as yaml from 'js-yaml';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
-import { validateCueConfig } from '../../cue/cue-yaml-loader';
-import { CUE_YAML_FILENAME } from '../../cue/cue-types';
+import { validateCueConfig, resolveCueConfigPath } from '../../cue/cue-yaml-loader';
+import { CUE_CONFIG_PATH, MAESTRO_DIR } from '../../../shared/maestro-paths';
 import type { CueEngine } from '../../cue/cue-engine';
 import type {
 	CueGraphSession,
@@ -163,14 +163,14 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
-	// Read raw YAML content from a session's maestro-cue.yaml
+	// Read raw YAML content from a session's cue config (checks .maestro/cue.yaml then legacy)
 	ipcMain.handle(
 		'cue:readYaml',
 		withIpcErrorLogging(
 			handlerOpts('readYaml'),
 			async (options: { projectRoot: string }): Promise<string | null> => {
-				const filePath = path.join(options.projectRoot, CUE_YAML_FILENAME);
-				if (!fs.existsSync(filePath)) {
+				const filePath = resolveCueConfigPath(options.projectRoot);
+				if (!filePath) {
 					return null;
 				}
 				return fs.readFileSync(filePath, 'utf-8');
@@ -178,15 +178,18 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		)
 	);
 
-	// Write YAML content to a session's maestro-cue.yaml
+	// Write YAML content to .maestro/cue.yaml (canonical path, creates .maestro/ if needed)
 	ipcMain.handle(
 		'cue:writeYaml',
 		withIpcErrorLogging(
 			handlerOpts('writeYaml'),
 			async (options: { projectRoot: string; content: string }): Promise<void> => {
-				const filePath = path.join(options.projectRoot, CUE_YAML_FILENAME);
+				const maestroDir = path.join(options.projectRoot, MAESTRO_DIR);
+				if (!fs.existsSync(maestroDir)) {
+					fs.mkdirSync(maestroDir, { recursive: true });
+				}
+				const filePath = path.join(options.projectRoot, CUE_CONFIG_PATH);
 				fs.writeFileSync(filePath, options.content, 'utf-8');
-				// The file watcher in CueEngine will automatically detect the change and refresh
 			}
 		)
 	);

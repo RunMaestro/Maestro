@@ -160,7 +160,7 @@ export function CueSettingsPanel({ settings, onChange, onClose }: CueSettingsPan
 					lineHeight: 1.4,
 				}}
 			>
-				Settings are saved to maestro-cue.yaml when you save the pipeline.
+				Settings are saved to .maestro/cue.yaml when you save the pipeline.
 			</div>
 		</div>
 	);

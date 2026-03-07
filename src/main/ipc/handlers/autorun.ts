@@ -16,6 +16,7 @@ import {
 	mkdirRemote,
 	deleteRemote,
 } from '../../utils/remote-fs';
+import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 
 const LOG_CONTEXT = '[AutoRun]';
 
@@ -727,7 +728,8 @@ export function registerAutorunHandlers(
 		)
 	);
 
-	// Delete the entire Auto Run Docs folder (for wizard "start fresh" feature)
+	// Delete the playbooks folder (for wizard "start fresh" feature)
+	// Checks canonical .maestro/playbooks first, then legacy Auto Run Docs
 	ipcMain.handle(
 		'autorun:deleteFolder',
 		createIpcHandler(handlerOpts('deleteFolder'), async (projectPath: string) => {
@@ -736,38 +738,31 @@ export function registerAutorunHandlers(
 				throw new Error('Invalid project path');
 			}
 
-			// Construct the Auto Run Docs folder path
-			const autoRunFolder = path.join(projectPath, 'Auto Run Docs');
+			// Allowed playbook folder names (canonical + legacy)
+			const ALLOWED_FOLDER_NAMES = new Set(['playbooks', 'Auto Run Docs']);
 
-			// Verify the folder exists
-			try {
-				const stat = await fs.stat(autoRunFolder);
-				if (!stat.isDirectory()) {
-					throw new Error('Auto Run Docs path is not a directory');
+			// Try canonical path first, then legacy
+			const canonicalFolder = path.join(projectPath, PLAYBOOKS_DIR);
+			const legacyFolder = path.join(projectPath, LEGACY_PLAYBOOKS_DIR);
+
+			for (const autoRunFolder of [canonicalFolder, legacyFolder]) {
+				try {
+					const stat = await fs.stat(autoRunFolder);
+					if (!stat.isDirectory()) continue;
+				} catch {
+					continue;
 				}
-			} catch (e) {
-				// If stat throws ENOENT, folder doesn't exist - nothing to delete
-				if (e instanceof Error && e.message.includes('ENOENT')) {
-					return {};
+
+				// Safety check: ensure we're only deleting known playbook folders
+				const folderName = path.basename(autoRunFolder);
+				if (!ALLOWED_FOLDER_NAMES.has(folderName)) {
+					throw new Error('Safety check failed: not a playbooks folder');
 				}
-				// If it's our own "not a directory" error, rethrow
-				if (e instanceof Error && e.message === 'Auto Run Docs path is not a directory') {
-					throw e;
-				}
-				// Folder doesn't exist, nothing to delete
-				return {};
+
+				await fs.rm(autoRunFolder, { recursive: true, force: true });
+				logger.info(`Deleted playbooks folder: ${autoRunFolder}`, LOG_CONTEXT);
 			}
 
-			// Safety check: ensure we're only deleting "Auto Run Docs" folder
-			const folderName = path.basename(autoRunFolder);
-			if (folderName !== 'Auto Run Docs') {
-				throw new Error('Safety check failed: not an Auto Run Docs folder');
-			}
-
-			// Delete the folder recursively
-			await fs.rm(autoRunFolder, { recursive: true, force: true });
-
-			logger.info(`Deleted Auto Run Docs folder: ${autoRunFolder}`, LOG_CONTEXT);
 			return {};
 		})
 	);
@@ -1089,8 +1084,8 @@ export function registerAutorunHandlers(
 
 				// Return the relative path (without .md for consistency with other APIs)
 				const relativePath = subDir
-					? `Runs/${subDir}/${workingCopyName.slice(0, -3)}`
-					: `Runs/${workingCopyName.slice(0, -3)}`;
+					? `runs/${subDir}/${workingCopyName.slice(0, -3)}`
+					: `runs/${workingCopyName.slice(0, -3)}`;
 
 				// SSH remote: dispatch to remote operations
 				if (sshRemoteId) {
@@ -1101,7 +1096,7 @@ export function registerAutorunHandlers(
 
 					// Construct remote paths (use forward slashes)
 					const remoteSourcePath = `${folderPath}/${fullFilename}`;
-					const remoteRunsDir = subDir ? `${folderPath}/Runs/${subDir}` : `${folderPath}/Runs`;
+					const remoteRunsDir = subDir ? `${folderPath}/runs/${subDir}` : `${folderPath}/runs`;
 					const remoteWorkingCopyPath = `${remoteRunsDir}/${workingCopyName}`;
 
 					logger.debug(
@@ -1152,8 +1147,8 @@ export function registerAutorunHandlers(
 
 				// Create Runs directory (with subdirectory if needed)
 				const runsDir = subDir
-					? path.join(folderPath, 'Runs', subDir)
-					: path.join(folderPath, 'Runs');
+					? path.join(folderPath, 'runs', subDir)
+					: path.join(folderPath, 'runs');
 				await fs.mkdir(runsDir, { recursive: true });
 
 				const workingCopyPath = path.join(runsDir, workingCopyName);

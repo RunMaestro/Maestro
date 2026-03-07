@@ -4,7 +4,7 @@ description: Real-world Maestro Cue configurations for common automation workflo
 icon: lightbulb
 ---
 
-Complete, copy-paste-ready `maestro-cue.yaml` configurations for common workflows. Each example is self-contained — drop it into your project root and adjust agent names to match your Left Bar.
+Complete, copy-paste-ready `.maestro/cue.yaml` configurations for common workflows. Each example is self-contained — drop it into your project's `.maestro/` directory and adjust agent names to match your Left Bar.
 
 ## CI-Style Pipeline
 
@@ -12,7 +12,7 @@ Lint, test, and deploy in sequence. Each step only runs if the previous one succ
 
 **Agents needed:** `linter`, `tester`, `deployer`
 
-The `linter` agent's `maestro-cue.yaml`:
+The `linter` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -24,7 +24,7 @@ subscriptions:
       Report any errors that couldn't be auto-fixed.
 ```
 
-The `tester` agent's `maestro-cue.yaml`:
+The `tester` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -38,7 +38,7 @@ subscriptions:
       Lint passed. Run `npm test` and report results.
 ```
 
-The `deployer` agent's `maestro-cue.yaml`:
+The `deployer` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -60,7 +60,7 @@ When an agent has multiple subscriptions but only one should chain to another ag
 
 **Agents needed:** `worker` (has multiple cue subscriptions), `reviewer`
 
-The `worker` agent's `maestro-cue.yaml`:
+The `worker` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -88,7 +88,7 @@ subscriptions:
       Implement this feature following existing patterns.
 ```
 
-The `reviewer` agent's `maestro-cue.yaml`:
+The `reviewer` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -119,7 +119,7 @@ Fan out a question to multiple agents, then fan in to synthesize results.
 
 **Agents needed:** `coordinator`, `researcher-a`, `researcher-b`, `researcher-c`
 
-The `coordinator` agent's `maestro-cue.yaml`:
+The `coordinator` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -166,7 +166,7 @@ Auto-review new PRs, then selectively notify a security reviewer only for PRs th
 
 **Agents needed:** `pr-reviewer`, `security-reviewer`
 
-The `pr-reviewer` agent's `maestro-cue.yaml`:
+The `pr-reviewer` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -188,7 +188,7 @@ subscriptions:
       In your output, list all files changed.
 ```
 
-The `security-reviewer` agent's `maestro-cue.yaml`:
+The `security-reviewer` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -248,7 +248,7 @@ Fan out deployments to staging, production, and docs after a build passes.
 
 **Agents needed:** `builder`, `deploy-staging`, `deploy-prod`, `deploy-docs`
 
-The `builder` agent's `maestro-cue.yaml`:
+The `builder` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -338,7 +338,7 @@ subscriptions:
       Be thorough and specific.
 ```
 
-The `judge` agent's `maestro-cue.yaml`:
+The `judge` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -372,7 +372,7 @@ Generate an hourly report, but only notify a summary agent when there's meaningf
 
 **Agents needed:** `reporter`, `summarizer`
 
-The `reporter` agent's `maestro-cue.yaml`:
+The `reporter` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:
@@ -387,7 +387,7 @@ subscriptions:
       If there are no commits, respond with exactly: "NO_ACTIVITY"
 ```
 
-The `summarizer` agent's `maestro-cue.yaml`:
+The `summarizer` agent's `.maestro/cue.yaml`:
 
 ```yaml
 subscriptions:

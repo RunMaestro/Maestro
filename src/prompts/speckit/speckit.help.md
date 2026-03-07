@@ -58,7 +58,7 @@ Convert your tasks directly into GitHub issues. Useful for team collaboration an
 Spec-Kit is designed to work seamlessly with Maestro's Auto Run feature:
 
 1. **Use `/speckit.implement`** to generate Auto Run documents from your tasks
-2. Documents are saved to `Auto Run Docs/` in your project
+2. Documents are saved to `.maestro/playbooks/` in your project
 3. Each task becomes a checkbox item that Auto Run can execute and verify
 4. Maestro will work through tasks sequentially, checking them off as completed
 5. You can run multiple agents in parallel on different phases

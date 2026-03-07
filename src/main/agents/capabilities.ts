@@ -171,7 +171,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 * https://github.com/openai/codex
 	 *
 	 * Verified capabilities based on CLI testing (v0.73.0+) and documentation review.
-	 * See Auto Run Docs/Codex-Support.md for investigation details.
+	 * See .maestro/playbooks/Codex-Support.md for investigation details.
 	 */
 	codex: {
 		supportsResume: true, // exec resume <id> (v0.30.0+) - Verified
@@ -257,7 +257,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 * https://github.com/opencode-ai/opencode
 	 *
 	 * Verified capabilities based on CLI testing and documentation review.
-	 * See Auto Run Docs/OpenCode-Support.md for investigation details.
+	 * See .maestro/playbooks/OpenCode-Support.md for investigation details.
 	 */
 	opencode: {
 		supportsResume: true, // --session flag (sessionID in output) - Verified

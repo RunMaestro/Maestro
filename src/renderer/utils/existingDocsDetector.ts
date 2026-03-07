@@ -5,10 +5,12 @@
  * Used by the inline wizard to determine whether to offer "new" or "iterate" mode.
  */
 
+import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+
 /**
- * Default Auto Run folder name - matches the constant in phaseGenerator.ts
+ * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
  */
-export const AUTO_RUN_FOLDER_NAME = 'Auto Run Docs';
+export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
 
 /**
  * Represents an existing Auto Run document.
@@ -23,48 +25,65 @@ export interface ExistingDocument {
 }
 
 /**
- * Build the Auto Run folder path for a project.
+ * Build the playbooks folder path for a project.
+ * Checks .maestro/playbooks first, falls back to legacy Auto Run Docs.
  *
  * @param projectPath - Root path of the project
- * @returns Full path to the Auto Run Docs folder
+ * @returns Full path to the playbooks folder
  */
 export function getAutoRunFolderPath(projectPath: string): string {
 	// Handle trailing slashes consistently
 	const normalizedPath = projectPath.endsWith('/') ? projectPath.slice(0, -1) : projectPath;
-	return `${normalizedPath}/${AUTO_RUN_FOLDER_NAME}`;
+	return `${normalizedPath}/${PLAYBOOKS_DIR}`;
+}
+
+/**
+ * Resolve the actual playbooks folder path, checking canonical then legacy.
+ * Returns the path that exists, or the canonical path if neither exists.
+ */
+export async function resolvePlaybooksFolderPath(projectPath: string): Promise<string> {
+	const normalizedPath = projectPath.endsWith('/') ? projectPath.slice(0, -1) : projectPath;
+	const canonicalPath = `${normalizedPath}/${PLAYBOOKS_DIR}`;
+	const legacyPath = `${normalizedPath}/${LEGACY_PLAYBOOKS_DIR}`;
+
+	// Check canonical first
+	try {
+		const result = await window.maestro.autorun.listDocs(canonicalPath);
+		if (result.success && result.files.length > 0) return canonicalPath;
+	} catch {
+		// ignore
+	}
+
+	// Check legacy
+	try {
+		const result = await window.maestro.autorun.listDocs(legacyPath);
+		if (result.success && result.files.length > 0) return legacyPath;
+	} catch {
+		// ignore
+	}
+
+	// Default to canonical (for new projects)
+	return canonicalPath;
 }
 
 /**
  * Check if a project has existing Auto Run documents.
+ * Checks both canonical (.maestro/playbooks) and legacy (Auto Run Docs) locations.
  *
- * This is a quick boolean check that can be used to determine whether
- * the inline wizard should offer "new" vs "iterate" mode options.
- *
- * @param projectPath - Root path of the project (not the Auto Run folder)
- * @returns True if the Auto Run Docs folder exists and contains at least one .md file
- *
- * @example
- * const hasExisting = await hasExistingAutoRunDocs('/path/to/project');
- * if (hasExisting) {
- *   // Offer "continue" or "iterate" options in wizard
- * } else {
- *   // Default to "new" mode
- * }
+ * @param projectPath - Root path of the project (not the playbooks folder)
+ * @returns True if either playbooks folder exists and contains at least one .md file
  */
 export async function hasExistingAutoRunDocs(projectPath: string): Promise<boolean> {
 	try {
-		const folderPath = getAutoRunFolderPath(projectPath);
+		const folderPath = await resolvePlaybooksFolderPath(projectPath);
 		const result = await window.maestro.autorun.listDocs(folderPath);
 
 		if (!result.success) {
-			// Folder doesn't exist or can't be read - no existing docs
 			return false;
 		}
 
-		// Check if there are any markdown files
 		return result.files.length > 0;
 	} catch (error) {
-		// Any error (folder doesn't exist, permission issues, etc.) means no existing docs
 		console.debug('[existingDocsDetector] hasExistingAutoRunDocs error:', error);
 		return false;
 	}
@@ -72,30 +91,20 @@ export async function hasExistingAutoRunDocs(projectPath: string): Promise<boole
 
 /**
  * Get a list of existing Auto Run documents in a project.
+ * Checks both canonical and legacy locations.
  *
- * Returns metadata about each document in the Auto Run Docs folder.
- * Documents are returned in the order provided by the file system (typically alphabetical).
- *
- * @param projectPath - Root path of the project (not the Auto Run folder)
+ * @param projectPath - Root path of the project (not the playbooks folder)
  * @returns Array of ExistingDocument objects, empty if no documents exist
- *
- * @example
- * const docs = await getExistingAutoRunDocs('/path/to/project');
- * for (const doc of docs) {
- *   console.log(`Found: ${doc.name} at ${doc.path}`);
- * }
  */
 export async function getExistingAutoRunDocs(projectPath: string): Promise<ExistingDocument[]> {
 	try {
-		const folderPath = getAutoRunFolderPath(projectPath);
+		const folderPath = await resolvePlaybooksFolderPath(projectPath);
 		const result = await window.maestro.autorun.listDocs(folderPath);
 
 		if (!result.success || !result.files) {
 			return [];
 		}
 
-		// The listDocs API returns filenames without .md extension
-		// Convert to ExistingDocument format
 		return result.files.map((name: string) => ({
 			name,
 			filename: `${name}.md`,
@@ -110,14 +119,12 @@ export async function getExistingAutoRunDocs(projectPath: string): Promise<Exist
 /**
  * Get the count of existing Auto Run documents without loading full metadata.
  *
- * Slightly more efficient than getExistingAutoRunDocs when you only need the count.
- *
  * @param projectPath - Root path of the project
  * @returns Number of Auto Run documents, 0 if none or folder doesn't exist
  */
 export async function getExistingAutoRunDocsCount(projectPath: string): Promise<number> {
 	try {
-		const folderPath = getAutoRunFolderPath(projectPath);
+		const folderPath = await resolvePlaybooksFolderPath(projectPath);
 		const result = await window.maestro.autorun.listDocs(folderPath);
 
 		if (!result.success || !result.files) {

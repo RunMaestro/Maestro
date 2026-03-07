@@ -83,7 +83,7 @@ Bridges OpenSpec with Maestro's Auto Run:
 
 1. Reads the proposal and tasks from a change
 2. Converts tasks into Auto Run document format with phases
-3. Saves to `Auto Run Docs/` with task checkboxes (filename: `OpenSpec-<change-id>-Phase-XX-[Description].md`)
+3. Saves to `.maestro/playbooks/` with task checkboxes (filename: `OpenSpec-<change-id>-Phase-XX-[Description].md`)
 4. Preserves task IDs (T001, T002, etc.) for traceability
 5. Groups related tasks into logical phases (5–15 tasks each)
 

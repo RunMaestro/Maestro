@@ -49,7 +49,7 @@ export function ExistingAutoRunDocsModal({
 			blocksLowerLayers: true,
 			capturesFocus: true,
 			focusTrap: 'strict',
-			ariaLabel: 'Existing Auto Run Documents Detected',
+			ariaLabel: 'Existing Playbook Documents Detected',
 			onEscape: onCancel,
 		});
 		layerIdRef.current = id;
@@ -107,7 +107,7 @@ export function ExistingAutoRunDocsModal({
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[10000] animate-in fade-in duration-200"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Existing Auto Run Documents Detected"
+			aria-label="Existing Playbook Documents Detected"
 			tabIndex={-1}
 			onKeyDown={handleKeyDown}
 		>
@@ -129,7 +129,7 @@ export function ExistingAutoRunDocsModal({
 								Existing Planning Documents Found
 							</h2>
 							<p className="text-sm mt-0.5" style={{ color: theme.colors.textDim }}>
-								This project already has Auto Run documents
+								This project already has playbook documents
 							</p>
 						</div>
 					</div>
@@ -173,7 +173,7 @@ export function ExistingAutoRunDocsModal({
 										className="px-1.5 py-0.5 rounded text-xs font-mono"
 										style={{ backgroundColor: theme.colors.bgMain }}
 									>
-										Auto Run Docs/
+										.maestro/playbooks/
 									</code>
 								</p>
 							</div>

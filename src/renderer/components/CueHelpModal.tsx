@@ -54,7 +54,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						from the right drawer onto the canvas, then connect them to define your workflow. The
 						editor automatically generates and manages the underlying{' '}
 						<code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
-							maestro-cue.yaml
+							.maestro/cue.yaml
 						</code>{' '}
 						file.
 					</p>
