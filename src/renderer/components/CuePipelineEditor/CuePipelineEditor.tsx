@@ -405,8 +405,11 @@ function CuePipelineEditorInner({
 	// Track whether we've applied saved layout positions yet
 	const hasRestoredLayoutRef = useRef(false);
 
-	// Load pipelines from saved layout (positions) merged with live graph data
+	// Load pipelines once on mount from saved layout merged with live graph data.
+	// The pipeline editor is the primary editor — we don't re-sync from disk
+	// while the user is working. Save writes back to disk.
 	useEffect(() => {
+		if (hasRestoredLayoutRef.current) return;
 		if (!graphSessions || graphSessions.length === 0) return;
 
 		const loadLayout = async () => {
@@ -414,13 +417,10 @@ function CuePipelineEditorInner({
 			if (livePipelines.length === 0) return;
 
 			let savedLayout: PipelineLayoutState | null = null;
-			if (!hasRestoredLayoutRef.current) {
-				try {
-					savedLayout =
-						(await window.maestro.cue.loadPipelineLayout()) as PipelineLayoutState | null;
-				} catch {
-					// No saved layout
-				}
+			try {
+				savedLayout = (await window.maestro.cue.loadPipelineLayout()) as PipelineLayoutState | null;
+			} catch {
+				// No saved layout
 			}
 
 			if (savedLayout && savedLayout.pipelines) {
@@ -447,7 +447,7 @@ function CuePipelineEditorInner({
 				savedStateRef.current = JSON.stringify(mergedPipelines);
 
 				// Restore viewport if available
-				if (savedLayout.viewport && !hasRestoredLayoutRef.current) {
+				if (savedLayout.viewport) {
 					setTimeout(() => {
 						reactFlowInstance.setViewport(savedLayout!.viewport!);
 					}, 100);

@@ -1208,6 +1208,192 @@ describe('CueEngine', () => {
 		});
 	});
 
+	describe('output_prompt execution', () => {
+		it('executes output prompt after successful main task', async () => {
+			const mainResult: CueRunResult = {
+				runId: 'run-1',
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'timer',
+				event: {} as CueEvent,
+				status: 'completed',
+				stdout: 'main task output',
+				stderr: '',
+				exitCode: 0,
+				durationMs: 100,
+				startedAt: new Date().toISOString(),
+				endedAt: new Date().toISOString(),
+			};
+			const outputResult: CueRunResult = {
+				...mainResult,
+				runId: 'run-2',
+				stdout: 'formatted output for downstream',
+			};
+			const onCueRun = vi
+				.fn()
+				.mockResolvedValueOnce(mainResult)
+				.mockResolvedValueOnce(outputResult);
+
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'do work',
+						output_prompt: 'format results',
+						interval_minutes: 60,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps({ onCueRun });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await vi.advanceTimersByTimeAsync(100);
+
+			// onCueRun called twice: main task + output prompt
+			expect(onCueRun).toHaveBeenCalledTimes(2);
+
+			// First call is the main prompt
+			expect(onCueRun.mock.calls[0][1]).toBe('do work');
+
+			// Second call is the output prompt with context appended
+			expect(onCueRun.mock.calls[1][1]).toContain('format results');
+			expect(onCueRun.mock.calls[1][1]).toContain('main task output');
+
+			// Activity log should have the output prompt's stdout
+			const log = engine.getActivityLog();
+			expect(log[0].stdout).toBe('formatted output for downstream');
+
+			engine.stop();
+		});
+
+		it('skips output prompt when main task fails', async () => {
+			const failedResult: CueRunResult = {
+				runId: 'run-1',
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'timer',
+				event: {} as CueEvent,
+				status: 'failed',
+				stdout: '',
+				stderr: 'error',
+				exitCode: 1,
+				durationMs: 100,
+				startedAt: new Date().toISOString(),
+				endedAt: new Date().toISOString(),
+			};
+			const onCueRun = vi.fn().mockResolvedValue(failedResult);
+
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'do work',
+						output_prompt: 'format results',
+						interval_minutes: 60,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps({ onCueRun });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await vi.advanceTimersByTimeAsync(100);
+
+			// Only called once — output prompt skipped
+			expect(onCueRun).toHaveBeenCalledTimes(1);
+
+			engine.stop();
+		});
+
+		it('falls back to main output when output prompt fails', async () => {
+			const mainResult: CueRunResult = {
+				runId: 'run-1',
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'timer',
+				event: {} as CueEvent,
+				status: 'completed',
+				stdout: 'main task output',
+				stderr: '',
+				exitCode: 0,
+				durationMs: 100,
+				startedAt: new Date().toISOString(),
+				endedAt: new Date().toISOString(),
+			};
+			const failedOutputResult: CueRunResult = {
+				...mainResult,
+				runId: 'run-2',
+				status: 'failed',
+				stdout: '',
+				stderr: 'output prompt error',
+			};
+			const onCueRun = vi
+				.fn()
+				.mockResolvedValueOnce(mainResult)
+				.mockResolvedValueOnce(failedOutputResult);
+
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'do work',
+						output_prompt: 'format results',
+						interval_minutes: 60,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps({ onCueRun });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await vi.advanceTimersByTimeAsync(100);
+
+			// Both calls made
+			expect(onCueRun).toHaveBeenCalledTimes(2);
+
+			// Activity log should retain main task output (fallback)
+			const log = engine.getActivityLog();
+			expect(log[0].stdout).toBe('main task output');
+
+			engine.stop();
+		});
+
+		it('does not execute output prompt when none is configured', async () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'do work',
+						interval_minutes: 60,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await vi.advanceTimersByTimeAsync(100);
+
+			// Only one call — no output prompt
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+
+			engine.stop();
+		});
+	});
+
 	describe('getGraphData', () => {
 		it('returns graph data for active sessions', () => {
 			const config = createMockConfig({

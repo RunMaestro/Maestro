@@ -24,7 +24,8 @@ export const AgentNode = memo(function AgentNode({
 	return (
 		<div
 			style={{
-				width: 220,
+				minWidth: 180,
+				maxWidth: 360,
 				height: 80,
 				borderRadius: 8,
 				backgroundColor: '#1e1e2e',
@@ -84,8 +85,6 @@ export const AgentNode = memo(function AgentNode({
 							fontSize: 13,
 							fontWeight: 600,
 							whiteSpace: 'nowrap',
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
 							flex: 1,
 						}}
 					>

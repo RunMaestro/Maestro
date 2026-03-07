@@ -443,11 +443,16 @@ export function graphSessionsToPipelines(
 	graphSessions: GraphSessionInput[],
 	allSessions: PipelineSessionInfo[]
 ): CuePipeline[] {
-	// Collect all subscriptions across all graph sessions
+	// Collect all subscriptions across all graph sessions, deduplicating by name.
+	// Multiple sessions sharing the same project root load the same cue.yaml,
+	// so the same subscription can appear in multiple graph sessions.
+	const seen = new Set<string>();
 	const allSubscriptions: CueSubscription[] = [];
 
 	for (const gs of graphSessions) {
 		for (const sub of gs.subscriptions) {
+			if (seen.has(sub.name)) continue;
+			seen.add(sub.name);
 			allSubscriptions.push(sub as CueSubscription);
 		}
 	}

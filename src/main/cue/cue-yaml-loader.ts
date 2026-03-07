@@ -76,6 +76,7 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					event: String(sub.event ?? '') as CueSubscription['event'],
 					enabled: sub.enabled !== false,
 					prompt: String(sub.prompt ?? ''),
+					output_prompt: typeof sub.output_prompt === 'string' ? sub.output_prompt : undefined,
 					interval_minutes:
 						typeof sub.interval_minutes === 'number' ? sub.interval_minutes : undefined,
 					watch: typeof sub.watch === 'string' ? sub.watch : undefined,
