@@ -480,7 +480,7 @@ describe('fileExplorer utils', () => {
 		it('always shows .maestro even when it matches ignore patterns', async () => {
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
 				{ name: '.maestro', isFile: false, isDirectory: true },
-				{ name: 'other.yaml', isFile: true, isDirectory: false },
+				{ name: '.env', isFile: true, isDirectory: false },
 				{ name: 'src', isFile: false, isDirectory: true },
 			]);
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]);
@@ -492,8 +492,8 @@ describe('fileExplorer utils', () => {
 
 			// .maestro should survive despite matching .*
 			expect(result.find((n) => n.name === '.maestro')).toBeDefined();
-			// other.yaml should be filtered out
-			expect(result.find((n) => n.name === 'other.yaml')).toBeUndefined();
+			// .env should be filtered out (matches .* and is not in ALWAYS_VISIBLE)
+			expect(result.find((n) => n.name === '.env')).toBeUndefined();
 			expect(result.find((n) => n.name === 'src')).toBeDefined();
 		});
 

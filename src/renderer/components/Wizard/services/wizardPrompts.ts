@@ -11,6 +11,7 @@ import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 
 /**
  * Structured response format expected from the agent
@@ -127,7 +128,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	const projectName = agentName || 'this project';
 
 	// Default Auto Run folder to standard location under working directory
-	const defaultAutoRunFolder = `${agentPath}/Auto Run Docs`;
+	const defaultAutoRunFolder = `${agentPath}/${PLAYBOOKS_DIR}`;
 	const effectiveAutoRunFolder = autoRunFolderPath || defaultAutoRunFolder;
 
 	// Build existing docs section if continuing from previous session
