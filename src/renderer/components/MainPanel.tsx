@@ -1812,10 +1812,11 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 
 									{/* TerminalView is kept alive for every session that has terminal tabs so that
 									     switching between sessions (or to AI mode) does not destroy the xterm.js
-									     scrollback buffer. Visibility is controlled via CSS display, not mount/unmount. */}
+									     scrollback buffer. visibility:hidden (not display:none) keeps the canvas
+									     at non-zero dimensions so the WebGL context is never lost or cleared. */}
 									{mountedTerminalSessionIds.map((sessionId) => {
 										const isCurrentSession = sessionId === activeSession.id;
-												const session = isCurrentSession
+										const session = isCurrentSession
 											? activeSession
 											: mountedTerminalSessionsRef.current.get(sessionId);
 										if (!session) return null;
@@ -1824,7 +1825,10 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 											<div
 												key={sessionId}
 												className="absolute inset-0 flex flex-col"
-												style={{ display: isTerminalVisible ? 'flex' : 'none' }}
+												style={{
+													visibility: isTerminalVisible ? 'visible' : 'hidden',
+													pointerEvents: isTerminalVisible ? 'auto' : 'none',
+												}}
 											>
 												<TerminalView
 													ref={(handle) => {
