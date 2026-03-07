@@ -13,6 +13,7 @@ import {
 	Bookmark,
 	Trophy,
 	Trash2,
+	Bot,
 } from 'lucide-react';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -858,6 +859,17 @@ function SessionListInner(props: SessionListProps) {
 								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
 							/>
+						</div>
+					)}
+
+					{/* Empty state for unread agents filter */}
+					{showUnreadAgentsOnly && sortedFilteredSessions.length === 0 && (
+						<div
+							className="flex-1 flex flex-col items-center justify-center gap-3 px-4"
+							style={{ color: theme.colors.textDim }}
+						>
+							<Bot className="w-8 h-8 opacity-30" />
+							<span className="text-xs italic">No unread or working agents</span>
 						</div>
 					)}
 
