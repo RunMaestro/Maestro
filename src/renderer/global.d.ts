@@ -2745,6 +2745,12 @@ interface MaestroAPI {
 
 	// Cue API (event-driven automation)
 	cue: {
+		getSettings: () => Promise<{
+			timeout_minutes: number;
+			timeout_on_fail: 'break' | 'continue';
+			max_concurrent: number;
+			queue_size: number;
+		}>;
 		getStatus: () => Promise<
 			Array<{
 				sessionId: string;

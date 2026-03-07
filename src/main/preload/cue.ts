@@ -65,6 +65,14 @@ export interface CueSessionStatus {
  */
 export function createCueApi() {
 	return {
+		// Get global Cue settings (timeout, concurrency, queue)
+		getSettings: (): Promise<{
+			timeout_minutes: number;
+			timeout_on_fail: 'break' | 'continue';
+			max_concurrent: number;
+			queue_size: number;
+		}> => ipcRenderer.invoke('cue:getSettings'),
+
 		// Get status of all Cue-enabled sessions
 		getStatus: (): Promise<CueSessionStatus[]> => ipcRenderer.invoke('cue:getStatus'),
 

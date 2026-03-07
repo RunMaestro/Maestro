@@ -24,7 +24,7 @@ import ReactFlow, {
 	type Connection,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle } from 'lucide-react';
+import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle, Settings } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
 	CuePipelineState,
@@ -48,6 +48,9 @@ import { NodeConfigPanel } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 import { graphSessionsToPipelines } from './utils/yamlToPipeline';
 import { pipelinesToYaml } from './utils/pipelineToYaml';
+import { CueSettingsPanel } from './panels/CueSettingsPanel';
+import type { CueSettings } from '../../../main/cue/cue-types';
+import { DEFAULT_CUE_SETTINGS } from '../../../main/cue/cue-types';
 
 interface CueGraphSession {
 	sessionId: string;
@@ -355,6 +358,10 @@ function CuePipelineEditorInner({
 	const savedStateRef = useRef<string>(''); // JSON snapshot for dirty tracking
 	const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	// Cue global settings
+	const [cueSettings, setCueSettings] = useState<CueSettings>({ ...DEFAULT_CUE_SETTINGS });
+	const [showSettings, setShowSettings] = useState(false);
+
 	// Debounced layout persistence (positions + viewport)
 	const persistLayout = useCallback(() => {
 		if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
@@ -376,6 +383,14 @@ function CuePipelineEditorInner({
 		return () => {
 			if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
 		};
+	}, []);
+
+	// Load global Cue settings from engine
+	useEffect(() => {
+		window.maestro.cue
+			.getSettings()
+			.then((settings) => setCueSettings(settings))
+			.catch(() => {});
 	}, []);
 
 	// Track whether we've applied saved layout positions yet
@@ -452,37 +467,43 @@ function CuePipelineEditorInner({
 	const handleSave = useCallback(async () => {
 		// Validate before save
 		const errors = validatePipelines(pipelineState.pipelines);
+
+		// Find unique project roots from sessions involved in pipelines
+		const sessionNames = new Set<string>();
+		for (const pipeline of pipelineState.pipelines) {
+			for (const node of pipeline.nodes) {
+				if (node.type === 'agent') {
+					sessionNames.add((node.data as AgentNodeData).sessionName);
+				}
+			}
+		}
+
+		const projectRoots = new Set<string>();
+		for (const session of sessions) {
+			if (session.projectRoot && sessionNames.has(session.name)) {
+				projectRoots.add(session.projectRoot);
+			}
+		}
+
+		// If no specific project roots found, use first session's project root
+		if (projectRoots.size === 0 && sessions.length > 0) {
+			const firstWithRoot = sessions.find((s) => s.projectRoot);
+			if (firstWithRoot?.projectRoot) {
+				projectRoots.add(firstWithRoot.projectRoot);
+			}
+		}
+
+		// No project root means we can't write YAML
+		if (projectRoots.size === 0) {
+			errors.push('No project root found — agents must have a working directory to save YAML');
+		}
+
 		setValidationErrors(errors);
 		if (errors.length > 0) return;
 
 		setSaveStatus('saving');
 		try {
-			const yamlContent = pipelinesToYaml(pipelineState.pipelines);
-
-			// Find unique project roots from sessions involved in pipelines
-			const sessionNames = new Set<string>();
-			for (const pipeline of pipelineState.pipelines) {
-				for (const node of pipeline.nodes) {
-					if (node.type === 'agent') {
-						sessionNames.add((node.data as AgentNodeData).sessionName);
-					}
-				}
-			}
-
-			const projectRoots = new Set<string>();
-			for (const session of sessions) {
-				if (session.projectRoot && sessionNames.has(session.name)) {
-					projectRoots.add(session.projectRoot);
-				}
-			}
-
-			// If no specific project roots found, use first session's project root
-			if (projectRoots.size === 0 && sessions.length > 0) {
-				const firstWithRoot = sessions.find((s) => s.projectRoot);
-				if (firstWithRoot?.projectRoot) {
-					projectRoots.add(firstWithRoot.projectRoot);
-				}
-			}
+			const yamlContent = pipelinesToYaml(pipelineState.pipelines, cueSettings);
 
 			// Write YAML and refresh sessions
 			for (const root of projectRoots) {
@@ -508,7 +529,7 @@ function CuePipelineEditorInner({
 			setSaveStatus('error');
 			setTimeout(() => setSaveStatus('idle'), 3000);
 		}
-	}, [pipelineState.pipelines, sessions]);
+	}, [pipelineState.pipelines, sessions, cueSettings]);
 
 	const handleDiscard = useCallback(async () => {
 		try {
@@ -1169,6 +1190,22 @@ function CuePipelineEditorInner({
 						Agents
 					</button>
 
+					{/* Settings toggle */}
+					<button
+						onClick={() => setShowSettings((v) => !v)}
+						className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
+						style={{
+							backgroundColor: showSettings ? `${theme.colors.accent}20` : 'transparent',
+							color: showSettings ? theme.colors.accent : theme.colors.textDim,
+							border: `1px solid ${showSettings ? theme.colors.accent : theme.colors.border}`,
+							cursor: 'pointer',
+							transition: 'all 0.15s',
+						}}
+						title="Global Cue settings"
+					>
+						<Settings size={12} />
+					</button>
+
 					{/* Discard Changes */}
 					{isDirty && (
 						<button
@@ -1439,6 +1476,18 @@ function CuePipelineEditorInner({
 							</button>
 						))}
 					</div>
+				)}
+
+				{/* Cue settings panel */}
+				{showSettings && (
+					<CueSettingsPanel
+						settings={cueSettings}
+						onChange={(s) => {
+							setCueSettings(s);
+							setIsDirty(true);
+						}}
+						onClose={() => setShowSettings(false)}
+					/>
 				)}
 
 				{/* Config panels */}

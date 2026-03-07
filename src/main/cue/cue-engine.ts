@@ -20,8 +20,10 @@ import type {
 	CueGraphSession,
 	CueRunResult,
 	CueSessionStatus,
+	CueSettings,
 	CueSubscription,
 } from './cue-types';
+import { DEFAULT_CUE_SETTINGS } from './cue-types';
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
 import { createCueGitHubPoller } from './cue-github-poller';
@@ -291,6 +293,14 @@ export class CueEngine {
 			}
 		}
 		return result;
+	}
+
+	/** Returns the merged Cue settings from the first available session config */
+	getSettings(): CueSettings {
+		for (const [, state] of this.sessions) {
+			return { ...state.config.settings };
+		}
+		return { ...DEFAULT_CUE_SETTINGS };
 	}
 
 	/** Returns all sessions with their parsed subscriptions (for graph visualization) */

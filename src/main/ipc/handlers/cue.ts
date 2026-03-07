@@ -15,7 +15,12 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { validateCueConfig } from '../../cue/cue-yaml-loader';
 import { CUE_YAML_FILENAME } from '../../cue/cue-types';
 import type { CueEngine } from '../../cue/cue-engine';
-import type { CueGraphSession, CueRunResult, CueSessionStatus } from '../../cue/cue-types';
+import type {
+	CueGraphSession,
+	CueRunResult,
+	CueSessionStatus,
+	CueSettings,
+} from '../../cue/cue-types';
 import type { PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 
 const LOG_CONTEXT = '[Cue]';
@@ -52,6 +57,14 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		}
 		return engine;
 	};
+
+	// Get global Cue settings (merged from engine state)
+	ipcMain.handle(
+		'cue:getSettings',
+		withIpcErrorLogging(handlerOpts('getSettings'), async (): Promise<CueSettings> => {
+			return requireEngine().getSettings();
+		})
+	);
 
 	// Get status of all Cue-enabled sessions
 	ipcMain.handle(

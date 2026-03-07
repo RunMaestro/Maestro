@@ -31,7 +31,7 @@ export const AgentNode = memo(function AgentNode({
 				display: 'flex',
 				flexDirection: 'row',
 				overflow: 'visible',
-				cursor: 'default',
+				cursor: 'grab',
 				transition: 'border-color 0.15s, box-shadow 0.15s',
 				position: 'relative',
 			}}
@@ -134,8 +134,9 @@ export const AgentNode = memo(function AgentNode({
 					cursor: 'pointer',
 					color: selected ? accentColor : '#555',
 					flexShrink: 0,
-					padding: '0 8px',
-					borderRadius: '0 6px 6px 0',
+					padding: '0 6px',
+					marginRight: 4,
+					borderRadius: 4,
 					transition: 'color 0.15s',
 				}}
 				onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
@@ -174,9 +175,12 @@ export const AgentNode = memo(function AgentNode({
 				position={Position.Left}
 				style={{
 					backgroundColor: accentColor,
-					borderColor: '#1e1e2e',
-					width: 8,
-					height: 8,
+					border: '3px solid #1e1e2e',
+					boxShadow: `0 0 0 2px ${accentColor}`,
+					width: 16,
+					height: 16,
+					zIndex: 10,
+					left: -8,
 				}}
 			/>
 			<Handle
@@ -184,9 +188,12 @@ export const AgentNode = memo(function AgentNode({
 				position={Position.Right}
 				style={{
 					backgroundColor: accentColor,
-					borderColor: '#1e1e2e',
-					width: 8,
-					height: 8,
+					border: '3px solid #1e1e2e',
+					boxShadow: `0 0 0 2px ${accentColor}`,
+					width: 16,
+					height: 16,
+					zIndex: 10,
+					right: -8,
 				}}
 			/>
 		</div>
