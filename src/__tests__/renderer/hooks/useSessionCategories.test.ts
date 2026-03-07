@@ -272,6 +272,27 @@ describe('useSessionCategories', () => {
 			expect(result.current.sortedFilteredSessions[0].name).toBe('Has Unread');
 		});
 
+		it('includes busy agents even without unread tabs when showUnreadAgentsOnly is true', () => {
+			const s1 = makeSession({
+				name: 'Has Unread',
+				aiTabs: [{ id: 't1', hasUnread: true } as any],
+			});
+			const s2 = makeSession({
+				name: 'Busy Agent',
+				state: 'busy',
+				aiTabs: [{ id: 't2', hasUnread: false } as any],
+			});
+			const s3 = makeSession({ name: 'Idle No Unread' });
+			resetStore([s1, s2, s3]);
+
+			const { result } = renderHook(() => useSessionCategories('', [s1, s2, s3], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(2);
+			const names = result.current.sortedFilteredSessions.map((s) => s.name);
+			expect(names).toContain('Has Unread');
+			expect(names).toContain('Busy Agent');
+		});
+
 		it('combines unread filter with text filter', () => {
 			const s1 = makeSession({
 				name: 'Frontend',

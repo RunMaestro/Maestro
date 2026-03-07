@@ -424,7 +424,10 @@ function SessionListInner(props: SessionListProps) {
 	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly);
 
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => !s.parentSessionId && s.aiTabs?.some((tab) => tab.hasUnread)),
+		() =>
+			sessions.some(
+				(s) => !s.parentSessionId && (s.aiTabs?.some((tab) => tab.hasUnread) || s.state === 'busy')
+			),
 		[sessions]
 	);
 

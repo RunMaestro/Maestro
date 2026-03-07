@@ -76,10 +76,10 @@ export function useSessionCategories(
 			// Exclude worktree children from main list (they appear under parent)
 			if (s.parentSessionId) continue;
 
-			// Apply unread agents filter
+			// Apply unread agents filter (also keep busy/working agents visible)
 			if (showUnreadAgentsOnly) {
 				const hasUnread = s.aiTabs?.some((tab) => tab.hasUnread);
-				if (!hasUnread) continue;
+				if (!hasUnread && s.state !== 'busy') continue;
 			}
 
 			if (!query) {
