@@ -740,7 +740,7 @@ describe('CueYamlEditor', () => {
 			});
 		});
 
-		it('should populate editor when a pattern is clicked', async () => {
+		it('should open a preview overlay when a pattern is clicked', async () => {
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
@@ -749,14 +749,12 @@ describe('CueYamlEditor', () => {
 
 			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
 
-			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
-			expect(editor.value).toContain('Scheduled Task');
-			expect(editor.value).toContain('time.interval');
-			expect(editor.value).toContain('interval_minutes: 60');
+			// Preview overlay should show the explanation and copy button
+			expect(screen.getByText(/Runs a prompt on a fixed interval/)).toBeInTheDocument();
+			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
 		});
 
-		it('should prompt for confirmation when editor is dirty before applying pattern', async () => {
-			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+		it('should not modify the editor when a pattern is clicked', async () => {
 			mockReadYaml.mockResolvedValue('original content');
 
 			render(<CueYamlEditor {...defaultProps} />);
@@ -765,43 +763,54 @@ describe('CueYamlEditor', () => {
 				expect(screen.getByTestId('yaml-editor')).toBeInTheDocument();
 			});
 
-			fireEvent.change(screen.getByTestId('yaml-editor'), {
-				target: { value: 'modified content' },
-			});
+			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
 
-			fireEvent.click(screen.getByTestId('pattern-file-enrichment'));
-
-			expect(mockConfirm).toHaveBeenCalledWith(
-				'Replace current YAML with this pattern? Unsaved changes will be lost.'
-			);
-
+			// Editor should still have original content
 			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
-			expect(editor.value).toBe('modified content');
-
-			mockConfirm.mockRestore();
+			expect(editor.value).toBe('original content');
 		});
 
-		it('should replace content when user confirms dirty pattern switch', async () => {
-			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
-			mockReadYaml.mockResolvedValue('original content');
+		it('should copy YAML to clipboard when Copy button is clicked', async () => {
+			const mockWriteText = vi.fn().mockResolvedValue(undefined);
+			Object.assign(navigator, {
+				clipboard: { writeText: mockWriteText },
+			});
 
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('yaml-editor')).toBeInTheDocument();
+				expect(screen.getByTestId('pattern-scheduled-task')).toBeInTheDocument();
 			});
 
-			fireEvent.change(screen.getByTestId('yaml-editor'), {
-				target: { value: 'modified content' },
+			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
+			fireEvent.click(screen.getByText('Copy to Clipboard'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalledWith(expect.stringContaining('time.interval'));
 			});
 
-			fireEvent.click(screen.getByTestId('pattern-debate'));
+			expect(screen.getByText('Copied')).toBeInTheDocument();
+		});
 
-			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
-			expect(editor.value).toContain('Debate');
-			expect(editor.value).toContain('debater-pro');
+		it('should close preview overlay when backdrop is clicked', async () => {
+			render(<CueYamlEditor {...defaultProps} />);
 
-			mockConfirm.mockRestore();
+			await waitFor(() => {
+				expect(screen.getByTestId('pattern-scheduled-task')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
+			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
+
+			// Click the backdrop overlay to close
+			const overlayBackdrop = document.querySelector('[style*="z-index: 464"]');
+			if (overlayBackdrop) {
+				fireEvent.click(overlayBackdrop);
+			}
+
+			await waitFor(() => {
+				expect(screen.queryByText('Copy to Clipboard')).not.toBeInTheDocument();
+			});
 		});
 	});
 });

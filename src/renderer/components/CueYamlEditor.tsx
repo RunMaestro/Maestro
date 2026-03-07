@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CheckCircle, XCircle, Zap, Send, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Zap, Send, Loader2, Copy, Check, X } from 'lucide-react';
+import type { CuePattern } from '../constants/cuePatterns';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { CUE_PATTERNS } from '../constants/cuePatterns';
@@ -243,20 +244,16 @@ export function CueYamlEditor({
 		onClose();
 	}, [yamlContent, originalContent, onClose]);
 
-	const handlePatternSelect = useCallback(
-		(yaml: string) => {
-			const editorDirty = yamlContent !== originalContent;
-			if (editorDirty) {
-				const confirmed = window.confirm(
-					'Replace current YAML with this pattern? Unsaved changes will be lost.'
-				);
-				if (!confirmed) return;
-			}
-			setYamlContent(yaml);
-			validateYaml(yaml);
-		},
-		[yamlContent, originalContent, validateYaml]
-	);
+	// Pattern preview state
+	const [previewPattern, setPreviewPattern] = useState<CuePattern | null>(null);
+	const [copied, setCopied] = useState(false);
+
+	const handleCopyPattern = useCallback(async () => {
+		if (!previewPattern) return;
+		await navigator.clipboard.writeText(previewPattern.yaml);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	}, [previewPattern]);
 
 	const refreshYamlFromDisk = useCallback(async () => {
 		try {
@@ -407,230 +404,325 @@ export function CueYamlEditor({
 	const isDirty = yamlContent !== originalContent;
 
 	return (
-		<Modal
-			theme={theme}
-			title={`Edit .maestro/cue.yaml${session?.name ? ` — ${session.name}` : ''}`}
-			priority={MODAL_PRIORITIES.CUE_YAML_EDITOR}
-			onClose={handleClose}
-			width={1200}
-			maxHeight="85vh"
-			closeOnBackdropClick={false}
-			headerIcon={<Zap className="w-4 h-4" style={{ color: CUE_TEAL }} />}
-			testId="cue-yaml-editor"
-			footer={
-				<div className="flex items-center justify-between w-full">
-					<div className="flex items-center gap-2 text-xs">
-						{isValid ? (
-							<>
-								<CheckCircle className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
-								<span style={{ color: theme.colors.success }}>Valid YAML</span>
-							</>
-						) : (
-							<>
-								<XCircle className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
-								<span style={{ color: theme.colors.error }}>
-									{validationErrors.length} error{validationErrors.length !== 1 ? 's' : ''}
-								</span>
-							</>
-						)}
+		<>
+			<Modal
+				theme={theme}
+				title={`Edit .maestro/cue.yaml${session?.name ? ` — ${session.name}` : ''}`}
+				priority={MODAL_PRIORITIES.CUE_YAML_EDITOR}
+				onClose={handleClose}
+				width={1200}
+				maxHeight="85vh"
+				closeOnBackdropClick={false}
+				headerIcon={<Zap className="w-4 h-4" style={{ color: CUE_TEAL }} />}
+				testId="cue-yaml-editor"
+				footer={
+					<div className="flex items-center justify-between w-full">
+						<div className="flex items-center gap-2 text-xs">
+							{isValid ? (
+								<>
+									<CheckCircle className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
+									<span style={{ color: theme.colors.success }}>Valid YAML</span>
+								</>
+							) : (
+								<>
+									<XCircle className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
+									<span style={{ color: theme.colors.error }}>
+										{validationErrors.length} error{validationErrors.length !== 1 ? 's' : ''}
+									</span>
+								</>
+							)}
+						</div>
+						<ModalFooter
+							theme={theme}
+							onCancel={handleClose}
+							cancelLabel="Exit"
+							onConfirm={handleSave}
+							confirmLabel="Save"
+							confirmDisabled={!isValid || !isDirty || chatBusy}
+						/>
 					</div>
-					<ModalFooter
-						theme={theme}
-						onCancel={handleClose}
-						cancelLabel="Exit"
-						onConfirm={handleSave}
-						confirmLabel="Save"
-						confirmDisabled={!isValid || !isDirty || chatBusy}
-					/>
-				</div>
-			}
-		>
-			{loading ? (
-				<div className="text-center py-12 text-sm" style={{ color: theme.colors.textDim }}>
-					Loading YAML...
-				</div>
-			) : (
-				<div className="flex gap-4" style={{ height: 'calc(85vh - 140px)', maxHeight: 600 }}>
-					{/* Left side: Patterns + AI Chat (35%) */}
-					<div className="flex flex-col gap-3 overflow-hidden" style={{ width: '35%' }}>
-						<h3
-							className="text-xs font-bold uppercase tracking-wider shrink-0"
-							style={{ color: theme.colors.textDim }}
-						>
-							Start from a pattern
-						</h3>
-						<div className="grid grid-cols-2 gap-1.5 shrink-0" data-testid="pattern-presets">
-							{CUE_PATTERNS.map((pattern) => (
-								<button
-									key={pattern.id}
-									onClick={() => handlePatternSelect(pattern.yaml)}
+				}
+			>
+				{loading ? (
+					<div className="text-center py-12 text-sm" style={{ color: theme.colors.textDim }}>
+						Loading YAML...
+					</div>
+				) : (
+					<div className="flex gap-4" style={{ height: 'calc(85vh - 140px)', maxHeight: 600 }}>
+						{/* Left side: Patterns + AI Chat (35%) */}
+						<div className="flex flex-col gap-3 overflow-hidden" style={{ width: '35%' }}>
+							<h3
+								className="text-xs font-bold uppercase tracking-wider shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
+								Start from a pattern
+							</h3>
+							<div className="grid grid-cols-2 gap-1.5 shrink-0" data-testid="pattern-presets">
+								{CUE_PATTERNS.map((pattern) => (
+									<button
+										key={pattern.id}
+										onClick={() => {
+											setCopied(false);
+											setPreviewPattern(pattern);
+										}}
+										disabled={chatBusy}
+										className="text-left px-2 py-1.5 rounded border text-xs transition-colors hover:opacity-90 disabled:opacity-50"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+										data-testid={`pattern-${pattern.id}`}
+									>
+										<div className="font-medium truncate">{pattern.name}</div>
+										<div
+											className="truncate mt-0.5"
+											style={{ color: theme.colors.textDim, fontSize: 10 }}
+										>
+											{pattern.description}
+										</div>
+									</button>
+								))}
+							</div>
+
+							<div
+								className="w-full border-t shrink-0"
+								style={{ borderColor: theme.colors.border }}
+							/>
+
+							<h3
+								className="text-xs font-bold uppercase tracking-wider shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
+								AI Assist
+							</h3>
+
+							{/* Chat history */}
+							<div
+								className="flex-1 overflow-y-auto min-h-0 space-y-2"
+								data-testid="ai-chat-history"
+							>
+								{chatMessages.length === 0 && !chatBusy && (
+									<p className="text-xs" style={{ color: theme.colors.textDim }}>
+										Describe what you want to automate. The agent will edit the config file and can
+										answer questions.
+									</p>
+								)}
+								{chatMessages.map((msg, i) => (
+									<div
+										key={i}
+										className="rounded px-2.5 py-1.5 text-xs whitespace-pre-wrap"
+										style={{
+											backgroundColor:
+												msg.role === 'user' ? `${CUE_TEAL}15` : theme.colors.bgActivity,
+											color: theme.colors.textMain,
+										}}
+										data-testid={`chat-message-${msg.role}`}
+									>
+										{msg.text}
+									</div>
+								))}
+								{chatBusy && (
+									<div
+										className="flex items-center gap-2 px-2.5 py-1.5 text-xs"
+										style={{ color: theme.colors.textDim }}
+										data-testid="chat-busy-indicator"
+									>
+										<Loader2 className="w-3 h-3 animate-spin" />
+										Agent is working...
+									</div>
+								)}
+								<div ref={chatEndRef} />
+							</div>
+
+							{/* Chat input */}
+							<div className="flex gap-1.5 shrink-0">
+								<textarea
+									value={chatInput}
+									onChange={(e) => setChatInput(e.target.value)}
+									onKeyDown={handleChatKeyDown}
+									placeholder={AI_PLACEHOLDER}
 									disabled={chatBusy}
-									className="text-left px-2 py-1.5 rounded border text-xs transition-colors hover:opacity-90 disabled:opacity-50"
+									rows={2}
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs resize-none disabled:opacity-50"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
-										backgroundColor: theme.colors.bgActivity,
 									}}
-									data-testid={`pattern-${pattern.id}`}
-								>
-									<div className="font-medium truncate">{pattern.name}</div>
-									<div
-										className="truncate mt-0.5"
-										style={{ color: theme.colors.textDim, fontSize: 10 }}
-									>
-										{pattern.description}
-									</div>
-								</button>
-							))}
-						</div>
-
-						<div
-							className="w-full border-t shrink-0"
-							style={{ borderColor: theme.colors.border }}
-						/>
-
-						<h3
-							className="text-xs font-bold uppercase tracking-wider shrink-0"
-							style={{ color: theme.colors.textDim }}
-						>
-							AI Assist
-						</h3>
-
-						{/* Chat history */}
-						<div className="flex-1 overflow-y-auto min-h-0 space-y-2" data-testid="ai-chat-history">
-							{chatMessages.length === 0 && !chatBusy && (
-								<p className="text-xs" style={{ color: theme.colors.textDim }}>
-									Describe what you want to automate. The agent will edit the config file and can
-									answer questions.
-								</p>
-							)}
-							{chatMessages.map((msg, i) => (
-								<div
-									key={i}
-									className="rounded px-2.5 py-1.5 text-xs whitespace-pre-wrap"
+									data-testid="ai-chat-input"
+								/>
+								<button
+									onClick={handleChatSend}
+									disabled={!chatInput.trim() || chatBusy}
+									className="self-end p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
 									style={{
 										backgroundColor:
-											msg.role === 'user' ? `${CUE_TEAL}15` : theme.colors.bgActivity,
-										color: theme.colors.textMain,
+											chatInput.trim() && !chatBusy ? CUE_TEAL : theme.colors.bgActivity,
+										color: chatInput.trim() && !chatBusy ? '#fff' : theme.colors.textDim,
 									}}
-									data-testid={`chat-message-${msg.role}`}
+									data-testid="ai-chat-send"
 								>
-									{msg.text}
-								</div>
-							))}
-							{chatBusy && (
-								<div
-									className="flex items-center gap-2 px-2.5 py-1.5 text-xs"
-									style={{ color: theme.colors.textDim }}
-									data-testid="chat-busy-indicator"
-								>
-									<Loader2 className="w-3 h-3 animate-spin" />
-									Agent is working...
-								</div>
-							)}
-							<div ref={chatEndRef} />
+									<Send className="w-3.5 h-3.5" />
+								</button>
+							</div>
 						</div>
 
-						{/* Chat input */}
-						<div className="flex gap-1.5 shrink-0">
-							<textarea
-								value={chatInput}
-								onChange={(e) => setChatInput(e.target.value)}
-								onKeyDown={handleChatKeyDown}
-								placeholder={AI_PLACEHOLDER}
-								disabled={chatBusy}
-								rows={2}
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-xs resize-none disabled:opacity-50"
+						{/* Divider */}
+						<div
+							className="w-px self-stretch shrink-0"
+							style={{ backgroundColor: theme.colors.border }}
+						/>
+
+						{/* Right side: YAML editor (65%) */}
+						<div className="flex flex-col gap-3 overflow-hidden" style={{ width: '65%' }}>
+							<h3
+								className="text-xs font-bold uppercase tracking-wider shrink-0"
+								style={{ color: theme.colors.textDim }}
+							>
+								YAML Configuration
+							</h3>
+							<div
+								className="flex-1 flex rounded border overflow-hidden min-h-0"
 								style={{
+									borderColor: theme.colors.border,
+									opacity: chatBusy ? 0.5 : 1,
+									pointerEvents: chatBusy ? 'none' : 'auto',
+								}}
+							>
+								{/* Line numbers gutter */}
+								<div
+									className="py-3 px-2 text-right select-none font-mono text-xs leading-[1.35rem] overflow-hidden"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textDim,
+										minWidth: 40,
+									}}
+									data-testid="line-numbers"
+									aria-hidden="true"
+								>
+									{yamlContent.split('\n').map((_, i) => (
+										<div key={i}>{i + 1}</div>
+									))}
+								</div>
+								{/* Editor textarea */}
+								<textarea
+									ref={yamlTextareaRef}
+									value={yamlContent}
+									onChange={(e) => handleYamlChange(e.target.value)}
+									onKeyDown={handleYamlKeyDown}
+									readOnly={chatBusy}
+									spellCheck={false}
+									className="flex-1 py-3 px-3 bg-transparent outline-none text-sm resize-none font-mono leading-[1.35rem]"
+									style={{ color: theme.colors.textMain }}
+									data-testid="yaml-editor"
+								/>
+							</div>
+
+							{/* Validation errors */}
+							{!isValid && validationErrors.length > 0 && (
+								<div
+									className="rounded px-3 py-2 text-xs space-y-1 shrink-0"
+									style={{ backgroundColor: `${theme.colors.error}15` }}
+									data-testid="validation-errors"
+								>
+									{validationErrors.map((err, i) => (
+										<div key={i} style={{ color: theme.colors.error }}>
+											{err}
+										</div>
+									))}
+								</div>
+							)}
+						</div>
+					</div>
+				)}
+			</Modal>
+
+			{/* Pattern preview overlay */}
+			{previewPattern && (
+				<div
+					className="fixed inset-0 flex items-center justify-center"
+					style={{ zIndex: MODAL_PRIORITIES.CUE_YAML_EDITOR + 1 }}
+					onClick={(e) => {
+						if (e.target === e.currentTarget) setPreviewPattern(null);
+					}}
+				>
+					<div className="absolute inset-0 bg-black/40" />
+					<div
+						className="relative rounded-lg shadow-xl flex flex-col"
+						style={{
+							width: 560,
+							maxHeight: '70vh',
+							backgroundColor: theme.colors.bgMain,
+							border: `1px solid ${theme.colors.border}`,
+						}}
+					>
+						{/* Header */}
+						<div
+							className="flex items-center justify-between px-4 py-3 border-b shrink-0"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+								{previewPattern.name}
+							</h3>
+							<button
+								onClick={() => setPreviewPattern(null)}
+								className="p-1 rounded hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textDim }}
+							>
+								<X className="w-4 h-4" />
+							</button>
+						</div>
+
+						{/* Explanation */}
+						<div className="px-4 pt-3 pb-2 shrink-0">
+							<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
+								{previewPattern.explanation}
+							</p>
+						</div>
+
+						{/* YAML preview */}
+						<div className="px-4 flex-1 min-h-0 overflow-y-auto">
+							<pre
+								className="rounded border p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
 									borderColor: theme.colors.border,
 									color: theme.colors.textMain,
 								}}
-								data-testid="ai-chat-input"
-							/>
-							<button
-								onClick={handleChatSend}
-								disabled={!chatInput.trim() || chatBusy}
-								className="self-end p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-								style={{
-									backgroundColor:
-										chatInput.trim() && !chatBusy ? CUE_TEAL : theme.colors.bgActivity,
-									color: chatInput.trim() && !chatBusy ? '#fff' : theme.colors.textDim,
-								}}
-								data-testid="ai-chat-send"
 							>
-								<Send className="w-3.5 h-3.5" />
+								{previewPattern.yaml}
+							</pre>
+						</div>
+
+						{/* Footer */}
+						<div
+							className="flex justify-end px-4 py-3 border-t shrink-0"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<button
+								onClick={handleCopyPattern}
+								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+								style={{
+									backgroundColor: copied ? theme.colors.success : CUE_TEAL,
+									color: '#fff',
+								}}
+							>
+								{copied ? (
+									<>
+										<Check className="w-3.5 h-3.5" />
+										Copied
+									</>
+								) : (
+									<>
+										<Copy className="w-3.5 h-3.5" />
+										Copy to Clipboard
+									</>
+								)}
 							</button>
 						</div>
 					</div>
-
-					{/* Divider */}
-					<div
-						className="w-px self-stretch shrink-0"
-						style={{ backgroundColor: theme.colors.border }}
-					/>
-
-					{/* Right side: YAML editor (65%) */}
-					<div className="flex flex-col gap-3 overflow-hidden" style={{ width: '65%' }}>
-						<h3
-							className="text-xs font-bold uppercase tracking-wider shrink-0"
-							style={{ color: theme.colors.textDim }}
-						>
-							YAML Configuration
-						</h3>
-						<div
-							className="flex-1 flex rounded border overflow-hidden min-h-0"
-							style={{
-								borderColor: theme.colors.border,
-								opacity: chatBusy ? 0.5 : 1,
-								pointerEvents: chatBusy ? 'none' : 'auto',
-							}}
-						>
-							{/* Line numbers gutter */}
-							<div
-								className="py-3 px-2 text-right select-none font-mono text-xs leading-[1.35rem] overflow-hidden"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									color: theme.colors.textDim,
-									minWidth: 40,
-								}}
-								data-testid="line-numbers"
-								aria-hidden="true"
-							>
-								{yamlContent.split('\n').map((_, i) => (
-									<div key={i}>{i + 1}</div>
-								))}
-							</div>
-							{/* Editor textarea */}
-							<textarea
-								ref={yamlTextareaRef}
-								value={yamlContent}
-								onChange={(e) => handleYamlChange(e.target.value)}
-								onKeyDown={handleYamlKeyDown}
-								readOnly={chatBusy}
-								spellCheck={false}
-								className="flex-1 py-3 px-3 bg-transparent outline-none text-sm resize-none font-mono leading-[1.35rem]"
-								style={{ color: theme.colors.textMain }}
-								data-testid="yaml-editor"
-							/>
-						</div>
-
-						{/* Validation errors */}
-						{!isValid && validationErrors.length > 0 && (
-							<div
-								className="rounded px-3 py-2 text-xs space-y-1 shrink-0"
-								style={{ backgroundColor: `${theme.colors.error}15` }}
-								data-testid="validation-errors"
-							>
-								{validationErrors.map((err, i) => (
-									<div key={i} style={{ color: theme.colors.error }}>
-										{err}
-									</div>
-								))}
-							</div>
-						)}
-					</div>
 				</div>
 			)}
-		</Modal>
+		</>
 	);
 }
