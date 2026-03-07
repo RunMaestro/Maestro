@@ -4,6 +4,7 @@ import type { Theme } from '../../../types';
 
 export interface AgentSessionInfo {
 	id: string;
+	groupId?: string;
 	name: string;
 	toolType: string;
 }
@@ -12,6 +13,7 @@ export interface AgentDrawerProps {
 	isOpen: boolean;
 	onClose: () => void;
 	sessions: AgentSessionInfo[];
+	groups?: { id: string; name: string; emoji: string }[];
 	onCanvasSessionIds?: Set<string>;
 	theme: Theme;
 }
@@ -33,6 +35,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 	isOpen,
 	onClose,
 	sessions,
+	groups,
 	onCanvasSessionIds,
 	theme,
 }: AgentDrawerProps) {
@@ -46,16 +49,29 @@ export const AgentDrawer = memo(function AgentDrawer({
 		);
 	}, [sessions, search]);
 
-	// Group by toolType
-	const grouped = useMemo(() => {
-		const groups = new Map<string, AgentSessionInfo[]>();
-		for (const s of filtered) {
-			const list = groups.get(s.toolType) ?? [];
-			list.push(s);
-			groups.set(s.toolType, list);
+	// Build group lookup
+	const groupMap = useMemo(() => {
+		const map = new Map<string, { name: string; emoji: string }>();
+		for (const g of groups ?? []) {
+			map.set(g.id, { name: g.name, emoji: g.emoji });
 		}
-		return groups;
-	}, [filtered]);
+		return map;
+	}, [groups]);
+
+	// Group by user-defined groups (matching left panel), ungrouped last
+	const grouped = useMemo(() => {
+		const result = new Map<string, { label: string; sessions: AgentSessionInfo[] }>();
+		for (const s of filtered) {
+			const key = s.groupId ?? '__ungrouped__';
+			if (!result.has(key)) {
+				const g = s.groupId ? groupMap.get(s.groupId) : undefined;
+				const label = g ? `${g.emoji} ${g.name}` : 'Ungrouped';
+				result.set(key, { label, sessions: [] });
+			}
+			result.get(key)!.sessions.push(s);
+		}
+		return result;
+	}, [filtered, groupMap]);
 
 	return (
 		<div
@@ -136,8 +152,8 @@ export const AgentDrawer = memo(function AgentDrawer({
 
 			{/* Agent list */}
 			<div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 8px' }}>
-				{Array.from(grouped.entries()).map(([toolType, agents]) => (
-					<div key={toolType}>
+				{Array.from(grouped.entries()).map(([key, { label, sessions: agents }]) => (
+					<div key={key}>
 						{grouped.size > 1 && (
 							<div
 								style={{
@@ -149,7 +165,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 									padding: '8px 4px 4px',
 								}}
 							>
-								{toolType}
+								{label}
 							</div>
 						)}
 						{agents.map((session) => {

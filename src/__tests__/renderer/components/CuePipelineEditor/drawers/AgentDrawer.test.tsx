@@ -24,10 +24,15 @@ const mockTheme: Theme = {
 	},
 };
 
+const mockGroups = [
+	{ id: 'grp-1', name: 'Dev', emoji: '🛠️' },
+	{ id: 'grp-2', name: 'Ops', emoji: '🚀' },
+];
+
 const mockSessions = [
-	{ id: 'sess-1', name: 'Maestro', toolType: 'claude-code' },
-	{ id: 'sess-2', name: 'Codex Helper', toolType: 'codex' },
-	{ id: 'sess-3', name: 'Review Bot', toolType: 'claude-code' },
+	{ id: 'sess-1', name: 'Maestro', toolType: 'claude-code', groupId: 'grp-1' },
+	{ id: 'sess-2', name: 'Codex Helper', toolType: 'codex', groupId: 'grp-2' },
+	{ id: 'sess-3', name: 'Review Bot', toolType: 'claude-code', groupId: 'grp-1' },
 ];
 
 describe('AgentDrawer', () => {
@@ -99,19 +104,19 @@ describe('AgentDrawer', () => {
 		expect(indicators).toHaveLength(1);
 	});
 
-	it('should group agents by toolType when multiple types exist', () => {
+	it('should group agents by user-defined groups', () => {
 		render(
-			<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+			<AgentDrawer
+				isOpen={true}
+				onClose={() => {}}
+				sessions={mockSessions}
+				groups={mockGroups}
+				theme={mockTheme}
+			/>
 		);
 
-		// Group headers appear alongside individual agent toolType labels
-		// so we check for multiple instances (header + labels)
-		const claudeCodeElements = screen.getAllByText('claude-code');
-		// 1 group header + 2 agent labels = 3
-		expect(claudeCodeElements.length).toBe(3);
-		const codexElements = screen.getAllByText('codex');
-		// 1 group header + 1 agent label = 2
-		expect(codexElements.length).toBe(2);
+		expect(screen.getByText('🛠️ Dev')).toBeInTheDocument();
+		expect(screen.getByText('🚀 Ops')).toBeInTheDocument();
 	});
 
 	it('should use theme colors for styling', () => {

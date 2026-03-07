@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
 	Background,
+	ConnectionMode,
 	Controls,
 	MiniMap,
 	ReactFlowProvider,
@@ -64,6 +65,7 @@ interface CueGraphSession {
 
 interface SessionInfo {
 	id: string;
+	groupId?: string;
 	name: string;
 	toolType: string;
 	projectRoot?: string;
@@ -76,6 +78,7 @@ interface ActiveRunInfo {
 
 export interface CuePipelineEditorProps {
 	sessions: SessionInfo[];
+	groups?: { id: string; name: string; emoji: string }[];
 	graphSessions: CueGraphSession[];
 	onSwitchToSession: (id: string) => void;
 	onClose: () => void;
@@ -186,7 +189,6 @@ function convertToReactFlowNodes(
 					type: 'trigger',
 					position: pNode.position,
 					data: nodeData,
-					dragHandle: '.drag-handle',
 				});
 			} else {
 				const agentData = pNode.data as AgentNodeData;
@@ -215,7 +217,6 @@ function convertToReactFlowNodes(
 					type: 'agent',
 					position: pNode.position,
 					data: nodeData,
-					dragHandle: '.drag-handle',
 					style: !isActive ? { opacity: 0.4 } : undefined,
 				});
 			}
@@ -320,6 +321,7 @@ function validatePipelines(pipelines: CuePipeline[]): string[] {
 
 function CuePipelineEditorInner({
 	sessions,
+	groups,
 	graphSessions,
 	onSwitchToSession,
 	theme,
@@ -603,7 +605,7 @@ function CuePipelineEditorInner({
 	}, [activeRunsProp, pipelineState.pipelines]);
 
 	const handleConfigureNode = useCallback((compositeId: string) => {
-		setSelectedNodeId(compositeId);
+		setSelectedNodeId((prev) => (prev === compositeId ? null : compositeId));
 		setSelectedEdgeId(null);
 	}, []);
 
@@ -1323,6 +1325,7 @@ function CuePipelineEditorInner({
 					onNodeContextMenu={onNodeContextMenu}
 					onDragOver={onDragOver}
 					onDrop={onDrop}
+					connectionMode={ConnectionMode.Loose}
 					fitView
 					style={{
 						backgroundColor: theme.colors.bgMain,
@@ -1370,6 +1373,7 @@ function CuePipelineEditorInner({
 					isOpen={agentDrawerOpen}
 					onClose={() => setAgentDrawerOpen(false)}
 					sessions={sessions}
+					groups={groups}
 					onCanvasSessionIds={onCanvasSessionIds}
 					theme={theme}
 				/>
