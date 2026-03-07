@@ -13,3 +13,6 @@ export type { FormInputProps } from './FormInput';
 
 export { EmojiPickerField } from './EmojiPickerField';
 export type { EmojiPickerFieldProps } from './EmojiPickerField';
+
+export { ToggleSwitch } from './ToggleSwitch';
+export type { ToggleSwitchProps } from './ToggleSwitch';

@@ -150,6 +150,10 @@ export interface WizardState {
 	/** User's edited content for Phase 1 (if modified) */
 	editedPhase1Content: string | null;
 
+	// Launch Options
+	/** Whether to auto-run all documents in sequence (vs just the first) */
+	runAllDocuments: boolean;
+
 	// Tour Preference
 	/** Whether user wants the walkthrough tour after setup */
 	wantsTour: boolean;
@@ -200,6 +204,9 @@ const initialState: WizardState = {
 	generationError: null,
 	editedPhase1Content: null,
 
+	// Launch Options
+	runAllDocuments: false, // Default to running first document only
+
 	// Tour
 	wantsTour: true, // Default to wanting the tour
 
@@ -247,6 +254,7 @@ type WizardAction =
 	| { type: 'SET_GENERATING_DOCUMENTS'; generating: boolean }
 	| { type: 'SET_GENERATION_ERROR'; error: string | null }
 	| { type: 'SET_EDITED_PHASE1_CONTENT'; content: string | null }
+	| { type: 'SET_RUN_ALL_DOCUMENTS'; runAll: boolean }
 	| { type: 'SET_WANTS_TOUR'; wantsTour: boolean }
 	| { type: 'SET_COMPLETE'; sessionId: string | null }
 	| { type: 'RESTORE_STATE'; state: Partial<WizardState> };
@@ -375,6 +383,9 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 		case 'SET_EDITED_PHASE1_CONTENT':
 			return { ...state, editedPhase1Content: action.content };
 
+		case 'SET_RUN_ALL_DOCUMENTS':
+			return { ...state, runAllDocuments: action.runAll };
+
 		case 'SET_WANTS_TOUR':
 			return { ...state, wantsTour: action.wantsTour };
 
@@ -408,6 +419,7 @@ export interface SerializableWizardState {
 	isReadyToProceed: boolean;
 	generatedDocuments: GeneratedDocument[];
 	editedPhase1Content: string | null;
+	runAllDocuments: boolean;
 	wantsTour: boolean;
 	/** Per-session SSH remote configuration (for remote execution) */
 	sessionSshRemoteConfig?: {
@@ -503,6 +515,10 @@ export interface WizardContextAPI {
 	setEditedPhase1Content: (content: string | null) => void;
 	/** Get current Phase 1 content (edited or original) */
 	getPhase1Content: () => string;
+
+	// Launch Options
+	/** Set whether to run all documents or just the first */
+	setRunAllDocuments: (runAll: boolean) => void;
 
 	// Tour
 	/** Set whether user wants the tour */
@@ -735,6 +751,11 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		return phase1Doc?.content || '';
 	}, [state.editedPhase1Content, state.generatedDocuments]);
 
+	// Launch Options
+	const setRunAllDocuments = useCallback((runAll: boolean) => {
+		dispatch({ type: 'SET_RUN_ALL_DOCUMENTS', runAll });
+	}, []);
+
 	// Tour
 	const setWantsTour = useCallback((wantsTour: boolean) => {
 		dispatch({ type: 'SET_WANTS_TOUR', wantsTour });
@@ -760,6 +781,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			isReadyToProceed: state.isReadyToProceed,
 			generatedDocuments: state.generatedDocuments,
 			editedPhase1Content: state.editedPhase1Content,
+			runAllDocuments: state.runAllDocuments,
 			wantsTour: state.wantsTour,
 			sessionSshRemoteConfig: state.sessionSshRemoteConfig,
 		};
@@ -774,6 +796,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		state.isReadyToProceed,
 		state.generatedDocuments,
 		state.editedPhase1Content,
+		state.runAllDocuments,
 		state.wantsTour,
 		state.sessionSshRemoteConfig,
 	]);
@@ -842,6 +865,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 				isReadyToProceed: currentState.isReadyToProceed,
 				generatedDocuments: currentState.generatedDocuments,
 				editedPhase1Content: currentState.editedPhase1Content,
+				runAllDocuments: currentState.runAllDocuments,
 				wantsTour: currentState.wantsTour,
 			};
 			window.maestro.settings.set('wizardResumeState', serializableState);
@@ -898,6 +922,9 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setEditedPhase1Content,
 			getPhase1Content,
 
+			// Launch Options
+			setRunAllDocuments,
+
 			// Tour
 			setWantsTour,
 
@@ -947,6 +974,7 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setGenerationError,
 			setEditedPhase1Content,
 			getPhase1Content,
+			setRunAllDocuments,
 			setWantsTour,
 			completeWizard,
 			saveStateForResume,
