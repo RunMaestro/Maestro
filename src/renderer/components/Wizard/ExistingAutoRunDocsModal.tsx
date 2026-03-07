@@ -2,7 +2,7 @@
  * ExistingAutoRunDocsModal.tsx
  *
  * Dialog that appears when the user selects a directory that already contains
- * an "Auto Run Docs" folder. Gives users the option to:
+ * a playbooks folder (.maestro/playbooks). Gives users the option to:
  * 1. Start fresh - delete existing docs and begin new planning
  * 2. Continue planning - have the agent read existing docs and continue from there
  */

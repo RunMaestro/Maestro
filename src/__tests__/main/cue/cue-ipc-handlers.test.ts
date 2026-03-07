@@ -11,7 +11,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
-import * as path from 'path';
 
 // Track registered IPC handlers
 const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -31,6 +30,7 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 	readFileSync: vi.fn(),
 	writeFileSync: vi.fn(),
+	mkdirSync: vi.fn(),
 }));
 
 vi.mock('path', async () => {
@@ -58,6 +58,7 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	validateCueConfig: vi.fn(),
+	resolveCueConfigPath: vi.fn(),
 }));
 
 vi.mock('../../../main/cue/cue-types', () => ({
@@ -70,7 +71,7 @@ vi.mock('../../../shared/maestro-paths', () => ({
 }));
 
 import { registerCueHandlers } from '../../../main/ipc/handlers/cue';
-import { validateCueConfig } from '../../../main/cue/cue-yaml-loader';
+import { validateCueConfig, resolveCueConfigPath } from '../../../main/cue/cue-yaml-loader';
 import * as yaml from 'js-yaml';
 
 // Create a mock CueEngine
@@ -253,18 +254,18 @@ describe('Cue IPC Handlers', () => {
 
 	describe('cue:readYaml', () => {
 		it('should return file content when file exists', async () => {
-			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(resolveCueConfigPath).mockReturnValue('/projects/test/.maestro/cue.yaml');
 			vi.mocked(fs.readFileSync).mockReturnValue('subscriptions: []');
 
 			const handler = registerAndGetHandler('cue:readYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBe('subscriptions: []');
-			expect(fs.existsSync).toHaveBeenCalledWith('/projects/test/.maestro/cue.yaml');
+			expect(resolveCueConfigPath).toHaveBeenCalledWith('/projects/test');
 			expect(fs.readFileSync).toHaveBeenCalledWith('/projects/test/.maestro/cue.yaml', 'utf-8');
 		});
 
 		it('should return null when file does not exist', async () => {
-			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(resolveCueConfigPath).mockReturnValue(null);
 
 			const handler = registerAndGetHandler('cue:readYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
@@ -276,6 +277,7 @@ describe('Cue IPC Handlers', () => {
 	describe('cue:writeYaml', () => {
 		it('should write content to the correct file path', async () => {
 			const content = 'subscriptions:\n  - name: test\n    event: time.interval';
+			vi.mocked(fs.existsSync).mockReturnValue(true); // .maestro dir exists
 
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content });

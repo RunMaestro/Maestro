@@ -1126,7 +1126,7 @@ export function DocumentGenerationView({
 					<p className="text-sm text-center max-w-md" style={{ color: theme.colors.textDim }}>
 						Available under{' '}
 						<span style={{ color: theme.colors.accent, fontWeight: 500 }}>
-							{subfolderName || 'Auto Run Docs'}/
+							{subfolderName || '.maestro/playbooks'}/
 						</span>
 					</p>
 				) : (
