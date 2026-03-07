@@ -465,7 +465,8 @@ describe('useMainKeyboardHandler', () => {
 			vi.useFakeTimers();
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockHandleOpenTerminalTab = vi.fn();			const mockActiveSession = {
+			const mockHandleOpenTerminalTab = vi.fn();
+			const mockActiveSession = {
 				id: 'test-session',
 				name: 'Test',
 				inputMode: 'ai',
@@ -481,7 +482,8 @@ describe('useMainKeyboardHandler', () => {
 				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'toggleMode',
 				activeSessionId: 'test-session',
 				activeSession: mockActiveSession,
-				handleOpenTerminalTab: mockHandleOpenTerminalTab,			});
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
 
 			act(() => {
 				window.dispatchEvent(
@@ -494,7 +496,8 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			// Cmd+J should open a new terminal tab even when file preview overlay is open
-			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();		});
+			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
 
 		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
 			// On macOS, Shift+[ produces '{' and Shift+] produces '}'
@@ -825,7 +828,8 @@ describe('useMainKeyboardHandler', () => {
 			vi.useFakeTimers();
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockHandleOpenTerminalTab = vi.fn();			const regularTab = {
+			const mockHandleOpenTerminalTab = vi.fn();
+			const regularTab = {
 				id: 'tab-1',
 				name: 'Regular Tab',
 				logs: [],
@@ -841,7 +845,8 @@ describe('useMainKeyboardHandler', () => {
 					inputMode: 'ai',
 				},
 				activeSessionId: 'session-1',
-				handleOpenTerminalTab: mockHandleOpenTerminalTab,			});
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
 
 			act(() => {
 				window.dispatchEvent(
@@ -854,13 +859,15 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			// handleOpenTerminalTab SHOULD be called for regular tabs
-			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();		});
+			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
 
 		it('should allow toggleMode when wizardState exists but isActive is false', () => {
 			vi.useFakeTimers();
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockHandleOpenTerminalTab = vi.fn();			const completedWizardTab = {
+			const mockHandleOpenTerminalTab = vi.fn();
+			const completedWizardTab = {
 				id: 'tab-1',
 				name: 'Completed Wizard',
 				wizardState: { isActive: false }, // Wizard completed
@@ -876,7 +883,8 @@ describe('useMainKeyboardHandler', () => {
 					inputMode: 'ai',
 				},
 				activeSessionId: 'session-1',
-				handleOpenTerminalTab: mockHandleOpenTerminalTab,			});
+				handleOpenTerminalTab: mockHandleOpenTerminalTab,
+			});
 
 			act(() => {
 				window.dispatchEvent(
@@ -889,7 +897,8 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			// handleOpenTerminalTab SHOULD be called when wizard is not active
-			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();		});
+			expect(mockHandleOpenTerminalTab).toHaveBeenCalled();
+		});
 	});
 
 	describe('unified tab shortcuts - file tab vs AI tab context', () => {
@@ -1753,6 +1762,96 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('Encore Feature shortcuts', () => {
+		it('should open Director Notes when shortcut is pressed and feature is enabled', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetDirectorNotesOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'directorNotes',
+				encoreFeatures: { directorNotes: true },
+				setDirectorNotesOpen: mockSetDirectorNotesOpen,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'd', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetDirectorNotesOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should NOT open Director Notes when feature is disabled', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetDirectorNotesOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'directorNotes',
+				encoreFeatures: { directorNotes: false },
+				setDirectorNotesOpen: mockSetDirectorNotesOpen,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'd', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetDirectorNotesOpen).not.toHaveBeenCalled();
+		});
+
+		it('should open Maestro Cue modal when shortcut is pressed and feature is enabled', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetCueModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'maestroCue',
+				encoreFeatures: { maestroCue: true },
+				setCueModalOpen: mockSetCueModalOpen,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'q', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetCueModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should NOT open Maestro Cue modal when feature is disabled', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetCueModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'maestroCue',
+				encoreFeatures: { maestroCue: false },
+				setCueModalOpen: mockSetCueModalOpen,
+				activeSessionId: 'test-session',
+				activeSession: { id: 'test-session', name: 'Test', inputMode: 'ai' },
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: 'q', altKey: true, bubbles: true })
+				);
+			});
+
+			expect(mockSetCueModalOpen).not.toHaveBeenCalled();
 		});
 	});
 });
