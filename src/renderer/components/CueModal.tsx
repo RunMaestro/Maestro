@@ -756,16 +756,6 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 				</div>,
 				document.body
 			)}
-			{yamlEditorSession && (
-				<CueYamlEditor
-					key={yamlEditorSession.sessionId}
-					isOpen={true}
-					onClose={handleCloseYamlEditor}
-					projectRoot={yamlEditorSession.projectRoot}
-					sessionId={yamlEditorSession.sessionId}
-					theme={theme}
-				/>
-			)}
 			{showHelp && <CueHelpContent theme={theme} cueShortcutKeys={cueShortcutKeys} />}
 		</>
 	);
