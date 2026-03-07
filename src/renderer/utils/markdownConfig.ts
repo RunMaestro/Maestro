@@ -375,9 +375,23 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 				}
 
 				// Standard syntax-highlighted code block
+				// Merge theme's text color into vscDarkPlus base so plain-text
+				// code blocks match inline code across all themes.
+				const themedStyle = {
+					...vscDarkPlus,
+					'pre[class*="language-"]': {
+						...(vscDarkPlus as any)['pre[class*="language-"]'],
+						color: theme.colors.textMain,
+						background: theme.colors.bgActivity,
+					},
+					'code[class*="language-"]': {
+						...(vscDarkPlus as any)['code[class*="language-"]'],
+						color: theme.colors.textMain,
+					},
+				};
 				return React.createElement(SyntaxHighlighter, {
 					language,
-					style: vscDarkPlus,
+					style: themedStyle,
 					customStyle: {
 						margin: '0.5em 0',
 						padding: '1em',
