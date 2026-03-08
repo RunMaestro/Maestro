@@ -149,11 +149,16 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			let aiLogs: any[] = [];
 			const targetTabId = tabId || session.activeTabId;
 			if (session.aiTabs && session.aiTabs.length > 0) {
-				const targetTab =
-					session.aiTabs.find((t: any) => t.id === targetTabId) || session.aiTabs[0];
-				const rawLogs = targetTab?.logs || [];
-				// Web interface should never show thinking/tool logs regardless of desktop settings
-				aiLogs = rawLogs.filter((log: any) => log.source !== 'thinking' && log.source !== 'tool');
+				const targetTab = session.aiTabs.find((t: any) => t.id === targetTabId);
+				// If a specific tabId was requested but not found, return empty logs
+				// (avoids showing stale history from another tab during new tab creation race)
+				if (!targetTab && tabId) {
+					aiLogs = [];
+				} else {
+					const rawLogs = (targetTab || session.aiTabs[0])?.logs || [];
+					// Web interface should never show thinking/tool logs regardless of desktop settings
+					aiLogs = rawLogs.filter((log: any) => log.source !== 'thinking' && log.source !== 'tool');
+				}
 			}
 
 			return {

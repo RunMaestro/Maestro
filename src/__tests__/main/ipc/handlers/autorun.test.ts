@@ -548,14 +548,15 @@ describe('autorun IPC handlers', () => {
 			expect(fs.readFile).toHaveBeenCalledWith(expect.stringContaining('doc2.md'), 'utf-8');
 		});
 
-		it('should return error for missing file', async () => {
+		it('should return empty content with notFound flag for missing file', async () => {
 			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
 
 			const handler = handlers.get('autorun:readDoc');
 			const result = await handler!({} as any, '/test/folder', 'nonexistent');
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('File not found');
+			expect(result.success).toBe(true);
+			expect(result.content).toBe('');
+			expect(result.notFound).toBe(true);
 		});
 
 		it('should return error for directory traversal attempts', async () => {

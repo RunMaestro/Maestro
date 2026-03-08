@@ -381,6 +381,82 @@ describe('subscriptionsToPipelines', () => {
 		expect(agentNames).toContain('tester');
 	});
 
+	it('overrides stale agent_id when subscription name matches a different session', () => {
+		// Bug scenario: agent_id was corrupted (points to Maestro) but subscription
+		// name "Pedsidian" matches the Pedsidian session. Name match should win.
+		const subs: CueSubscription[] = [
+			{
+				name: 'Pedsidian',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Do briefing',
+				schedule_times: ['08:30'],
+				schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+				agent_id: 'maestro-uuid', // Wrong! Should be pedsidian-uuid
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{
+				id: 'maestro-uuid',
+				name: 'Maestro',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+			{
+				id: 'pedsidian-uuid',
+				name: 'Pedsidian',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(1);
+		// Should resolve to Pedsidian (name match), not Maestro (stale agent_id)
+		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Pedsidian');
+		expect((agents[0].data as { sessionId: string }).sessionId).toBe('pedsidian-uuid');
+	});
+
+	it('uses subscription name to find target when agent_id is absent', () => {
+		// Pre-agent_id YAML: subscription named after the target session
+		const subs: CueSubscription[] = [
+			{
+				name: 'Pedsidian',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Morning briefing',
+				schedule_times: ['08:30'],
+			},
+		];
+		const sessions = [
+			{
+				id: 'maestro-uuid',
+				name: 'Maestro',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+			{
+				id: 'pedsidian-uuid',
+				name: 'Pedsidian',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+		] as SessionInfo[];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(1);
+		// Should pick Pedsidian by name, not fall back to sessions[0] (Maestro)
+		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Pedsidian');
+	});
+
 	it('sets default edge mode to pass', () => {
 		const subs: CueSubscription[] = [
 			{

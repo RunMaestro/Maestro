@@ -59,10 +59,17 @@ export interface TabNamingHandlerDependencies {
 }
 
 /**
- * Timeout for tab naming requests (30 seconds)
- * This is a short timeout since we want quick response
+ * Timeout for tab naming requests (45 seconds)
+ * Allows headroom for agent cold starts while still failing fast
  */
-const TAB_NAMING_TIMEOUT_MS = 30 * 1000;
+const TAB_NAMING_TIMEOUT_MS = 45 * 1000;
+
+/**
+ * Interval for checking partial output for a valid tab name.
+ * Allows resolving as soon as the agent outputs the name,
+ * without waiting for the full process to exit.
+ */
+const EARLY_EXTRACT_INTERVAL_MS = 2 * 1000;
 
 /**
  * Register Tab Naming IPC handlers.
@@ -201,15 +208,47 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						let output = '';
 						let resolved = false;
 
+						const cleanup = () => {
+							clearTimeout(timeoutId);
+							clearInterval(earlyExtractIntervalId);
+							processManager.off('data', onData);
+							processManager.off('exit', onExit);
+						};
+
+						const resolveWith = (tabName: string | null, reason: string) => {
+							if (resolved) return;
+							resolved = true;
+							cleanup();
+							logger.info(`Tab naming ${reason}`, LOG_CONTEXT, {
+								sessionId,
+								outputLength: output.length,
+								tabName,
+							});
+							// Kill the process if it's still running (fire-and-forget)
+							try {
+								processManager.kill(sessionId);
+							} catch {
+								// Process may have already exited
+							}
+							resolve(tabName);
+						};
+
 						// Set timeout
 						const timeoutId = setTimeout(() => {
-							if (!resolved) {
-								resolved = true;
-								logger.warn('Tab naming request timed out', LOG_CONTEXT, { sessionId });
-								processManager.kill(sessionId);
-								resolve(null);
-							}
+							logger.warn('Tab naming request timed out', LOG_CONTEXT, { sessionId });
+							resolveWith(null, 'timed out');
 						}, TAB_NAMING_TIMEOUT_MS);
+
+						// Periodically try to extract a tab name from partial output.
+						// This lets us resolve as soon as the agent outputs the name,
+						// without waiting for the full process to exit.
+						const earlyExtractIntervalId = setInterval(() => {
+							if (resolved || !output.trim()) return;
+							const earlyName = extractTabName(output);
+							if (earlyName) {
+								resolveWith(earlyName, 'resolved early from partial output');
+							}
+						}, EARLY_EXTRACT_INTERVAL_MS);
 
 						// Listen for data from the process
 						const onData = (dataSessionId: string, data: string) => {
@@ -221,24 +260,15 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						const onExit = (exitSessionId: string, code?: number) => {
 							if (exitSessionId !== sessionId) return;
 
-							// Clean up
-							clearTimeout(timeoutId);
-							processManager.off('data', onData);
-							processManager.off('exit', onExit);
+							if (resolved) {
+								// Already resolved by early extraction, just clean up listeners
+								processManager.off('data', onData);
+								processManager.off('exit', onExit);
+								return;
+							}
 
-							if (resolved) return;
-							resolved = true;
-
-							// Extract the tab name from the output
-							// The agent should return just the tab name, but we clean up any extra whitespace/formatting
 							const tabName = extractTabName(output);
-							logger.info('Tab naming completed', LOG_CONTEXT, {
-								sessionId,
-								exitCode: code,
-								outputLength: output.length,
-								tabName,
-							});
-							resolve(tabName);
+							resolveWith(tabName, `completed (exit code ${code})`);
 						};
 
 						processManager.on('data', onData);

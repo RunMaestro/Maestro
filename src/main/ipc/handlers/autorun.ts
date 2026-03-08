@@ -362,11 +362,12 @@ export function registerAutorunHandlers(
 					throw new Error('Invalid file path');
 				}
 
-				// Check if file exists
+				// Check if file exists — return empty content instead of throwing,
+				// since missing files are expected (deleted, renamed, stale references)
 				try {
 					await fs.access(filePath);
 				} catch {
-					throw new Error('File not found');
+					return { content: '', notFound: true };
 				}
 
 				// Read the file
