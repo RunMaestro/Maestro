@@ -9,7 +9,6 @@ interface SidebarActionsProps {
 	hasNoSessions: boolean;
 	shortcuts: Record<string, Shortcut>;
 	showUnreadAgentsOnly: boolean;
-	hasUnreadAgents: boolean;
 	addNewSession: () => void;
 	openWizard?: () => void;
 	setLeftSidebarOpen: (open: boolean) => void;
@@ -22,7 +21,6 @@ export const SidebarActions = memo(function SidebarActions({
 	hasNoSessions,
 	shortcuts,
 	showUnreadAgentsOnly,
-	hasUnreadAgents,
 	addNewSession,
 	openWizard,
 	setLeftSidebarOpen,
@@ -91,12 +89,11 @@ export const SidebarActions = memo(function SidebarActions({
 					}
 				>
 					<Bot className="w-4 h-4" />
-					{hasUnreadAgents && (
-						<div
-							className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full"
-							style={{ backgroundColor: theme.colors.accent }}
-						/>
-					)}
+					{/* Notification dot - always visible to match tab filter icon pattern */}
+					<div
+						className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
+						style={{ backgroundColor: theme.colors.accent }}
+					/>
 				</button>
 			)}
 		</div>

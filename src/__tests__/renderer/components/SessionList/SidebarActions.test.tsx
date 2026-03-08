@@ -32,7 +32,6 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 		hasNoSessions: false,
 		shortcuts: defaultShortcuts,
 		showUnreadAgentsOnly: false,
-		hasUnreadAgents: false,
 		addNewSession: vi.fn(),
 		openWizard: vi.fn(),
 		setLeftSidebarOpen: vi.fn(),
