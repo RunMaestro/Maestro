@@ -90,6 +90,8 @@ interface AgentConfig {
 	args?: string[];
 	hidden?: boolean;
 	configOptions?: AgentConfigOption[];
+	yoloModeArgs?: string[];
+	readOnlyCliEnforced?: boolean;
 	capabilities?: AgentCapabilities;
 }
 

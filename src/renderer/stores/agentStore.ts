@@ -32,6 +32,7 @@ import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { filterYoloArgs } from '../utils/agentArgs';
 
 // ============================================================================
 // Store Types
@@ -283,11 +284,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
 			const spawnArgs = isReadOnly
-				? (agent.args || []).filter(
-						(arg) =>
-							arg !== '--dangerously-skip-permissions' &&
-							arg !== '--dangerously-bypass-approvals-and-sandbox'
-					)
+				? filterYoloArgs(agent.args || [], agent)
 				: [...(agent.args || [])];
 
 			const commandToUse = agent.path ?? agent.command;

@@ -243,6 +243,8 @@ describe('buildAgentArgs', () => {
 			agentSessionId: 'abc',
 		});
 
+		// batchModeArgs (--skip-git) is omitted when readOnlyMode is true —
+		// batch mode args grant write/approval permissions that conflict with read-only
 		expect(result).toEqual([
 			'run',
 			'--print',
@@ -259,6 +261,97 @@ describe('buildAgentArgs', () => {
 			'--resume',
 			'abc',
 		]);
+	});
+
+	// -- readOnlyMode + batchModeArgs interaction (TASK-S05) --
+	it('skips batchModeArgs when readOnlyMode is true even with empty readOnlyArgs', () => {
+		// Gemini CLI scenario: readOnlyArgs is [] but -y should still be skipped
+		const agent = makeAgent({
+			batchModeArgs: ['-y'],
+			readOnlyArgs: [],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--output-format', 'stream-json'],
+			prompt: 'analyze this code',
+			readOnlyMode: true,
+		});
+		expect(result).not.toContain('-y');
+		expect(result).toEqual(['--output-format', 'stream-json']);
+	});
+
+	it('skips batchModeArgs when readOnlyMode is true and readOnlyArgs is undefined', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--json'],
+			prompt: 'review code',
+			readOnlyMode: true,
+		});
+		expect(result).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+		expect(result).not.toContain('--skip-git-repo-check');
+	});
+
+	it('includes batchModeArgs when readOnlyMode is false even with empty readOnlyArgs', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['-y'],
+			readOnlyArgs: [],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--output-format', 'stream-json'],
+			prompt: 'fix this bug',
+			readOnlyMode: false,
+		});
+		expect(result).toContain('-y');
+	});
+
+	it('logs warning when readOnlyMode requested and readOnlyCliEnforced is false', async () => {
+		const { logger } = await import('../../../main/utils/logger');
+		vi.mocked(logger.warn).mockClear();
+
+		const agent = makeAgent({
+			readOnlyArgs: [],
+			readOnlyCliEnforced: false,
+		});
+		buildAgentArgs(agent, {
+			baseArgs: [],
+			readOnlyMode: true,
+		});
+		expect(logger.warn).toHaveBeenCalledWith(
+			expect.stringContaining('read-only mode requested but no CLI-level enforcement'),
+			'AgentArgs',
+			{ agentId: 'test-agent' }
+		);
+	});
+
+	it('does not log warning when readOnlyCliEnforced is true', async () => {
+		const { logger } = await import('../../../main/utils/logger');
+		vi.mocked(logger.warn).mockClear();
+
+		const agent = makeAgent({
+			readOnlyArgs: ['--agent', 'plan'],
+			readOnlyCliEnforced: true,
+		});
+		buildAgentArgs(agent, {
+			baseArgs: [],
+			readOnlyMode: true,
+		});
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('does not log warning when readOnlyCliEnforced is undefined', async () => {
+		const { logger } = await import('../../../main/utils/logger');
+		vi.mocked(logger.warn).mockClear();
+
+		const agent = makeAgent({
+			readOnlyArgs: ['--sandbox', 'read-only'],
+		});
+		buildAgentArgs(agent, {
+			baseArgs: [],
+			readOnlyMode: true,
+		});
+		// readOnlyCliEnforced is undefined (not explicitly false), so no warning
+		expect(logger.warn).not.toHaveBeenCalled();
 	});
 
 	it('does not mutate the original baseArgs array', () => {
