@@ -170,6 +170,32 @@ describe('MaestroClient', () => {
 			);
 		});
 
+		it('should resolve via requestId when response includes matching requestId', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string; data: string }>(
+				{ type: 'ping' },
+				'pong'
+			);
+
+			// Extract the requestId that was sent
+			const sentPayload = JSON.parse(mockWsInstance.send.mock.calls[0][0] as string) as Record<
+				string,
+				unknown
+			>;
+			expect(sentPayload.requestId).toBeDefined();
+
+			// Respond with the same requestId (triggers requestId-based resolution)
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({ type: 'pong', data: 'ok', requestId: sentPayload.requestId })
+			);
+
+			const result = await commandPromise;
+			expect(result.type).toBe('pong');
+			expect(result.data).toBe('ok');
+		});
+
 		it('should resolve on matching response type', async () => {
 			const client = await createConnectedClient();
 
