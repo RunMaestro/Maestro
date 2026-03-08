@@ -792,4 +792,180 @@ describe('Logger', () => {
 			}
 		});
 	});
+
+	describe('Log Cleanup (cleanOldLogs)', () => {
+		it('should delete log files older than 7 days during rotation', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			// Determine the logs directory the logger uses
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			// Create the logs directory
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create some old log files (10 days ago) and a recent one (2 days ago)
+			const oldFile = 'maestro-debug-2020-01-01.log';
+			const recentDate = new Date();
+			recentDate.setDate(recentDate.getDate() - 2);
+			const recentYear = recentDate.getFullYear();
+			const recentMonth = String(recentDate.getMonth() + 1).padStart(2, '0');
+			const recentDay = String(recentDate.getDate()).padStart(2, '0');
+			const recentFile = `maestro-debug-${recentYear}-${recentMonth}-${recentDay}.log`;
+			const nonMatchingFile = 'other-file.log';
+
+			const oldFilePath = path.join(logsDir, oldFile);
+			const recentFilePath = path.join(logsDir, recentFile);
+			const nonMatchingPath = path.join(logsDir, nonMatchingFile);
+
+			// Write dummy content
+			fs.writeFileSync(oldFilePath, 'old log content');
+			fs.writeFileSync(recentFilePath, 'recent log content');
+			fs.writeFileSync(nonMatchingPath, 'non-matching content');
+
+			try {
+				// Enable file logging
+				logger.enableFileLogging();
+
+				// Mock Date to simulate tomorrow (triggers rotation which calls cleanOldLogs)
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const originalDate = globalThis.Date;
+				const mockDate = class extends originalDate {
+					constructor(...args: ConstructorParameters<typeof Date>) {
+						if (args.length === 0) {
+							super(tomorrow.getTime());
+						} else {
+							// @ts-expect-error - spread constructor args
+							super(...args);
+						}
+					}
+					static now() {
+						return tomorrow.getTime();
+					}
+				};
+				// @ts-expect-error - replacing Date globally
+				globalThis.Date = mockDate;
+
+				try {
+					// Trigger rotation (which calls cleanOldLogs)
+					logger.info('trigger rotation');
+
+					// Old file should be deleted
+					expect(fs.existsSync(oldFilePath)).toBe(false);
+
+					// Recent file should still exist
+					expect(fs.existsSync(recentFilePath)).toBe(true);
+
+					// Non-matching file should still exist
+					expect(fs.existsSync(nonMatchingPath)).toBe(true);
+				} finally {
+					globalThis.Date = originalDate;
+					logger.disableFileLogging();
+				}
+			} finally {
+				// Cleanup test files
+				for (const f of [oldFilePath, recentFilePath, nonMatchingPath]) {
+					try {
+						if (fs.existsSync(f)) fs.unlinkSync(f);
+					} catch {
+						// ignore cleanup errors
+					}
+				}
+			}
+		});
+
+		it('should not delete log files that are exactly 7 days old', async () => {
+			const fs = await import('fs');
+			const path = await import('path');
+			const os = await import('os');
+
+			const platform = process.platform;
+			let appDataDir: string;
+			if (platform === 'win32') {
+				appDataDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+			} else if (platform === 'darwin') {
+				appDataDir = path.join(os.homedir(), 'Library', 'Application Support');
+			} else {
+				appDataDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+			}
+			const logsDir = path.join(appDataDir, 'Maestro', 'logs');
+
+			if (!fs.existsSync(logsDir)) {
+				fs.mkdirSync(logsDir, { recursive: true });
+			}
+
+			// Create a file exactly 7 days old from tomorrow's perspective (since rotation runs "tomorrow")
+			const sevenDaysAgo = new Date();
+			sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+			const year = sevenDaysAgo.getFullYear();
+			const month = String(sevenDaysAgo.getMonth() + 1).padStart(2, '0');
+			const day = String(sevenDaysAgo.getDate()).padStart(2, '0');
+			const borderlineFile = `maestro-debug-${year}-${month}-${day}.log`;
+			const borderlineFilePath = path.join(logsDir, borderlineFile);
+
+			fs.writeFileSync(borderlineFilePath, 'borderline log content');
+
+			try {
+				logger.enableFileLogging();
+
+				const tomorrow = new Date();
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				const originalDate = globalThis.Date;
+				const mockDate = class extends originalDate {
+					constructor(...args: ConstructorParameters<typeof Date>) {
+						if (args.length === 0) {
+							super(tomorrow.getTime());
+						} else {
+							// @ts-expect-error - spread constructor args
+							super(...args);
+						}
+					}
+					static now() {
+						return tomorrow.getTime();
+					}
+				};
+				// @ts-expect-error - replacing Date globally
+				globalThis.Date = mockDate;
+
+				try {
+					logger.info('trigger rotation');
+
+					// File exactly 7 days old should NOT be deleted (only > 7)
+					expect(fs.existsSync(borderlineFilePath)).toBe(true);
+				} finally {
+					globalThis.Date = originalDate;
+					logger.disableFileLogging();
+				}
+			} finally {
+				try {
+					if (fs.existsSync(borderlineFilePath)) fs.unlinkSync(borderlineFilePath);
+				} catch {
+					// ignore
+				}
+			}
+		});
+
+		it('should handle missing logs directory gracefully', async () => {
+			// This tests that cleanOldLogs doesn't throw when the directory doesn't exist
+			// Since cleanOldLogs is called during rotation, and rotation creates the directory,
+			// we just verify no errors are thrown during normal operation
+			logger.enableFileLogging();
+			logger.info('test message');
+			logger.disableFileLogging();
+			// If we got here without errors, the test passes
+		});
+	});
 });

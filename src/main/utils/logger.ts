@@ -166,9 +166,40 @@ class Logger extends EventEmitter {
 
 	/**
 	 * Remove log files older than 7 days.
+	 * Uses console.log for cleanup messages to avoid circular issues during startup.
 	 */
 	private cleanOldLogs(): void {
-		// Will be implemented in a subsequent task
+		try {
+			const logsDir = getLogsDir();
+			const files = fs.readdirSync(logsDir);
+			const logFilePattern = /^maestro-debug-(\d{4}-\d{2}-\d{2})\.log$/;
+			const now = new Date();
+			const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+			for (const file of files) {
+				const match = file.match(logFilePattern);
+				if (!match) continue;
+
+				const [yearStr, monthStr, dayStr] = match[1].split('-');
+				const fileDate = new Date(
+					parseInt(yearStr, 10),
+					parseInt(monthStr, 10) - 1,
+					parseInt(dayStr, 10)
+				);
+				const ageInDays = Math.floor((todayMs - fileDate.getTime()) / (1000 * 60 * 60 * 24));
+
+				if (ageInDays > 7) {
+					try {
+						fs.unlinkSync(path.join(logsDir, file));
+						console.log(`[Logger] Cleaned up old log file: ${file}`);
+					} catch (deleteError) {
+						console.error(`[Logger] Failed to delete old log file ${file}:`, deleteError);
+					}
+				}
+			}
+		} catch (error) {
+			console.error('[Logger] Failed to clean old log files:', error);
+		}
 	}
 
 	/**
