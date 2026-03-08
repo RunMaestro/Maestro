@@ -109,7 +109,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [syncMigratedCount, setSyncMigratedCount] = useState<number | null>(null);
 
-
 	// Load sync settings when modal opens
 	useEffect(() => {
 		if (!isOpen) return;
@@ -132,7 +131,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				console.error('Failed to load sync settings:', err);
 				setSyncError('Failed to load storage settings');
 			});
-
 	}, [isOpen]);
 
 	const loadShells = async () => {
@@ -846,21 +844,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 			/>
 
-
 			{/* Settings Storage Location */}
 			<div>
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<FolderSync className="w-3 h-3" />
 					Storage Location
-					<span
-						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
-					>
-						Beta
-					</span>
 				</div>
 				<div
 					className="p-3 rounded border space-y-3"
