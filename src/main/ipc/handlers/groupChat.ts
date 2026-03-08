@@ -10,6 +10,8 @@
  */
 
 import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 import { ipcMain, BrowserWindow } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
@@ -366,6 +368,27 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					throw new Error(`Group chat not found: ${id}`);
 				}
 				const messages = await readLog(chat.logPath);
+
+				// Convert stored image filenames to base64 data URLs for display
+				for (const msg of messages) {
+					if (msg.images && msg.images.length > 0) {
+						const dataUrls: string[] = [];
+						for (const filename of msg.images) {
+							try {
+								const filePath = path.join(chat.imagesDir, filename);
+								const buffer = await fs.readFile(filePath);
+								const ext = path.extname(filename).slice(1).toLowerCase();
+								const mimeType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+								dataUrls.push(`data:${mimeType};base64,${buffer.toString('base64')}`);
+							} catch {
+								// Skip images that can't be read (deleted, etc.)
+								logger.warn(`Failed to read image ${filename} for group chat ${id}`, LOG_CONTEXT);
+							}
+						}
+						msg.images = dataUrls.length > 0 ? dataUrls : undefined;
+					}
+				}
+
 				logger.debug(`Read ${messages.length} messages from ${id}`, LOG_CONTEXT);
 				return messages;
 			}
@@ -439,7 +462,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					message,
 					processManager ?? undefined,
 					agentDetector ?? undefined,
-					readOnly
+					readOnly,
+					images
 				);
 
 				console.log(`[GroupChat:Debug] User message routed to moderator`);

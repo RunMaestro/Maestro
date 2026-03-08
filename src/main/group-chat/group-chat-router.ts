@@ -9,6 +9,7 @@
  */
 
 import * as os from 'os';
+import * as path from 'path';
 import {
 	GroupChatParticipant,
 	loadGroupChat,
@@ -17,7 +18,7 @@ import {
 	extractFirstSentence,
 	getGroupChatDir,
 } from './group-chat-storage';
-import { appendToLog, readLog } from './group-chat-log';
+import { appendToLog, readLog, saveImage } from './group-chat-log';
 import {
 	type GroupChatMessage,
 	mentionMatches,
@@ -257,7 +258,8 @@ export async function routeUserMessage(
 	message: string,
 	processManager?: IProcessManager,
 	agentDetector?: AgentDetector,
-	readOnly?: boolean
+	readOnly?: boolean,
+	images?: string[]
 ): Promise<void> {
 	console.log(`[GroupChat:Debug] ========== ROUTE USER MESSAGE ==========`);
 	console.log(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -368,18 +370,35 @@ export async function routeUserMessage(
 		}
 	}
 
-	// Log the message as coming from user
-	await appendToLog(chat.logPath, 'user', message, readOnly);
+	// Save images to disk and collect filenames for the log
+	let savedImageFilenames: string[] | undefined;
+	if (images && images.length > 0) {
+		savedImageFilenames = [];
+		for (const dataUrl of images) {
+			// Extract base64 data and extension from data URL
+			const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+			if (match) {
+				const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+				const buffer = Buffer.from(match[2], 'base64');
+				const filename = await saveImage(chat.imagesDir, buffer, `image.${ext}`);
+				savedImageFilenames.push(filename);
+			}
+		}
+	}
+
+	// Log the message as coming from user (with image filenames if any)
+	await appendToLog(chat.logPath, 'user', message, readOnly, savedImageFilenames);
 
 	// Store the read-only state for this group chat so it can be propagated to participants
 	setGroupChatReadOnlyState(groupChatId, readOnly ?? false);
 
-	// Emit message event to renderer so it shows immediately
+	// Emit message event to renderer so it shows immediately (with original data URLs for display)
 	const userMessage: GroupChatMessage = {
 		timestamp: new Date().toISOString(),
 		from: 'user',
 		content: message,
 		readOnly,
+		...(images && images.length > 0 && { images }),
 	};
 	groupChatEmitters.emitMessage?.(groupChatId, userMessage);
 
@@ -444,6 +463,13 @@ export async function routeUserMessage(
 				.map((m) => `[${m.from}]: ${m.content}`)
 				.join('\n');
 
+			// Build image context if user attached images
+			let imageContext = '';
+			if (savedImageFilenames && savedImageFilenames.length > 0) {
+				const imagePaths = savedImageFilenames.map((f) => path.join(chat.imagesDir, f));
+				imageContext = `\n\n## Attached Images (${savedImageFilenames.length}):\nThe user attached ${savedImageFilenames.length} image(s) to this message. The images are saved at:\n${imagePaths.map((p, i) => `${i + 1}. ${p}`).join('\n')}\nPlease read/view these images to understand the user's request. When delegating to agents, mention the image paths so they can view them too.`;
+			}
+
 			const fullPrompt = `${getModeratorSystemPrompt()}
 
 ## Current Participants:
@@ -453,7 +479,7 @@ ${participantContext}${availableSessionsContext}
 ${historyContext}
 
 ## User Request${readOnly ? ' (READ-ONLY MODE - do not make changes)' : ''}:
-${message}`;
+${message}${imageContext}`;
 
 			// Get the base args from the agent configuration
 			const args = [...agent.args];

@@ -134,6 +134,7 @@ export function GroupChatPanel({
 				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
 				maxOutputLines={maxOutputLines}
 				participantColors={participantColors}
+				onOpenLightbox={onOpenLightbox}
 			/>
 
 			<GroupChatInput
