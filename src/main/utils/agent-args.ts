@@ -1,4 +1,21 @@
 import type { AgentConfig } from '../agents';
+import { logger } from './logger';
+
+const LOG_CONTEXT = 'AgentArgs';
+
+/**
+ * Arguments that must never be passed through from user-supplied custom args.
+ * These flags can bypass security controls (sandboxing, approval gates, permissions).
+ */
+const DENIED_CUSTOM_ARGS = new Set([
+	'--no-sandbox',
+	'--include-directories',
+	'--dangerous-auto-approve',
+	'--dangerously-skip-permissions',
+	'--dangerously-bypass-approvals-and-sandbox',
+	'--approval-mode',
+	'-y',
+]);
 
 type BuildAgentArgsOptions = {
 	baseArgs: string[];
@@ -153,8 +170,15 @@ export function applyAgentConfigOverrides(
 			: 'none';
 
 	const parsedCustomArgs = parseCustomArgs(effectiveCustomArgs);
-	if (parsedCustomArgs.length > 0) {
-		finalArgs = [...finalArgs, ...parsedCustomArgs];
+	const filteredCustomArgs = parsedCustomArgs.filter((arg) => {
+		if (DENIED_CUSTOM_ARGS.has(arg)) {
+			logger.warn('Stripped denied custom arg', LOG_CONTEXT, { arg });
+			return false;
+		}
+		return true;
+	});
+	if (filteredCustomArgs.length > 0) {
+		finalArgs = [...finalArgs, ...filteredCustomArgs];
 	} else {
 		customArgsSource = 'none';
 	}
