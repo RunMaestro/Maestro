@@ -473,16 +473,15 @@ export function createProcessApi() {
 		): (() => void) => {
 			const handler = (_: unknown, sessionId: string, config: any, responseChannel: string) => {
 				try {
-					const result = callback(sessionId, config, responseChannel);
-					// Handle async callbacks - catch rejections and send error response
-					if (result && typeof (result as any).catch === 'function') {
-						(result as Promise<unknown>).catch((error) => {
+					// callback may return a promise even though typed as void
+					Promise.resolve(callback(sessionId, config, responseChannel)).catch(
+						(error) => {
 							ipcRenderer.send(responseChannel, {
 								success: false,
 								error: error instanceof Error ? error.message : String(error),
 							});
-						});
-					}
+						}
+					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, {
 						success: false,
