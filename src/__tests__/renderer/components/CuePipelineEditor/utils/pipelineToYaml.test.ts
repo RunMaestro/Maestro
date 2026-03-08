@@ -491,6 +491,77 @@ describe('pipelinesToYaml', () => {
 		expect(yamlStr).toContain('subscriptions: []');
 	});
 
+	it('includes agent_id from agent node sessionId', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'time.interval', label: 'Timer', config: { interval_minutes: 5 } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 'uuid-abc-123',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'go',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+		const { yaml: yamlStr } = pipelinesToYaml([pipeline]);
+		expect(yamlStr).toContain('agent_id: uuid-abc-123');
+	});
+
+	it('includes agent_id for each agent in a chain', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'file.changed', label: 'Files', config: { watch: '**/*' } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 'id-builder',
+						sessionName: 'builder',
+						toolType: 'claude-code',
+						inputPrompt: 'build',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 600, y: 0 },
+					data: {
+						sessionId: 'id-tester',
+						sessionName: 'tester',
+						toolType: 'claude-code',
+						inputPrompt: 'test',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const { yaml: yamlStr } = pipelinesToYaml([pipeline]);
+		expect(yamlStr).toContain('agent_id: id-builder');
+		expect(yamlStr).toContain('agent_id: id-tester');
+	});
+
 	it('saves output_prompt to separate file with -output suffix', () => {
 		const pipeline = makePipeline({
 			nodes: [

@@ -35,6 +35,7 @@ interface GraphSessionInput {
 		filter?: Record<string, string | number | boolean>;
 		repo?: string;
 		poll_minutes?: number;
+		agent_id?: string;
 	}>;
 }
 
@@ -369,6 +370,35 @@ function findTargetSession(
 	allSubs: CueSubscription[],
 	sessions: PipelineSessionInfo[]
 ): string | null {
+	// If the subscription has an explicit agent_id, resolve by session ID directly.
+	if (sub.agent_id) {
+		const session = sessions.find((s) => s.id === sub.agent_id);
+		if (session) return session.name;
+	}
+
+	// If the subscription was tagged with owning sessions from getGraphData(),
+	// use that to resolve the target when unambiguous.
+	const owners = (sub as CueSubscription & { _ownerSessions?: string[] })._ownerSessions;
+	if (owners && owners.length === 1) {
+		// Single owner — this is the definitive target session.
+		return owners[0];
+	}
+	if (owners && owners.length > 1) {
+		// Multiple owners (shared project root). For chain subs with source_session,
+		// the target is the owner that is NOT the source.
+		const sources = Array.isArray(sub.source_session)
+			? sub.source_session
+			: sub.source_session
+				? [sub.source_session]
+				: [];
+		if (sources.length > 0) {
+			const nonSource = owners.find((o) => !sources.includes(o));
+			if (nonSource) return nonSource;
+		}
+		// For initial triggers with multiple owners, fall through to chain-based
+		// resolution below which checks the next chain link's source_session.
+	}
+
 	// For chain subscriptions, the target is the session that the next chain link
 	// references as source_session
 	const baseName = getBasePipelineName(sub.name);
@@ -446,6 +476,21 @@ export function graphSessionsToPipelines(
 	// Collect all subscriptions across all graph sessions, deduplicating by name.
 	// Multiple sessions sharing the same project root load the same cue.yaml,
 	// so the same subscription can appear in multiple graph sessions.
+	//
+	// Build a map from subscription name → all graph session names that own it,
+	// so pipeline reconstruction can correctly associate agents.
+	const ownerMap = new Map<string, string[]>();
+	for (const gs of graphSessions) {
+		for (const sub of gs.subscriptions) {
+			const owners = ownerMap.get(sub.name);
+			if (owners) {
+				owners.push(gs.sessionName);
+			} else {
+				ownerMap.set(sub.name, [gs.sessionName]);
+			}
+		}
+	}
+
 	const seen = new Set<string>();
 	const allSubscriptions: CueSubscription[] = [];
 
@@ -453,7 +498,10 @@ export function graphSessionsToPipelines(
 		for (const sub of gs.subscriptions) {
 			if (seen.has(sub.name)) continue;
 			seen.add(sub.name);
-			allSubscriptions.push(sub as CueSubscription);
+			const tagged = { ...sub, _ownerSessions: ownerMap.get(sub.name) ?? [] } as CueSubscription & {
+				_ownerSessions: string[];
+			};
+			allSubscriptions.push(tagged);
 		}
 	}
 

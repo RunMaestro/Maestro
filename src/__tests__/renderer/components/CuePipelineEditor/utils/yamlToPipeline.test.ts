@@ -328,6 +328,59 @@ describe('subscriptionsToPipelines', () => {
 		expect(workerBCount).toBe(1);
 	});
 
+	it('resolves target session from agent_id', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'agent-id-test',
+				event: 'time.interval',
+				enabled: true,
+				prompt: 'Do work',
+				interval_minutes: 10,
+				agent_id: 'session-1',
+			},
+		];
+		// session-1 maps to 'specific-worker', session-0 maps to 'other-agent'
+		const sessions = makeSessions('other-agent', 'specific-worker');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(1);
+		expect((agents[0].data as { sessionName: string }).sessionName).toBe('specific-worker');
+		expect((agents[0].data as { sessionId: string }).sessionId).toBe('session-1');
+	});
+
+	it('resolves agent_id in chain subscriptions', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'chain-id',
+				event: 'file.changed',
+				enabled: true,
+				prompt: 'Build',
+				watch: 'src/**/*',
+				agent_id: 'session-0',
+			},
+			{
+				name: 'chain-id-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'Test',
+				source_session: 'builder',
+				agent_id: 'session-1',
+			},
+		];
+		const sessions = makeSessions('builder', 'tester');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const agentNames = agents.map((a) => (a.data as { sessionName: string }).sessionName);
+		expect(agentNames).toContain('builder');
+		expect(agentNames).toContain('tester');
+	});
+
 	it('sets default edge mode to pass', () => {
 		const subs: CueSubscription[] = [
 			{
@@ -421,5 +474,96 @@ describe('graphSessionsToPipelines', () => {
 	it('returns empty array for no graph sessions', () => {
 		const result = graphSessionsToPipelines([], []);
 		expect(result).toEqual([]);
+	});
+
+	it('uses owning graph session name for agent nodes (dashboard matching)', () => {
+		// Simulates the dashboard scenario: a session "PedTome RSSidian" has a
+		// cue.yaml with an issue trigger. The agent node should use that session's
+		// name so getPipelineColorForAgent can match it by sessionId.
+		const graphSessions: CueGraphSession[] = [
+			{
+				sessionId: 'real-uuid-123',
+				sessionName: 'PedTome RSSidian',
+				toolType: 'claude-code',
+				subscriptions: [
+					{
+						name: 'issue-triage',
+						event: 'github.issue',
+						enabled: true,
+						prompt: 'Triage this issue',
+						repo: 'RunMaestro/Maestro',
+					},
+				],
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{
+				id: 'real-uuid-123',
+				name: 'PedTome RSSidian',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+			{
+				id: 'other-uuid-456',
+				name: 'Maestro',
+				toolType: 'claude-code',
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+		];
+
+		const pipelines = graphSessionsToPipelines(graphSessions, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(1);
+		expect((agents[0].data as { sessionName: string }).sessionName).toBe('PedTome RSSidian');
+		expect((agents[0].data as { sessionId: string }).sessionId).toBe('real-uuid-123');
+	});
+
+	it('correctly maps agents when multiple sessions share subscriptions', () => {
+		// Two sessions share the same project root / cue.yaml with a chain pipeline.
+		// Both report all subscriptions. The builder should be target of the initial
+		// trigger, and the tester should be target of the chain-1 sub.
+		const sharedSubs = [
+			{
+				name: 'shared-pipeline',
+				event: 'file.changed' as const,
+				enabled: true,
+				prompt: 'Build',
+				watch: 'src/**/*',
+			},
+			{
+				name: 'shared-pipeline-chain-1',
+				event: 'agent.completed' as const,
+				enabled: true,
+				prompt: 'Test',
+				source_session: 'builder',
+			},
+		];
+		const graphSessions: CueGraphSession[] = [
+			{
+				sessionId: 'builder-id',
+				sessionName: 'builder',
+				toolType: 'claude-code',
+				subscriptions: sharedSubs,
+			},
+			{
+				sessionId: 'tester-id',
+				sessionName: 'tester',
+				toolType: 'claude-code',
+				subscriptions: sharedSubs,
+			},
+		];
+		const sessions = makeSessions('builder', 'tester');
+
+		const pipelines = graphSessionsToPipelines(graphSessions, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const agentNames = agents.map((a) => (a.data as { sessionName: string }).sessionName);
+		expect(agentNames).toContain('builder');
+		expect(agentNames).toContain('tester');
 	});
 });
