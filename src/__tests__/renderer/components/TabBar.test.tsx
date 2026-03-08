@@ -249,7 +249,7 @@ describe('TabBar', () => {
 			);
 
 			expect(
-				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Alt', 'Meta', 't'])})`)
 			).toBeInTheDocument();
 		});
 
@@ -266,7 +266,7 @@ describe('TabBar', () => {
 			);
 
 			expect(
-				screen.queryByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+				screen.queryByTitle(`Search tabs (${formatShortcutKeys(['Alt', 'Meta', 't'])})`)
 			).not.toBeInTheDocument();
 		});
 	});
@@ -845,7 +845,7 @@ describe('TabBar', () => {
 			);
 
 			fireEvent.click(
-				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Alt', 'Meta', 't'])})`)
 			);
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});

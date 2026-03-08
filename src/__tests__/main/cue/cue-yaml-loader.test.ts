@@ -756,6 +756,55 @@ subscriptions:
 		});
 	});
 
+	describe('loadCueConfig with agent_id', () => {
+		it('parses agent_id from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: bound-sub
+    event: time.heartbeat
+    prompt: Do something
+    interval_minutes: 5
+    agent_id: session-abc-123
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].agent_id).toBe('session-abc-123');
+		});
+
+		it('defaults agent_id to undefined when not specified', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: unbound-sub
+    event: time.heartbeat
+    prompt: Do something
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].agent_id).toBeUndefined();
+		});
+
+		it('ignores non-string agent_id', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: bad-id
+    event: time.heartbeat
+    prompt: Do something
+    interval_minutes: 5
+    agent_id: 12345
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].agent_id).toBeUndefined();
+		});
+	});
+
 	describe('loadCueConfig with filter', () => {
 		it('parses filter field from YAML', () => {
 			mockExistsSync.mockReturnValue(true);

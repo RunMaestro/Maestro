@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentDrawer } from '../../../../../renderer/components/CuePipelineEditor/drawers/AgentDrawer';
 import type { Theme } from '../../../../../renderer/types';
@@ -190,5 +190,17 @@ describe('AgentDrawer', () => {
 
 		const maestro = screen.getByText('Maestro').closest('[draggable]');
 		expect(maestro).toHaveAttribute('draggable', 'true');
+	});
+
+	it('should auto-focus search input when drawer opens', () => {
+		vi.useFakeTimers();
+		render(
+			<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+		);
+
+		const input = screen.getByPlaceholderText('Search agents...');
+		vi.advanceTimersByTime(100);
+		expect(input).toHaveFocus();
+		vi.useRealTimers();
 	});
 });

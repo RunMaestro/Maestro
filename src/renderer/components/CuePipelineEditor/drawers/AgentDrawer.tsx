@@ -1,4 +1,4 @@
-import { memo, useState, useMemo } from 'react';
+import { memo, useState, useMemo, useRef, useEffect } from 'react';
 import { Bot, Search, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 
@@ -40,6 +40,16 @@ export const AgentDrawer = memo(function AgentDrawer({
 	theme,
 }: AgentDrawerProps) {
 	const [search, setSearch] = useState('');
+	const searchInputRef = useRef<HTMLInputElement>(null);
+
+	// Auto-focus search input when drawer opens
+	useEffect(() => {
+		if (isOpen) {
+			// Small delay to allow the CSS transform transition to start
+			const timer = setTimeout(() => searchInputRef.current?.focus(), 50);
+			return () => clearTimeout(timer);
+		}
+	}, [isOpen]);
 
 	const filtered = useMemo(() => {
 		if (!search.trim()) return sessions;
@@ -150,6 +160,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 				>
 					<Search size={12} style={{ color: theme.colors.textDim, flexShrink: 0 }} />
 					<input
+						ref={searchInputRef}
 						type="text"
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}

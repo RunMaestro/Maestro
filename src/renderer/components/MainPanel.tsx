@@ -933,7 +933,7 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 			<>
 				<ErrorBoundary>
 					<div
-						className={`flex-1 flex flex-col min-w-0 relative ${activeFocus === 'main' ? 'ring-1 ring-inset z-10' : ''}`}
+						className={`flex-1 flex flex-col min-w-0 relative ${activeFocus === 'main' ? 'ring-1 ring-inset' : ''}`}
 						style={
 							{
 								backgroundColor: theme.colors.bgMain,

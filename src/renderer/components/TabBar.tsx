@@ -31,6 +31,7 @@ import { getExtensionColor } from '../utils/extensionColors';
 import { getRevealLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { buildSessionDeepLink } from '../../shared/deep-link-urls';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface TabBarProps {
 	tabs: AITab[];
@@ -2065,6 +2066,10 @@ function TabBarInner({
 	const toggleUnreadFilter =
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
 
+	// Read actual shortcut bindings from settings (supports user customization)
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
 	// New-tab-type popover state (shown when onNewTerminalTab is provided)
 	const [newTabPopoverOpen, setNewTabPopoverOpen] = useState(false);
 	const [newTabPopoverPos, setNewTabPopoverPos] = useState<{ top: number; left: number } | null>(
@@ -2431,7 +2436,7 @@ function TabBarInner({
 						onClick={onOpenTabSearch}
 						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textDim }}
-						title={`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`}
+						title={`Search tabs (${formatShortcutKeys(tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't'])})`}
 					>
 						<Search className="w-4 h-4" />
 					</button>
@@ -2446,8 +2451,8 @@ function TabBarInner({
 					}}
 					title={
 						showUnreadOnly
-							? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`
-							: `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`
+							? `Showing unread only (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
+							: `Filter unread tabs (${formatShortcutKeys(tabShortcuts.filterUnreadTabs?.keys ?? ['Meta', 'u'])})`
 					}
 				>
 					<Mail className="w-4 h-4" />
@@ -2763,7 +2768,11 @@ function TabBarInner({
 					onClick={handleNewTabButtonClick}
 					className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textDim }}
-					title={onNewTerminalTab ? 'New tab…' : `New tab (${formatShortcutKeys(['Meta', 't'])})`}
+					title={
+						onNewTerminalTab
+							? 'New tab…'
+							: `New tab (${formatShortcutKeys(tabShortcuts.newTab?.keys ?? ['Meta', 't'])})`
+					}
 				>
 					<Plus className="w-4 h-4" />
 				</button>
@@ -2795,7 +2804,7 @@ function TabBarInner({
 							<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							New AI Chat
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(['Meta', 't'])}
+								{formatShortcutKeys(tabShortcuts.newTab?.keys ?? ['Meta', 't'])}
 							</span>
 						</button>
 						<button
@@ -2809,7 +2818,7 @@ function TabBarInner({
 							<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							New Terminal
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(['Meta', 'j'])}
+								{formatShortcutKeys(shortcuts.toggleMode?.keys ?? ['Meta', 'j'])}
 							</span>
 						</button>
 					</div>,

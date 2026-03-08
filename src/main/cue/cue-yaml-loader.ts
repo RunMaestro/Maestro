@@ -130,6 +130,7 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					filter,
 					repo: typeof sub.repo === 'string' ? sub.repo : undefined,
 					poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,
+					agent_id: typeof sub.agent_id === 'string' ? sub.agent_id : undefined,
 				});
 			}
 		}

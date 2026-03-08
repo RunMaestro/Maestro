@@ -422,7 +422,7 @@ function SessionListInner(props: SessionListProps) {
 		sortedUngroupedParentSessions,
 		sortedFilteredSessions,
 		sortedGroups,
-	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly);
+	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly, activeSessionId);
 
 	const hasUnreadAgents = useMemo(
 		() =>
@@ -486,9 +486,16 @@ function SessionListInner(props: SessionListProps) {
 			onDrop?: () => void;
 		}
 	) => {
-		const worktreeChildren = getWorktreeChildren(session.id);
+		const allWorktreeChildren = getWorktreeChildren(session.id);
+		// When filtering unread, only show worktree children that are unread or busy
+		const worktreeChildren = showUnreadAgentsOnly
+			? allWorktreeChildren.filter(
+					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+				)
+			: allWorktreeChildren;
 		const hasWorktrees = worktreeChildren.length > 0;
-		const worktreesExpanded = session.worktreesExpanded ?? true;
+		// Force expand worktrees when filtering by unread
+		const worktreesExpanded = showUnreadAgentsOnly ? true : (session.worktreesExpanded ?? true);
 		const globalIdx = sortedSessionIndexById.get(session.id) ?? -1;
 		const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
 
@@ -561,7 +568,10 @@ function SessionListInner(props: SessionListProps) {
 					>
 						{/* Worktree children list */}
 						<div>
-							{(sortedWorktreeChildrenByParentId.get(session.id) || []).map((child) => {
+							{(showUnreadAgentsOnly
+								? worktreeChildren
+								: sortedWorktreeChildrenByParentId.get(session.id) || []
+							).map((child) => {
 								const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
 								const isChildKeyboardSelected =
 									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;

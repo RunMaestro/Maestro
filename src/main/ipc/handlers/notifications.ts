@@ -90,6 +90,13 @@ interface ActiveNotificationProcess {
 /** Track active notification command processes by ID for stopping */
 const activeNotificationProcesses = new Map<number, ActiveNotificationProcess>();
 
+/**
+ * Keep OS Notification objects alive until clicked or closed.
+ * Without this, GC can collect the notification before the user
+ * interacts with it, silently dropping the click handler.
+ */
+const activeNotifications = new Set<Notification>();
+
 /** Counter for generating unique notification process IDs */
 let notificationProcessIdCounter = 0;
 
@@ -360,6 +367,13 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 						silent: true, // Don't play system sound - we have our own audio feedback option
 					});
 
+					// Prevent GC from collecting the notification before user interaction
+					activeNotifications.add(notification);
+					const releaseNotification = () => {
+						activeNotifications.delete(notification);
+					};
+					notification.on('close', releaseNotification);
+
 					// Wire click handler for navigation if session context is provided
 					if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
@@ -369,6 +383,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 							if (parsed) {
 								dispatchDeepLink(parsed, deps.getMainWindow);
 							}
+							releaseNotification();
 						});
 					}
 
@@ -488,6 +503,7 @@ export function clearNotificationQueue(): void {
 export function resetNotificationState(): void {
 	notificationQueue.length = 0;
 	activeNotificationProcesses.clear();
+	activeNotifications.clear();
 	notificationProcessIdCounter = 0;
 	lastNotificationEndTime = 0;
 	isNotificationProcessing = false;

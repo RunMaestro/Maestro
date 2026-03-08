@@ -38,8 +38,17 @@ interface CueGraphSession {
 		event: string;
 		enabled: boolean;
 		prompt?: string;
+		output_prompt?: string;
+		interval_minutes?: number;
+		schedule_times?: string[];
+		schedule_days?: string[];
+		watch?: string;
 		source_session?: string | string[];
 		fan_out?: string[];
+		filter?: Record<string, string | number | boolean>;
+		repo?: string;
+		poll_minutes?: number;
+		agent_id?: string;
 	}>;
 }
 

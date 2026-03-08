@@ -203,10 +203,18 @@ describe('Notification IPC Handlers', () => {
 	});
 
 	describe('notification:show click-to-navigate', () => {
+		it('should register close handler to prevent GC on all notifications', async () => {
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body');
+
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('close', expect.any(Function));
+		});
+
 		it('should register click handler when sessionId is provided', async () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body', 'session-123');
 
+			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('close', expect.any(Function));
 			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
 		});
 
@@ -222,9 +230,12 @@ describe('Notification IPC Handlers', () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body', 'id/with/slashes', 'tab?special');
 
-			// Trigger the click handler
-			const clickHandler = mocks.mockNotificationOn.mock.calls[0][1];
-			clickHandler();
+			// Find the click handler (not the close handler)
+			const clickCall = mocks.mockNotificationOn.mock.calls.find(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCall).toBeDefined();
+			clickCall![1]();
 
 			expect(parseDeepLink).toHaveBeenCalledWith(
 				`maestro://session/${encodeURIComponent('id/with/slashes')}/tab/${encodeURIComponent('tab?special')}`
@@ -235,14 +246,21 @@ describe('Notification IPC Handlers', () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body');
 
-			expect(mocks.mockNotificationOn).not.toHaveBeenCalled();
+			// close handler is registered, but not click
+			const clickCalls = mocks.mockNotificationOn.mock.calls.filter(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCalls).toHaveLength(0);
 		});
 
 		it('should not register click handler when sessionId is undefined', async () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body', undefined, undefined);
 
-			expect(mocks.mockNotificationOn).not.toHaveBeenCalled();
+			const clickCalls = mocks.mockNotificationOn.mock.calls.filter(
+				(call: any[]) => call[0] === 'click'
+			);
+			expect(clickCalls).toHaveLength(0);
 		});
 	});
 

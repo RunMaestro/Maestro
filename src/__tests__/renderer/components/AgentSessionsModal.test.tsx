@@ -592,8 +592,7 @@ describe('AgentSessionsModal', () => {
 		});
 
 		it('should display minutes ago', async () => {
-			const date = new Date();
-			date.setMinutes(date.getMinutes() - 15);
+			const date = new Date(Date.now() - 15 * 60 * 1000);
 			const mockSessions = [createMockClaudeSession({ modifiedAt: date.toISOString() })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions: mockSessions,
@@ -617,8 +616,7 @@ describe('AgentSessionsModal', () => {
 		});
 
 		it('should display hours ago', async () => {
-			const date = new Date();
-			date.setHours(date.getHours() - 5);
+			const date = new Date(Date.now() - 5 * 60 * 60 * 1000);
 			const mockSessions = [createMockClaudeSession({ modifiedAt: date.toISOString() })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions: mockSessions,
@@ -667,8 +665,7 @@ describe('AgentSessionsModal', () => {
 		});
 
 		it('should display full date for old timestamps', async () => {
-			const date = new Date();
-			date.setDate(date.getDate() - 30);
+			const date = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 			const mockSessions = [createMockClaudeSession({ modifiedAt: date.toISOString() })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions: mockSessions,

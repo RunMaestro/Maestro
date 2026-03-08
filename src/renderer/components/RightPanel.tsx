@@ -381,7 +381,7 @@ export const RightPanel = memo(
 			<div
 				ref={panelRef}
 				tabIndex={0}
-				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} ${activeFocus === 'right' ? 'ring-1 ring-inset z-10' : ''}`}
+				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} ${activeFocus === 'right' ? 'ring-1 ring-inset' : ''}`}
 				style={
 					{
 						width: rightPanelOpen ? `${rightPanelWidth}px` : '0',
@@ -392,6 +392,14 @@ export const RightPanel = memo(
 				}
 				onClick={() => setActiveFocus('right')}
 				onFocus={() => setActiveFocus('right')}
+				onBlur={(e) => {
+					// Clear focus ring when focus moves entirely outside this panel
+					if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+						if (useUIStore.getState().activeFocus === 'right') {
+							setActiveFocus('main');
+						}
+					}
+				}}
 			>
 				{/* Resize Handle */}
 				{rightPanelOpen && (
