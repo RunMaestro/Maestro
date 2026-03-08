@@ -592,11 +592,25 @@ interface SpawnGeminiOptions {
 	timeout?: number;
 }
 
+/** Pattern for valid model identifiers (alphanumeric, dots, hyphens, slashes) */
+const VALID_MODEL_PATTERN = /^[\w.\-\/]+$/;
+
+/** Pattern for valid session/resume IDs (alphanumeric, hyphens, colons, dots) */
+const VALID_SESSION_ID_PATTERN = /^[\w\-:.]+$/;
+
 /**
  * Spawn Gemini CLI with a prompt and return the result
  */
 export async function spawnGeminiCli(options: SpawnGeminiOptions): Promise<AgentResult> {
 	const { prompt, cwd, model, resume, env: customEnv, timeout } = options;
+
+	if (model && !VALID_MODEL_PATTERN.test(model)) {
+		throw new Error(`Invalid model identifier: contains disallowed characters`);
+	}
+
+	if (resume && !VALID_SESSION_ID_PATTERN.test(resume)) {
+		throw new Error(`Invalid session ID for resume: contains disallowed characters`);
+	}
 
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv(customEnv);
@@ -701,7 +715,8 @@ export async function spawnGeminiCli(options: SpawnGeminiOptions): Promise<Agent
 			}
 
 			const parserError = parser.detectErrorFromExit(code ?? 0, stderr, stdoutBuffer);
-			const finalError = parserError?.message || errorText || stderr || `Process exited with code ${code}`;
+			const finalError =
+				parserError?.message || errorText || stderr || `Process exited with code ${code}`;
 
 			resolve({
 				success: false,

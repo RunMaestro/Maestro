@@ -231,6 +231,49 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	it('skips resumeArgs when agentSessionId contains invalid characters', async () => {
+		const { logger } = await import('../../../main/utils/logger');
+		vi.mocked(logger.warn).mockClear();
+
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			agentSessionId: 'sess; rm -rf /',
+		});
+		expect(result).toEqual(['--print']);
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Invalid agentSessionId format, skipping resume args',
+			'AgentArgs',
+			{ agentSessionId: 'sess; rm -rf /' }
+		);
+	});
+
+	it('allows valid session IDs with dots, colons, and hyphens', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			agentSessionId: 'session-2025:03.08_abc',
+		});
+		expect(result).toEqual(['--print', '--resume', 'session-2025:03.08_abc']);
+	});
+
+	it('rejects session IDs with shell metacharacters', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+		});
+		for (const bad of ['id$(cmd)', 'id`cmd`', 'id|pipe', 'id&bg', 'id>file']) {
+			const result = buildAgentArgs(agent, {
+				baseArgs: [],
+				agentSessionId: bad,
+			});
+			expect(result).toEqual([]);
+		}
+	});
+
 	// -- combined --
 	it('combines multiple options together', () => {
 		const agent = makeAgent({

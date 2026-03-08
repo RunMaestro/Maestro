@@ -82,6 +82,7 @@ import {
 	getClaudeCommand,
 	detectClaude,
 	spawnAgent,
+	spawnGeminiCli,
 	AgentResult,
 } from '../../../cli/services/agent-spawner';
 
@@ -1367,6 +1368,67 @@ Some text with [x] in it that's not a checkbox
 			expect(fs.promises.access).not.toHaveBeenCalled();
 
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// spawnGeminiCli input validation (TASK-S04)
+	// -----------------------------------------------------------------------
+	describe('spawnGeminiCli — input validation', () => {
+		it('rejects model with shell metacharacters', async () => {
+			await expect(
+				spawnGeminiCli({ prompt: 'test', cwd: '/tmp', model: 'model; rm -rf /' })
+			).rejects.toThrow('Invalid model identifier: contains disallowed characters');
+		});
+
+		it('rejects model with backticks', async () => {
+			await expect(
+				spawnGeminiCli({ prompt: 'test', cwd: '/tmp', model: 'model`cmd`' })
+			).rejects.toThrow('Invalid model identifier: contains disallowed characters');
+		});
+
+		it('rejects model with spaces', async () => {
+			await expect(
+				spawnGeminiCli({ prompt: 'test', cwd: '/tmp', model: 'model name' })
+			).rejects.toThrow('Invalid model identifier: contains disallowed characters');
+		});
+
+		it('accepts valid model identifiers', async () => {
+			mockSpawn.mockReturnValue(mockChild);
+			// Should not throw — the promise resolves when process exits
+			const promise = spawnGeminiCli({
+				prompt: 'test',
+				cwd: '/tmp',
+				model: 'gemini-2.0-flash/latest',
+			});
+			// Trigger process close to resolve the promise
+			(mockChild as EventEmitter).emit('close', 0);
+			const result = await promise;
+			expect(result).toBeDefined();
+		});
+
+		it('rejects resume ID with shell metacharacters', async () => {
+			await expect(
+				spawnGeminiCli({ prompt: 'test', cwd: '/tmp', resume: 'id$(whoami)' })
+			).rejects.toThrow('Invalid session ID for resume: contains disallowed characters');
+		});
+
+		it('rejects resume ID with pipe characters', async () => {
+			await expect(
+				spawnGeminiCli({ prompt: 'test', cwd: '/tmp', resume: 'id|cat /etc/passwd' })
+			).rejects.toThrow('Invalid session ID for resume: contains disallowed characters');
+		});
+
+		it('accepts valid resume IDs with dots, colons, and hyphens', async () => {
+			mockSpawn.mockReturnValue(mockChild);
+			const promise = spawnGeminiCli({
+				prompt: 'test',
+				cwd: '/tmp',
+				resume: 'session-2025:03.08_abc',
+			});
+			(mockChild as EventEmitter).emit('close', 0);
+			const result = await promise;
+			expect(result).toBeDefined();
 		});
 	});
 });

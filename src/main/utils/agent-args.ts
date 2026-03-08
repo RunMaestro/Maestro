@@ -101,7 +101,13 @@ export function buildAgentArgs(
 	}
 
 	if (options.agentSessionId && agent.resumeArgs) {
-		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
+		if (/^[\w\-:.]+$/.test(options.agentSessionId)) {
+			finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
+		} else {
+			logger.warn('Invalid agentSessionId format, skipping resume args', LOG_CONTEXT, {
+				agentSessionId: options.agentSessionId,
+			});
+		}
 	}
 
 	// Deduplicate repeated flag-style arguments while preserving order.
