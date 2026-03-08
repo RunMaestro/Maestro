@@ -10,6 +10,7 @@ import {
 	updateTerminalTabPid,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
+import { useTabStore } from '../stores/tabStore';
 import { captureException } from '../utils/sentry';
 import type { Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
@@ -72,6 +73,8 @@ export const TerminalView = memo(
 		const spawnInFlightRef = useRef<Set<string>>(new Set());
 		// Track which tabs have already had the loading message written to avoid duplicates
 		const loadingWrittenRef = useRef<Set<string>>(new Set());
+
+		const closeTerminalTab = useTabStore((s) => s.closeTerminalTab);
 
 		const activeTab = getActiveTerminalTab(session);
 
@@ -231,23 +234,19 @@ export const TerminalView = memo(
 			return cleanup;
 		}, [session.id]);
 
-		// Write shell exit message to xterm buffer when a tab transitions to 'exited'
+		// Auto-close terminal tabs when the shell process exits
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
 			for (const tab of terminalTabs) {
 				const prev = prevTabStatesRef.current.get(tab.id);
 				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited') {
-					const handle = terminalRefs.current.get(tab.id);
-					if (handle) {
-						const code = tab.exitCode ?? 0;
-						handle.write(
-							`\r\n\x1b[33mShell exited (code: ${code}).\x1b[0m Press Ctrl+Shift+\` for new terminal.\r\n`
-						);
-					}
+					// Brief delay so the user sees the exit before the tab disappears
+					const tabId = tab.id;
+					setTimeout(() => closeTerminalTab(tabId), 300);
 				}
 				prevTabStatesRef.current.set(tab.id, tab.state);
 			}
-		}, [session.terminalTabs]);
+		}, [session.terminalTabs, closeTerminalTab]);
 
 		const terminalTabs = session.terminalTabs || [];
 
@@ -327,19 +326,6 @@ export const TerminalView = memo(
 								</div>
 							) : (
 								<>
-									{tab.state === 'exited' && (
-										<div
-											className="absolute top-0 left-0 right-0 z-10 px-3 py-1 text-xs text-center"
-											style={{
-												background: theme.colors.bgSidebar,
-												color: theme.colors.textDim,
-												borderBottom: `1px solid ${theme.colors.accentDim}`,
-											}}
-										>
-											Process exited{tab.exitCode !== undefined ? ` (code ${tab.exitCode})` : ''} —
-											press any key or create a new tab
-										</div>
-									)}
 									<XTerminal
 										ref={(handle) => {
 											if (handle) {

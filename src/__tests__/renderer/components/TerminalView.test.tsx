@@ -66,6 +66,19 @@ vi.mock('../../../renderer/components/TerminalSearchBar', () => ({
 	TerminalSearchBar: () => null,
 }));
 
+// Mock tabStore — TerminalView uses closeTerminalTab to auto-close exited tabs
+const { mockCloseTerminalTab } = vi.hoisted(() => ({
+	mockCloseTerminalTab: vi.fn(),
+}));
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock('../../../renderer/stores/tabStore', () => ({
+	useTabStore: (sel?: (s: any) => any) => {
+		const state = { closeTerminalTab: mockCloseTerminalTab };
+		return sel ? sel(state) : state;
+	},
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -248,6 +261,34 @@ describe('TerminalView — isVisible repaint behaviour', () => {
 
 		// At least one more refresh() call compared to after first show
 		expect(mockRefresh.mock.calls.length).toBeGreaterThan(callsAfterFirstShow);
+	});
+});
+
+describe('TerminalView — auto-close on shell exit', () => {
+	it('calls closeTerminalTab when a tab transitions to exited state', async () => {
+		vi.useFakeTimers();
+		const tab = makeTab({ pid: 1234, state: 'busy' });
+		const session = makeSession([tab]);
+
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={session} isVisible={true} />
+		);
+
+		// Transition tab state to 'exited'
+		const exitedTab = makeTab({ pid: 1234, state: 'exited', exitCode: 0 });
+		const exitedSession = makeSession([exitedTab]);
+
+		act(() => {
+			rerender(<TerminalView {...defaultProps} session={exitedSession} isVisible={true} />);
+		});
+
+		// Advance past the 300ms auto-close delay
+		act(() => {
+			vi.advanceTimersByTime(350);
+		});
+
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
+		vi.useRealTimers();
 	});
 });
 
