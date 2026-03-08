@@ -61,6 +61,11 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// Disable modulepreload polyfill — Electron doesn't need it and eager
+		// preloading of lazy chunks (vendor-flow, vendor-mermaid, etc.) can cause
+		// "Cannot read properties of undefined (reading 'useState')" at startup
+		// when a chunk executes before vendor-react is fully initialised.
+		modulePreload: false,
 		rollupOptions: {
 			output: {
 				// Manual chunking for better caching and code splitting
