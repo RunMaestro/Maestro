@@ -518,10 +518,22 @@ export class CueEngine {
 						fanOutIndex: i,
 					},
 				};
-				this.executeCueRun(targetSession.id, sub.prompt, fanOutEvent, sub.name, sub.output_prompt);
+				this.executeCueRun(
+					targetSession.id,
+					sub.prompt_file ?? sub.prompt,
+					fanOutEvent,
+					sub.name,
+					sub.output_prompt
+				);
 			}
 		} else {
-			this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name, sub.output_prompt);
+			this.executeCueRun(
+				ownerSessionId,
+				sub.prompt_file ?? sub.prompt,
+				event,
+				sub.name,
+				sub.output_prompt
+			);
 		}
 	}
 
@@ -705,6 +717,7 @@ export class CueEngine {
 		sub: {
 			name: string;
 			prompt: string;
+			prompt_file?: string;
 			output_prompt?: string;
 			interval_minutes?: number;
 			filter?: Record<string, string | number | boolean>;
@@ -725,7 +738,13 @@ export class CueEngine {
 		// Check payload filter (even for timer events)
 		if (!sub.filter || matchesFilter(immediateEvent.payload, sub.filter)) {
 			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval, initial)`);
-			this.executeCueRun(session.id, sub.prompt, immediateEvent, sub.name, sub.output_prompt);
+			this.executeCueRun(
+				session.id,
+				sub.prompt_file ?? sub.prompt,
+				immediateEvent,
+				sub.name,
+				sub.output_prompt
+			);
 		} else {
 			this.deps.onLog(
 				'cue',
@@ -757,7 +776,13 @@ export class CueEngine {
 			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval)`);
 			state.lastTriggered = event.timestamp;
 			state.nextTriggers.set(sub.name, Date.now() + intervalMs);
-			this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
+			this.executeCueRun(
+				session.id,
+				sub.prompt_file ?? sub.prompt,
+				event,
+				sub.name,
+				sub.output_prompt
+			);
 		}, intervalMs);
 
 		state.nextTriggers.set(sub.name, Date.now() + intervalMs);
@@ -770,6 +795,7 @@ export class CueEngine {
 		sub: {
 			name: string;
 			prompt: string;
+			prompt_file?: string;
 			output_prompt?: string;
 			watch?: string;
 			filter?: Record<string, string | number | boolean>;
@@ -796,7 +822,13 @@ export class CueEngine {
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (file.changed)`);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
+				this.executeCueRun(
+					session.id,
+					sub.prompt_file ?? sub.prompt,
+					event,
+					sub.name,
+					sub.output_prompt
+				);
 			},
 		});
 
@@ -830,7 +862,13 @@ export class CueEngine {
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (${sub.event})`);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
+				this.executeCueRun(
+					session.id,
+					sub.prompt_file ?? sub.prompt,
+					event,
+					sub.name,
+					sub.output_prompt
+				);
 			},
 		});
 
@@ -867,7 +905,13 @@ export class CueEngine {
 					`[CUE] "${sub.name}" triggered (task.pending: ${event.payload.taskCount} task(s) in ${event.payload.filename})`
 				);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
+				this.executeCueRun(
+					session.id,
+					sub.prompt_file ?? sub.prompt,
+					event,
+					sub.name,
+					sub.output_prompt
+				);
 			},
 		});
 
@@ -1158,7 +1202,13 @@ export class CueEngine {
 				wakeTimeMs: now,
 				sessions: reconcileSessions,
 				onDispatch: (sessionId, sub, event) => {
-					this.executeCueRun(sessionId, sub.prompt, event, sub.name, sub.output_prompt);
+					this.executeCueRun(
+						sessionId,
+						sub.prompt_file ?? sub.prompt,
+						event,
+						sub.name,
+						sub.output_prompt
+					);
 				},
 				onLog: (level, message) => {
 					this.deps.onLog(level as MainLogLevel, message);

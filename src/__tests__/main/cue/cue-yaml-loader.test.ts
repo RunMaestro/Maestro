@@ -175,6 +175,45 @@ subscriptions:
 			expect(() => loadCueConfig('/projects/test')).toThrow();
 		});
 
+		it('resolves prompt_file to prompt content when prompt is empty', () => {
+			// First call: existsSync for config file (true), then for prompt file path (true)
+			let readCallCount = 0;
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockImplementation((p: string) => {
+				readCallCount++;
+				if (String(p).endsWith('.maestro/prompts/worker-pipeline.md')) {
+					return 'Prompt from external file';
+				}
+				return `
+subscriptions:
+  - name: test-sub
+    event: time.interval
+    prompt_file: .maestro/prompts/worker-pipeline.md
+    interval_minutes: 5
+`;
+			});
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].prompt).toBe('Prompt from external file');
+			expect(result!.subscriptions[0].prompt_file).toBe('.maestro/prompts/worker-pipeline.md');
+		});
+
+		it('keeps inline prompt when both prompt and prompt_file exist', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: test-sub
+    event: time.interval
+    prompt: Inline prompt text
+    prompt_file: .maestro/prompts/should-be-ignored.md
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result!.subscriptions[0].prompt).toBe('Inline prompt text');
+		});
+
 		it('handles agent.completed with source_session array', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockReturnValue(`
@@ -312,6 +351,30 @@ subscriptions:
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
 				expect.arrayContaining([expect.stringContaining('source_session')])
+			);
+		});
+
+		it('accepts prompt_file as alternative to prompt', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'time.interval',
+						prompt_file: '.maestro/prompts/test.md',
+						interval_minutes: 5,
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects subscription with neither prompt nor prompt_file', () => {
+			const result = validateCueConfig({
+				subscriptions: [{ name: 'test', event: 'time.interval', interval_minutes: 5 }],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file"')])
 			);
 		});
 

@@ -31,6 +31,9 @@ vi.mock('../../../renderer/components/ui/Modal', () => ({
 		onClose: () => void;
 	}) => (
 		<div data-testid={testId} role="dialog" aria-label={title}>
+			<button data-testid={`${testId}-close`} onClick={onClose}>
+				Close
+			</button>
 			<div data-testid="modal-content">{children}</div>
 			{footer && <div data-testid="modal-footer">{footer}</div>}
 		</div>
@@ -62,6 +65,7 @@ vi.mock('../../../renderer/components/ui/Modal', () => ({
 vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	MODAL_PRIORITIES: {
 		CUE_YAML_EDITOR: 463,
+		CUE_PATTERN_PREVIEW: 464,
 	},
 }));
 
@@ -792,7 +796,7 @@ describe('CueYamlEditor', () => {
 			expect(screen.getByText('Copied')).toBeInTheDocument();
 		});
 
-		it('should close preview overlay when backdrop is clicked', async () => {
+		it('should close preview modal when close is triggered', async () => {
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
@@ -801,15 +805,13 @@ describe('CueYamlEditor', () => {
 
 			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
 			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
+			expect(screen.getByTestId('cue-pattern-preview')).toBeInTheDocument();
 
-			// Click the backdrop overlay to close
-			const overlayBackdrop = document.querySelector('[style*="z-index: 464"]');
-			if (overlayBackdrop) {
-				fireEvent.click(overlayBackdrop);
-			}
+			// Close via the mock Modal's close button
+			fireEvent.click(screen.getByTestId('cue-pattern-preview-close'));
 
 			await waitFor(() => {
-				expect(screen.queryByText('Copy to Clipboard')).not.toBeInTheDocument();
+				expect(screen.queryByTestId('cue-pattern-preview')).not.toBeInTheDocument();
 			});
 		});
 	});

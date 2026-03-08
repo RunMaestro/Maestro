@@ -71,12 +71,42 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					}
 				}
 
+				// Resolve prompt_file: read external file content into prompt field
+				let prompt = String(sub.prompt ?? '');
+				const promptFile = typeof sub.prompt_file === 'string' ? sub.prompt_file : undefined;
+				if (promptFile && !prompt) {
+					const resolvedPromptPath = path.isAbsolute(promptFile)
+						? promptFile
+						: path.join(projectRoot, promptFile);
+					try {
+						prompt = fs.readFileSync(resolvedPromptPath, 'utf-8');
+					} catch {
+						// File missing — keep empty prompt, engine will handle error
+					}
+				}
+
+				let outputPrompt = typeof sub.output_prompt === 'string' ? sub.output_prompt : undefined;
+				const outputPromptFile =
+					typeof sub.output_prompt_file === 'string' ? sub.output_prompt_file : undefined;
+				if (outputPromptFile && !outputPrompt) {
+					const resolvedOutputPath = path.isAbsolute(outputPromptFile)
+						? outputPromptFile
+						: path.join(projectRoot, outputPromptFile);
+					try {
+						outputPrompt = fs.readFileSync(resolvedOutputPath, 'utf-8');
+					} catch {
+						// File missing — keep undefined
+					}
+				}
+
 				subscriptions.push({
 					name: String(sub.name ?? ''),
 					event: String(sub.event ?? '') as CueSubscription['event'],
 					enabled: sub.enabled !== false,
-					prompt: String(sub.prompt ?? ''),
-					output_prompt: typeof sub.output_prompt === 'string' ? sub.output_prompt : undefined,
+					prompt,
+					prompt_file: promptFile,
+					output_prompt: outputPrompt,
+					output_prompt_file: outputPromptFile,
 					interval_minutes:
 						typeof sub.interval_minutes === 'number' ? sub.interval_minutes : undefined,
 					watch: typeof sub.watch === 'string' ? sub.watch : undefined,
@@ -183,8 +213,10 @@ export function validateCueConfig(config: unknown): { valid: boolean; errors: st
 				errors.push(`${prefix}: "event" is required and must be a string`);
 			}
 
-			if (!sub.prompt || typeof sub.prompt !== 'string') {
-				errors.push(`${prefix}: "prompt" is required and must be a non-empty string`);
+			const hasPrompt = sub.prompt && typeof sub.prompt === 'string';
+			const hasPromptFile = sub.prompt_file && typeof sub.prompt_file === 'string';
+			if (!hasPrompt && !hasPromptFile) {
+				errors.push(`${prefix}: "prompt" or "prompt_file" is required`);
 			}
 
 			const event = sub.event as string;

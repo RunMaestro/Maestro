@@ -10,6 +10,7 @@ import {
 	GitFork,
 	ArrowLeft,
 	FileCode,
+	Trash2,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -119,6 +120,7 @@ function SessionsTable({
 	theme,
 	onViewInPipeline,
 	onEditYaml,
+	onRemoveCue,
 	queueStatus,
 	pipelines,
 }: {
@@ -126,6 +128,7 @@ function SessionsTable({
 	theme: Theme;
 	onViewInPipeline: (session: CueSessionStatus) => void;
 	onEditYaml: (session: CueSessionStatus) => void;
+	onRemoveCue: (session: CueSessionStatus) => void;
 	queueStatus: Record<string, number>;
 	pipelines: CuePipeline[];
 }) {
@@ -223,6 +226,14 @@ function SessionsTable({
 									>
 										<GitFork className="w-3.5 h-3.5" />
 										View in Pipeline
+									</button>
+									<button
+										onClick={() => onRemoveCue(s)}
+										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
+										style={{ color: '#ef4444' }}
+										title="Remove cue.yaml"
+									>
+										<Trash2 className="w-3.5 h-3.5" />
 									</button>
 								</span>
 							</td>
@@ -416,6 +427,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		disable,
 		stopRun,
 		stopAll,
+		refresh,
 	} = useCue();
 
 	const allSessions = useSessionStore((state) => state.sessions);
@@ -463,6 +475,16 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 			capturesFocus: true,
 			focusTrap: 'strict',
 			onEscape: () => {
+				if (showHelpRef.current) {
+					setShowHelp(false);
+					return;
+				}
+				if (pipelineDirtyRef.current) {
+					const confirmed = window.confirm(
+						'You have unsaved changes in the pipeline editor. Discard and close?'
+					);
+					if (!confirmed) return;
+				}
 				onCloseRef.current();
 			},
 		});
@@ -506,6 +528,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 	// Help modal state
 	const [showHelp, setShowHelp] = useState(false);
+	const showHelpRef = useRef(false);
+	showHelpRef.current = showHelp;
+
+	// Pipeline dirty state (unsaved changes)
+	const [pipelineDirty, setPipelineDirty] = useState(false);
+	const pipelineDirtyRef = useRef(false);
+	pipelineDirtyRef.current = pipelineDirty;
 
 	// YAML editor state
 	const [yamlEditorSession, setYamlEditorSession] = useState<CueSessionStatus | null>(null);
@@ -518,6 +547,29 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		setActiveTab('pipeline');
 	}, []);
 
+	const handleRemoveCue = useCallback(
+		async (session: CueSessionStatus) => {
+			const confirmed = window.confirm(
+				`Remove Cue configuration for "${session.sessionName}"?\n\nThis will delete the cue.yaml file from this project. This cannot be undone.`
+			);
+			if (!confirmed) return;
+			await window.maestro.cue.deleteYaml(session.projectRoot);
+			await refresh();
+		},
+		[refresh]
+	);
+
+	// Close with unsaved changes confirmation
+	const handleCloseWithConfirm = useCallback(() => {
+		if (pipelineDirtyRef.current) {
+			const confirmed = window.confirm(
+				'You have unsaved changes in the pipeline editor. Discard and close?'
+			);
+			if (!confirmed) return;
+		}
+		onClose();
+	}, [onClose]);
+
 	// Active runs section is collapsible when empty
 	const [activeRunsExpanded, setActiveRunsExpanded] = useState(true);
 
@@ -528,7 +580,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 					className="fixed inset-0 flex items-center justify-center"
 					style={{ zIndex: MODAL_PRIORITIES.CUE_MODAL }}
 					onClick={(e) => {
-						if (e.target === e.currentTarget) onClose();
+						if (e.target === e.currentTarget) handleCloseWithConfirm();
 					}}
 				>
 					{/* Backdrop */}
@@ -655,7 +707,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 
 								{/* Close button */}
 								<button
-									onClick={onClose}
+									onClick={handleCloseWithConfirm}
 									className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textDim }}
 								>
@@ -693,6 +745,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 												theme={theme}
 												onViewInPipeline={handleViewInPipeline}
 												onEditYaml={handleEditYaml}
+												onRemoveCue={handleRemoveCue}
 												queueStatus={queueStatus}
 												pipelines={dashboardPipelines}
 											/>
@@ -772,6 +825,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								graphSessions={graphSessions}
 								onSwitchToSession={handleSwitchToSession}
 								onClose={onClose}
+								onDirtyChange={setPipelineDirty}
 								theme={theme}
 								activeRuns={activeRuns}
 							/>

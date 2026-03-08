@@ -13,7 +13,7 @@ import { app, ipcMain } from 'electron';
 import * as yaml from 'js-yaml';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { validateCueConfig, resolveCueConfigPath } from '../../cue/cue-yaml-loader';
-import { CUE_CONFIG_PATH, MAESTRO_DIR } from '../../../shared/maestro-paths';
+import { CUE_CONFIG_PATH, MAESTRO_DIR, CUE_PROMPTS_DIR } from '../../../shared/maestro-paths';
 import type { CueEngine } from '../../cue/cue-engine';
 import type {
 	CueGraphSession,
@@ -179,17 +179,54 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	);
 
 	// Write YAML content to .maestro/cue.yaml (canonical path, creates .maestro/ if needed)
+	// Optionally writes external prompt files alongside the YAML.
 	ipcMain.handle(
 		'cue:writeYaml',
 		withIpcErrorLogging(
 			handlerOpts('writeYaml'),
-			async (options: { projectRoot: string; content: string }): Promise<void> => {
+			async (options: {
+				projectRoot: string;
+				content: string;
+				promptFiles?: Record<string, string>;
+			}): Promise<void> => {
 				const maestroDir = path.join(options.projectRoot, MAESTRO_DIR);
 				if (!fs.existsSync(maestroDir)) {
 					fs.mkdirSync(maestroDir, { recursive: true });
 				}
 				const filePath = path.join(options.projectRoot, CUE_CONFIG_PATH);
 				fs.writeFileSync(filePath, options.content, 'utf-8');
+
+				// Write external prompt files
+				if (options.promptFiles) {
+					const promptsDir = path.join(options.projectRoot, CUE_PROMPTS_DIR);
+					if (!fs.existsSync(promptsDir)) {
+						fs.mkdirSync(promptsDir, { recursive: true });
+					}
+					for (const [relativePath, content] of Object.entries(options.promptFiles)) {
+						const absPath = path.join(options.projectRoot, relativePath);
+						const dir = path.dirname(absPath);
+						if (!fs.existsSync(dir)) {
+							fs.mkdirSync(dir, { recursive: true });
+						}
+						fs.writeFileSync(absPath, content, 'utf-8');
+					}
+				}
+			}
+		)
+	);
+
+	// Delete a session's cue.yaml config file
+	ipcMain.handle(
+		'cue:deleteYaml',
+		withIpcErrorLogging(
+			handlerOpts('deleteYaml'),
+			async (options: { projectRoot: string }): Promise<boolean> => {
+				const filePath = resolveCueConfigPath(options.projectRoot);
+				if (!filePath) {
+					return false;
+				}
+				fs.unlinkSync(filePath);
+				return true;
 			}
 		)
 	);

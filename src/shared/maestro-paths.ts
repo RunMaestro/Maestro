@@ -49,3 +49,19 @@ export const LEGACY_CUE_CONFIG_PATH = 'maestro-cue.yaml';
  * in the file explorer (regardless of gitignore).
  */
 export const ALWAYS_VISIBLE_ENTRIES = new Set([MAESTRO_DIR]);
+
+/**
+ * Generate a prompt file path for a Cue pipeline agent.
+ * Convention: .maestro/prompts/{agentName}-{pipelineName}.md
+ * Spaces are replaced with underscores.
+ */
+export function cuePromptFilePath(
+	agentName: string,
+	pipelineName: string,
+	suffix?: string
+): string {
+	const sanitize = (s: string) => s.replace(/\s+/g, '_').toLowerCase();
+	const base = `${sanitize(agentName)}-${sanitize(pipelineName)}`;
+	const filename = suffix ? `${base}-${suffix}.md` : `${base}.md`;
+	return `${CUE_PROMPTS_DIR}/${filename}`;
+}

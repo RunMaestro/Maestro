@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CheckCircle, XCircle, Zap, Send, Loader2, Copy, Check, X } from 'lucide-react';
+import { CheckCircle, XCircle, Zap, Send, Loader2, Copy, Check } from 'lucide-react';
 import type { CuePattern } from '../constants/cuePatterns';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -633,68 +633,19 @@ export function CueYamlEditor({
 				)}
 			</Modal>
 
-			{/* Pattern preview overlay */}
+			{/* Pattern preview modal */}
 			{previewPattern && (
-				<div
-					className="fixed inset-0 flex items-center justify-center"
-					style={{ zIndex: MODAL_PRIORITIES.CUE_YAML_EDITOR + 1 }}
-					onClick={(e) => {
-						if (e.target === e.currentTarget) setPreviewPattern(null);
-					}}
-				>
-					<div className="absolute inset-0 bg-black/40" />
-					<div
-						className="relative rounded-lg shadow-xl flex flex-col"
-						style={{
-							width: 560,
-							maxHeight: '70vh',
-							backgroundColor: theme.colors.bgMain,
-							border: `1px solid ${theme.colors.border}`,
-						}}
-					>
-						{/* Header */}
-						<div
-							className="flex items-center justify-between px-4 py-3 border-b shrink-0"
-							style={{ borderColor: theme.colors.border }}
-						>
-							<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-								{previewPattern.name}
-							</h3>
-							<button
-								onClick={() => setPreviewPattern(null)}
-								className="p-1 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
-							>
-								<X className="w-4 h-4" />
-							</button>
-						</div>
-
-						{/* Explanation */}
-						<div className="px-4 pt-3 pb-2 shrink-0">
-							<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
-								{previewPattern.explanation}
-							</p>
-						</div>
-
-						{/* YAML preview */}
-						<div className="px-4 flex-1 min-h-0 overflow-y-auto">
-							<pre
-								className="rounded border p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-							>
-								{previewPattern.yaml}
-							</pre>
-						</div>
-
-						{/* Footer */}
-						<div
-							className="flex justify-end px-4 py-3 border-t shrink-0"
-							style={{ borderColor: theme.colors.border }}
-						>
+				<Modal
+					theme={theme}
+					title={previewPattern.name}
+					priority={MODAL_PRIORITIES.CUE_PATTERN_PREVIEW}
+					onClose={() => setPreviewPattern(null)}
+					width={560}
+					maxHeight="70vh"
+					closeOnBackdropClick={true}
+					testId="cue-pattern-preview"
+					footer={
+						<div className="flex justify-end w-full">
 							<button
 								onClick={handleCopyPattern}
 								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors"
@@ -716,8 +667,25 @@ export function CueYamlEditor({
 								)}
 							</button>
 						</div>
-					</div>
-				</div>
+					}
+				>
+					{/* Explanation */}
+					<p className="text-xs leading-relaxed mb-3" style={{ color: theme.colors.textDim }}>
+						{previewPattern.explanation}
+					</p>
+
+					{/* YAML preview */}
+					<pre
+						className="rounded border p-3 text-xs font-mono whitespace-pre-wrap overflow-x-auto"
+						style={{
+							backgroundColor: theme.colors.bgActivity,
+							borderColor: theme.colors.border,
+							color: theme.colors.textMain,
+						}}
+					>
+						{previewPattern.yaml}
+					</pre>
+				</Modal>
 			)}
 		</>
 	);

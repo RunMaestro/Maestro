@@ -2852,7 +2852,12 @@ interface MaestroAPI {
 		getQueueStatus: () => Promise<Record<string, number>>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
-		writeYaml: (projectRoot: string, content: string) => Promise<void>;
+		writeYaml: (
+			projectRoot: string,
+			content: string,
+			promptFiles?: Record<string, string>
+		) => Promise<void>;
+		deleteYaml: (projectRoot: string) => Promise<boolean>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;

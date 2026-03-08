@@ -83,6 +83,7 @@ export interface CuePipelineEditorProps {
 	graphSessions: CueGraphSession[];
 	onSwitchToSession: (id: string) => void;
 	onClose: () => void;
+	onDirtyChange?: (isDirty: boolean) => void;
 	theme: Theme;
 	activeRuns?: ActiveRunInfo[];
 }
@@ -296,6 +297,15 @@ function validatePipelines(pipelines: CuePipeline[]): string[] {
 			}
 		}
 
+		// Check agents have prompts configured
+		for (const agent of agents) {
+			const agentData = agent.data as AgentNodeData;
+			if (!agentData.inputPrompt?.trim()) {
+				const name = agentData.sessionName;
+				errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);
+			}
+		}
+
 		// Check for cycles via topological sort
 		const adjList = new Map<string, string[]>();
 		const inDegree = new Map<string, number>();
@@ -331,6 +341,7 @@ function CuePipelineEditorInner({
 	groups,
 	graphSessions,
 	onSwitchToSession,
+	onDirtyChange,
 	theme,
 	activeRuns: activeRunsProp,
 }: CuePipelineEditorProps) {
@@ -473,6 +484,11 @@ function CuePipelineEditorInner({
 		}
 	}, [pipelineState.pipelines]);
 
+	// Notify parent of dirty state changes
+	useEffect(() => {
+		onDirtyChange?.(isDirty);
+	}, [isDirty, onDirtyChange]);
+
 	const handleSave = useCallback(async () => {
 		// Validate before save
 		const errors = validatePipelines(pipelineState.pipelines);
@@ -512,11 +528,20 @@ function CuePipelineEditorInner({
 
 		setSaveStatus('saving');
 		try {
-			const yamlContent = pipelinesToYaml(pipelineState.pipelines, cueSettings);
+			const { yaml: yamlContent, promptFiles } = pipelinesToYaml(
+				pipelineState.pipelines,
+				cueSettings
+			);
 
-			// Write YAML and refresh sessions
+			// Convert prompt files Map to plain object for IPC
+			const promptFilesObj: Record<string, string> = {};
+			for (const [filePath, content] of promptFiles) {
+				promptFilesObj[filePath] = content;
+			}
+
+			// Write YAML + prompt files and refresh sessions
 			for (const root of projectRoots) {
-				await window.maestro.cue.writeYaml(root, yamlContent);
+				await window.maestro.cue.writeYaml(root, yamlContent, promptFilesObj);
 			}
 
 			// Refresh all sessions involved

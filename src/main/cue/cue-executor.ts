@@ -84,32 +84,35 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	const startedAt = new Date().toISOString();
 	const startTime = Date.now();
 
-	// 1. Resolve the prompt path
-	const resolvedPath = path.isAbsolute(promptPath)
-		? promptPath
-		: path.join(projectRoot, promptPath);
-
-	// 2. Read the prompt file
+	// 1. Resolve prompt: try file path first, fall back to inline prompt text
 	let promptContent: string;
-	try {
-		promptContent = fs.readFileSync(resolvedPath, 'utf-8');
-	} catch (error) {
-		const message = `Failed to read prompt file: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
-		onLog('error', message);
-		return {
-			runId,
-			sessionId: session.id,
-			sessionName: session.name,
-			subscriptionName: subscription.name,
-			event,
-			status: 'failed',
-			stdout: '',
-			stderr: message,
-			exitCode: null,
-			durationMs: Date.now() - startTime,
-			startedAt,
-			endedAt: new Date().toISOString(),
-		};
+	if (promptPath.endsWith('.md') || promptPath.endsWith('.txt') || promptPath.endsWith('.yaml')) {
+		const resolvedPath = path.isAbsolute(promptPath)
+			? promptPath
+			: path.join(projectRoot, promptPath);
+		try {
+			promptContent = fs.readFileSync(resolvedPath, 'utf-8');
+		} catch (error) {
+			const message = `Failed to read prompt file: ${resolvedPath} - ${error instanceof Error ? error.message : String(error)}`;
+			onLog('error', message);
+			return {
+				runId,
+				sessionId: session.id,
+				sessionName: session.name,
+				subscriptionName: subscription.name,
+				event,
+				status: 'failed',
+				stdout: '',
+				stderr: message,
+				exitCode: null,
+				durationMs: Date.now() - startTime,
+				startedAt,
+				endedAt: new Date().toISOString(),
+			};
+		}
+	} else {
+		// Inline prompt text (no file extension = raw prompt content)
+		promptContent = promptPath;
 	}
 
 	// 3. Populate the template context with Cue event data

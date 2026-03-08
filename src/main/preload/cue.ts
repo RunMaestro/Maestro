@@ -128,9 +128,16 @@ export function createCueApi() {
 		readYaml: (projectRoot: string): Promise<string | null> =>
 			ipcRenderer.invoke('cue:readYaml', { projectRoot }),
 
-		// Write YAML content to a session's maestro-cue.yaml
-		writeYaml: (projectRoot: string, content: string): Promise<void> =>
-			ipcRenderer.invoke('cue:writeYaml', { projectRoot, content }),
+		// Write YAML content to a session's maestro-cue.yaml (with optional external prompt files)
+		writeYaml: (
+			projectRoot: string,
+			content: string,
+			promptFiles?: Record<string, string>
+		): Promise<void> => ipcRenderer.invoke('cue:writeYaml', { projectRoot, content, promptFiles }),
+
+		// Delete a session's cue.yaml config file
+		deleteYaml: (projectRoot: string): Promise<boolean> =>
+			ipcRenderer.invoke('cue:deleteYaml', { projectRoot }),
 
 		// Validate YAML content as a Cue configuration
 		validateYaml: (content: string): Promise<{ valid: boolean; errors: string[] }> =>

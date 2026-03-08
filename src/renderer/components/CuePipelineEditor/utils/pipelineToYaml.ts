@@ -16,6 +16,13 @@ import type {
 	AgentNodeData,
 } from '../../../../shared/cue-pipeline-types';
 import type { CueSubscription, CueSettings } from '../../../../main/cue/cue-types';
+import { cuePromptFilePath } from '../../../../shared/maestro-paths';
+
+/** Result of converting pipelines to YAML, including external prompt files */
+export interface PipelineYamlResult {
+	yaml: string;
+	promptFiles: Map<string, string>;
+}
 
 function buildAdjacency(pipeline: CuePipeline): {
 	outgoing: Map<string, PipelineEdge[]>;
@@ -214,11 +221,16 @@ function buildChain(
 }
 
 /**
- * Converts pipeline graph state to YAML string.
+ * Converts pipeline graph state to YAML string with external prompt files.
+ * Prompts are saved as external .md files referenced by prompt_file in the YAML.
  */
-export function pipelinesToYaml(pipelines: CuePipeline[], settings?: Partial<CueSettings>): string {
+export function pipelinesToYaml(
+	pipelines: CuePipeline[],
+	settings?: Partial<CueSettings>
+): PipelineYamlResult {
 	const allSubscriptions: Array<Record<string, unknown>> = [];
 	const comments: string[] = [];
+	const promptFiles = new Map<string, string>();
 
 	for (const pipeline of pipelines) {
 		// Pipeline metadata comment
@@ -226,12 +238,8 @@ export function pipelinesToYaml(pipelines: CuePipeline[], settings?: Partial<Cue
 
 		const subs = pipelineToYamlSubscriptions(pipeline);
 
-		// Build edge mode map for annotation
-		const edgeModeMap = new Map<string, PipelineEdge>();
-		for (const edge of pipeline.edges) {
-			// Key by source->target for lookup
-			edgeModeMap.set(`${edge.source}->${edge.target}`, edge);
-		}
+		// Build a map from subscription name to the agent node that owns it
+		const subAgentMap = buildSubAgentMap(pipeline);
 
 		for (const sub of subs) {
 			const record: Record<string, unknown> = {
@@ -247,20 +255,19 @@ export function pipelinesToYaml(pipelines: CuePipeline[], settings?: Partial<Cue
 			if (sub.fan_out != null) record.fan_out = sub.fan_out;
 			if (sub.filter != null) record.filter = sub.filter;
 
-			// Handle prompt: inline if short, note file path if long
+			// Save prompts as external files
+			const agentName = subAgentMap.get(sub.name) ?? 'agent';
+
 			if (sub.prompt) {
-				if (sub.prompt.length < 500) {
-					record.prompt = sub.prompt;
-				} else {
-					record.prompt = sub.prompt;
-					comments.push(
-						`# NOTE: Prompt for "${sub.name}" is ${sub.prompt.length} chars - consider saving to .maestro/prompts/${sub.name}.md`
-					);
-				}
+				const filePath = cuePromptFilePath(agentName, pipeline.name);
+				record.prompt_file = filePath;
+				promptFiles.set(filePath, sub.prompt);
 			}
 
 			if (sub.output_prompt) {
-				record.output_prompt = sub.output_prompt;
+				const filePath = cuePromptFilePath(agentName, pipeline.name, 'output');
+				record.output_prompt_file = filePath;
+				promptFiles.set(filePath, sub.output_prompt);
 			}
 
 			allSubscriptions.push(record);
@@ -302,5 +309,73 @@ export function pipelinesToYaml(pipelines: CuePipeline[], settings?: Partial<Cue
 
 	// Prepend pipeline metadata comments
 	const header = comments.length > 0 ? comments.join('\n') + '\n\n' : '';
-	return header + yamlStr;
+	return { yaml: header + yamlStr, promptFiles };
+}
+
+/**
+ * Builds a map from subscription name to the agent session name that owns it.
+ * Used for generating prompt file paths with the agent name.
+ */
+function buildSubAgentMap(pipeline: CuePipeline): Map<string, string> {
+	const result = new Map<string, string>();
+	const { outgoing } = buildAdjacency(pipeline);
+	const triggers = findTriggerNodes(pipeline);
+	const nodeMap = new Map(pipeline.nodes.map((n) => [n.id, n]));
+
+	const visited = new Set<string>();
+	let chainIndex = 0;
+
+	for (const trigger of triggers) {
+		const triggerOutgoing = outgoing.get(trigger.id) ?? [];
+		if (triggerOutgoing.length === 0) continue;
+
+		const directTargets = triggerOutgoing
+			.map((e) => nodeMap.get(e.target))
+			.filter(Boolean) as PipelineNode[];
+		const agentTargets = directTargets.filter((n) => n.type === 'agent');
+		if (agentTargets.length === 0) continue;
+
+		const subName = chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
+		chainIndex++;
+
+		if (agentTargets.length === 1) {
+			result.set(subName, (agentTargets[0].data as AgentNodeData).sessionName);
+			visited.add(agentTargets[0].id);
+			buildSubAgentMapChain(agentTargets[0], pipeline.name, result, outgoing, nodeMap, visited);
+			chainIndex = result.size;
+		} else {
+			// Fan-out: use first agent name for the subscription
+			result.set(subName, (agentTargets[0].data as AgentNodeData).sessionName);
+			for (const agent of agentTargets) visited.add(agent.id);
+			for (const agent of agentTargets) {
+				buildSubAgentMapChain(agent, pipeline.name, result, outgoing, nodeMap, visited);
+			}
+			chainIndex = result.size;
+		}
+	}
+
+	return result;
+}
+
+function buildSubAgentMapChain(
+	fromNode: PipelineNode,
+	pipelineName: string,
+	result: Map<string, string>,
+	outgoing: Map<string, PipelineEdge[]>,
+	nodeMap: Map<string, PipelineNode>,
+	visited: Set<string>
+): void {
+	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
+	const targets = fromOutgoing
+		.map((e) => nodeMap.get(e.target))
+		.filter((n): n is PipelineNode => n != null && n.type === 'agent');
+
+	for (const target of targets) {
+		if (visited.has(target.id)) continue;
+		visited.add(target.id);
+
+		const subName = `${pipelineName}-chain-${result.size}`;
+		result.set(subName, (target.data as AgentNodeData).sessionName);
+		buildSubAgentMapChain(target, pipelineName, result, outgoing, nodeMap, visited);
+	}
 }
