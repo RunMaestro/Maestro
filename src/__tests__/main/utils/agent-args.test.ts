@@ -18,6 +18,8 @@ vi.mock('../../../main/utils/logger', () => ({
 		warn: vi.fn(),
 		error: vi.fn(),
 		debug: vi.fn(),
+		toast: vi.fn(),
+		autorun: vi.fn(),
 	},
 }));
 
@@ -625,6 +627,91 @@ describe('applyAgentConfigOverrides', () => {
 		});
 		applyAgentConfigOverrides(agent, baseArgs, {});
 		expect(baseArgs).toEqual(['--print']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// custom args denylist (TASK-S01)
+// ---------------------------------------------------------------------------
+describe('applyAgentConfigOverrides — denied custom args', () => {
+	it('strips --no-sandbox from custom args', () => {
+		const agent = makeAgent();
+		const result = applyAgentConfigOverrides(agent, ['--print'], {
+			sessionCustomArgs: '--no-sandbox --verbose',
+		});
+		expect(result.args).toContain('--verbose');
+		expect(result.args).not.toContain('--no-sandbox');
+	});
+
+	it('strips all denied flags from custom args', () => {
+		const agent = makeAgent();
+		const deniedFlags = [
+			'--no-sandbox',
+			'--include-directories',
+			'--dangerous-auto-approve',
+			'--dangerously-skip-permissions',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--approval-mode',
+			'-y',
+		];
+
+		const result = applyAgentConfigOverrides(agent, [], {
+			sessionCustomArgs: deniedFlags.join(' '),
+		});
+
+		for (const flag of deniedFlags) {
+			expect(result.args).not.toContain(flag);
+		}
+		// All args were denied, so source should be 'none'
+		expect(result.customArgsSource).toBe('none');
+	});
+
+	it('passes through clean custom args unchanged', () => {
+		const agent = makeAgent();
+		const result = applyAgentConfigOverrides(agent, [], {
+			sessionCustomArgs: '--model gemini-2.0 --verbose --temperature 0.5',
+		});
+		expect(result.args).toEqual(['--model', 'gemini-2.0', '--verbose', '--temperature', '0.5']);
+		expect(result.customArgsSource).toBe('session');
+	});
+
+	it('filters denied flags from mixed custom args', () => {
+		const agent = makeAgent();
+		const result = applyAgentConfigOverrides(agent, ['--base'], {
+			sessionCustomArgs: '--verbose --no-sandbox --output json -y --debug',
+		});
+		expect(result.args).toEqual(['--base', '--verbose', '--output', 'json', '--debug']);
+		expect(result.args).not.toContain('--no-sandbox');
+		expect(result.args).not.toContain('-y');
+		expect(result.customArgsSource).toBe('session');
+	});
+
+	it('logs a warning for each denied arg', async () => {
+		const { logger } = await import('../../../main/utils/logger');
+		vi.mocked(logger.warn).mockClear();
+
+		const agent = makeAgent();
+		applyAgentConfigOverrides(agent, [], {
+			sessionCustomArgs: '--no-sandbox -y --verbose',
+		});
+
+		expect(logger.warn).toHaveBeenCalledTimes(2);
+		expect(logger.warn).toHaveBeenCalledWith('Stripped denied custom arg', '[AgentArgs]', {
+			arg: '--no-sandbox',
+		});
+		expect(logger.warn).toHaveBeenCalledWith('Stripped denied custom arg', '[AgentArgs]', {
+			arg: '-y',
+		});
+	});
+
+	it('applies denylist to agent-level customArgs too', () => {
+		const agent = makeAgent();
+		const result = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { customArgs: '--dangerously-skip-permissions --safe-flag' },
+		});
+		expect(result.args).toContain('--safe-flag');
+		expect(result.args).not.toContain('--dangerously-skip-permissions');
+		expect(result.customArgsSource).toBe('agent');
 	});
 });
 
