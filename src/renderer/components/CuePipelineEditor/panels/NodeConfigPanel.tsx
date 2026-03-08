@@ -25,11 +25,22 @@ import type {
 } from '../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../hooks/utils';
 
+/** Info about an incoming trigger edge for per-edge prompt editing */
+export interface IncomingTriggerEdgeInfo {
+	edgeId: string;
+	triggerLabel: string;
+	configSummary: string;
+	prompt: string;
+}
+
 interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
+	/** Incoming trigger edges for the selected agent node (for per-edge prompts) */
+	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
+	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
 }
@@ -87,15 +98,33 @@ function TriggerConfig({
 }) {
 	const data = node.data as TriggerNodeData;
 	const [localConfig, setLocalConfig] = useState(data.config);
+	const [localCustomLabel, setLocalCustomLabel] = useState(data.customLabel ?? '');
 
 	useEffect(() => {
 		setLocalConfig(data.config);
 	}, [data.config]);
 
+	useEffect(() => {
+		setLocalCustomLabel(data.customLabel ?? '');
+	}, [data.customLabel]);
+
 	const { debouncedCallback: debouncedUpdate } = useDebouncedCallback((...args: unknown[]) => {
 		const config = args[0] as TriggerNodeData['config'];
 		onUpdateNode(node.id, { config } as Partial<TriggerNodeData>);
 	}, 300);
+
+	const { debouncedCallback: debouncedUpdateLabel } = useDebouncedCallback((...args: unknown[]) => {
+		const customLabel = (args[0] as string) || undefined;
+		onUpdateNode(node.id, { customLabel } as Partial<TriggerNodeData>);
+	}, 300);
+
+	const handleCustomLabelChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			setLocalCustomLabel(e.target.value);
+			debouncedUpdateLabel(e.target.value);
+		},
+		[debouncedUpdateLabel]
+	);
 
 	const updateConfig = useCallback(
 		(key: string, value: string | number) => {
@@ -118,10 +147,24 @@ function TriggerConfig({
 		[localConfig, debouncedUpdate]
 	);
 
+	const nameField = (
+		<label style={labelStyle}>
+			Name
+			<input
+				type="text"
+				value={localCustomLabel}
+				onChange={handleCustomLabelChange}
+				placeholder={data.label}
+				style={inputStyle}
+			/>
+		</label>
+	);
+
 	switch (data.eventType) {
 		case 'time.heartbeat':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
 					<label style={labelStyle}>
 						Run every N minutes
 						<input
@@ -138,6 +181,7 @@ function TriggerConfig({
 		case 'time.scheduled':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
 					<label style={labelStyle}>
 						Times (HH:MM, comma-separated)
 						<input
@@ -197,6 +241,7 @@ function TriggerConfig({
 		case 'file.changed':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
 					<label style={labelStyle}>
 						Watch pattern
 						<input
@@ -224,15 +269,19 @@ function TriggerConfig({
 			);
 		case 'agent.completed':
 			return (
-				<div style={{ color: '#9ca3af', fontSize: 12, fontStyle: 'italic' }}>
-					Source agent is determined by incoming edges. Connect a trigger or agent node to configure
-					the source.
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					<div style={{ color: '#9ca3af', fontSize: 12, fontStyle: 'italic' }}>
+						Source agent is determined by incoming edges. Connect a trigger or agent node to
+						configure the source.
+					</div>
 				</div>
 			);
 		case 'github.pull_request':
 		case 'github.issue':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
 					<label style={labelStyle}>
 						Repository
 						<input
@@ -259,6 +308,7 @@ function TriggerConfig({
 		case 'task.pending':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
 					<label style={labelStyle}>
 						Scan pattern
 						<input
@@ -276,20 +326,85 @@ function TriggerConfig({
 	}
 }
 
+/** Single prompt row for a specific incoming trigger edge */
+function EdgePromptRow({
+	edgeInfo,
+	onUpdateEdgePrompt,
+}: {
+	edgeInfo: IncomingTriggerEdgeInfo;
+	onUpdateEdgePrompt: (edgeId: string, prompt: string) => void;
+}) {
+	const [localPrompt, setLocalPrompt] = useState(edgeInfo.prompt);
+
+	useEffect(() => {
+		setLocalPrompt(edgeInfo.prompt);
+	}, [edgeInfo.prompt]);
+
+	const { debouncedCallback: debouncedUpdate } = useDebouncedCallback((...args: unknown[]) => {
+		onUpdateEdgePrompt(edgeInfo.edgeId, args[0] as string);
+	}, 300);
+
+	const handleChange = useCallback(
+		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+			setLocalPrompt(e.target.value);
+			debouncedUpdate(e.target.value);
+		},
+		[debouncedUpdate]
+	);
+
+	return (
+		<div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+			<label style={labelStyle}>
+				<span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+					<span style={{ color: '#e4e4e7', fontWeight: 600, fontSize: 11 }}>
+						{edgeInfo.triggerLabel}
+					</span>
+					{edgeInfo.configSummary && (
+						<span style={{ color: '#6b7280', fontSize: 10 }}>{edgeInfo.configSummary}</span>
+					)}
+				</span>
+				<textarea
+					value={localPrompt}
+					onChange={handleChange}
+					rows={2}
+					placeholder="Prompt for this trigger..."
+					style={{
+						...inputStyle,
+						resize: 'vertical',
+						fontFamily: 'inherit',
+						lineHeight: 1.4,
+						marginTop: 4,
+					}}
+				/>
+			</label>
+			<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
+				{localPrompt.length} chars
+			</div>
+		</div>
+	);
+}
+
 function AgentConfig({
 	node,
 	pipelines,
 	hasOutgoingEdge,
+	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdgePrompt,
 	onSwitchToAgent,
 }: {
 	node: PipelineNode;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
+	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: NodeConfigPanelProps['onUpdateNode'];
+	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
 }) {
 	const data = node.data as AgentNodeData;
+	const hasMultipleTriggers = (incomingTriggerEdges?.length ?? 0) > 1;
+
+	// Single-trigger mode: use agent node's inputPrompt (existing behavior)
 	const [localInputPrompt, setLocalInputPrompt] = useState(data.inputPrompt ?? '');
 	const [localOutputPrompt, setLocalOutputPrompt] = useState(data.outputPrompt ?? '');
 
@@ -342,32 +457,45 @@ function AgentConfig({
 	return (
 		<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 			<div style={{ display: 'flex', gap: 12, flex: 1 }}>
-				{/* Input Prompt */}
-				<div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-					<label style={labelStyle}>
-						Input Prompt
-						<textarea
-							value={localInputPrompt}
-							onChange={handleInputPromptChange}
-							rows={3}
-							placeholder="Prompt sent when this agent receives data from the pipeline..."
-							style={{
-								...inputStyle,
-								resize: 'vertical',
-								fontFamily: 'inherit',
-								lineHeight: 1.4,
-							}}
-						/>
-					</label>
-					<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
-						{localInputPrompt.length} chars
+				{/* Input Prompt(s) */}
+				{hasMultipleTriggers && onUpdateEdgePrompt ? (
+					<div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+						{incomingTriggerEdges!.map((edgeInfo) => (
+							<EdgePromptRow
+								key={edgeInfo.edgeId}
+								edgeInfo={edgeInfo}
+								onUpdateEdgePrompt={onUpdateEdgePrompt}
+							/>
+						))}
 					</div>
-				</div>
+				) : (
+					<div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+						<label style={labelStyle}>
+							Input Prompt
+							<textarea
+								value={localInputPrompt}
+								onChange={handleInputPromptChange}
+								rows={3}
+								placeholder="Prompt sent when this agent receives data from the pipeline..."
+								style={{
+									...inputStyle,
+									resize: 'vertical',
+									fontFamily: 'inherit',
+									lineHeight: 1.4,
+								}}
+							/>
+						</label>
+						<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
+							{localInputPrompt.length} chars
+						</div>
+					</div>
+				)}
 
 				{/* Output Prompt */}
 				<div
 					style={{
-						flex: 1,
+						flex: hasMultipleTriggers ? 0 : 1,
+						minWidth: hasMultipleTriggers ? 200 : undefined,
 						display: 'flex',
 						flexDirection: 'column',
 						opacity: outputDisabled ? 0.35 : 1,
@@ -460,7 +588,9 @@ export function NodeConfigPanel({
 	selectedNode,
 	pipelines,
 	hasOutgoingEdge,
+	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdgePrompt,
 	onDeleteNode,
 	onSwitchToAgent,
 }: NodeConfigPanelProps) {
@@ -579,7 +709,9 @@ export function NodeConfigPanel({
 						node={selectedNode}
 						pipelines={pipelines}
 						hasOutgoingEdge={hasOutgoingEdge}
+						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
+						onUpdateEdgePrompt={onUpdateEdgePrompt}
 						onSwitchToAgent={onSwitchToAgent}
 					/>
 				)}

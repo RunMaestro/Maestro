@@ -22,7 +22,7 @@ import ReactFlow, {
 	type Connection,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle, Settings } from 'lucide-react';
+import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle, Settings, Plus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
 	CuePipelineState,
@@ -42,7 +42,7 @@ import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
 import { PipelineSelector } from './PipelineSelector';
 import { getNextPipelineColor } from './pipelineColors';
-import { NodeConfigPanel } from './panels/NodeConfigPanel';
+import { NodeConfigPanel, type IncomingTriggerEdgeInfo } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 import { graphSessionsToPipelines } from './utils/yamlToPipeline';
 import { pipelinesToYaml } from './utils/pipelineToYaml';
@@ -71,6 +71,7 @@ interface CueGraphSession {
 		repo?: string;
 		poll_minutes?: number;
 		agent_id?: string;
+		label?: string;
 	}>;
 }
 
@@ -148,6 +149,26 @@ function convertToReactFlowNodes(
 	const nodes: Node[] = [];
 	const agentPipelineMap = new Map<string, string[]>();
 
+	// When showing all pipelines, compute vertical offsets to prevent overlap
+	const pipelineYOffsets = new Map<string, number>();
+	if (selectedPipelineId === null && pipelines.length > 1) {
+		const PIPELINE_GAP = 100; // px between pipeline groups
+		const NODE_HEIGHT = 100; // approximate node height
+		let currentY = 0;
+		for (const pipeline of pipelines) {
+			if (pipeline.nodes.length === 0) continue;
+			let minY = Infinity;
+			let maxY = -Infinity;
+			for (const node of pipeline.nodes) {
+				minY = Math.min(minY, node.position.y);
+				maxY = Math.max(maxY, node.position.y);
+			}
+			// Offset so this pipeline's top starts at currentY
+			pipelineYOffsets.set(pipeline.id, currentY - minY);
+			currentY += maxY - minY + NODE_HEIGHT + PIPELINE_GAP;
+		}
+	}
+
 	// First pass: compute pipeline colors per agent (by sessionId)
 	for (const pipeline of pipelines) {
 		for (const pNode of pipeline.nodes) {
@@ -199,17 +220,18 @@ function convertToReactFlowNodes(
 
 				const triggerData = pNode.data as TriggerNodeData;
 				const compositeId = `${pipeline.id}:${pNode.id}`;
+				const yOffset = pipelineYOffsets.get(pipeline.id) ?? 0;
 				const nodeData: TriggerNodeDataProps = {
 					compositeId,
 					eventType: triggerData.eventType,
-					label: triggerData.label,
+					label: triggerData.customLabel || triggerData.label,
 					configSummary: getTriggerConfigSummary(triggerData),
 					onConfigure: onConfigureNode,
 				};
 				nodes.push({
 					id: compositeId,
 					type: 'trigger',
-					position: pNode.position,
+					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
@@ -225,13 +247,15 @@ function convertToReactFlowNodes(
 
 				const pipelineColors = agentPipelineMap.get(agentData.sessionId) ?? [pipeline.color];
 				const compositeId = `${pipeline.id}:${pNode.id}`;
+				const yOffset = pipelineYOffsets.get(pipeline.id) ?? 0;
 				const hasOutgoingEdge = pipeline.edges.some((e) => e.source === pNode.id);
+				const hasEdgePrompt = pipeline.edges.some((e) => e.target === pNode.id && !!e.prompt);
 				const nodeData: AgentNodeDataProps = {
 					compositeId,
 					sessionId: agentData.sessionId,
 					sessionName: agentData.sessionName,
 					toolType: agentData.toolType,
-					hasPrompt: !!(agentData.inputPrompt || agentData.outputPrompt),
+					hasPrompt: !!(agentData.inputPrompt || agentData.outputPrompt || hasEdgePrompt),
 					hasOutgoingEdge,
 					pipelineColor: pipeline.color,
 					pipelineCount: agentPipelineCount.get(agentData.sessionId) ?? 1,
@@ -241,7 +265,7 @@ function convertToReactFlowNodes(
 				nodes.push({
 					id: compositeId,
 					type: 'agent',
-					position: pNode.position,
+					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
 					data: nodeData,
 					dragHandle: '.drag-handle',
 					style: !isActive ? { opacity: 0.4 } : undefined,
@@ -256,7 +280,8 @@ function convertToReactFlowNodes(
 function convertToReactFlowEdges(
 	pipelines: CuePipelineState['pipelines'],
 	selectedPipelineId: string | null,
-	runningPipelineIds?: Set<string>
+	runningPipelineIds?: Set<string>,
+	selectedEdgeId?: string | null
 ): Edge[] {
 	const edges: Edge[] = [];
 
@@ -265,6 +290,7 @@ function convertToReactFlowEdges(
 		const isRunning = runningPipelineIds?.has(pipeline.id) ?? false;
 
 		for (const pEdge of pipeline.edges) {
+			const compositeId = `${pipeline.id}:${pEdge.id}`;
 			const edgeData: PipelineEdgeData = {
 				pipelineColor: pipeline.color,
 				mode: pEdge.mode,
@@ -272,16 +298,17 @@ function convertToReactFlowEdges(
 				isRunning,
 			};
 			edges.push({
-				id: `${pipeline.id}:${pEdge.id}`,
+				id: compositeId,
 				source: `${pipeline.id}:${pEdge.source}`,
 				target: `${pipeline.id}:${pEdge.target}`,
 				type: 'pipeline',
 				data: edgeData,
+				selected: compositeId === selectedEdgeId,
 				markerEnd: {
 					type: MarkerType.ArrowClosed,
 					color: pipeline.color,
-					width: 16,
-					height: 16,
+					width: selectedEdgeId === compositeId ? 18 : 16,
+					height: selectedEdgeId === compositeId ? 18 : 16,
 				},
 			});
 		}
@@ -316,10 +343,30 @@ function validatePipelines(pipelines: CuePipeline[]): string[] {
 			}
 		}
 
-		// Check agents have prompts configured
+		// Check agents have prompts configured.
+		// An agent's prompt can live on the node (single trigger) or on incoming edges (multi-trigger).
 		for (const agent of agents) {
 			const agentData = agent.data as AgentNodeData;
-			if (!agentData.inputPrompt?.trim()) {
+			const incomingEdges = pipeline.edges.filter((e) => e.target === agent.id);
+			const hasTriggerEdges = incomingEdges.some((e) => {
+				const src = pipeline.nodes.find((n) => n.id === e.source);
+				return src?.type === 'trigger';
+			});
+
+			if (hasTriggerEdges) {
+				// Check: either the agent has a node-level prompt, or ALL incoming trigger edges have prompts
+				const triggerEdges = incomingEdges.filter((e) => {
+					const src = pipeline.nodes.find((n) => n.id === e.source);
+					return src?.type === 'trigger';
+				});
+				const hasNodePrompt = !!agentData.inputPrompt?.trim();
+				const allEdgesHavePrompts = triggerEdges.every((e) => e.prompt?.trim());
+				if (!hasNodePrompt && !allEdgesHavePrompts) {
+					const name = agentData.sessionName;
+					errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);
+				}
+			} else if (!agentData.inputPrompt?.trim()) {
+				// Chain agent (incoming from other agents) — must have node-level prompt
 				const name = agentData.sessionName;
 				errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);
 			}
@@ -370,6 +417,8 @@ function CuePipelineEditorInner({
 		pipelines: [],
 		selectedPipelineId: null,
 	});
+
+	const isAllPipelinesView = pipelineState.selectedPipelineId === null;
 
 	const [triggerDrawerOpen, setTriggerDrawerOpen] = useState(false);
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
@@ -644,6 +693,10 @@ function CuePipelineEditorInner({
 	const selectPipeline = useCallback(
 		(id: string | null) => {
 			setPipelineState((prev) => ({ ...prev, selectedPipelineId: id }));
+			if (id === null) {
+				setTriggerDrawerOpen(false);
+				setAgentDrawerOpen(false);
+			}
 			persistLayout();
 		},
 		[persistLayout]
@@ -692,9 +745,10 @@ function CuePipelineEditorInner({
 			convertToReactFlowEdges(
 				pipelineState.pipelines,
 				pipelineState.selectedPipelineId,
-				runningPipelineIds
+				runningPipelineIds,
+				selectedEdgeId
 			),
-		[pipelineState.pipelines, pipelineState.selectedPipelineId, runningPipelineIds]
+		[pipelineState.pipelines, pipelineState.selectedPipelineId, runningPipelineIds, selectedEdgeId]
 	);
 
 	// Collect session IDs currently on canvas for the agent drawer indicator
@@ -711,30 +765,51 @@ function CuePipelineEditorInner({
 	}, [pipelineState.pipelines]);
 
 	// Resolve selected node/edge from pipeline state using the composite IDs
-	const { selectedNode, selectedNodePipelineId, selectedNodeHasOutgoingEdge } = useMemo(() => {
-		if (!selectedNodeId)
-			return {
-				selectedNode: null,
-				selectedNodePipelineId: null,
-				selectedNodeHasOutgoingEdge: false,
-			};
+	const {
+		selectedNode,
+		selectedNodePipelineId,
+		selectedNodeHasOutgoingEdge,
+		incomingTriggerEdges,
+	} = useMemo(() => {
+		const empty = {
+			selectedNode: null as PipelineNode | null,
+			selectedNodePipelineId: null as string | null,
+			selectedNodeHasOutgoingEdge: false,
+			incomingTriggerEdges: [] as IncomingTriggerEdgeInfo[],
+		};
+		if (!selectedNodeId) return empty;
 		// selectedNodeId is composite: "pipelineId:nodeId"
 		const sepIdx = selectedNodeId.indexOf(':');
-		if (sepIdx === -1)
-			return {
-				selectedNode: null,
-				selectedNodePipelineId: null,
-				selectedNodeHasOutgoingEdge: false,
-			};
+		if (sepIdx === -1) return empty;
 		const pipelineId = selectedNodeId.substring(0, sepIdx);
 		const nodeId = selectedNodeId.substring(sepIdx + 1);
 		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId);
 		const node = pipeline?.nodes.find((n) => n.id === nodeId);
 		const hasOutgoing = pipeline?.edges.some((e) => e.source === nodeId) ?? false;
+
+		// Compute incoming trigger edges for agent nodes
+		const triggerEdges: IncomingTriggerEdgeInfo[] = [];
+		if (node?.type === 'agent' && pipeline) {
+			const incomingEdges = pipeline.edges.filter((e) => e.target === nodeId);
+			for (const edge of incomingEdges) {
+				const sourceNode = pipeline.nodes.find((n) => n.id === edge.source);
+				if (sourceNode?.type === 'trigger') {
+					const triggerData = sourceNode.data as TriggerNodeData;
+					triggerEdges.push({
+						edgeId: edge.id,
+						triggerLabel: triggerData.customLabel || triggerData.label,
+						configSummary: getTriggerConfigSummary(triggerData),
+						prompt: edge.prompt ?? (node.data as AgentNodeData).inputPrompt ?? '',
+					});
+				}
+			}
+		}
+
 		return {
 			selectedNode: node ?? null,
 			selectedNodePipelineId: node ? pipelineId : null,
 			selectedNodeHasOutgoingEdge: hasOutgoing,
+			incomingTriggerEdges: triggerEdges,
 		};
 	}, [selectedNodeId, pipelineState.pipelines]);
 
@@ -870,6 +945,26 @@ function CuePipelineEditorInner({
 						nodes: p.nodes.map((n) => {
 							if (n.id !== nodeId) return n;
 							return { ...n, data: { ...n.data, ...data } };
+						}),
+					};
+				}),
+			}));
+		},
+		[selectedNodePipelineId]
+	);
+
+	const onUpdateEdgePrompt = useCallback(
+		(edgeId: string, prompt: string) => {
+			if (!selectedNodePipelineId) return;
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== selectedNodePipelineId) return p;
+					return {
+						...p,
+						edges: p.edges.map((e) => {
+							if (e.id !== edgeId) return e;
+							return { ...e, prompt };
 						}),
 					};
 				}),
@@ -1217,15 +1312,18 @@ function CuePipelineEditorInner({
 			>
 				<div className="flex items-center gap-2">
 					<button
-						onClick={() => setTriggerDrawerOpen((v) => !v)}
+						onClick={() => !isAllPipelinesView && setTriggerDrawerOpen((v) => !v)}
+						disabled={isAllPipelinesView}
 						className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
 						style={{
 							backgroundColor: triggerDrawerOpen ? `${theme.colors.accent}20` : 'transparent',
 							color: triggerDrawerOpen ? theme.colors.accent : theme.colors.textDim,
 							border: `1px solid ${triggerDrawerOpen ? theme.colors.accent : theme.colors.border}`,
-							cursor: 'pointer',
+							cursor: isAllPipelinesView ? 'not-allowed' : 'pointer',
+							opacity: isAllPipelinesView ? 0.4 : 1,
 							transition: 'all 0.15s',
 						}}
+						title={isAllPipelinesView ? 'Select a pipeline to add triggers' : undefined}
 					>
 						<Zap size={12} />
 						Triggers
@@ -1246,15 +1344,18 @@ function CuePipelineEditorInner({
 				</div>
 				<div className="flex items-center gap-2">
 					<button
-						onClick={() => setAgentDrawerOpen((v) => !v)}
+						onClick={() => !isAllPipelinesView && setAgentDrawerOpen((v) => !v)}
+						disabled={isAllPipelinesView}
 						className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium"
 						style={{
 							backgroundColor: agentDrawerOpen ? `${theme.colors.accent}20` : 'transparent',
 							color: agentDrawerOpen ? theme.colors.accent : theme.colors.textDim,
 							border: `1px solid ${agentDrawerOpen ? theme.colors.accent : theme.colors.border}`,
-							cursor: 'pointer',
+							cursor: isAllPipelinesView ? 'not-allowed' : 'pointer',
+							opacity: isAllPipelinesView ? 0.4 : 1,
 							transition: 'all 0.15s',
 						}}
+						title={isAllPipelinesView ? 'Select a pipeline to add agents' : undefined}
 					>
 						<Bot size={12} />
 						Agents
@@ -1391,28 +1492,64 @@ function CuePipelineEditorInner({
 				{/* Empty state overlay */}
 				{nodes.length === 0 && (
 					<div
-						className="absolute inset-0 flex items-center justify-center pointer-events-none"
-						style={{ zIndex: 5 }}
+						className="absolute inset-0 flex items-center justify-center"
+						style={{
+							zIndex: 5,
+							pointerEvents: pipelineState.pipelines.length === 0 ? 'auto' : 'none',
+						}}
 					>
-						<div className="flex flex-col items-center gap-3 text-center px-8">
-							<div className="flex items-center gap-6" style={{ color: theme.colors.textDim }}>
-								<div className="flex flex-col items-center gap-1">
-									<span style={{ fontSize: 20 }}>←</span>
-									<span className="text-xs">Triggers</span>
-								</div>
-								<div className="flex flex-col items-center gap-2 max-w-xs">
-									<Zap size={24} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
-									<span className="text-sm" style={{ color: theme.colors.textDim }}>
-										Drag a trigger from the left drawer and an agent from the right drawer to create
-										your first pipeline
-									</span>
-								</div>
-								<div className="flex flex-col items-center gap-1">
-									<span style={{ fontSize: 20 }}>→</span>
-									<span className="text-xs">Agents</span>
+						{pipelineState.pipelines.length === 0 ? (
+							<div className="flex flex-col items-center gap-4 text-center px-8">
+								<Zap size={28} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
+								<span className="text-sm" style={{ color: theme.colors.textDim }}>
+									Build event-driven automations by connecting triggers to agents
+								</span>
+								<button
+									onClick={() => {
+										createPipeline();
+										setTimeout(() => {
+											setTriggerDrawerOpen(true);
+											setAgentDrawerOpen(true);
+										}, 50);
+									}}
+									className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.bgMain,
+										cursor: 'pointer',
+										transition: 'opacity 0.15s',
+									}}
+									onMouseEnter={(e) => {
+										e.currentTarget.style.opacity = '0.85';
+									}}
+									onMouseLeave={(e) => {
+										e.currentTarget.style.opacity = '1';
+									}}
+								>
+									<Plus size={14} />
+									Create your first pipeline
+								</button>
+							</div>
+						) : (
+							<div className="flex flex-col items-center gap-3 text-center px-8">
+								<div className="flex items-center gap-6" style={{ color: theme.colors.textDim }}>
+									<div className="flex flex-col items-center gap-1">
+										<span style={{ fontSize: 20 }}>←</span>
+										<span className="text-xs">Triggers</span>
+									</div>
+									<div className="flex flex-col items-center gap-2 max-w-xs">
+										<Zap size={24} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
+										<span className="text-sm" style={{ color: theme.colors.textDim }}>
+											Drag a trigger from the left drawer and an agent from the right drawer
+										</span>
+									</div>
+									<div className="flex flex-col items-center gap-1">
+										<span style={{ fontSize: 20 }}>→</span>
+										<span className="text-xs">Agents</span>
+									</div>
 								</div>
 							</div>
-						</div>
+						)}
 					</div>
 				)}
 
@@ -1567,7 +1704,9 @@ function CuePipelineEditorInner({
 						selectedNode={selectedNode}
 						pipelines={pipelineState.pipelines}
 						hasOutgoingEdge={selectedNodeHasOutgoingEdge}
+						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
+						onUpdateEdgePrompt={onUpdateEdgePrompt}
 						onDeleteNode={onDeleteNode}
 						onSwitchToAgent={onSwitchToSession}
 					/>

@@ -597,4 +597,175 @@ describe('pipelinesToYaml', () => {
 			'Summarize output'
 		);
 	});
+
+	it('uses edge prompt when available instead of agent node prompt', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'time.heartbeat', label: 'Timer', config: { interval_minutes: 5 } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'node-level prompt',
+					},
+				},
+			],
+			edges: [
+				{
+					id: 'e1',
+					source: 't1',
+					target: 'a1',
+					mode: 'pass' as const,
+					prompt: 'edge-level prompt',
+				},
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs).toHaveLength(1);
+		expect(subs[0].prompt).toBe('edge-level prompt');
+	});
+
+	it('serializes trigger customLabel as subscription label', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						customLabel: 'Morning Check',
+						config: { schedule_times: ['08:30'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'Check stuff',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' as const }],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[0].label).toBe('Morning Check');
+	});
+
+	it('creates separate subscriptions for multiple triggers targeting same agent with edge prompts', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: -100 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						customLabel: 'Morning',
+						config: { schedule_times: ['08:30'] },
+					},
+				},
+				{
+					id: 't2',
+					type: 'trigger',
+					position: { x: 0, y: 100 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						customLabel: 'Evening',
+						config: { schedule_times: ['17:30'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' as const, prompt: 'Morning routine' },
+				{ id: 'e2', source: 't2', target: 'a1', mode: 'pass' as const, prompt: 'Evening wrap-up' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs).toHaveLength(2);
+		expect(subs[0].prompt).toBe('Morning routine');
+		expect(subs[0].label).toBe('Morning');
+		expect(subs[0].schedule_times).toEqual(['08:30']);
+		expect(subs[1].prompt).toBe('Evening wrap-up');
+		expect(subs[1].label).toBe('Evening');
+		expect(subs[1].schedule_times).toEqual(['17:30']);
+	});
+
+	it('generates unique prompt file paths for multiple triggers targeting same agent', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: -100 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						config: { schedule_times: ['08:30'] },
+					},
+				},
+				{
+					id: 't2',
+					type: 'trigger',
+					position: { x: 0, y: 100 },
+					data: {
+						eventType: 'time.scheduled',
+						label: 'Scheduled',
+						config: { schedule_times: ['17:30'] },
+					},
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' as const, prompt: 'Prompt A' },
+				{ id: 'e2', source: 't2', target: 'a1', mode: 'pass' as const, prompt: 'Prompt B' },
+			],
+		});
+
+		const { promptFiles } = pipelinesToYaml([pipeline]);
+		// Should have 2 distinct prompt files, not overwrite
+		const promptEntries = [...promptFiles.entries()].filter(
+			([, content]) => content === 'Prompt A' || content === 'Prompt B'
+		);
+		expect(promptEntries).toHaveLength(2);
+		expect(promptEntries[0][0]).not.toBe(promptEntries[1][0]); // Different file paths
+	});
 });

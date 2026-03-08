@@ -411,6 +411,34 @@ export class CueEngine {
 		return result;
 	}
 
+	/**
+	 * Manually trigger a subscription by name, bypassing its event conditions.
+	 * Creates a synthetic event and dispatches through the normal execution path.
+	 * Returns true if the subscription was found and triggered.
+	 */
+	triggerSubscription(subscriptionName: string): boolean {
+		for (const [sessionId, state] of this.sessions) {
+			for (const sub of state.config.subscriptions) {
+				if (sub.name !== subscriptionName) continue;
+				if (sub.agent_id && sub.agent_id !== sessionId) continue;
+
+				const event: CueEvent = {
+					id: crypto.randomUUID(),
+					type: sub.event,
+					timestamp: new Date().toISOString(),
+					triggerName: sub.name,
+					payload: { manual: true },
+				};
+
+				this.deps.onLog('cue', `[CUE] "${sub.name}" manually triggered`);
+				state.lastTriggered = event.timestamp;
+				this.dispatchSubscription(sessionId, sub, event, 'manual');
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Clears queued events for a session */
 	clearQueue(sessionId: string): void {
 		this.eventQueue.delete(sessionId);

@@ -55,6 +55,8 @@ export interface CueSubscription {
 	poll_minutes?: number;
 	/** Session ID of the agent that owns this subscription. When set, only that agent activates it. */
 	agent_id?: string;
+	/** Human-readable label for the trigger (e.g. "Morning Check"). Editor metadata, ignored by engine. */
+	label?: string;
 }
 
 /** Global Cue settings */

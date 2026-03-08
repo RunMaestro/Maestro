@@ -9,7 +9,11 @@ function ensurePipelineDashStyle() {
 	if (pipelineDashInjected) return;
 	pipelineDashInjected = true;
 	const style = document.createElement('style');
-	style.textContent = `@keyframes pipeline-dash { to { stroke-dashoffset: -9; } }`;
+	style.textContent = [
+		`@keyframes pipeline-dash { to { stroke-dashoffset: -9; } }`,
+		`@keyframes pipeline-edge-pulse { 0%, 100% { opacity: 1; filter: drop-shadow(0 0 3px var(--edge-color)); } 50% { opacity: 0.7; filter: drop-shadow(0 0 8px var(--edge-color)); } }`,
+		`@keyframes pipeline-node-pulse { 0%, 100% { box-shadow: 0 0 12px var(--node-color-40); } 50% { box-shadow: 0 0 20px var(--node-color-60), 0 0 6px var(--node-color-30); } }`,
+	].join('\n');
 	document.head.appendChild(style);
 }
 
@@ -50,17 +54,35 @@ export const PipelineEdge = memo(function PipelineEdge({
 
 	return (
 		<>
+			{/* Glow underlay for selected edge */}
+			{selected && (
+				<BaseEdge
+					id={`${id}-glow`}
+					path={edgePath}
+					style={{
+						stroke: color,
+						strokeWidth: 8,
+						opacity: 0.3,
+						filter: `drop-shadow(0 0 4px ${color})`,
+						strokeLinecap: 'round',
+					}}
+				/>
+			)}
 			<BaseEdge
 				id={id}
 				path={edgePath}
 				markerEnd={markerEnd}
 				style={{
 					stroke: color,
-					strokeWidth: selected ? 2.5 : isRunning ? 2 : 1.5,
+					strokeWidth: selected ? 3.5 : isRunning ? 2 : 1.5,
 					opacity,
 					strokeDasharray: mode === 'autorun' || isRunning ? '6 3' : undefined,
-					animation:
-						mode === 'autorun' || isRunning ? 'pipeline-dash 0.8s linear infinite' : undefined,
+					animation: selected
+						? `pipeline-edge-pulse 1.5s ease-in-out infinite`
+						: mode === 'autorun' || isRunning
+							? 'pipeline-dash 0.8s linear infinite'
+							: undefined,
+					['--edge-color' as string]: color,
 				}}
 			/>
 

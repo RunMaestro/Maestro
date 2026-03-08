@@ -97,6 +97,11 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 			prompt: '',
 		};
 
+		// Persist trigger's custom label
+		if (triggerData.customLabel) {
+			sub.label = triggerData.customLabel;
+		}
+
 		// Map trigger config fields
 		switch (triggerData.eventType) {
 			case 'time.heartbeat':
@@ -135,10 +140,10 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 			// Single target
 			const agent = agentTargets[0];
 			const agentData = agent.data as AgentNodeData;
-			sub.prompt = agentData.inputPrompt ?? '';
+			// Use edge prompt if available (per-trigger prompt), fallback to agent node prompt
+			const triggerEdge = triggerOutgoing.find((e) => e.target === agent.id);
+			sub.prompt = triggerEdge?.prompt ?? agentData.inputPrompt ?? '';
 			if (agentData.outputPrompt) sub.output_prompt = agentData.outputPrompt;
-			// The target session is implicit (the session this YAML belongs to)
-			// but we can note it for clarity
 			subscriptions.push(sub);
 			visited.add(agent.id);
 
@@ -260,6 +265,7 @@ export function pipelinesToYaml(
 			const agentId = subAgentIdMap.get(sub.name);
 			if (agentId) record.agent_id = agentId;
 
+			if (sub.label) record.label = sub.label;
 			if (sub.interval_minutes != null) record.interval_minutes = sub.interval_minutes;
 			if (sub.schedule_times != null) record.schedule_times = sub.schedule_times;
 			if (sub.schedule_days != null) record.schedule_days = sub.schedule_days;
@@ -270,17 +276,20 @@ export function pipelinesToYaml(
 			if (sub.fan_out != null) record.fan_out = sub.fan_out;
 			if (sub.filter != null) record.filter = sub.filter;
 
-			// Save prompts as external files
+			// Save prompts as external files.
+			// Use sub.name as the suffix key so multiple triggers targeting the same agent
+			// get unique file paths (e.g. agent-pipeline.md vs agent-pipeline-chain-1.md).
 			const agentName = subAgentMap.get(sub.name) ?? 'agent';
+			const promptSuffix = sub.name === pipeline.name ? pipeline.name : sub.name;
 
 			if (sub.prompt) {
-				const filePath = cuePromptFilePath(agentName, pipeline.name);
+				const filePath = cuePromptFilePath(agentName, promptSuffix);
 				record.prompt_file = filePath;
 				promptFiles.set(filePath, sub.prompt);
 			}
 
 			if (sub.output_prompt) {
-				const filePath = cuePromptFilePath(agentName, pipeline.name, 'output');
+				const filePath = cuePromptFilePath(agentName, promptSuffix, 'output');
 				record.output_prompt_file = filePath;
 				promptFiles.set(filePath, sub.output_prompt);
 			}

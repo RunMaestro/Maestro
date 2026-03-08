@@ -47,6 +47,8 @@ export interface PipelineNodePosition {
 export interface TriggerNodeData {
 	eventType: CueEventType;
 	label: string;
+	/** User-defined label overriding the default event-type label (e.g. "Morning Check") */
+	customLabel?: string;
 	config: {
 		interval_minutes?: number;
 		schedule_times?: string[];
@@ -81,6 +83,8 @@ export interface PipelineEdge {
 	target: string;
 	mode: EdgeMode;
 	debateConfig?: DebateConfig;
+	/** Per-edge input prompt (used when multiple triggers feed the same agent with different prompts) */
+	prompt?: string;
 }
 
 export interface CuePipeline {

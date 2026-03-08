@@ -38,6 +38,7 @@ interface GraphSessionInput {
 		repo?: string;
 		poll_minutes?: number;
 		agent_id?: string;
+		label?: string;
 	}>;
 }
 
@@ -233,6 +234,7 @@ export function subscriptionsToPipelines(
 					data: {
 						eventType: sub.event as CueEventType,
 						label: triggerLabel(sub.event as CueEventType),
+						customLabel: sub.label || undefined,
 						config: extractTriggerConfig(sub),
 					} as TriggerNodeData,
 				};
@@ -270,8 +272,6 @@ export function subscriptionsToPipelines(
 					}
 				} else {
 					// Single target - infer target from subscription context
-					// The target agent is the session this YAML config belongs to
-					// We'll use the subscription name as a proxy for session name
 					const targetSessionName = findTargetSession(sub, subs, sessions);
 					if (targetSessionName) {
 						const pos = {
@@ -280,15 +280,20 @@ export function subscriptionsToPipelines(
 						};
 
 						const agentNode = getOrCreateAgentNode(targetSessionName, sessions, nodeMap, pos);
+						const isReusedAgent = sessionToNode.has(targetSessionName);
 						sessionToNode.set(targetSessionName, agentNode);
 						sessionColumn.set(targetSessionName, 1);
 						sessionRow.set(targetSessionName, triggerCount - 1);
 
-						if (sub.prompt) {
-							(agentNode.data as AgentNodeData).inputPrompt = sub.prompt;
-						}
 						if (sub.output_prompt) {
 							(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
+						}
+
+						// Store prompt on edge when agent has multiple incoming triggers,
+						// otherwise set it on the agent node for backward compat.
+						const edgePrompt = isReusedAgent ? sub.prompt || undefined : undefined;
+						if (!isReusedAgent && sub.prompt) {
+							(agentNode.data as AgentNodeData).inputPrompt = sub.prompt;
 						}
 
 						edges.push({
@@ -296,7 +301,21 @@ export function subscriptionsToPipelines(
 							source: triggerId,
 							target: agentNode.id,
 							mode: 'pass' as EdgeMode,
+							prompt: edgePrompt,
 						});
+
+						// If this agent was previously added with a node-level prompt and
+						// now has a second trigger, migrate the first edge's prompt too.
+						if (isReusedAgent && sub.prompt) {
+							const firstEdge = edges.find((e) => e.target === agentNode.id && !e.prompt);
+							if (firstEdge) {
+								firstEdge.prompt = (agentNode.data as AgentNodeData).inputPrompt || undefined;
+								// Clear node-level prompt since we're now using per-edge prompts
+								(agentNode.data as AgentNodeData).inputPrompt = undefined;
+							}
+							// Set this edge's prompt
+							edges[edges.length - 1].prompt = sub.prompt;
+						}
 					}
 				}
 			} else {

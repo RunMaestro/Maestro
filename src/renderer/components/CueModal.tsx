@@ -11,6 +11,12 @@ import {
 	ArrowLeft,
 	FileCode,
 	Trash2,
+	Play,
+	ChevronDown,
+	ChevronRight,
+	Clock,
+	Terminal,
+	AlertTriangle,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -130,16 +136,20 @@ function SessionsTable({
 	onViewInPipeline,
 	onEditYaml,
 	onRemoveCue,
+	onTriggerSubscription,
 	queueStatus,
 	pipelines,
+	graphSessions,
 }: {
 	sessions: CueSessionStatus[];
 	theme: Theme;
 	onViewInPipeline: (session: CueSessionStatus) => void;
 	onEditYaml: (session: CueSessionStatus) => void;
 	onRemoveCue: (session: CueSessionStatus) => void;
+	onTriggerSubscription: (subscriptionName: string) => void;
 	queueStatus: Record<string, number>;
 	pipelines: CuePipeline[];
+	graphSessions: CueGraphSession[];
 }) {
 	if (sessions.length === 0) {
 		return (
@@ -218,6 +228,26 @@ function SessionsTable({
 							</td>
 							<td className="py-2 text-right">
 								<span className="inline-flex items-center gap-2">
+									{(() => {
+										const gs = graphSessions.find((g) => g.sessionId === s.sessionId);
+										const subs = gs?.subscriptions.filter((sub) => sub.enabled !== false) ?? [];
+										if (subs.length === 0 || !s.enabled) return null;
+										return (
+											<button
+												onClick={() => {
+													for (const sub of subs) {
+														onTriggerSubscription(sub.name);
+													}
+												}}
+												className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
+												style={{ color: '#22c55e' }}
+												title={`Run all ${subs.length} subscription(s) now`}
+											>
+												<Play className="w-3.5 h-3.5" />
+												Run Now
+											</button>
+										);
+									})()}
 									<button
 										onClick={() => onEditYaml(s)}
 										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
@@ -323,6 +353,141 @@ function ActiveRunsList({
 	);
 }
 
+/** Formats event payload into human-readable key-value pairs, filtering out noise. */
+function formatPayloadEntries(payload: Record<string, unknown>): Array<[string, string]> {
+	const skipKeys = new Set(['outputPromptPhase', 'manual']);
+	const entries: Array<[string, string]> = [];
+	for (const [key, value] of Object.entries(payload)) {
+		if (skipKeys.has(key)) continue;
+		if (value === undefined || value === null || value === '') continue;
+		const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+		// Truncate very long values for display
+		entries.push([key, strValue.length > 500 ? strValue.slice(0, 500) + '…' : strValue]);
+	}
+	return entries;
+}
+
+function ActivityLogDetail({ entry, theme }: { entry: CueRunResult; theme: Theme }) {
+	const payloadEntries = formatPayloadEntries(entry.event.payload);
+	const hasStdout = entry.stdout.trim().length > 0;
+	const hasStderr = entry.stderr.trim().length > 0;
+
+	return (
+		<div
+			className="mt-1 mb-2 rounded-md px-3 py-3 text-xs space-y-3"
+			style={{ backgroundColor: theme.colors.bgMain, border: `1px solid ${theme.colors.border}` }}
+		>
+			{/* Execution metadata */}
+			<div className="grid grid-cols-2 gap-x-6 gap-y-1">
+				<div className="flex items-center gap-1.5">
+					<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+					<span style={{ color: theme.colors.textDim }}>Started:</span>
+					<span style={{ color: theme.colors.textMain }}>
+						{new Date(entry.startedAt).toLocaleString()}
+					</span>
+				</div>
+				<div className="flex items-center gap-1.5">
+					<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+					<span style={{ color: theme.colors.textDim }}>Duration:</span>
+					<span style={{ color: theme.colors.textMain }}>{formatDuration(entry.durationMs)}</span>
+				</div>
+				<div className="flex items-center gap-1.5">
+					<Zap className="w-3 h-3" style={{ color: CUE_TEAL }} />
+					<span style={{ color: theme.colors.textDim }}>Event:</span>
+					<span style={{ color: theme.colors.textMain }}>{entry.event.type}</span>
+				</div>
+				<div className="flex items-center gap-1.5">
+					<Terminal className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+					<span style={{ color: theme.colors.textDim }}>Exit code:</span>
+					<span
+						style={{
+							color:
+								entry.exitCode === 0
+									? '#22c55e'
+									: entry.exitCode != null
+										? '#ef4444'
+										: theme.colors.textDim,
+						}}
+					>
+						{entry.exitCode ?? '—'}
+					</span>
+				</div>
+				<div className="flex items-center gap-1.5">
+					<span style={{ color: theme.colors.textDim }}>Session:</span>
+					<span style={{ color: theme.colors.textMain }}>{entry.sessionName}</span>
+				</div>
+				<div className="flex items-center gap-1.5">
+					<span style={{ color: theme.colors.textDim }}>Run ID:</span>
+					<span className="font-mono" style={{ color: theme.colors.textDim }}>
+						{entry.runId.slice(0, 8)}
+					</span>
+				</div>
+			</div>
+
+			{/* Event payload */}
+			{payloadEntries.length > 0 && (
+				<div>
+					<div
+						className="text-[10px] font-bold uppercase tracking-wider mb-1"
+						style={{ color: theme.colors.textDim }}
+					>
+						Event Payload
+					</div>
+					<div
+						className="rounded px-2 py-1.5 font-mono text-[11px] space-y-0.5 max-h-32 overflow-y-auto"
+						style={{ backgroundColor: theme.colors.bgActivity }}
+					>
+						{payloadEntries.map(([key, value]) => (
+							<div key={key} className="flex gap-2">
+								<span className="flex-shrink-0" style={{ color: CUE_TEAL }}>
+									{key}:
+								</span>
+								<span className="break-all" style={{ color: theme.colors.textMain }}>
+									{value}
+								</span>
+							</div>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* stdout */}
+			{hasStdout && (
+				<div>
+					<div
+						className="text-[10px] font-bold uppercase tracking-wider mb-1"
+						style={{ color: theme.colors.textDim }}
+					>
+						Output
+					</div>
+					<pre
+						className="rounded px-2 py-1.5 text-[11px] max-h-48 overflow-y-auto whitespace-pre-wrap break-all"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
+					>
+						{entry.stdout.slice(-5000)}
+					</pre>
+				</div>
+			)}
+
+			{/* stderr */}
+			{hasStderr && (
+				<div>
+					<div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider mb-1">
+						<AlertTriangle className="w-3 h-3" style={{ color: '#ef4444' }} />
+						<span style={{ color: '#ef4444' }}>Errors</span>
+					</div>
+					<pre
+						className="rounded px-2 py-1.5 text-[11px] max-h-32 overflow-y-auto whitespace-pre-wrap break-all"
+						style={{ backgroundColor: '#ef444410', color: '#ef4444' }}
+					>
+						{entry.stderr.slice(-3000)}
+					</pre>
+				</div>
+			)}
+		</div>
+	);
+}
+
 function ActivityLog({
 	log,
 	theme,
@@ -333,6 +498,7 @@ function ActivityLog({
 	subscriptionPipelineMap: Map<string, { name: string; color: string }>;
 }) {
 	const [visibleCount, setVisibleCount] = useState(100);
+	const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
 
 	if (log.length === 0) {
 		return (
@@ -345,7 +511,7 @@ function ActivityLog({
 	const visible = log.slice(0, visibleCount);
 
 	return (
-		<div className="space-y-1">
+		<div className="space-y-0.5">
 			{visible.map((entry) => {
 				const isFailed = entry.status === 'failed' || entry.status === 'timeout';
 				const eventType = entry.event.type;
@@ -363,47 +529,67 @@ function ActivityLog({
 						? ` (#${String(entry.event.payload.number)} ${String(entry.event.payload.title ?? '')})`
 						: '';
 				const isReconciled = entry.event.payload?.reconciled === true;
+				const isExpanded = expandedRunId === entry.runId;
 
 				return (
-					<div key={entry.runId} className="flex items-center gap-2 py-1.5 text-xs">
-						<span className="flex-shrink-0 font-mono" style={{ color: theme.colors.textDim }}>
-							{new Date(entry.startedAt).toLocaleTimeString()}
-						</span>
-						{(() => {
-							const pInfo = getPipelineForSubscription(
-								entry.subscriptionName,
-								subscriptionPipelineMap
-							);
-							return pInfo ? (
-								<PipelineDot color={pInfo.color} name={pInfo.name} />
+					<div key={entry.runId}>
+						<button
+							onClick={() => setExpandedRunId(isExpanded ? null : entry.runId)}
+							className="flex items-center gap-2 py-1.5 text-xs w-full text-left rounded hover:bg-white/5 transition-colors px-1"
+						>
+							{isExpanded ? (
+								<ChevronDown
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.textDim }}
+								/>
 							) : (
-								<Zap className="w-3 h-3 flex-shrink-0" style={{ color: CUE_TEAL }} />
-							);
-						})()}
-						<span className="flex-1 min-w-0 truncate">
-							<span style={{ color: theme.colors.textMain }}>"{entry.subscriptionName}"</span>
-							{isReconciled && (
-								<span
-									className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold"
-									style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
-								>
-									catch-up
-								</span>
+								<ChevronRight
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.textDim }}
+								/>
 							)}
-							<span style={{ color: theme.colors.textDim }}>
-								{' '}
-								triggered ({eventType}){filePayload}
-								{taskPayload}
-								{githubPayload} →{' '}
+							<span className="flex-shrink-0 font-mono" style={{ color: theme.colors.textDim }}>
+								{new Date(entry.startedAt).toLocaleTimeString()}
 							</span>
-							{isFailed ? (
-								<span style={{ color: '#ef4444' }}>{entry.status} ✗</span>
-							) : (
-								<span style={{ color: '#22c55e' }}>
-									completed in {formatDuration(entry.durationMs)} ✓
+							{(() => {
+								const pInfo = getPipelineForSubscription(
+									entry.subscriptionName,
+									subscriptionPipelineMap
+								);
+								return pInfo ? (
+									<PipelineDot color={pInfo.color} name={pInfo.name} />
+								) : (
+									<Zap className="w-3 h-3 flex-shrink-0" style={{ color: CUE_TEAL }} />
+								);
+							})()}
+							<span className="flex-1 min-w-0 truncate">
+								<span style={{ color: theme.colors.textMain }}>"{entry.subscriptionName}"</span>
+								{isReconciled && (
+									<span
+										className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold"
+										style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
+									>
+										catch-up
+									</span>
+								)}
+								<span style={{ color: theme.colors.textDim }}>
+									{' '}
+									triggered ({eventType}){filePayload}
+									{taskPayload}
+									{githubPayload} →{' '}
 								</span>
-							)}
-						</span>
+								{isFailed ? (
+									<span style={{ color: '#ef4444' }}>{entry.status} ✗</span>
+								) : entry.status === 'stopped' ? (
+									<span style={{ color: '#f59e0b' }}>stopped</span>
+								) : (
+									<span style={{ color: '#22c55e' }}>
+										completed in {formatDuration(entry.durationMs)} ✓
+									</span>
+								)}
+							</span>
+						</button>
+						{isExpanded && <ActivityLogDetail entry={entry} theme={theme} />}
 					</div>
 				);
 			})}
@@ -436,6 +622,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		disable,
 		stopRun,
 		stopAll,
+		triggerSubscription,
 		refresh,
 	} = useCue();
 
@@ -755,8 +942,10 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 												onViewInPipeline={handleViewInPipeline}
 												onEditYaml={handleEditYaml}
 												onRemoveCue={handleRemoveCue}
+												onTriggerSubscription={triggerSubscription}
 												queueStatus={queueStatus}
 												pipelines={dashboardPipelines}
+												graphSessions={graphSessions}
 											/>
 										</div>
 
@@ -814,7 +1003,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 												Activity Log
 											</h3>
 											<div
-												className="max-h-64 overflow-y-auto rounded-md px-3 py-2"
+												className="max-h-96 overflow-y-auto rounded-md px-3 py-2"
 												style={{ backgroundColor: theme.colors.bgActivity }}
 											>
 												<ActivityLog

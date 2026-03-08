@@ -2841,6 +2841,7 @@ interface MaestroAPI {
 		disable: () => Promise<void>;
 		stopRun: (runId: string) => Promise<boolean>;
 		stopAll: () => Promise<void>;
+		triggerSubscription: (subscriptionName: string) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;

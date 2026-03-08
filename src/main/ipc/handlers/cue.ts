@@ -128,6 +128,17 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
+	// Manually trigger a subscription by name (Run Now)
+	ipcMain.handle(
+		'cue:triggerSubscription',
+		withIpcErrorLogging(
+			handlerOpts('triggerSubscription'),
+			async (options: { subscriptionName: string }): Promise<boolean> => {
+				return requireEngine().triggerSubscription(options.subscriptionName);
+			}
+		)
+	);
+
 	// Get queue status per session
 	ipcMain.handle(
 		'cue:getQueueStatus',
