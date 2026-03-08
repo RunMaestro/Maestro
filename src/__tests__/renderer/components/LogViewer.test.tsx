@@ -68,6 +68,12 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+// Mock clipboard utility
+const mockSafeClipboardWrite = vi.fn().mockResolvedValue(true);
+vi.mock('../../../renderer/utils/clipboard', () => ({
+	safeClipboardWrite: (...args: unknown[]) => mockSafeClipboardWrite(...args),
+}));
+
 // Mock ConfirmModal
 vi.mock('../../../renderer/components/ConfirmModal', () => ({
 	ConfirmModal: ({
@@ -1459,6 +1465,86 @@ describe('LogViewer', () => {
 			await waitFor(() => {
 				// Only the log with data should show expanded JSON content
 				expect(screen.getByText(/"foo":/)).toBeInTheDocument();
+			});
+		});
+	});
+
+	describe('Copy log entry', () => {
+		it('should render copy button for each log entry', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'Log 1' }),
+				createMockLog({ message: 'Log 2' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Log 1')).toBeInTheDocument();
+			});
+
+			const copyButtons = screen.getAllByTitle('Copy log entry');
+			expect(copyButtons).toHaveLength(2);
+		});
+
+		it('should copy log entry text to clipboard on click', async () => {
+			const timestamp = Date.now();
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'Important log', level: 'error', context: 'TestCtx', timestamp }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Important log')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(expect.stringContaining('[ERROR]'));
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(
+					expect.stringContaining('Important log')
+				);
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(expect.stringContaining('[TestCtx]'));
+			});
+		});
+
+		it('should show check icon after successful copy', async () => {
+			getMockGetLogs().mockResolvedValue([createMockLog({ message: 'Copy me' })]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Copy me')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Copied!')).toBeInTheDocument();
+			});
+		});
+
+		it('should include data in copied text when log has data', async () => {
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ message: 'With data', data: { key: 'value' } }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('With data')).toBeInTheDocument();
+			});
+
+			const copyButton = screen.getByTitle('Copy log entry');
+			fireEvent.click(copyButton);
+
+			await waitFor(() => {
+				expect(mockSafeClipboardWrite).toHaveBeenCalledWith(
+					expect.stringContaining('"key": "value"')
+				);
 			});
 		});
 	});

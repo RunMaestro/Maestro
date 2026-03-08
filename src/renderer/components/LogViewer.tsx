@@ -9,11 +9,14 @@ import {
 	ChevronsDownUp,
 	ChevronsUpDown,
 	Pencil,
+	Copy,
+	Check,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
 
 interface SystemLogEntry {
@@ -112,6 +115,7 @@ export function LogViewer({
 		[onSelectedLevelsChange]
 	);
 	const [expandedData, setExpandedData] = useState<Set<number>>(new Set());
+	const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 	const [showClearConfirm, setShowClearConfirm] = useState(false);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -311,6 +315,18 @@ export function LogViewer({
 		a.click();
 		URL.revokeObjectURL(url);
 	};
+
+	const handleCopyEntry = useCallback(async (log: SystemLogEntry, index: number) => {
+		const timestamp = new Date(log.timestamp).toISOString();
+		const contextStr = log.context ? `[${log.context}]` : '';
+		const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
+		const text = `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
+		const ok = await safeClipboardWrite(text);
+		if (ok) {
+			setCopiedIndex(index);
+			setTimeout(() => setCopiedIndex(null), 2000);
+		}
+	}, []);
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Open search with Cmd+F
@@ -607,7 +623,7 @@ export function LogViewer({
 								borderColor: theme.colors.border,
 							}}
 						>
-							<div className="flex items-start gap-3">
+							<div className="flex items-start gap-3 group">
 								{/* Level Pill */}
 								<div
 									className="px-2 py-0.5 rounded text-xs font-bold uppercase flex-shrink-0"
@@ -618,6 +634,22 @@ export function LogViewer({
 								>
 									{log.level}
 								</div>
+
+								{/* Copy Button */}
+								<button
+									onClick={() => handleCopyEntry(log, index)}
+									className="p-1 rounded hover:bg-opacity-10 transition-all flex-shrink-0 opacity-0 group-hover:opacity-100"
+									style={{
+										color: copiedIndex === index ? theme.colors.accent : theme.colors.textDim,
+									}}
+									title={copiedIndex === index ? 'Copied!' : 'Copy log entry'}
+								>
+									{copiedIndex === index ? (
+										<Check className="w-3.5 h-3.5" />
+									) : (
+										<Copy className="w-3.5 h-3.5" />
+									)}
+								</button>
 
 								{/* Content */}
 								<div className="flex-1 min-w-0">

@@ -42,6 +42,12 @@ vi.mock('lucide-react', () => ({
 	),
 }));
 
+// Mock theme utils (getExplorerFileIcon returns JSX with lucide-react icons)
+vi.mock('../../../renderer/utils/theme', () => ({
+	getExplorerFileIcon: () => <span data-testid="file-icon">📄</span>,
+	getExplorerFolderIcon: () => <span data-testid="folder-icon">📁</span>,
+}));
+
 // Test theme
 const mockTheme: Theme = {
 	id: 'test-theme',
