@@ -1686,10 +1686,7 @@ const TerminalTabItem = memo(function TerminalTabItem({
 		(e: React.DragEvent) => onDragOver(tab.id, e),
 		[onDragOver, tab.id]
 	);
-	const handleTabDrop = useCallback(
-		(e: React.DragEvent) => onDrop(tab.id, e),
-		[onDrop, tab.id]
-	);
+	const handleTabDrop = useCallback((e: React.DragEvent) => onDrop(tab.id, e), [onDrop, tab.id]);
 
 	// Overlay action handlers
 	const handleRenameClick = useCallback(
@@ -1777,7 +1774,15 @@ const TerminalTabItem = memo(function TerminalTabItem({
 				zIndex: isActive ? 1 : 0,
 				'--tw-ring-color': isDragOver ? theme.colors.accent : 'transparent',
 			}) as React.CSSProperties,
-		[isActive, isHovered, isDragOver, theme.colors.bgMain, theme.colors.border, theme.colors.accent, hoverBgColor]
+		[
+			isActive,
+			isHovered,
+			isDragOver,
+			theme.colors.bgMain,
+			theme.colors.border,
+			theme.colors.accent,
+			hoverBgColor,
+		]
 	);
 
 	return (
@@ -1930,7 +1935,10 @@ const TerminalTabItem = memo(function TerminalTabItem({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										<ChevronsRight
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
 										Move to Last Position
 									</button>
 								)}
@@ -1986,7 +1994,10 @@ const TerminalTabItem = memo(function TerminalTabItem({
 										style={{ color: theme.colors.textMain }}
 										disabled={tabIndex === (totalTabs ?? 1) - 1}
 									>
-										<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										<ChevronsRight
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
 										Close Tabs to Right
 									</button>
 								)}
@@ -2056,14 +2067,18 @@ function TabBarInner({
 
 	// New-tab-type popover state (shown when onNewTerminalTab is provided)
 	const [newTabPopoverOpen, setNewTabPopoverOpen] = useState(false);
-	const [newTabPopoverPos, setNewTabPopoverPos] = useState<{ top: number; left: number } | null>(null);
+	const [newTabPopoverPos, setNewTabPopoverPos] = useState<{ top: number; left: number } | null>(
+		null
+	);
 	const newTabBtnRef = useRef<HTMLButtonElement>(null);
+	const newTabPopoverRef = useRef<HTMLDivElement>(null);
 
 	// Close popover on outside click
 	useEffect(() => {
 		if (!newTabPopoverOpen) return;
 		const handler = (e: MouseEvent) => {
 			if (newTabBtnRef.current && newTabBtnRef.current.contains(e.target as Node)) return;
+			if (newTabPopoverRef.current && newTabPopoverRef.current.contains(e.target as Node)) return;
 			setNewTabPopoverOpen(false);
 		};
 		document.addEventListener('mousedown', handler);
@@ -2253,14 +2268,23 @@ function TabBarInner({
 
 	const handleMoveToFirst = useCallback(
 		(tabId: string) => {
-			// When unified tabs are used, prefer onUnifiedTabReorder
+			console.debug('[TabBar] handleMoveToFirst called', {
+				tabId,
+				hasUnifiedTabs: !!unifiedTabs,
+				hasOnUnifiedTabReorder: !!onUnifiedTabReorder,
+				hasOnTabReorder: !!onTabReorder,
+			});
 			if (unifiedTabs && onUnifiedTabReorder) {
 				const currentIndex = unifiedTabs.findIndex((ut) => ut.id === tabId);
+				console.debug('[TabBar] unified move-to-first', {
+					currentIndex,
+					unifiedTabsLength: unifiedTabs.length,
+					ids: unifiedTabs.map((ut) => ut.id),
+				});
 				if (currentIndex > 0) {
 					onUnifiedTabReorder(currentIndex, 0);
 				}
 			} else if (onTabReorder) {
-				// Fallback to legacy AI-tab-only reorder
 				const currentIndex = tabs.findIndex((t) => t.id === tabId);
 				if (currentIndex > 0) {
 					onTabReorder(currentIndex, 0);
@@ -2272,14 +2296,21 @@ function TabBarInner({
 
 	const handleMoveToLast = useCallback(
 		(tabId: string) => {
-			// When unified tabs are used, prefer onUnifiedTabReorder
+			console.debug('[TabBar] handleMoveToLast called', {
+				tabId,
+				hasUnifiedTabs: !!unifiedTabs,
+				hasOnUnifiedTabReorder: !!onUnifiedTabReorder,
+			});
 			if (unifiedTabs && onUnifiedTabReorder) {
 				const currentIndex = unifiedTabs.findIndex((ut) => ut.id === tabId);
-				if (currentIndex < unifiedTabs.length - 1) {
+				console.debug('[TabBar] unified move-to-last', {
+					currentIndex,
+					unifiedTabsLength: unifiedTabs.length,
+				});
+				if (currentIndex >= 0 && currentIndex < unifiedTabs.length - 1) {
 					onUnifiedTabReorder(currentIndex, unifiedTabs.length - 1);
 				}
 			} else if (onTabReorder) {
-				// Fallback to legacy AI-tab-only reorder
 				const currentIndex = tabs.findIndex((t) => t.id === tabId);
 				if (currentIndex < tabs.length - 1) {
 					onTabReorder(currentIndex, tabs.length - 1);
@@ -2453,8 +2484,8 @@ function TabBarInner({
 							unifiedTab.type === 'ai'
 								? unifiedTab.id === activeTabId && !activeFileTabId && inputMode !== 'terminal'
 								: unifiedTab.type === 'file'
-								? unifiedTab.id === activeFileTabId
-								: unifiedTab.id === activeTerminalTabId && inputMode === 'terminal';
+									? unifiedTab.id === activeFileTabId
+									: unifiedTab.id === activeTerminalTabId && inputMode === 'terminal';
 
 						// Check previous tab's active state for separator logic
 						const prevUnifiedTab = index > 0 ? displayedUnifiedTabs[index - 1] : null;
@@ -2462,8 +2493,8 @@ function TabBarInner({
 							? prevUnifiedTab.type === 'ai'
 								? prevUnifiedTab.id === activeTabId && !activeFileTabId && inputMode !== 'terminal'
 								: prevUnifiedTab.type === 'file'
-								? prevUnifiedTab.id === activeFileTabId
-								: prevUnifiedTab.id === activeTerminalTabId && inputMode === 'terminal'
+									? prevUnifiedTab.id === activeFileTabId
+									: prevUnifiedTab.id === activeTerminalTabId && inputMode === 'terminal'
 							: false;
 
 						// Get original index in the FULL unified list (not filtered)
@@ -2590,52 +2621,52 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-					} else {
-						// Terminal tab
-						const terminalTab = unifiedTab.data;
-						// Compute this tab's position among terminal tabs only (for "Terminal N" display name)
-						const terminalIndex = allTabs
-							.filter((ut) => ut.type === 'terminal')
-							.findIndex((ut) => ut.id === unifiedTab.id);
-						return (
-							<React.Fragment key={unifiedTab.id}>
-								{showSeparator && (
-									<div
-										className="w-px h-4 self-center shrink-0"
-										style={{ backgroundColor: theme.colors.border }}
+						} else {
+							// Terminal tab
+							const terminalTab = unifiedTab.data;
+							// Compute this tab's position among terminal tabs only (for "Terminal N" display name)
+							const terminalIndex = allTabs
+								.filter((ut) => ut.type === 'terminal')
+								.findIndex((ut) => ut.id === unifiedTab.id);
+							return (
+								<React.Fragment key={unifiedTab.id}>
+									{showSeparator && (
+										<div
+											className="w-px h-4 self-center shrink-0"
+											style={{ backgroundColor: theme.colors.border }}
+										/>
+									)}
+									<TerminalTabItem
+										tab={terminalTab}
+										terminalIndex={terminalIndex >= 0 ? terminalIndex : 0}
+										isActive={isActive}
+										theme={theme}
+										onSelect={onTerminalTabSelect || (() => {})}
+										onClose={onTerminalTabClose || (() => {})}
+										onRename={onTerminalTabRename}
+										onDragStart={handleDragStart}
+										onDragOver={handleDragOver}
+										onDragEnd={handleDragEnd}
+										onDrop={handleDrop}
+										isDragging={draggingTabId === terminalTab.id}
+										isDragOver={dragOverTabId === terminalTab.id}
+										registerRef={(el) => registerTabRef(terminalTab.id, el)}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
+										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										isFirstTab={isFirstTab}
+										isLastTab={isLastTab}
+										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+										totalTabs={allTabs.length}
+										tabIndex={originalIndex}
+										shortcutHint={shortcutHint}
 									/>
-								)}
-								<TerminalTabItem
-									tab={terminalTab}
-									terminalIndex={terminalIndex >= 0 ? terminalIndex : 0}
-									isActive={isActive}
-									theme={theme}
-									onSelect={onTerminalTabSelect || (() => {})}
-									onClose={onTerminalTabClose || (() => {})}
-									onRename={onTerminalTabRename}
-									onDragStart={handleDragStart}
-									onDragOver={handleDragOver}
-									onDragEnd={handleDragEnd}
-									onDrop={handleDrop}
-									isDragging={draggingTabId === terminalTab.id}
-									isDragOver={dragOverTabId === terminalTab.id}
-									registerRef={(el) => registerTabRef(terminalTab.id, el)}
-									onMoveToFirst={
-										!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
-									}
-									onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
-									isFirstTab={isFirstTab}
-									isLastTab={isLastTab}
-									onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
-									onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
-									onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
-									totalTabs={allTabs.length}
-									tabIndex={originalIndex}
-									shortcutHint={shortcutHint}
-								/>
-							</React.Fragment>
-						);
-					}
+								</React.Fragment>
+							);
+						}
 					})
 				: // Fallback: render AI tabs only (legacy mode when unifiedTabs not provided)
 					displayedTabs.map((tab, index) => {
@@ -2742,42 +2773,51 @@ function TabBarInner({
 			</div>
 
 			{/* New-tab-type popover (portal, shown when both AI and terminal options are available) */}
-			{newTabPopoverOpen && newTabPopoverPos && createPortal(
-				<div
-					className="fixed z-50 rounded-lg shadow-xl overflow-hidden"
-					style={{
-						top: newTabPopoverPos.top,
-						left: newTabPopoverPos.left,
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
-						minWidth: 180,
-					}}
-				>
-					<button
-						className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-						onClick={() => { setNewTabPopoverOpen(false); onNewTab(); }}
+			{newTabPopoverOpen &&
+				newTabPopoverPos &&
+				createPortal(
+					<div
+						ref={newTabPopoverRef}
+						className="fixed z-50 rounded-lg shadow-xl overflow-hidden"
+						style={{
+							top: newTabPopoverPos.top,
+							left: newTabPopoverPos.left,
+							backgroundColor: theme.colors.bgSidebar,
+							border: `1px solid ${theme.colors.border}`,
+							minWidth: 180,
+						}}
 					>
-						<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						New AI Chat
-						<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-							{formatShortcutKeys(['Meta', 't'])}
-						</span>
-					</button>
-					<button
-						className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-						onClick={() => { setNewTabPopoverOpen(false); onNewTerminalTab?.(); }}
-					>
-						<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						New Terminal
-						<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-							{formatShortcutKeys(['Meta', 'j'])}
-						</span>
-					</button>
-				</div>,
-				document.body
-			)}
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => {
+								setNewTabPopoverOpen(false);
+								onNewTab();
+							}}
+						>
+							<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							New AI Chat
+							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								{formatShortcutKeys(['Meta', 't'])}
+							</span>
+						</button>
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => {
+								setNewTabPopoverOpen(false);
+								onNewTerminalTab?.();
+							}}
+						>
+							<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							New Terminal
+							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								{formatShortcutKeys(['Meta', 'j'])}
+							</span>
+						</button>
+					</div>,
+					document.body
+				)}
 		</div>
 	);
 }

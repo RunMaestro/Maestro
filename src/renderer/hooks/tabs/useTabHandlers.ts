@@ -609,6 +609,12 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
+				console.debug('[useTabHandlers] handleUnifiedTabReorder', {
+					fromIndex,
+					toIndex,
+					orderLength: s.unifiedTabOrder.length,
+					order: s.unifiedTabOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
+				});
 				if (
 					fromIndex < 0 ||
 					fromIndex >= s.unifiedTabOrder.length ||
@@ -616,11 +622,18 @@ export function useTabHandlers(): TabHandlersReturn {
 					toIndex >= s.unifiedTabOrder.length ||
 					fromIndex === toIndex
 				) {
+					console.debug(
+						'[useTabHandlers] handleUnifiedTabReorder: bounds check failed, returning unchanged'
+					);
 					return s;
 				}
 				const newOrder = [...s.unifiedTabOrder];
 				const [movedRef] = newOrder.splice(fromIndex, 1);
 				newOrder.splice(toIndex, 0, movedRef);
+				console.debug('[useTabHandlers] handleUnifiedTabReorder: reordered', {
+					movedRef,
+					newOrder: newOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
+				});
 				return { ...s, unifiedTabOrder: newOrder };
 			})
 		);
