@@ -72,11 +72,30 @@ export function useAppInitialization(): AppInitializationReturn {
 	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
 
 	// --- Splash screen coordination ---
+	// Progress stages: 0-40% React bootstrap (splash.js), 40-60% settings,
+	// 60-80% sessions, 80-95% UI rendering, 95-100% ready.
+	// We wait for the React tree to paint with loaded data before dismissing,
+	// so the user doesn't see an unresponsive interface.
 	useEffect(() => {
+		if (settingsLoaded && !sessionsLoaded) {
+			window.__updateSplash?.(60, 'Warming up the ensemble...');
+		}
+		if (!settingsLoaded && sessionsLoaded) {
+			window.__updateSplash?.(60, 'Warming up the ensemble...');
+		}
 		if (settingsLoaded && sessionsLoaded) {
-			if (typeof window.__hideSplash === 'function') {
-				window.__hideSplash();
-			}
+			window.__updateSplash?.(80, 'The concertmaster rises...');
+			// Wait for React to render the UI with loaded data before hiding splash.
+			// Double rAF ensures at least one full paint cycle has completed,
+			// then a short delay lets the file tree and heavy components settle.
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					window.__updateSplash?.(95, 'Maestro takes the podium...');
+					setTimeout(() => {
+						window.__hideSplash?.();
+					}, 150);
+				});
+			});
 		}
 	}, [settingsLoaded, sessionsLoaded]);
 

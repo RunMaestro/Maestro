@@ -32,9 +32,10 @@ declare module '*.webp' {
 declare const __APP_VERSION__: string;
 declare const __COMMIT_HASH__: string;
 
-// Splash screen global functions (defined in index.html)
+// Splash screen global functions (defined in splash.js)
 interface Window {
 	__hideSplash?: () => void;
+	__updateSplash?: (progress: number, text?: string) => void;
 	__splashProgress?: () => number;
 	__splashInterval?: ReturnType<typeof setInterval>;
 }
