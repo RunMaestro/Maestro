@@ -213,7 +213,7 @@ export function useFileExplorerEffects(
 		const filterHiddenFiles = (nodes: FileNode[]): FileNode[] => {
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter((node) => !node.name.startsWith('.'))
+				.filter((node) => !node.name.startsWith('.') || node.name === '.maestro')
 				.map((node) => ({
 					...node,
 					children: node.children ? filterHiddenFiles(node.children) : undefined,
