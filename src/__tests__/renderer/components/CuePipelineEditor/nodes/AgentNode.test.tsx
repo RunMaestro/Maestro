@@ -49,8 +49,8 @@ describe('AgentNode', () => {
 	it('should not clip badge overflow (overflow: visible on root)', () => {
 		const { container } = renderAgentNode({ pipelineCount: 3 });
 
-		// Find the agent node root div (220px wide, position: relative)
-		const rootDiv = container.querySelector('div[style*="width: 220px"]') as HTMLElement;
+		// Find the agent node root div (variable width with min-width, position: relative)
+		const rootDiv = container.querySelector('div[style*="min-width: 180px"]') as HTMLElement;
 		expect(rootDiv).not.toBeNull();
 		expect(rootDiv.style.overflow).toBe('visible');
 	});
