@@ -75,28 +75,30 @@ export const SidebarActions = memo(function SidebarActions({
 			)}
 
 			{/* Unread agents filter toggle */}
-			<button
-				type="button"
-				onClick={toggleShowUnreadAgentsOnly}
-				className="relative flex items-center justify-center p-2 rounded transition-colors w-8 h-8 shrink-0 hover:bg-white/5"
-				style={{
-					color: showUnreadAgentsOnly ? theme.colors.accent : undefined,
-					opacity: showUnreadAgentsOnly ? 1 : 0.5,
-				}}
-				title={
-					showUnreadAgentsOnly
-						? `Showing unread agents only (${formatShortcutKeys(shortcuts.filterUnreadAgents.keys)})`
-						: `Filter unread agents (${formatShortcutKeys(shortcuts.filterUnreadAgents.keys)})`
-				}
-			>
-				<Bot className="w-4 h-4" />
-				{hasUnreadAgents && (
-					<div
-						className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full"
-						style={{ backgroundColor: theme.colors.accent }}
-					/>
-				)}
-			</button>
+			{leftSidebarOpen && (
+				<button
+					type="button"
+					onClick={toggleShowUnreadAgentsOnly}
+					className="relative flex items-center justify-center p-2 rounded transition-colors w-8 h-8 shrink-0 hover:bg-white/5"
+					style={{
+						color: showUnreadAgentsOnly ? theme.colors.accent : undefined,
+						opacity: showUnreadAgentsOnly ? 1 : 0.5,
+					}}
+					title={
+						showUnreadAgentsOnly
+							? `Showing unread agents only (${formatShortcutKeys(shortcuts.filterUnreadAgents.keys)})`
+							: `Filter unread agents (${formatShortcutKeys(shortcuts.filterUnreadAgents.keys)})`
+					}
+				>
+					<Bot className="w-4 h-4" />
+					{hasUnreadAgents && (
+						<div
+							className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full"
+							style={{ backgroundColor: theme.colors.accent }}
+						/>
+					)}
+				</button>
+			)}
 		</div>
 	);
 });

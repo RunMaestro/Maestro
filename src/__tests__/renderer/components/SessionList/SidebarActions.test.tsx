@@ -49,11 +49,13 @@ describe('SidebarActions', () => {
 		expect(screen.getByText('Wizard')).toBeTruthy();
 	});
 
-	it('hides New Agent and Wizard when sidebar is collapsed', () => {
+	it('hides New Agent, Wizard, and unread filter when sidebar is collapsed', () => {
 		render(<SidebarActions {...createProps({ leftSidebarOpen: false })} />);
 
 		expect(screen.queryByText('New Agent')).toBeNull();
 		expect(screen.queryByText('Wizard')).toBeNull();
+		expect(screen.queryByTitle(/Filter unread agents/)).toBeNull();
+		expect(screen.queryByTitle(/Showing unread agents only/)).toBeNull();
 	});
 
 	it('hides Wizard button when openWizard is undefined', () => {
