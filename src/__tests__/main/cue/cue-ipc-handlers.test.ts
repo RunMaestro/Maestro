@@ -130,6 +130,7 @@ describe('Cue IPC Handlers', () => {
 				'cue:refreshSession',
 				'cue:readYaml',
 				'cue:writeYaml',
+				'cue:deleteYaml',
 				'cue:validateYaml',
 				'cue:savePipelineLayout',
 				'cue:loadPipelineLayout',

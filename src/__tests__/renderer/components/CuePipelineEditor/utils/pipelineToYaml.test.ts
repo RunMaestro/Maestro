@@ -321,7 +321,7 @@ describe('pipelineToYamlSubscriptions', () => {
 });
 
 describe('pipelinesToYaml', () => {
-	it('produces valid YAML with subscriptions', () => {
+	it('produces valid YAML with prompt_file references', () => {
 		const pipeline = makePipeline({
 			nodes: [
 				{
@@ -349,13 +349,17 @@ describe('pipelinesToYaml', () => {
 			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
 		});
 
-		const yamlStr = pipelinesToYaml([pipeline]);
+		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
 		expect(yamlStr).toContain('# Pipeline: test-pipeline (color: #06b6d4)');
 		expect(yamlStr).toContain('subscriptions:');
 		expect(yamlStr).toContain('name: test-pipeline');
 		expect(yamlStr).toContain('event: time.interval');
 		expect(yamlStr).toContain('interval_minutes: 15');
-		expect(yamlStr).toContain('prompt: Do stuff');
+		expect(yamlStr).toContain('prompt_file: .maestro/prompts/worker-test-pipeline.md');
+		expect(yamlStr).not.toContain('prompt: Do stuff');
+
+		// Prompt content saved to external file
+		expect(promptFiles.get('.maestro/prompts/worker-test-pipeline.md')).toBe('Do stuff');
 	});
 
 	it('includes settings block when provided', () => {
@@ -377,7 +381,10 @@ describe('pipelinesToYaml', () => {
 			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
 		});
 
-		const yamlStr = pipelinesToYaml([pipeline], { timeout_minutes: 60, max_concurrent: 3 });
+		const { yaml: yamlStr } = pipelinesToYaml([pipeline], {
+			timeout_minutes: 60,
+			max_concurrent: 3,
+		});
 		expect(yamlStr).toContain('settings:');
 		expect(yamlStr).toContain('timeout_minutes: 60');
 		expect(yamlStr).toContain('max_concurrent: 3');
@@ -415,7 +422,7 @@ describe('pipelinesToYaml', () => {
 			],
 		});
 
-		const yamlStr = pipelinesToYaml([pipeline]);
+		const { yaml: yamlStr } = pipelinesToYaml([pipeline]);
 		expect(yamlStr).toContain('mode: debate, max_rounds: 5, timeout_per_round: 120');
 	});
 
@@ -472,7 +479,7 @@ describe('pipelinesToYaml', () => {
 			edges: [{ id: 'e2', source: 't2', target: 'a2', mode: 'pass' }],
 		});
 
-		const yamlStr = pipelinesToYaml([p1, p2]);
+		const { yaml: yamlStr } = pipelinesToYaml([p1, p2]);
 		expect(yamlStr).toContain('# Pipeline: pipeline-a');
 		expect(yamlStr).toContain('# Pipeline: pipeline-b');
 		expect(yamlStr).toContain('name: pipeline-a');
@@ -480,7 +487,43 @@ describe('pipelinesToYaml', () => {
 	});
 
 	it('returns empty subscriptions for empty pipelines array', () => {
-		const yamlStr = pipelinesToYaml([]);
+		const { yaml: yamlStr } = pipelinesToYaml([]);
 		expect(yamlStr).toContain('subscriptions: []');
+	});
+
+	it('saves output_prompt to separate file with -output suffix', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'time.interval', label: 'Timer', config: { interval_minutes: 5 } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'worker',
+						toolType: 'claude-code',
+						inputPrompt: 'Do work',
+						outputPrompt: 'Summarize output',
+					},
+				},
+			],
+			edges: [{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' }],
+		});
+
+		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
+		expect(yamlStr).toContain('prompt_file: .maestro/prompts/worker-test-pipeline.md');
+		expect(yamlStr).toContain(
+			'output_prompt_file: .maestro/prompts/worker-test-pipeline-output.md'
+		);
+		expect(promptFiles.get('.maestro/prompts/worker-test-pipeline.md')).toBe('Do work');
+		expect(promptFiles.get('.maestro/prompts/worker-test-pipeline-output.md')).toBe(
+			'Summarize output'
+		);
 	});
 });

@@ -206,6 +206,9 @@ export const MODAL_PRIORITIES = {
 	/** Maestro Cue help modal (above Cue modal) */
 	CUE_HELP: 465,
 
+	/** Maestro Cue pattern preview modal (above YAML editor) */
+	CUE_PATTERN_PREVIEW: 464,
+
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
 	CUE_YAML_EDITOR: 463,
 
