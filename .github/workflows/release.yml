@@ -693,7 +693,7 @@ jobs:
           files: artifacts/release/*
           fail_on_unmatched_files: false
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-RC') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

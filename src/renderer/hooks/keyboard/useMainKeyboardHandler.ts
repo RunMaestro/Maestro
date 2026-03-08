@@ -530,18 +530,93 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
+			// Tab shortcuts (mode-agnostic — work in AI, terminal, and file input modes)
+			if (ctx.activeSessionId && ctx.activeSession?.aiTabs && !ctx.activeGroupChatId) {
+				if (ctx.isTabShortcut(e, 'tabSwitcher')) {
+					e.preventDefault();
+					ctx.setTabSwitcherOpen(true);
+					trackShortcut('tabSwitcher');
+				}
+				if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
+					e.preventDefault();
+					ctx.toggleUnreadFilter();
+					trackShortcut('filterUnreadTabs');
+				}
+				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
+					e.preventDefault();
+					ctx.toggleTabUnread();
+					trackShortcut('toggleTabUnread');
+				}
+				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
+					e.preventDefault();
+					const result = ctx.reopenUnifiedClosedTab(ctx.activeSession);
+					if (result) {
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
+						);
+						trackShortcut('reopenClosedTab');
+					}
+				}
+				// Cmd+Shift+] / Cmd+Shift+[ — Navigate unified tab order
+				if (ctx.isTabShortcut(e, 'nextTab')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
+						if (!result) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+					});
+					trackShortcut('nextTab');
+				}
+				if (ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
+						if (!result) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+					});
+					trackShortcut('prevTab');
+				}
+				// Cmd+1-9 / Cmd+0 — Jump to tab by unified index
+				if (!ctx.showUnreadOnly) {
+					for (let i = 1; i <= 9; i++) {
+						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
+							e.preventDefault();
+							ctx.setSessions((prev: Session[]) => {
+								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+								if (!current) return prev;
+								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
+								if (!result) return prev;
+								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+							});
+							trackShortcut(`goToTab${i}`);
+							break;
+						}
+					}
+					if (ctx.isTabShortcut(e, 'goToLastTab')) {
+						e.preventDefault();
+						ctx.setSessions((prev: Session[]) => {
+							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+							if (!current) return prev;
+							const result = ctx.navigateToLastUnifiedTab(current);
+							if (!result) return prev;
+							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+						});
+						trackShortcut('goToLastTab');
+					}
+				}
+			}
+
+			// Tab shortcuts (AI mode only)
 			if (
 				ctx.activeSessionId &&
 				ctx.activeSession?.inputMode === 'ai' &&
 				ctx.activeSession?.aiTabs &&
 				!ctx.activeGroupChatId
 			) {
-				if (ctx.isTabShortcut(e, 'tabSwitcher')) {
-					e.preventDefault();
-					ctx.setTabSwitcherOpen(true);
-					trackShortcut('tabSwitcher');
-				}
 				if (ctx.isTabShortcut(e, 'newTab')) {
 					e.preventDefault();
 					const result = ctx.createTab(ctx.activeSession, {
@@ -552,7 +627,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.setSessions((prev: Session[]) =>
 							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
 						);
-						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
 						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 						trackShortcut('newTab');
@@ -560,15 +634,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'closeTab')) {
 					e.preventDefault();
-					// Use handleCloseCurrentTab to close the active tab (file or AI)
-					// This handles both file preview tabs and AI tabs with unified tab system
 					const closeResult = ctx.handleCloseCurrentTab();
 
 					if (closeResult.type === 'file') {
-						// File tab was already closed by handleCloseCurrentTab
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'ai' && closeResult.tabId) {
-						// AI tab - need to handle wizard confirmation
 						if (closeResult.isWizardTab) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'Close this wizard? Your progress will be lost and cannot be restored.',
@@ -578,13 +648,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 								},
 							});
 						} else {
-							// Regular AI tab - close it using performTabClose
-							// This ensures the tab is added to unifiedClosedTabHistory for Cmd+Shift+T
 							ctx.performTabClose(closeResult.tabId);
 							trackShortcut('closeTab');
 						}
 					}
-					// 'prevented' or 'none' - do nothing (can't close last AI tab)
 				}
 				if (ctx.isTabShortcut(e, 'closeAllTabs')) {
 					e.preventDefault();
@@ -593,7 +660,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'closeOtherTabs')) {
 					e.preventDefault();
-					// Only execute if there are multiple tabs
 					if (ctx.activeSession.aiTabs.length > 1) {
 						ctx.handleCloseOtherTabs();
 						trackShortcut('closeOtherTabs');
@@ -604,7 +670,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
 						(t: AITab) => t.id === ctx.activeSession.activeTabId
 					);
-					// Only execute if not first tab
 					if (activeTabIndex > 0) {
 						ctx.handleCloseTabsLeft();
 						trackShortcut('closeTabsLeft');
@@ -615,27 +680,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					const activeTabIndex = ctx.activeSession.aiTabs.findIndex(
 						(t: AITab) => t.id === ctx.activeSession.activeTabId
 					);
-					// Only execute if not last tab
 					if (activeTabIndex < ctx.activeSession.aiTabs.length - 1) {
 						ctx.handleCloseTabsRight();
 						trackShortcut('closeTabsRight');
 					}
 				}
-				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
-					e.preventDefault();
-					// Reopen the most recently closed tab (AI or file), or switch to existing if duplicate
-					const result = ctx.reopenUnifiedClosedTab(ctx.activeSession);
-					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
-						);
-						trackShortcut('reopenClosedTab');
-					}
-				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
 					e.preventDefault();
 					const activeTab = ctx.getActiveTab(ctx.activeSession);
-					// Only allow rename if tab has an active Claude session
 					if (activeTab?.agentSessionId) {
 						ctx.setRenameTabId(activeTab.id);
 						ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
@@ -675,7 +727,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
 					e.preventDefault();
-					// Helper to cycle through thinking modes: off -> on -> sticky -> off
 					const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
 						if (!current || current === 'off') return 'on';
 						if (current === 'on') return 'sticky';
@@ -688,23 +739,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 								...s,
 								aiTabs: s.aiTabs.map((tab: AITab) => {
 									if (tab.id !== s.activeTabId) return tab;
-									// Check if wizard is active on this tab - toggle wizard thinking instead
 									if (tab.wizardState?.isActive) {
 										return {
 											...tab,
 											wizardState: {
 												...tab.wizardState,
 												showWizardThinking: !tab.wizardState.showWizardThinking,
-												// Clear thinking content when turning off
 												thinkingContent: !tab.wizardState.showWizardThinking
 													? ''
 													: tab.wizardState.thinkingContent,
 											},
 										};
 									}
-									// Regular tab: cycle showThinking through three states
 									const newMode = cycleThinkingMode(tab.showThinking);
-									// When turning OFF, also clear any existing thinking/tool logs
 									if (newMode === 'off') {
 										return {
 											...tab,
@@ -719,76 +766,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					);
 					trackShortcut('toggleShowThinking');
 				}
-				if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
-					e.preventDefault();
-					ctx.toggleUnreadFilter();
-					trackShortcut('filterUnreadTabs');
-				}
-				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
-					e.preventDefault();
-					ctx.toggleTabUnread();
-					trackShortcut('toggleTabUnread');
-				}
-				// Cmd+Shift+] - Navigate to next tab in unified tab order
-				// Cycles through both AI tabs and file preview tabs
-				if (ctx.isTabShortcut(e, 'nextTab')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
-						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('nextTab');
-				}
-				// Cmd+Shift+[ - Navigate to previous tab in unified tab order
-				// Cycles through both AI tabs and file preview tabs
-				if (ctx.isTabShortcut(e, 'prevTab')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
-						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('prevTab');
-				}
-				// Cmd+1 through Cmd+9: Jump to specific tab by index in unified tab order
-				// Works with both AI tabs and file preview tabs
-				// Disabled in unread-only mode (unread filter only applies to AI tabs)
-				if (!ctx.showUnreadOnly) {
-					for (let i = 1; i <= 9; i++) {
-						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
-							e.preventDefault();
-							ctx.setSessions((prev: Session[]) => {
-								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-								if (!current) return prev;
-								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
-								if (!result) return prev;
-								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-							});
-							trackShortcut(`goToTab${i}`);
-							break;
-						}
-					}
-					// Cmd+0: Jump to last tab in unified tab order
-					if (ctx.isTabShortcut(e, 'goToLastTab')) {
-						e.preventDefault();
-						ctx.setSessions((prev: Session[]) => {
-							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-							if (!current) return prev;
-							const result = ctx.navigateToLastUnifiedTab(current);
-							if (!result) return prev;
-							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-						});
-						trackShortcut('goToLastTab');
-					}
-				}
 			}
 
-			// Tab shortcuts (terminal mode), requires an explicitly selected session, disabled in group chat
+			// Tab shortcuts (terminal mode only)
 			if (
 				ctx.activeSessionId &&
 				ctx.activeSession?.inputMode === 'terminal' &&
@@ -796,7 +776,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			) {
 				const activeTerminalTabId = ctx.activeSession?.activeTerminalTabId;
 
-				// Cmd+Shift+R: Rename the active terminal tab
 				if (ctx.isTabShortcut(e, 'renameTab') && activeTerminalTabId) {
 					e.preventDefault();
 					const terminalTab = ctx.activeSession?.terminalTabs?.find(
@@ -810,14 +789,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 				}
 
-				// Cmd+W: Close the active terminal tab (switching to AI mode if it was the last one)
 				if (ctx.isTabShortcut(e, 'closeTab') && activeTerminalTabId) {
 					e.preventDefault();
 					ctx.handleCloseTerminalTab(activeTerminalTabId);
 					trackShortcut('closeTab');
 				}
 
-				// Cmd+T in terminal mode: create a new AI tab and switch to AI mode
 				if (ctx.isTabShortcut(e, 'newTab') && ctx.activeSession) {
 					e.preventDefault();
 					const result = ctx.createTab(ctx.activeSession, {
@@ -833,63 +810,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.setActiveFocus('main');
 						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 						trackShortcut('newTab');
-					}
-				}
-
-				// Cmd+Shift+] — Navigate to next tab in unified order (crosses terminal/AI/file tab types)
-				if (ctx.isTabShortcut(e, 'nextTab')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
-						const result = ctx.navigateToNextUnifiedTab(current, false);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('nextTab');
-				}
-
-				// Cmd+Shift+[ — Navigate to previous tab in unified order (crosses terminal/AI/file tab types)
-				if (ctx.isTabShortcut(e, 'prevTab')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
-						const result = ctx.navigateToPrevUnifiedTab(current, false);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-					});
-					trackShortcut('prevTab');
-				}
-
-				// Cmd+1-9 — Jump to tab by unified index (works across terminal/AI/file tabs)
-				if (!ctx.showUnreadOnly) {
-					for (let i = 1; i <= 9; i++) {
-						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
-							e.preventDefault();
-							ctx.setSessions((prev: Session[]) => {
-								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-								if (!current) return prev;
-								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
-								if (!result) return prev;
-								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-							});
-							trackShortcut(`goToTab${i}`);
-							break;
-						}
-					}
-
-					// Cmd+0 — Jump to last tab in unified order
-					if (ctx.isTabShortcut(e, 'goToLastTab')) {
-						e.preventDefault();
-						ctx.setSessions((prev: Session[]) => {
-							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-							if (!current) return prev;
-							const result = ctx.navigateToLastUnifiedTab(current);
-							if (!result) return prev;
-							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
-						});
-						trackShortcut('goToLastTab');
 					}
 				}
 			}

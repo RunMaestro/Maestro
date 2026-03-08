@@ -250,7 +250,7 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 	}
 
 	if (showUnreadOnly) {
-		return session.aiTabs.filter((tab) => tab.hasUnread || hasDraft(tab));
+		return session.aiTabs.filter((tab) => tab.hasUnread || tab.state === 'busy' || hasDraft(tab));
 	}
 
 	return session.aiTabs;
@@ -1592,7 +1592,7 @@ export function navigateToNextUnifiedTab(
 
 			// For AI tabs, check if it's unread or has a draft
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
-			if (aiTab && (aiTab.hasUnread || hasDraft(aiTab))) {
+			if (aiTab && (aiTab.hasUnread || aiTab.state === 'busy' || hasDraft(aiTab))) {
 				return navigateToUnifiedTabByIndex(session, nextIndex);
 			}
 		}
@@ -1662,9 +1662,9 @@ export function navigateToPrevUnifiedTab(
 				continue; // Orphaned tab, skip
 			}
 
-			// For AI tabs, check if it's unread or has a draft
+			// For AI tabs, check if it's unread, busy, or has a draft
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
-			if (aiTab && (aiTab.hasUnread || hasDraft(aiTab))) {
+			if (aiTab && (aiTab.hasUnread || aiTab.state === 'busy' || hasDraft(aiTab))) {
 				return navigateToUnifiedTabByIndex(session, prevIndex);
 			}
 		}

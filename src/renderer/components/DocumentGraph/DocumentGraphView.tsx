@@ -221,6 +221,13 @@ export function DocumentGraphView({
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 
+	// Close all other dropdowns when opening one
+	const openDropdown = (which: 'depth' | 'preview' | 'layout') => {
+		setShowDepthSlider(which === 'depth' ? (v) => !v : false);
+		setShowPreviewSlider(which === 'preview' ? (v) => !v : false);
+		setShowLayoutDropdown(which === 'layout' ? (v) => !v : false);
+	};
+
 	// Sync settings state with prop changes
 	useEffect(() => {
 		setLayoutType(defaultLayoutType);
@@ -1358,7 +1365,7 @@ export function DocumentGraphView({
 						{/* Layout Algorithm Selector */}
 						<div className="relative">
 							<button
-								onClick={() => setShowLayoutDropdown(!showLayoutDropdown)}
+								onClick={() => openDropdown('layout')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor: `${theme.colors.accent}10`,
@@ -1417,7 +1424,7 @@ export function DocumentGraphView({
 						{/* Neighbor Depth Slider */}
 						<div className="relative">
 							<button
-								onClick={() => setShowDepthSlider(!showDepthSlider)}
+								onClick={() => openDropdown('depth')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor:
@@ -1490,7 +1497,7 @@ export function DocumentGraphView({
 						{/* Preview Character Limit Slider */}
 						<div className="relative">
 							<button
-								onClick={() => setShowPreviewSlider(!showPreviewSlider)}
+								onClick={() => openDropdown('preview')}
 								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
 								style={{
 									backgroundColor:

@@ -2156,7 +2156,7 @@ function TabBarInner({
 	// When filter is on, show: unread tabs + active tab + tabs with drafts
 	// The active tab disappears from the filtered list when user navigates away from it
 	const displayedTabs = showUnreadOnly
-		? tabs.filter((t) => t.hasUnread || t.id === activeTabId || hasDraft(t))
+		? tabs.filter((t) => t.hasUnread || t.state === 'busy' || t.id === activeTabId || hasDraft(t))
 		: tabs;
 
 	// When unifiedTabs is provided, filter it similarly for display
@@ -2167,7 +2167,12 @@ function TabBarInner({
 		// In filter mode: show AI tabs that are unread/active/have drafts, plus file/terminal tabs that are active
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
-				return ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
+				return (
+					ut.data.hasUnread ||
+					ut.data.state === 'busy' ||
+					ut.id === activeTabId ||
+					hasDraft(ut.data)
+				);
 			}
 			if (ut.type === 'file') {
 				return ut.id === activeFileTabId;
