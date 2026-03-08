@@ -536,11 +536,13 @@ ${message}${imageContext}`;
 				sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 			});
 
-			// For Gemini CLI: disable workspace sandbox for the moderator.
-			// The moderator is already read-only (--approval-mode plan), so disabling
-			// the sandbox is safe and avoids "path not in workspace" errors when
-			// Gemini needs to coordinate across multiple agent workspaces.
-			const geminiNoSandbox = chat.moderatorAgentId === 'gemini-cli' ? ['--no-sandbox'] : [];
+			// For Gemini CLI: only disable workspace sandbox when read-only mode is
+			// CLI-enforced (readOnlyArgs has entries). Without hard read-only enforcement,
+			// removing the sandbox would give the moderator unsandboxed write capability.
+			// The CWD is already set to the group chat folder to avoid "path not in workspace" errors.
+			const geminiCanBeUnsandboxed =
+				chat.moderatorAgentId === 'gemini-cli' && !!agent.readOnlyArgs?.length;
+			const geminiNoSandbox = geminiCanBeUnsandboxed ? ['--no-sandbox'] : [];
 			const finalArgs = [...configResolution.args, ...geminiNoSandbox];
 			console.log(`[GroupChat:Debug] Args: ${JSON.stringify(finalArgs)}`);
 
@@ -1330,8 +1332,11 @@ Review the agent responses above. Either:
 		sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 	});
 
-	// For Gemini CLI: disable workspace sandbox (same rationale as moderator spawn)
-	const geminiSynthNoSandbox = chat.moderatorAgentId === 'gemini-cli' ? ['--no-sandbox'] : [];
+	// For Gemini CLI: only disable workspace sandbox when read-only mode is
+	// CLI-enforced (same rationale as moderator spawn above)
+	const geminiCanBeUnsandboxed =
+		chat.moderatorAgentId === 'gemini-cli' && !!agent.readOnlyArgs?.length;
+	const geminiSynthNoSandbox = geminiCanBeUnsandboxed ? ['--no-sandbox'] : [];
 	const finalArgs = [...configResolution.args, ...geminiSynthNoSandbox];
 	console.log(`[GroupChat:Debug] Args: ${JSON.stringify(finalArgs)}`);
 
