@@ -59,6 +59,7 @@ import { useContributorStats, type Achievement } from '../hooks/symphony/useCont
 import { AgentCreationDialog, type AgentCreationConfig } from './AgentCreationDialog';
 import { generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 // ============================================================================
 // Types
@@ -1802,7 +1803,9 @@ export function SymphonyModal({
 											</p>
 											<button
 												onClick={() => {
-													window.maestro.shell.openExternal('https://docs.runmaestro.ai/symphony');
+													window.maestro.shell.openExternal(
+														buildMaestroUrl('https://docs.runmaestro.ai/symphony')
+													);
 													setShowHelp(false);
 												}}
 												className="text-xs hover:opacity-80 transition-colors"
@@ -1828,7 +1831,9 @@ export function SymphonyModal({
 								{/* Register Project link */}
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal('https://docs.runmaestro.ai/symphony');
+										window.maestro.shell.openExternal(
+											buildMaestroUrl('https://docs.runmaestro.ai/symphony')
+										);
 									}}
 									className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
 									title="Register your project for Symphony contributions"

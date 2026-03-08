@@ -16,6 +16,7 @@ import type { Theme, Shortcut } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -219,7 +220,7 @@ export function EmptyStateView({
 
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal('https://runmaestro.ai');
+										window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'));
 										setMenuOpen(false);
 									}}
 									className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
@@ -238,7 +239,9 @@ export function EmptyStateView({
 
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal('https://docs.runmaestro.ai');
+										window.maestro.shell.openExternal(
+											buildMaestroUrl('https://docs.runmaestro.ai')
+										);
 										setMenuOpen(false);
 									}}
 									className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"

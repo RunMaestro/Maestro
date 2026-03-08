@@ -18,6 +18,7 @@ import pedramAvatar from '../assets/pedram-avatar.png';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
 import { Modal } from './ui/Modal';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface AboutModalProps {
 	theme: Theme;
@@ -126,7 +127,9 @@ export function AboutModal({
 					About Maestro
 				</h2>
 				<button
-					onClick={() => window.maestro.shell.openExternal('https://runmaestro.ai')}
+					onClick={() =>
+						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'))
+					}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Visit runmaestro.ai"
 					style={{ color: theme.colors.accent }}
@@ -134,7 +137,9 @@ export function AboutModal({
 					<Globe className="w-4 h-4" />
 				</button>
 				<button
-					onClick={() => window.maestro.shell.openExternal('https://runmaestro.ai/discord')}
+					onClick={() =>
+						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/discord'))
+					}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Join our Discord"
 					style={{ color: theme.colors.accent }}
@@ -144,7 +149,9 @@ export function AboutModal({
 					</svg>
 				</button>
 				<button
-					onClick={() => window.maestro.shell.openExternal('https://docs.runmaestro.ai/')}
+					onClick={() =>
+						window.maestro.shell.openExternal(buildMaestroUrl('https://docs.runmaestro.ai/'))
+					}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Documentation"
 					style={{ color: theme.colors.accent }}

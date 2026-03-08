@@ -12,6 +12,7 @@ import type { WizardStep } from './Wizard/WizardContext';
 import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface QuickAction {
 	id: string;
@@ -917,7 +918,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Maestro Website',
 			subtext: 'Open the Maestro website',
 			action: () => {
-				window.maestro.shell.openExternal('https://runmaestro.ai/');
+				window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/'));
 				setQuickActionOpen(false);
 			},
 		},
@@ -926,7 +927,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Documentation and User Guide',
 			subtext: 'Open the Maestro documentation',
 			action: () => {
-				window.maestro.shell.openExternal('https://docs.runmaestro.ai/');
+				window.maestro.shell.openExternal(buildMaestroUrl('https://docs.runmaestro.ai/'));
 				setQuickActionOpen(false);
 			},
 		},
@@ -935,7 +936,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Join Discord',
 			subtext: 'Join the Maestro community',
 			action: () => {
-				window.maestro.shell.openExternal('https://runmaestro.ai/discord');
+				window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/discord'));
 				setQuickActionOpen(false);
 			},
 		},

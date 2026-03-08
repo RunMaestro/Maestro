@@ -29,6 +29,7 @@ import { getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
@@ -810,7 +811,9 @@ export function LeaderboardRegistrationModal({
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Join the global Maestro leaderboard at{' '}
 						<button
-							onClick={() => window.maestro.shell.openExternal('https://runmaestro.ai')}
+							onClick={() =>
+								window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'))
+							}
 							className="inline-flex items-center gap-1 hover:underline"
 							style={{ color: theme.colors.accent }}
 						>
