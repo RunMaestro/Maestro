@@ -18,6 +18,7 @@
  *   - Worktree children included when parent's worktreesExpanded !== false
  *   - Worktree children skipped when parent's worktreesExpanded === false
  *   - Position tracking via cyclePosition store field
+ *   - Unread filter restricts cycling to unread/busy agents only
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -136,6 +137,7 @@ const defaultUIStoreState = {
 	leftSidebarOpen: true,
 	bookmarksCollapsed: false,
 	groupChatsExpanded: true,
+	showUnreadAgentsOnly: false,
 };
 
 const defaultSettingsStoreState = {
@@ -1513,6 +1515,185 @@ describe('useCycleSession', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+	});
+
+	// =========================================================================
+	// Unread filter — showUnreadAgentsOnly restricts cycling
+	// =========================================================================
+	describe('unread agents filter', () => {
+		it('cycles only through unread sessions when filter is active', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta' }); // no unread
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Alpha → Gamma (skips Beta which has no unread)
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+		});
+
+		it('includes busy sessions even if not unread', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta', state: 'busy' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma' }); // neither unread nor busy
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Alpha → Beta (busy counts as visible)
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('always includes the currently active session in the cycle list', () => {
+			// Active session 'a' is not unread but should still appear in the filtered
+			// cycle list so the user can cycle away from it (rather than being stuck).
+			const sessA = makeSession({ id: 'a', name: 'Alpha' }); // not unread, but active
+			const sessB = makeSession({ id: 'b', name: 'Beta', aiTabs: [{ hasUnread: true }] as any });
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// 'a' is active (not unread) → included. Filtered list: [a, b, c]
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('wraps around within filtered sessions', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha', aiTabs: [{ hasUnread: true }] as any });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			const sessC = makeSession({ id: 'c', name: 'Gamma', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB, sessC],
+				activeSessionId: 'c',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Gamma is last unread → wraps to Alpha (active Gamma + unread Alpha + unread Gamma)
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('includes parent when worktree child has unread', () => {
+			const parent = makeSession({ id: 'p', name: 'Parent' }); // no unread itself
+			const child = makeSession({
+				id: 'child1',
+				name: 'Child',
+				parentSessionId: 'p',
+				worktreeBranch: 'feat',
+				aiTabs: [{ hasUnread: true }] as any,
+			});
+			const other = makeSession({ id: 'o', name: 'Other', aiTabs: [{ hasUnread: true }] as any });
+
+			useSessionStore.setState({
+				sessions: [parent, child, other],
+				activeSessionId: 'o',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// Other → Parent (parent included because child has unread)
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('does not filter when showUnreadAgentsOnly is false', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: false,
+				showUnreadAgentsOnly: false,
+			} as any);
+
+			const deps = makeDeps();
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			// All sessions visible — Alpha → Beta
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});
 });

@@ -55,6 +55,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
+	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 
 	// --- Store actions (stable via getState) ---
 	const { setActiveSessionIdInternal, setCyclePosition } = useSessionStore.getState();
@@ -169,6 +170,34 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 				);
 			}
 
+			// When unread filter is active, restrict cycling to unread/busy agents only
+			// (plus the currently active agent so you don't get lost)
+			if (showUnreadAgentsOnly) {
+				const currentActiveId = activeGroupChatId || activeSessionId;
+				const filteredOrder = visualOrder.filter((item) => {
+					// Always keep the currently active item
+					if (item.id === currentActiveId) return true;
+					// Group chats pass through (they have their own unread badges)
+					if (item.type === 'groupChat') return true;
+					// Check if session is unread or busy
+					const session = sessions.find((s) => s.id === item.id);
+					if (!session) return false;
+					if (session.aiTabs?.some((tab) => tab.hasUnread)) return true;
+					if (session.state === 'busy') return true;
+					// Check worktree children for unread/busy
+					const children = sessions.filter((s) => s.parentSessionId === session.id);
+					if (
+						children.some(
+							(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+						)
+					)
+						return true;
+					return false;
+				});
+				visualOrder.length = 0;
+				visualOrder.push(...filteredOrder);
+			}
+
 			if (visualOrder.length === 0) return;
 
 			// Determine what is currently active (session or group chat)
@@ -233,6 +262,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			bookmarksCollapsed,
 			groupChatsExpanded,
 			ungroupedCollapsed,
+			showUnreadAgentsOnly,
 			groupChats,
 			sortedSessions,
 			handleOpenGroupChat,
