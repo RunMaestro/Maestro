@@ -80,7 +80,8 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'factory-droid';
 
 	/**
-	 * Parse a single JSON line from Factory Droid output
+	 * Parse a single JSON line from Factory Droid output.
+	 * Delegates to parseJsonObject after JSON.parse.
 	 */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
@@ -89,41 +90,16 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 
 		try {
 			const parsed: unknown = JSON.parse(line);
-
-			// Validate the parsed JSON matches expected structure
-			if (!isFactoryStreamMessage(parsed)) {
-				// Valid JSON but not a Factory message - return as raw text
-				return {
-					type: 'text',
+			// parseJsonObject handles non-Factory messages by returning null;
+			// fall through to raw text for those
+			return (
+				this.parseJsonObject(parsed) ?? {
+					type: 'text' as const,
 					text: line,
 					isPartial: true,
 					raw: parsed,
-				};
-			}
-
-			const data = parsed;
-
-			switch (data.type) {
-				case 'system':
-					return this.parseSystemEvent(data);
-
-				case 'message':
-					return this.parseMessageEvent(data);
-
-				case 'completion':
-					return this.parseCompletionEvent(data);
-
-				case 'error':
-					return this.parseErrorEvent(data);
-
-				default:
-					// Unknown type - return as system event to not lose data
-					return {
-						type: 'system',
-						sessionId: data.session_id,
-						raw: data,
-					};
-			}
+				}
+			);
 		} catch {
 			// Not valid JSON - return as raw text event
 			if (line.trim()) {
@@ -135,6 +111,43 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 				};
 			}
 			return null;
+		}
+	}
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		if (!isFactoryStreamMessage(parsed)) {
+			return null;
+		}
+
+		const data = parsed;
+
+		switch (data.type) {
+			case 'system':
+				return this.parseSystemEvent(data);
+
+			case 'message':
+				return this.parseMessageEvent(data);
+
+			case 'completion':
+				return this.parseCompletionEvent(data);
+
+			case 'error':
+				return this.parseErrorEvent(data);
+
+			default:
+				return {
+					type: 'system',
+					sessionId: data.session_id,
+					raw: data,
+				};
 		}
 	}
 
@@ -262,40 +275,52 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Detect an error from a line of agent output
+	 * Detect an error from a line of agent output.
+	 * Delegates to detectErrorFromParsed after JSON.parse.
 	 */
 	detectErrorFromLine(line: string): AgentError | null {
 		if (!line.trim()) {
 			return null;
 		}
 
-		let errorText: string | null = null;
-		let parsedJson: unknown = null;
-
 		try {
-			const parsed = JSON.parse(line) as FactoryStreamMessage;
-
-			// Factory Droid error format: { type: "error", error: "..." }
-			if (parsed.type === 'error' && parsed.error) {
-				parsedJson = parsed;
-
-				if (typeof parsed.error === 'string') {
-					errorText = parsed.error;
-				} else if (parsed.error.data?.message) {
-					errorText = parsed.error.data.message;
-				} else if (parsed.error.message) {
-					errorText = parsed.error.message;
-				}
+			const error = this.detectErrorFromParsed(JSON.parse(line));
+			if (error) {
+				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
 			}
+			return error;
 		} catch {
 			// Not JSON - skip
+			return null;
+		}
+	}
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Core logic extracted from detectErrorFromLine to avoid redundant JSON.parse calls.
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		const obj = parsed as FactoryStreamMessage;
+		let errorText: string | null = null;
+
+		if (obj.type === 'error' && obj.error) {
+			if (typeof obj.error === 'string') {
+				errorText = obj.error;
+			} else if (obj.error.data?.message) {
+				errorText = obj.error.data.message;
+			} else if (obj.error.message) {
+				errorText = obj.error.message;
+			}
 		}
 
 		if (!errorText) {
 			return null;
 		}
 
-		// Match against error patterns
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -306,20 +331,19 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 				recoverable: match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: { errorLine: line },
-				parsedJson,
+				raw: { parsedJson: parsed },
+				parsedJson: parsed,
 			};
 		}
 
-		// Return generic error if no pattern matched
 		return {
 			type: 'unknown',
 			message: errorText,
 			recoverable: true,
 			agentId: this.agentId,
 			timestamp: Date.now(),
-			raw: { errorLine: line },
-			parsedJson,
+			raw: { parsedJson: parsed },
+			parsedJson: parsed,
 		};
 	}
 

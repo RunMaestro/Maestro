@@ -197,6 +197,16 @@ export interface AgentOutputParser {
 	extractSlashCommands(event: ParsedEvent): string[] | null;
 
 	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Like parseJsonLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns ParsedEvent if the object is valid and should be processed, null otherwise
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null;
+
+	/**
 	 * Detect an error from a line of agent output
 	 * Checks for error patterns in the output and returns structured error info
 	 *
@@ -204,6 +214,16 @@ export interface AgentOutputParser {
 	 * @returns AgentError if an error was detected, null otherwise
 	 */
 	detectErrorFromLine(line: string): AgentError | null;
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Like detectErrorFromLine but accepts an already-parsed object to avoid redundant JSON.parse calls.
+	 * StdoutHandler parses JSON once and passes the object to this method.
+	 *
+	 * @param parsed - A pre-parsed JSON object from agent output
+	 * @returns AgentError if an error was detected, null otherwise
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null;
 
 	/**
 	 * Detect an error from process exit information

@@ -69,7 +69,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
 
 	/**
-	 * Parse a single JSON line from Claude Code output
+	 * Parse a single JSON line from Claude Code output.
+	 * Delegates to parseJsonObject after JSON.parse.
 	 *
 	 * Claude Code message types:
 	 * - { type: 'system', subtype: 'init', session_id, slash_commands }
@@ -82,17 +83,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			const msg: ClaudeRawMessage = JSON.parse(line);
-
-			// DEBUG: Log raw message if it contains usage data
-			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				console.log(
-					'[ClaudeOutputParser] Raw message with usage data:',
-					JSON.stringify(msg, null, 2)
-				);
-			}
-
-			return this.transformMessage(msg);
+			return this.parseJsonObject(JSON.parse(line));
 		} catch {
 			// Not valid JSON - return as raw text event
 			// Note: This doesn't set isPartial, so it won't be emitted as thinking content
@@ -102,6 +93,28 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				raw: line,
 			};
 		}
+	}
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		const msg = parsed as ClaudeRawMessage;
+
+		// DEBUG: Log raw message if it contains usage data
+		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
+			console.log(
+				'[ClaudeOutputParser] Raw message with usage data:',
+				JSON.stringify(msg, null, 2)
+			);
+		}
+
+		return this.transformMessage(msg);
 	}
 
 	/**
@@ -320,16 +333,13 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Detect an error from a line of agent output
+	 * Detect an error from a line of agent output.
+	 * Delegates to detectErrorFromParsed for valid JSON; falls back to
+	 * extractErrorFromMixedLine for non-JSON lines with embedded JSON.
 	 *
 	 * IMPORTANT: Only detect errors from structured JSON error events, not from
 	 * arbitrary text content. Pattern matching on conversational text leads to
 	 * false positives (e.g., AI discussing "timeout" triggers timeout error).
-	 *
-	 * Error detection sources (in order of reliability):
-	 * 1. Structured JSON: { type: "error", message: "..." } or { error: "..." }
-	 * 2. stderr output (handled separately by process-manager)
-	 * 3. Non-zero exit code (handled by detectErrorFromExit)
 	 */
 	detectErrorFromLine(line: string): AgentError | null {
 		// Skip empty lines
@@ -337,41 +347,69 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
-		let errorText: string | null = null;
-		let parsedJson: unknown = null;
 		try {
 			const parsed = JSON.parse(line);
-			// Check for error type messages
-			// Claude Code uses type: 'error' for some errors and type: 'turn.failed' for others
-			if (parsed.type === 'error' && parsed.message) {
-				parsedJson = parsed;
-				errorText = parsed.message;
-			} else if (
-				(parsed.type === 'turn.failed' || parsed.type === 'turn_failed') &&
-				parsed.error?.message
-			) {
-				// Handle turn.failed/turn_failed format: {"type":"turn.failed","error":{"message":"..."}}
-				parsedJson = parsed;
-				errorText = parsed.error.message;
-			} else if (parsed.error) {
-				parsedJson = parsed;
-				errorText = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
+			const error = this.detectErrorFromParsed(parsed);
+			if (error) {
+				// Preserve original line in raw for backwards compatibility
+				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
 			}
-			// If no error field in JSON, this is normal output - don't check it
+			return error;
 		} catch {
 			// Not pure JSON - try to extract embedded JSON from stderr messages
 			// Example: "Error streaming...: 400 {"type":"error","error":{"type":"invalid_request_error","message":"..."}}"
-			errorText = this.extractErrorFromMixedLine(line);
+			const errorText = this.extractErrorFromMixedLine(line);
+			if (!errorText) {
+				return null;
+			}
+
+			const patterns = getErrorPatterns(this.agentId);
+			const match = matchErrorPattern(patterns, errorText);
+			if (match) {
+				return {
+					type: match.type,
+					message: match.message,
+					recoverable: match.recoverable,
+					agentId: this.agentId,
+					timestamp: Date.now(),
+					raw: { errorLine: line },
+				};
+			}
+			return null;
+		}
+	}
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Core logic extracted from detectErrorFromLine to avoid redundant JSON.parse calls.
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
 		}
 
-		// If no error text was extracted, no error to detect
+		const obj = parsed as Record<string, unknown>;
+		let errorText: string | null = null;
+		let parsedJson: unknown = null;
+
+		if (obj.type === 'error' && obj.message) {
+			parsedJson = parsed;
+			errorText = obj.message as string;
+		} else if (
+			(obj.type === 'turn.failed' || obj.type === 'turn_failed') &&
+			(obj.error as Record<string, unknown>)?.message
+		) {
+			parsedJson = parsed;
+			errorText = (obj.error as Record<string, unknown>).message as string;
+		} else if (obj.error) {
+			parsedJson = parsed;
+			errorText = typeof obj.error === 'string' ? obj.error : JSON.stringify(obj.error);
+		}
+
 		if (!errorText) {
 			return null;
 		}
 
-		// Match against error patterns
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -382,9 +420,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				recoverable: match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
+				raw: { parsedJson },
 				parsedJson,
 			};
 		}
@@ -398,7 +434,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				recoverable: true,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: { errorLine: line },
+				raw: { parsedJson },
 				parsedJson,
 			};
 		}
