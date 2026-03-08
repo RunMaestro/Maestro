@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw, FolderOpen, Plus, Folder } from 'lucide-react';
 import type { Theme } from '../types';
 import { useClickOutside } from '../hooks';
+import { getExplorerFileIcon } from '../utils/theme';
 
 // Tree node type for folder structure
 export interface DocTreeNode {
@@ -206,31 +207,35 @@ export function AutoRunDocumentSelector({
 			<button
 				key={node.path}
 				onClick={() => handleSelectDocument(node.path)}
-				className="w-full flex items-center py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
+				className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
 				style={{
 					paddingLeft,
 					color: node.path === selectedDocument ? theme.colors.accent : theme.colors.textMain,
 					backgroundColor: node.path === selectedDocument ? theme.colors.bgActivity : 'transparent',
 				}}
 			>
-				{/* Fixed-width percentage column for alignment */}
+				{/* Spacer matching chevron width for alignment with folders */}
+				<span className="w-3 shrink-0" />
+				{/* File icon matching the Files tab */}
 				<span
-					className="shrink-0 text-xs mr-2 px-1.5 py-0.5 rounded text-right"
-					style={{
-						width: '40px',
-						backgroundColor:
-							taskPct !== null
-								? taskPct === 100
-									? theme.colors.success
-									: theme.colors.accentDim
-								: 'transparent',
-						color:
-							taskPct !== null ? (taskPct === 100 ? '#000' : theme.colors.textDim) : 'transparent',
-					}}
+					className="shrink-0 w-3.5 h-3.5 flex items-center justify-center"
+					style={{ color: theme.colors.textDim }}
 				>
-					{taskPct !== null ? `${taskPct}%` : ''}
+					{getExplorerFileIcon(`${node.name}.md`, theme)}
 				</span>
 				<span className="truncate">{node.name}.md</span>
+				{/* Task percentage badge - right-aligned */}
+				{taskPct !== null && (
+					<span
+						className="shrink-0 text-xs ml-auto px-1.5 py-0.5 rounded"
+						style={{
+							backgroundColor: taskPct === 100 ? theme.colors.success : theme.colors.accentDim,
+							color: taskPct === 100 ? '#000' : theme.colors.textDim,
+						}}
+					>
+						{taskPct}%
+					</span>
+				)}
 			</button>
 		);
 	};
@@ -303,7 +308,7 @@ export function AutoRunDocumentSelector({
 										<button
 											key={doc}
 											onClick={() => handleSelectDocument(doc)}
-											className="w-full flex items-center px-3 py-2 text-sm transition-colors hover:bg-white/5"
+											className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors hover:bg-white/5"
 											style={{
 												color:
 													doc === selectedDocument ? theme.colors.accent : theme.colors.textMain,
@@ -311,28 +316,25 @@ export function AutoRunDocumentSelector({
 													doc === selectedDocument ? theme.colors.bgActivity : 'transparent',
 											}}
 										>
-											{/* Fixed-width percentage column for alignment */}
 											<span
-												className="shrink-0 text-xs mr-2 px-1.5 py-0.5 rounded text-right"
-												style={{
-													width: '40px',
-													backgroundColor:
-														taskPct !== null
-															? taskPct === 100
-																? theme.colors.success
-																: theme.colors.accentDim
-															: 'transparent',
-													color:
-														taskPct !== null
-															? taskPct === 100
-																? '#000'
-																: theme.colors.textDim
-															: 'transparent',
-												}}
+												className="shrink-0 w-3.5 h-3.5 flex items-center justify-center"
+												style={{ color: theme.colors.textDim }}
 											>
-												{taskPct !== null ? `${taskPct}%` : ''}
+												{getExplorerFileIcon(`${doc}.md`, theme)}
 											</span>
 											<span className="truncate">{doc}.md</span>
+											{taskPct !== null && (
+												<span
+													className="shrink-0 text-xs ml-auto px-1.5 py-0.5 rounded"
+													style={{
+														backgroundColor:
+															taskPct === 100 ? theme.colors.success : theme.colors.accentDim,
+														color: taskPct === 100 ? '#000' : theme.colors.textDim,
+													}}
+												>
+													{taskPct}%
+												</span>
+											)}
 										</button>
 									);
 								})

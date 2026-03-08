@@ -381,7 +381,17 @@ function findTargetSession(
 	// If the subscription has an explicit agent_id, resolve by session ID directly.
 	if (sub.agent_id) {
 		const session = sessions.find((s) => s.id === sub.agent_id);
-		if (session) return session.name;
+		if (session) {
+			// Cross-check: if subscription base name matches a DIFFERENT session,
+			// prefer the name match. agent_id may be stale from a previous bad
+			// resolution (e.g., pre-agent_id YAML that got locked to the wrong session).
+			const baseName = getBasePipelineName(sub.name);
+			const nameMatch = sessions.find((s) => s.name === baseName);
+			if (nameMatch && nameMatch.name !== session.name) {
+				return nameMatch.name;
+			}
+			return session.name;
+		}
 	}
 
 	// If the subscription was tagged with owning sessions from getGraphData(),
@@ -447,6 +457,12 @@ function findTargetSession(
 					: [];
 			for (const name of sources) usedSessions.add(name);
 		}
+
+		// Try matching subscription base name to a session name.
+		// Pipeline names often reflect the target agent (e.g., "Pedsidian" → session "Pedsidian").
+		const baseName = getBasePipelineName(sub.name);
+		const nameMatch = sessions.find((s) => s.name === baseName);
+		if (nameMatch) return nameMatch.name;
 
 		// For the initial subscription, try to find a session not already used as a source
 		// This is a heuristic: the target session is typically the one the YAML belongs to

@@ -371,8 +371,8 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// Advance time past the timeout (30 seconds)
-			vi.advanceTimersByTime(31000);
+			// Advance time past the timeout (45 seconds)
+			vi.advanceTimersByTime(46000);
 
 			const result = await resultPromise;
 			expect(result).toBeNull();
