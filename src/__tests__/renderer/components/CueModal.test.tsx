@@ -7,10 +7,12 @@
  * - Activity log rendering with success/failure indicators
  * - Master enable/disable toggle
  * - Close button and backdrop click
+ * - Help view escape-to-go-back behavior
+ * - Unsaved changes confirmation on close
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CueModal } from '../../../renderer/components/CueModal';
 import type { Theme } from '../../../renderer/types';
 
@@ -44,9 +46,14 @@ vi.mock('../../../renderer/components/CueGraphView', () => ({
 	CueGraphView: () => null,
 }));
 
-// Mock CuePipelineEditor
+// Capture the onDirtyChange callback from CuePipelineEditor
+let capturedOnDirtyChange: ((isDirty: boolean) => void) | undefined;
+
 vi.mock('../../../renderer/components/CuePipelineEditor', () => ({
-	CuePipelineEditor: () => <div data-testid="cue-pipeline-editor">Pipeline Editor Mock</div>,
+	CuePipelineEditor: ({ onDirtyChange }: { onDirtyChange?: (isDirty: boolean) => void }) => {
+		capturedOnDirtyChange = onDirtyChange;
+		return <div data-testid="cue-pipeline-editor">Pipeline Editor Mock</div>;
+	},
 }));
 
 // Mock sessionStore
@@ -54,14 +61,16 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: (selector: (state: unknown) => unknown) => {
 		const mockState = {
 			sessions: [],
+			groups: [],
 			setActiveSessionId: vi.fn(),
 		};
 		return selector(mockState);
 	},
 }));
 
-// Mock window.maestro.cue.getGraphData
+// Mock window.maestro.cue
 const mockGetGraphData = vi.fn().mockResolvedValue([]);
+const mockDeleteYaml = vi.fn().mockResolvedValue(undefined);
 if (!window.maestro) {
 	(window as unknown as Record<string, unknown>).maestro = {};
 }
@@ -69,6 +78,7 @@ if (!(window.maestro as Record<string, unknown>).cue) {
 	(window.maestro as Record<string, unknown>).cue = {};
 }
 (window.maestro.cue as Record<string, unknown>).getGraphData = mockGetGraphData;
+(window.maestro.cue as Record<string, unknown>).deleteYaml = mockDeleteYaml;
 
 // Mock useCue hook
 const mockEnable = vi.fn().mockResolvedValue(undefined);
@@ -175,6 +185,7 @@ describe('CueModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockUseCueReturn = { ...defaultUseCueReturn };
+		capturedOnDirtyChange = undefined;
 	});
 
 	describe('rendering', () => {
@@ -467,7 +478,7 @@ describe('CueModal', () => {
 	});
 
 	describe('close behavior', () => {
-		it('should call onClose when close button is clicked', () => {
+		it('should call onClose when close button is clicked (no unsaved changes)', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// The close button has an X icon
@@ -477,6 +488,172 @@ describe('CueModal', () => {
 				fireEvent.click(closeButton);
 				expect(mockOnClose).toHaveBeenCalledOnce();
 			}
+		});
+
+		it('should show confirmation when closing with unsaved pipeline changes via escape', () => {
+			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Simulate pipeline becoming dirty
+			expect(capturedOnDirtyChange).toBeDefined();
+			act(() => {
+				capturedOnDirtyChange!(true);
+			});
+
+			// Trigger escape (which goes through the same dirty check)
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(confirmSpy).toHaveBeenCalledWith(
+				'You have unsaved changes in the pipeline editor. Discard and close?'
+			);
+			// User declined, so onClose should NOT be called
+			expect(mockOnClose).not.toHaveBeenCalled();
+
+			confirmSpy.mockRestore();
+		});
+
+		it('should close when user confirms discarding unsaved changes', () => {
+			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Simulate pipeline becoming dirty
+			act(() => {
+				capturedOnDirtyChange!(true);
+			});
+
+			// Trigger escape
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(confirmSpy).toHaveBeenCalled();
+			expect(mockOnClose).toHaveBeenCalledOnce();
+
+			confirmSpy.mockRestore();
+		});
+
+		it('should not show confirmation after pipeline changes are saved (dirty cleared)', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Simulate pipeline becoming dirty then saved
+			act(() => {
+				capturedOnDirtyChange!(true);
+			});
+			act(() => {
+				capturedOnDirtyChange!(false);
+			});
+
+			// Trigger escape
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			// Should close without confirmation
+			expect(mockOnClose).toHaveBeenCalledOnce();
+		});
+	});
+
+	describe('help view escape behavior', () => {
+		it('should navigate to help view when help button is clicked', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Click help button
+			const helpButton = screen.getByTitle('Help');
+			fireEvent.click(helpButton);
+
+			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
+		});
+
+		it('should go back from help view when escape is pressed (not close modal)', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Click help button to enter help view
+			const helpButton = screen.getByTitle('Help');
+			fireEvent.click(helpButton);
+			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
+
+			// Trigger the onEscape callback from the registered layer
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			act(() => {
+				layerConfig.onEscape();
+			});
+
+			// Should go back to main view, not close the modal
+			expect(mockOnClose).not.toHaveBeenCalled();
+			// Help view should be gone, main header should be back
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+		});
+
+		it('should go back from help view via back arrow button', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Click help button
+			fireEvent.click(screen.getByTitle('Help'));
+			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
+
+			// Click the back arrow
+			fireEvent.click(screen.getByTitle('Back to dashboard'));
+
+			// Should be back to main view
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+		});
+
+		it('should close modal on escape when not in help view', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Trigger the onEscape callback
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(mockOnClose).toHaveBeenCalledOnce();
+		});
+
+		it('should show confirmation on escape when pipeline has unsaved changes', () => {
+			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Simulate dirty pipeline
+			act(() => {
+				capturedOnDirtyChange!(true);
+			});
+
+			// Trigger escape
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			layerConfig.onEscape();
+
+			expect(confirmSpy).toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+
+			confirmSpy.mockRestore();
+		});
+
+		it('should not show confirmation on escape from help view even with unsaved changes', () => {
+			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Make pipeline dirty
+			act(() => {
+				capturedOnDirtyChange!(true);
+			});
+
+			// Enter help view
+			fireEvent.click(screen.getByTitle('Help'));
+			expect(screen.getByText('Maestro Cue Guide')).toBeInTheDocument();
+
+			// Press escape — should go back from help, not trigger confirmation
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			act(() => {
+				layerConfig.onEscape();
+			});
+
+			expect(confirmSpy).not.toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+
+			confirmSpy.mockRestore();
 		});
 	});
 });
