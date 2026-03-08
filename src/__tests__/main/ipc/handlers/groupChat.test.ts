@@ -688,7 +688,8 @@ describe('groupChat IPC handlers', () => {
 				'Hello moderator',
 				mockProcessManager,
 				mockAgentDetector,
-				false
+				false,
+				undefined
 			);
 		});
 
@@ -703,7 +704,8 @@ describe('groupChat IPC handlers', () => {
 				'Analyze this',
 				mockProcessManager,
 				mockAgentDetector,
-				true
+				true,
+				undefined
 			);
 		});
 	});
