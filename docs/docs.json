@@ -9,6 +9,7 @@
 		"href": "https://runmaestro.ai"
 	},
 	"favicon": "/assets/icon.ico",
+	"js": "/assets/theme-hint.js",
 	"colors": {
 		"primary": "#BD93F9",
 		"light": "#F8F8F2",
