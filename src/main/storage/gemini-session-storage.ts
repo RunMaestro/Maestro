@@ -296,9 +296,11 @@ export class GeminiSessionStorage implements AgentSessionStorage {
 			const startedAt = session.startTime || new Date(stats.mtimeMs).toISOString();
 			const lastActiveAt = session.lastUpdated || new Date(stats.mtimeMs).toISOString();
 
-			const startTime = new Date(startedAt).getTime();
-			const endTime = new Date(lastActiveAt).getTime();
-			const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+			const startTime = Date.parse(startedAt);
+			const endTime = Date.parse(lastActiveAt);
+			const safeStart = Number.isNaN(startTime) ? stats.mtimeMs : startTime;
+			const safeEnd = Number.isNaN(endTime) ? stats.mtimeMs : endTime;
+			const durationSeconds = Math.max(0, Math.floor((safeEnd - safeStart) / 1000));
 
 			return {
 				sessionId,
