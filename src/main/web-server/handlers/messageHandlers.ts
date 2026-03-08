@@ -731,7 +731,9 @@ export class WebSocketMessageHandler {
 	 */
 	private handleConfigureAutoRun(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
-		const documents = message.documents as Array<{ filename: string; resetOnCompletion?: boolean }> | undefined;
+		const documents = message.documents as
+			| Array<{ filename: string; resetOnCompletion?: boolean }>
+			| undefined;
 		logger.info(
 			`[Web] Received configure_auto_run message: session=${sessionId}, documents=${documents?.length || 0}`,
 			LOG_CONTEXT

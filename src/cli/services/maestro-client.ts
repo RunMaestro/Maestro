@@ -172,7 +172,9 @@ export function resolveSessionId(options: { session?: string }): string {
  * Helper: create client, connect, run action, disconnect.
  * Handles the connect/disconnect lifecycle for one-shot commands.
  */
-export async function withMaestroClient<T>(action: (client: MaestroClient) => Promise<T>): Promise<T> {
+export async function withMaestroClient<T>(
+	action: (client: MaestroClient) => Promise<T>
+): Promise<T> {
 	const client = new MaestroClient();
 	try {
 		await client.connect();

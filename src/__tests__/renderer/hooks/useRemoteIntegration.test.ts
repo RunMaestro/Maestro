@@ -121,7 +121,20 @@ describe('useRemoteIntegration', () => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
 		}),
+		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteRefreshFileTree: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteConfigureAutoRun: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
+		sendRemoteConfigureAutoRunResponse: vi.fn(),
 	};
 
 	const mockLive = {

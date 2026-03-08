@@ -1806,9 +1806,7 @@ function MaestroConsoleInner() {
 				]);
 				if (content !== null) {
 					const filename = filePath.split(/[\\/]/).pop() || filePath;
-					const lastModified = stat?.modifiedAt
-						? new Date(stat.modifiedAt).getTime()
-						: undefined;
+					const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
 					handleOpenFileTab({
 						path: filePath,
 						name: filename,
@@ -1893,12 +1891,14 @@ function MaestroConsoleInner() {
 					}
 
 					const batchConfig = {
-						documents: (config.documents || []).map((doc: { filename: string; resetOnCompletion?: boolean }) => ({
-							id: generateId(),
-							filename: doc.filename.replace(/\.md$/, ''),
-							resetOnCompletion: doc.resetOnCompletion || false,
-							isDuplicate: false,
-						})),
+						documents: (config.documents || []).map(
+							(doc: { filename: string; resetOnCompletion?: boolean }) => ({
+								id: generateId(),
+								filename: doc.filename.replace(/\.md$/, ''),
+								resetOnCompletion: doc.resetOnCompletion || false,
+								isDuplicate: false,
+							})
+						),
 						prompt: config.prompt || '',
 						loopEnabled: config.loopEnabled || false,
 						maxLoops: config.maxLoops,

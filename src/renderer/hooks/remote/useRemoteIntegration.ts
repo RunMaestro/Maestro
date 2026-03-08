@@ -454,15 +454,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Handle remote refresh file tree from web/CLI interface
 	useEffect(() => {
-		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree(
-			(sessionId: string) => {
-				window.dispatchEvent(
-					new CustomEvent('maestro:refreshFileTree', {
-						detail: { sessionId },
-					})
-				);
-			}
-		);
+		const unsubscribe = window.maestro.process.onRemoteRefreshFileTree((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:refreshFileTree', {
+					detail: { sessionId },
+				})
+			);
+		});
 		return () => {
 			unsubscribe();
 		};
@@ -470,15 +468,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Handle remote refresh auto-run docs from web/CLI interface
 	useEffect(() => {
-		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs(
-			(sessionId: string) => {
-				window.dispatchEvent(
-					new CustomEvent('maestro:refreshAutoRunDocs', {
-						detail: { sessionId },
-					})
-				);
-			}
-		);
+		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:refreshAutoRunDocs', {
+					detail: { sessionId },
+				})
+			);
+		});
 		return () => {
 			unsubscribe();
 		};

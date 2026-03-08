@@ -294,11 +294,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.selectSession).toHaveBeenCalledWith(
-					'session-2',
-					undefined,
-					undefined
-				);
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined, undefined);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -314,11 +310,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.selectSession).toHaveBeenCalledWith(
-					'session-2',
-					'tab-5',
-					undefined
-				);
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', 'tab-5', undefined);
 			});
 		});
 
@@ -693,9 +685,7 @@ describe('WebSocketMessageHandler', () => {
 		});
 
 		it('should handle refresh auto run docs callback failure', async () => {
-			(callbacks.refreshAutoRunDocs as any).mockRejectedValue(
-				new Error('Auto-run refresh failed')
-			);
+			(callbacks.refreshAutoRunDocs as any).mockRejectedValue(new Error('Auto-run refresh failed'));
 
 			handler.handleMessage(client, {
 				type: 'refresh_auto_run_docs',
@@ -881,11 +871,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.selectSession).toHaveBeenCalledWith(
-					'session-2',
-					undefined,
-					undefined
-				);
+				expect(callbacks.selectSession).toHaveBeenCalledWith('session-2', undefined, undefined);
 			});
 		});
 	});

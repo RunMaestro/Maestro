@@ -131,7 +131,9 @@ export async function send(
 				);
 			});
 		} catch {
-			console.error('Warning: Could not focus session tab in Maestro desktop (app may not be running)');
+			console.error(
+				'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
+			);
 		}
 	}
 }

@@ -18,10 +18,7 @@ export async function status(): Promise<void> {
 	try {
 		// Ping to verify WebSocket connectivity
 		await withMaestroClient(async (client) => {
-			await client.sendCommand<{ type: string }>(
-				{ type: 'ping' },
-				'pong'
-			);
+			await client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
 			// Get session count
 			const sessionsResult = await client.sendCommand<{ type: string; sessions: unknown[] }>(
@@ -30,7 +27,9 @@ export async function status(): Promise<void> {
 			);
 
 			const sessionCount = sessionsResult.sessions?.length ?? 0;
-			console.log(`Maestro is running on port ${info.port} with ${sessionCount} session${sessionCount !== 1 ? 's' : ''}`);
+			console.log(
+				`Maestro is running on port ${info.port} with ${sessionCount} session${sessionCount !== 1 ? 's' : ''}`
+			);
 		});
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

@@ -145,7 +145,7 @@ program
 	.option('-p, --prompt <text>', 'Custom prompt for the auto-run')
 	.option('--loop', 'Enable looping')
 	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')
-	.option('--save-as <name>', 'Save as a playbook with this name (don\'t launch)')
+	.option('--save-as <name>', "Save as a playbook with this name (don't launch)")
 	.option('--launch', 'Start the auto-run immediately (default: just configure)')
 	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
 	.action(autoRun);

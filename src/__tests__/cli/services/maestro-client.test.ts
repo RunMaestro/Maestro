@@ -14,7 +14,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
 // Track WebSocket instances created
-let mockWsInstance: EventEmitter & { close: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; readyState: number };
+let mockWsInstance: EventEmitter & {
+	close: ReturnType<typeof vi.fn>;
+	send: ReturnType<typeof vi.fn>;
+	readyState: number;
+};
 
 vi.mock('ws', async () => {
 	const { EventEmitter: EE } = await import('events');
@@ -42,7 +46,11 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSessions: vi.fn(),
 }));
 
-import { MaestroClient, withMaestroClient, resolveSessionId } from '../../../cli/services/maestro-client';
+import {
+	MaestroClient,
+	withMaestroClient,
+	resolveSessionId,
+} from '../../../cli/services/maestro-client';
 import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
 import { readSessions } from '../../../cli/services/storage';
 import WebSocket from 'ws';
@@ -96,7 +104,7 @@ describe('MaestroClient', () => {
 			await connectPromise;
 
 			// Verify connection was established (mockWsInstance is set)
-		expect(mockWsInstance).toBeDefined();
+			expect(mockWsInstance).toBeDefined();
 		});
 
 		it('should reject on WebSocket error', async () => {
@@ -114,7 +122,9 @@ describe('MaestroClient', () => {
 			// Simulate WebSocket error
 			mockWsInstance.emit('error', new Error('Connection refused'));
 
-			await expect(connectPromise).rejects.toThrow('Failed to connect to Maestro: Connection refused');
+			await expect(connectPromise).rejects.toThrow(
+				'Failed to connect to Maestro: Connection refused'
+			);
 		});
 
 		it('should timeout after 5 seconds', async () => {
@@ -155,9 +165,9 @@ describe('MaestroClient', () => {
 
 		it('should throw when not connected', async () => {
 			const client = new MaestroClient();
-			await expect(
-				client.sendCommand({ type: 'ping' }, 'pong')
-			).rejects.toThrow('Not connected to Maestro');
+			await expect(client.sendCommand({ type: 'ping' }, 'pong')).rejects.toThrow(
+				'Not connected to Maestro'
+			);
 		});
 
 		it('should resolve on matching response type', async () => {
@@ -174,19 +184,13 @@ describe('MaestroClient', () => {
 			const result = await commandPromise;
 			expect(result.type).toBe('pong');
 			expect(result.data).toBe('ok');
-			expect(mockWsInstance.send).toHaveBeenCalledWith(
-				expect.stringContaining('"type":"ping"')
-			);
+			expect(mockWsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"type":"ping"'));
 		});
 
 		it('should reject on timeout', async () => {
 			const client = await createConnectedClient();
 
-			const commandPromise = client.sendCommand(
-				{ type: 'ping' },
-				'pong',
-				2000
-			);
+			const commandPromise = client.sendCommand({ type: 'ping' }, 'pong', 2000);
 
 			// Advance past timeout
 			vi.advanceTimersByTime(2001);
@@ -197,10 +201,7 @@ describe('MaestroClient', () => {
 		it('should use default 10s timeout', async () => {
 			const client = await createConnectedClient();
 
-			const commandPromise = client.sendCommand(
-				{ type: 'ping' },
-				'pong'
-			);
+			const commandPromise = client.sendCommand({ type: 'ping' }, 'pong');
 
 			// At 9.9s it should still be pending
 			vi.advanceTimersByTime(9900);
@@ -214,10 +215,7 @@ describe('MaestroClient', () => {
 		it('should ignore non-matching response types', async () => {
 			const client = await createConnectedClient();
 
-			const commandPromise = client.sendCommand<{ type: string }>(
-				{ type: 'ping' },
-				'pong'
-			);
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
 			// Send non-matching response first
 			mockWsInstance.emit('message', JSON.stringify({ type: 'other_event', data: 'ignored' }));
@@ -232,10 +230,7 @@ describe('MaestroClient', () => {
 		it('should ignore non-JSON messages', async () => {
 			const client = await createConnectedClient();
 
-			const commandPromise = client.sendCommand<{ type: string }>(
-				{ type: 'ping' },
-				'pong'
-			);
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
 
 			// Send invalid JSON
 			mockWsInstance.emit('message', 'not json');
@@ -352,9 +347,9 @@ describe('withMaestroClient()', () => {
 	it('should propagate connection errors', async () => {
 		vi.mocked(readCliServerInfo).mockReturnValue(null);
 
-		await expect(
-			withMaestroClient(async () => 'should not reach')
-		).rejects.toThrow('Maestro desktop app is not running');
+		await expect(withMaestroClient(async () => 'should not reach')).rejects.toThrow(
+			'Maestro desktop app is not running'
+		);
 	});
 });
 
@@ -371,8 +366,20 @@ describe('resolveSessionId()', () => {
 
 	it('should return first session ID when no option provided', () => {
 		vi.mocked(readSessions).mockReturnValue([
-			{ id: 'first-session', name: 'First', toolType: 'claude-code', cwd: '/path', projectRoot: '/path' },
-			{ id: 'second-session', name: 'Second', toolType: 'claude-code', cwd: '/path', projectRoot: '/path' },
+			{
+				id: 'first-session',
+				name: 'First',
+				toolType: 'claude-code',
+				cwd: '/path',
+				projectRoot: '/path',
+			},
+			{
+				id: 'second-session',
+				name: 'Second',
+				toolType: 'claude-code',
+				cwd: '/path',
+				projectRoot: '/path',
+			},
 		]);
 
 		const result = resolveSessionId({});

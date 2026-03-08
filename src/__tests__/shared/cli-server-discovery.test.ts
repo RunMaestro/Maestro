@@ -85,7 +85,13 @@ describe('cli-server-discovery', () => {
 			readCliServerInfo();
 
 			expect(mockFs.readFileSync).toHaveBeenCalledWith(
-				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro', 'cli-server.json'),
+				path.join(
+					'/Users/testuser',
+					'Library',
+					'Application Support',
+					'maestro',
+					'cli-server.json'
+				),
 				'utf-8'
 			);
 		});
@@ -244,45 +250,53 @@ describe('cli-server-discovery', () => {
 		});
 
 		it('should return null when port is missing', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({
-				token: 'abc',
-				pid: 123,
-				startedAt: 1000,
-			}));
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					token: 'abc',
+					pid: 123,
+					startedAt: 1000,
+				})
+			);
 
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
 		});
 
 		it('should return null when token is not a string', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({
-				port: 3456,
-				token: 123,
-				pid: 123,
-				startedAt: 1000,
-			}));
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 123,
+					pid: 123,
+					startedAt: 1000,
+				})
+			);
 
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
 		});
 
 		it('should return null when pid is missing', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({
-				port: 3456,
-				token: 'abc',
-				startedAt: 1000,
-			}));
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 'abc',
+					startedAt: 1000,
+				})
+			);
 
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
 		});
 
 		it('should return null when startedAt is missing', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({
-				port: 3456,
-				token: 'abc',
-				pid: 123,
-			}));
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({
+					port: 3456,
+					token: 'abc',
+					pid: 123,
+				})
+			);
 
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
@@ -294,7 +308,11 @@ describe('cli-server-discovery', () => {
 			deleteCliServerInfo();
 
 			const expectedFile = path.join(
-				'/Users/testuser', 'Library', 'Application Support', 'maestro', 'cli-server.json'
+				'/Users/testuser',
+				'Library',
+				'Application Support',
+				'maestro',
+				'cli-server.json'
 			);
 			expect(mockFs.unlinkSync).toHaveBeenCalledWith(expectedFile);
 		});

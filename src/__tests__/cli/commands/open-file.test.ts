@@ -87,9 +87,7 @@ describe('open-file command', () => {
 	it('should error gracefully when Maestro app is not running', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		vi.mocked(resolveSessionId).mockReturnValue('session-123');
-		vi.mocked(withMaestroClient).mockRejectedValue(
-			new Error('Maestro desktop app is not running')
-		);
+		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
 
 		await openFile('/path/to/file.ts', { session: 'session-123' });
 

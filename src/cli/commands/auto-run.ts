@@ -45,7 +45,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resetOnCompletion: options.resetOnCompletion || false,
 	}));
 
-	const loopEnabled = options.loop || (options.maxLoops !== undefined);
+	const loopEnabled = options.loop || options.maxLoops !== undefined;
 	const maxLoops = options.maxLoops !== undefined ? parseInt(options.maxLoops, 10) : undefined;
 
 	if (maxLoops !== undefined && (isNaN(maxLoops) || maxLoops < 1)) {
@@ -77,11 +77,17 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 
 		if (result.success) {
 			if (options.saveAs) {
-				console.log(`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`);
+				console.log(
+					`Playbook '${options.saveAs}' saved${result.playbookId ? ` (ID: ${result.playbookId})` : ''}`
+				);
 			} else if (options.launch) {
-				console.log(`Auto-run launched with ${documents.length} document${documents.length !== 1 ? 's' : ''}`);
+				console.log(
+					`Auto-run launched with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+				);
 			} else {
-				console.log(`Auto-run configured with ${documents.length} document${documents.length !== 1 ? 's' : ''}`);
+				console.log(
+					`Auto-run configured with ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+				);
 			}
 		} else {
 			console.error(`Error: ${result.error || 'Failed to configure auto-run'}`);
