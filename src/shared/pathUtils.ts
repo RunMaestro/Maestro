@@ -395,17 +395,18 @@ export function buildExpandedPath(customPaths?: string[]): string {
 		}
 	}
 
-	// Add Node version manager paths (nvm, fnm, volta, mise, asdf, n)
-	// These are critical for agents spawned as child processes to find node/npm
-	const versionManagerPaths = detectNodeVersionManagerBinPaths();
-	for (const p of versionManagerPaths) {
+	// Add standard additional paths
+	for (const p of additionalPaths) {
 		if (!pathParts.includes(p)) {
 			pathParts.unshift(p);
 		}
 	}
 
-	// Add standard additional paths
-	for (const p of additionalPaths) {
+	// Add Node version manager paths (nvm, fnm, volta, mise, asdf, n) LAST
+	// so they land at the front of PATH via unshift, ensuring version manager
+	// binaries take priority over system-installed Node in /usr/local/bin etc.
+	const versionManagerPaths = detectNodeVersionManagerBinPaths();
+	for (const p of versionManagerPaths) {
 		if (!pathParts.includes(p)) {
 			pathParts.unshift(p);
 		}
