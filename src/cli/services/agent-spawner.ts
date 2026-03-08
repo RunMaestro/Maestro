@@ -3,6 +3,8 @@
 
 import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
 import { GeminiOutputParser } from '../../main/parsers/gemini-output-parser';
@@ -599,6 +601,26 @@ const VALID_MODEL_PATTERN = /^[\w.\-\/]+$/;
 const VALID_SESSION_ID_PATTERN = /^[\w\-:.]+$/;
 
 /**
+ * Check if a Gemini session file exists for the given session ID.
+ * Looks in ~/.gemini/history/{project_basename}/ for matching files.
+ */
+async function geminiSessionFileExists(sessionId: string, cwd: string): Promise<boolean> {
+	const projectBasename = path.basename(cwd);
+	const historyDir = path.join(os.homedir(), '.gemini', 'history', projectBasename);
+
+	try {
+		const files = await fs.promises.readdir(historyDir);
+		// Match session-{timestamp}-{sessionId}.json
+		return files.some((file) => {
+			const match = file.match(/^session-[^-]+-(.+)\.json$/);
+			return match !== null && match[1] === sessionId;
+		});
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Spawn Gemini CLI with a prompt and return the result
  */
 export async function spawnGeminiCli(options: SpawnGeminiOptions): Promise<AgentResult> {
@@ -612,6 +634,18 @@ export async function spawnGeminiCli(options: SpawnGeminiOptions): Promise<Agent
 		throw new Error(`Invalid session ID for resume: contains disallowed characters`);
 	}
 
+	// Validate session file exists before attempting resume
+	let validatedResume = resume;
+	if (resume) {
+		const sessionExists = await geminiSessionFileExists(resume, cwd);
+		if (!sessionExists) {
+			console.warn(
+				`[Gemini CLI] Session file not found for resume ID "${resume}" — starting fresh session`
+			);
+			validatedResume = undefined;
+		}
+	}
+
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv(customEnv);
 		const args = [...GEMINI_ARGS];
@@ -620,8 +654,8 @@ export async function spawnGeminiCli(options: SpawnGeminiOptions): Promise<Agent
 			args.push('-m', model);
 		}
 
-		if (resume) {
-			args.push('--resume', resume);
+		if (validatedResume) {
+			args.push('--resume', validatedResume);
 		}
 
 		args.push('-p', prompt);

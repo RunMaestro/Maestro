@@ -871,7 +871,12 @@ export class GeminiSessionStorage implements AgentSessionStorage {
 					await fs.rename(tmpPath, sessionFilePath);
 
 					// Clean up backup on success
-					fs.unlink(backupPath).catch(() => {});
+					fs.unlink(backupPath).catch((err) => {
+						logger.warn('Failed to clean up session backup file', LOG_CONTEXT, {
+							backupPath,
+							error: err instanceof Error ? err.message : String(err),
+						});
+					});
 
 					logger.info('Deleted message pair from Gemini session', LOG_CONTEXT, {
 						sessionId,

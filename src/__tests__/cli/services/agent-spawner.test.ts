@@ -56,6 +56,7 @@ vi.mock('fs', async (importOriginal) => {
 		promises: {
 			stat: vi.fn(),
 			access: vi.fn(),
+			readdir: vi.fn(),
 		},
 		constants: {
 			X_OK: 1,
@@ -1420,15 +1421,97 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('accepts valid resume IDs with dots, colons, and hyphens', async () => {
-			mockSpawn.mockReturnValue(mockChild);
-			const promise = spawnGeminiCli({
+			// Emit close after spawn is called (async readdir resolves first)
+			mockSpawn.mockImplementation(() => {
+				process.nextTick(() => (mockChild as EventEmitter).emit('close', 0));
+				return mockChild;
+			});
+			(fs.promises.readdir as Mock).mockResolvedValue([
+				'session-1709900000-session-2025:03.08_abc.json',
+			]);
+			const result = await spawnGeminiCli({
 				prompt: 'test',
 				cwd: '/tmp',
 				resume: 'session-2025:03.08_abc',
 			});
-			(mockChild as EventEmitter).emit('close', 0);
-			const result = await promise;
 			expect(result).toBeDefined();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// spawnGeminiCli session resume validation (TASK-M08)
+	// -----------------------------------------------------------------------
+	describe('spawnGeminiCli — session resume validation', () => {
+		it('omits --resume when session file does not exist', async () => {
+			// Emit close after spawn is called
+			mockSpawn.mockImplementation(() => {
+				process.nextTick(() => (mockChild as EventEmitter).emit('close', 0));
+				return mockChild;
+			});
+			// No matching session file in history dir
+			(fs.promises.readdir as Mock).mockResolvedValue(['session-1709900000-other-session-id.json']);
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await spawnGeminiCli({
+				prompt: 'test',
+				cwd: '/tmp/myproject',
+				resume: 'nonexistent-session-id',
+			});
+
+			// --resume should NOT be in the spawn args
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnArgs).not.toContain('--resume');
+			expect(spawnArgs).not.toContain('nonexistent-session-id');
+
+			// Warning should be logged
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Session file not found for resume ID "nonexistent-session-id"')
+			);
+			warnSpy.mockRestore();
+		});
+
+		it('includes --resume when session file exists', async () => {
+			mockSpawn.mockImplementation(() => {
+				process.nextTick(() => (mockChild as EventEmitter).emit('close', 0));
+				return mockChild;
+			});
+			(fs.promises.readdir as Mock).mockResolvedValue(['session-1709900000-valid-session-id.json']);
+
+			await spawnGeminiCli({
+				prompt: 'test',
+				cwd: '/tmp/myproject',
+				resume: 'valid-session-id',
+			});
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnArgs).toContain('--resume');
+			expect(spawnArgs).toContain('valid-session-id');
+		});
+
+		it('omits --resume when history directory does not exist', async () => {
+			mockSpawn.mockImplementation(() => {
+				process.nextTick(() => (mockChild as EventEmitter).emit('close', 0));
+				return mockChild;
+			});
+			// readdir throws ENOENT when directory doesn't exist
+			(fs.promises.readdir as Mock).mockRejectedValue(
+				Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+			);
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await spawnGeminiCli({
+				prompt: 'test',
+				cwd: '/tmp/myproject',
+				resume: 'some-session-id',
+			});
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnArgs).not.toContain('--resume');
+
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Session file not found for resume ID "some-session-id"')
+			);
+			warnSpy.mockRestore();
 		});
 	});
 });

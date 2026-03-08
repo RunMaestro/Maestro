@@ -633,7 +633,11 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
  * For document generation, the agent can write files directly to the Auto Run folder.
  * The prompt strictly enforces the write restriction to prevent writing elsewhere.
  */
-function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
+function buildArgsForAgent(agent: {
+	id: string;
+	args?: string[];
+	batchModeArgs?: string[];
+}): string[] {
 	const agentId = agent.id;
 
 	switch (agentId) {
@@ -676,9 +680,8 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 			}
 
 			// Add auto-approve for batch mode
-			const agentWithBatch = agent as any;
-			if (agentWithBatch.batchModeArgs) {
-				args.push(...agentWithBatch.batchModeArgs);
+			if (agent.batchModeArgs) {
+				args.push(...agent.batchModeArgs);
 			}
 
 			return args;
