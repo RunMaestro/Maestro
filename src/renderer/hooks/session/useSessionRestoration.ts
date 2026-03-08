@@ -378,6 +378,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 		const loadSessionsAndGroups = async () => {
 			try {
+				window.__updateSplash?.(50, 'Seating the musicians...');
 				const savedSessions = await window.maestro.sessions.getAll();
 				const savedGroups = await window.maestro.groups.getAll();
 

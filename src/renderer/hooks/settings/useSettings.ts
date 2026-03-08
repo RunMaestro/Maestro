@@ -316,6 +316,7 @@ export function useSettings(): UseSettingsReturn {
 
 	// Load settings on mount
 	useEffect(() => {
+		window.__updateSplash?.(45, 'Reading the score...');
 		loadAllSettings();
 	}, []);
 
