@@ -35,6 +35,8 @@ export interface CueSubscription {
 	filter?: Record<string, string | number | boolean>;
 	repo?: string;
 	poll_minutes?: number;
+	/** Session ID of the agent that owns this subscription. When set, only that agent activates it. */
+	agent_id?: string;
 }
 
 /** Global Cue settings */

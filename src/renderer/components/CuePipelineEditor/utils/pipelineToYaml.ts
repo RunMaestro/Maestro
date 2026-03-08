@@ -238,14 +238,19 @@ export function pipelinesToYaml(
 
 		const subs = pipelineToYamlSubscriptions(pipeline);
 
-		// Build a map from subscription name to the agent node that owns it
+		// Build maps from subscription name to the agent node that owns it
 		const subAgentMap = buildSubAgentMap(pipeline);
+		const subAgentIdMap = buildSubAgentIdMap(pipeline);
 
 		for (const sub of subs) {
 			const record: Record<string, unknown> = {
 				name: sub.name,
 				event: sub.event,
 			};
+
+			// Bind subscription to its owning agent by session ID
+			const agentId = subAgentIdMap.get(sub.name);
+			if (agentId) record.agent_id = agentId;
 
 			if (sub.interval_minutes != null) record.interval_minutes = sub.interval_minutes;
 			if (sub.watch != null) record.watch = sub.watch;
@@ -355,6 +360,74 @@ function buildSubAgentMap(pipeline: CuePipeline): Map<string, string> {
 	}
 
 	return result;
+}
+
+/**
+ * Builds a map from subscription name to the agent session ID that owns it.
+ * Used for setting the agent_id field in YAML so subscriptions are bound to specific agents.
+ */
+function buildSubAgentIdMap(pipeline: CuePipeline): Map<string, string> {
+	const result = new Map<string, string>();
+	const { outgoing } = buildAdjacency(pipeline);
+	const triggers = findTriggerNodes(pipeline);
+	const nodeMap = new Map(pipeline.nodes.map((n) => [n.id, n]));
+
+	const visited = new Set<string>();
+	let chainIndex = 0;
+
+	for (const trigger of triggers) {
+		const triggerOutgoing = outgoing.get(trigger.id) ?? [];
+		if (triggerOutgoing.length === 0) continue;
+
+		const directTargets = triggerOutgoing
+			.map((e) => nodeMap.get(e.target))
+			.filter(Boolean) as PipelineNode[];
+		const agentTargets = directTargets.filter((n) => n.type === 'agent');
+		if (agentTargets.length === 0) continue;
+
+		const subName = chainIndex === 0 ? pipeline.name : `${pipeline.name}-chain-${chainIndex}`;
+		chainIndex++;
+
+		if (agentTargets.length === 1) {
+			result.set(subName, (agentTargets[0].data as AgentNodeData).sessionId);
+			visited.add(agentTargets[0].id);
+			buildSubAgentIdMapChain(agentTargets[0], pipeline.name, result, outgoing, nodeMap, visited);
+			chainIndex = result.size;
+		} else {
+			// Fan-out: use first agent's ID for the subscription
+			result.set(subName, (agentTargets[0].data as AgentNodeData).sessionId);
+			for (const agent of agentTargets) visited.add(agent.id);
+			for (const agent of agentTargets) {
+				buildSubAgentIdMapChain(agent, pipeline.name, result, outgoing, nodeMap, visited);
+			}
+			chainIndex = result.size;
+		}
+	}
+
+	return result;
+}
+
+function buildSubAgentIdMapChain(
+	fromNode: PipelineNode,
+	pipelineName: string,
+	result: Map<string, string>,
+	outgoing: Map<string, PipelineEdge[]>,
+	nodeMap: Map<string, PipelineNode>,
+	visited: Set<string>
+): void {
+	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
+	const targets = fromOutgoing
+		.map((e) => nodeMap.get(e.target))
+		.filter((n): n is PipelineNode => n != null && n.type === 'agent');
+
+	for (const target of targets) {
+		if (visited.has(target.id)) continue;
+		visited.add(target.id);
+
+		const subName = `${pipelineName}-chain-${result.size}`;
+		result.set(subName, (target.data as AgentNodeData).sessionId);
+		buildSubAgentIdMapChain(target, pipelineName, result, outgoing, nodeMap, visited);
+	}
 }
 
 function buildSubAgentMapChain(

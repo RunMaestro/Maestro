@@ -236,7 +236,9 @@ export class CueEngine {
 				toolType: session.toolType,
 				projectRoot: session.projectRoot,
 				enabled: true,
-				subscriptionCount: state.config.subscriptions.filter((s) => s.enabled !== false).length,
+				subscriptionCount: state.config.subscriptions.filter(
+					(s) => s.enabled !== false && (!s.agent_id || s.agent_id === sessionId)
+				).length,
 				activeRuns: activeRunCount,
 				lastTriggered: state.lastTriggered,
 				nextTrigger,
@@ -256,7 +258,9 @@ export class CueEngine {
 					toolType: session.toolType,
 					projectRoot: session.projectRoot,
 					enabled: false,
-					subscriptionCount: config.subscriptions.filter((s) => s.enabled !== false).length,
+					subscriptionCount: config.subscriptions.filter(
+						(s) => s.enabled !== false && (!s.agent_id || s.agent_id === session.id)
+					).length,
 					activeRuns: 0,
 				});
 			}
@@ -342,7 +346,9 @@ export class CueEngine {
 				sessionId,
 				sessionName: session.name,
 				toolType: session.toolType,
-				subscriptions: state.config.subscriptions,
+				subscriptions: state.config.subscriptions.filter(
+					(s) => !s.agent_id || s.agent_id === sessionId
+				),
 			});
 		}
 
@@ -357,7 +363,9 @@ export class CueEngine {
 					sessionId: session.id,
 					sessionName: session.name,
 					toolType: session.toolType,
-					subscriptions: config.subscriptions,
+					subscriptions: config.subscriptions.filter(
+						(s) => !s.agent_id || s.agent_id === session.id
+					),
 				});
 			}
 		}
@@ -381,9 +389,10 @@ export class CueEngine {
 		const completingSession = allSessions.find((s) => s.id === sessionId);
 		const completingName = completingSession?.name ?? sessionId;
 
-		for (const [, state] of this.sessions) {
+		for (const [ownerSessionId, state] of this.sessions) {
 			for (const sub of state.config.subscriptions) {
 				if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
+				if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
 
 				const sources = Array.isArray(sub.source_session)
 					? sub.source_session
@@ -412,6 +421,7 @@ export class CueEngine {
 		for (const [ownerSessionId, state] of this.sessions) {
 			for (const sub of state.config.subscriptions) {
 				if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
+				if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
 
 				const sources = Array.isArray(sub.source_session)
 					? sub.source_session
@@ -691,6 +701,8 @@ export class CueEngine {
 		// Set up subscriptions
 		for (const sub of config.subscriptions) {
 			if (sub.enabled === false) continue;
+			// Skip subscriptions bound to a different agent
+			if (sub.agent_id && sub.agent_id !== session.id) continue;
 
 			if (sub.event === 'time.interval' && sub.interval_minutes) {
 				this.setupTimerSubscription(session, state, sub);
