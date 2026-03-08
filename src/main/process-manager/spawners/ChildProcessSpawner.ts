@@ -18,6 +18,17 @@ import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 
+/** Default batch-mode timeout: 10 minutes */
+const DEFAULT_BATCH_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Default interactive inactivity timeout: 30 minutes */
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** Interval for checking interactive inactivity: 5 minutes */
+const INACTIVITY_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+
+const LOG_CONTEXT = 'ProcessManager';
+
 /**
  * Handles spawning of child processes (non-PTY).
  * Used for AI agents in batch mode and interactive mode.
@@ -429,6 +440,10 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
 					const output = data.toString();
+					// Update last activity timestamp for inactivity watchdog
+					if (managedProcess.lastActivityMs !== undefined) {
+						managedProcess.lastActivityMs = Date.now();
+					}
 					this.stdoutHandler.handleData(sessionId, output);
 				});
 			} else {
@@ -461,6 +476,15 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
+				// Clear watchdog/inactivity timers on process close
+				if (managedProcess.watchdogTimer) {
+					clearTimeout(managedProcess.watchdogTimer);
+					managedProcess.watchdogTimer = undefined;
+				}
+				if (managedProcess.inactivityTimer) {
+					clearInterval(managedProcess.inactivityTimer);
+					managedProcess.inactivityTimer = undefined;
+				}
 				this.exitHandler.handleExit(sessionId, code || 0);
 			});
 
@@ -468,6 +492,58 @@ export class ChildProcessSpawner {
 			childProcess.on('error', (error) => {
 				this.exitHandler.handleError(sessionId, error);
 			});
+
+			// ── Process watchdog timers ─────────────────────────────────────
+			if (isBatchMode) {
+				// Batch mode: hard timeout — kill the process if it doesn't finish
+				const batchTimeout = config.timeout ?? DEFAULT_BATCH_TIMEOUT_MS;
+				managedProcess.watchdogTimer = setTimeout(() => {
+					const proc = this.processes.get(sessionId);
+					if (proc?.childProcess && !proc.childProcess.killed) {
+						logger.warn(
+							'[ProcessManager] Batch watchdog timeout — killing hung process',
+							LOG_CONTEXT,
+							{
+								sessionId,
+								timeoutMs: batchTimeout,
+								pid: proc.pid,
+							}
+						);
+						proc.childProcess.kill('SIGTERM');
+					}
+				}, batchTimeout);
+			} else {
+				// Interactive mode: inactivity timeout — kill if no stdout for a long time
+				const inactivityTimeout = config.inactivityTimeout ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
+				managedProcess.lastActivityMs = Date.now();
+				managedProcess.inactivityTimeout = inactivityTimeout;
+				managedProcess.inactivityTimer = setInterval(() => {
+					const proc = this.processes.get(sessionId);
+					if (!proc || !proc.lastActivityMs) {
+						return;
+					}
+					const elapsed = Date.now() - proc.lastActivityMs;
+					if (elapsed >= inactivityTimeout) {
+						logger.warn(
+							'[ProcessManager] Inactivity watchdog timeout — killing idle process',
+							LOG_CONTEXT,
+							{
+								sessionId,
+								inactivityMs: elapsed,
+								timeoutMs: inactivityTimeout,
+								pid: proc.pid,
+							}
+						);
+						if (proc.childProcess && !proc.childProcess.killed) {
+							proc.childProcess.kill('SIGTERM');
+						}
+						if (proc.inactivityTimer) {
+							clearInterval(proc.inactivityTimer);
+							proc.inactivityTimer = undefined;
+						}
+					}
+				}, INACTIVITY_CHECK_INTERVAL_MS);
+			}
 
 			if (config.sshStdinScript) {
 				// SSH stdin script mode: send the entire script to /bin/bash on remote

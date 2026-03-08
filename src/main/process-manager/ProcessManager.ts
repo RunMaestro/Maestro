@@ -173,6 +173,12 @@ export class ProcessManager extends EventEmitter {
 			if (process.dataBufferTimeout) {
 				clearTimeout(process.dataBufferTimeout);
 			}
+			if (process.watchdogTimer) {
+				clearTimeout(process.watchdogTimer);
+			}
+			if (process.inactivityTimer) {
+				clearInterval(process.inactivityTimer);
+			}
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (process.isTerminal && process.ptyProcess) {

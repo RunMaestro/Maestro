@@ -40,6 +40,10 @@ export interface ProcessConfig {
 	cols?: number;
 	/** PTY terminal height in rows (default 24) */
 	rows?: number;
+	/** Batch-mode timeout in ms — process is killed after this duration (default: 10 min) */
+	timeout?: number;
+	/** Interactive inactivity timeout in ms — process is killed after this period of no stdout (default: 30 min) */
+	inactivityTimeout?: number;
 }
 
 /**
@@ -78,6 +82,14 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Watchdog timer for batch-mode timeout */
+	watchdogTimer?: NodeJS.Timeout;
+	/** Interval timer for interactive inactivity checks */
+	inactivityTimer?: NodeJS.Timeout;
+	/** Timestamp of last stdout activity (epoch ms) */
+	lastActivityMs?: number;
+	/** Configured inactivity timeout in ms */
+	inactivityTimeout?: number;
 }
 
 export interface UsageTotals {

@@ -777,6 +777,8 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Timeout in ms for batch-mode execution (default: 600000 = 10 min) */
+	timeout?: number;
 }
 
 /**
@@ -792,7 +794,7 @@ export async function spawnAgent(
 	const readOnly = options?.readOnlyMode;
 
 	if (toolType === 'gemini-cli') {
-		return spawnGeminiCli({ prompt, cwd, resume: agentSessionId });
+		return spawnGeminiCli({ prompt, cwd, resume: agentSessionId, timeout: options?.timeout });
 	}
 
 	if (toolType === 'codex') {

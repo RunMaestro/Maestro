@@ -23,6 +23,7 @@ function createMockChildProcess() {
 		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
+		kill: vi.fn(),
 		killed: false,
 		exitCode: null,
 	};
@@ -54,11 +55,14 @@ vi.mock('../../../../main/parsers', () => ({
 	getOutputParser: vi.fn(() => ({
 		agentId: 'claude-code',
 		parseJsonLine: vi.fn(),
+		parseJsonObject: vi.fn(),
 		extractUsage: vi.fn(),
 		extractSessionId: vi.fn(),
 		extractSlashCommands: vi.fn(),
 		isResultMessage: vi.fn(),
 		detectErrorFromLine: vi.fn(),
+		detectErrorFromParsed: vi.fn(),
+		detectErrorFromExit: vi.fn(() => null),
 	})),
 }));
 
@@ -724,6 +728,145 @@ describe('ChildProcessSpawner', () => {
 			// Should have -f flag (uses default file-based args)
 			expect(spawnArgs).toContain('-f');
 			expect(spawnArgs).toContain('/tmp/maestro-image-0.png');
+		});
+	});
+
+	describe('process watchdog timers', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('should set a batch watchdog timer when prompt is provided (batch mode)', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test prompt' }));
+
+			const proc = processes.get('test-session');
+			expect(proc?.watchdogTimer).toBeDefined();
+			// Interactive timers should not be set
+			expect(proc?.inactivityTimer).toBeUndefined();
+			expect(proc?.lastActivityMs).toBeUndefined();
+		});
+
+		it('should kill process after batch timeout expires', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test prompt', timeout: 5000 }));
+
+			expect(mockChildProcess.killed).toBe(false);
+
+			// Advance time past the timeout
+			vi.advanceTimersByTime(5001);
+
+			// Process should have been killed
+			expect(mockChildProcess.kill).toHaveBeenCalledWith('SIGTERM');
+		});
+
+		it('should use default 10-minute timeout when no timeout specified in batch mode', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test prompt' }));
+
+			// Should NOT kill before 10 minutes
+			vi.advanceTimersByTime(9 * 60 * 1000);
+			expect(mockChildProcess.kill).not.toHaveBeenCalledWith('SIGTERM');
+
+			// Should kill after 10 minutes
+			vi.advanceTimersByTime(2 * 60 * 1000);
+			expect(mockChildProcess.kill).toHaveBeenCalledWith('SIGTERM');
+		});
+
+		it('should clear batch watchdog timer on process close', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test prompt', timeout: 5000 }));
+
+			const proc = processes.get('test-session');
+			expect(proc?.watchdogTimer).toBeDefined();
+
+			// Simulate process close
+			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
+			const closeHandler = onCalls.find(([event]) => event === 'close')?.[1];
+			closeHandler?.(0);
+
+			expect(proc?.watchdogTimer).toBeUndefined();
+		});
+
+		it('should NOT kill process if already killed when batch watchdog fires', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test prompt', timeout: 5000 }));
+
+			// Mark process as already killed
+			mockChildProcess.killed = true;
+
+			vi.advanceTimersByTime(5001);
+
+			// kill() should NOT have been called since process is already killed
+			expect(mockChildProcess.kill).not.toHaveBeenCalled();
+		});
+
+		it('should set inactivity timer for interactive sessions (no prompt)', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: undefined }));
+
+			const proc = processes.get('test-session');
+			expect(proc?.inactivityTimer).toBeDefined();
+			expect(proc?.lastActivityMs).toBeDefined();
+			// Batch watchdog should not be set
+			expect(proc?.watchdogTimer).toBeUndefined();
+		});
+
+		it('should update lastActivityMs on stdout data', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: undefined }));
+
+			const proc = processes.get('test-session');
+			const initialActivity = proc?.lastActivityMs;
+
+			// Advance time a bit
+			vi.advanceTimersByTime(1000);
+
+			// Simulate stdout data
+			mockChildProcess.stdout.emit('data', 'some output');
+
+			expect(proc?.lastActivityMs).toBeGreaterThan(initialActivity!);
+		});
+
+		it('should clear inactivity timer on process close', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: undefined }));
+
+			const proc = processes.get('test-session');
+			expect(proc?.inactivityTimer).toBeDefined();
+
+			// Simulate process close
+			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
+			const closeHandler = onCalls.find(([event]) => event === 'close')?.[1];
+			closeHandler?.(0);
+
+			expect(proc?.inactivityTimer).toBeUndefined();
+		});
+
+		it('should use custom inactivity timeout when specified', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					prompt: undefined,
+					inactivityTimeout: 60000, // 1 minute
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.inactivityTimeout).toBe(60000);
 		});
 	});
 });
