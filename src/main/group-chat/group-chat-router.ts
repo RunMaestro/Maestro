@@ -826,13 +826,10 @@ export async function routeModeratorResponse(
 		const sessions = getSessionsCallback?.() || [];
 
 		// Get chat history for context
+		// Note: The last entry is the raw moderator message; we'll rebuild historyContext
+		// per-participant with the sanitized message to prevent security bypass
 		const chatHistory = await readLog(updatedChat.logPath);
-		const historyContext = chatHistory
-			.slice(-15)
-			.map(
-				(m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`
-			)
-			.join('\n');
+		const historyExceptLast = chatHistory.slice(-15, -1);
 
 		for (const participantName of mentions) {
 			console.log(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
@@ -922,6 +919,15 @@ export async function routeModeratorResponse(
 
 			// Use sanitized message if available
 			const sanitizedMessage = interAgentResult.sanitizedMessage;
+
+			// Build historyContext per-participant with the sanitized message
+			// to prevent security bypass via raw message in history
+			const historyContext = [
+				...historyExceptLast.map(
+					(m) => `[${m.from}]: ${m.content.substring(0, 500)}${m.content.length > 500 ? '...' : ''}`
+				),
+				`[moderator]: ${sanitizedMessage.substring(0, 500)}${sanitizedMessage.length > 500 ? '...' : ''}`,
+			].join('\n');
 
 			// Build the prompt with context for this participant
 			// Uses template from src/prompts/group-chat-participant-request.md
@@ -1086,6 +1092,30 @@ export async function routeModeratorResponse(
 			}
 		}
 		console.log(`[GroupChat:Debug] =================================================`);
+
+		// Check if all mentioned participants were blocked/unavailable
+		// If so, we need to reset state since no agents will respond
+		if (participantsToRespond.size === 0) {
+			console.log(
+				`[GroupChat:Debug] All ${mentions.length} mentioned participant(s) were blocked or unavailable`
+			);
+			// Set all mentioned participants back to idle
+			for (const participantName of mentions) {
+				groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
+			}
+			// Set state back to idle since no agents are being spawned
+			groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+			console.log(`[GroupChat:Debug] Emitted state change: idle (all participants blocked)`);
+			// Remove power block reason since round is complete
+			powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+			// Emit a system message explaining the situation
+			const warningMessage: GroupChatMessage = {
+				timestamp: new Date().toISOString(),
+				from: 'system',
+				content: `⚠️ Security: All mentioned participants were blocked by security policies. The round has been cancelled.`,
+			};
+			groupChatEmitters.emitMessage?.(groupChatId, warningMessage);
+		}
 	} else if (mentions.length === 0) {
 		console.log(`[GroupChat:Debug] No participant @mentions found - moderator response is final`);
 		// Set state back to idle since no agents are being spawned

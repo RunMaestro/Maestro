@@ -382,20 +382,20 @@ export class StdoutHandler {
 			managedProcess.resultEmitted = true;
 			const resultText = event.text || managedProcess.streamedText || '';
 
-			// Log synopsis result processing (for debugging empty synopsis issue)
-			if (sessionId.includes('-synopsis-')) {
-				logger.info('[ProcessManager] Synopsis result processing', 'ProcessManager', {
-					sessionId,
-					eventText: event.text?.substring(0, 200) || '(empty)',
-					eventTextLength: event.text?.length || 0,
-					streamedText: managedProcess.streamedText?.substring(0, 200) || '(empty)',
-					streamedTextLength: managedProcess.streamedText?.length || 0,
-					resultTextLength: resultText.length,
-				});
-			}
-
 			if (resultText) {
 				const guardedText = this.applyOutputGuard(sessionId, managedProcess, resultText);
+
+				// Log synopsis result processing (for debugging empty synopsis issue)
+				// Use guardedText to avoid logging raw sensitive content
+				if (sessionId.includes('-synopsis-')) {
+					logger.info('[ProcessManager] Synopsis result processing', 'ProcessManager', {
+						sessionId,
+						resultTextLength: resultText.length,
+						guardedTextLength: guardedText.length,
+						guardedTextPreview: guardedText.substring(0, 200) || '(empty)',
+					});
+				}
+
 				logger.debug('[ProcessManager] Emitting result data via parser', 'ProcessManager', {
 					sessionId,
 					resultLength: guardedText.length,
