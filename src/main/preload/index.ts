@@ -35,6 +35,7 @@ import { createLoggerApi } from './logger';
 import { createClaudeApi, createAgentSessionsApi } from './sessions';
 import { createTempfileApi, createHistoryApi, createCliApi } from './files';
 import { createSpeckitApi, createOpenspecApi } from './commands';
+import { createPromptsApi } from './prompts';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
@@ -144,6 +145,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// OpenSpec API
 	openspec: createOpenspecApi(),
 
+	// Core Prompts API (Maestro system prompts)
+	prompts: createPromptsApi(),
+
 	// Notification API
 	notification: createNotificationApi(),
 
@@ -231,6 +235,8 @@ export {
 	// Commands
 	createSpeckitApi,
 	createOpenspecApi,
+	// Prompts
+	createPromptsApi,
 	// Auto Run
 	createAutorunApi,
 	createPlaybooksApi,
@@ -335,6 +341,11 @@ export type {
 	CommandMetadata,
 	CommandDefinition,
 } from './commands';
+export type {
+	// From prompts
+	PromptsApi,
+	CorePromptEntry,
+} from './prompts';
 export type {
 	// From autorun
 	AutorunApi,
