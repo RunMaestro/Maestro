@@ -14,7 +14,32 @@ import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
-import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
+
+// Module-level prompt cache (loaded once via IPC)
+let cachedWizardInlineIteratePrompt = '';
+let cachedWizardInlineNewPrompt = '';
+let inlineWizardConversationPromptsLoaded = false;
+
+/**
+ * Load inline wizard conversation prompts from disk via IPC.
+ * Called once at startup before components mount.
+ */
+export async function loadInlineWizardConversationPrompts(): Promise<void> {
+	if (inlineWizardConversationPromptsLoaded) return;
+
+	const [iterateResult, newResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-inline-iterate'),
+		window.maestro.prompts.get('wizard-inline-new'),
+	]);
+
+	if (iterateResult.success && iterateResult.content) {
+		cachedWizardInlineIteratePrompt = iterateResult.content;
+	}
+	if (newResult.success && newResult.content) {
+		cachedWizardInlineNewPrompt = newResult.content;
+	}
+	inlineWizardConversationPromptsLoaded = true;
+}
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
@@ -201,10 +226,10 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 	// Select the base prompt based on mode
 	let basePrompt: string;
 	if (mode === 'iterate') {
-		basePrompt = wizardInlineIteratePrompt;
+		basePrompt = cachedWizardInlineIteratePrompt;
 	} else {
 		// 'new' mode uses the new plan prompt
-		basePrompt = wizardInlineNewPrompt;
+		basePrompt = cachedWizardInlineNewPrompt;
 	}
 
 	// Handle wizard-specific variables that have different semantics from the central template system

@@ -83,6 +83,10 @@ const CORE_PROMPTS: PromptDefinition[] = [
 	{ id: 'context-grooming', filename: 'context-grooming.md', description: 'Context grooming prompt', category: 'context' },
 	{ id: 'context-transfer', filename: 'context-transfer.md', description: 'Context transfer prompt', category: 'context' },
 	{ id: 'context-summarize', filename: 'context-summarize.md', description: 'Context summarization prompt', category: 'context' },
+	// Tab Naming
+	{ id: 'tab-naming', filename: 'tab-naming.md', description: 'Tab naming prompt', category: 'commands' },
+	// Director's Notes
+	{ id: 'director-notes', filename: 'director-notes.md', description: 'Director notes synopsis prompt', category: 'system' },
 ];
 
 // ============================================================================

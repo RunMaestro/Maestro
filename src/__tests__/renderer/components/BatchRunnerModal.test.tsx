@@ -1,12 +1,33 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import React from 'react';
+import { loadBatchPrompts } from '../../../renderer/hooks/batch/batchUtils';
 import {
 	BatchRunnerModal,
 	DEFAULT_BATCH_PROMPT,
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
 import type { Theme, Playbook } from '../../../renderer/types';
+
+// Realistic mock prompt with markdown task references that validateAgentPromptHasTaskReference expects
+const MOCK_AUTORUN_DEFAULT_PROMPT = `Process the markdown task document at {{DOCUMENT_PATH}}.
+Agent: {{AGENT_NAME}} at {{AGENT_PATH}}.
+Work through each unchecked task - [ ] sequentially and check off task when completed.`;
+
+// Set up window.maestro.prompts and load batch prompts before tests
+beforeAll(async () => {
+	if (!(window as any).maestro) {
+		(window as any).maestro = {};
+	}
+	(window as any).maestro.prompts = {
+		get: vi.fn((id: string) => {
+			if (id === 'autorun-default') return { success: true, content: MOCK_AUTORUN_DEFAULT_PROMPT };
+			if (id === 'autorun-synopsis') return { success: true, content: 'Generate a synopsis.' };
+			return { success: false, error: `Unknown prompt: ${id}` };
+		}),
+	};
+	await loadBatchPrompts();
+});
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
@@ -1142,12 +1163,11 @@ describe('Helper Functions', () => {
 });
 
 describe('DEFAULT_BATCH_PROMPT export', () => {
-	it('exports DEFAULT_BATCH_PROMPT constant', () => {
+	it('exports DEFAULT_BATCH_PROMPT as a string', () => {
+		// DEFAULT_BATCH_PROMPT is loaded from disk via IPC at startup.
+		// In test context without prompt loading, it starts as empty string.
 		expect(DEFAULT_BATCH_PROMPT).toBeDefined();
 		expect(typeof DEFAULT_BATCH_PROMPT).toBe('string');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{DOCUMENT_PATH}}');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{AGENT_NAME}}');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{AGENT_PATH}}');
 	});
 });
 

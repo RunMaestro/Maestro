@@ -13,7 +13,32 @@ import type { ToolType } from '../types';
 import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
-import { wizardDocumentGenerationPrompt, wizardInlineIterateGenerationPrompt } from '../../prompts';
+
+// Module-level prompt cache (loaded once via IPC)
+let cachedWizardDocumentGenerationPrompt = '';
+let cachedWizardInlineIterateGenerationPrompt = '';
+let inlineWizardDocGenPromptsLoaded = false;
+
+/**
+ * Load inline wizard document generation prompts from disk via IPC.
+ * Called once at startup before components mount.
+ */
+export async function loadInlineWizardDocGenPrompts(): Promise<void> {
+	if (inlineWizardDocGenPromptsLoaded) return;
+
+	const [docGenResult, iterateGenResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-document-generation'),
+		window.maestro.prompts.get('wizard-inline-iterate-generation'),
+	]);
+
+	if (docGenResult.success && docGenResult.content) {
+		cachedWizardDocumentGenerationPrompt = docGenResult.content;
+	}
+	if (iterateGenResult.success && iterateGenResult.content) {
+		cachedWizardInlineIterateGenerationPrompt = iterateGenResult.content;
+	}
+	inlineWizardDocGenPromptsLoaded = true;
+}
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 
 /**
@@ -360,7 +385,7 @@ export function generateDocumentPrompt(
 
 	// Choose the appropriate prompt template based on mode
 	const basePrompt =
-		mode === 'iterate' ? wizardInlineIterateGenerationPrompt : wizardDocumentGenerationPrompt;
+		mode === 'iterate' ? cachedWizardInlineIterateGenerationPrompt : cachedWizardDocumentGenerationPrompt;
 
 	// Build the full Auto Run folder path (including subfolder if specified)
 	// Use the user-configured autoRunFolderPath (which may be external to directoryPath)

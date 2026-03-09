@@ -3,10 +3,44 @@
  * Extracted from useBatchProcessor.ts for reusability.
  */
 
-import { autorunDefaultPrompt } from '../../../prompts';
+// Module-level prompt cache (loaded once via IPC)
+let cachedAutorunDefaultPrompt = '';
+let cachedAutorunSynopsisPrompt = '';
+let batchPromptsLoaded = false;
+
+/**
+ * Load batch/autorun prompts from disk via IPC.
+ * Called once at startup before components mount.
+ */
+export async function loadBatchPrompts(): Promise<void> {
+	if (batchPromptsLoaded) return;
+
+	const [defaultResult, synopsisResult] = await Promise.all([
+		window.maestro.prompts.get('autorun-default'),
+		window.maestro.prompts.get('autorun-synopsis'),
+	]);
+
+	if (defaultResult.success && defaultResult.content) {
+		cachedAutorunDefaultPrompt = defaultResult.content;
+		DEFAULT_BATCH_PROMPT = defaultResult.content;
+	}
+	if (synopsisResult.success && synopsisResult.content) {
+		cachedAutorunSynopsisPrompt = synopsisResult.content;
+	}
+	batchPromptsLoaded = true;
+}
+
+/**
+ * Get the autorun synopsis prompt (from cache).
+ */
+export function getAutorunSynopsisPrompt(): string {
+	return cachedAutorunSynopsisPrompt;
+}
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
-export const DEFAULT_BATCH_PROMPT = autorunDefaultPrompt;
+// Updated via loadBatchPrompts() at startup; live ES module binding ensures importers see the value.
+// eslint-disable-next-line import/no-mutable-exports
+export let DEFAULT_BATCH_PROMPT = '';
 
 // Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ])
 const UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s*\]\s*.+$/gm;

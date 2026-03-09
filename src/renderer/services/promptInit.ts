@@ -7,6 +7,9 @@ import { loadContextSummarizerPrompts } from './contextSummarizer';
 import { loadWizardPrompts } from '../components/Wizard/services/wizardPrompts';
 import { loadPhaseGeneratorPrompts } from '../components/Wizard/services/phaseGenerator';
 import { loadSettingsStorePrompts } from '../stores/settingsStore';
+import { loadInlineWizardConversationPrompts } from './inlineWizardConversation';
+import { loadInlineWizardDocGenPrompts } from './inlineWizardDocumentGeneration';
+import { loadBatchPrompts } from '../hooks/batch/batchUtils';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -33,6 +36,9 @@ export async function initializeRendererPrompts(): Promise<void> {
 				loadWizardPrompts(),
 				loadPhaseGeneratorPrompts(),
 				loadSettingsStorePrompts(),
+				loadInlineWizardConversationPrompts(),
+				loadInlineWizardDocGenPrompts(),
+				loadBatchPrompts(),
 			]);
 
 			initialized = true;

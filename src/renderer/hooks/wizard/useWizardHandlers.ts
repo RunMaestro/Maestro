@@ -35,7 +35,7 @@ import { getActiveTab, createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { autorunSynopsisPrompt } from '../../../prompts';
+import { getAutorunSynopsisPrompt } from '../batch/batchUtils';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
@@ -524,9 +524,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			let synopsisPrompt: string;
 			if (activeTab.lastSynopsisTime) {
 				const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
-				synopsisPrompt = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+				synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
 			} else {
-				synopsisPrompt = autorunSynopsisPrompt;
+				synopsisPrompt = getAutorunSynopsisPrompt();
 			}
 			const synopsisTime = Date.now();
 
