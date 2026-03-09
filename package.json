@@ -254,6 +254,7 @@
 		"rehype-slug": "^6.0.0",
 		"remark-frontmatter": "^5.0.0",
 		"remark-gfm": "^4.0.1",
+		"uuid": "^13.0.0",
 		"ws": "^8.16.0",
 		"zustand": "^5.0.11"
 	},
@@ -273,6 +274,7 @@
 		"@types/react": "^18.2.47",
 		"@types/react-dom": "^18.2.18",
 		"@types/react-syntax-highlighter": "^15.5.13",
+		"@types/uuid": "^10.0.0",
 		"@types/ws": "^8.5.10",
 		"@typescript-eslint/eslint-plugin": "^8.50.1",
 		"@typescript-eslint/parser": "^8.50.1",
