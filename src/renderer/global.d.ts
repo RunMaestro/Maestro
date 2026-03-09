@@ -42,6 +42,8 @@ interface ProcessConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	// Per-session security policy (merged with global LLM Guard settings)
+	sessionSecurityPolicy?: Record<string, unknown>;
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
@@ -2923,6 +2925,372 @@ interface MaestroAPI {
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
+	};
+
+	// Security API (LLM Guard events)
+	security: {
+		onSecurityEvent: (
+			callback: (event: {
+				sessionId: string;
+				tabId?: string;
+				eventType:
+					| 'input_scan'
+					| 'output_scan'
+					| 'blocked'
+					| 'warning'
+					| 'scan_start'
+					| 'scan_complete';
+				findingTypes: string[];
+				findingCount: number;
+				action: 'none' | 'sanitized' | 'blocked' | 'warned';
+				originalLength: number;
+				sanitizedLength: number;
+			}) => void
+		) => () => void;
+		onScanProgress: (
+			callback: (event: {
+				sessionId: string;
+				tabId?: string;
+				eventType: 'scan_start' | 'scan_complete';
+				contentLength: number;
+			}) => void
+		) => () => void;
+		getEvents: (
+			limit?: number,
+			offset?: number
+		) => Promise<{
+			events: Array<{
+				id: string;
+				timestamp: number;
+				sessionId: string;
+				tabId?: string;
+				eventType: 'input_scan' | 'output_scan' | 'blocked' | 'warning';
+				findings: Array<{
+					type: string;
+					value: string;
+					start: number;
+					end: number;
+					confidence: number;
+					replacement?: string;
+				}>;
+				action: 'none' | 'sanitized' | 'blocked' | 'warned';
+				originalLength: number;
+				sanitizedLength: number;
+			}>;
+			total: number;
+			hasMore: boolean;
+		}>;
+		getEventsByType: (
+			eventType: 'input_scan' | 'output_scan' | 'blocked' | 'warning',
+			limit?: number
+		) => Promise<
+			Array<{
+				id: string;
+				timestamp: number;
+				sessionId: string;
+				tabId?: string;
+				eventType: 'input_scan' | 'output_scan' | 'blocked' | 'warning';
+				findings: Array<{
+					type: string;
+					value: string;
+					start: number;
+					end: number;
+					confidence: number;
+					replacement?: string;
+				}>;
+				action: 'none' | 'sanitized' | 'blocked' | 'warned';
+				originalLength: number;
+				sanitizedLength: number;
+			}>
+		>;
+		getEventsBySession: (
+			sessionId: string,
+			limit?: number
+		) => Promise<
+			Array<{
+				id: string;
+				timestamp: number;
+				sessionId: string;
+				tabId?: string;
+				eventType: 'input_scan' | 'output_scan' | 'blocked' | 'warning';
+				findings: Array<{
+					type: string;
+					value: string;
+					start: number;
+					end: number;
+					confidence: number;
+					replacement?: string;
+				}>;
+				action: 'none' | 'sanitized' | 'blocked' | 'warned';
+				originalLength: number;
+				sanitizedLength: number;
+			}>
+		>;
+		clearEvents: () => Promise<void>;
+		clearAllEvents: () => Promise<void>;
+		getStats: () => Promise<{ bufferSize: number; totalLogged: number; maxSize: number }>;
+		exportEvents: (
+			format: 'json' | 'csv' | 'html',
+			filters?: {
+				startDate?: number;
+				endDate?: number;
+				eventTypes?: Array<
+					'input_scan' | 'output_scan' | 'blocked' | 'warning' | 'inter_agent_scan'
+				>;
+				sessionIds?: string[];
+				minConfidence?: number;
+			}
+		) => Promise<string>;
+		getSessionIds: () => Promise<string[]>;
+		exportConfig: (
+			settings: {
+				enabled: boolean;
+				action: 'warn' | 'sanitize' | 'block';
+				input: {
+					anonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPromptInjection: boolean;
+					structuralAnalysis?: boolean;
+					invisibleCharacterDetection?: boolean;
+					scanUrls?: boolean;
+				};
+				output: {
+					deanonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPiiLeakage: boolean;
+					scanUrls?: boolean;
+					scanCode?: boolean;
+				};
+				thresholds: {
+					promptInjection: number;
+				};
+				banSubstrings?: string[];
+				banTopicsPatterns?: string[];
+				customPatterns?: Array<{
+					id: string;
+					name: string;
+					pattern: string;
+					type: 'secret' | 'pii' | 'injection' | 'other';
+					action: 'warn' | 'sanitize' | 'block';
+					confidence: number;
+					enabled: boolean;
+					description?: string;
+				}>;
+				groupChat?: {
+					interAgentScanEnabled?: boolean;
+				};
+			},
+			description?: string
+		) => Promise<string>;
+		importConfig: (jsonString: string) => Promise<
+			| {
+					success: true;
+					config: {
+						enabled: boolean;
+						action: 'warn' | 'sanitize' | 'block';
+						input: {
+							anonymizePii: boolean;
+							redactSecrets: boolean;
+							detectPromptInjection: boolean;
+							structuralAnalysis?: boolean;
+							invisibleCharacterDetection?: boolean;
+							scanUrls?: boolean;
+						};
+						output: {
+							deanonymizePii: boolean;
+							redactSecrets: boolean;
+							detectPiiLeakage: boolean;
+							scanUrls?: boolean;
+							scanCode?: boolean;
+						};
+						thresholds: {
+							promptInjection: number;
+						};
+						banSubstrings?: string[];
+						banTopicsPatterns?: string[];
+						customPatterns?: Array<{
+							id: string;
+							name: string;
+							pattern: string;
+							type: 'secret' | 'pii' | 'injection' | 'other';
+							action: 'warn' | 'sanitize' | 'block';
+							confidence: number;
+							enabled: boolean;
+							description?: string;
+						}>;
+						groupChat?: {
+							interAgentScanEnabled?: boolean;
+						};
+					};
+					warnings: string[];
+			  }
+			| { success: false; errors: string[] }
+		>;
+		validateConfig: (jsonString: string) => Promise<{
+			valid: boolean;
+			errors: string[];
+			warnings: string[];
+		}>;
+		getRecommendations: (
+			config: Partial<{
+				enabled: boolean;
+				action: 'warn' | 'sanitize' | 'block';
+				input: {
+					anonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPromptInjection: boolean;
+					structuralAnalysis?: boolean;
+					invisibleCharacterDetection?: boolean;
+					scanUrls?: boolean;
+				};
+				output: {
+					deanonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPiiLeakage: boolean;
+					scanUrls?: boolean;
+					scanCode?: boolean;
+				};
+				thresholds: {
+					promptInjection: number;
+				};
+				banSubstrings?: string[];
+				banTopicsPatterns?: string[];
+				customPatterns?: Array<{
+					id: string;
+					name: string;
+					pattern: string;
+					type: 'secret' | 'pii' | 'injection' | 'other';
+					action: 'warn' | 'sanitize' | 'block';
+					confidence: number;
+					enabled: boolean;
+					description?: string;
+				}>;
+				groupChat?: {
+					interAgentScanEnabled?: boolean;
+				};
+			}>,
+			options?: {
+				minSeverity?: 'low' | 'medium' | 'high';
+				categories?: Array<
+					| 'blocked_content'
+					| 'secret_detection'
+					| 'pii_detection'
+					| 'prompt_injection'
+					| 'code_patterns'
+					| 'url_detection'
+					| 'configuration'
+					| 'usage_patterns'
+				>;
+				excludeDismissed?: boolean;
+				dismissedIds?: string[];
+			}
+		) => Promise<
+			Array<{
+				id: string;
+				category:
+					| 'blocked_content'
+					| 'secret_detection'
+					| 'pii_detection'
+					| 'prompt_injection'
+					| 'code_patterns'
+					| 'url_detection'
+					| 'configuration'
+					| 'usage_patterns';
+				severity: 'low' | 'medium' | 'high';
+				title: string;
+				description: string;
+				actionItems: string[];
+				affectedEventCount: number;
+				relatedFindingTypes: string[];
+				generatedAt: number;
+				dismissedUntil?: number;
+			}>
+		>;
+		getRecommendationsSummary: (
+			config: Partial<{
+				enabled: boolean;
+				action: 'warn' | 'sanitize' | 'block';
+				input: {
+					anonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPromptInjection: boolean;
+					structuralAnalysis?: boolean;
+					invisibleCharacterDetection?: boolean;
+					scanUrls?: boolean;
+				};
+				output: {
+					deanonymizePii: boolean;
+					redactSecrets: boolean;
+					detectPiiLeakage: boolean;
+					scanUrls?: boolean;
+					scanCode?: boolean;
+				};
+				thresholds: {
+					promptInjection: number;
+				};
+				banSubstrings?: string[];
+				banTopicsPatterns?: string[];
+				customPatterns?: Array<{
+					id: string;
+					name: string;
+					pattern: string;
+					type: 'secret' | 'pii' | 'injection' | 'other';
+					action: 'warn' | 'sanitize' | 'block';
+					confidence: number;
+					enabled: boolean;
+					description?: string;
+				}>;
+				groupChat?: {
+					interAgentScanEnabled?: boolean;
+				};
+			}>
+		) => Promise<{
+			total: number;
+			high: number;
+			medium: number;
+			low: number;
+			categories: Record<
+				| 'blocked_content'
+				| 'secret_detection'
+				| 'pii_detection'
+				| 'prompt_injection'
+				| 'code_patterns'
+				| 'url_detection'
+				| 'configuration'
+				| 'usage_patterns',
+				number
+			>;
+		}>;
+		scanInputPreview: (
+			text: string,
+			config?: Partial<{
+				enabled: boolean;
+				input: {
+					anonymizePii?: boolean;
+					redactSecrets?: boolean;
+				};
+			}>
+		) => Promise<{
+			findings: Array<{
+				type: string;
+				value: string;
+				start: number;
+				end: number;
+				confidence: number;
+			}>;
+			scanDurationMs: number;
+		}>;
+	};
+
+	// Spell-check API (native Electron spell-check integration)
+	spellcheck: {
+		getSystemLocale: () => Promise<string>;
+		checkWord: (word: string) => Promise<{ word: string; suggestions: string[] }>;
+		getSuggestions: (word: string) => Promise<string[]>;
+		addToDictionary: (word: string) => Promise<void>;
+		setLanguages: (languages: string[]) => Promise<void>;
+		getLanguages: () => Promise<string[]>;
+		getAvailableDictionaries: () => Promise<string[]>;
 	};
 }
 

@@ -10,6 +10,7 @@ import {
 	FlaskConical,
 	Server,
 	Monitor,
+	Shield,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -24,6 +25,7 @@ import { SshRemoteIgnoreSection } from './SshRemoteIgnoreSection';
 import { GeneralTab } from './tabs/GeneralTab';
 import { DisplayTab } from './tabs/DisplayTab';
 import { EncoreTab } from './tabs/EncoreTab';
+import { LlmGuardTab } from './tabs/LlmGuardTab';
 import { ShortcutsTab } from './tabs/ShortcutsTab';
 import { ThemeTab } from './tabs/ThemeTab';
 
@@ -46,6 +48,7 @@ interface SettingsModalProps {
 		| 'notifications'
 		| 'aicommands'
 		| 'ssh'
+		| 'security'
 		| 'encore';
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
@@ -103,6 +106,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		| 'notifications'
 		| 'aicommands'
 		| 'ssh'
+		| 'security'
 		| 'encore'
 	>('general');
 	const [testingLLM, setTestingLLM] = useState(false);
@@ -167,6 +171,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'notifications'
 				| 'aicommands'
 				| 'ssh'
+				| 'security'
 				| 'encore'
 			> = FEATURE_FLAGS.LLM_SETTINGS
 				? [
@@ -178,6 +183,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'notifications',
 						'aicommands',
 						'ssh',
+						'security',
 						'encore',
 					]
 				: [
@@ -188,6 +194,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'notifications',
 						'aicommands',
 						'ssh',
+						'security',
 						'encore',
 					];
 			const currentIndex = tabs.indexOf(activeTab);
@@ -400,6 +407,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'ssh' && <span>SSH Hosts</span>}
 					</button>
 					<button
+						onClick={() => setActiveTab('security')}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'security' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						title="LLM Guard"
+					>
+						<Shield className="w-4 h-4" />
+						{activeTab === 'security' && <span>Security</span>}
+					</button>
+					<button
 						onClick={() => setActiveTab('encore')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'encore' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						style={{
@@ -583,6 +598,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							/>
 						</div>
 					)}
+
+					{activeTab === 'security' && <LlmGuardTab theme={theme} />}
 
 					{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
 				</div>

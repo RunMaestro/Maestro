@@ -30,6 +30,7 @@ import type {
 	ThinkingMode,
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
+	LlmGuardSettings,
 } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
@@ -119,11 +120,36 @@ export const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	usageStats: true,
 	symphony: true,
 	maestroCue: false,
+	llmGuard: false,
 };
 
 export const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
 	defaultLookbackDays: 7,
+};
+
+export const DEFAULT_LLM_GUARD_SETTINGS: LlmGuardSettings = {
+	enabled: false,
+	action: 'sanitize',
+	input: {
+		anonymizePii: true,
+		redactSecrets: true,
+		detectPromptInjection: true,
+		structuralAnalysis: true,
+		invisibleCharacterDetection: true,
+	},
+	output: {
+		deanonymizePii: true,
+		redactSecrets: true,
+		detectPiiLeakage: true,
+	},
+	thresholds: {
+		promptInjection: 0.7,
+	},
+	banSubstrings: [],
+	banTopicsPatterns: [],
+	showSecurityToasts: true,
+	showInputPreview: true,
 };
 
 export const DEFAULT_AI_COMMANDS: CustomAICommand[] = [
@@ -255,6 +281,8 @@ export interface SettingsStoreState {
 	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	llmGuardSettings: LlmGuardSettings;
+	lastViewedSecurityEventId: string | null;
 }
 
 export interface SettingsStoreActions {
@@ -384,6 +412,11 @@ export interface SettingsStoreActions {
 	recordShortcutUsage: (shortcutId: string) => { newLevel: number | null };
 	acknowledgeKeyboardMasteryLevel: (level: number) => void;
 	getUnacknowledgedKeyboardMasteryLevel: () => number | null;
+
+	// LLM Guard
+	setLlmGuardSettings: (value: LlmGuardSettings) => void;
+	updateLlmGuardSettings: (partial: Partial<LlmGuardSettings>) => void;
+	setLastViewedSecurityEventId: (value: string | null) => void;
 }
 
 export type SettingsStore = SettingsStoreState & SettingsStoreActions;
@@ -479,6 +512,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeDetailedTracking: false,
 		useNativeTitleBar: false,
 		autoHideMenuBar: false,
+		llmGuardSettings: DEFAULT_LLM_GUARD_SETTINGS,
+		lastViewedSecurityEventId: null,
 
 		// ============================================================================
 		// Simple Setters
@@ -1310,6 +1345,30 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			}
 			return null;
 		},
+
+		// LLM Guard
+		setLlmGuardSettings: (value) => {
+			set({ llmGuardSettings: value });
+			window.maestro.settings.set('llmGuardSettings', value);
+		},
+
+		updateLlmGuardSettings: (partial) => {
+			const current = get().llmGuardSettings;
+			const updated = {
+				...current,
+				...partial,
+				input: { ...current.input, ...(partial.input || {}) },
+				output: { ...current.output, ...(partial.output || {}) },
+				thresholds: { ...current.thresholds, ...(partial.thresholds || {}) },
+			};
+			set({ llmGuardSettings: updated });
+			window.maestro.settings.set('llmGuardSettings', updated);
+		},
+
+		setLastViewedSecurityEventId: (value) => {
+			set({ lastViewedSecurityEventId: value });
+			window.maestro.settings.set('lastViewedSecurityEventId', value);
+		},
 	};
 });
 
@@ -1803,6 +1862,22 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
+
+		// LLM Guard settings (merge with defaults to preserve new fields and nested objects)
+		if (allSettings['llmGuardSettings'] !== undefined) {
+			const saved = allSettings['llmGuardSettings'] as Partial<LlmGuardSettings>;
+			patch.llmGuardSettings = {
+				...DEFAULT_LLM_GUARD_SETTINGS,
+				...saved,
+				input: { ...DEFAULT_LLM_GUARD_SETTINGS.input, ...(saved.input || {}) },
+				output: { ...DEFAULT_LLM_GUARD_SETTINGS.output, ...(saved.output || {}) },
+				thresholds: { ...DEFAULT_LLM_GUARD_SETTINGS.thresholds, ...(saved.thresholds || {}) },
+			};
+		}
+
+		// Last viewed security event ID for badge calculation
+		if (allSettings['lastViewedSecurityEventId'] !== undefined)
+			patch.lastViewedSecurityEventId = allSettings['lastViewedSecurityEventId'] as string | null;
 
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
