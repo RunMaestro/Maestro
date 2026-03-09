@@ -83,6 +83,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	virtuosos: {
+		id: 'virtuosos',
+		label: 'Virtuosos',
+		keys: ['Alt', 'v'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

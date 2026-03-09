@@ -6,7 +6,7 @@
  * Usage & Stats configuration (stats collection, time ranges, WakaTime integration).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
 	Clapperboard,
 	ChevronDown,
@@ -20,14 +20,17 @@ import {
 	Timer,
 	Key,
 	Trash2,
+	Users,
 	Zap,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
 import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
+import type { AccountProfile } from '../../../../shared/account-types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
+import { getModalActions } from '../../../stores/modalStore';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -94,6 +97,43 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		},
 		[setWakatimeApiKey]
 	);
+
+	// Virtuosos state
+	const [virtuososAccounts, setVirtuososAccounts] = useState<AccountProfile[]>([]);
+	const [virtuososBaseDirValid, setVirtuososBaseDirValid] = useState<boolean | null>(null);
+
+	useEffect(() => {
+		if (!isOpen || !encoreFeatures.virtuosos) return;
+		let cancelled = false;
+
+		window.maestro.accounts
+			.list()
+			.then((accounts) => {
+				if (!cancelled) setVirtuososAccounts(accounts as AccountProfile[]);
+			})
+			.catch(() => {
+				if (!cancelled) setVirtuososAccounts([]);
+			});
+
+		window.maestro.accounts
+			.validateBaseDir()
+			.then((result) => {
+				if (!cancelled) setVirtuososBaseDirValid(result.valid);
+			})
+			.catch(() => {
+				if (!cancelled) setVirtuososBaseDirValid(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, encoreFeatures.virtuosos]);
+
+	const virtuososStatusCounts = useMemo(() => {
+		const active = virtuososAccounts.filter((a) => a.status === 'active').length;
+		const throttled = virtuososAccounts.filter((a) => a.status === 'throttled').length;
+		return { active, throttled, total: virtuososAccounts.length };
+	}, [virtuososAccounts]);
 
 	// Symphony registry URL management
 	const [newRegistryUrl, setNewRegistryUrl] = useState('');
@@ -1147,6 +1187,160 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						/>
 					</div>
 				</button>
+			</div>
+
+			{/* Virtuosos Feature Section */}
+			<div
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.virtuosos ? `${theme.colors.accent}08` : 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							virtuosos: !encoreFeatures.virtuosos,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<Users
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Virtuosos
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Multi-account multiplexing with capacity-aware routing and automated provider
+								failover
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.virtuosos ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.virtuosos ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+
+				{encoreFeatures.virtuosos && (
+					<div
+						className="px-4 pb-4 space-y-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						{/* Base Directory Status */}
+						<div className="flex items-center justify-between pt-3">
+							<div className="flex items-center gap-2">
+								<span className="text-sm" style={{ color: theme.colors.textMain }}>
+									Base directory (~/.claude)
+								</span>
+							</div>
+							<span
+								className="text-xs font-medium px-2 py-0.5 rounded"
+								style={{
+									backgroundColor:
+										virtuososBaseDirValid === null
+											? theme.colors.bgActivity
+											: virtuososBaseDirValid
+												? theme.colors.success + '20'
+												: theme.colors.error + '20',
+									color:
+										virtuososBaseDirValid === null
+											? theme.colors.textDim
+											: virtuososBaseDirValid
+												? theme.colors.success
+												: theme.colors.error,
+								}}
+							>
+								{virtuososBaseDirValid === null
+									? 'Checking...'
+									: virtuososBaseDirValid
+										? 'Valid'
+										: 'Not found'}
+							</span>
+						</div>
+
+						{/* Account Summary */}
+						<div className="flex items-center justify-between">
+							<span className="text-sm" style={{ color: theme.colors.textMain }}>
+								Registered accounts
+							</span>
+							<div className="flex items-center gap-2">
+								{virtuososStatusCounts.total > 0 ? (
+									<>
+										<span
+											className="text-xs font-mono px-2 py-0.5 rounded"
+											style={{
+												backgroundColor: theme.colors.success + '20',
+												color: theme.colors.success,
+											}}
+										>
+											{virtuososStatusCounts.active} active
+										</span>
+										{virtuososStatusCounts.throttled > 0 && (
+											<span
+												className="text-xs font-mono px-2 py-0.5 rounded"
+												style={{
+													backgroundColor: theme.colors.warning + '20',
+													color: theme.colors.warning,
+												}}
+											>
+												{virtuososStatusCounts.throttled} throttled
+											</span>
+										)}
+									</>
+								) : (
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>
+										None configured
+									</span>
+								)}
+							</div>
+						</div>
+
+						{/* Open Dashboard Button */}
+						<button
+							onClick={() => getModalActions().setVirtuososOpen(true)}
+							className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.bgMain,
+							}}
+						>
+							<Users className="w-4 h-4" />
+							Open Virtuosos Dashboard
+						</button>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							Manage accounts, configure provider failover, and monitor usage from the dashboard.
+						</p>
+					</div>
+				)}
 			</div>
 		</div>
 	);

@@ -6,13 +6,7 @@ const SettingsModal = lazy(() =>
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
-import {
-	AppModals,
-	type PRDetails,
-	type FlatFileItem,
-	type MergeOptions,
-	type SendToAgentOptions,
-} from './components/AppModals';
+import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
 // DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
 import * as Sentry from '@sentry/electron/renderer';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -174,7 +168,14 @@ import { getAgentDisplayName } from './services/contextGroomer';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem, ToolType } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	ThinkingItem,
+	ToolType,
+} from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
@@ -1634,6 +1635,10 @@ function MaestroConsoleInner() {
 		handleClearAgentError,
 	});
 
+	// Bridge ref for resumeAfterError (used by account recovery effect)
+	const resumeAfterErrorRef = useRef<((sessionId: string) => void) | null>(handleResumeAfterError);
+	resumeAfterErrorRef.current = handleResumeAfterError;
+
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners
 	// (onData, onExit, onSessionId, onSlashCommands, onStderr, onCommandExit,
@@ -2232,7 +2237,6 @@ function MaestroConsoleInner() {
 	// startRenamingSession, finishRenamingSession — provided by useSessionCrud hook
 
 	// handleDragStart, handleDragOver — provided by useSessionCrud hook
-
 
 	// Note: processInput has been extracted to useInputProcessing hook (see line ~2128)
 
@@ -3297,6 +3301,7 @@ function MaestroConsoleInner() {
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
+					onOpenVirtuosos={encoreFeatures.virtuosos ? () => setVirtuososOpen(true) : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					onCloseTabSwitcher={handleCloseTabSwitcher}

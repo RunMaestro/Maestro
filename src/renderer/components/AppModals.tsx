@@ -490,9 +490,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 }: AppSessionModalsProps) {
 	// Determine if the rename modal is for a terminal tab or an AI tab
 	const terminalTabs = activeSession?.terminalTabs ?? [];
-	const renamingTerminalTab = renameTabId
-		? terminalTabs.find((t) => t.id === renameTabId)
-		: null;
+	const renamingTerminalTab = renameTabId ? terminalTabs.find((t) => t.id === renameTabId) : null;
 	const renamingTerminalTabIndex = renamingTerminalTab
 		? terminalTabs.findIndex((t) => t.id === renameTabId)
 		: -1;
@@ -893,6 +891,9 @@ export interface AppUtilityModalsProps {
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
 
+	// Virtuosos
+	onOpenVirtuosos?: () => void;
+
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -1099,6 +1100,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	// Maestro Cue
 	onOpenMaestroCue,
 	onConfigureCue,
+	// Virtuosos
+	onOpenVirtuosos,
 	// Auto-scroll
 	autoScrollAiMode,
 	setAutoScrollAiMode,
@@ -1261,6 +1264,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenDirectorNotes={onOpenDirectorNotes}
 					onOpenMaestroCue={onOpenMaestroCue}
 					onConfigureCue={onConfigureCue}
+					onOpenVirtuosos={onOpenVirtuosos}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 				/>
@@ -2045,6 +2049,8 @@ export interface AppModalsProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Virtuosos
+	onOpenVirtuosos?: () => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -2418,6 +2424,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		// Maestro Cue
 		onOpenMaestroCue,
 		onConfigureCue,
+		// Virtuosos
+		onOpenVirtuosos,
 		// Auto-scroll
 		autoScrollAiMode,
 		setAutoScrollAiMode,
@@ -2729,6 +2737,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
 				onConfigureCue={onConfigureCue}
+				onOpenVirtuosos={onOpenVirtuosos}
 				autoScrollAiMode={autoScrollAiMode}
 				setAutoScrollAiMode={setAutoScrollAiMode}
 				tabSwitcherOpen={tabSwitcherOpen}
