@@ -218,6 +218,9 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 
+	/** Session Security policy modal (above settings, below SSH remote) */
+	SESSION_SECURITY: 455,
+
 	/** Settings modal */
 	SETTINGS: 450,
 
