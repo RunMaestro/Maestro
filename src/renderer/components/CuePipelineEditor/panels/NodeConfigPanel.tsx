@@ -15,6 +15,8 @@ import {
 	GitBranch,
 	CheckSquare,
 	ExternalLink,
+	ChevronsUp,
+	ChevronsDown,
 } from 'lucide-react';
 import type {
 	PipelineNode,
@@ -330,9 +332,11 @@ function TriggerConfig({
 function EdgePromptRow({
 	edgeInfo,
 	onUpdateEdgePrompt,
+	expanded,
 }: {
 	edgeInfo: IncomingTriggerEdgeInfo;
 	onUpdateEdgePrompt: (edgeId: string, prompt: string) => void;
+	expanded?: boolean;
 }) {
 	const [localPrompt, setLocalPrompt] = useState(edgeInfo.prompt);
 
@@ -353,9 +357,17 @@ function EdgePromptRow({
 	);
 
 	return (
-		<div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-			<label style={labelStyle}>
-				<span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+		<div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+			<label
+				style={{
+					...labelStyle,
+					flex: expanded ? 1 : undefined,
+					display: 'flex',
+					flexDirection: 'column',
+					minHeight: 0,
+				}}
+			>
+				<span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
 					<span style={{ color: '#e4e4e7', fontWeight: 600, fontSize: 11 }}>
 						{edgeInfo.triggerLabel}
 					</span>
@@ -366,7 +378,7 @@ function EdgePromptRow({
 				<textarea
 					value={localPrompt}
 					onChange={handleChange}
-					rows={2}
+					rows={expanded ? undefined : 2}
 					placeholder="Prompt for this trigger..."
 					style={{
 						...inputStyle,
@@ -374,10 +386,11 @@ function EdgePromptRow({
 						fontFamily: 'inherit',
 						lineHeight: 1.4,
 						marginTop: 4,
+						...(expanded ? { flex: 1, minHeight: 0 } : {}),
 					}}
 				/>
 			</label>
-			<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
+			<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
 				{localPrompt.length} chars
 			</div>
 		</div>
@@ -392,6 +405,7 @@ function AgentConfig({
 	onUpdateNode,
 	onUpdateEdgePrompt,
 	onSwitchToAgent,
+	expanded,
 }: {
 	node: PipelineNode;
 	pipelines: CuePipeline[];
@@ -400,6 +414,7 @@ function AgentConfig({
 	onUpdateNode: NodeConfigPanelProps['onUpdateNode'];
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
+	expanded?: boolean;
 }) {
 	const data = node.data as AgentNodeData;
 	const hasMultipleTriggers = (incomingTriggerEdges?.length ?? 0) > 1;
@@ -455,37 +470,55 @@ function AgentConfig({
 	const outputDisabled = !hasOutgoingEdge;
 
 	return (
-		<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-			<div style={{ display: 'flex', gap: 12, flex: 1 }}>
+		<div
+			style={{
+				display: 'flex',
+				flexDirection: 'column',
+				gap: 8,
+				flex: expanded ? 1 : undefined,
+				minHeight: 0,
+			}}
+		>
+			<div style={{ display: 'flex', gap: 12, flex: expanded ? 1 : undefined, minHeight: 0 }}>
 				{/* Input Prompt(s) */}
 				{hasMultipleTriggers && onUpdateEdgePrompt ? (
-					<div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+					<div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0 }}>
 						{incomingTriggerEdges!.map((edgeInfo) => (
 							<EdgePromptRow
 								key={edgeInfo.edgeId}
 								edgeInfo={edgeInfo}
 								onUpdateEdgePrompt={onUpdateEdgePrompt}
+								expanded={expanded}
 							/>
 						))}
 					</div>
 				) : (
-					<div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-						<label style={labelStyle}>
+					<div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+						<label
+							style={{
+								...labelStyle,
+								flex: expanded ? 1 : undefined,
+								display: 'flex',
+								flexDirection: 'column',
+								minHeight: 0,
+							}}
+						>
 							Input Prompt
 							<textarea
 								value={localInputPrompt}
 								onChange={handleInputPromptChange}
-								rows={3}
+								rows={expanded ? undefined : 3}
 								placeholder="Prompt sent when this agent receives data from the pipeline..."
 								style={{
 									...inputStyle,
 									resize: 'vertical',
 									fontFamily: 'inherit',
 									lineHeight: 1.4,
+									...(expanded ? { flex: 1, minHeight: 0 } : {}),
 								}}
 							/>
 						</label>
-						<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
+						<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
 							{localInputPrompt.length} chars
 						</div>
 					</div>
@@ -500,14 +533,23 @@ function AgentConfig({
 						flexDirection: 'column',
 						opacity: outputDisabled ? 0.35 : 1,
 						transition: 'opacity 0.15s',
+						minHeight: 0,
 					}}
 				>
-					<label style={labelStyle}>
+					<label
+						style={{
+							...labelStyle,
+							flex: expanded ? 1 : undefined,
+							display: 'flex',
+							flexDirection: 'column',
+							minHeight: 0,
+						}}
+					>
 						Output Prompt
 						<textarea
 							value={localOutputPrompt}
 							onChange={handleOutputPromptChange}
-							rows={3}
+							rows={expanded ? undefined : 3}
 							disabled={outputDisabled}
 							placeholder={
 								outputDisabled
@@ -520,16 +562,19 @@ function AgentConfig({
 								fontFamily: 'inherit',
 								lineHeight: 1.4,
 								cursor: outputDisabled ? 'not-allowed' : undefined,
+								...(expanded ? { flex: 1, minHeight: 0 } : {}),
 							}}
 						/>
 					</label>
-					<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right' }}>
+					<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
 						{localOutputPrompt.length} chars
 					</div>
 				</div>
 			</div>
 
-			<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+			<div
+				style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}
+			>
 				{agentPipelines.length > 0 && (
 					<div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
 						{agentPipelines.map((p) => (
@@ -594,6 +639,7 @@ export function NodeConfigPanel({
 	onDeleteNode,
 	onSwitchToAgent,
 }: NodeConfigPanelProps) {
+	const [expanded, setExpanded] = useState(false);
 	const isVisible = selectedNode !== null;
 
 	if (!isVisible) return null;
@@ -603,6 +649,7 @@ export function NodeConfigPanel({
 	const agentData = !isTrigger ? (selectedNode.data as AgentNodeData) : null;
 
 	const Icon = triggerData ? (EVENT_ICONS[triggerData.eventType] ?? Zap) : null;
+	const ExpandIcon = expanded ? ChevronsDown : ChevronsUp;
 
 	return (
 		<div
@@ -611,7 +658,7 @@ export function NodeConfigPanel({
 				bottom: 0,
 				left: 220,
 				right: 240,
-				height: 200,
+				height: expanded ? '80%' : 200,
 				backgroundColor: '#1a1a2e',
 				borderTop: '1px solid #333',
 				borderLeft: '1px solid #333',
@@ -622,6 +669,7 @@ export function NodeConfigPanel({
 				flexDirection: 'column',
 				zIndex: 10,
 				animation: 'slideUp 0.15s ease-out',
+				transition: 'height 0.2s ease-out',
 			}}
 		>
 			<style>{`
@@ -681,28 +729,57 @@ export function NodeConfigPanel({
 						</>
 					)}
 				</div>
-				<button
-					onClick={() => onDeleteNode(selectedNode.id)}
-					style={{
-						display: 'flex',
-						alignItems: 'center',
-						padding: 4,
-						color: '#6b7280',
-						backgroundColor: 'transparent',
-						border: 'none',
-						borderRadius: 4,
-						cursor: 'pointer',
-					}}
-					onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
-					onMouseLeave={(e) => (e.currentTarget.style.color = '#6b7280')}
-					title="Delete node"
-				>
-					<Trash2 size={14} />
-				</button>
+				<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+					<button
+						onClick={() => setExpanded((v) => !v)}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							padding: 4,
+							color: '#6b7280',
+							backgroundColor: 'transparent',
+							border: 'none',
+							borderRadius: 4,
+							cursor: 'pointer',
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.color = '#e4e4e7')}
+						onMouseLeave={(e) => (e.currentTarget.style.color = '#6b7280')}
+						title={expanded ? 'Collapse panel' : 'Expand panel'}
+					>
+						<ExpandIcon size={14} />
+					</button>
+					<button
+						onClick={() => onDeleteNode(selectedNode.id)}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							padding: 4,
+							color: '#6b7280',
+							backgroundColor: 'transparent',
+							border: 'none',
+							borderRadius: 4,
+							cursor: 'pointer',
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
+						onMouseLeave={(e) => (e.currentTarget.style.color = '#6b7280')}
+						title="Delete node"
+					>
+						<Trash2 size={14} />
+					</button>
+				</div>
 			</div>
 
 			{/* Content */}
-			<div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+			<div
+				style={{
+					flex: 1,
+					overflow: expanded ? 'hidden' : 'auto',
+					padding: '12px 16px',
+					display: 'flex',
+					flexDirection: 'column',
+					minHeight: 0,
+				}}
+			>
 				{isTrigger && <TriggerConfig node={selectedNode} onUpdateNode={onUpdateNode} />}
 				{!isTrigger && (
 					<AgentConfig
@@ -713,6 +790,7 @@ export function NodeConfigPanel({
 						onUpdateNode={onUpdateNode}
 						onUpdateEdgePrompt={onUpdateEdgePrompt}
 						onSwitchToAgent={onSwitchToAgent}
+						expanded={expanded}
 					/>
 				)}
 			</div>
