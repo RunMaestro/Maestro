@@ -5,9 +5,16 @@ import { logger } from '../../utils/logger';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
-import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
+import type {
+	ManagedProcess,
+	UsageStats,
+	UsageTotals,
+	AgentError,
+	SecurityEventData,
+} from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import { runLlmGuardPost } from '../../security/llm-guard';
+import { logSecurityEvent, type SecurityEventAction } from '../../security/security-logger';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -129,7 +136,9 @@ export class StdoutHandler {
 				bufferLength: managedProcess.jsonBuffer.length,
 			});
 		} else {
-			this.bufferManager.emitDataBuffered(sessionId, output);
+			// Non-JSON mode: apply output guard before emitting raw output
+			const guardedOutput = this.applyOutputGuard(sessionId, managedProcess, output);
+			this.bufferManager.emitDataBuffered(sessionId, guardedOutput);
 		}
 	}
 
@@ -211,7 +220,9 @@ export class StdoutHandler {
 				this.handleLegacyMessage(sessionId, managedProcess, msg);
 			}
 		} catch {
-			this.bufferManager.emitDataBuffered(sessionId, line);
+			// JSON parse failed: apply output guard to raw line before emitting
+			const guardedLine = this.applyOutputGuard(sessionId, managedProcess, line);
+			this.bufferManager.emitDataBuffered(sessionId, guardedLine);
 		}
 	}
 
@@ -313,7 +324,10 @@ export class StdoutHandler {
 				sessionId,
 				textLength: event.text.length,
 			});
-			this.emitter.emit('thinking-chunk', sessionId, event.text);
+			// Apply output guard to streaming chunks to catch sensitive content early
+			const guardedChunk = this.applyOutputGuard(sessionId, managedProcess, event.text);
+			this.emitter.emit('thinking-chunk', sessionId, guardedChunk);
+			// Store original text for final result (will be guarded again at emit time)
 			managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
 		}
 
@@ -516,6 +530,42 @@ export class StdoutHandler {
 				sessionId,
 				toolType: managedProcess.toolType,
 				findings: guardResult.findings.map((finding) => finding.type),
+			});
+		}
+
+		// Log and emit security event for output scan
+		if (guardResult.findings.length > 0 || guardResult.blocked || guardResult.warned) {
+			let action: SecurityEventAction = 'none';
+			if (guardResult.blocked) {
+				action = 'blocked';
+			} else if (guardResult.warned) {
+				action = 'warned';
+			} else if (guardResult.findings.length > 0) {
+				action = 'sanitized';
+			}
+
+			// Log to persistent security event store
+			logSecurityEvent({
+				sessionId,
+				tabId: managedProcess.tabId,
+				eventType: guardResult.blocked ? 'blocked' : 'output_scan',
+				findings: guardResult.findings,
+				action,
+				originalLength: resultText.length,
+				sanitizedLength: guardResult.sanitizedResponse.length,
+			}).then((event) => {
+				// Emit to ProcessManager listeners for real-time UI forwarding
+				const eventData: SecurityEventData = {
+					sessionId: event.sessionId,
+					tabId: event.tabId,
+					eventType: event.eventType,
+					findingTypes: event.findings.map((f) => f.type),
+					findingCount: event.findings.length,
+					action: event.action,
+					originalLength: event.originalLength,
+					sanitizedLength: event.sanitizedLength,
+				};
+				this.emitter.emit('security-event', eventData);
 			});
 		}
 

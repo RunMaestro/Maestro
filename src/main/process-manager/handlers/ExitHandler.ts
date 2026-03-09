@@ -5,8 +5,9 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { runLlmGuardPost } from '../../security/llm-guard';
+import { logSecurityEvent, type SecurityEventAction } from '../../security/security-logger';
 import { cleanupTempFiles } from '../utils/imageUtils';
-import type { ManagedProcess, AgentError } from '../types';
+import type { ManagedProcess, AgentError, SecurityEventData } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
 interface ExitHandlerDependencies {
@@ -46,6 +47,42 @@ export class ExitHandler {
 				sessionId,
 				toolType: managedProcess.toolType,
 				findings: guardResult.findings.map((finding) => finding.type),
+			});
+		}
+
+		// Log and emit security event for output scan
+		if (guardResult.findings.length > 0 || guardResult.blocked || guardResult.warned) {
+			let action: SecurityEventAction = 'none';
+			if (guardResult.blocked) {
+				action = 'blocked';
+			} else if (guardResult.warned) {
+				action = 'warned';
+			} else if (guardResult.findings.length > 0) {
+				action = 'sanitized';
+			}
+
+			// Log to persistent security event store
+			logSecurityEvent({
+				sessionId,
+				tabId: managedProcess.tabId,
+				eventType: guardResult.blocked ? 'blocked' : 'output_scan',
+				findings: guardResult.findings,
+				action,
+				originalLength: resultText.length,
+				sanitizedLength: guardResult.sanitizedResponse.length,
+			}).then((event) => {
+				// Emit to ProcessManager listeners for real-time UI forwarding
+				const eventData: SecurityEventData = {
+					sessionId: event.sessionId,
+					tabId: event.tabId,
+					eventType: event.eventType,
+					findingTypes: event.findings.map((f) => f.type),
+					findingCount: event.findings.length,
+					action: event.action,
+					originalLength: event.originalLength,
+					sanitizedLength: event.sanitizedLength,
+				};
+				this.emitter.emit('security-event', eventData);
 			});
 		}
 
@@ -124,8 +161,11 @@ export class ExitHandler {
 					}
 				}
 			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine);
+				// If parsing fails, apply output guard to raw line before emitting
+				this.bufferManager.emitDataBuffered(
+					sessionId,
+					this.applyOutputGuard(sessionId, managedProcess, remainingLine)
+				);
 			}
 		}
 
@@ -305,8 +345,12 @@ export class ExitHandler {
 				sessionId,
 				error: String(error),
 			});
-			// Emit raw buffer as fallback
-			this.emitter.emit('data', sessionId, managedProcess.jsonBuffer!);
+			// Emit raw buffer as fallback, applying output guard
+			this.emitter.emit(
+				'data',
+				sessionId,
+				this.applyOutputGuard(sessionId, managedProcess, managedProcess.jsonBuffer!)
+			);
 		}
 	}
 
@@ -343,7 +387,11 @@ export class ExitHandler {
 			cleanupTempFiles(managedProcess.tempImageFiles);
 		}
 
-		this.emitter.emit('data', sessionId, `[error] ${error.message}`);
+		// Apply output guard to error message in case it contains sensitive content
+		const guardedErrorMsg = managedProcess
+			? this.applyOutputGuard(sessionId, managedProcess, `[error] ${error.message}`)
+			: `[error] ${error.message}`;
+		this.emitter.emit('data', sessionId, guardedErrorMsg);
 		this.emitter.emit('exit', sessionId, 1);
 		this.processes.delete(sessionId);
 	}

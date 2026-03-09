@@ -27,11 +27,12 @@ import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 import {
 	DEFAULT_LLM_GUARD_CONFIG,
-	normalizeLlmGuardConfig,
+	mergeSecurityPolicy,
 	runLlmGuardPre,
 	type LlmGuardConfig,
 	type LlmGuardState,
 } from '../../security/llm-guard';
+import { logSecurityEvent, type SecurityEventAction } from '../../security/security-logger';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -120,6 +121,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
+				// Per-session security policy overrides (merged with global settings)
+				sessionSecurityPolicy?: Partial<LlmGuardConfig>;
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -140,16 +143,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					hasAgentSessionId: !!config.agentSessionId,
 					hasPrompt: !!config.prompt,
 					promptLength: config.prompt?.length,
-					// On Windows, show prompt preview to help debug truncation issues
-					promptPreview:
-						config.prompt && isWindows
-							? {
-									first50: config.prompt.substring(0, 50),
-									last50: config.prompt.substring(Math.max(0, config.prompt.length - 50)),
-									containsHash: config.prompt.includes('#'),
-									containsNewline: config.prompt.includes('\n'),
-								}
-							: undefined,
 					// SSH remote config logging
 					hasSessionSshRemoteConfig: !!config.sessionSshRemoteConfig,
 					sessionSshRemoteConfig: config.sessionSshRemoteConfig
@@ -162,19 +155,88 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 				let effectivePrompt = config.prompt;
 				let llmGuardState: LlmGuardState | undefined;
-				const llmGuardConfig = normalizeLlmGuardConfig(
-					(settingsStore.get('llmGuardConfig', DEFAULT_LLM_GUARD_CONFIG) as
+				// Build effective LLM Guard config by merging global settings with session-level overrides
+				// Session policy takes precedence over global settings
+				const globalGuardConfig =
+					(settingsStore.get('llmGuardSettings', DEFAULT_LLM_GUARD_CONFIG) as
 						| Partial<LlmGuardConfig>
-						| undefined) ?? DEFAULT_LLM_GUARD_CONFIG
-				);
+						| undefined) ?? DEFAULT_LLM_GUARD_CONFIG;
+				// Use mergeSecurityPolicy to properly merge global and session configs
+				// Session policy overrides global settings; arrays (ban lists, custom patterns) are merged
+				const llmGuardConfig = mergeSecurityPolicy(globalGuardConfig, config.sessionSecurityPolicy);
 
 				if (config.toolType !== 'terminal' && effectivePrompt) {
+					// Emit scan_start event for progress indicator (only if guard is enabled)
+					// The UI will only show the indicator for prompts above a certain length
+					if (llmGuardConfig.enabled) {
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send('security:scan-progress', {
+								sessionId: config.sessionId,
+								tabId: config.tabId,
+								eventType: 'scan_start',
+								contentLength: effectivePrompt.length,
+							});
+						}
+					}
+
 					const guardResult = runLlmGuardPre(effectivePrompt, llmGuardConfig);
+
+					// Emit scan_complete event (before processing results)
+					if (llmGuardConfig.enabled) {
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send('security:scan-progress', {
+								sessionId: config.sessionId,
+								tabId: config.tabId,
+								eventType: 'scan_complete',
+								contentLength: effectivePrompt.length,
+							});
+						}
+					}
+
 					if (guardResult.findings.length > 0) {
 						logger.warn('[LLMGuard] Input findings detected', 'LLMGuard', {
 							sessionId: config.sessionId,
 							toolType: config.toolType,
 							findings: guardResult.findings.map((finding) => finding.type),
+						});
+					}
+
+					// Log security event for input scan
+					if (llmGuardConfig.enabled) {
+						let action: SecurityEventAction = 'none';
+						if (guardResult.blocked) {
+							action = 'blocked';
+						} else if (guardResult.warned) {
+							action = 'warned';
+						} else if (guardResult.findings.length > 0) {
+							action = 'sanitized';
+						}
+
+						logSecurityEvent({
+							sessionId: config.sessionId,
+							tabId: config.tabId,
+							eventType: guardResult.blocked ? 'blocked' : 'input_scan',
+							findings: guardResult.findings,
+							action,
+							originalLength: config.prompt!.length,
+							sanitizedLength: guardResult.sanitizedPrompt.length,
+						}).then((event) => {
+							// Emit simplified event to renderer for real-time UI updates
+							const mainWindow = getMainWindow();
+							if (isWebContentsAvailable(mainWindow)) {
+								mainWindow.webContents.send('security:event', {
+									sessionId: event.sessionId,
+									tabId: event.tabId,
+									eventType: event.eventType,
+									findingTypes: event.findings.map((f) => f.type),
+									findingCount: event.findings.length,
+									action: event.action,
+									originalLength: event.originalLength,
+									sanitizedLength: event.sanitizedLength,
+								});
+							}
 						});
 					}
 
@@ -188,6 +250,32 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						vault: guardResult.vault,
 						inputFindings: guardResult.findings,
 					};
+				}
+
+				// Log prompt preview AFTER LLM Guard sanitization to avoid logging secrets
+				// On Windows, show prompt preview to help debug truncation issues
+				if (effectivePrompt && isWindows) {
+					logFn(`Prompt preview (post-sanitization)`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						promptPreview: {
+							first50: effectivePrompt.substring(0, 50),
+							last50: effectivePrompt.substring(Math.max(0, effectivePrompt.length - 50)),
+							containsHash: effectivePrompt.includes('#'),
+							containsNewline: effectivePrompt.includes('\n'),
+						},
+					});
+				}
+
+				// Debug-level logging for raw prompt metadata when sanitization occurred
+				// Prefixed with [RAW PROMPT] to clearly indicate this is pre-sanitization metadata
+				// Only logs metadata (lengths, delta), never actual prompt content that may contain secrets
+				if (config.prompt && effectivePrompt && config.prompt !== effectivePrompt) {
+					logger.debug(`[RAW PROMPT] Pre-sanitization prompt metadata`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						rawLength: config.prompt.length,
+						sanitizedLength: effectivePrompt.length,
+						lengthDelta: config.prompt.length - effectivePrompt.length,
+					});
 				}
 
 				let finalArgs = buildAgentArgs(agent, {
@@ -515,7 +603,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							sshArgsCount: sshCommand.args.length,
 							remoteCommand,
 							remoteCwd: config.cwd,
-							promptLength: config.prompt?.length,
 							sanitizedPromptLength: effectivePrompt?.length,
 							stdinScriptLength: sshCommand.stdinScript?.length,
 							hasImages,

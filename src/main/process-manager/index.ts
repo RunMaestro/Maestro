@@ -10,6 +10,7 @@ export type {
 	UsageStats,
 	UsageTotals,
 	ProcessManagerEvents,
+	SecurityEventData,
 	ParsedEvent,
 	AgentOutputParser,
 	AgentError,

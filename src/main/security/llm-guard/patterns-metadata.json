@@ -1,0 +1,14 @@
+{
+	"generatedAt": "2026-03-09T11:24:07.394Z",
+	"sources": {
+		"gitleaks": {
+			"url": "https://github.com/gitleaks/gitleaks",
+			"ruleCount": 64
+		},
+		"secretsDb": {
+			"url": "https://github.com/mazen160/secrets-patterns-db",
+			"patternCount": 1606
+		}
+	},
+	"totalPatterns": 1652
+}
