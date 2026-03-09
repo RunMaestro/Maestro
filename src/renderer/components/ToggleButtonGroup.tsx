@@ -12,7 +12,7 @@ export interface ToggleButtonOption<T extends string | number> {
 	activeTextColor?: string;
 }
 
-interface ToggleButtonGroupProps<T extends string | number> {
+export interface ToggleButtonGroupProps<T extends string | number> {
 	/** Array of options - can be simple values or objects with custom styling */
 	options: (T | ToggleButtonOption<T>)[];
 	/** Currently selected value */
@@ -23,6 +23,8 @@ interface ToggleButtonGroupProps<T extends string | number> {
 	theme: Theme;
 	/** Optional custom labels map (alternative to ToggleButtonOption.label) */
 	labels?: Record<string, string>;
+	/** Whether the toggle group is disabled */
+	disabled?: boolean;
 }
 
 function ToggleButtonGroupInner<T extends string | number>({
@@ -31,9 +33,10 @@ function ToggleButtonGroupInner<T extends string | number>({
 	onChange,
 	theme,
 	labels,
+	disabled,
 }: ToggleButtonGroupProps<T>) {
 	return (
-		<div className="flex gap-2">
+		<div className={`flex gap-2 ${disabled ? 'opacity-50' : ''}`}>
 			{options.map((opt) => {
 				// Normalize option to object form
 				const option: ToggleButtonOption<T> =
@@ -62,7 +65,8 @@ function ToggleButtonGroupInner<T extends string | number>({
 					<button
 						key={String(optValue)}
 						onClick={() => onChange(optValue)}
-						className={`flex-1 py-2 px-3 rounded border transition-all ${isActive ? 'ring-2' : ''}`}
+						disabled={disabled}
+						className={`flex-1 py-2 px-3 rounded border transition-all ${isActive ? 'ring-2' : ''} ${disabled ? 'cursor-not-allowed' : ''}`}
 						style={
 							{
 								borderColor: theme.colors.border,
