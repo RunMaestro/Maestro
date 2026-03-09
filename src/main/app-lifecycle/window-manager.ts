@@ -4,7 +4,7 @@
  */
 
 import * as path from 'path';
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, Menu } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -137,6 +137,71 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				`Spell-checker configured with languages: ${spellCheckLanguages.join(', ')}`,
 				'Window'
 			);
+
+			// Handle context menu for spell-check suggestions
+			mainWindow.webContents.on('context-menu', (_event, params) => {
+				// Only show custom context menu if there are spelling suggestions
+				if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
+					const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+					// Add spelling suggestions
+					for (const suggestion of params.dictionarySuggestions) {
+						menuItems.push({
+							label: suggestion,
+							click: () => {
+								mainWindow.webContents.replaceMisspelling(suggestion);
+							},
+						});
+					}
+
+					// Add separator and "Add to Dictionary" option
+					menuItems.push({ type: 'separator' });
+					menuItems.push({
+						label: 'Add to Dictionary',
+						click: () => {
+							mainWindow.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+						},
+					});
+
+					// Add separator and standard edit options
+					menuItems.push({ type: 'separator' });
+					if (params.editFlags.canCut) {
+						menuItems.push({ role: 'cut' });
+					}
+					if (params.editFlags.canCopy) {
+						menuItems.push({ role: 'copy' });
+					}
+					if (params.editFlags.canPaste) {
+						menuItems.push({ role: 'paste' });
+					}
+					if (params.editFlags.canSelectAll) {
+						menuItems.push({ role: 'selectAll' });
+					}
+
+					const menu = Menu.buildFromTemplate(menuItems);
+					menu.popup();
+				} else if (params.isEditable) {
+					// For editable fields without spelling errors, show standard edit menu
+					const menuItems: Electron.MenuItemConstructorOptions[] = [];
+					if (params.editFlags.canCut) {
+						menuItems.push({ role: 'cut' });
+					}
+					if (params.editFlags.canCopy) {
+						menuItems.push({ role: 'copy' });
+					}
+					if (params.editFlags.canPaste) {
+						menuItems.push({ role: 'paste' });
+					}
+					if (params.editFlags.canSelectAll) {
+						menuItems.push({ role: 'selectAll' });
+					}
+
+					if (menuItems.length > 0) {
+						const menu = Menu.buildFromTemplate(menuItems);
+						menu.popup();
+					}
+				}
+			});
 
 			// Save window state before closing
 			const saveWindowState = () => {
