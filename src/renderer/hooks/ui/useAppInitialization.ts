@@ -28,6 +28,8 @@ import { useTabStore } from '../../stores/tabStore';
 import { useNotificationStore, notifyToast } from '../../stores/notificationStore';
 import { getSpeckitCommands } from '../../services/speckit';
 import { getOpenSpecCommands } from '../../services/openspec';
+import { loadInputProcessingPrompts } from '../input/useInputProcessing';
+import { loadSettingsStorePrompts } from '../../stores/settingsStore';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
 
@@ -70,6 +72,16 @@ export function useAppInitialization(): AppInitializationReturn {
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
 	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
+
+	// --- Load disk-based prompts into module caches ---
+	useEffect(() => {
+		loadInputProcessingPrompts().catch((error) => {
+			console.error('[useAppInitialization] Failed to load input processing prompts:', error);
+		});
+		loadSettingsStorePrompts().catch((error) => {
+			console.error('[useAppInitialization] Failed to load settings store prompts:', error);
+		});
+	}, []);
 
 	// --- Splash screen coordination ---
 	useEffect(() => {

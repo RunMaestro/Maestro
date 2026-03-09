@@ -34,7 +34,28 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
-import { commitCommandPrompt } from '../../prompts';
+// ============================================================================
+// Module-level prompt cache (loaded once via IPC, used throughout session)
+// ============================================================================
+
+let cachedCommitCommandPrompt = '';
+let commitPromptLoaded = false;
+
+/**
+ * Load commit command prompt from disk via IPC.
+ * Called once at startup before settings are initialized.
+ */
+export async function loadSettingsStorePrompts(): Promise<void> {
+	if (commitPromptLoaded) return;
+	const result = await window.maestro.prompts.get('commit-command');
+	if (result.success && result.content) {
+		cachedCommitCommandPrompt = result.content;
+	}
+	commitPromptLoaded = true;
+
+	// Update the default AI commands with the loaded prompt
+	DEFAULT_AI_COMMANDS[0].prompt = cachedCommitCommandPrompt;
+}
 
 // ============================================================================
 // Shared Type Aliases
@@ -128,7 +149,7 @@ export const DEFAULT_AI_COMMANDS: CustomAICommand[] = [
 		id: 'commit',
 		command: '/commit',
 		description: 'Commit outstanding changes and push up',
-		prompt: commitCommandPrompt,
+		prompt: cachedCommitCommandPrompt,
 		isBuiltIn: true,
 	},
 ];

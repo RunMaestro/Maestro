@@ -5,7 +5,7 @@
  */
 
 // Main input processing
-export { useInputProcessing, DEFAULT_IMAGE_ONLY_PROMPT } from './useInputProcessing';
+export { useInputProcessing, DEFAULT_IMAGE_ONLY_PROMPT, getImageOnlyPrompt, getMaestroSystemPrompt, loadInputProcessingPrompts } from './useInputProcessing';
 export type {
 	UseInputProcessingDeps,
 	UseInputProcessingReturn,

@@ -28,8 +28,7 @@ import type {
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
-import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
-import { maestroSystemPrompt } from '../../prompts';
+import { getImageOnlyPrompt, getMaestroSystemPrompt } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 
@@ -299,11 +298,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
-				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
+				let effectivePrompt = isImageOnlyMessage ? getImageOnlyPrompt() : item.text!;
 
 				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
 				const isNewSession = !tabAgentSessionId;
-				if (isNewSession && maestroSystemPrompt) {
+				const currentMaestroSystemPrompt = getMaestroSystemPrompt();
+				if (isNewSession && currentMaestroSystemPrompt) {
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
 						try {
@@ -314,7 +314,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						}
 					}
 
-					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					const substitutedSystemPrompt = substituteTemplateVariables(currentMaestroSystemPrompt, {
 						session,
 						gitBranch,
 						conductorProfile: deps.conductorProfile,
@@ -393,8 +393,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// For NEW sessions, prepend Maestro system prompt
 					const isNewSessionForCommand = !tabAgentSessionId;
 					let promptForAgent = substitutedPrompt;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					const systemPromptForCommand = getMaestroSystemPrompt();
+					if (isNewSessionForCommand && systemPromptForCommand) {
+						const substitutedSystemPrompt = substituteTemplateVariables(systemPromptForCommand, {
 							session,
 							gitBranch,
 							conductorProfile: deps.conductorProfile,
