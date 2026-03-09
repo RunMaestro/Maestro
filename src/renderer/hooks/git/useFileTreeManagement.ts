@@ -287,7 +287,17 @@ export function useFileTreeManagement(
 				]);
 
 				// Discard if a newer load started while we were awaiting
-				if (seq !== loadSequenceRef.current) return;
+				if (seq !== loadSequenceRef.current) {
+					// Reset loading state so this session can retry later
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId
+								? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+								: s
+						)
+					);
+					return;
+				}
 
 				const stats = await statsPromise;
 
