@@ -1,5 +1,14 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Zap, RefreshCw } from 'lucide-react';
+import {
+	Activity,
+	GitBranch,
+	Bot,
+	Bookmark,
+	AlertCircle,
+	Server,
+	Zap,
+	RefreshCw,
+} from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -190,16 +199,19 @@ export const SessionItem = memo(function SessionItem({
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 						{/* Account assignment badge */}
-						{session.accountId && session.accountName && (
+						{(session.accountName || session.accountId) && (
 							<span
 								className="text-[9px] px-1 py-0.5 rounded font-bold"
 								style={{
 									backgroundColor: `${theme.colors.accent}25`,
 									color: theme.colors.accentText || theme.colors.accent,
 								}}
-								title={`Virtuoso: ${session.accountName}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
+								title={`Virtuoso: ${session.accountName || session.accountId}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
 							>
-								{session.accountName.split('@')[0]?.slice(0, 10)?.toUpperCase() || 'ACC'}
+								{(session.accountName || session.accountId || '')
+									.split('@')[0]
+									?.slice(0, 10)
+									?.toUpperCase() || 'ACC'}
 							</span>
 						)}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}
@@ -367,7 +379,10 @@ export const SessionItem = memo(function SessionItem({
 							session.archivedByMigration
 								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
-									? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
+									? {
+											border: `1.5px solid ${theme.colors.textDim}`,
+											backgroundColor: 'transparent',
+										}
 									: {
 											backgroundColor: isInBatch
 												? theme.colors.warning
