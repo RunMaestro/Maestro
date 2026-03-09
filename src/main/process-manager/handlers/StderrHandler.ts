@@ -108,10 +108,10 @@ export class StderrHandler {
 			}
 
 			// Gemini CLI writes informational status messages to stderr during startup
-			// (e.g., "YOLO mode is enabled", "Loaded cached credentials").
-			// It also dumps raw Axios error objects when internal subagents hit API
-			// failures — these contain "[Function: ...]" references and full request
-			// payloads that are noise in the UI.
+			// and on every turn (e.g., "YOLO mode is enabled", "Loading extension:").
+			// It also writes response text to stderr when --output-format stream-json
+			// is active (stdout is reserved for the JSON event stream).
+			// Filter out known informational lines and re-emit the rest as 'data'.
 			if (toolType === 'gemini-cli') {
 				const geminiInfoPatterns = [
 					/YOLO mode is enabled/i,
@@ -119,19 +119,24 @@ export class StderrHandler {
 					/Loaded cached credentials/i,
 					/Loading configuration/i,
 					/Connecting to/i,
+					// Extension and hook lifecycle messages
+					/Loading extension:/i,
+					/Hook execution for \w+:/i,
+					/Created execution plan for \w+:/i,
+					/Expanding hook command:/i,
+					/Hook\(s\) \[.*?\] (?:failed|succeeded) for event/i,
+					/hooks? executed successfully/i,
+					/^\[WARNING\] Hook/i,
+					/Press F12 to see the debug drawer/i,
 				];
 
 				// Detect capacity/quota errors with model info BEFORE the Axios dump check.
 				// These are actionable — the user can switch models to work around them.
-				const capacityMatch = cleanedStderr.match(
-					/no capacity available for model\s+(\S+)/i
-				);
+				const capacityMatch = cleanedStderr.match(/no capacity available for model\s+(\S+)/i);
 				const retryExhaustedMatch = cleanedStderr.match(
 					/(?:attempt\s+\d+\s+failed|max\s+attempts?\s+reached).*?(?:model\s+(\S+))?/i
 				);
-				const quotaErrorMatch = cleanedStderr.match(
-					/RetryableQuotaError:.*?(?:model\s+(\S+))?/i
-				);
+				const quotaErrorMatch = cleanedStderr.match(/RetryableQuotaError:.*?(?:model\s+(\S+))?/i);
 
 				const failedModel =
 					capacityMatch?.[1] || retryExhaustedMatch?.[1] || quotaErrorMatch?.[1] || null;
@@ -145,17 +150,13 @@ export class StderrHandler {
 						? `Gemini API retry limit reached.${modelHint}`
 						: `Gemini API capacity unavailable.${modelHint}`;
 
-					logger.info(
-						'[ProcessManager] Gemini capacity/quota error detected',
-						'ProcessManager',
-						{
-							sessionId,
-							failedModel,
-							hasCapacityMatch: !!capacityMatch,
-							hasRetryExhausted: !!retryExhaustedMatch,
-							hasQuotaError: !!quotaErrorMatch,
-						}
-					);
+					logger.info('[ProcessManager] Gemini capacity/quota error detected', 'ProcessManager', {
+						sessionId,
+						failedModel,
+						hasCapacityMatch: !!capacityMatch,
+						hasRetryExhausted: !!retryExhaustedMatch,
+						hasQuotaError: !!quotaErrorMatch,
+					});
 
 					// Emit as stderr for the log
 					this.emitter.emit('stderr', sessionId, message);
@@ -194,8 +195,8 @@ export class StderrHandler {
 					const hasActualError =
 						/\berror\b/i.test(cleanedStderr) &&
 						(/status(?:Code)?[:\s]+[45]\d{2}/i.test(cleanedStderr) ||
-						/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket hang up/i.test(cleanedStderr) ||
-						/\b(?:40[013]|403|429|50[023])\b/.test(cleanedStderr));
+							/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket hang up/i.test(cleanedStderr) ||
+							/\b(?:40[013]|403|429|50[023])\b/.test(cleanedStderr));
 
 					logger.debug(
 						'[ProcessManager] Suppressing Gemini CLI internal stderr dump',
@@ -210,9 +211,7 @@ export class StderrHandler {
 
 					if (hasActualError) {
 						// Try to extract model from the API URL in the dump
-						const apiModelMatch = cleanedStderr.match(
-							/models\/([^/:?]+)/i
-						);
+						const apiModelMatch = cleanedStderr.match(/models\/([^/:?]+)/i);
 						const dumpModel = apiModelMatch?.[1];
 						const apiErrorMsg = dumpModel
 							? `Gemini API error (model: ${dumpModel}). This may be transient — try again or switch to a different model.`
@@ -227,18 +226,16 @@ export class StderrHandler {
 					(line) => line.trim() && !geminiInfoPatterns.some((p) => p.test(line))
 				);
 				if (nonInfoLines.length === 0) {
-					logger.debug(
-						'[ProcessManager] Suppressing Gemini CLI info stderr',
-						'ProcessManager',
-						{
-							sessionId,
-							message: cleanedStderr.substring(0, 200),
-						}
-					);
+					logger.debug('[ProcessManager] Suppressing Gemini CLI info stderr', 'ProcessManager', {
+						sessionId,
+						message: cleanedStderr.substring(0, 200),
+					});
 					return;
 				}
-				// Re-emit only non-informational lines
-				this.emitter.emit('stderr', sessionId, nonInfoLines.join('\n'));
+				// Re-emit as regular data — Gemini CLI writes response text to stderr
+				// when --output-format stream-json is active (stdout is reserved for
+				// the JSON event stream). Same pattern as Codex stderr handling.
+				this.emitter.emit('data', sessionId, nonInfoLines.join('\n'));
 				return;
 			}
 

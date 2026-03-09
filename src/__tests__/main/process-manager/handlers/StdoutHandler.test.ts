@@ -1428,6 +1428,92 @@ describe('StdoutHandler', () => {
 
 	// ── Edge cases ─────────────────────────────────────────────────────────
 
+	describe('Gemini CLI non-partial text events', () => {
+		function createGeminiParser() {
+			return {
+				agentId: 'gemini-cli',
+				parseJsonLine: vi.fn(() => null),
+				parseJsonObject: vi.fn((parsed: any) => {
+					if (parsed.type === 'message' && parsed.role === 'assistant') {
+						return {
+							type: 'text',
+							text: parsed.content,
+							isPartial: parsed.delta === true,
+							raw: parsed,
+						};
+					}
+					if (parsed.type === 'result') {
+						return { type: 'result', text: '', raw: parsed };
+					}
+					return null;
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn((event: any) => event?.raw?.type === 'result'),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+		}
+
+		it('should emit complete (delta:false) message events as data immediately', () => {
+			const parser = createGeminiParser();
+			const { handler, bufferManager, sessionId, proc, emitter } = createTestContext({
+				toolType: 'gemini-cli' as any,
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Gemini sends a complete message (delta: false or absent)
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'Hello! How can I help you?',
+			});
+
+			// Should be emitted immediately as data, not accumulated
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Hello! How can I help you?'
+			);
+			// Should also emit thinking-chunk for live display
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello! How can I help you?');
+			// Should NOT be accumulated in streamedText
+			expect(proc.streamedText).toBe('');
+		});
+
+		it('should accumulate partial (delta:true) message events in streamedText', () => {
+			const parser = createGeminiParser();
+			const { handler, bufferManager, sessionId, proc, emitter } = createTestContext({
+				toolType: 'gemini-cli' as any,
+				isStreamJsonMode: true,
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Gemini sends streaming delta
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'Hello',
+				delta: true,
+			});
+
+			// Should accumulate in streamedText
+			expect(proc.streamedText).toBe('Hello');
+			// Should emit thinking-chunk
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello');
+			// Should NOT emit via emitDataBuffered (deferred to result)
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('edge cases', () => {
 		it('should emit non-JSON lines via bufferManager in stream JSON mode', () => {
 			const { handler, bufferManager, sessionId } = createTestContext({

@@ -277,4 +277,93 @@ describe('StderrHandler', () => {
 			expect(proc.stderrBuffer).toContain('Error 2');
 		});
 	});
+
+	describe('Gemini CLI informational message filtering', () => {
+		it('should suppress YOLO mode and extension loading messages', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'gemini-cli' as any,
+			});
+
+			const dataSpy = vi.fn();
+			const stderrSpy = vi.fn();
+			emitter.on('data', dataSpy);
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(
+				sessionId,
+				'YOLO mode is enabled. All tool calls will be automatically approved.'
+			);
+
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should suppress extension and hook lifecycle messages', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'gemini-cli' as any,
+			});
+
+			const dataSpy = vi.fn();
+			const stderrSpy = vi.fn();
+			emitter.on('data', dataSpy);
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(sessionId, 'Loading extension: gemini-cli-vibes');
+			handler.handleData(sessionId, 'Hook execution for SessionStart: success');
+			handler.handleData(sessionId, 'Created execution plan for BeforeAgent: 2 hooks');
+
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should re-emit non-info Gemini content as data (not stderr)', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'gemini-cli' as any,
+			});
+
+			const dataSpy = vi.fn();
+			const stderrSpy = vi.fn();
+			emitter.on('data', dataSpy);
+			emitter.on('stderr', stderrSpy);
+
+			handler.handleData(sessionId, 'Here is the response to your question.');
+
+			// Non-info lines are re-emitted as 'data', not 'stderr'
+			expect(dataSpy).toHaveBeenCalledWith(sessionId, 'Here is the response to your question.');
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should suppress Axios dumps but surface actual API errors', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'gemini-cli' as any,
+			});
+
+			const stderrSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+
+			// Pure Axios noise — should be fully suppressed
+			handler.handleData(sessionId, '[Function: serialize] paramsSerializer validateStatus');
+
+			expect(stderrSpy).not.toHaveBeenCalled();
+		});
+
+		it('should emit capacity/quota errors as agent-error events', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'gemini-cli' as any,
+			});
+
+			const agentErrorSpy = vi.fn();
+			emitter.on('agent-error', agentErrorSpy);
+
+			handler.handleData(sessionId, 'no capacity available for model gemini-2.5-pro');
+
+			expect(agentErrorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					type: 'rate_limited',
+					recoverable: true,
+				})
+			);
+		});
+	});
 });
