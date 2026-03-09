@@ -13,7 +13,7 @@
 import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
-import { buildSshCommand } from './ssh-command-builder';
+import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
 import { logger } from './logger';
 
 const LOG_CONTEXT = '[SshSpawnWrapper]';
@@ -52,8 +52,10 @@ export interface SshSpawnWrapResult {
 	cwd: string;
 	/** Custom environment variables (undefined for SSH since they're in the command) */
 	customEnvVars?: Record<string, string>;
-	/** The prompt to pass to ProcessManager (undefined for small SSH prompts, original for large) */
+	/** The prompt to pass to ProcessManager (undefined for SSH prompts sent via stdinScript) */
 	prompt?: string;
+	/** Script to send via stdin for SSH execution (includes PATH setup + prompt passthrough) */
+	sshStdinScript?: string;
 	/** Whether SSH remote was used */
 	sshRemoteUsed: SshRemoteConfig | null;
 }
@@ -125,19 +127,49 @@ export async function wrapSpawnWithSsh(
 		host: sshResult.config.host,
 	});
 
-	// For SSH execution, we need to include the prompt in the args
-	// because ProcessManager.spawn() won't add it (we pass prompt: undefined for SSH)
-	// Use promptArgs if available (e.g., OpenCode -p), otherwise use positional arg
-	//
-	// For large prompts (>4000 chars), don't embed in command line to avoid
-	// command line length limits. Instead, use --input-format stream-json and
-	// let ProcessManager send via stdin.
-	const isLargePrompt = config.prompt && config.prompt.length > 4000;
-	let sshArgs = [...config.args];
-	let passPromptToSpawn: string | undefined;
+	// Determine the command to run on the remote host:
+	// Use agentBinaryName if provided (e.g., 'codex', 'claude'), otherwise use the command
+	// This avoids using local paths like '/opt/homebrew/bin/codex' on the remote
+	const remoteCommand = config.agentBinaryName || config.command;
 
-	if (config.prompt && !isLargePrompt) {
-		// Small prompt - embed in command line
+	// For SSH execution, we need to include the prompt in the args or send via stdin.
+	// Small prompts (<= 4000 chars) are embedded in the command line via buildSshCommand.
+	// Large prompts use buildSshCommandWithStdin which sends everything (PATH setup,
+	// cd, env vars, exec command, and prompt) via stdin to /bin/bash on the remote.
+	// This matches the approach used by the process:spawn IPC handler.
+	const isLargePrompt = config.prompt && config.prompt.length > 4000;
+
+	if (config.prompt && isLargePrompt) {
+		// Large prompt - use stdin passthrough via buildSshCommandWithStdin
+		// The prompt is appended after the exec line in the stdin script, so the
+		// exec'd agent reads it directly from stdin as raw text.
+		logger.info('Using stdin passthrough for large prompt in SSH remote execution', LOG_CONTEXT, {
+			promptLength: config.prompt.length,
+			reason: 'avoid-command-line-length-limit',
+		});
+
+		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
+			command: remoteCommand,
+			args: [...config.args],
+			cwd: config.cwd,
+			env: config.customEnvVars,
+			stdinInput: config.prompt,
+		});
+
+		return {
+			command: sshCommand.command,
+			args: sshCommand.args,
+			cwd: os.homedir(),
+			customEnvVars: undefined,
+			prompt: undefined,
+			sshStdinScript: sshCommand.stdinScript,
+			sshRemoteUsed: sshResult.config,
+		};
+	}
+
+	// Small or no prompt - embed in command line via buildSshCommand
+	let sshArgs = [...config.args];
+	if (config.prompt) {
 		if (config.promptArgs) {
 			sshArgs = [...config.args, ...config.promptArgs(config.prompt)];
 		} else if (config.noPromptSeparator) {
@@ -145,31 +177,13 @@ export async function wrapSpawnWithSsh(
 		} else {
 			sshArgs = [...config.args, '--', config.prompt];
 		}
-	} else if (config.prompt && isLargePrompt) {
-		// Large prompt - use stdin mode
-		sshArgs = [...config.args, '--input-format', 'stream-json'];
-		passPromptToSpawn = config.prompt; // Pass to ProcessManager for stdin delivery
-		logger.info('Using stdin for large prompt in SSH remote execution', LOG_CONTEXT, {
-			promptLength: config.prompt.length,
-			reason: 'avoid-command-line-length-limit',
-		});
 	}
 
-	// Determine the command to run on the remote host:
-	// Use agentBinaryName if provided (e.g., 'codex', 'claude'), otherwise use the command
-	// This avoids using local paths like '/opt/homebrew/bin/codex' on the remote
-	const remoteCommand = config.agentBinaryName || config.command;
-
-	// Check if we'll send input via stdin
-	const useStdin = sshArgs.includes('--input-format') && sshArgs.includes('stream-json');
-
-	// Build the SSH command
 	const sshCommand = await buildSshCommand(sshResult.config, {
 		command: remoteCommand,
 		args: sshArgs,
 		cwd: config.cwd,
 		env: config.customEnvVars,
-		useStdin,
 	});
 
 	logger.debug('SSH command built', LOG_CONTEXT, {
@@ -183,12 +197,9 @@ export async function wrapSpawnWithSsh(
 	return {
 		command: sshCommand.command,
 		args: sshCommand.args,
-		// Use local home directory as cwd - remote cwd is in the SSH command
 		cwd: os.homedir(),
-		// Env vars are passed via the SSH command, not locally
 		customEnvVars: undefined,
-		// For large prompts, pass to ProcessManager for stdin delivery
-		prompt: passPromptToSpawn,
+		prompt: undefined,
 		sshRemoteUsed: sshResult.config,
 	};
 }

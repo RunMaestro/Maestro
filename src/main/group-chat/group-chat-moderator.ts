@@ -39,6 +39,8 @@ export interface IProcessManager {
 		sendPromptViaStdin?: boolean;
 		/** Send prompt via stdin as raw text (for non-stream-json agents on Windows) */
 		sendPromptViaStdinRaw?: boolean;
+		/** Script to send via stdin for SSH execution (bypasses shell escaping) */
+		sshStdinScript?: string;
 	}): { pid: number; success: boolean };
 
 	write(sessionId: string, data: string): boolean;

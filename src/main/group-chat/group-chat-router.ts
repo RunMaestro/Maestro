@@ -537,6 +537,7 @@ ${message}${imageContext}`;
 					getCustomEnvVarsCallback?.(chat.moderatorAgentId);
 				let spawnShell: string | undefined;
 				let spawnRunInShell = false;
+				let spawnSshStdinScript: string | undefined;
 
 				// Apply SSH wrapping if configured
 				if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
@@ -562,6 +563,7 @@ ${message}${imageContext}`;
 					spawnCwd = sshWrapped.cwd;
 					spawnPrompt = sshWrapped.prompt;
 					spawnEnvVars = sshWrapped.customEnvVars;
+					spawnSshStdinScript = sshWrapped.sshStdinScript;
 					if (sshWrapped.sshRemoteUsed) {
 						console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
 					}
@@ -594,6 +596,7 @@ ${message}${imageContext}`;
 					runInShell: spawnRunInShell,
 					sendPromptViaStdin: winConfig.sendPromptViaStdin,
 					sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
+					sshStdinScript: spawnSshStdinScript,
 				});
 
 				console.log(`[GroupChat:Debug] Spawn result: ${JSON.stringify(spawnResult)}`);
@@ -923,6 +926,7 @@ export async function routeModeratorResponse(
 					getCustomEnvVarsCallback?.(participant.agentId);
 				let finalSpawnShell: string | undefined;
 				let finalSpawnRunInShell = false;
+				let finalSshStdinScript: string | undefined;
 
 				// Apply SSH wrapping if configured for this session
 				if (sshStore && matchingSession?.sshRemoteConfig) {
@@ -950,6 +954,7 @@ export async function routeModeratorResponse(
 					finalSpawnCwd = sshWrapped.cwd;
 					finalSpawnPrompt = sshWrapped.prompt;
 					finalSpawnEnvVars = sshWrapped.customEnvVars;
+					finalSshStdinScript = sshWrapped.sshStdinScript;
 					if (sshWrapped.sshRemoteUsed) {
 						console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
 					}
@@ -984,6 +989,7 @@ export async function routeModeratorResponse(
 					runInShell: finalSpawnRunInShell,
 					sendPromptViaStdin: winConfig.sendPromptViaStdin,
 					sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
+					sshStdinScript: finalSshStdinScript,
 				});
 
 				console.log(
@@ -1293,6 +1299,47 @@ Review the agent responses above. Either:
 		groupChatEmitters.emitStateChange?.(groupChatId, 'moderator-thinking');
 		console.log(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
+		// Prepare spawn config with potential SSH wrapping
+		let spawnCommand = command;
+		let spawnArgs = finalArgs;
+		let spawnCwd = os.homedir();
+		let spawnPrompt: string | undefined = synthesisPrompt;
+		let spawnEnvVars =
+			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(chat.moderatorAgentId);
+		let spawnSshStdinScript: string | undefined;
+
+		// Apply SSH wrapping if configured
+		if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
+			console.log(`[GroupChat:Debug] Applying SSH wrapping for synthesis moderator...`);
+			const sshWrapped = await wrapSpawnWithSsh(
+				{
+					command,
+					args: finalArgs,
+					cwd: os.homedir(),
+					prompt: synthesisPrompt,
+					customEnvVars:
+						configResolution.effectiveCustomEnvVars ??
+						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+					promptArgs: agent.promptArgs,
+					noPromptSeparator: agent.noPromptSeparator,
+					agentBinaryName: agent.binaryName,
+				},
+				chat.moderatorConfig.sshRemoteConfig,
+				sshStore
+			);
+			spawnCommand = sshWrapped.command;
+			spawnArgs = sshWrapped.args;
+			spawnCwd = sshWrapped.cwd;
+			spawnPrompt = sshWrapped.prompt;
+			spawnEnvVars = sshWrapped.customEnvVars;
+			spawnSshStdinScript = sshWrapped.sshStdinScript;
+			if (sshWrapped.sshRemoteUsed) {
+				console.log(
+					`[GroupChat:Debug] SSH remote used for synthesis: ${sshWrapped.sshRemoteUsed.name}`
+				);
+			}
+		}
+
 		// Get Windows-specific spawn config (shell, stdin mode) - handles SSH exclusion
 		const winConfig = getWindowsSpawnConfig(
 			chat.moderatorAgentId,
@@ -1305,21 +1352,20 @@ Review the agent responses above. Either:
 		const spawnResult = processManager.spawn({
 			sessionId,
 			toolType: chat.moderatorAgentId,
-			cwd: os.homedir(),
-			command,
-			args: finalArgs,
+			cwd: spawnCwd,
+			command: spawnCommand,
+			args: spawnArgs,
 			readOnlyMode: true,
-			prompt: synthesisPrompt,
+			prompt: spawnPrompt,
 			contextWindow: getContextWindowValue(agent, agentConfigValues),
-			customEnvVars:
-				configResolution.effectiveCustomEnvVars ??
-				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+			customEnvVars: spawnEnvVars,
 			promptArgs: agent.promptArgs,
 			noPromptSeparator: agent.noPromptSeparator,
 			shell: winConfig.shell,
 			runInShell: winConfig.runInShell,
 			sendPromptViaStdin: winConfig.sendPromptViaStdin,
 			sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
+			sshStdinScript: spawnSshStdinScript,
 		});
 
 		console.log(`[GroupChat:Debug] Synthesis spawn result: ${JSON.stringify(spawnResult)}`);
@@ -1461,6 +1507,7 @@ export async function respawnParticipantWithRecovery(
 		configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId);
 	let finalSpawnShell: string | undefined;
 	let finalSpawnRunInShell = false;
+	let finalSshStdinScript: string | undefined;
 
 	console.log(`[GroupChat:Debug] Recovery spawn command: ${finalSpawnCommand}`);
 	console.log(`[GroupChat:Debug] Recovery spawn args count: ${finalSpawnArgs.length}`);
@@ -1487,6 +1534,7 @@ export async function respawnParticipantWithRecovery(
 		finalSpawnCwd = sshWrapped.cwd;
 		finalSpawnPrompt = sshWrapped.prompt;
 		finalSpawnEnvVars = sshWrapped.customEnvVars;
+		finalSshStdinScript = sshWrapped.sshStdinScript;
 		if (sshWrapped.sshRemoteUsed) {
 			console.log(
 				`[GroupChat:Debug] SSH remote used for recovery: ${sshWrapped.sshRemoteUsed.name}`
@@ -1518,6 +1566,7 @@ export async function respawnParticipantWithRecovery(
 		runInShell: finalSpawnRunInShell,
 		sendPromptViaStdin: winConfig.sendPromptViaStdin,
 		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
+		sshStdinScript: finalSshStdinScript,
 	});
 
 	console.log(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);
