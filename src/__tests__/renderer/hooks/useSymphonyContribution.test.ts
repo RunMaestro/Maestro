@@ -1025,8 +1025,8 @@ describe('useSymphonyContribution', () => {
 			});
 
 			// startBatchRun fires after 500ms
-			act(() => {
-				vi.advanceTimersByTime(500);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
 			});
 
 			expect(startBatchRun).toHaveBeenCalledTimes(1);
@@ -1046,8 +1046,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(500);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
 			});
 
 			const newSessionId = useSessionStore.getState().sessions[0].id;
@@ -1077,8 +1077,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(500);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
 			});
 
 			const [, batchConfig] = startBatchRun.mock.calls[0];
@@ -1106,8 +1106,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(500);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
 			});
 
 			const [, batchConfig] = startBatchRun.mock.calls[0];
@@ -1128,8 +1128,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(1000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
@@ -1150,8 +1150,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(1000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
@@ -1171,8 +1171,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(499);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(499);
 			});
 
 			expect(startBatchRun).not.toHaveBeenCalled();
@@ -1192,12 +1192,8 @@ describe('useSymphonyContribution', () => {
 				await result.current.handleStartContribution(data);
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(500);
-			});
-
 			await act(async () => {
-				await Promise.resolve();
+				await vi.advanceTimersByTimeAsync(500);
 			});
 
 			expect(startBatchRun).toHaveBeenCalledTimes(1);
@@ -1213,6 +1209,35 @@ describe('useSymphonyContribution', () => {
 
 			consoleError.mockRestore();
 			vi.useRealTimers();
+		});
+
+		it('handles loadBatchPrompts failure by showing auto-run error and skipping batch start', async () => {
+			const startBatchRun = vi.fn().mockResolvedValue(undefined);
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			(loadBatchPrompts as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+				new Error('prompt load failed')
+			);
+			const deps = createDeps({ startBatchRun });
+			const data = createContributionData({ autoRunPath: '/tmp/repo/docs' });
+
+			const { result } = renderHook(() => useSymphonyContribution(deps));
+
+			await act(async () => {
+				await result.current.handleStartContribution(data);
+			});
+
+			expect(startBatchRun).not.toHaveBeenCalled();
+			expect(consoleError).toHaveBeenCalledWith(
+				'[Symphony] Failed to auto-start batch run:',
+				expect.any(Error)
+			);
+			expect(notifyToast).toHaveBeenCalledWith({
+				type: 'error',
+				title: 'Symphony Error',
+				message: 'Failed to start Auto Run.',
+			});
+
+			consoleError.mockRestore();
 		});
 	});
 

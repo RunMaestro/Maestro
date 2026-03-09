@@ -365,27 +365,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 		const loadDefaultPrompt = async () => {
 			try {
-					await loadBatchPrompts();
-					if (cancelled) return;
+				await loadBatchPrompts();
+				if (cancelled) return;
 
-					const loadedDefaultPrompt = getDefaultBatchPrompt();
-					setDefaultBatchPrompt(loadedDefaultPrompt);
-					setPrompt((existingPrompt) =>
-						!hasInitialPromptRef.current && existingPrompt === ''
-							? loadedDefaultPrompt
-							: existingPrompt
-					);
-					setSavedPrompt((existingPrompt) =>
-						!hasInitialPromptRef.current && existingPrompt === ''
-							? loadedDefaultPrompt
-							: existingPrompt
-					);
-					if (!hasInitialPromptRef.current && initialPromptRef.current === '') {
-						initialPromptRef.current = loadedDefaultPrompt;
-					}
-				} catch (error) {
-					console.error('[BatchRunnerModal] Failed to load default prompt:', error);
+				const loadedDefaultPrompt = getDefaultBatchPrompt();
+				setDefaultBatchPrompt(loadedDefaultPrompt);
+				setPrompt((existingPrompt) =>
+					!hasInitialPromptRef.current && existingPrompt === ''
+						? loadedDefaultPrompt
+						: existingPrompt
+				);
+				setSavedPrompt((existingPrompt) =>
+					!hasInitialPromptRef.current && existingPrompt === ''
+						? loadedDefaultPrompt
+						: existingPrompt
+				);
+				if (!hasInitialPromptRef.current && initialPromptRef.current === '') {
+					initialPromptRef.current = loadedDefaultPrompt;
 				}
+			} catch (error) {
+				console.error('[BatchRunnerModal] Failed to load default prompt:', error);
+			}
 		};
 
 		loadDefaultPrompt();

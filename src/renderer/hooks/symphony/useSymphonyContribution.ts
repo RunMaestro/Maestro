@@ -133,7 +133,7 @@ export function useSymphonyContribution(
 			};
 
 			// Create session with Symphony metadata
-				const newSession: Session = {
+			const newSession: Session = {
 				id: newId,
 				name: data.sessionName,
 				toolType: data.agentType as ToolType,
@@ -194,10 +194,11 @@ export function useSymphonyContribution(
 					documentPaths: data.issue.documentPaths.map((d) => d.path),
 					status: 'running',
 				},
-				};
+			};
 
-				let batchConfig: BatchRunConfig | null = null;
-				if (data.autoRunPath && data.issue.documentPaths.length > 0) {
+			let batchConfig: BatchRunConfig | null = null;
+			if (data.autoRunPath && data.issue.documentPaths.length > 0) {
+				try {
 					await loadBatchPrompts();
 					batchConfig = {
 						documents: data.issue.documentPaths.map((doc) => ({
@@ -209,69 +210,77 @@ export function useSymphonyContribution(
 						prompt: getDefaultBatchPrompt(),
 						loopEnabled: false,
 					};
-				}
-
-				setSessions((prev) => [...prev, newSession]);
-				setActiveSessionId(newId);
-				setSymphonyModalOpen(false);
-
-				// Register active contribution in Symphony persistent state
-				// This makes it show up in the Active tab of the Symphony modal
-				window.maestro.symphony
-					.registerActive({
-						contributionId: data.contributionId,
-						sessionId: newId,
-						repoSlug: data.repo.slug,
-						repoName: data.repo.name,
-						issueNumber: data.issue.number,
-						issueTitle: data.issue.title,
-						localPath: data.localPath,
-						branchName: data.branchName || '',
-						totalDocuments: data.issue.documentPaths.length,
-						agentType: data.agentType,
-						draftPrNumber: data.draftPrNumber,
-						draftPrUrl: data.draftPrUrl,
-					})
-					.catch((err: unknown) => {
-						console.error('[Symphony] Failed to register active contribution:', err);
+				} catch (error) {
+					console.error('[Symphony] Failed to auto-start batch run:', error);
+					notifyToast({
+						type: 'error',
+						title: 'Symphony Error',
+						message: 'Failed to start Auto Run.',
 					});
+				}
+			}
 
-				// Track stats
-				window.maestro.stats.recordSessionCreated({
+			setSessions((prev) => [...prev, newSession]);
+			setActiveSessionId(newId);
+			setSymphonyModalOpen(false);
+
+			// Register active contribution in Symphony persistent state
+			// This makes it show up in the Active tab of the Symphony modal
+			window.maestro.symphony
+				.registerActive({
+					contributionId: data.contributionId,
 					sessionId: newId,
+					repoSlug: data.repo.slug,
+					repoName: data.repo.name,
+					issueNumber: data.issue.number,
+					issueTitle: data.issue.title,
+					localPath: data.localPath,
+					branchName: data.branchName || '',
+					totalDocuments: data.issue.documentPaths.length,
 					agentType: data.agentType,
-					projectPath: data.localPath,
-					createdAt: Date.now(),
-					isRemote: false,
+					draftPrNumber: data.draftPrNumber,
+					draftPrUrl: data.draftPrUrl,
+				})
+				.catch((err: unknown) => {
+					console.error('[Symphony] Failed to register active contribution:', err);
 				});
 
-				// Focus input
-				setActiveFocus('main');
-				setTimeout(() => inputRef.current?.focus(), 50);
+			// Track stats
+			window.maestro.stats.recordSessionCreated({
+				sessionId: newId,
+				agentType: data.agentType,
+				projectPath: data.localPath,
+				createdAt: Date.now(),
+				isRemote: false,
+			});
 
-				// Switch to Auto Run tab so user sees the documents
-				setActiveRightTab('autorun');
+			// Focus input
+			setActiveFocus('main');
+			setTimeout(() => inputRef.current?.focus(), 50);
 
-				// Auto-start batch run with all contribution documents
-				if (batchConfig && data.autoRunPath) {
-					// Small delay to ensure session state is fully propagated
-					setTimeout(() => {
-						console.log(
-							'[Symphony] Auto-starting batch run with',
-							batchConfig.documents.length,
-							'documents'
-						);
-						void startBatchRun(newId, batchConfig, data.autoRunPath).catch((error) => {
-							console.error('[Symphony] Failed to auto-start batch run:', error);
-							notifyToast({
-								type: 'error',
-								title: 'Symphony Error',
-								message: 'Failed to start Auto Run.',
-							});
+			// Switch to Auto Run tab so user sees the documents
+			setActiveRightTab('autorun');
+
+			// Auto-start batch run with all contribution documents
+			if (batchConfig && data.autoRunPath) {
+				// Small delay to ensure session state is fully propagated
+				setTimeout(() => {
+					console.log(
+						'[Symphony] Auto-starting batch run with',
+						batchConfig.documents.length,
+						'documents'
+					);
+					void startBatchRun(newId, batchConfig, data.autoRunPath).catch((error) => {
+						console.error('[Symphony] Failed to auto-start batch run:', error);
+						notifyToast({
+							type: 'error',
+							title: 'Symphony Error',
+							message: 'Failed to start Auto Run.',
 						});
-					}, 500);
-				}
-			},
+					});
+				}, 500);
+			}
+		},
 			[sessions, defaultSaveToHistory, startBatchRun]
 		);
 
