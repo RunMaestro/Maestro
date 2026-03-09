@@ -149,6 +149,11 @@ export function useFileTreeManagement(
 
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 
+	// Sequence counter to discard stale file tree loads.
+	// When a newer load starts, any in-flight load with an older sequence number
+	// will silently discard its result instead of calling setSessions.
+	const loadSequenceRef = useRef<number>(0);
+
 	// Build SSH context options from settings
 	const sshContextOptions: SshContextOptions = useMemo(
 		() => ({
@@ -174,6 +179,7 @@ export function useFileTreeManagement(
 	 */
 	const refreshFileTree = useCallback(
 		async (sessionId: string): Promise<FileTreeChanges | undefined> => {
+			const seq = ++loadSequenceRef.current;
 			// Use sessionsRef to avoid dependency on sessions state (prevents timer reset on every session change)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return undefined;
@@ -198,6 +204,10 @@ export function useFileTreeManagement(
 					});
 
 				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
+
+				// Discard if a newer load started while we were awaiting
+				if (seq !== loadSequenceRef.current) return undefined;
+
 				const stats = await statsPromise;
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, newTree);
@@ -241,6 +251,7 @@ export function useFileTreeManagement(
 	 */
 	const refreshGitFileState = useCallback(
 		async (sessionId: string) => {
+			const seq = ++loadSequenceRef.current;
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
@@ -275,6 +286,9 @@ export function useFileTreeManagement(
 					gitService.isRepo(gitRoot, sshContext?.sshRemoteId),
 				]);
 
+				// Discard if a newer load started while we were awaiting
+				if (seq !== loadSequenceRef.current) return;
+
 				const stats = await statsPromise;
 
 				let gitBranches: string[] | undefined;
@@ -288,6 +302,9 @@ export function useFileTreeManagement(
 					]);
 					gitRefsCacheTime = Date.now();
 				}
+
+				// Re-check after additional awaits (branches/tags fetch)
+				if (seq !== loadSequenceRef.current) return;
 
 				setSessions((prev) =>
 					prev.map((s) =>
@@ -407,6 +424,9 @@ export function useFileTreeManagement(
 				);
 			};
 
+			// Increment load sequence so concurrent loads can detect staleness
+			const seq = ++loadSequenceRef.current;
+
 			// Load tree with progress callback for SSH sessions
 			const treePromise = sshContext
 				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localOptions)
@@ -425,6 +445,9 @@ export function useFileTreeManagement(
 
 			treePromise
 				.then(async (tree) => {
+					// Discard if a newer load started while we were awaiting
+					if (seq !== loadSequenceRef.current) return;
+
 					const stats = await statsPromise;
 					setSessions((prev) =>
 						prev.map((s) =>
