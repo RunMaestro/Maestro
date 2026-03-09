@@ -6,7 +6,41 @@
  */
 
 import { getRandomInitialQuestion } from './fillerPhrases';
-import { wizardSystemPrompt, wizardSystemContinuationPrompt } from '../../../../prompts';
+// Module-level prompt cache
+let cachedWizardSystemPrompt: string = '';
+let cachedWizardSystemContinuationPrompt: string = '';
+let wizardPromptsLoaded = false;
+
+export async function loadWizardPrompts(): Promise<void> {
+	if (wizardPromptsLoaded) return;
+
+	const [systemResult, continuationResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-system'),
+		window.maestro.prompts.get('wizard-system-continuation'),
+	]);
+
+	if (systemResult.success && systemResult.content) {
+		cachedWizardSystemPrompt = systemResult.content;
+	}
+	if (continuationResult.success && continuationResult.content) {
+		cachedWizardSystemContinuationPrompt = continuationResult.content;
+	}
+	wizardPromptsLoaded = true;
+}
+
+export function getWizardSystemPrompt(): string {
+	if (!cachedWizardSystemPrompt) {
+		throw new Error('Wizard system prompt not loaded');
+	}
+	return cachedWizardSystemPrompt;
+}
+
+export function getWizardSystemContinuationPrompt(): string {
+	if (!cachedWizardSystemContinuationPrompt) {
+		throw new Error('Wizard continuation prompt not loaded');
+	}
+	return cachedWizardSystemContinuationPrompt;
+}
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
@@ -136,7 +170,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 		const docsContent = existingDocs
 			.map((doc) => `### ${doc.filename}\n\n${doc.content}\n`)
 			.join('\n---\n\n');
-		existingDocsSection = wizardSystemContinuationPrompt.replace('{{EXISTING_DOCS}}', docsContent);
+		existingDocsSection = getWizardSystemContinuationPrompt().replace('{{EXISTING_DOCS}}', docsContent);
 	}
 
 	// First, handle wizard-specific variables that have different semantics
@@ -145,7 +179,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	// - PROJECT_NAME: wizard uses user-provided agentName (or "this project"),
 	//   not the path-derived name from the central system
 	// - READY_CONFIDENCE_THRESHOLD: wizard-specific constant
-	let prompt = wizardSystemPrompt
+	let prompt = getWizardSystemPrompt()
 		.replace(/\{\{PROJECT_NAME\}\}/gi, projectName)
 		.replace(/\{\{READY_CONFIDENCE_THRESHOLD\}\}/gi, String(READY_CONFIDENCE_THRESHOLD));
 

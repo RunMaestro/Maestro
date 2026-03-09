@@ -35,7 +35,26 @@ import {
 	parseGroomedOutput,
 	estimateTextTokenCount,
 } from '../utils/contextExtractor';
-import { contextSummarizePrompt } from '../../prompts';
+// Module-level prompt cache
+let cachedContextSummarizePrompt: string = '';
+let contextSummarizerPromptsLoaded = false;
+
+export async function loadContextSummarizerPrompts(): Promise<void> {
+	if (contextSummarizerPromptsLoaded) return;
+
+	const result = await window.maestro.prompts.get('context-summarize');
+	if (result.success && result.content) {
+		cachedContextSummarizePrompt = result.content;
+	}
+	contextSummarizerPromptsLoaded = true;
+}
+
+function getContextSummarizePrompt(): string {
+	if (!cachedContextSummarizePrompt) {
+		throw new Error('Context summarize prompt not loaded');
+	}
+	return cachedContextSummarizePrompt;
+}
 
 /**
  * Configuration options for the summarization service.
@@ -380,7 +399,7 @@ Please provide the consolidated summary:`;
 	 * @returns Complete prompt to send to the summarization agent
 	 */
 	private buildSummarizationPrompt(formattedContext: string): string {
-		return `${contextSummarizePrompt}
+		return `${getContextSummarizePrompt()}
 
 ${formattedContext}
 

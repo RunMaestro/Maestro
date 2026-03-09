@@ -21,7 +21,41 @@ import {
 	estimateTokenCount,
 	calculateTotalTokens,
 } from '../utils/contextExtractor';
-import { contextGroomingPrompt, contextTransferPrompt } from '../../prompts';
+// Module-level prompt cache
+let cachedContextGroomingPrompt: string = '';
+let cachedContextTransferPrompt: string = '';
+let contextGroomerPromptsLoaded = false;
+
+export async function loadContextGroomerPrompts(): Promise<void> {
+	if (contextGroomerPromptsLoaded) return;
+
+	const [groomingResult, transferResult] = await Promise.all([
+		window.maestro.prompts.get('context-grooming'),
+		window.maestro.prompts.get('context-transfer'),
+	]);
+
+	if (groomingResult.success && groomingResult.content) {
+		cachedContextGroomingPrompt = groomingResult.content;
+	}
+	if (transferResult.success && transferResult.content) {
+		cachedContextTransferPrompt = transferResult.content;
+	}
+	contextGroomerPromptsLoaded = true;
+}
+
+function getContextGroomingPrompt(): string {
+	if (!cachedContextGroomingPrompt) {
+		throw new Error('Context grooming prompt not loaded');
+	}
+	return cachedContextGroomingPrompt;
+}
+
+function getContextTransferPrompt(): string {
+	if (!cachedContextTransferPrompt) {
+		throw new Error('Context transfer prompt not loaded');
+	}
+	return cachedContextTransferPrompt;
+}
 
 /**
  * Agent-specific artifacts that should be removed when transferring context.
@@ -171,7 +205,7 @@ export function buildContextTransferPrompt(sourceAgent: ToolType, targetAgent: T
 			: '- No specific artifacts to remove';
 
 	// Replace template variables in the transfer prompt
-	return contextTransferPrompt
+	return getContextTransferPrompt()
 		.replace('{{sourceAgent}}', getAgentDisplayName(sourceAgent))
 		.replace('{{targetAgent}}', getAgentDisplayName(targetAgent))
 		.replace('{{sourceAgentArtifacts}}', artifactList)
@@ -366,7 +400,7 @@ ${formatLogsForGrooming(source.logs)}
 	 * @returns Complete prompt to send to the grooming agent
 	 */
 	private buildGroomingPrompt(formattedContexts: string, customPrompt?: string): string {
-		const systemPrompt = customPrompt || contextGroomingPrompt;
+		const systemPrompt = customPrompt || getContextGroomingPrompt();
 
 		return `${systemPrompt}
 
