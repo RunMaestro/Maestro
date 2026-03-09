@@ -13,6 +13,7 @@ import type { ToolType } from '../types';
 import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
+import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 
 // Module-level prompt cache (loaded once via IPC)
 let cachedWizardDocumentGenerationPrompt = '';
@@ -23,23 +24,41 @@ let inlineWizardDocGenPromptsLoaded = false;
  * Load inline wizard document generation prompts from disk via IPC.
  * Called once at startup before components mount.
  */
-export async function loadInlineWizardDocGenPrompts(): Promise<void> {
-	if (inlineWizardDocGenPromptsLoaded) return;
+export async function loadInlineWizardDocGenPrompts(force = false): Promise<void> {
+	if (inlineWizardDocGenPromptsLoaded && !force) return;
 
 	const [docGenResult, iterateGenResult] = await Promise.all([
 		window.maestro.prompts.get('wizard-document-generation'),
 		window.maestro.prompts.get('wizard-inline-iterate-generation'),
 	]);
 
-	if (docGenResult.success && docGenResult.content) {
-		cachedWizardDocumentGenerationPrompt = docGenResult.content;
+	if (!docGenResult.success || docGenResult.content === undefined) {
+		throw new Error(docGenResult.error || 'Failed to load prompt: wizard-document-generation');
 	}
-	if (iterateGenResult.success && iterateGenResult.content) {
-		cachedWizardInlineIterateGenerationPrompt = iterateGenResult.content;
+	if (!iterateGenResult.success || iterateGenResult.content === undefined) {
+		throw new Error(
+			iterateGenResult.error || 'Failed to load prompt: wizard-inline-iterate-generation'
+		);
 	}
+
+	cachedWizardDocumentGenerationPrompt = docGenResult.content;
+	cachedWizardInlineIterateGenerationPrompt = iterateGenResult.content;
 	inlineWizardDocGenPromptsLoaded = true;
 }
-import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+
+function getWizardDocumentGenerationPrompt(): string {
+	if (!inlineWizardDocGenPromptsLoaded) {
+		throw new Error('Inline wizard document generation prompt not loaded');
+	}
+	return cachedWizardDocumentGenerationPrompt;
+}
+
+function getWizardInlineIterateGenerationPrompt(): string {
+	if (!inlineWizardDocGenPromptsLoaded) {
+		throw new Error('Inline wizard iterate generation prompt not loaded');
+	}
+	return cachedWizardInlineIterateGenerationPrompt;
+}
 
 /**
  * Auto Run folder name constant.
@@ -385,7 +404,9 @@ export function generateDocumentPrompt(
 
 	// Choose the appropriate prompt template based on mode
 	const basePrompt =
-		mode === 'iterate' ? cachedWizardInlineIterateGenerationPrompt : cachedWizardDocumentGenerationPrompt;
+		mode === 'iterate'
+			? getWizardInlineIterateGenerationPrompt()
+			: getWizardDocumentGenerationPrompt();
 
 	// Build the full Auto Run folder path (including subfolder if specified)
 	// Use the user-configured autoRunFolderPath (which may be external to directoryPath)

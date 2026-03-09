@@ -28,14 +28,14 @@ import { useSessionStore } from '../stores/sessionStore';
 import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
-	DEFAULT_BATCH_PROMPT,
+	getDefaultBatchPrompt,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 
 // Re-export for external consumers
-export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
+export { getDefaultBatchPrompt, validateAgentPromptHasTaskReference } from '../hooks';
 
 interface BatchRunnerModalProps {
 	theme: Theme;
@@ -100,6 +100,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onOpenMarketplace,
 	} = props;
 
+	const defaultBatchPrompt = getDefaultBatchPrompt();
+
 	// Worktree run target state
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
 	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
@@ -148,14 +150,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const initialMaxLoopsRef = useRef<number | null>(null);
 
 	// Prompt state
-	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const [prompt, setPrompt] = useState(initialPrompt || defaultBatchPrompt);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
 	const [savedPrompt, setSavedPrompt] = useState(initialPrompt || '');
 	const [promptComposerOpen, setPromptComposerOpen] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	// Track initial prompt for dirty checking
-	const initialPromptRef = useRef(initialPrompt || DEFAULT_BATCH_PROMPT);
+	const initialPromptRef = useRef(initialPrompt || defaultBatchPrompt);
 
 	// Compute if there are unsaved configuration changes
 	// This checks if documents, loop settings, or prompt have changed from initial values
@@ -348,7 +350,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 	const handleReset = () => {
 		showConfirmation('Reset the prompt to the default? Your customizations will be lost.', () => {
-			setPrompt(DEFAULT_BATCH_PROMPT);
+			setPrompt(defaultBatchPrompt);
 		});
 	};
 
@@ -400,8 +402,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	};
 
-	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
-	const hasUnsavedChanges = prompt !== savedPrompt && prompt !== DEFAULT_BATCH_PROMPT;
+	const isModified = prompt !== defaultBatchPrompt;
+	const hasUnsavedChanges = prompt !== savedPrompt && prompt !== defaultBatchPrompt;
 
 	return (
 		<div

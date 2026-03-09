@@ -19,19 +19,13 @@ import { app } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from './utils/logger';
+import { CORE_PROMPT_DEFINITIONS, type PromptDefinition } from '../prompts/catalog';
 
 const LOG_CONTEXT = '[PromptManager]';
 
 // ============================================================================
 // Types
 // ============================================================================
-
-interface PromptDefinition {
-	id: string;
-	filename: string;
-	description: string;
-	category: string;
-}
 
 export interface CorePrompt {
 	id: string;
@@ -52,42 +46,45 @@ interface StoredData {
 	prompts: Record<string, StoredPrompt>;
 }
 
+function normalizeStoredData(value: unknown): StoredData {
+	const normalized: StoredData = { prompts: {} };
+	if (!value || typeof value !== 'object') {
+		return normalized;
+	}
+
+	const promptsValue = (value as { prompts?: unknown }).prompts;
+	if (!promptsValue || typeof promptsValue !== 'object') {
+		return normalized;
+	}
+
+	for (const [id, rawPrompt] of Object.entries(promptsValue as Record<string, unknown>)) {
+		if (!rawPrompt || typeof rawPrompt !== 'object') {
+			continue;
+		}
+
+		const content = (rawPrompt as { content?: unknown }).content;
+		if (typeof content !== 'string') {
+			continue;
+		}
+
+		const isModified = (rawPrompt as { isModified?: unknown }).isModified;
+		const modifiedAt = (rawPrompt as { modifiedAt?: unknown }).modifiedAt;
+
+		normalized.prompts[id] = {
+			content,
+			isModified: typeof isModified === 'boolean' ? isModified : true,
+			...(typeof modifiedAt === 'string' ? { modifiedAt } : {}),
+		};
+	}
+
+	return normalized;
+}
+
 // ============================================================================
 // Prompt Definitions
 // ============================================================================
 
-const CORE_PROMPTS: PromptDefinition[] = [
-	// Wizard
-	{ id: 'wizard-system', filename: 'wizard-system.md', description: 'Main wizard conversation system prompt', category: 'wizard' },
-	{ id: 'wizard-system-continuation', filename: 'wizard-system-continuation.md', description: 'Wizard continuation prompt', category: 'wizard' },
-	{ id: 'wizard-document-generation', filename: 'wizard-document-generation.md', description: 'Wizard document generation prompt', category: 'wizard' },
-	// Inline Wizard
-	{ id: 'wizard-inline-system', filename: 'wizard-inline-system.md', description: 'Inline wizard system prompt', category: 'inline-wizard' },
-	{ id: 'wizard-inline-iterate', filename: 'wizard-inline-iterate.md', description: 'Inline wizard iteration prompt', category: 'inline-wizard' },
-	{ id: 'wizard-inline-new', filename: 'wizard-inline-new.md', description: 'Inline wizard new session prompt', category: 'inline-wizard' },
-	{ id: 'wizard-inline-iterate-generation', filename: 'wizard-inline-iterate-generation.md', description: 'Inline wizard iteration generation', category: 'inline-wizard' },
-	// AutoRun
-	{ id: 'autorun-default', filename: 'autorun-default.md', description: 'Default Auto Run behavior prompt', category: 'autorun' },
-	{ id: 'autorun-synopsis', filename: 'autorun-synopsis.md', description: 'Auto Run synopsis generation prompt', category: 'autorun' },
-	// Commands
-	{ id: 'image-only-default', filename: 'image-only-default.md', description: 'Default prompt for image-only messages', category: 'commands' },
-	{ id: 'commit-command', filename: 'commit-command.md', description: 'Git commit command prompt', category: 'commands' },
-	// System
-	{ id: 'maestro-system-prompt', filename: 'maestro-system-prompt.md', description: 'Maestro system context prompt', category: 'system' },
-	// Group Chat
-	{ id: 'group-chat-moderator-system', filename: 'group-chat-moderator-system.md', description: 'Group chat moderator system prompt', category: 'group-chat' },
-	{ id: 'group-chat-moderator-synthesis', filename: 'group-chat-moderator-synthesis.md', description: 'Group chat synthesis prompt', category: 'group-chat' },
-	{ id: 'group-chat-participant', filename: 'group-chat-participant.md', description: 'Group chat participant prompt', category: 'group-chat' },
-	{ id: 'group-chat-participant-request', filename: 'group-chat-participant-request.md', description: 'Group chat participant request prompt', category: 'group-chat' },
-	// Context
-	{ id: 'context-grooming', filename: 'context-grooming.md', description: 'Context grooming prompt', category: 'context' },
-	{ id: 'context-transfer', filename: 'context-transfer.md', description: 'Context transfer prompt', category: 'context' },
-	{ id: 'context-summarize', filename: 'context-summarize.md', description: 'Context summarization prompt', category: 'context' },
-	// Tab Naming
-	{ id: 'tab-naming', filename: 'tab-naming.md', description: 'Tab naming prompt', category: 'commands' },
-	// Director's Notes
-	{ id: 'director-notes', filename: 'director-notes.md', description: 'Director notes synopsis prompt', category: 'system' },
-];
+const CORE_PROMPTS: PromptDefinition[] = CORE_PROMPT_DEFINITIONS;
 
 // ============================================================================
 // State
@@ -95,6 +92,16 @@ const CORE_PROMPTS: PromptDefinition[] = [
 
 const promptCache = new Map<string, { content: string; isModified: boolean }>();
 let initialized = false;
+let customizationWriteQueue: Promise<void> = Promise.resolve();
+
+async function withSerializedCustomizationMutation<T>(mutation: () => Promise<T>): Promise<T> {
+	const next = customizationWriteQueue.then(mutation, mutation);
+	customizationWriteQueue = next.then(
+		() => undefined,
+		() => undefined
+	);
+	return next;
+}
 
 // ============================================================================
 // Path Helpers
@@ -118,9 +125,14 @@ function getCustomizationsPath(): string {
 async function loadUserCustomizations(): Promise<StoredData | null> {
 	try {
 		const content = await fs.readFile(getCustomizationsPath(), 'utf-8');
-		return JSON.parse(content) as StoredData;
-	} catch {
-		return null;
+		const parsed = JSON.parse(content) as unknown;
+		return normalizeStoredData(parsed);
+	} catch (error) {
+		const fsError = error as NodeJS.ErrnoException;
+		if (fsError?.code === 'ENOENT' || fsError?.message?.includes('ENOENT')) {
+			return null;
+		}
+		throw error;
 	}
 }
 
@@ -219,14 +231,15 @@ export async function savePrompt(id: string, content: string): Promise<void> {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
-	// Update disk
-	const customizations = (await loadUserCustomizations()) || { prompts: {} };
-	customizations.prompts[id] = {
-		content,
-		isModified: true,
-		modifiedAt: new Date().toISOString(),
-	};
-	await saveUserCustomizations(customizations);
+	await withSerializedCustomizationMutation(async () => {
+		const customizations = (await loadUserCustomizations()) || { prompts: {} };
+		customizations.prompts[id] = {
+			content,
+			isModified: true,
+			modifiedAt: new Date().toISOString(),
+		};
+		await saveUserCustomizations(customizations);
+	});
 
 	// Update in-memory cache immediately
 	promptCache.set(id, { content, isModified: true });
@@ -244,23 +257,25 @@ export async function resetPrompt(id: string): Promise<string> {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
-	// Remove from customizations on disk
-	const customizations = await loadUserCustomizations();
-	if (customizations?.prompts?.[id]) {
-		delete customizations.prompts[id];
-		await saveUserCustomizations(customizations);
-	}
+	return withSerializedCustomizationMutation(async () => {
+		// Remove from customizations on disk
+		const customizations = await loadUserCustomizations();
+		if (customizations?.prompts?.[id]) {
+			delete customizations.prompts[id];
+			await saveUserCustomizations(customizations);
+		}
 
-	// Read bundled content
-	const promptsPath = getBundledPromptsPath();
-	const filePath = path.join(promptsPath, def.filename);
-	const bundledContent = await fs.readFile(filePath, 'utf-8');
+		// Read bundled content
+		const promptsPath = getBundledPromptsPath();
+		const filePath = path.join(promptsPath, def.filename);
+		const bundledContent = await fs.readFile(filePath, 'utf-8');
 
-	// Update in-memory cache immediately
-	promptCache.set(id, { content: bundledContent, isModified: false });
+		// Update in-memory cache immediately
+		promptCache.set(id, { content: bundledContent, isModified: false });
 
-	logger.info(`Reset and applied bundled default for ${id}`, LOG_CONTEXT);
-	return bundledContent;
+		logger.info(`Reset and applied bundled default for ${id}`, LOG_CONTEXT);
+		return bundledContent;
+	});
 }
 
 /**

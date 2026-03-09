@@ -10,7 +10,7 @@ export {
 	countUnfinishedTasks,
 	countCheckedTasks,
 	uncheckAllTasks,
-	DEFAULT_BATCH_PROMPT,
+	getDefaultBatchPrompt,
 	validateAgentPromptHasTaskReference,
 } from './batchUtils';
 

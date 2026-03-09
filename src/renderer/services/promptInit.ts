@@ -14,6 +14,20 @@ import { loadBatchPrompts } from '../hooks/batch/batchUtils';
 let initialized = false;
 let initPromise: Promise<void> | null = null;
 
+async function loadAllRendererPrompts(force = false): Promise<void> {
+	await Promise.all([
+		loadInputProcessingPrompts(force),
+		loadContextGroomerPrompts(force),
+		loadContextSummarizerPrompts(force),
+		loadWizardPrompts(force),
+		loadPhaseGeneratorPrompts(force),
+		loadSettingsStorePrompts(force),
+		loadInlineWizardConversationPrompts(force),
+		loadInlineWizardDocGenPrompts(force),
+		loadBatchPrompts(force),
+	]);
+}
+
 /**
  * Initialize all renderer prompts. Safe to call multiple times (idempotent).
  */
@@ -29,21 +43,12 @@ export async function initializeRendererPrompts(): Promise<void> {
 		console.log('[PromptInit] Loading renderer prompts...');
 
 		try {
-			await Promise.all([
-				loadInputProcessingPrompts(),
-				loadContextGroomerPrompts(),
-				loadContextSummarizerPrompts(),
-				loadWizardPrompts(),
-				loadPhaseGeneratorPrompts(),
-				loadSettingsStorePrompts(),
-				loadInlineWizardConversationPrompts(),
-				loadInlineWizardDocGenPrompts(),
-				loadBatchPrompts(),
-			]);
+			await loadAllRendererPrompts();
 
 			initialized = true;
 			console.log('[PromptInit] Renderer prompts loaded successfully');
 		} catch (error) {
+			initPromise = null;
 			console.error('[PromptInit] Failed to load renderer prompts:', error);
 			throw error;
 		}
@@ -57,4 +62,11 @@ export async function initializeRendererPrompts(): Promise<void> {
  */
 export function areRendererPromptsInitialized(): boolean {
 	return initialized;
+}
+
+/**
+ * Reload all renderer prompt caches after a runtime prompt edit/reset.
+ */
+export async function reloadRendererPrompts(): Promise<void> {
+	await loadAllRendererPrompts(true);
 }

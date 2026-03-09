@@ -45,12 +45,13 @@ let commitPromptLoaded = false;
  * Load commit command prompt from disk via IPC.
  * Called once at startup before settings are initialized.
  */
-export async function loadSettingsStorePrompts(): Promise<void> {
-	if (commitPromptLoaded) return;
+export async function loadSettingsStorePrompts(force = false): Promise<void> {
+	if (commitPromptLoaded && !force) return;
 	const result = await window.maestro.prompts.get('commit-command');
-	if (result.success && result.content) {
-		cachedCommitCommandPrompt = result.content;
+	if (!result.success || result.content === undefined) {
+		throw new Error(result.error || 'Failed to load prompt: commit-command');
 	}
+	cachedCommitCommandPrompt = result.content;
 	commitPromptLoaded = true;
 
 	// Update the default AI commands with the loaded prompt

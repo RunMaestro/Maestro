@@ -120,6 +120,7 @@ export async function* runPlaybook(
 		pid: process.pid,
 	});
 
+	try {
 	// Emit start event
 	yield {
 		type: 'start',
@@ -182,7 +183,6 @@ export async function* runPlaybook(
 	}
 
 	if (initialTotalTasks === 0) {
-		unregisterCliActivity(session.id);
 		yield {
 			type: 'error',
 			timestamp: Date.now(),
@@ -233,7 +233,6 @@ export async function* runPlaybook(
 			};
 		}
 
-		unregisterCliActivity(session.id);
 		yield {
 			type: 'complete',
 			timestamp: Date.now(),
@@ -769,9 +768,6 @@ export async function* runPlaybook(
 		loopIteration++;
 	}
 
-	// Unregister CLI activity - session is no longer busy
-	unregisterCliActivity(session.id);
-
 	// Add total Auto Run summary (only if looping was used)
 	createAutoRunSummary();
 
@@ -784,4 +780,8 @@ export async function* runPlaybook(
 		totalElapsedMs: Date.now() - batchStartTime,
 		totalCost,
 	};
+	} finally {
+		// Ensure CLI busy state is always cleared (including early returns and throw paths)
+		unregisterCliActivity(session.id);
+	}
 }

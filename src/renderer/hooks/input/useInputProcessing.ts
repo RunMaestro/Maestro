@@ -21,20 +21,27 @@ let inputProcessingPromptsLoaded = false;
  * Load prompts used by input processing from disk via IPC.
  * Called once at startup before components mount.
  */
-export async function loadInputProcessingPrompts(): Promise<void> {
-	if (inputProcessingPromptsLoaded) return;
+export async function loadInputProcessingPrompts(force = false): Promise<void> {
+	if (inputProcessingPromptsLoaded && !force) return;
 
 	const [imageResult, systemResult] = await Promise.all([
 		window.maestro.prompts.get('image-only-default'),
 		window.maestro.prompts.get('maestro-system-prompt'),
 	]);
 
-	if (imageResult.success && imageResult.content) {
-		cachedImageOnlyPrompt = imageResult.content;
+	if (!imageResult.success || imageResult.content === undefined) {
+		throw new Error(
+			imageResult.error || 'Failed to load prompt: image-only-default'
+		);
 	}
-	if (systemResult.success && systemResult.content) {
-		cachedMaestroSystemPrompt = systemResult.content;
+	if (!systemResult.success || systemResult.content === undefined) {
+		throw new Error(
+			systemResult.error || 'Failed to load prompt: maestro-system-prompt'
+		);
 	}
+
+	cachedImageOnlyPrompt = imageResult.content;
+	cachedMaestroSystemPrompt = systemResult.content;
 	inputProcessingPromptsLoaded = true;
 }
 
@@ -47,13 +54,19 @@ export const DEFAULT_IMAGE_ONLY_PROMPT = '';
  * Get the current image-only prompt (from cache).
  */
 export function getImageOnlyPrompt(): string {
-	return cachedImageOnlyPrompt || DEFAULT_IMAGE_ONLY_PROMPT;
+	if (!inputProcessingPromptsLoaded) {
+		throw new Error('Image-only prompt not loaded');
+	}
+	return cachedImageOnlyPrompt;
 }
 
 /**
  * Get the current maestro system prompt (from cache).
  */
 export function getMaestroSystemPrompt(): string {
+	if (!inputProcessingPromptsLoaded) {
+		throw new Error('Maestro system prompt not loaded');
+	}
 	return cachedMaestroSystemPrompt;
 }
 

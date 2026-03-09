@@ -12,35 +12,45 @@ let batchPromptsLoaded = false;
  * Load batch/autorun prompts from disk via IPC.
  * Called once at startup before components mount.
  */
-export async function loadBatchPrompts(): Promise<void> {
-	if (batchPromptsLoaded) return;
+export async function loadBatchPrompts(force = false): Promise<void> {
+	if (batchPromptsLoaded && !force) return;
 
 	const [defaultResult, synopsisResult] = await Promise.all([
 		window.maestro.prompts.get('autorun-default'),
 		window.maestro.prompts.get('autorun-synopsis'),
 	]);
 
-	if (defaultResult.success && defaultResult.content) {
-		cachedAutorunDefaultPrompt = defaultResult.content;
-		DEFAULT_BATCH_PROMPT = defaultResult.content;
+	if (!defaultResult.success || defaultResult.content === undefined) {
+		throw new Error(defaultResult.error || 'Failed to load prompt: autorun-default');
 	}
-	if (synopsisResult.success && synopsisResult.content) {
-		cachedAutorunSynopsisPrompt = synopsisResult.content;
+	if (!synopsisResult.success || synopsisResult.content === undefined) {
+		throw new Error(synopsisResult.error || 'Failed to load prompt: autorun-synopsis');
 	}
+
+	cachedAutorunDefaultPrompt = defaultResult.content;
+	cachedAutorunSynopsisPrompt = synopsisResult.content;
 	batchPromptsLoaded = true;
+}
+
+/**
+ * Get the default Auto Run prompt (from cache).
+ */
+export function getDefaultBatchPrompt(): string {
+	if (!batchPromptsLoaded) {
+		throw new Error('Default Auto Run prompt not loaded');
+	}
+	return cachedAutorunDefaultPrompt;
 }
 
 /**
  * Get the autorun synopsis prompt (from cache).
  */
 export function getAutorunSynopsisPrompt(): string {
+	if (!batchPromptsLoaded) {
+		throw new Error('Auto Run synopsis prompt not loaded');
+	}
 	return cachedAutorunSynopsisPrompt;
 }
-
-// Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
-// Updated via loadBatchPrompts() at startup; live ES module binding ensures importers see the value.
-// eslint-disable-next-line import/no-mutable-exports
-export let DEFAULT_BATCH_PROMPT = '';
 
 // Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ])
 const UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s*\]\s*.+$/gm;

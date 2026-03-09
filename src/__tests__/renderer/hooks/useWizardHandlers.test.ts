@@ -49,10 +49,9 @@ vi.mock('../../../renderer/constants/app', () => ({
 	getSlashCommandDescription: vi.fn((cmd: string) => `Description for ${cmd}`),
 }));
 
-vi.mock('../../../prompts', async () => {
-	const actual = await vi.importActual('../../../prompts');
-	return { ...actual, autorunSynopsisPrompt: 'Generate a synopsis of all work done.' };
-});
+vi.mock('../../../renderer/hooks/batch/batchUtils', () => ({
+	getAutorunSynopsisPrompt: vi.fn(() => 'Generate a synopsis of all work done.'),
+}));
 
 vi.mock('../../../shared/synopsis', () => ({
 	parseSynopsis: vi.fn((response: string) => ({
@@ -71,7 +70,7 @@ vi.mock('../../../renderer/components/Wizard', () => ({
 }));
 
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
-	DEFAULT_BATCH_PROMPT: 'Run each task sequentially.',
+	getDefaultBatchPrompt: vi.fn(() => 'Run each task sequentially.'),
 }));
 
 import { useWizardHandlers } from '../../../renderer/hooks/wizard/useWizardHandlers';

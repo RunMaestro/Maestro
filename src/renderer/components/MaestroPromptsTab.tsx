@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Save, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Theme } from '../types';
 import type { CorePromptEntry } from '../../main/preload/prompts';
+import { reloadRendererPrompts } from '../services/promptInit';
 
 interface MaestroPromptsTabProps {
 	theme: Theme;
@@ -98,8 +99,12 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps) {
 
 	const handleSelectPrompt = useCallback(
 		(prompt: CorePromptEntry) => {
-			if (hasUnsavedChanges) {
-				// Discard unsaved changes on switch
+			if (
+				hasUnsavedChanges &&
+				selectedPromptId !== prompt.id &&
+				!window.confirm('Discard unsaved changes to the current prompt?')
+			) {
+				return;
 			}
 			setSelectedPromptId(prompt.id);
 			setEditedContent(prompt.content);
@@ -107,7 +112,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps) {
 			setSuccessMessage(null);
 			setError(null);
 		},
-		[hasUnsavedChanges]
+		[hasUnsavedChanges, selectedPromptId]
 	);
 
 	const handleContentChange = useCallback(
@@ -128,15 +133,25 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps) {
 		try {
 			const result = await window.maestro.prompts.save(selectedPrompt.id, editedContent);
 			if (result.success) {
+				let reloadError: string | null = null;
+				try {
+					await reloadRendererPrompts();
+				} catch (err) {
+					reloadError = String(err);
+				}
+
 				setPrompts((prev) =>
 					prev.map((p) =>
-						p.id === selectedPrompt.id
-							? { ...p, content: editedContent, isModified: true }
-							: p
+						p.id === selectedPrompt.id ? { ...p, content: editedContent, isModified: true } : p
 					)
 				);
 				setHasUnsavedChanges(false);
-				setSuccessMessage('Changes saved and applied');
+				setSuccessMessage(
+					reloadError ? 'Changes saved (runtime cache refresh failed)' : 'Changes saved and applied'
+				);
+				if (reloadError) {
+					setError(reloadError);
+				}
 			} else {
 				setError(result.error || 'Failed to save prompt');
 			}
@@ -155,7 +170,14 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps) {
 		setSuccessMessage(null);
 		try {
 			const result = await window.maestro.prompts.reset(selectedPrompt.id);
-			if (result.success && result.content) {
+			if (result.success && result.content !== undefined) {
+				let reloadError: string | null = null;
+				try {
+					await reloadRendererPrompts();
+				} catch (err) {
+					reloadError = String(err);
+				}
+
 				setPrompts((prev) =>
 					prev.map((p) =>
 						p.id === selectedPrompt.id
@@ -165,7 +187,14 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps) {
 				);
 				setEditedContent(result.content);
 				setHasUnsavedChanges(false);
-				setSuccessMessage('Prompt reset to default');
+				setSuccessMessage(
+					reloadError
+						? 'Prompt reset (runtime cache refresh failed)'
+						: 'Prompt reset to default'
+				);
+				if (reloadError) {
+					setError(reloadError);
+				}
 			} else {
 				setError(result.error || 'Failed to reset prompt');
 			}

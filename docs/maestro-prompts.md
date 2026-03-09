@@ -42,7 +42,7 @@ Click **Reset to Default** to restore any prompt to its original bundled version
 
 ## How It Works
 
-- **Bundled prompts** ship with each release in `Resources/prompts/core/`
+- **Bundled prompts** ship with each release in the app's bundled resources prompts directory (example: `Resources/prompts/core/`; exact resource location can vary by platform)
 - **User customizations** are stored in `userData/core-prompts-customizations.json`
 - When loading a prompt, Maestro checks for a user customization first; if none exists, it falls back to the bundled default
 

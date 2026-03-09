@@ -277,4 +277,11 @@ describe('prompt-manager', () => {
 
 		await expect(resetPrompt('nonexistent-id')).rejects.toThrow('Unknown prompt ID');
 	});
+
+	it('should keep prompt IDs in sync with src/prompts constants', async () => {
+		const { getAllPromptIds } = await import('../../main/prompt-manager');
+		const { PROMPT_IDS } = await import('../../prompts');
+
+		expect(new Set(getAllPromptIds())).toEqual(new Set(Object.values(PROMPT_IDS)));
+	});
 });

@@ -520,11 +520,13 @@ export const RightPanel = memo(
 						</div>
 					)}
 
-					{activeRightTab === 'maestro-prompts' && (
-						<div data-tour="maestro-prompts-panel" className="h-full">
+						<div
+							data-tour="maestro-prompts-panel"
+							className="h-full"
+							style={{ display: activeRightTab === 'maestro-prompts' ? undefined : 'none' }}
+						>
 							<MaestroPromptsTab theme={theme} />
 						</div>
-					)}
 				</div>
 
 				{/* Auto Run Expanded Modal */}

@@ -231,7 +231,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				}
 
 				// Build file-path manifest so the agent reads history files directly
-				const cutoffTime = Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000;
+				const hasLookbackWindow = options.lookbackDays > 0;
+				const cutoffTime = hasLookbackWindow
+					? Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000
+					: 0;
 				const sessionIds = historyManager.listSessionsWithHistory();
 				const sessionNameMap = buildSessionNameMap();
 
@@ -255,7 +258,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					const entries = historyManager.getEntries(sessionId);
 					let agentHasEntries = false;
 					for (const entry of entries) {
-						if (entry.timestamp >= cutoffTime) {
+						if (!hasLookbackWindow || entry.timestamp >= cutoffTime) {
 							entryCount++;
 							agentHasEntries = true;
 						}
@@ -266,7 +269,9 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				if (sessionManifest.length === 0) {
 					return {
 						success: true,
-						synopsis: `# Director's Notes\n\n*Generated for the past ${options.lookbackDays} days*\n\nNo history files found.`,
+						synopsis: hasLookbackWindow
+							? `# Director's Notes\n\n*Generated for the past ${options.lookbackDays} days*\n\nNo history files found.`
+							: "# Director's Notes\n\n*Generated for all available history*\n\nNo history files found.",
 						generatedAt: Date.now(),
 						stats: { agentCount: 0, entryCount: 0, durationMs: 0 },
 					};
@@ -280,11 +285,13 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					)
 					.join('\n');
 
-				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short',
-					day: 'numeric',
-					year: 'numeric',
-				});
+				const cutoffDate = hasLookbackWindow
+					? new Date(cutoffTime).toLocaleDateString('en-US', {
+							month: 'short',
+							day: 'numeric',
+							year: 'numeric',
+						})
+					: 'N/A';
 				const nowDate = new Date().toLocaleDateString('en-US', {
 					month: 'short',
 					day: 'numeric',
@@ -298,8 +305,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					'',
 					'## Session History Files',
 					'',
-					`Lookback period: ${options.lookbackDays} days (${cutoffDate} – ${nowDate})`,
-					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
+					hasLookbackWindow
+						? `Lookback period: ${options.lookbackDays} days (${cutoffDate} – ${nowDate})`
+						: 'Lookback period: all time (no cutoff)',
+					hasLookbackWindow
+						? `Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`
+						: 'Timestamp cutoff: none (include all history entries)',
 					`${agentCount} agents had ${entryCount} qualifying entries.`,
 					'',
 					manifestLines,

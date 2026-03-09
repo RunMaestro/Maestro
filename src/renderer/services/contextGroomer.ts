@@ -26,32 +26,35 @@ let cachedContextGroomingPrompt: string = '';
 let cachedContextTransferPrompt: string = '';
 let contextGroomerPromptsLoaded = false;
 
-export async function loadContextGroomerPrompts(): Promise<void> {
-	if (contextGroomerPromptsLoaded) return;
+export async function loadContextGroomerPrompts(force = false): Promise<void> {
+	if (contextGroomerPromptsLoaded && !force) return;
 
 	const [groomingResult, transferResult] = await Promise.all([
 		window.maestro.prompts.get('context-grooming'),
 		window.maestro.prompts.get('context-transfer'),
 	]);
 
-	if (groomingResult.success && groomingResult.content) {
-		cachedContextGroomingPrompt = groomingResult.content;
+	if (!groomingResult.success || groomingResult.content === undefined) {
+		throw new Error(groomingResult.error || 'Failed to load prompt: context-grooming');
 	}
-	if (transferResult.success && transferResult.content) {
-		cachedContextTransferPrompt = transferResult.content;
+	if (!transferResult.success || transferResult.content === undefined) {
+		throw new Error(transferResult.error || 'Failed to load prompt: context-transfer');
 	}
+
+	cachedContextGroomingPrompt = groomingResult.content;
+	cachedContextTransferPrompt = transferResult.content;
 	contextGroomerPromptsLoaded = true;
 }
 
 function getContextGroomingPrompt(): string {
-	if (!cachedContextGroomingPrompt) {
+	if (!contextGroomerPromptsLoaded) {
 		throw new Error('Context grooming prompt not loaded');
 	}
 	return cachedContextGroomingPrompt;
 }
 
 function getContextTransferPrompt(): string {
-	if (!cachedContextTransferPrompt) {
+	if (!contextGroomerPromptsLoaded) {
 		throw new Error('Context transfer prompt not loaded');
 	}
 	return cachedContextTransferPrompt;

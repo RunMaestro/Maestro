@@ -22,7 +22,7 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
-import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
+import { getDefaultBatchPrompt } from '../../components/BatchRunnerModal';
 
 // ============================================================================
 // Dependencies interface
@@ -236,15 +236,15 @@ export function useSymphonyContribution(
 			// Auto-start batch run with all contribution documents
 			if (data.autoRunPath && data.issue.documentPaths.length > 0) {
 				const batchConfig: BatchRunConfig = {
-					documents: data.issue.documentPaths.map((doc) => ({
-						id: generateId(),
-						filename: doc.name.replace(/\.md$/, ''),
-						resetOnCompletion: false,
-						isDuplicate: false,
-					})),
-					prompt: DEFAULT_BATCH_PROMPT,
-					loopEnabled: false,
-				};
+						documents: data.issue.documentPaths.map((doc) => ({
+							id: generateId(),
+							filename: doc.name.replace(/\.md$/, ''),
+							resetOnCompletion: false,
+							isDuplicate: false,
+						})),
+						prompt: getDefaultBatchPrompt(),
+						loopEnabled: false,
+					};
 
 				// Small delay to ensure session state is fully propagated
 				setTimeout(() => {

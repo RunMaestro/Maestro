@@ -40,7 +40,7 @@ import { parseSynopsis } from '../../../shared/synopsis';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
-import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
+import { getDefaultBatchPrompt } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
@@ -1211,10 +1211,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 							resetOnCompletion: false,
 							isDuplicate: false,
 						},
-					],
-					prompt: DEFAULT_BATCH_PROMPT,
-					loopEnabled: false,
-				};
+						],
+						prompt: getDefaultBatchPrompt(),
+						loopEnabled: false,
+					};
 
 				setTimeout(() => {
 					console.log(

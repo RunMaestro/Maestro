@@ -7,6 +7,14 @@ import React from 'react';
 import { MaestroPromptsTab } from '../../../renderer/components/MaestroPromptsTab';
 import type { Theme } from '../../../renderer/types';
 
+const { mockReloadRendererPrompts } = vi.hoisted(() => ({
+	mockReloadRendererPrompts: vi.fn(),
+}));
+
+vi.mock('../../../renderer/services/promptInit', () => ({
+	reloadRendererPrompts: mockReloadRendererPrompts,
+}));
+
 const mockTheme: Theme = {
 	id: 'dark',
 	name: 'Dark',
@@ -65,6 +73,7 @@ const mockPromptsApi = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockReloadRendererPrompts.mockResolvedValue(undefined);
 	// Add prompts namespace to existing window.maestro mock
 	(window as any).maestro.prompts = mockPromptsApi;
 });

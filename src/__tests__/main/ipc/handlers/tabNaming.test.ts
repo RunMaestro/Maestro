@@ -37,7 +37,7 @@ vi.mock('uuid', () => ({
 vi.mock('../../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		if (id === 'tab-naming') return 'You are a tab naming assistant. Generate a concise tab name.';
-		return '';
+		throw new Error(`Unexpected prompt id: ${id}`);
 	}),
 }));
 

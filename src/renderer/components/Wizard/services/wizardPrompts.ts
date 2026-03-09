@@ -6,45 +6,51 @@
  */
 
 import { getRandomInitialQuestion } from './fillerPhrases';
+import {
+	substituteTemplateVariables,
+	type TemplateContext,
+} from '../../../utils/templateVariables';
+
 // Module-level prompt cache
 let cachedWizardSystemPrompt: string = '';
 let cachedWizardSystemContinuationPrompt: string = '';
 let wizardPromptsLoaded = false;
 
-export async function loadWizardPrompts(): Promise<void> {
-	if (wizardPromptsLoaded) return;
+export async function loadWizardPrompts(force = false): Promise<void> {
+	if (wizardPromptsLoaded && !force) return;
 
 	const [systemResult, continuationResult] = await Promise.all([
 		window.maestro.prompts.get('wizard-system'),
 		window.maestro.prompts.get('wizard-system-continuation'),
 	]);
 
-	if (systemResult.success && systemResult.content) {
-		cachedWizardSystemPrompt = systemResult.content;
+	if (!systemResult.success || systemResult.content === undefined) {
+		throw new Error(systemResult.error || 'Failed to load prompt: wizard-system');
 	}
-	if (continuationResult.success && continuationResult.content) {
-		cachedWizardSystemContinuationPrompt = continuationResult.content;
+	if (!continuationResult.success || continuationResult.content === undefined) {
+		throw new Error(
+			continuationResult.error || 'Failed to load prompt: wizard-system-continuation'
+		);
 	}
+
+	cachedWizardSystemPrompt = systemResult.content;
+	cachedWizardSystemContinuationPrompt = continuationResult.content;
 	wizardPromptsLoaded = true;
 }
 
 export function getWizardSystemPrompt(): string {
-	if (!cachedWizardSystemPrompt) {
+	if (!wizardPromptsLoaded) {
 		throw new Error('Wizard system prompt not loaded');
 	}
 	return cachedWizardSystemPrompt;
 }
 
 export function getWizardSystemContinuationPrompt(): string {
-	if (!cachedWizardSystemContinuationPrompt) {
+	if (!wizardPromptsLoaded) {
 		throw new Error('Wizard continuation prompt not loaded');
 	}
 	return cachedWizardSystemContinuationPrompt;
 }
-import {
-	substituteTemplateVariables,
-	type TemplateContext,
-} from '../../../utils/templateVariables';
 
 /**
  * Structured response format expected from the agent

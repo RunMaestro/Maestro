@@ -56,7 +56,7 @@ vi.mock('../../../../main/utils/context-groomer', () => ({
 vi.mock('../../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		if (id === 'director-notes') return 'Mock director notes prompt';
-		return '';
+		throw new Error(`Unexpected prompt id: ${id}`);
 	}),
 }));
 

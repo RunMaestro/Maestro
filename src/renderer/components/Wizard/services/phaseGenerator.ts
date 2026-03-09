@@ -8,30 +8,32 @@
 
 import type { ToolType } from '../../../types';
 import type { WizardMessage, GeneratedDocument } from '../WizardContext';
-// Module-level prompt cache
-let cachedWizardDocumentGenerationPrompt: string = '';
-let phaseGeneratorPromptsLoaded = false;
-
-export async function loadPhaseGeneratorPrompts(): Promise<void> {
-	if (phaseGeneratorPromptsLoaded) return;
-
-	const result = await window.maestro.prompts.get('wizard-document-generation');
-	if (result.success && result.content) {
-		cachedWizardDocumentGenerationPrompt = result.content;
-	}
-	phaseGeneratorPromptsLoaded = true;
-}
-
-function getWizardDocumentGenerationPrompt(): string {
-	if (!cachedWizardDocumentGenerationPrompt) {
-		throw new Error('Wizard document generation prompt not loaded');
-	}
-	return cachedWizardDocumentGenerationPrompt;
-}
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+
+// Module-level prompt cache
+let cachedWizardDocumentGenerationPrompt: string = '';
+let phaseGeneratorPromptsLoaded = false;
+
+export async function loadPhaseGeneratorPrompts(force = false): Promise<void> {
+	if (phaseGeneratorPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('wizard-document-generation');
+	if (!result.success || result.content === undefined) {
+		throw new Error(result.error || 'Failed to load prompt: wizard-document-generation');
+	}
+	cachedWizardDocumentGenerationPrompt = result.content;
+	phaseGeneratorPromptsLoaded = true;
+}
+
+function getWizardDocumentGenerationPrompt(): string {
+	if (!phaseGeneratorPromptsLoaded) {
+		throw new Error('Wizard document generation prompt not loaded');
+	}
+	return cachedWizardDocumentGenerationPrompt;
+}
 
 /**
  * Configuration for document generation

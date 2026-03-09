@@ -39,18 +39,19 @@ import {
 let cachedContextSummarizePrompt: string = '';
 let contextSummarizerPromptsLoaded = false;
 
-export async function loadContextSummarizerPrompts(): Promise<void> {
-	if (contextSummarizerPromptsLoaded) return;
+export async function loadContextSummarizerPrompts(force = false): Promise<void> {
+	if (contextSummarizerPromptsLoaded && !force) return;
 
 	const result = await window.maestro.prompts.get('context-summarize');
-	if (result.success && result.content) {
-		cachedContextSummarizePrompt = result.content;
+	if (!result.success || result.content === undefined) {
+		throw new Error(result.error || 'Failed to load prompt: context-summarize');
 	}
+	cachedContextSummarizePrompt = result.content;
 	contextSummarizerPromptsLoaded = true;
 }
 
 function getContextSummarizePrompt(): string {
-	if (!cachedContextSummarizePrompt) {
+	if (!contextSummarizerPromptsLoaded) {
 		throw new Error('Context summarize prompt not loaded');
 	}
 	return cachedContextSummarizePrompt;

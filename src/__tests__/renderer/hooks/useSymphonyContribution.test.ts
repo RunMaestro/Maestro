@@ -59,7 +59,7 @@ vi.mock('../../../renderer/stores/modalStore', async () => {
 });
 
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
-	DEFAULT_BATCH_PROMPT: 'mock-default-batch-prompt',
+	getDefaultBatchPrompt: vi.fn(() => 'mock-default-batch-prompt'),
 }));
 
 // ============================================================================

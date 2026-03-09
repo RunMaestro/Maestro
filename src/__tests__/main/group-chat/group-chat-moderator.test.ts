@@ -49,7 +49,7 @@ vi.mock('../../../main/prompt-manager', () => ({
 		if (id === 'group-chat-moderator-synthesis') return 'Synthesize the agents responses into a coherent answer.';
 		if (id === 'group-chat-participant') return 'You are {{PARTICIPANT_NAME}} in {{GROUP_CHAT_NAME}}. Log path: {{LOG_PATH}}';
 		if (id === 'group-chat-participant-request') return '{{PARTICIPANT_NAME}} in {{GROUP_CHAT_NAME}}: {{MESSAGE}}';
-		return '';
+		throw new Error(`Unexpected prompt ID in test: ${id}`);
 	}),
 }));
 
