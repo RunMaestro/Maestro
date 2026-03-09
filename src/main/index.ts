@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { app, BrowserWindow, dialog, Menu, powerMonitor } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
@@ -77,6 +77,7 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
+import { initializePrompts } from './prompt-manager';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -362,6 +363,21 @@ app.whenReady().then(async () => {
 		// Stats will be unavailable but the app will still function
 		logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
 		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
+	}
+
+	// Initialize prompts from disk (must happen before features that use them)
+	logger.info('Initializing core prompts', 'Startup');
+	try {
+		await initializePrompts();
+		logger.info('Core prompts initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+		dialog.showErrorBox(
+			'Startup Error',
+			'Failed to load system prompts. Please reinstall the application.'
+		);
+		app.quit();
+		return;
 	}
 
 	// Set up IPC handlers
