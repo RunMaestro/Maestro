@@ -218,26 +218,27 @@ export const RightPanel = memo(
 		// Security events for badge display
 		const [securityEventIds, setSecurityEventIds] = useState<string[]>([]);
 
+		// Load security event IDs - extracted as callback so it can be reused
+		const loadSecurityEventIds = useCallback(async () => {
+			try {
+				const result = await window.maestro.security.getEvents(100, 0);
+				setSecurityEventIds(result.events.map((e) => e.id));
+			} catch {
+				// Ignore errors - security events are optional
+			}
+		}, []);
+
 		// Load security event IDs on mount and subscribe to updates
 		useEffect(() => {
-			const loadEventIds = async () => {
-				try {
-					const result = await window.maestro.security.getEvents(100, 0);
-					setSecurityEventIds(result.events.map((e) => e.id));
-				} catch {
-					// Ignore errors - security events are optional
-				}
-			};
-
-			loadEventIds();
+			loadSecurityEventIds();
 
 			// Subscribe to real-time updates
 			const unsubscribe = window.maestro.security.onSecurityEvent(() => {
-				loadEventIds();
+				loadSecurityEventIds();
 			});
 
 			return unsubscribe;
-		}, []);
+		}, [loadSecurityEventIds]);
 
 		// Calculate unread security events count
 		const unreadSecurityCount = useMemo(() => {
@@ -367,9 +368,11 @@ export const RightPanel = memo(
 				},
 				refreshSecurityEvents: () => {
 					securityEventsPanelRef.current?.refresh();
+					// Also refresh the badge by reloading event IDs
+					loadSecurityEventIds();
 				},
 			}),
-			[toggleAutoRunExpanded]
+			[toggleAutoRunExpanded, loadSecurityEventIds]
 		);
 
 		// Focus the history panel when switching to history tab
