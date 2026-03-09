@@ -156,4 +156,20 @@ describe('buildWorktreeSession', () => {
 		expect(tab.state).toBe('idle');
 		expect(tab.logs).toEqual([]);
 	});
+
+	it('should not auto-create terminal tabs', () => {
+		const parent = createMockParentSession();
+		const session = buildWorktreeSession({
+			parentSession: parent,
+			path: '/worktrees/no-term',
+			name: 'no-term',
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+		});
+
+		expect(session.terminalTabs).toEqual([]);
+		expect(session.activeTerminalTabId).toBeNull();
+		expect(session.unifiedTabOrder).toHaveLength(1);
+		expect(session.unifiedTabOrder[0].type).toBe('ai');
+	});
 });
