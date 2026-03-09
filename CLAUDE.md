@@ -202,6 +202,8 @@ src/
 | Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                   |
 | Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler |
 | Modify history components    | `src/renderer/components/History/`                                                                                                    |
+| Customize prompts            | Use "Maestro Prompts" tab in Right Bar, or edit `userData/core-prompts-customizations.json`                                            |
+| Add new prompt               | `src/prompts/*.md`, `src/main/prompt-manager.ts` (add to CORE_PROMPTS array)                                                          |
 
 ---
 
@@ -347,3 +349,27 @@ Maestro provides a hosted MCP (Model Context Protocol) server for AI application
 ```
 
 See [MCP Server documentation](https://docs.runmaestro.ai/mcp-server) for full details.
+
+---
+
+## Prompt Customization
+
+Core system prompts can be customized via the **Maestro Prompts** tab in the Right Bar.
+
+### Using the UI
+1. Open the Right Bar
+2. Select the "Maestro Prompts" tab
+3. Browse prompts by category (Wizard, Auto Run, Group Chat, etc.)
+4. Edit prompt content in the editor
+5. Click "Save" to apply changes (takes effect immediately)
+
+### How It Works
+- **Bundled prompts**: Ship with the app in `Resources/prompts/core/`
+- **User customizations**: Stored in `userData/core-prompts-customizations.json`
+- **Load priority**: User customization wins if present, else bundled default
+- **Immediate effect**: Changes are applied to the in-memory cache immediately (no restart required)
+
+### Resetting Prompts
+Click "Reset to Default" to restore the bundled version (takes effect immediately).
+
+**Note:** Unlike SpecKit/OpenSpec, core prompts do not have an "Update from GitHub" button since they ship with each release.

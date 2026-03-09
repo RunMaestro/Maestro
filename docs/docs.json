@@ -58,7 +58,8 @@
 							"group-chat",
 							"remote-control",
 							"ssh-remote-execution",
-							"configuration"
+							"configuration",
+							"maestro-prompts"
 						]
 					},
 					{
