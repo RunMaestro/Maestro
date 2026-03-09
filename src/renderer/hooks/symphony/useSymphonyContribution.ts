@@ -281,8 +281,8 @@ export function useSymphonyContribution(
 				}, 500);
 			}
 		},
-			[sessions, defaultSaveToHistory, startBatchRun]
-		);
+		[sessions, defaultSaveToHistory, startBatchRun, inputRef]
+	);
 
 	return { handleStartContribution };
 }

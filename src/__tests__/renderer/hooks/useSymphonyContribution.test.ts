@@ -58,9 +58,17 @@ vi.mock('../../../renderer/stores/modalStore', async () => {
 	};
 });
 
+let batchPromptsLoaded = false;
 vi.mock('../../../renderer/hooks/batch/batchUtils', () => ({
-	getDefaultBatchPrompt: vi.fn(() => 'mock-default-batch-prompt'),
-	loadBatchPrompts: vi.fn().mockResolvedValue(undefined),
+	getDefaultBatchPrompt: vi.fn(() => {
+		if (!batchPromptsLoaded) {
+			throw new Error('batch prompts not loaded');
+		}
+		return 'mock-default-batch-prompt';
+	}),
+	loadBatchPrompts: vi.fn().mockImplementation(async () => {
+		batchPromptsLoaded = true;
+	}),
 }));
 
 // ============================================================================
@@ -175,6 +183,7 @@ function createDeps(
 
 beforeEach(() => {
 	idCounter = 0;
+	batchPromptsLoaded = false;
 	vi.clearAllMocks();
 
 	// Re-establish default mock return values cleared by clearAllMocks
@@ -188,7 +197,9 @@ beforeEach(() => {
 	(gitService.getBranches as ReturnType<typeof vi.fn>).mockResolvedValue(['main']);
 	(gitService.getTags as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 	(validateNewSession as ReturnType<typeof vi.fn>).mockReturnValue({ valid: true, error: null });
-	(loadBatchPrompts as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+	(loadBatchPrompts as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+		batchPromptsLoaded = true;
+	});
 	(getModalActions as ReturnType<typeof vi.fn>).mockReturnValue({
 		setSymphonyModalOpen: vi.fn(),
 	});
