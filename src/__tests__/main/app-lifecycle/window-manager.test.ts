@@ -21,6 +21,7 @@ const mockWebContents = {
 	setWindowOpenHandler: vi.fn(),
 	session: {
 		setPermissionRequestHandler: vi.fn(),
+		setSpellCheckerLanguages: vi.fn(),
 	},
 };
 
@@ -65,6 +66,9 @@ vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
+	},
+	app: {
+		getLocale: vi.fn().mockReturnValue('en-US'),
 	},
 }));
 
