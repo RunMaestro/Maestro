@@ -1016,6 +1016,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
+							// Per-session security policy (merged with global LLM Guard settings)
+							sessionSecurityPolicy: freshSession.securityPolicy,
 							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
 							// For stream-json agents (Claude Code, Codex): use JSON format via stdin
 							// For other agents (OpenCode, etc.): use raw text via stdin

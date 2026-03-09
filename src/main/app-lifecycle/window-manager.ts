@@ -4,7 +4,7 @@
  */
 
 import * as path from 'path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, app } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -106,6 +106,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					contextIsolation: true,
 					nodeIntegration: false,
 					sandbox: true,
+					spellcheck: true,
 				},
 			});
 
@@ -122,6 +123,20 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				fullScreen: savedState.isFullScreen,
 				mode: isDevelopment ? 'development' : 'production',
 			});
+
+			// Configure spell-checker with system locale
+			// Uses system locale to respect user's language preference (en_US vs en_GB, etc.)
+			const systemLocale = app.getLocale();
+			const spellCheckLanguages = [systemLocale];
+			// Add fallback to generic English if not already included
+			if (!systemLocale.startsWith('en')) {
+				spellCheckLanguages.push('en-US');
+			}
+			mainWindow.webContents.session.setSpellCheckerLanguages(spellCheckLanguages);
+			logger.info(
+				`Spell-checker configured with languages: ${spellCheckLanguages.join(', ')}`,
+				'Window'
+			);
 
 			// Save window state before closing
 			const saveWindowState = () => {

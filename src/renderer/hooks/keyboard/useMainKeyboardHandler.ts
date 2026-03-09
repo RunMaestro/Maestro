@@ -112,12 +112,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) even when modals are open
 				const isLayoutShortcut =
 					e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
+				// Allow right panel tab shortcuts (Cmd+Shift+F/H/S/X) even when overlays are open
 				const keyLower = e.key.toLowerCase();
 				const isRightPanelShortcut =
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
-					(keyLower === 'f' || keyLower === 'h' || keyLower === 's');
+					(keyLower === 'f' || keyLower === 'h' || keyLower === 's' || keyLower === 'x');
 				// Allow jumpToBottom (Cmd+Shift+J) from anywhere - always scroll main panel to bottom
 				const isJumpToBottomShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && keyLower === 'j';
 				// Allow markdown toggle (Cmd+E) for chat history, even when overlays are open
@@ -446,6 +446,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('maestroCue');
+			} else if (ctx.isShortcut(e, 'toggleLlmGuard')) {
+				e.preventDefault();
+				// Toggle LLM Guard enabled state
+				const current = ctx.llmGuardSettings?.enabled ?? false;
+				ctx.updateLlmGuardSettings?.({ enabled: !current });
+				ctx.setFlashNotification?.(current ? 'LLM Guard Disabled' : 'LLM Guard Enabled');
+				trackShortcut('toggleLlmGuard');
+			} else if (ctx.isShortcut(e, 'goToSecurity')) {
+				e.preventDefault();
+				ctx.setRightPanelOpen(true);
+				ctx.handleSetActiveRightTab('security');
+				ctx.setActiveFocus('right');
+				trackShortcut('goToSecurity');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)

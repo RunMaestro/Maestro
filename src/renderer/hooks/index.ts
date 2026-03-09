@@ -103,6 +103,11 @@ export * from './worktree';
 export * from './wizard';
 
 // ============================================================================
+// Security Module - LLM Guard and security-related functionality
+// ============================================================================
+export * from './security';
+
+// ============================================================================
 // Re-export TransferError types from component for convenience
 // ============================================================================
 export type {

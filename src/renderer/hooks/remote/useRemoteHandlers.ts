@@ -415,6 +415,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					sessionSecurityPolicy: session.securityPolicy,
 				});
 
 				console.log(`[Remote] ${session.toolType} spawn initiated successfully`);

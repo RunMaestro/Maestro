@@ -48,6 +48,10 @@ import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-ch
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
+// Import LLM Guard for inter-agent security scanning
+import { runLlmGuardInterAgent } from '../security/llm-guard';
+import type { LlmGuardConfig } from '../security/llm-guard/types';
+import { logSecurityEvent } from '../security/security-logger';
 
 const LOG_CONTEXT = '[GroupChatRouter]';
 
@@ -86,6 +90,11 @@ export type GetSessionsCallback = () => SessionInfo[];
 export type GetCustomEnvVarsCallback = (agentId: string) => Record<string, string> | undefined;
 export type GetAgentConfigCallback = (agentId: string) => Record<string, any> | undefined;
 
+/**
+ * Callback type for getting LLM Guard settings.
+ */
+export type GetLlmGuardSettingsCallback = () => Partial<LlmGuardConfig> | null;
+
 // Module-level callback for session lookup
 let getSessionsCallback: GetSessionsCallback | null = null;
 
@@ -95,6 +104,9 @@ let getAgentConfigCallback: GetAgentConfigCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
+
+// Module-level callback for LLM Guard settings lookup
+let getLlmGuardSettingsCallback: GetLlmGuardSettingsCallback | null = null;
 
 /**
  * Tracks pending participant responses for each group chat.
@@ -181,6 +193,14 @@ export function setGetAgentConfigCallback(callback: GetAgentConfigCallback): voi
  */
 export function setSshStore(store: SshRemoteSettingsStore): void {
 	sshStore = store;
+}
+
+/**
+ * Sets the callback for getting LLM Guard settings.
+ * Called from index.ts during initialization.
+ */
+export function setGetLlmGuardSettingsCallback(callback: GetLlmGuardSettingsCallback): void {
+	getLlmGuardSettingsCallback = callback;
 }
 
 /**
@@ -840,6 +860,61 @@ export async function routeModeratorResponse(
 				continue;
 			}
 
+			// Apply inter-agent security scanning (moderator -> participant)
+			const llmGuardSettings = getLlmGuardSettingsCallback?.() ?? null;
+			const interAgentResult = runLlmGuardInterAgent(
+				message,
+				'Moderator',
+				participantName,
+				llmGuardSettings
+			);
+
+			// Log inter-agent security event if there were findings
+			if (interAgentResult.findings.length > 0) {
+				logSecurityEvent({
+					sessionId: `group-chat-${groupChatId}`,
+					eventType: 'inter_agent_scan',
+					findings: interAgentResult.findings,
+					action: interAgentResult.blocked
+						? 'blocked'
+						: interAgentResult.warned
+							? 'warned'
+							: interAgentResult.sanitizedMessage !== message
+								? 'sanitized'
+								: 'none',
+					originalLength: message.length,
+					sanitizedLength: interAgentResult.sanitizedMessage.length,
+					groupChatId,
+					sourceAgent: 'Moderator',
+					targetAgent: participantName,
+				}).catch((err) => {
+					logger.error('Failed to log inter-agent security event', LOG_CONTEXT, { err });
+				});
+
+				console.log(
+					`[GroupChat:Debug] Inter-agent scan (Moderator -> ${participantName}): ${interAgentResult.findings.length} finding(s), blocked=${interAgentResult.blocked}, warned=${interAgentResult.warned}`
+				);
+			}
+
+			// If blocked, skip this participant
+			if (interAgentResult.blocked) {
+				console.warn(
+					`[GroupChat:Debug] Inter-agent message blocked: ${interAgentResult.blockReason}`
+				);
+				groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
+				// Emit a warning message to the chat
+				const warningMessage: GroupChatMessage = {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ Security: Message to @${participantName} was blocked. ${interAgentResult.blockReason}`,
+				};
+				groupChatEmitters.emitMessage?.(groupChatId, warningMessage);
+				continue;
+			}
+
+			// Use sanitized message if available
+			const sanitizedMessage = interAgentResult.sanitizedMessage;
+
 			// Build the prompt with context for this participant
 			// Uses template from src/prompts/group-chat-participant-request.md
 			const readOnlyNote = readOnly
@@ -860,7 +935,7 @@ export async function routeModeratorResponse(
 				.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
 				.replace(/\{\{HISTORY_CONTEXT\}\}/g, historyContext)
 				.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
-				.replace(/\{\{MESSAGE\}\}/g, message)
+				.replace(/\{\{MESSAGE\}\}/g, sanitizedMessage)
 				.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
 
 			// Create a unique session ID for this batch process
@@ -1067,20 +1142,71 @@ export async function routeAgentResponse(
 		`[GroupChat:Debug] Participant verified: ${participantName} (agent: ${participant.agentId})`
 	);
 
-	// Log the message as coming from the participant
-	await appendToLog(chat.logPath, participantName, message);
+	// Apply inter-agent security scanning (participant -> moderator/chat)
+	const llmGuardSettings = getLlmGuardSettingsCallback?.() ?? null;
+	const interAgentResult = runLlmGuardInterAgent(
+		message,
+		participantName,
+		'Moderator',
+		llmGuardSettings
+	);
+
+	// Log inter-agent security event if there were findings
+	if (interAgentResult.findings.length > 0) {
+		logSecurityEvent({
+			sessionId: `group-chat-${groupChatId}`,
+			eventType: 'inter_agent_scan',
+			findings: interAgentResult.findings,
+			action: interAgentResult.blocked
+				? 'blocked'
+				: interAgentResult.warned
+					? 'warned'
+					: interAgentResult.sanitizedMessage !== message
+						? 'sanitized'
+						: 'none',
+			originalLength: message.length,
+			sanitizedLength: interAgentResult.sanitizedMessage.length,
+			groupChatId,
+			sourceAgent: participantName,
+			targetAgent: 'Moderator',
+		}).catch((err) => {
+			logger.error('Failed to log inter-agent security event', LOG_CONTEXT, { err });
+		});
+
+		console.log(
+			`[GroupChat:Debug] Inter-agent scan (${participantName} -> Moderator): ${interAgentResult.findings.length} finding(s), blocked=${interAgentResult.blocked}, warned=${interAgentResult.warned}`
+		);
+	}
+
+	// Use sanitized message (or original if no changes)
+	const sanitizedMessage = interAgentResult.sanitizedMessage;
+
+	// If blocked, emit warning but don't log to chat history
+	if (interAgentResult.blocked) {
+		console.warn(`[GroupChat:Debug] Inter-agent message blocked: ${interAgentResult.blockReason}`);
+		const warningMessage: GroupChatMessage = {
+			timestamp: new Date().toISOString(),
+			from: 'system',
+			content: `⚠️ Security: Response from @${participantName} was blocked. ${interAgentResult.blockReason}`,
+		};
+		groupChatEmitters.emitMessage?.(groupChatId, warningMessage);
+		return;
+	}
+
+	// Log the (potentially sanitized) message as coming from the participant
+	await appendToLog(chat.logPath, participantName, sanitizedMessage);
 	console.log(`[GroupChat:Debug] Message appended to log`);
 
 	// Emit message event to renderer so it shows immediately
 	const agentMessage: GroupChatMessage = {
 		timestamp: new Date().toISOString(),
 		from: participantName,
-		content: message,
+		content: sanitizedMessage,
 	};
 	groupChatEmitters.emitMessage?.(groupChatId, agentMessage);
 
 	// Extract summary from first sentence (agents are prompted to start with a summary sentence)
-	const summary = extractFirstSentence(message);
+	const summary = extractFirstSentence(sanitizedMessage);
 
 	// Update participant stats
 	const currentParticipant = participant;
@@ -1119,7 +1245,7 @@ export async function routeAgentResponse(
 			participantName,
 			participantColor: participant.color || '#808080', // Default gray if no color assigned
 			type: 'response',
-			fullResponse: message,
+			fullResponse: sanitizedMessage,
 		});
 
 		// Emit history entry event to renderer

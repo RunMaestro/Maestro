@@ -126,6 +126,11 @@ export interface WorktreeModalData {
 	session: Session;
 }
 
+/** Session security modal data */
+export interface SessionSecurityModalData {
+	session: Session;
+}
+
 /** Group chat modal data (delete/rename/edit) */
 export interface GroupChatModalData {
 	groupChatId: string;
@@ -229,7 +234,9 @@ export type ModalId =
 	| 'directorNotes'
 	// Maestro Cue
 	| 'cueModal'
-	| 'cueYamlEditor';
+	| 'cueYamlEditor'
+	// Session Security
+	| 'sessionSecurity';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -261,6 +268,7 @@ export interface ModalDataMap {
 	keyboardMastery: KeyboardMasteryData;
 	lightbox: LightboxData;
 	cueYamlEditor: CueYamlEditorData;
+	sessionSecurity: SessionSecurityModalData;
 }
 
 // Helper type to get data type for a modal ID
