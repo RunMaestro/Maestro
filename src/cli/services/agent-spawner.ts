@@ -1,9 +1,10 @@
 // Agent spawner service for CLI
-// Spawns agent CLIs (Claude Code, Codex) and parses their output
+// Spawns agent CLIs and parses their output
 
 import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
+import type { AgentOutputParser } from '../../main/parsers/agent-output-parser';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
 import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
@@ -13,10 +14,8 @@ import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
-import { getAgentDefinition } from '../../main/agents/definitions';
 
-// Claude Code default command and arguments (same as Electron app)
-const CLAUDE_DEFAULT_COMMAND = 'claude';
+// Claude Code arguments for batch mode (stream-json format)
 const CLAUDE_ARGS = [
 	'--print',
 	'--verbose',
@@ -25,30 +24,11 @@ const CLAUDE_ARGS = [
 	'--dangerously-skip-permissions',
 ];
 
-// Cached Claude path (resolved once at startup)
-let cachedClaudePath: string | null = null;
+// Cached paths per agent type (resolved once at startup)
+const cachedPaths: Map<string, string> = new Map();
 
-// Codex default command and arguments (batch mode)
-const CODEX_DEFAULT_COMMAND = 'codex';
-const CODEX_ARGS = [
-	'exec',
-	'--json',
-	'--dangerously-bypass-approvals-and-sandbox',
-	'--skip-git-repo-check',
-];
-
-// Cached Codex path (resolved once at startup)
-let cachedCodexPath: string | null = null;
-
-// OpenCode default command
-const OPENCODE_DEFAULT_COMMAND = 'opencode';
-// Cached OpenCode path (resolved once at startup)
-let cachedOpenCodePath: string | null = null;
-
-// Factory Droid default command
-const DROID_DEFAULT_COMMAND = 'droid';
-// Cached Factory Droid path (resolved once at startup)
-let cachedDroidPath: string | null = null;
+// Agent types that support CLI batch mode via JSON line parsing
+const JSON_LINE_AGENTS: ToolType[] = ['codex', 'opencode', 'factory-droid'];
 
 // Result from spawning an agent
 export interface AgentResult {
@@ -57,6 +37,13 @@ export interface AgentResult {
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	error?: string;
+}
+
+// Detection result
+export interface DetectResult {
+	available: boolean;
+	path?: string;
+	source?: 'settings' | 'path';
 }
 
 /**
@@ -89,65 +76,7 @@ async function isExecutable(filePath: string): Promise<boolean> {
 }
 
 /**
- * Find Claude in PATH using 'which' command
- */
-async function findClaudeInPath(): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const env = { ...process.env, PATH: getExpandedPath() };
-		const command = getWhichCommand();
-
-		const proc = spawn(command, [CLAUDE_DEFAULT_COMMAND], { env });
-		let stdout = '';
-
-		proc.stdout?.on('data', (data) => {
-			stdout += data.toString();
-		});
-
-		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]); // First match
-			} else {
-				resolve(undefined);
-			}
-		});
-
-		proc.on('error', () => {
-			resolve(undefined);
-		});
-	});
-}
-
-/**
- * Find Codex in PATH using 'which' command
- */
-async function findCodexInPath(): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const env = { ...process.env, PATH: getExpandedPath() };
-		const command = getWhichCommand();
-
-		const proc = spawn(command, [CODEX_DEFAULT_COMMAND], { env });
-		let stdout = '';
-
-		proc.stdout?.on('data', (data) => {
-			stdout += data.toString();
-		});
-
-		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]); // First match
-			} else {
-				resolve(undefined);
-			}
-		});
-
-		proc.on('error', () => {
-			resolve(undefined);
-		});
-	});
-}
-
-/**
- * Generic which-style lookup for arbitrary command names
+ * Find a command in PATH using 'which' (Unix) or 'where' (Windows)
  */
 async function findCommandInPath(commandName: string): Promise<string | undefined> {
 	return new Promise((resolve) => {
@@ -176,170 +105,62 @@ async function findCommandInPath(commandName: string): Promise<string | undefine
 }
 
 /**
- * Check if Claude Code is available
- * First checks for a custom path in settings, then falls back to PATH detection
+ * Detect if an agent CLI is available.
+ * Checks custom path in settings first, then falls back to PATH detection.
  */
-export async function detectClaude(): Promise<{
-	available: boolean;
-	path?: string;
-	source?: 'settings' | 'path';
-}> {
-	// Return cached result if available
-	if (cachedClaudePath) {
-		return { available: true, path: cachedClaudePath, source: 'settings' };
+export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
+	const cached = cachedPaths.get(toolType);
+	if (cached) {
+		return { available: true, path: cached, source: 'settings' };
 	}
 
-	// 1. Check for custom path in settings (same settings as desktop app)
-	const customPath = getAgentCustomPath('claude-code');
+	const def = getAgentDefinition(toolType);
+	const defaultCommand = def?.binaryName || toolType;
+
+	// 1. Check for custom path in settings
+	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
 		if (await isExecutable(customPath)) {
-			cachedClaudePath = customPath;
+			cachedPaths.set(toolType, customPath);
 			return { available: true, path: customPath, source: 'settings' };
 		}
-		// Custom path is set but invalid - warn but continue to PATH detection
 		console.error(
-			`Warning: Custom Claude path "${customPath}" is not executable, falling back to PATH detection`
+			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
 		);
 	}
 
 	// 2. Fall back to PATH detection
-	const pathResult = await findClaudeInPath();
+	const pathResult = await findCommandInPath(defaultCommand);
 	if (pathResult) {
-		cachedClaudePath = pathResult;
+		cachedPaths.set(toolType, pathResult);
 		return { available: true, path: pathResult, source: 'path' };
 	}
 
 	return { available: false };
 }
 
-/**
- * Check if Codex CLI is available
- * First checks for a custom path in settings, then falls back to PATH detection
- */
-export async function detectCodex(): Promise<{
-	available: boolean;
-	path?: string;
-	source?: 'settings' | 'path';
-}> {
-	if (cachedCodexPath) {
-		return { available: true, path: cachedCodexPath, source: 'settings' };
-	}
-
-	const customPath = getAgentCustomPath('codex');
-	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedCodexPath = customPath;
-			return { available: true, path: customPath, source: 'settings' };
-		}
-		console.error(
-			`Warning: Custom Codex path "${customPath}" is not executable, falling back to PATH detection`
-		);
-	}
-
-	const pathResult = await findCodexInPath();
-	if (pathResult) {
-		cachedCodexPath = pathResult;
-		return { available: true, path: pathResult, source: 'path' };
-	}
-
-	return { available: false };
-}
+// Backward-compatible wrappers
+export const detectClaude = () => detectAgent('claude-code');
+export const detectCodex = () => detectAgent('codex');
+export const detectOpenCode = () => detectAgent('opencode');
+export const detectDroid = () => detectAgent('factory-droid');
 
 /**
- * Check if OpenCode CLI is available
- * First checks for a custom path in settings, then falls back to PATH detection
+ * Get the resolved command/path for spawning an agent.
+ * Uses cached path from detectAgent() or falls back to the agent's binaryName.
  */
-export async function detectOpenCode(): Promise<{
-	available: boolean;
-	path?: string;
-	source?: 'settings' | 'path';
-}> {
-	if (cachedOpenCodePath) {
-		return { available: true, path: cachedOpenCodePath, source: 'settings' };
-	}
-
-	const customPath = getAgentCustomPath('opencode');
-	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedOpenCodePath = customPath;
-			return { available: true, path: customPath, source: 'settings' };
-		}
-		console.error(
-			`Warning: Custom OpenCode path "${customPath}" is not executable, falling back to PATH detection`
-		);
-	}
-
-	const pathResult = await findCommandInPath(OPENCODE_DEFAULT_COMMAND);
-	if (pathResult) {
-		cachedOpenCodePath = pathResult;
-		return { available: true, path: pathResult, source: 'path' };
-	}
-
-	return { available: false };
+export function getAgentCommand(toolType: ToolType): string {
+	const cached = cachedPaths.get(toolType);
+	if (cached) return cached;
+	const def = getAgentDefinition(toolType);
+	return def?.binaryName || toolType;
 }
 
-/**
- * Check if Factory Droid CLI is available
- * First checks for a custom path in settings, then falls back to PATH detection
- */
-export async function detectDroid(): Promise<{
-	available: boolean;
-	path?: string;
-	source?: 'settings' | 'path';
-}> {
-	if (cachedDroidPath) {
-		return { available: true, path: cachedDroidPath, source: 'settings' };
-	}
-
-	const customPath = getAgentCustomPath('factory-droid');
-	if (customPath) {
-		if (await isExecutable(customPath)) {
-			cachedDroidPath = customPath;
-			return { available: true, path: customPath, source: 'settings' };
-		}
-		console.error(
-			`Warning: Custom Droid path "${customPath}" is not executable, falling back to PATH detection`
-		);
-	}
-
-	const pathResult = await findCommandInPath(DROID_DEFAULT_COMMAND);
-	if (pathResult) {
-		cachedDroidPath = pathResult;
-		return { available: true, path: pathResult, source: 'path' };
-	}
-
-	return { available: false };
-}
-
-/**
- * Get the resolved OpenCode command/path for spawning
- */
-export function getOpenCodeCommand(): string {
-	return cachedOpenCodePath || OPENCODE_DEFAULT_COMMAND;
-}
-
-/**
- * Get the resolved Factory Droid command/path for spawning
- */
-export function getDroidCommand(): string {
-	return cachedDroidPath || DROID_DEFAULT_COMMAND;
-}
-
-/**
- * Get the resolved Claude command/path for spawning
- * Uses cached path from detectClaude() or falls back to default command
- */
-export function getClaudeCommand(): string {
-	return cachedClaudePath || CLAUDE_DEFAULT_COMMAND;
-}
-
-/**
- * Get the resolved Codex command/path for spawning
- * Uses cached path from detectCodex() or falls back to default command
- */
-export function getCodexCommand(): string {
-	return cachedCodexPath || CODEX_DEFAULT_COMMAND;
-}
+// Backward-compatible wrappers
+export const getClaudeCommand = () => getAgentCommand('claude-code');
+export const getCodexCommand = () => getAgentCommand('codex');
+export const getOpenCodeCommand = () => getAgentCommand('opencode');
+export const getDroidCommand = () => getAgentCommand('factory-droid');
 
 /**
  * Spawn Claude Code with a prompt and return the result.
@@ -348,32 +169,20 @@ export function getCodexCommand(): string {
  * Designed for headless batch execution without access to the Electron settings
  * store or per-session agent configuration. Custom model, args, env vars, and
  * SSH remote execution are not supported in CLI mode.
+ *
+ * Claude uses a unique JSON format (stream-json) that differs from the
+ * AgentOutputParser interface used by other agents, so it has its own spawner.
  */
 async function spawnClaudeAgent(
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string,
-	readOnlyMode?: boolean
+	agentSessionId?: string
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
-		// Note: CLI agent spawner doesn't have access to settingsStore with global shell env vars.
-		// For CLI, we rely on the environment that Maestro itself is running in.
-		// Global shell env vars are primarily used by the desktop app's process manager.
 		const env = buildExpandedEnv();
 
-		// Build args: base args + session handling + read-only + prompt
+		// Build args: base args + session handling + prompt
 		const args = [...CLAUDE_ARGS];
-
-		// Apply read-only mode args from centralized agent definitions
-		if (readOnlyMode) {
-			const def = getAgentDefinition('claude-code');
-			if (def?.readOnlyArgs) {
-				args.push(...def.readOnlyArgs);
-			}
-			if (def?.readOnlyEnvOverrides) {
-				Object.assign(env, def.readOnlyEnvOverrides);
-			}
-		}
 
 		if (agentSessionId) {
 			// Resume an existing session (e.g., for synopsis generation)
@@ -393,8 +202,7 @@ async function spawnClaudeAgent(
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
-		// Use the resolved Claude path (from settings or PATH detection)
-		const claudeCommand = getClaudeCommand();
+		const claudeCommand = getAgentCommand('claude-code');
 		const child = spawn(claudeCommand, args, options);
 
 		let jsonBuffer = '';
@@ -511,43 +319,64 @@ function mergeUsageStats(
 	return merged;
 }
 
+/** Create the appropriate output parser for a given agent type */
+function createParser(toolType: ToolType): AgentOutputParser {
+	switch (toolType) {
+		case 'codex':
+			return new CodexOutputParser();
+		case 'opencode':
+			return new OpenCodeOutputParser();
+		case 'factory-droid':
+			return new FactoryDroidOutputParser();
+		default:
+			throw new Error(`No parser available for agent type: ${toolType}`);
+	}
+}
+
 /**
- * Spawn Codex with a prompt and return the result.
+ * Generic spawner for agents that use JSON line output parsed via AgentOutputParser.
+ * Handles Codex, OpenCode, Factory Droid, and any future agents with the same pattern.
  *
  * NOTE: Same limitations as spawnClaudeAgent — no applyAgentConfigOverrides()
  * or SSH wrapping in CLI mode.
  */
-async function spawnCodexAgent(
+async function spawnJsonLineAgent(
+	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string,
-	readOnlyMode?: boolean
+	agentSessionId?: string
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
-		// Note: CLI agent spawner doesn't have access to settingsStore with global shell env vars.
-		// For CLI, we rely on the environment that Maestro itself is running in.
-		// Global shell env vars are primarily used by the desktop app's process manager.
 		const env = buildExpandedEnv();
+		const def = getAgentDefinition(toolType);
 
-		const args = [...CODEX_ARGS];
-
-		// Apply read-only mode args from centralized agent definitions
-		if (readOnlyMode) {
-			const def = getAgentDefinition('codex');
-			if (def?.readOnlyArgs) {
-				args.push(...def.readOnlyArgs);
-			}
-			if (def?.readOnlyEnvOverrides) {
-				Object.assign(env, def.readOnlyEnvOverrides);
+		// Apply default env vars from agent definition
+		if (def?.defaultEnvVars) {
+			for (const k of Object.keys(def.defaultEnvVars)) {
+				if (!env[k]) env[k] = def.defaultEnvVars[k];
 			}
 		}
-		args.push('-C', cwd);
 
-		if (agentSessionId) {
-			args.push('resume', agentSessionId);
+		// Build args from agent definition
+		const args: string[] = [];
+		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
+		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
+		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
+
+		if (agentSessionId && def?.resumeArgs) {
+			args.push(...def.resumeArgs(agentSessionId));
 		}
 
-		args.push('--', prompt);
+		// Codex requires explicit working directory arg (other agents use process cwd)
+		if (toolType === 'codex' && def?.workingDirArgs) {
+			args.push(...def.workingDirArgs(cwd));
+		}
+
+		// Add prompt (with or without '--' separator depending on agent)
+		if (!def?.noPromptSeparator) {
+			args.push('--');
+		}
+		args.push(prompt);
 
 		const options: SpawnOptions = {
 			cwd,
@@ -555,10 +384,10 @@ async function spawnCodexAgent(
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
-		const codexCommand = getCodexCommand();
-		const child = spawn(codexCommand, args, options);
+		const agentCommand = getAgentCommand(toolType);
+		const child = spawn(agentCommand, args, options);
 
-		const parser = new CodexOutputParser();
+		const parser = createParser(toolType);
 		let jsonBuffer = '';
 		let result: string | undefined;
 		let sessionId: string | undefined;
@@ -590,116 +419,6 @@ async function spawnCodexAgent(
 
 				const usage = parser.extractUsage(event);
 				if (usage) {
-					usageStats = mergeUsageStats(usageStats, usage);
-				}
-			}
-		});
-
-		child.stderr?.on('data', (data: Buffer) => {
-			stderr += data.toString();
-		});
-
-		child.stdin?.end();
-
-		child.on('close', (code) => {
-			if (code === 0 && !errorText) {
-				resolve({
-					success: true,
-					response: result,
-					agentSessionId: sessionId,
-					usageStats,
-				});
-			} else {
-				resolve({
-					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
-					agentSessionId: sessionId,
-					usageStats,
-				});
-			}
-		});
-
-		child.on('error', (error) => {
-			resolve({
-				success: false,
-				error: `Failed to spawn Codex: ${error.message}`,
-			});
-		});
-	});
-}
-
-async function spawnOpenCodeAgent(
-	cwd: string,
-	prompt: string,
-	agentSessionId?: string
-): Promise<AgentResult> {
-	return new Promise((resolve) => {
-		const env = buildExpandedEnv();
-
-		// Ensure OpenCode default env vars (prevents interactive permission prompts)
-		const def = getAgentDefinition('opencode');
-		if (def?.defaultEnvVars) {
-			for (const k of Object.keys(def.defaultEnvVars)) {
-				if (!env[k]) env[k] = def.defaultEnvVars[k];
-			}
-		}
-
-		const args: string[] = [];
-		// batchModePrefix + json output
-		const defArgs = def?.batchModePrefix || ['run'];
-		args.push(...defArgs);
-		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
-
-		if (agentSessionId && def?.resumeArgs) {
-			args.push(...def.resumeArgs(agentSessionId));
-		}
-
-		// OpenCode uses positional prompt without '--'
-		args.push(prompt);
-
-		const options: SpawnOptions = {
-			cwd,
-			env,
-			stdio: ['pipe', 'pipe', 'pipe'],
-		};
-
-		const openCodeCommand = getOpenCodeCommand();
-		const child = spawn(openCodeCommand, args, options);
-
-		const parser = new OpenCodeOutputParser();
-		let jsonBuffer = '';
-		let result: string | undefined;
-		let sessionId: string | undefined;
-		let usageStats: UsageStats | undefined;
-		let stderr = '';
-		let errorText: string | undefined;
-
-		child.stdout?.on('data', (data: Buffer) => {
-			jsonBuffer += data.toString();
-			const lines = jsonBuffer.split('\n');
-			jsonBuffer = lines.pop() || '';
-
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				const event = parser.parseJsonLine(line);
-				if (!event) continue;
-
-				if (event.type === 'init' && event.sessionId && !sessionId) {
-					sessionId = event.sessionId;
-				}
-
-				if (event.type === 'result' && event.text) {
-					result = result ? `${result}\n${event.text}` : event.text;
-				}
-
-				// Capture structured JSON error events emitted by OpenCode
-				// (opencode --format json can emit { type: 'error', error: ... })
-				if (event.type === 'error' && event.text && !errorText) {
-					errorText = event.text;
-				}
-
-				const usage = parser.extractUsage(event as any);
-				if (usage) {
 					usageStats = mergeUsageStats(usageStats, {
 						inputTokens: usage.inputTokens || 0,
 						outputTokens: usage.outputTokens || 0,
@@ -719,110 +438,7 @@ async function spawnOpenCodeAgent(
 
 		child.stdin?.end();
 
-		child.on('close', (code) => {
-			// If OpenCode emitted a structured JSON 'error' event, treat it as a failure
-			// even when the process exits with code 0. This mirrors Codex/Factory Droid
-			// behaviour and preserves provider error messages emitted in JSON mode.
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
-			} else {
-				resolve({
-					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
-					agentSessionId: sessionId,
-					usageStats,
-				});
-			}
-		});
-
-		child.on('error', (error) => {
-			resolve({ success: false, error: `Failed to spawn OpenCode: ${error.message}` });
-		});
-	});
-}
-
-async function spawnDroidAgent(
-	cwd: string,
-	prompt: string,
-	agentSessionId?: string
-): Promise<AgentResult> {
-	return new Promise((resolve) => {
-		const env = buildExpandedEnv();
-
-		const def = getAgentDefinition('factory-droid');
-
-		const args: string[] = [];
-		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
-		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
-		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
-
-		if (agentSessionId && def?.resumeArgs) {
-			args.push(...def.resumeArgs(agentSessionId));
-		}
-
-		// Factory Droid uses positional prompt
-		args.push(prompt);
-
-		const options: SpawnOptions = {
-			cwd,
-			env,
-			stdio: ['pipe', 'pipe', 'pipe'],
-		};
-
-		const droidCommand = getDroidCommand();
-		const child = spawn(droidCommand, args, options);
-
-		const parser = new FactoryDroidOutputParser();
-		let jsonBuffer = '';
-		let result: string | undefined;
-		let sessionId: string | undefined;
-		let usageStats: UsageStats | undefined;
-		let stderr = '';
-		let errorText: string | undefined;
-
-		child.stdout?.on('data', (data: Buffer) => {
-			jsonBuffer += data.toString();
-			const lines = jsonBuffer.split('\n');
-			jsonBuffer = lines.pop() || '';
-
-			for (const line of lines) {
-				if (!line.trim()) continue;
-				const event = parser.parseJsonLine(line);
-				if (!event) continue;
-
-				if (event.type === 'init' && event.sessionId && !sessionId) {
-					sessionId = event.sessionId;
-				}
-
-				if (event.type === 'result' && event.text) {
-					result = result ? `${result}\n${event.text}` : event.text;
-				}
-
-				if (event.type === 'error' && event.text && !errorText) {
-					errorText = event.text;
-				}
-
-				const usage = parser.extractUsage(event as any);
-				if (usage) {
-					usageStats = mergeUsageStats(usageStats, {
-						inputTokens: usage.inputTokens || 0,
-						outputTokens: usage.outputTokens || 0,
-						cacheReadTokens: usage.cacheReadTokens || 0,
-						cacheCreationTokens: usage.cacheCreationTokens || 0,
-						costUsd: usage.costUsd || 0,
-						contextWindow: usage.contextWindow || 0,
-						reasoningTokens: usage.reasoningTokens || 0,
-					});
-				}
-			}
-		});
-
-		child.stderr?.on('data', (data: Buffer) => {
-			stderr += data.toString();
-		});
-
-		child.stdin?.end();
-
+		const agentName = def?.name || toolType;
 		child.on('close', (code) => {
 			if (code === 0 && !errorText) {
 				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
@@ -837,19 +453,9 @@ async function spawnDroidAgent(
 		});
 
 		child.on('error', (error) => {
-			resolve({ success: false, error: `Failed to spawn Factory Droid: ${error.message}` });
+			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});
-}
-
-/**
- * Options for spawning an agent via CLI
- */
-export interface SpawnAgentOptions {
-	/** Resume an existing agent session */
-	agentSessionId?: string;
-	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
-	readOnlyMode?: boolean;
 }
 
 /**
@@ -859,25 +465,14 @@ export async function spawnAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string,
-	options?: SpawnAgentOptions
+	agentSessionId?: string
 ): Promise<AgentResult> {
-	const readOnly = options?.readOnlyMode;
-
-	if (toolType === 'codex') {
-		return spawnCodexAgent(cwd, prompt, agentSessionId, readOnly);
-	}
-
 	if (toolType === 'claude-code') {
-		return spawnClaudeAgent(cwd, prompt, agentSessionId, readOnly);
+		return spawnClaudeAgent(cwd, prompt, agentSessionId);
 	}
 
-	if (toolType === 'opencode') {
-		return spawnOpenCodeAgent(cwd, prompt, agentSessionId);
-	}
-
-	if (toolType === 'factory-droid') {
-		return spawnDroidAgent(cwd, prompt, agentSessionId);
+	if (JSON_LINE_AGENTS.includes(toolType)) {
+		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId);
 	}
 
 	return {
