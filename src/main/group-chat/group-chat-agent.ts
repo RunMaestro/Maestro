@@ -25,7 +25,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
-import { groupChatParticipantPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getWindowsSpawnConfig } from './group-chat-config';
@@ -52,7 +52,7 @@ export function getParticipantSystemPrompt(
 	groupChatName: string,
 	logPath: string
 ): string {
-	return groupChatParticipantPrompt
+	return getPrompt('group-chat-participant')
 		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, groupChatName)
 		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 		.replace(/\{\{LOG_PATH\}\}/g, logPath);

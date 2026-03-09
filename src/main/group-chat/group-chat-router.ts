@@ -40,7 +40,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
-import { groupChatParticipantRequestPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
@@ -827,7 +827,7 @@ export async function routeModeratorResponse(
 			// Get the group chat folder path for file access permissions
 			const groupChatFolder = getGroupChatDir(groupChatId);
 
-			const participantPrompt = groupChatParticipantRequestPrompt
+			const participantPrompt = getPrompt('group-chat-participant-request')
 				.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
 				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
@@ -1371,7 +1371,7 @@ export async function respawnParticipantWithRecovery(
 	const groupChatFolder = getGroupChatDir(groupChatId);
 
 	// Build the recovery prompt - includes standard prompt plus recovery context
-	const basePrompt = groupChatParticipantRequestPrompt
+	const basePrompt = getPrompt('group-chat-participant-request')
 		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, chat.name)
 		.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
