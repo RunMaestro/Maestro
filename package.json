@@ -55,7 +55,8 @@
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
-		"refresh-openspec": "node scripts/refresh-openspec.mjs"
+		"refresh-openspec": "node scripts/refresh-openspec.mjs",
+		"refresh-llm-guard": "node scripts/refresh-llm-guard-patterns.mjs"
 	},
 	"build": {
 		"npmRebuild": false,

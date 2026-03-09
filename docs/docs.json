@@ -86,6 +86,11 @@
 						]
 					},
 					{
+						"group": "Security",
+						"icon": "shield-halved",
+						"pages": ["security/llm-guard"]
+					},
+					{
 						"group": "Providers & CLI",
 						"pages": ["provider-notes", "multi-claude", "cli"]
 					},

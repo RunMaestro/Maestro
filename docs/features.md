@@ -17,6 +17,7 @@ icon: sparkles
 - 🚀 **Multi-Agent Management** - Run unlimited agents in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
 - 🔐 **[Global Environment Variables](./configuration#global-environment-variables)** - Configure environment variables once in Settings and they apply to all agent processes and terminal sessions. Perfect for API keys, proxy settings, and tool paths.
+- 🛡️ **[LLM Guard](./security/llm-guard)** - Built-in security layer that scans all AI inputs and outputs for sensitive content. Detects secrets, PII, prompt injection attacks, malicious URLs, and dangerous code patterns. Supports custom regex patterns, per-session policies, and audit log export.
 
 ## Core Features
 
