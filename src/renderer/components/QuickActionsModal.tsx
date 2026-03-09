@@ -13,6 +13,7 @@ import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface QuickAction {
 	id: string;
@@ -224,6 +225,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
+
+	// LLM Guard settings for toggle action
+	const llmGuardEnabled = useSettingsStore((s) => s.llmGuardSettings.enabled);
+	const updateLlmGuardSettings = useSettingsStore((s) => s.updateLlmGuardSettings);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
@@ -1024,6 +1029,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		{
+			id: 'goToSecurity',
+			label: 'Go to Security Tab',
+			shortcut: shortcuts.goToSecurity,
+			action: () => {
+				setRightPanelOpen(true);
+				setActiveRightTab('security');
+				setQuickActionOpen(false);
+			},
+		},
 		// Playbook Exchange - browse and import community playbooks
 		...(onOpenPlaybookExchange
 			? [
@@ -1113,6 +1128,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		// LLM Guard toggle
+		{
+			id: 'toggleLlmGuard',
+			label: llmGuardEnabled ? 'Disable LLM Guard' : 'Enable LLM Guard',
+			shortcut: shortcuts.toggleLlmGuard,
+			subtext: 'Security scanning for AI prompts and responses',
+			action: () => {
+				updateLlmGuardSettings({ enabled: !llmGuardEnabled });
+				setQuickActionOpen(false);
+			},
+		},
 		// Last Document Graph - quick re-open (only when a graph has been opened before)
 		...(lastGraphFocusFile && onOpenLastDocumentGraph
 			? [

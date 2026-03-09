@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, startTransition } from 'react';
+import React, { useEffect, useMemo, startTransition, useState, useCallback } from 'react';
 import {
 	Terminal,
 	Cpu,
@@ -36,7 +36,9 @@ import { ExecutionQueueIndicator } from './ExecutionQueueIndicator';
 import { ContextWarningSash } from './ContextWarningSash';
 import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
-import { useAgentCapabilities, useScrollIntoView } from '../hooks';
+import { ScanProgressIndicator } from './ScanProgressIndicator';
+import { SensitiveContentOverlay } from './SensitiveContentOverlay';
+import { useAgentCapabilities, useScrollIntoView, useSensitiveContentDetection } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 
 interface SlashCommand {
@@ -156,6 +158,8 @@ interface InputAreaProps {
 	// Wizard thinking toggle
 	wizardShowThinking?: boolean;
 	onToggleWizardShowThinking?: () => void;
+	// LLM Guard props
+	llmGuardEnabled?: boolean;
 }
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
@@ -247,6 +251,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		// Wizard thinking toggle
 		wizardShowThinking = false,
 		onToggleWizardShowThinking,
+		// LLM Guard props
+		llmGuardEnabled = false,
 	} = props;
 
 	const setCommandHistoryFilterRef = React.useCallback((el: HTMLInputElement | null) => {
@@ -266,6 +272,21 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Get wizardState from active tab (not session level - wizard state is per-tab)
 	const wizardState = activeTab?.wizardState;
+
+	// Scroll position tracking for sensitive content overlay
+	const [textareaScrollTop, setTextareaScrollTop] = useState(0);
+
+	// Handle textarea scroll for overlay sync
+	const handleTextareaScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
+		setTextareaScrollTop(e.currentTarget.scrollTop);
+	}, []);
+
+	// Sensitive content detection for real-time preview (LLM Guard input preview)
+	const { findings: sensitiveFindings } = useSensitiveContentDetection(inputValue, {
+		enabled: llmGuardEnabled && session.inputMode === 'ai',
+		debounceMs: 300,
+		minLength: 3,
+	});
 
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
@@ -456,6 +477,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			{/* ExecutionQueueIndicator - show when items are queued in AI mode */}
 			{session.inputMode === 'ai' && onOpenQueueBrowser && (
 				<ExecutionQueueIndicator session={session} theme={theme} onClick={onOpenQueueBrowser} />
+			)}
+
+			{/* ScanProgressIndicator - show when LLM Guard is scanning content */}
+			{session.inputMode === 'ai' && llmGuardEnabled && (
+				<div className="flex justify-center mb-2">
+					<ScanProgressIndicator
+						theme={theme}
+						enabled={llmGuardEnabled}
+						sessionId={session.id}
+						tabId={session.activeTabId}
+					/>
+				</div>
 			)}
 
 			{/* Only show staged images in AI mode */}
@@ -860,86 +893,106 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									$
 								</span>
 							)}
-							<textarea
-								ref={inputRef}
-								className={`flex-1 bg-transparent text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[3.5rem] scrollbar-thin`}
-								style={{ color: theme.colors.textMain, maxHeight: '11rem' }}
-								placeholder={
-									isTerminalMode
-										? 'Run shell command...'
-										: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
-								}
-								value={inputValue}
-								onFocus={onInputFocus}
-								onBlur={onInputBlur}
-								onChange={(e) => {
-									const value = e.target.value;
-									const cursorPosition = e.target.selectionStart || 0;
+							{/* Textarea wrapper with overlay positioned inside */}
+							<div className="flex-1 relative">
+								{/* Sensitive content overlay - renders pills behind transparent textarea */}
+								{llmGuardEnabled && session.inputMode === 'ai' && sensitiveFindings.length > 0 && (
+									<SensitiveContentOverlay
+										text={inputValue}
+										findings={sensitiveFindings}
+										scrollTop={textareaScrollTop}
+										isTerminalMode={false}
+									/>
+								)}
+								<textarea
+									ref={inputRef}
+									className={`w-full text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[3.5rem] scrollbar-thin bg-transparent`}
+									style={{
+										color: theme.colors.textMain,
+										maxHeight: '11rem',
+										// Keep text visible but allow overlay pills to show through
+										position: 'relative',
+										zIndex: 1,
+									}}
+									placeholder={
+										isTerminalMode
+											? 'Run shell command...'
+											: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
+									}
+									value={inputValue}
+									onFocus={onInputFocus}
+									onBlur={onInputBlur}
+									onChange={(e) => {
+										const value = e.target.value;
+										const cursorPosition = e.target.selectionStart || 0;
 
-									// CRITICAL: Update input value immediately for responsive typing
-									setInputValue(value);
+										// CRITICAL: Update input value immediately for responsive typing
+										setInputValue(value);
 
-									// PERFORMANCE: Use startTransition for non-urgent UI updates
-									// This allows React to interrupt these updates if more keystrokes come in
-									startTransition(() => {
-										// Show slash command autocomplete when typing /
-										// Close when there's a space or newline (user is adding arguments or multiline content)
-										if (value.startsWith('/') && !value.includes(' ') && !value.includes('\n')) {
-											if (!slashCommandOpen) {
-												setSelectedSlashCommandIndex(0);
-											}
-											setSlashCommandOpen(true);
-										} else {
-											setSlashCommandOpen(false);
-										}
-
-										// @ mention file completion (AI mode only)
-										if (
-											!isTerminalMode &&
-											setAtMentionOpen &&
-											setAtMentionFilter &&
-											setAtMentionStartIndex &&
-											setSelectedAtMentionIndex
-										) {
-											const textBeforeCursor = value.substring(0, cursorPosition);
-											const lastAtPos = textBeforeCursor.lastIndexOf('@');
-
-											if (lastAtPos === -1) {
-												setAtMentionOpen(false);
+										// PERFORMANCE: Use startTransition for non-urgent UI updates
+										// This allows React to interrupt these updates if more keystrokes come in
+										startTransition(() => {
+											// Show slash command autocomplete when typing /
+											// Close when there's a space or newline (user is adding arguments or multiline content)
+											if (value.startsWith('/') && !value.includes(' ') && !value.includes('\n')) {
+												if (!slashCommandOpen) {
+													setSelectedSlashCommandIndex(0);
+												}
+												setSlashCommandOpen(true);
 											} else {
-												const isValidTrigger = lastAtPos === 0 || /\s/.test(value[lastAtPos - 1]);
-												const textAfterAt = value.substring(lastAtPos + 1, cursorPosition);
-												const hasSpaceAfterAt = textAfterAt.includes(' ');
+												setSlashCommandOpen(false);
+											}
 
-												if (isValidTrigger && !hasSpaceAfterAt) {
-													setAtMentionOpen(true);
-													setAtMentionFilter(textAfterAt);
-													setAtMentionStartIndex(lastAtPos);
-													setSelectedAtMentionIndex(0);
-												} else {
+											// @ mention file completion (AI mode only)
+											if (
+												!isTerminalMode &&
+												setAtMentionOpen &&
+												setAtMentionFilter &&
+												setAtMentionStartIndex &&
+												setSelectedAtMentionIndex
+											) {
+												const textBeforeCursor = value.substring(0, cursorPosition);
+												const lastAtPos = textBeforeCursor.lastIndexOf('@');
+
+												if (lastAtPos === -1) {
 													setAtMentionOpen(false);
+												} else {
+													const isValidTrigger = lastAtPos === 0 || /\s/.test(value[lastAtPos - 1]);
+													const textAfterAt = value.substring(lastAtPos + 1, cursorPosition);
+													const hasSpaceAfterAt = textAfterAt.includes(' ');
+
+													if (isValidTrigger && !hasSpaceAfterAt) {
+														setAtMentionOpen(true);
+														setAtMentionFilter(textAfterAt);
+														setAtMentionStartIndex(lastAtPos);
+														setSelectedAtMentionIndex(0);
+													} else {
+														setAtMentionOpen(false);
+													}
 												}
 											}
-										}
-									});
+										});
 
-									// PERFORMANCE: Auto-grow logic deferred to next animation frame
-									// This prevents layout thrashing from blocking the keystroke handling
-									const textarea = e.target;
-									requestAnimationFrame(() => {
-										textarea.style.height = 'auto';
-										textarea.style.height = `${Math.min(textarea.scrollHeight, 176)}px`;
-									});
-								}}
-								onKeyDown={handleInputKeyDown}
-								onPaste={handlePaste}
-								onDrop={(e) => {
-									e.stopPropagation();
-									handleDrop(e);
-								}}
-								onDragOver={(e) => e.preventDefault()}
-								rows={2}
-							/>
+										// PERFORMANCE: Auto-grow logic deferred to next animation frame
+										// This prevents layout thrashing from blocking the keystroke handling
+										const textarea = e.target;
+										requestAnimationFrame(() => {
+											textarea.style.height = 'auto';
+											textarea.style.height = `${Math.min(textarea.scrollHeight, 176)}px`;
+										});
+									}}
+									onKeyDown={handleInputKeyDown}
+									onPaste={handlePaste}
+									onDrop={(e) => {
+										e.stopPropagation();
+										handleDrop(e);
+									}}
+									onDragOver={(e) => e.preventDefault()}
+									onScroll={handleTextareaScroll}
+									rows={2}
+									spellCheck={true}
+								/>
+							</div>
 						</div>
 
 						<div className="flex justify-between items-center px-2 pb-2 pt-1">

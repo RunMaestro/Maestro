@@ -979,6 +979,7 @@ export interface AppUtilityModalsProps {
 	promptSupportsThinking: boolean;
 	promptEnterToSend: boolean;
 	onPromptToggleEnterToSend: () => void;
+	promptLlmGuardEnabled?: boolean;
 
 	// ExecutionQueueBrowser
 	queueBrowserOpen: boolean;
@@ -1162,6 +1163,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	promptSupportsThinking,
 	promptEnterToSend,
 	onPromptToggleEnterToSend,
+	promptLlmGuardEnabled,
 	// ExecutionQueueBrowser
 	queueBrowserOpen,
 	onCloseQueueBrowser,
@@ -1402,6 +1404,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					supportsThinking={promptSupportsThinking}
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
+					llmGuardEnabled={promptLlmGuardEnabled}
 				/>
 			)}
 
@@ -2080,6 +2083,7 @@ export interface AppModalsProps {
 	promptSupportsThinking: boolean;
 	promptEnterToSend: boolean;
 	onPromptToggleEnterToSend: () => void;
+	promptLlmGuardEnabled?: boolean;
 	onCloseQueueBrowser: () => void;
 	onRemoveQueueItem: (sessionId: string, itemId: string) => void;
 	onSwitchQueueSession: (sessionId: string) => void;
@@ -2443,6 +2447,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		promptSupportsThinking,
 		promptEnterToSend,
 		onPromptToggleEnterToSend,
+		promptLlmGuardEnabled,
 		onCloseQueueBrowser,
 		onRemoveQueueItem,
 		onSwitchQueueSession,

@@ -49,6 +49,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { LlmGuardIndicator } from './LlmGuardIndicator';
 import type {
 	Session,
 	Theme,
@@ -450,6 +451,10 @@ export const MainPanel = React.memo(
 		);
 		const contextWarningRedThreshold = useSettingsStore(
 			(s) => s.contextManagementSettings.contextWarningRedThreshold ?? 80
+		);
+		const llmGuardEnabled = useSettingsStore((s) => s.llmGuardSettings.enabled);
+		const llmGuardShowInputPreview = useSettingsStore(
+			(s) => s.llmGuardSettings.showInputPreview !== false
 		);
 		const activeFocus = useUIStore((s) => s.activeFocus);
 		const outputSearchOpen = useUIStore((s) => s.outputSearchOpen);
@@ -1519,6 +1524,15 @@ export const MainPanel = React.memo(
 											</div>
 										)}
 
+									{/* LLM Guard Status Indicator - only show in AI mode when guard is enabled */}
+									{activeSession.inputMode === 'ai' && llmGuardEnabled && (
+										<LlmGuardIndicator
+											theme={theme}
+											enabled={llmGuardEnabled}
+											sessionId={activeTab?.agentSessionId ?? undefined}
+										/>
+									)}
+
 									{/* Agent Sessions Button - only show if agent supports session storage */}
 									{hasCapability('supportsSessionStorage') && (
 										<button
@@ -1919,6 +1933,8 @@ export const MainPanel = React.memo(
 													onExitWizard={onExitWizard}
 													wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
 													onToggleWizardShowThinking={props.onToggleWizardShowThinking}
+													// LLM Guard
+													llmGuardEnabled={llmGuardEnabled && llmGuardShowInputPreview}
 												/>
 											</div>
 										)}
