@@ -446,14 +446,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
 				trackShortcut('maestroCue');
-			} else if (ctx.isShortcut(e, 'toggleLlmGuard')) {
+			} else if (ctx.isShortcut(e, 'toggleLlmGuard') && ctx.encoreFeatures?.llmGuard) {
 				e.preventDefault();
-				// Toggle LLM Guard enabled state
-				const current = ctx.llmGuardSettings?.enabled ?? false;
-				ctx.updateLlmGuardSettings?.({ enabled: !current });
+				// Toggle LLM Guard enabled state via encore features
+				const current = ctx.encoreFeatures?.llmGuard ?? false;
+				ctx.setEncoreFeatures?.({ llmGuard: !current });
 				ctx.setFlashNotification?.(current ? 'LLM Guard Disabled' : 'LLM Guard Enabled');
 				trackShortcut('toggleLlmGuard');
-			} else if (ctx.isShortcut(e, 'goToSecurity')) {
+			} else if (ctx.isShortcut(e, 'goToSecurity') && ctx.encoreFeatures?.llmGuard) {
 				e.preventDefault();
 				ctx.setRightPanelOpen(true);
 				ctx.handleSetActiveRightTab('security');

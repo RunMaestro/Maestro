@@ -452,9 +452,9 @@ export const MainPanel = React.memo(
 		const contextWarningRedThreshold = useSettingsStore(
 			(s) => s.contextManagementSettings.contextWarningRedThreshold ?? 80
 		);
-		const llmGuardEnabled = useSettingsStore((s) => s.llmGuardSettings?.enabled ?? false);
+		const llmGuardEnabled = useSettingsStore((s) => s.encoreFeatures.llmGuard);
 		const llmGuardShowInputPreview = useSettingsStore(
-			(s) => s.llmGuardSettings?.showInputPreview !== false
+			(s) => s.encoreFeatures.llmGuard && s.llmGuardSettings?.showInputPreview !== false
 		);
 		const activeFocus = useUIStore((s) => s.activeFocus);
 		const outputSearchOpen = useUIStore((s) => s.outputSearchOpen);

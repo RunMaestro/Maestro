@@ -155,12 +155,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 				let effectivePrompt = config.prompt;
 				let llmGuardState: LlmGuardState | undefined;
+
+				// Check if LLM Guard encore feature is enabled
+				const encoreFeatures = settingsStore.get('encoreFeatures', { llmGuard: false }) as {
+					llmGuard?: boolean;
+				};
+				const llmGuardFeatureEnabled = encoreFeatures.llmGuard ?? false;
+
 				// Build effective LLM Guard config by merging global settings with session-level overrides
 				// Session policy takes precedence over global settings
-				const globalGuardConfig =
-					(settingsStore.get('llmGuardSettings', DEFAULT_LLM_GUARD_CONFIG) as
-						| Partial<LlmGuardConfig>
-						| undefined) ?? DEFAULT_LLM_GUARD_CONFIG;
+				// If the LLM Guard feature is disabled, use a disabled config
+				const globalGuardConfig = llmGuardFeatureEnabled
+					? ((settingsStore.get('llmGuardSettings', DEFAULT_LLM_GUARD_CONFIG) as
+							| Partial<LlmGuardConfig>
+							| undefined) ?? DEFAULT_LLM_GUARD_CONFIG)
+					: { ...DEFAULT_LLM_GUARD_CONFIG, enabled: false };
 				// Use mergeSecurityPolicy to properly merge global and session configs
 				// Session policy overrides global settings; arrays (ban lists, custom patterns) are merged
 				const llmGuardConfig = mergeSecurityPolicy(globalGuardConfig, config.sessionSecurityPolicy);

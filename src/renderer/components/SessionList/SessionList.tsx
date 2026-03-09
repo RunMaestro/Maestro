@@ -130,7 +130,7 @@ function SessionListInner(props: SessionListProps) {
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
-	const llmGuardEnabled = useSettingsStore((s) => s.llmGuardSettings.enabled);
+	const llmGuardEnabled = useSettingsStore((s) => s.encoreFeatures.llmGuard);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);

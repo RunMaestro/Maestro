@@ -764,7 +764,14 @@ function setupIpcHandlers() {
 	setGetCustomShellPathCallback(getCustomShellPathFn);
 
 	// Set up callback for group chat to get LLM Guard settings for inter-agent scanning
+	// Only return settings if the LLM Guard encore feature is enabled
 	setGetLlmGuardSettingsCallback(() => {
+		const encoreFeatures = store.get('encoreFeatures', { llmGuard: false }) as {
+			llmGuard?: boolean;
+		};
+		if (!encoreFeatures.llmGuard) {
+			return null;
+		}
 		const settings = store.get('llmGuardSettings', null);
 		return settings as Partial<import('./security/llm-guard/types').LlmGuardConfig> | null;
 	});

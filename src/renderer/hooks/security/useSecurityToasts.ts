@@ -135,10 +135,13 @@ function shouldShowToast(event: SecurityEventData): boolean {
  */
 export function useSecurityToasts(): void {
 	const llmGuardSettings = useSettingsStore((s) => s.llmGuardSettings);
+	const llmGuardFeatureEnabled = useSettingsStore((s) => s.encoreFeatures.llmGuard);
 
 	// Use ref to avoid re-subscribing on every settings change
 	const settingsRef = useRef(llmGuardSettings);
 	settingsRef.current = llmGuardSettings;
+	const featureEnabledRef = useRef(llmGuardFeatureEnabled);
+	featureEnabledRef.current = llmGuardFeatureEnabled;
 
 	useEffect(() => {
 		// Don't subscribe if window.maestro.security is not available
@@ -147,6 +150,11 @@ export function useSecurityToasts(): void {
 		}
 
 		const unsubscribe = window.maestro.security.onSecurityEvent((event: SecurityEventData) => {
+			// Check if LLM Guard feature is enabled
+			if (!featureEnabledRef.current) {
+				return;
+			}
+
 			// Check if toasts are enabled
 			const showToasts = settingsRef.current.showSecurityToasts !== false;
 			if (!showToasts) {

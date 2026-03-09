@@ -83,7 +83,7 @@ export function PromptComposerModal({
 
 	// Read LLM Guard enabled directly from store to ensure reactivity
 	// (props may be stale due to memo boundaries)
-	const llmGuardEnabledFromStore = useSettingsStore((s) => s.llmGuardSettings?.enabled ?? false);
+	const llmGuardEnabledFromStore = useSettingsStore((s) => s.encoreFeatures.llmGuard);
 	const llmGuardEnabled = llmGuardEnabledFromStore || llmGuardEnabledProp;
 
 	// Handle textarea scroll for overlay sync

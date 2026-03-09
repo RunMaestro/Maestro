@@ -226,10 +226,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 
-	// LLM Guard settings for toggle action
-	const llmGuardEnabled = useSettingsStore((s) => s.llmGuardSettings.enabled);
-	const updateLlmGuardSettings = useSettingsStore((s) => s.updateLlmGuardSettings);
-
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
 	const [renamingSession, setRenamingSession] = useState(false);
@@ -1128,17 +1124,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		// LLM Guard toggle
-		{
-			id: 'toggleLlmGuard',
-			label: llmGuardEnabled ? 'Disable LLM Guard' : 'Enable LLM Guard',
-			shortcut: shortcuts.toggleLlmGuard,
-			subtext: 'Security scanning for AI prompts and responses',
-			action: () => {
-				updateLlmGuardSettings({ enabled: !llmGuardEnabled });
-				setQuickActionOpen(false);
-			},
-		},
 		// Last Document Graph - quick re-open (only when a graph has been opened before)
 		...(lastGraphFocusFile && onOpenLastDocumentGraph
 			? [
