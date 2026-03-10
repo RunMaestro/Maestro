@@ -16,7 +16,12 @@ import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
 import { WindowsWarningModal } from './components/WindowsWarningModal';
 import { GistPublishModal } from './components/GistPublishModal';
-import { MaestroWizard, useWizard, WizardResumeModal } from './components/Wizard';
+import {
+	MaestroWizard,
+	useWizard,
+	WizardResumeModal,
+	type SerializableWizardState,
+} from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
@@ -139,7 +144,7 @@ import { useSymphonyContribution } from './hooks/symphony/useSymphonyContributio
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
 import { notifyToast } from './stores/notificationStore';
-import { useModalActions, useModalStore } from './stores/modalStore';
+import { useModalActions, useModalStore, getModalActions } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
@@ -345,6 +350,25 @@ function MaestroConsoleInner() {
 		closeWizard: _closeWizardModal,
 		goToStep: wizardGoToStep,
 	} = useWizard();
+	// --- WIZARD RESUME CHECK (check for incomplete wizard when opening wizard) ---
+	const handleOpenWizardWithResumeCheck = useCallback(async () => {
+		try {
+			const saved = await window.maestro.settings.get('wizardResumeState');
+			if (
+				saved &&
+				typeof saved === 'object' &&
+				'currentStep' in saved &&
+				saved.currentStep !== 'agent-selection'
+			) {
+				const { setWizardResumeState } = getModalActions();
+				setWizardResumeState(saved as SerializableWizardState);
+				return;
+			}
+		} catch (e) {
+			console.error('[App] Failed to check wizard resume state:', e);
+		}
+		openWizardModal();
+	}, [openWizardModal]);
 
 	// --- SETTINGS (from useSettings hook) ---
 	const settings = useSettings();
@@ -744,30 +768,6 @@ function MaestroConsoleInner() {
 
 	// --- SESSION RESTORATION (extracted hook, Phase 2E) ---
 	const { initialLoadComplete } = useSessionRestoration();
-	// --- WIZARD RESUME CHECK (check for incomplete wizard on app startup) ---
-	useEffect(() => {
-		// Only check after initial session load is complete
-		if (!initialLoadComplete.current) return;
-
-		// Check for saved wizard resume state
-		const checkWizardResume = async () => {
-			try {
-				const saved = await window.maestro.settings.get('wizardResumeState');
-				if (saved && typeof saved === 'object' && saved.currentStep) {
-					// Only resume if past the first step and wizard is not already open
-					if (saved.currentStep !== 'agent-selection' && !wizardState.isOpen) {
-						const { setWizardResumeModalOpen, setWizardResumeState } = getModalActions();
-						setWizardResumeState(saved);
-						setWizardResumeModalOpen(true);
-					}
-				}
-			} catch (e) {
-				console.error('[App] Failed to check wizard resume state:', e);
-			}
-		};
-
-		checkWizardResume();
-	}, [initialLoadComplete.current, wizardState.isOpen]);
 
 	// --- TAB HANDLERS (extracted hook) ---
 	const {
@@ -2307,7 +2307,7 @@ function MaestroConsoleInner() {
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
-		openWizardModal,
+		openWizardModal: handleOpenWizardWithResumeCheck,
 		handleStartTour,
 
 		// Group Chat handlers
@@ -2596,7 +2596,7 @@ function MaestroConsoleInner() {
 					markdownEditMode={activeSession?.activeFileTabId ? markdownEditMode : chatRawTextMode}
 					onQuickActionsToggleMarkdownEditMode={handleQuickActionsToggleMarkdownEditMode}
 					setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
-					openWizard={openWizardModal}
+					openWizard={handleOpenWizardWithResumeCheck}
 					wizardGoToStep={wizardGoToStep}
 					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
@@ -2991,7 +2991,7 @@ function MaestroConsoleInner() {
 						theme={theme}
 						shortcuts={shortcuts}
 						onNewAgent={addNewSession}
-						onOpenWizard={openWizardModal}
+						onOpenWizard={handleOpenWizardWithResumeCheck}
 						onOpenSettings={() => {
 							setSettingsModalOpen(true);
 							setSettingsTab('general');
