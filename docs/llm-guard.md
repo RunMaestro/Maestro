@@ -6,6 +6,10 @@ icon: shield
 
 LLM Guard is Maestro's built-in security layer that scans all prompts sent to AI agents and responses received from them. It detects and handles sensitive data, injection attacks, malicious URLs, dangerous code patterns, and more.
 
+<Note>
+LLM Guard is an **Encore Feature** — it's disabled by default. Enable it in **Settings > Encore Features**, then configure it in **Settings > Security**.
+</Note>
+
 ## Quick Start
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Security** tab
