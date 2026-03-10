@@ -403,7 +403,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -442,7 +442,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -483,7 +483,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -518,7 +518,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -560,7 +560,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -601,7 +601,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
@@ -644,7 +644,7 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			mockMaestro.process.spawn.mockResolvedValue(undefined);
 
 			const sessionId = await conversationManager.startConversation({
-				agentType: 'gemini-cli' as any,
+				agentType: 'gemini-cli',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
 			});
