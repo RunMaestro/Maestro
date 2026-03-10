@@ -2,21 +2,49 @@
 
 Essential guidance for working with this codebase. For detailed architecture, see [ARCHITECTURE.md](ARCHITECTURE.md). For development setup and processes, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Documentation Index
+## Documentation Hierarchy
 
-This guide has been split into focused sub-documents for progressive disclosure:
+AI agents pay a token cost for every line loaded. This codebase uses tiered documentation to minimize waste:
 
-| Document                             | Description                                                                                                 |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]               | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features) |
-| [[CLAUDE-IPC.md]]                    | IPC API surface (`window.maestro.*` namespaces)                                                             |
-| [[CLAUDE-PERFORMANCE.md]]            | Performance best practices (React optimization, debouncing, batching)                                       |
-| [[CLAUDE-WIZARD.md]]                 | Onboarding Wizard, Inline Wizard, and Tour System                                                           |
-| [[CLAUDE-FEATURES.md]]               | Usage Dashboard and Document Graph features                                                                 |
-| [[CLAUDE-AGENTS.md]]                 | Supported agents and capabilities                                                                           |
-| [[CLAUDE-SESSION.md]]                | Session interface (agent data model) and code conventions                                                   |
-| [[CLAUDE-PLATFORM.md]]               | Cross-platform concerns (Windows, Linux, macOS, SSH remote)                                                 |
-| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide                                                                            |
+| Layer | Loaded | What goes here |
+|-------|--------|---------------|
+| **CLAUDE.md** | Every conversation | Rules preventing mistakes on ANY task |
+| **MEMORY.md** (`.claude/memory/`) | Every conversation | Cross-cutting index + learned patterns |
+| **Topic files** (`.claude/memory/*.md`) | On demand | Feature-specific patterns and pitfalls |
+| **CLAUDE-*.md** (root) | On demand | Deep implementation references |
+| **ARCHITECTURE.md, CONTRIBUTING.md** | On demand | Human-facing reference docs |
+
+**Rule:** Prevents mistakes on unrelated tasks → CLAUDE.md. Spans features → MEMORY.md. One topic → `.claude/memory/topic.md`. Deep reference → CLAUDE-*.md or ARCHITECTURE.md.
+
+### Topic Files (load when relevant)
+
+| File | When to load |
+|------|-------------|
+| `.claude/memory/testing.md` | Writing or fixing tests |
+| `.claude/memory/data-model.md` | Modifying Session, AITab, stores |
+| `.claude/memory/agents.md` | Adding/modifying agent support |
+| `.claude/memory/ipc-api.md` | Adding IPC handlers or preload APIs |
+| `.claude/memory/patterns.md` | Implementing settings, modals, tabs |
+| `.claude/memory/performance.md` | Optimizing React rendering or IPC |
+| `.claude/memory/platform.md` | Cross-platform or SSH work |
+| `.claude/memory/wizard.md` | Wizard or tour system changes |
+| `.claude/memory/features.md` | Usage Dashboard or Document Graph |
+| `.claude/memory/pitfalls.md` | Debugging UI or state issues |
+| `.claude/memory/build-deploy.md` | Build system, CI/CD, scripts |
+
+### Deep References (CLAUDE-*.md)
+
+| Document | Description |
+| -------- | ----------- |
+| [[CLAUDE-PATTERNS.md]] | Core implementation patterns (process management, settings, modals, themes, Auto Run, SSH, Encore Features) |
+| [[CLAUDE-IPC.md]] | IPC API surface (`window.maestro.*` namespaces) |
+| [[CLAUDE-PERFORMANCE.md]] | Performance best practices (React optimization, debouncing, batching) |
+| [[CLAUDE-WIZARD.md]] | Onboarding Wizard, Inline Wizard, and Tour System |
+| [[CLAUDE-FEATURES.md]] | Usage Dashboard and Document Graph features |
+| [[CLAUDE-AGENTS.md]] | Supported agents and capabilities |
+| [[CLAUDE-SESSION.md]] | Session interface (agent data model) and code conventions |
+| [[CLAUDE-PLATFORM.md]] | Cross-platform concerns (Windows, Linux, macOS, SSH remote) |
+| [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide |
 
 ---
 
