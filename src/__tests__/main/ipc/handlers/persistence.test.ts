@@ -15,6 +15,7 @@ import {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ProjectsData,
 } from '../../../../main/ipc/handlers/persistence';
 import type Store from 'electron-store';
 import type { WebServer } from '../../../../main/web-server';
@@ -72,6 +73,10 @@ describe('persistence IPC handlers', () => {
 		get: ReturnType<typeof vi.fn>;
 		set: ReturnType<typeof vi.fn>;
 	};
+	let mockProjectsStore: {
+		get: ReturnType<typeof vi.fn>;
+		set: ReturnType<typeof vi.fn>;
+	};
 	let mockWebServer: {
 		getWebClientCount: ReturnType<typeof vi.fn>;
 		broadcastThemeChange: ReturnType<typeof vi.fn>;
@@ -103,6 +108,11 @@ describe('persistence IPC handlers', () => {
 			set: vi.fn(),
 		};
 
+		mockProjectsStore = {
+			get: vi.fn().mockReturnValue([]),
+			set: vi.fn(),
+		};
+
 		mockWebServer = {
 			getWebClientCount: vi.fn().mockReturnValue(0),
 			broadcastThemeChange: vi.fn(),
@@ -125,6 +135,7 @@ describe('persistence IPC handlers', () => {
 			settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
 			sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 			groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+			projectsStore: mockProjectsStore as unknown as Store<ProjectsData>,
 			getWebServer: getWebServerFn,
 		};
 		registerPersistenceHandlers(deps);
@@ -144,6 +155,8 @@ describe('persistence IPC handlers', () => {
 				'sessions:setAll',
 				'groups:getAll',
 				'groups:setAll',
+				'projects:getAll',
+				'projects:setAll',
 				'cli:getActivity',
 			];
 
@@ -261,6 +274,7 @@ describe('persistence IPC handlers', () => {
 				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
 				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
 				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				projectsStore: mockProjectsStore as unknown as Store<ProjectsData>,
 				getWebServer: () => null,
 			};
 			registerPersistenceHandlers(deps);
@@ -717,6 +731,66 @@ describe('persistence IPC handlers', () => {
 
 			const handler = handlers.get('groups:setAll');
 			const result = await handler!({} as any, [{ id: 'g1', name: 'G1' }]);
+
+			expect(result).toBe(false);
+		});
+	});
+
+	describe('projects:getAll', () => {
+		it('should load projects from store', async () => {
+			const mockProjects = [
+				{ id: 'proj-1', name: 'Project 1', repoPath: '/code/proj1', createdAt: 1000 },
+				{ id: 'proj-2', name: 'Project 2', repoPath: '/code/proj2', createdAt: 2000 },
+			];
+			mockProjectsStore.get.mockReturnValue(mockProjects);
+
+			const handler = handlers.get('projects:getAll');
+			const result = await handler!({} as any);
+
+			expect(mockProjectsStore.get).toHaveBeenCalledWith('projects', []);
+			expect(result).toEqual(mockProjects);
+		});
+
+		it('should return empty array for missing projects', async () => {
+			mockProjectsStore.get.mockReturnValue([]);
+
+			const handler = handlers.get('projects:getAll');
+			const result = await handler!({} as any);
+
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe('projects:setAll', () => {
+		it('should write projects to store', async () => {
+			const projects = [
+				{ id: 'proj-1', name: 'Project 1', repoPath: '/code/proj1', createdAt: 1000 },
+			];
+
+			const handler = handlers.get('projects:setAll');
+			const result = await handler!({} as any, projects);
+
+			expect(mockProjectsStore.set).toHaveBeenCalledWith('projects', projects);
+			expect(result).toBe(true);
+		});
+
+		it('should handle empty projects array', async () => {
+			const handler = handlers.get('projects:setAll');
+			const result = await handler!({} as any, []);
+
+			expect(mockProjectsStore.set).toHaveBeenCalledWith('projects', []);
+			expect(result).toBe(true);
+		});
+
+		it('should return false on ENOSPC write error', async () => {
+			const error = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+			error.code = 'ENOSPC';
+			mockProjectsStore.set.mockImplementation(() => {
+				throw error;
+			});
+
+			const handler = handlers.get('projects:setAll');
+			const result = await handler!({} as any, [{ id: 'p1', name: 'P1', repoPath: '/p', createdAt: 1 }]);
 
 			expect(result).toBe(false);
 		});
