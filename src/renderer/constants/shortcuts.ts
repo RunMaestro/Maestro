@@ -78,6 +78,16 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	toggleLlmGuard: {
+		id: 'toggleLlmGuard',
+		label: 'Toggle LLM Guard',
+		keys: ['Alt', 'Meta', 'g'],
+	},
+	goToSecurity: {
+		id: 'goToSecurity',
+		label: 'Go to Security Tab',
+		keys: ['Meta', 'Shift', 'x'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)

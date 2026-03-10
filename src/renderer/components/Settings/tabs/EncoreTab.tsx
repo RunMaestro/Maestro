@@ -2,15 +2,17 @@
  * EncoreTab - Encore Features settings tab for SettingsModal
  *
  * Contains: Feature flags for optional/experimental Maestro capabilities,
- * Director's Notes configuration (provider selection, agent config, lookback period).
+ * Director's Notes configuration (provider selection, agent config, lookback period),
+ * LLM Guard configuration (security scanning settings).
  */
 
-import { Clapperboard, ChevronDown, Settings, Check } from 'lucide-react';
+import { Clapperboard, ChevronDown, Settings, Check, Shield, ExternalLink } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
+import { LlmGuardConfig } from './LlmGuardTab';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -18,8 +20,13 @@ export interface EncoreTabProps {
 }
 
 export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
-	const { encoreFeatures, setEncoreFeatures, directorNotesSettings, setDirectorNotesSettings } =
-		useSettings();
+	const {
+		encoreFeatures,
+		setEncoreFeatures,
+		directorNotesSettings,
+		setDirectorNotesSettings,
+		updateLlmGuardSettings,
+	} = useSettings();
 
 	// Centralized agent configuration via shared hook
 	const ac = useAgentConfiguration({
@@ -75,6 +82,98 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					Contributors building new features should consider gating them here to keep the core
 					experience focused.
 				</p>
+			</div>
+
+			{/* LLM Guard Feature Section */}
+			<div
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.llmGuard ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.llmGuard ? `${theme.colors.accent}08` : 'transparent',
+				}}
+			>
+				{/* Feature Toggle Header */}
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() => {
+						const newValue = !encoreFeatures.llmGuard;
+						setEncoreFeatures({
+							...encoreFeatures,
+							llmGuard: newValue,
+						});
+						// Sync llmGuardSettings.enabled with the feature flag
+						updateLlmGuardSettings({ enabled: newValue });
+					}}
+				>
+					<div className="flex items-center gap-3">
+						<Shield
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.llmGuard ? theme.colors.accent : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								LLM Guard
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Protect sensitive data in AI interactions with PII/secret scanning
+							</div>
+						</div>
+					</div>
+					<div className="flex items-center gap-3">
+						{encoreFeatures.llmGuard && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									window.maestro.shell.openExternal(
+										'https://docs.runmaestro.ai/security/llm-guard'
+									);
+								}}
+								className="flex items-center gap-1 text-xs hover:opacity-80 transition-opacity"
+								style={{ color: theme.colors.accent }}
+								title="View LLM Guard documentation"
+							>
+								<ExternalLink className="w-3.5 h-3.5" />
+								Docs
+							</button>
+						)}
+						<div
+							className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.llmGuard ? '' : 'opacity-50'}`}
+							style={{
+								backgroundColor: encoreFeatures.llmGuard
+									? theme.colors.accent
+									: theme.colors.border,
+							}}
+						>
+							<div
+								className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+								style={{
+									transform: encoreFeatures.llmGuard ? 'translateX(22px)' : 'translateX(2px)',
+								}}
+							/>
+						</div>
+					</div>
+				</button>
+
+				{/* LLM Guard Settings (shown when enabled) */}
+				{encoreFeatures.llmGuard && (
+					<div className="px-4 pb-4 border-t" style={{ borderColor: theme.colors.border }}>
+						<LlmGuardConfig theme={theme} />
+					</div>
+				)}
 			</div>
 
 			{/* Director's Notes Feature Section */}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, PenLine, Send, ImageIcon, History, Eye, Keyboard, Brain, Pin } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -9,6 +9,9 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
+import { useSensitiveContentDetection } from '../hooks';
+import { renderTextWithHighlights } from './SensitiveContentOverlay';
+import { useSettingsStore } from '../stores/settingsStore';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -35,6 +38,8 @@ interface PromptComposerModalProps {
 	supportsThinking?: boolean;
 	enterToSend?: boolean;
 	onToggleEnterToSend?: () => void;
+	// LLM Guard
+	llmGuardEnabled?: boolean;
 }
 
 export function PromptComposerModal({
@@ -58,10 +63,14 @@ export function PromptComposerModal({
 	supportsThinking = false,
 	enterToSend = false,
 	onToggleEnterToSend,
+	llmGuardEnabled: llmGuardEnabledProp = false,
 }: PromptComposerModalProps) {
 	const [value, setValue] = useState('');
+	const [textareaScrollTop, setTextareaScrollTop] = useState(0);
+	const [containerWidth, setContainerWidth] = useState(0); // Track width for overlay re-render
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
 	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -71,6 +80,38 @@ export function PromptComposerModal({
 	onSendRef.current = onSend;
 	const valueRef = useRef(value);
 	valueRef.current = value;
+
+	// Read LLM Guard enabled directly from store to ensure reactivity
+	// (props may be stale due to memo boundaries)
+	const llmGuardEnabledFromStore = useSettingsStore((s) => s.encoreFeatures.llmGuard);
+	const llmGuardEnabled = llmGuardEnabledFromStore || llmGuardEnabledProp;
+
+	// Handle textarea scroll for overlay sync
+	const handleTextareaScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
+		setTextareaScrollTop(e.currentTarget.scrollTop);
+	}, []);
+
+	// Track container width changes to re-render overlay when window resizes
+	useEffect(() => {
+		const container = containerRef.current;
+		if (!container) return;
+
+		const resizeObserver = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				setContainerWidth(entry.contentRect.width);
+			}
+		});
+
+		resizeObserver.observe(container);
+		return () => resizeObserver.disconnect();
+	}, []);
+
+	// Sensitive content detection for real-time preview (LLM Guard input preview)
+	const { findings: sensitiveFindings } = useSensitiveContentDetection(value, {
+		enabled: llmGuardEnabled && isOpen,
+		debounceMs: 300,
+		minLength: 3,
+	});
 
 	// Sync value when modal opens with new initialValue
 	useEffect(() => {
@@ -336,18 +377,64 @@ export function PromptComposerModal({
 					</div>
 				)}
 
-				{/* Textarea */}
-				<div className="flex-1 p-4 overflow-hidden">
+				{/* Textarea with overlay */}
+				<div
+					ref={containerRef}
+					className="flex-1 relative"
+					style={{ backgroundColor: theme.colors.bgMain }}
+				>
+					{/* Textarea - renders the editable text */}
 					<textarea
 						ref={textareaRef}
 						value={value}
 						onChange={(e) => setValue(e.target.value)}
 						onKeyDown={handleKeyDown}
 						onPaste={handlePaste}
-						className="w-full h-full bg-transparent resize-none outline-none text-base leading-relaxed scrollbar-thin"
-						style={{ color: theme.colors.textMain }}
+						onScroll={handleTextareaScroll}
+						className="absolute inset-0 bg-transparent resize-none outline-none scrollbar-thin p-4"
+						style={{
+							color: theme.colors.textMain,
+							zIndex: 1,
+							caretColor: theme.colors.textMain,
+							// Explicit font styling for exact overlay match
+							fontFamily:
+								'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+							fontSize: '1rem',
+							lineHeight: 1.625,
+							wordBreak: 'break-word',
+							overflowWrap: 'break-word',
+						}}
 						placeholder="Write your prompt here..."
 					/>
+					{/* Sensitive content overlay - renders ON TOP with pointer-events-none */}
+					{/* key={containerWidth} forces re-render when container resizes for correct text wrapping */}
+					{llmGuardEnabled && sensitiveFindings.length > 0 && (
+						<div
+							key={containerWidth}
+							className="absolute inset-0 pointer-events-none overflow-hidden p-4"
+							style={{ zIndex: 2 }}
+							aria-hidden="true"
+						>
+							<div
+								style={{
+									// Must match textarea font styling EXACTLY
+									fontFamily:
+										'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+									fontSize: '1rem',
+									lineHeight: 1.625,
+									whiteSpace: 'pre-wrap',
+									wordBreak: 'break-word',
+									overflowWrap: 'break-word',
+									transform: `translateY(-${textareaScrollTop}px)`,
+								}}
+							>
+								{renderTextWithHighlights(value, sensitiveFindings, {
+									showText: true,
+									textColor: theme.colors.textMain,
+								})}
+							</div>
+						</div>
+					)}
 				</div>
 
 				{/* Footer */}

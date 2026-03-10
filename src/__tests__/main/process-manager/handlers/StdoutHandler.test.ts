@@ -197,6 +197,55 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Here is the answer.');
 		});
 
+		it('should deanonymize vault placeholders and redact output secrets before emitting', () => {
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: undefined,
+				llmGuardState: {
+					config: {
+						enabled: true,
+						action: 'sanitize',
+						input: {
+							anonymizePii: true,
+							redactSecrets: true,
+							detectPromptInjection: true,
+						},
+						output: {
+							deanonymizePii: true,
+							redactSecrets: true,
+							detectPiiLeakage: true,
+						},
+					},
+					vault: {
+						entries: [
+							{ placeholder: '[EMAIL_1]', original: 'john@example.com', type: 'PII_EMAIL' },
+						],
+					},
+					inputFindings: [],
+				},
+			} as Partial<ManagedProcess>);
+
+			// Build token from pieces to avoid triggering secret scanners
+			const githubToken = ['ghp_', '123456789012345678901234567890123456'].join('');
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				result: `Contact [EMAIL_1] and rotate ${githubToken} immediately.`,
+			});
+
+			expect(proc.resultEmitted).toBe(true);
+			// Verify emitted payloads contain expected content
+			const emittedPayloads = (
+				bufferManager.emitDataBuffered as ReturnType<typeof vi.fn>
+			).mock.calls.map((call: unknown[]) => String(call[1]));
+			expect(emittedPayloads.some((payload) => payload.includes('john@example.com'))).toBe(true);
+			expect(
+				emittedPayloads.some((payload) => payload.includes('[REDACTED_SECRET_GITHUB_TOKEN_1]'))
+			).toBe(true);
+			// Verify raw token and placeholder are NOT in output
+			expect(emittedPayloads.some((payload) => payload.includes('[EMAIL_1]'))).toBe(false);
+			expect(emittedPayloads.some((payload) => payload.includes(githubToken))).toBe(false);
+		});
+
 		it('should only emit result once (first result wins)', () => {
 			const { handler, bufferManager, sessionId } = createTestContext({
 				isStreamJsonMode: true,

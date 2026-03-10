@@ -26,6 +26,7 @@ import type {
 	ThinkingMode,
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
+	LlmGuardSettings,
 } from '../../types';
 import {
 	useSettingsStore,
@@ -308,6 +309,11 @@ export interface UseSettingsReturn {
 	setUseNativeTitleBar: (value: boolean) => void;
 	autoHideMenuBar: boolean;
 	setAutoHideMenuBar: (value: boolean) => void;
+
+	// LLM Guard settings
+	llmGuardSettings: LlmGuardSettings;
+	setLlmGuardSettings: (value: LlmGuardSettings) => void;
+	updateLlmGuardSettings: (partial: Partial<LlmGuardSettings>) => void;
 }
 
 export function useSettings(): UseSettingsReturn {

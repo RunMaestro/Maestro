@@ -28,6 +28,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { SessionSecurityModal } from '../SessionSecurityModal';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -124,6 +125,7 @@ function SessionListInner(props: SessionListProps) {
 	const contextWarningRedThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
+	const llmGuardEnabled = useSettingsStore((s) => s.encoreFeatures.llmGuard);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
@@ -254,12 +256,26 @@ function SessionListInner(props: SessionListProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
 
+	// Session security modal state
+	const [securityModalSession, setSecurityModalSession] = useState<Session | null>(null);
+
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
 	const toggleBookmark = useCallback(
 		(sessionId: string) => {
 			setSessions((prev) =>
 				prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
 			);
+		},
+		[setSessions]
+	);
+
+	// Save session security policy
+	const handleSaveSecurityPolicy = useCallback(
+		(
+			sessionId: string,
+			securityPolicy: Partial<import('../../types').LlmGuardSettings> | undefined
+		) => {
+			setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, securityPolicy } : s)));
 		},
 		[setSessions]
 	);
@@ -463,6 +479,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					llmGuardEnabled={llmGuardEnabled}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -525,6 +542,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										llmGuardEnabled={llmGuardEnabled}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -1235,6 +1253,21 @@ function SessionListInner(props: SessionListProps) {
 							? () => onCreateGroupAndMove(contextMenuSession.id)
 							: createNewGroup
 					}
+					onSecuritySettings={
+						llmGuardEnabled && contextMenuSession.toolType !== 'terminal'
+							? () => setSecurityModalSession(contextMenuSession)
+							: undefined
+					}
+				/>
+			)}
+
+			{/* Session Security Modal */}
+			{securityModalSession && (
+				<SessionSecurityModal
+					theme={theme}
+					session={securityModalSession}
+					onClose={() => setSecurityModalSession(null)}
+					onSave={handleSaveSecurityPolicy}
 				/>
 			)}
 		</div>

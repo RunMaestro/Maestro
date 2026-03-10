@@ -991,6 +991,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		{
+			id: 'goToSecurity',
+			label: 'Go to Security Tab',
+			shortcut: shortcuts.goToSecurity,
+			action: () => {
+				setRightPanelOpen(true);
+				setActiveRightTab('security');
+				setQuickActionOpen(false);
+			},
+		},
 		// Playbook Exchange - browse and import community playbooks
 		...(onOpenPlaybookExchange
 			? [

@@ -120,6 +120,11 @@ export interface WorktreeModalData {
 	session: Session;
 }
 
+/** Session security modal data */
+export interface SessionSecurityModalData {
+	session: Session;
+}
+
 /** Group chat modal data (delete/rename/edit) */
 export interface GroupChatModalData {
 	groupChatId: string;
@@ -220,7 +225,9 @@ export type ModalId =
 	// Platform Warnings
 	| 'windowsWarning'
 	// Director's Notes
-	| 'directorNotes';
+	| 'directorNotes'
+	// Session Security
+	| 'sessionSecurity';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -251,6 +258,7 @@ export interface ModalDataMap {
 	firstRunCelebration: FirstRunCelebrationData;
 	keyboardMastery: KeyboardMasteryData;
 	lightbox: LightboxData;
+	sessionSecurity: SessionSecurityModalData;
 }
 
 // Helper type to get data type for a modal ID

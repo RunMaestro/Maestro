@@ -158,7 +158,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		if (!isOpen) return;
 
 		const handleTabNavigation = (e: KeyboardEvent) => {
-			const tabs: Array<
+			// Build tabs array dynamically based on feature flags
+			const baseTabs: Array<
 				| 'general'
 				| 'display'
 				| 'llm'
@@ -168,28 +169,15 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'aicommands'
 				| 'ssh'
 				| 'encore'
-			> = FEATURE_FLAGS.LLM_SETTINGS
-				? [
-						'general',
-						'display',
-						'llm',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'ssh',
-						'encore',
-					]
-				: [
-						'general',
-						'display',
-						'shortcuts',
-						'theme',
-						'notifications',
-						'aicommands',
-						'ssh',
-						'encore',
-					];
+			> = ['general', 'display'];
+
+			if (FEATURE_FLAGS.LLM_SETTINGS) {
+				baseTabs.push('llm');
+			}
+
+			baseTabs.push('shortcuts', 'theme', 'notifications', 'aicommands', 'ssh', 'encore');
+
+			const tabs = baseTabs;
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {

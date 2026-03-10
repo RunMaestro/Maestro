@@ -11,6 +11,7 @@ import {
 	GitPullRequest,
 	Trash2,
 	Edit3,
+	Shield,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -34,6 +35,7 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	onSecuritySettings?: () => void;
 }
 
 export function SessionContextMenu({
@@ -55,6 +57,7 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	onSecuritySettings,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -171,6 +174,22 @@ export function SessionContextMenu({
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
 			</button>
+
+			{/* Security Settings - only shown for non-terminal sessions */}
+			{session.toolType !== 'terminal' && onSecuritySettings && (
+				<button
+					type="button"
+					onClick={() => {
+						onSecuritySettings();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Shield className="w-3.5 h-3.5" />
+					Security Settings...
+				</button>
+			)}
 
 			<button
 				type="button"

@@ -74,7 +74,7 @@
 					{
 						"group": "Encore Features",
 						"icon": "flask",
-						"pages": ["encore-features", "director-notes"]
+						"pages": ["encore-features", "director-notes", "llm-guard"]
 					},
 					{
 						"group": "Providers & CLI",

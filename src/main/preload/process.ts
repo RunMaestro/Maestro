@@ -39,6 +39,21 @@ export interface ProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// Per-session overrides (from Session object)
+	sessionCustomPath?: string; // Custom agent binary path
+	sessionCustomArgs?: string[]; // Custom additional args
+	sessionCustomEnvVars?: Record<string, string>; // Custom environment variables
+	sessionCustomModel?: string; // Custom model override
+	sessionCustomContextWindow?: number; // Custom context window size
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
+	sessionSecurityPolicy?: Record<string, unknown>; // Per-session LLM Guard policy
+	// Stdin options for prompt delivery
+	sendPromptViaStdin?: boolean;
+	sendPromptViaStdinRaw?: boolean;
 }
 
 /**

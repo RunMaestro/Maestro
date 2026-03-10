@@ -495,6 +495,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,
 						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
+						sessionSecurityPolicy: targetSession.securityPolicy,
 					});
 				} catch (error) {
 					captureException(error, {

@@ -78,6 +78,8 @@ export interface BuildSpawnConfigOptions {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Per-session security policy (merged with global LLM Guard settings) */
+	sessionSecurityPolicy?: Partial<import('../types').LlmGuardSettings>;
 }
 
 /**
@@ -119,6 +121,7 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomModel,
 		sessionCustomContextWindow,
 		sessionSshRemoteConfig,
+		sessionSecurityPolicy,
 	} = options;
 
 	// Fetch the agent configuration from main process
@@ -160,6 +163,8 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomContextWindow,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
+		// Per-session security policy (merged with global LLM Guard settings)
+		sessionSecurityPolicy,
 	};
 
 	return spawnConfig;

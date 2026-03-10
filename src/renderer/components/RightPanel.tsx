@@ -6,6 +6,7 @@ import React, {
 	useState,
 	useCallback,
 	memo,
+	useMemo,
 } from 'react';
 import {
 	PanelRightClose,
@@ -14,12 +15,14 @@ import {
 	GitBranch,
 	Skull,
 	AlertTriangle,
+	Shield,
 } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
+import { SecurityEventsPanel, SecurityEventsPanelHandle } from './SecurityEventsPanel';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
@@ -36,6 +39,7 @@ export interface RightPanelHandle {
 	toggleAutoRunExpanded: () => void;
 	openAutoRunResetTasksModal: () => void;
 	getAutoRunCompletedTaskCount: () => number;
+	refreshSecurityEvents: () => void;
 }
 
 interface RightPanelProps {
@@ -129,6 +133,8 @@ export const RightPanel = memo(
 		const showHiddenFiles = useSettingsStore((s) => s.showHiddenFiles);
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
+		const lastViewedSecurityEventId = useSettingsStore((s) => s.lastViewedSecurityEventId);
+		const setLastViewedSecurityEventId = useSettingsStore((s) => s.setLastViewedSecurityEventId);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
@@ -189,6 +195,7 @@ export const RightPanel = memo(
 
 		const historyPanelRef = useRef<HistoryPanelHandle>(null);
 		const autoRunRef = useRef<AutoRunHandle>(null);
+		const securityEventsPanelRef = useRef<SecurityEventsPanelHandle>(null);
 		const {
 			panelRef,
 			onResizeStart: onRightPanelResizeStart,
@@ -207,6 +214,55 @@ export const RightPanel = memo(
 
 		// Kill confirmation modal for force-killing during Auto Run stop
 		const [showKillConfirm, setShowKillConfirm] = useState(false);
+
+		// Security events for badge display
+		const [securityEventIds, setSecurityEventIds] = useState<string[]>([]);
+
+		// Load security event IDs - extracted as callback so it can be reused
+		const loadSecurityEventIds = useCallback(async () => {
+			try {
+				const result = await window.maestro.security.getEvents(100, 0);
+				setSecurityEventIds(result.events.map((e) => e.id));
+			} catch {
+				// Ignore errors - security events are optional
+			}
+		}, []);
+
+		// Load security event IDs on mount and subscribe to updates
+		useEffect(() => {
+			loadSecurityEventIds();
+
+			// Subscribe to real-time updates
+			const unsubscribe = window.maestro.security.onSecurityEvent(() => {
+				loadSecurityEventIds();
+			});
+
+			return unsubscribe;
+		}, [loadSecurityEventIds]);
+
+		// Calculate unread security events count
+		const unreadSecurityCount = useMemo(() => {
+			if (!lastViewedSecurityEventId || securityEventIds.length === 0) {
+				// If never viewed, all events are "new" but cap at 99
+				return securityEventIds.length > 0 ? Math.min(securityEventIds.length, 99) : 0;
+			}
+			// Find the index of the last viewed event
+			const lastViewedIndex = securityEventIds.indexOf(lastViewedSecurityEventId);
+			if (lastViewedIndex === -1) {
+				// Last viewed event no longer in buffer - all events are new
+				return Math.min(securityEventIds.length, 99);
+			}
+			// Count events newer than the last viewed (events are sorted newest first)
+			return Math.min(lastViewedIndex, 99);
+		}, [securityEventIds, lastViewedSecurityEventId]);
+
+		// Mark events as viewed when Security tab is opened
+		useEffect(() => {
+			if (activeRightTab === 'security' && rightPanelOpen && securityEventIds.length > 0) {
+				// Mark the newest event as viewed
+				setLastViewedSecurityEventId(securityEventIds[0]);
+			}
+		}, [activeRightTab, rightPanelOpen, securityEventIds, setLastViewedSecurityEventId]);
 
 		// Shared draft state for Auto Run (shared between panel and expanded modal)
 		// This ensures edits in one view are immediately visible in the other
@@ -310,8 +366,13 @@ export const RightPanel = memo(
 				getAutoRunCompletedTaskCount: () => {
 					return autoRunRef.current?.getCompletedTaskCount() ?? 0;
 				},
+				refreshSecurityEvents: () => {
+					securityEventsPanelRef.current?.refresh();
+					// Also refresh the badge by reloading event IDs
+					loadSecurityEventIds();
+				},
 			}),
-			[toggleAutoRunExpanded]
+			[toggleAutoRunExpanded, loadSecurityEventIds]
 		);
 
 		// Focus the history panel when switching to history tab
@@ -330,6 +391,16 @@ export const RightPanel = memo(
 				// Small delay to ensure the panel is rendered
 				requestAnimationFrame(() => {
 					autoRunRef.current?.focus();
+				});
+			}
+		}, [activeRightTab, rightPanelOpen, activeFocus]);
+
+		// Focus the security events panel when switching to security tab
+		useEffect(() => {
+			if (activeRightTab === 'security' && rightPanelOpen && activeFocus === 'right') {
+				// Small delay to ensure the panel is rendered
+				requestAnimationFrame(() => {
+					securityEventsPanelRef.current?.focus();
 				});
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
@@ -403,18 +474,35 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{['files', 'history', 'autorun'].map((tab) => (
+					{['files', 'history', 'autorun', 'security'].map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
+							className="flex-1 text-xs font-bold border-b-2 transition-colors flex items-center justify-center gap-1 relative"
 							style={{
 								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
 								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'security' && <Shield className="w-3 h-3" />}
+							{tab === 'autorun'
+								? 'Auto Run'
+								: tab === 'security'
+									? 'Security'
+									: tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{/* Security badge for unread events */}
+							{tab === 'security' && unreadSecurityCount > 0 && activeRightTab !== 'security' && (
+								<span
+									className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 text-[9px] font-bold rounded-full flex items-center justify-center"
+									style={{
+										backgroundColor: theme.colors.error,
+										color: '#ffffff',
+									}}
+								>
+									{unreadSecurityCount > 99 ? '99+' : unreadSecurityCount}
+								</span>
+							)}
 						</button>
 					))}
 
@@ -512,6 +600,16 @@ export const RightPanel = memo(
 					{activeRightTab === 'autorun' && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
+						</div>
+					)}
+
+					{activeRightTab === 'security' && (
+						<div data-tour="security-panel" className="h-full">
+							<SecurityEventsPanel
+								ref={securityEventsPanelRef}
+								theme={theme}
+								onJumpToSession={onJumpToAgentSession}
+							/>
 						</div>
 					)}
 				</div>

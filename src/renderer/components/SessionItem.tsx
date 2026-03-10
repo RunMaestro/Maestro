@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
+import { SecurityBadge } from './SecurityBadge';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -35,6 +36,7 @@ export interface SessionItemProps {
 	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
+	llmGuardEnabled?: boolean; // Whether LLM Guard is enabled (for security badge)
 
 	// Handlers
 	onSelect: () => void;
@@ -75,6 +77,7 @@ export const SessionItem = memo(function SessionItem({
 	gitFileCount,
 	isInBatch = false,
 	jumpNumber,
+	llmGuardEnabled = false,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -277,6 +280,17 @@ export const SessionItem = memo(function SessionItem({
 						<AlertCircle className="w-2.5 h-2.5" />
 						ERR
 					</div>
+				)}
+
+				{/* Security Badge - LLM Guard findings indicator */}
+				{llmGuardEnabled && session.toolType !== 'terminal' && (
+					<SecurityBadge
+						theme={theme}
+						sessionId={session.id}
+						enabled={llmGuardEnabled}
+						isActive={isActive}
+						compact={true}
+					/>
 				)}
 
 				{/* Bookmark toggle - hidden for worktree children (they inherit from parent) */}

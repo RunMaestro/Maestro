@@ -52,11 +52,81 @@ import type { AgentError } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'security';
 export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
+
+// LLM Guard action mode
+export type LlmGuardAction = 'warn' | 'sanitize' | 'block';
+
+// Custom pattern type for user-defined security rules
+export type CustomPatternType = 'secret' | 'pii' | 'injection' | 'other';
+
+// Custom regex pattern for user-defined security scanning
+export interface CustomPattern {
+	/** Unique identifier for the pattern */
+	id: string;
+	/** Human-readable name for the pattern */
+	name: string;
+	/** Regex pattern string (will be compiled with 'gi' flags) */
+	pattern: string;
+	/** Type of content this pattern detects */
+	type: CustomPatternType;
+	/** Action to take when pattern matches */
+	action: LlmGuardAction;
+	/** Confidence score for matches (0.0 - 1.0) */
+	confidence: number;
+	/** Whether pattern is enabled */
+	enabled: boolean;
+	/** Optional description */
+	description?: string;
+}
+
+// LLM Guard settings for security scanning
+export interface LlmGuardSettings {
+	enabled: boolean;
+	action: LlmGuardAction;
+	input: {
+		anonymizePii: boolean;
+		redactSecrets: boolean;
+		detectPromptInjection: boolean;
+		/** Enable structural prompt injection analysis (default: true) */
+		structuralAnalysis?: boolean;
+		/** Enable invisible character detection (default: true) */
+		invisibleCharacterDetection?: boolean;
+		/** Enable malicious URL detection (default: true) */
+		scanUrls?: boolean;
+	};
+	output: {
+		deanonymizePii: boolean;
+		redactSecrets: boolean;
+		detectPiiLeakage: boolean;
+		/** Enable malicious URL detection in outputs (default: true) */
+		scanUrls?: boolean;
+		/** Enable dangerous code pattern detection (default: true) */
+		scanCode?: boolean;
+	};
+	thresholds: {
+		promptInjection: number;
+	};
+	/** Exact substring matches that should be blocked (case-insensitive) */
+	banSubstrings?: string[];
+	/** Regex patterns for banned topics (case-insensitive) */
+	banTopicsPatterns?: string[];
+	/** Custom regex patterns defined by the user */
+	customPatterns?: CustomPattern[];
+	/** Show toast notifications for security events (default: true) */
+	showSecurityToasts?: boolean;
+	/** Show real-time preview of sensitive content in input area (default: true) */
+	showInputPreview?: boolean;
+	/** Group Chat inter-agent protection settings */
+	groupChat?: {
+		/** Enable inter-agent scanning in Group Chat (default: true) */
+		interAgentScanEnabled?: boolean;
+	};
+}
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -706,6 +776,11 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	// Per-session LLM Guard security policy overrides
+	// Allows overriding global security settings for specific sessions
+	// Use cases: stricter settings for sensitive projects, relaxed for internal/test projects
+	securityPolicy?: Partial<LlmGuardSettings>;
 }
 
 export interface AgentConfigOption {
@@ -783,6 +858,11 @@ export interface ProcessConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	// Per-session security policy overrides (merged with global LLM Guard settings)
+	// Use cases: stricter settings for sensitive projects, relaxed for internal/test
+	// Note: Uses Record<string, unknown> since this crosses the IPC boundary and
+	// the main process has a compatible but separately defined type (LlmGuardConfig)
+	sessionSecurityPolicy?: Record<string, unknown>;
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
@@ -908,6 +988,7 @@ export interface LeaderboardSubmitResponse {
 // Each key is a feature ID, value indicates whether it's enabled
 export interface EncoreFeatureFlags {
 	directorNotes: boolean;
+	llmGuard: boolean;
 }
 
 // Director's Notes settings for synopsis generation

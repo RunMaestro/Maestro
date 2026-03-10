@@ -53,6 +53,8 @@ import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerWakatimeHandlers } from './wakatime';
+import { registerSecurityHandlers } from './security';
+import { registerSpellCheckHandlers } from './spellcheck';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -97,6 +99,8 @@ export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
 export { registerWakatimeHandlers };
+export { registerSecurityHandlers };
+export { registerSpellCheckHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -284,4 +288,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
+	// Register security handlers for LLM Guard events
+	registerSecurityHandlers();
+	// Register spell-check handlers for native spell-check integration
+	registerSpellCheckHandlers();
 }

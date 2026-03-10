@@ -3,7 +3,7 @@
  * These listeners just forward events from ProcessManager to the renderer.
  */
 
-import type { ProcessManager } from '../process-manager';
+import type { ProcessManager, SecurityEventData } from '../process-manager';
 import type { ProcessListenerDependencies, ToolExecution } from './types';
 
 /**
@@ -41,5 +41,11 @@ export function setupForwardingListeners(
 	// Handle command exit (from runCommand - separate from PTY exit)
 	processManager.on('command-exit', (sessionId: string, code: number) => {
 		safeSend('process:command-exit', sessionId, code);
+	});
+
+	// Handle security events from LLM Guard
+	// Emitted when LLM Guard detects and processes sensitive content
+	processManager.on('security-event', (event: SecurityEventData) => {
+		safeSend('security:event', event);
 	});
 }

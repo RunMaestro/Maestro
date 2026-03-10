@@ -24,6 +24,12 @@ vi.mock('../../../renderer/components/AutoRun', () => ({
 	AutoRun: vi.fn((props) => <div data-testid="auto-run">AutoRun</div>),
 }));
 
+vi.mock('../../../renderer/components/SecurityEventsPanel', () => ({
+	SecurityEventsPanel: vi.fn((props) => (
+		<div data-testid="security-events-panel">SecurityEventsPanel</div>
+	)),
+}));
+
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys) => keys.join('+')),
 	isMacOS: vi.fn(() => false),
@@ -72,6 +78,11 @@ vi.mock('lucide-react', () => ({
 	AlertTriangle: ({ className }: { className?: string }) => (
 		<span data-testid="alert-triangle" className={className}>
 			AlertTriangle
+		</span>
+	),
+	Shield: ({ className }: { className?: string }) => (
+		<span data-testid="shield" className={className}>
+			Shield
 		</span>
 	),
 }));
@@ -1342,7 +1353,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.getAllByRole('button')).toHaveLength(4); // toggle + 3 tabs
+			expect(screen.getAllByRole('button')).toHaveLength(5); // toggle + 4 tabs (files, history, autorun, security)
 		});
 	});
 

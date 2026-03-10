@@ -4,7 +4,7 @@
  */
 
 import * as path from 'path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, app, Menu } from 'electron';
 import type Store from 'electron-store';
 import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
@@ -106,6 +106,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					contextIsolation: true,
 					nodeIntegration: false,
 					sandbox: true,
+					spellcheck: true,
 				},
 			});
 
@@ -121,6 +122,94 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				maximized: savedState.isMaximized,
 				fullScreen: savedState.isFullScreen,
 				mode: isDevelopment ? 'development' : 'production',
+			});
+
+			// Configure spell-checker with system locale
+			// Uses system locale to respect user's language preference (en_US vs en_GB, etc.)
+			// Filter against availableSpellCheckerLanguages to avoid errors from unsupported locales
+			const systemLocale = app.getLocale();
+			const available = new Set(mainWindow.webContents.session.availableSpellCheckerLanguages);
+			const candidates = [systemLocale, systemLocale.split('-')[0], 'en-US'];
+			const spellCheckLanguages = candidates.filter(
+				(lang, index) => !!lang && available.has(lang) && candidates.indexOf(lang) === index
+			);
+
+			if (spellCheckLanguages.length > 0) {
+				mainWindow.webContents.session.setSpellCheckerLanguages(spellCheckLanguages);
+				logger.info(
+					`Spell-checker configured with languages: ${spellCheckLanguages.join(', ')}`,
+					'Window'
+				);
+			} else {
+				logger.warn(
+					`No supported spell-check dictionary found for locale ${systemLocale}`,
+					'Window'
+				);
+			}
+
+			// Handle context menu for spell-check suggestions
+			mainWindow.webContents.on('context-menu', (_event, params) => {
+				// Only show custom context menu if there are spelling suggestions
+				if (params.dictionarySuggestions && params.dictionarySuggestions.length > 0) {
+					const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
+					// Add spelling suggestions
+					for (const suggestion of params.dictionarySuggestions) {
+						menuItems.push({
+							label: suggestion,
+							click: () => {
+								mainWindow.webContents.replaceMisspelling(suggestion);
+							},
+						});
+					}
+
+					// Add separator and "Add to Dictionary" option
+					menuItems.push({ type: 'separator' });
+					menuItems.push({
+						label: 'Add to Dictionary',
+						click: () => {
+							mainWindow.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord);
+						},
+					});
+
+					// Add separator and standard edit options
+					menuItems.push({ type: 'separator' });
+					if (params.editFlags.canCut) {
+						menuItems.push({ role: 'cut' });
+					}
+					if (params.editFlags.canCopy) {
+						menuItems.push({ role: 'copy' });
+					}
+					if (params.editFlags.canPaste) {
+						menuItems.push({ role: 'paste' });
+					}
+					if (params.editFlags.canSelectAll) {
+						menuItems.push({ role: 'selectAll' });
+					}
+
+					const menu = Menu.buildFromTemplate(menuItems);
+					menu.popup();
+				} else if (params.isEditable) {
+					// For editable fields without spelling errors, show standard edit menu
+					const menuItems: Electron.MenuItemConstructorOptions[] = [];
+					if (params.editFlags.canCut) {
+						menuItems.push({ role: 'cut' });
+					}
+					if (params.editFlags.canCopy) {
+						menuItems.push({ role: 'copy' });
+					}
+					if (params.editFlags.canPaste) {
+						menuItems.push({ role: 'paste' });
+					}
+					if (params.editFlags.canSelectAll) {
+						menuItems.push({ role: 'selectAll' });
+					}
+
+					if (menuItems.length > 0) {
+						const menu = Menu.buildFromTemplate(menuItems);
+						menu.popup();
+					}
+				}
 			});
 
 			// Save window state before closing

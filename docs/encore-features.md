@@ -16,11 +16,10 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and navigate to the **Encore Features** t
 
 ## Available Features
 
-| Feature                              | Shortcut                       | Description                                                     |
-| ------------------------------------ | ------------------------------ | --------------------------------------------------------------- |
-| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses |
-
-More features will be added here as they ship.
+| Feature                              | Shortcut                       | Description                                                                                        |
+| ------------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| [Director's Notes](./director-notes) | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-powered synopses                                    |
+| [LLM Guard](./llm-guard)             | —                              | AI security layer that scans prompts and responses for sensitive data, injection attacks, and more |
 
 ## For Developers
 

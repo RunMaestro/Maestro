@@ -4,7 +4,6 @@ import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { logger } from '../../utils/logger';
-import { isWindows } from '../../../shared/platformDetection';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
@@ -26,6 +25,14 @@ import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import {
+	DEFAULT_LLM_GUARD_CONFIG,
+	mergeSecurityPolicy,
+	runLlmGuardPre,
+	type LlmGuardConfig,
+	type LlmGuardState,
+} from '../../security/llm-guard';
+import { logSecurityEvent, type SecurityEventAction } from '../../security/security-logger';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -114,6 +121,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
+				// Per-session security policy overrides (merged with global settings)
+				sessionSecurityPolicy?: Partial<LlmGuardConfig>;
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -121,8 +130,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Get agent definition to access config options and argument builders
 				const agent = await agentDetector.getAgent(config.toolType);
 				// Use INFO level on Windows for better visibility in logs
-
-				const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
+				const isWindows = process.platform === 'win32';
+				const logFn = isWindows ? logger.info.bind(logger) : logger.debug.bind(logger);
 				logFn(`Spawn config received`, LOG_CONTEXT, {
 					platform: process.platform,
 					configToolType: config.toolType,
@@ -134,16 +143,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					hasAgentSessionId: !!config.agentSessionId,
 					hasPrompt: !!config.prompt,
 					promptLength: config.prompt?.length,
-					// On Windows, show prompt preview to help debug truncation issues
-					promptPreview:
-						config.prompt && isWindows()
-							? {
-									first50: config.prompt.substring(0, 50),
-									last50: config.prompt.substring(Math.max(0, config.prompt.length - 50)),
-									containsHash: config.prompt.includes('#'),
-									containsNewline: config.prompt.includes('\n'),
-								}
-							: undefined,
 					// SSH remote config logging
 					hasSessionSshRemoteConfig: !!config.sessionSshRemoteConfig,
 					sessionSshRemoteConfig: config.sessionSshRemoteConfig
@@ -154,9 +153,157 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						: null,
 				});
+				let effectivePrompt = config.prompt;
+				let llmGuardState: LlmGuardState | undefined;
+
+				// Check if LLM Guard encore feature is enabled
+				const encoreFeatures = settingsStore.get('encoreFeatures', { llmGuard: false }) as {
+					llmGuard?: boolean;
+				};
+				const llmGuardFeatureEnabled = encoreFeatures.llmGuard ?? false;
+
+				// Build effective LLM Guard config by merging global settings with session-level overrides
+				// Session policy takes precedence over global settings
+				// If the LLM Guard feature is disabled, use a disabled config
+				const globalGuardConfig = llmGuardFeatureEnabled
+					? ((settingsStore.get('llmGuardSettings', DEFAULT_LLM_GUARD_CONFIG) as
+							| Partial<LlmGuardConfig>
+							| undefined) ?? DEFAULT_LLM_GUARD_CONFIG)
+					: { ...DEFAULT_LLM_GUARD_CONFIG, enabled: false };
+				// Use mergeSecurityPolicy to properly merge global and session configs
+				// Session policy overrides global settings; arrays (ban lists, custom patterns) are merged
+				const llmGuardConfig = mergeSecurityPolicy(globalGuardConfig, config.sessionSecurityPolicy);
+
+				if (config.toolType !== 'terminal' && effectivePrompt) {
+					// Emit scan_start event for progress indicator (only if guard is enabled)
+					// The UI will only show the indicator for prompts above a certain length
+					if (llmGuardConfig.enabled) {
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send('security:scan-progress', {
+								sessionId: config.sessionId,
+								tabId: config.tabId,
+								eventType: 'scan_start',
+								contentLength: effectivePrompt.length,
+							});
+						}
+					}
+
+					const guardResult = runLlmGuardPre(effectivePrompt, llmGuardConfig);
+
+					// Emit scan_complete event (before processing results)
+					if (llmGuardConfig.enabled) {
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send('security:scan-progress', {
+								sessionId: config.sessionId,
+								tabId: config.tabId,
+								eventType: 'scan_complete',
+								contentLength: effectivePrompt.length,
+							});
+						}
+					}
+
+					if (guardResult.findings.length > 0) {
+						logger.warn('[LLMGuard] Input findings detected', 'LLMGuard', {
+							sessionId: config.sessionId,
+							toolType: config.toolType,
+							findings: guardResult.findings.map((finding) => finding.type),
+						});
+					}
+
+					// Log security event for input scan
+					if (llmGuardConfig.enabled) {
+						let action: SecurityEventAction = 'none';
+						if (guardResult.blocked) {
+							action = 'blocked';
+						} else if (guardResult.warned) {
+							action = 'warned';
+						} else if (guardResult.findings.length > 0) {
+							action = 'sanitized';
+						}
+
+						// Determine event type based on result
+						const eventType = guardResult.blocked
+							? 'blocked'
+							: guardResult.warned
+								? 'warning'
+								: 'input_scan';
+
+						void logSecurityEvent({
+							sessionId: config.sessionId,
+							tabId: config.tabId,
+							eventType,
+							findings: guardResult.findings,
+							action,
+							originalLength: config.prompt!.length,
+							sanitizedLength: guardResult.sanitizedPrompt.length,
+						})
+							.then((event) => {
+								// Emit simplified event to renderer for real-time UI updates
+								const mainWindow = getMainWindow();
+								if (isWebContentsAvailable(mainWindow)) {
+									mainWindow.webContents.send('security:event', {
+										sessionId: event.sessionId,
+										tabId: event.tabId,
+										eventType: event.eventType,
+										findingTypes: event.findings.map((f) => f.type),
+										findingCount: event.findings.length,
+										action: event.action,
+										originalLength: event.originalLength,
+										sanitizedLength: event.sanitizedLength,
+									});
+								}
+							})
+							.catch((error) => {
+								logger.error('Failed to log security event', LOG_CONTEXT, {
+									error,
+									sessionId: config.sessionId,
+								});
+							});
+					}
+
+					if (guardResult.blocked) {
+						throw new Error(guardResult.blockReason ?? 'Prompt blocked by LLM Guard.');
+					}
+
+					effectivePrompt = guardResult.sanitizedPrompt;
+					llmGuardState = {
+						config: llmGuardConfig,
+						vault: guardResult.vault,
+						inputFindings: guardResult.findings,
+					};
+				}
+
+				// Log prompt preview AFTER LLM Guard sanitization to avoid logging secrets
+				// On Windows, show prompt preview to help debug truncation issues
+				if (effectivePrompt && isWindows) {
+					logFn(`Prompt preview (post-sanitization)`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						promptPreview: {
+							first50: effectivePrompt.substring(0, 50),
+							last50: effectivePrompt.substring(Math.max(0, effectivePrompt.length - 50)),
+							containsHash: effectivePrompt.includes('#'),
+							containsNewline: effectivePrompt.includes('\n'),
+						},
+					});
+				}
+
+				// Debug-level logging for raw prompt metadata when sanitization occurred
+				// Prefixed with [RAW PROMPT] to clearly indicate this is pre-sanitization metadata
+				// Only logs metadata (lengths, delta), never actual prompt content that may contain secrets
+				if (config.prompt && effectivePrompt && config.prompt !== effectivePrompt) {
+					logger.debug(`[RAW PROMPT] Pre-sanitization prompt metadata`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						rawLength: config.prompt.length,
+						sanitizedLength: effectivePrompt.length,
+						lengthDelta: config.prompt.length - effectivePrompt.length,
+					});
+				}
+
 				let finalArgs = buildAgentArgs(agent, {
 					baseArgs: config.args,
-					prompt: config.prompt,
+					prompt: effectivePrompt,
 					cwd: config.cwd,
 					readOnlyMode: config.readOnlyMode,
 					modelId: config.modelId,
@@ -276,9 +423,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					...(config.readOnlyMode && { readOnlyMode: true }),
 					...(config.yoloMode && { yoloMode: true }),
 					...(config.modelId && { modelId: config.modelId }),
-					...(config.prompt && {
+					...(effectivePrompt && {
 						prompt:
-							config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
+							effectivePrompt.length > 500
+								? effectivePrompt.substring(0, 500) + '...'
+								: effectivePrompt,
 					}),
 				});
 
@@ -323,7 +472,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// On Windows (except SSH), always use shell execution for agents
 				// This avoids cmd.exe command line length limits (~8191 chars) which can cause
 				// "Die Befehlszeile ist zu lang" errors with long prompts
-				if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
+				if (isWindows && !config.sessionSshRemoteConfig?.enabled) {
 					// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 					const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
 					// Filter out undefined values to match Record<string, string> type
@@ -357,7 +506,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Only consider SSH remote for non-terminal AI agent sessions
 				// SSH is session-level ONLY - no agent-level or global defaults
 				// Log SSH evaluation on Windows for debugging
-				if (isWindows()) {
+				if (isWindows) {
 					logger.info(`Evaluating SSH remote config`, LOG_CONTEXT, {
 						toolType: config.toolType,
 						isTerminal: config.toolType === 'terminal',
@@ -411,11 +560,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						//   (e.g., -i /tmp/image.png for Codex, -f /tmp/image.png for OpenCode).
 						const hasImages = config.images && config.images.length > 0;
 						let sshArgs = finalArgs;
-						let stdinInput: string | undefined = config.prompt;
+						let stdinInput: string | undefined = effectivePrompt;
 
-						if (hasImages && config.prompt && agent?.capabilities?.supportsStreamJsonInput) {
+						if (hasImages && effectivePrompt && agent?.capabilities?.supportsStreamJsonInput) {
 							// Stream-json agent (Claude Code): embed images in the stdin message
-							stdinInput = buildStreamJsonMessage(config.prompt, config.images!) + '\n';
+							stdinInput = buildStreamJsonMessage(effectivePrompt, config.images!) + '\n';
 							if (!sshArgs.includes('--input-format')) {
 								sshArgs = [...sshArgs, '--input-format', 'stream-json'];
 							}
@@ -477,7 +626,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							sshArgsCount: sshCommand.args.length,
 							remoteCommand,
 							remoteCwd: config.cwd,
-							promptLength: config.prompt?.length,
+							sanitizedPromptLength: effectivePrompt?.length,
 							stdinScriptLength: sshCommand.stdinScript?.length,
 							hasImages,
 							imageCount: config.images?.length,
@@ -490,12 +639,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sessionId: config.sessionId,
 					useShell,
 					shellToUse,
-					isWindows: isWindows(),
+					isWindows,
 					isSshCommand: !!sshRemoteUsed,
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
-				const result = processManager.spawn({
+				const result = await processManager.spawn({
 					...config,
 					command: commandToSpawn,
 					args: argsToSpawn,
@@ -507,7 +656,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					requiresPty: sshRemoteUsed ? false : agent?.requiresPty,
 					// For SSH, prompt is included in the stdin script, not passed separately
 					// For local execution, pass prompt as normal
-					prompt: sshRemoteUsed ? undefined : config.prompt,
+					prompt: sshRemoteUsed ? undefined : effectivePrompt,
 					shell: shellToUse,
 					runInShell: useShell,
 					shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
@@ -525,6 +674,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sshRemoteHost: sshRemoteUsed?.host,
 					// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 					sshStdinScript,
+					llmGuardState,
 				});
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
