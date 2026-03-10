@@ -286,7 +286,18 @@ export class StdoutHandler {
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			// Not valid JSON — handled in the else branch below
+			// Not valid JSON — log at debug level for structured-output agents
+			if (outputParser) {
+				logger.debug(
+					'[ProcessManager] JSON parse failed for structured-output agent line',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						lineLength: line.length,
+					}
+				);
+			}
 		}
 
 		// ── Error detection from parser ──
