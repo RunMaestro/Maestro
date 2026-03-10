@@ -49,6 +49,8 @@ import {
 	getModeratorSessionId,
 	clearAllModeratorSessions,
 	getModeratorSystemPrompt,
+	getModeratorSynthesisPrompt,
+	isModeratorActive,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
 import {
@@ -286,6 +288,105 @@ describe('group-chat-moderator', () => {
 			await killModerator(chat.id, mockProcessManager);
 
 			expect(getModeratorSessionId(chat.id)).toBeUndefined();
+		});
+	});
+
+	// ===========================================================================
+	// Test 3.6: getModeratorSynthesisPrompt returns synthesis instructions
+	// ===========================================================================
+	describe('getModeratorSynthesisPrompt', () => {
+		it('returns a non-empty synthesis prompt string', () => {
+			const prompt = getModeratorSynthesisPrompt();
+			expect(typeof prompt).toBe('string');
+			expect(prompt.length).toBeGreaterThan(0);
+		});
+
+		it('contains synthesis-related instructions', () => {
+			const prompt = getModeratorSynthesisPrompt();
+			// The synthesis prompt should instruct the moderator about reviewing responses
+			// and deciding next steps (synthesize or follow-up)
+			expect(prompt.toLowerCase()).toMatch(/synthe|review|response|summar/);
+		});
+
+		it('is distinct from the system prompt', () => {
+			const systemPrompt = getModeratorSystemPrompt();
+			const synthesisPrompt = getModeratorSynthesisPrompt();
+			expect(synthesisPrompt).not.toBe(systemPrompt);
+		});
+	});
+
+	// ===========================================================================
+	// Test 3.7: Moderator lifecycle — spawn → send → kill → cleanup
+	// ===========================================================================
+	describe('moderator lifecycle', () => {
+		it('full lifecycle: spawn → sendToModerator → killModerator', async () => {
+			const chat = await createTestChat('Lifecycle Test', 'claude-code');
+
+			// 1. Spawn moderator
+			const sessionId = await spawnModerator(chat, mockProcessManager);
+			expect(sessionId).toBeTruthy();
+			expect(isModeratorActive(chat.id)).toBe(true);
+			expect(getModeratorSessionId(chat.id)).toBe(sessionId);
+
+			// 2. Send message to moderator
+			await sendToModerator(chat.id, 'Plan the architecture', mockProcessManager);
+			expect(mockProcessManager.write).toHaveBeenCalledWith(sessionId, 'Plan the architecture\n');
+
+			// Verify message was logged
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.from === 'user' && m.content === 'Plan the architecture')).toBe(
+				true
+			);
+
+			// 3. Kill moderator
+			await killModerator(chat.id, mockProcessManager);
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+			expect(isModeratorActive(chat.id)).toBe(false);
+			expect(getModeratorSessionId(chat.id)).toBeUndefined();
+
+			// 4. Verify storage was cleaned up
+			const updated = await loadGroupChat(chat.id);
+			expect(updated?.moderatorSessionId).toBe('');
+		});
+
+		it('spawn replaces previous session mapping for same chat', async () => {
+			const chat = await createTestChat('Replace Test', 'claude-code');
+
+			const sessionId1 = await spawnModerator(chat, mockProcessManager);
+			expect(getModeratorSessionId(chat.id)).toBe(sessionId1);
+
+			// Spawn again for the same chat — should replace the mapping
+			const sessionId2 = await spawnModerator(chat, mockProcessManager);
+			expect(getModeratorSessionId(chat.id)).toBe(sessionId2);
+			// Session IDs are based on chat.id so they will be the same prefix
+			expect(sessionId1).toBe(sessionId2);
+		});
+
+		it('kill after kill is idempotent', async () => {
+			const chat = await createTestChat('Double Kill Test', 'claude-code');
+			await spawnModerator(chat, mockProcessManager);
+
+			await killModerator(chat.id, mockProcessManager);
+			expect(isModeratorActive(chat.id)).toBe(false);
+
+			// Second kill should not throw
+			await expect(killModerator(chat.id, mockProcessManager)).resolves.not.toThrow();
+			// Process manager kill should only be called once (first kill had a session)
+			expect(mockProcessManager.kill).toHaveBeenCalledTimes(1);
+		});
+
+		it('sendToModerator without spawn logs but does not write to process', async () => {
+			const chat = await createTestChat('No Spawn Send Test', 'claude-code');
+
+			// Send without spawning moderator first
+			await sendToModerator(chat.id, 'Hello without moderator', mockProcessManager);
+
+			// Message should be logged
+			const messages = await readLog(chat.logPath);
+			expect(messages.some((m) => m.content === 'Hello without moderator')).toBe(true);
+
+			// But write should not be called (no active session)
+			expect(mockProcessManager.write).not.toHaveBeenCalled();
 		});
 	});
 

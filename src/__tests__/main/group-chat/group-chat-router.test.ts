@@ -63,6 +63,9 @@ import {
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
+	killModerator,
+	isModeratorActive,
+	getModeratorSessionId,
 	clearAllModeratorSessions,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
@@ -1279,6 +1282,127 @@ describe('group-chat-router', () => {
 				.length;
 			// No additional spawns beyond what routeUserMessage already did
 			expect(spawnCountAfter).toBe(spawnCountAfterUserMsg);
+		});
+	});
+
+	// ===========================================================================
+	// Test: Moderator synthesis pipeline lifecycle
+	// (spawn → synthesis → cleanup)
+	// ===========================================================================
+	describe('moderator synthesis pipeline lifecycle', () => {
+		it('spawn → spawnModeratorSynthesis → killModerator full lifecycle', async () => {
+			const chat = await createTestChatWithModerator('Synthesis Lifecycle');
+			await addParticipant(chat.id, 'Coder', 'claude-code', mockProcessManager);
+
+			// Verify moderator is active after spawn
+			expect(isModeratorActive(chat.id)).toBe(true);
+			const sessionId = getModeratorSessionId(chat.id);
+			expect(sessionId).toBeTruthy();
+
+			// Trigger synthesis — should spawn a process
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore + 1);
+
+			// Verify synthesis spawn used a session ID derived from the moderator prefix
+			const spawnCall = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls[
+				spawnCountAfter - 1
+			][0];
+			expect(spawnCall.sessionId).toContain('moderator');
+			expect(spawnCall.readOnlyMode).toBe(true);
+
+			// Kill moderator — cleanup
+			await killModerator(chat.id, mockProcessManager);
+			expect(isModeratorActive(chat.id)).toBe(false);
+			expect(getModeratorSessionId(chat.id)).toBeUndefined();
+		});
+
+		it('spawnModeratorSynthesis returns early if chat not found', async () => {
+			// Use a non-existent chat ID — should not throw, just return early
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			await spawnModeratorSynthesis('non-existent-chat', mockProcessManager, mockAgentDetector);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
+		});
+
+		it('spawnModeratorSynthesis returns early if moderator not active', async () => {
+			const chat = await createTestChat('No Moderator Synth');
+			// Do NOT spawn moderator — isModeratorActive will return false
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
+		});
+
+		it('spawnModeratorSynthesis returns early if agent unavailable', async () => {
+			const chat = await createTestChatWithModerator('Unavailable Agent Synth');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			// Override agent detector to return unavailable agent
+			const unavailableDetector = {
+				...mockAgentDetector,
+				getAgent: vi.fn().mockResolvedValue({
+					id: 'claude-code',
+					name: 'Claude Code',
+					command: 'claude',
+					args: [],
+					available: false,
+					capabilities: {},
+				}),
+			} as unknown as AgentDetector;
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, unavailableDetector);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
+		});
+
+		it('synthesis prompt includes participant context and chat history', async () => {
+			const chat = await createTestChatWithModerator('Prompt Content Synth');
+			await addParticipant(chat.id, 'Architect', 'claude-code', mockProcessManager);
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			// Check the prompt passed to spawn contains participant info
+			const spawnCalls = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls;
+			const lastSpawn = spawnCalls[spawnCalls.length - 1][0];
+			expect(lastSpawn.prompt).toBeDefined();
+			expect(lastSpawn.prompt).toContain('Architect');
+			expect(lastSpawn.prompt).toContain('Current Participants');
+		});
+
+		it('synthesis after kill does not spawn', async () => {
+			const chat = await createTestChatWithModerator('Kill Then Synth');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			// Kill moderator first
+			await killModerator(chat.id, mockProcessManager);
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			// Attempt synthesis after kill — should not spawn
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
 		});
 	});
 });
