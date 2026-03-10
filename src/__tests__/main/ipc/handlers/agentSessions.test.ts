@@ -746,6 +746,41 @@ describe('agentSessions IPC handlers', () => {
 			expect(result.inputTokens).toBe(15);
 			expect(result.outputTokens).toBe(3);
 		});
+
+		it('should use first-match semantics to avoid double-counting tokens across sources', () => {
+			// When tokens appear in multiple locations (e.g., msg.tokens AND msg.metadata.tokens),
+			// only the first source with non-zero values should be used
+			const content = JSON.stringify({
+				messages: [
+					{
+						type: 'gemini',
+						tokens: { input: 100, output: 200 },
+						tokenUsage: { input: 100, output: 200 },
+						metadata: { tokens: { input: 100, output: 200 } },
+					},
+				],
+			});
+			const result = parseGeminiSessionContent(content, 512);
+			// Should be 100/200, NOT 300/600 from triple-counting
+			expect(result.inputTokens).toBe(100);
+			expect(result.outputTokens).toBe(200);
+		});
+
+		it('should fall through to next token source when earlier sources are empty', () => {
+			const content = JSON.stringify({
+				messages: [
+					{
+						type: 'gemini',
+						tokens: {},
+						tokenUsage: { input: 50, output: 75, cached: 10 },
+					},
+				],
+			});
+			const result = parseGeminiSessionContent(content, 256);
+			expect(result.inputTokens).toBe(50);
+			expect(result.outputTokens).toBe(75);
+			expect(result.cachedInputTokens).toBe(10);
+		});
 	});
 
 	describe('sessionId extraction regex (used in getGlobalStats)', () => {

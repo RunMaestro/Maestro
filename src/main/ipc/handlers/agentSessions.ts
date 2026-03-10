@@ -303,9 +303,12 @@ export function parseGeminiSessionContent(
 			const tokenSources = [msg.tokens, msg.tokenUsage, msg.tokenCounts, msg.metadata?.tokens];
 			for (const source of tokenSources) {
 				const { input, output, cached } = accumulateGeminiTokens(source);
-				inputTokens += input;
-				outputTokens += output;
-				cachedInputTokens += cached;
+				if (input > 0 || output > 0 || cached > 0) {
+					inputTokens += input;
+					outputTokens += output;
+					cachedInputTokens += cached;
+					break;
+				}
 			}
 		}
 	} catch (error) {
