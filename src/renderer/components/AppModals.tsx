@@ -1717,6 +1717,22 @@ export const AppAgentModals = memo(function AppAgentModals({
 	onApproveWorkspaceDir,
 	onDenyWorkspaceDir,
 }: AppAgentModalsProps) {
+	// Pre-compute workspace approval session data to avoid repeated sessions.find() in JSX
+	const approvalSession = useMemo(
+		() =>
+			workspaceApprovalData
+				? sessions.find((s) => s.id === workspaceApprovalData.sessionId)
+				: undefined,
+		[workspaceApprovalData, sessions]
+	);
+	const approvalSessionName = approvalSession?.name || 'Gemini CLI';
+	const approvalSshRemoteId: string | undefined =
+		approvalSession?.sshRemoteId ??
+		(approvalSession?.sessionSshRemoteConfig?.enabled
+			? approvalSession.sessionSshRemoteConfig.remoteId
+			: undefined) ??
+		undefined;
+
 	return (
 		<>
 			{/* --- LEADERBOARD REGISTRATION MODAL --- */}
@@ -1772,20 +1788,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<WorkspaceApprovalModal
 					theme={theme}
 					deniedPath={workspaceApprovalData.deniedPath}
-					sessionName={
-						sessions.find((s) => s.id === workspaceApprovalData.sessionId)?.name || 'Gemini CLI'
-					}
-					sshRemoteId={(() => {
-						const s = sessions.find((s) => s.id === workspaceApprovalData.sessionId);
-						return (
-							s?.sshRemoteId ||
-							(s?.sessionSshRemoteConfig?.enabled
-								? s.sessionSshRemoteConfig.remoteId
-								: undefined) ||
-							undefined
-						);
-					})()}
-					projectCwd={sessions.find((s) => s.id === workspaceApprovalData.sessionId)?.projectRoot}
+					sessionName={approvalSessionName}
+					sshRemoteId={approvalSshRemoteId}
+					projectCwd={approvalSession?.projectRoot}
 					onApprove={(directory) =>
 						onApproveWorkspaceDir(workspaceApprovalData.sessionId, directory)
 					}

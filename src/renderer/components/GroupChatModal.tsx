@@ -11,7 +11,7 @@
  * - Enter/edit a name for the group chat
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Settings, ChevronDown, Check } from 'lucide-react';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -190,21 +190,95 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		configWasModified,
 	]);
 
+	// Filter AGENT_TILES to only show supported + detected agents
+	const availableTiles = useMemo(
+		() =>
+			AGENT_TILES.filter((tile) => {
+				if (!tile.supported) return false;
+				return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
+			}),
+		[ac.detectedAgents]
+	);
+
+	// Get selected agent info
+	const selectedAgentConfig = useMemo(
+		() => ac.detectedAgents.find((a) => a.id === ac.selectedAgent),
+		[ac.detectedAgents, ac.selectedAgent]
+	);
+	const selectedTile = useMemo(
+		() => AGENT_TILES.find((t) => t.id === ac.selectedAgent),
+		[ac.selectedAgent]
+	);
+
+	// Memoized handlers for AgentConfigPanel props
+	const handleCustomPathBlur = useCallback(() => {
+		/* Local state only */
+	}, []);
+	const handleCustomPathClear = useCallback(() => ac.setCustomPath(''), [ac.setCustomPath]);
+	const handleCustomArgsBlur = useCallback(() => {
+		/* Local state only */
+	}, []);
+	const handleCustomArgsClear = useCallback(() => ac.setCustomArgs(''), [ac.setCustomArgs]);
+	const handleEnvVarKeyChange = useCallback(
+		(oldKey: string, newKey: string, value: string) => {
+			const newVars = { ...ac.customEnvVars };
+			delete newVars[oldKey];
+			newVars[newKey] = value;
+			ac.setCustomEnvVars(newVars);
+		},
+		[ac.customEnvVars, ac.setCustomEnvVars]
+	);
+	const handleEnvVarValueChange = useCallback(
+		(key: string, value: string) => {
+			ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
+		},
+		[ac.customEnvVars, ac.setCustomEnvVars]
+	);
+	const handleEnvVarRemove = useCallback(
+		(key: string) => {
+			const newVars = { ...ac.customEnvVars };
+			delete newVars[key];
+			ac.setCustomEnvVars(newVars);
+		},
+		[ac.customEnvVars, ac.setCustomEnvVars]
+	);
+	const handleEnvVarAdd = useCallback(() => {
+		let newKey = 'NEW_VAR';
+		let counter = 1;
+		while (ac.customEnvVars[newKey]) {
+			newKey = `NEW_VAR_${counter}`;
+			counter++;
+		}
+		ac.setCustomEnvVars({ ...ac.customEnvVars, [newKey]: '' });
+	}, [ac.customEnvVars, ac.setCustomEnvVars]);
+	const handleEnvVarsBlur = useCallback(() => {
+		/* Local state only */
+	}, []);
+	const handleConfigChange = useCallback(
+		(key: string, value: any) => {
+			const newConfig = { ...ac.agentConfig, [key]: value };
+			ac.setAgentConfig(newConfig);
+			ac.agentConfigRef.current = newConfig;
+			if (mode === 'edit') {
+				setConfigWasModified(true);
+			}
+		},
+		[ac.agentConfig, ac.setAgentConfig, ac.agentConfigRef, mode]
+	);
+	const handleConfigBlur = useCallback(async () => {
+		if (ac.selectedAgent) {
+			await ac.saveAgentConfig(ac.selectedAgent);
+			if (mode === 'edit') {
+				setConfigWasModified(true);
+			}
+		}
+	}, [ac.selectedAgent, ac.saveAgentConfig, mode]);
+
 	const canSubmit =
 		name.trim().length > 0 && ac.selectedAgent !== null && (mode === 'create' || hasChanges());
 
 	if (!isOpen) return null;
 	if (mode === 'edit' && !groupChat) return null;
-
-	// Filter AGENT_TILES to only show supported + detected agents
-	const availableTiles = AGENT_TILES.filter((tile) => {
-		if (!tile.supported) return false;
-		return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
-	});
-
-	// Get selected agent info
-	const selectedAgentConfig = ac.detectedAgents.find((a) => a.id === ac.selectedAgent);
-	const selectedTile = AGENT_TILES.find((t) => t.id === ac.selectedAgent);
 
 	const isCreate = mode === 'create';
 	const modalTitle = isCreate ? 'New Group Chat' : 'Edit Group Chat';
@@ -332,7 +406,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								>
 									{availableTiles.map((tile) => {
 										const isBeta =
-											tile.id === 'codex' || tile.id === 'opencode' || tile.id === 'factory-droid' || tile.id === 'gemini-cli';
+											tile.id === 'codex' ||
+											tile.id === 'opencode' ||
+											tile.id === 'factory-droid' ||
+											tile.id === 'gemini-cli';
 										return (
 											<option key={tile.id} value={tile.id}>
 												{tile.name}
@@ -397,60 +474,21 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								agent={selectedAgentConfig}
 								customPath={ac.customPath}
 								onCustomPathChange={ac.setCustomPath}
-								onCustomPathBlur={() => {
-									/* Local state only */
-								}}
-								onCustomPathClear={() => ac.setCustomPath('')}
+								onCustomPathBlur={handleCustomPathBlur}
+								onCustomPathClear={handleCustomPathClear}
 								customArgs={ac.customArgs}
 								onCustomArgsChange={ac.setCustomArgs}
-								onCustomArgsBlur={() => {
-									/* Local state only */
-								}}
-								onCustomArgsClear={() => ac.setCustomArgs('')}
+								onCustomArgsBlur={handleCustomArgsBlur}
+								onCustomArgsClear={handleCustomArgsClear}
 								customEnvVars={ac.customEnvVars}
-								onEnvVarKeyChange={(oldKey, newKey, value) => {
-									const newVars = { ...ac.customEnvVars };
-									delete newVars[oldKey];
-									newVars[newKey] = value;
-									ac.setCustomEnvVars(newVars);
-								}}
-								onEnvVarValueChange={(key, value) => {
-									ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
-								}}
-								onEnvVarRemove={(key) => {
-									const newVars = { ...ac.customEnvVars };
-									delete newVars[key];
-									ac.setCustomEnvVars(newVars);
-								}}
-								onEnvVarAdd={() => {
-									let newKey = 'NEW_VAR';
-									let counter = 1;
-									while (ac.customEnvVars[newKey]) {
-										newKey = `NEW_VAR_${counter}`;
-										counter++;
-									}
-									ac.setCustomEnvVars({ ...ac.customEnvVars, [newKey]: '' });
-								}}
-								onEnvVarsBlur={() => {
-									/* Local state only */
-								}}
+								onEnvVarKeyChange={handleEnvVarKeyChange}
+								onEnvVarValueChange={handleEnvVarValueChange}
+								onEnvVarRemove={handleEnvVarRemove}
+								onEnvVarAdd={handleEnvVarAdd}
+								onEnvVarsBlur={handleEnvVarsBlur}
 								agentConfig={ac.agentConfig}
-								onConfigChange={(key, value) => {
-									const newConfig = { ...ac.agentConfig, [key]: value };
-									ac.setAgentConfig(newConfig);
-									ac.agentConfigRef.current = newConfig;
-									if (mode === 'edit') {
-										setConfigWasModified(true);
-									}
-								}}
-								onConfigBlur={async () => {
-									if (ac.selectedAgent) {
-										await ac.saveAgentConfig(ac.selectedAgent);
-										if (mode === 'edit') {
-											setConfigWasModified(true);
-										}
-									}
-								}}
+								onConfigChange={handleConfigChange}
+								onConfigBlur={handleConfigBlur}
 								availableModels={ac.availableModels}
 								loadingModels={ac.loadingModels}
 								onRefreshModels={ac.refreshModels}

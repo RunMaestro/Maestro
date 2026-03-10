@@ -11,7 +11,7 @@
  * - Uses shared AgentSelector and AgentConfigPanel components
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import {
 	Music,
@@ -63,6 +63,169 @@ export interface AgentCreationConfig {
 	/** Agent-specific configuration options */
 	agentConfig?: Record<string, any>;
 }
+
+// ============================================================================
+// Memoized Agent Card Row
+// ============================================================================
+
+interface AgentConfigRowProps {
+	theme: Theme;
+	agent: AgentConfig;
+	isSelected: boolean;
+	isExpanded: boolean;
+	isBeta: boolean;
+	refreshing: boolean;
+	onSelect: (agentId: string) => void;
+	onRefresh: (agentId: string) => void;
+	customPath: string;
+	onCustomPathChange: (value: string) => void;
+	onCustomPathClear: () => void;
+	customArgs: string;
+	onCustomArgsChange: (value: string) => void;
+	onCustomArgsClear: () => void;
+	customEnvVars: Record<string, string>;
+	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string) => void;
+	onEnvVarValueChange: (key: string, value: string) => void;
+	onEnvVarRemove: (key: string) => void;
+	onEnvVarAdd: () => void;
+	agentConfig: Record<string, any>;
+	onConfigChange: (key: string, value: any) => void;
+	onConfigBlur: (key: string, value: any) => void;
+	availableModels: string[];
+	loadingModels: boolean;
+	onRefreshModels: () => void;
+}
+
+const AgentConfigRow = memo(function AgentConfigRow({
+	theme,
+	agent,
+	isSelected,
+	isExpanded,
+	isBeta,
+	refreshing,
+	onSelect,
+	onRefresh,
+	customPath,
+	onCustomPathChange,
+	onCustomPathClear,
+	customArgs,
+	onCustomArgsChange,
+	onCustomArgsClear,
+	customEnvVars,
+	onEnvVarKeyChange,
+	onEnvVarValueChange,
+	onEnvVarRemove,
+	onEnvVarAdd,
+	agentConfig,
+	onConfigChange,
+	onConfigBlur,
+	availableModels,
+	loadingModels,
+	onRefreshModels,
+}: AgentConfigRowProps) {
+	return (
+		<div
+			className="rounded-lg border transition-all"
+			style={{
+				borderColor: isSelected ? theme.colors.accent : theme.colors.border,
+				...(isSelected && { boxShadow: `0 0 0 2px ${theme.colors.accent}` }),
+			}}
+		>
+			{/* Agent header row */}
+			<div
+				role="button"
+				tabIndex={0}
+				onClick={() => onSelect(agent.id)}
+				onKeyDown={(e) => {
+					if (e.target !== e.currentTarget) return;
+					if (e.key === 'Enter' || e.key === ' ') {
+						e.preventDefault();
+						onSelect(agent.id);
+					}
+				}}
+				className="w-full text-left px-3 py-2 flex items-center justify-between hover:bg-white/5 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+				style={{ color: theme.colors.textMain }}
+			>
+				<div className="flex items-center gap-2">
+					<ChevronRight
+						className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+						style={{ color: theme.colors.textDim }}
+					/>
+					<span className="font-medium">{agent.name}</span>
+					{isBeta && (
+						<span
+							className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
+							style={{
+								backgroundColor: theme.colors.warning + '30',
+								color: theme.colors.warning,
+							}}
+						>
+							Beta
+						</span>
+					)}
+				</div>
+				<div className="flex items-center gap-2">
+					<span
+						className="text-xs px-2 py-0.5 rounded"
+						style={{
+							backgroundColor: theme.colors.success + '20',
+							color: theme.colors.success,
+						}}
+					>
+						Available
+					</span>
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							onRefresh(agent.id);
+						}}
+						className="p-1 rounded hover:bg-white/10 transition-colors"
+						title="Refresh detection"
+						style={{ color: theme.colors.textDim }}
+					>
+						<RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+					</button>
+				</div>
+			</div>
+
+			{/* Expanded config panel */}
+			{isExpanded && (
+				<div className="px-3 pb-3 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
+					<AgentConfigPanel
+						theme={theme}
+						agent={agent}
+						customPath={customPath}
+						onCustomPathChange={onCustomPathChange}
+						onCustomPathBlur={() => {}}
+						onCustomPathClear={onCustomPathClear}
+						customArgs={customArgs}
+						onCustomArgsChange={onCustomArgsChange}
+						onCustomArgsBlur={() => {}}
+						onCustomArgsClear={onCustomArgsClear}
+						customEnvVars={customEnvVars}
+						onEnvVarKeyChange={onEnvVarKeyChange}
+						onEnvVarValueChange={onEnvVarValueChange}
+						onEnvVarRemove={onEnvVarRemove}
+						onEnvVarAdd={onEnvVarAdd}
+						onEnvVarsBlur={() => {}}
+						agentConfig={agentConfig}
+						onConfigChange={onConfigChange}
+						onConfigBlur={onConfigBlur}
+						availableModels={availableModels}
+						loadingModels={loadingModels}
+						onRefreshModels={onRefreshModels}
+						onRefreshAgent={() => onRefresh(agent.id)}
+						refreshingAgent={refreshing}
+						compact
+						showBuiltInEnvVars
+					/>
+				</div>
+			)}
+		</div>
+	);
+});
+
+const BETA_AGENTS = new Set(['codex', 'opencode', 'factory-droid', 'gemini-cli']);
 
 // ============================================================================
 // Main Dialog Component
@@ -352,192 +515,106 @@ export function AgentCreationDialog({
 							</div>
 						) : (
 							<div className="space-y-2">
-								{ac.detectedAgents.map((agent) => {
-									const isSelected = selectedAgent === agent.id;
-									const isExpanded = expandedAgent === agent.id;
-	const isBetaAgent =
-		agent.id === 'codex' ||
-		agent.id === 'opencode' ||
-		agent.id === 'factory-droid' ||
-		agent.id === 'gemini-cli';
-
-									return (
-										<div
-											key={agent.id}
-											className="rounded-lg border transition-all"
-											style={{
-												borderColor: isSelected ? theme.colors.accent : theme.colors.border,
-												...(isSelected && { boxShadow: `0 0 0 2px ${theme.colors.accent}` }),
-											}}
-										>
-											{/* Agent header row */}
-											<div
-												role="button"
-												tabIndex={0}
-												onClick={() => handleSelectAgent(agent.id)}
-												onKeyDown={(e) => {
-													if (e.target !== e.currentTarget) return;
-													if (e.key === 'Enter' || e.key === ' ') {
-														e.preventDefault();
-														handleSelectAgent(agent.id);
-													}
-												}}
-												className="w-full text-left px-3 py-2 flex items-center justify-between hover:bg-white/5 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-												style={{ color: theme.colors.textMain }}
-											>
-												<div className="flex items-center gap-2">
-													<ChevronRight
-														className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-														style={{ color: theme.colors.textDim }}
-													/>
-													<span className="font-medium">{agent.name}</span>
-													{isBetaAgent && (
-														<span
-															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
-															style={{
-																backgroundColor: theme.colors.warning + '30',
-																color: theme.colors.warning,
-															}}
-														>
-															Beta
-														</span>
-													)}
-												</div>
-												<div className="flex items-center gap-2">
-													<span
-														className="text-xs px-2 py-0.5 rounded"
-														style={{
-															backgroundColor: theme.colors.success + '20',
-															color: theme.colors.success,
-														}}
-													>
-														Available
-													</span>
-													<button
-														onClick={(e) => {
-															e.stopPropagation();
-															handleRefreshAgent(agent.id);
-														}}
-														className="p-1 rounded hover:bg-white/10 transition-colors"
-														title="Refresh detection"
-														style={{ color: theme.colors.textDim }}
-													>
-														<RefreshCw
-															className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
-														/>
-													</button>
-												</div>
-											</div>
-
-											{/* Expanded config panel */}
-											{isExpanded && (
-												<div
-													className="px-3 pb-3 pt-2 border-t"
-													style={{ borderColor: theme.colors.border }}
-												>
-													<AgentConfigPanel
-														theme={theme}
-														agent={agent}
-														customPath={customAgentPaths[agent.id] || ''}
-														onCustomPathChange={(value) => {
-															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
-														}}
-														onCustomPathBlur={() => {}}
-														onCustomPathClear={() => {
-															setCustomAgentPaths((prev) => {
-																const newPaths = { ...prev };
-																delete newPaths[agent.id];
-																return newPaths;
-															});
-														}}
-														customArgs={customAgentArgs[agent.id] || ''}
-														onCustomArgsChange={(value) => {
-															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
-														}}
-														onCustomArgsBlur={() => {}}
-														onCustomArgsClear={() => {
-															setCustomAgentArgs((prev) => {
-																const newArgs = { ...prev };
-																delete newArgs[agent.id];
-																return newArgs;
-															});
-														}}
-														customEnvVars={customAgentEnvVars[agent.id] || {}}
-														onEnvVarKeyChange={(oldKey, newKey, value) => {
-															const currentVars = { ...customAgentEnvVars[agent.id] };
-															delete currentVars[oldKey];
-															currentVars[newKey] = value;
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: currentVars,
-															}));
-														}}
-														onEnvVarValueChange={(key, value) => {
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[key]: value,
-																},
-															}));
-														}}
-														onEnvVarRemove={(key) => {
-															const currentVars = { ...customAgentEnvVars[agent.id] };
-															delete currentVars[key];
-															if (Object.keys(currentVars).length > 0) {
-																setCustomAgentEnvVars((prev) => ({
-																	...prev,
-																	[agent.id]: currentVars,
-																}));
-															} else {
-																setCustomAgentEnvVars((prev) => {
-																	const newVars = { ...prev };
-																	delete newVars[agent.id];
-																	return newVars;
-																});
-															}
-														}}
-														onEnvVarAdd={() => {
-															const currentVars = customAgentEnvVars[agent.id] || {};
-															let newKey = 'NEW_VAR';
-															let counter = 1;
-															while (currentVars[newKey]) {
-																newKey = `NEW_VAR_${counter}`;
-																counter++;
-															}
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[newKey]: '',
-																},
-															}));
-														}}
-														onEnvVarsBlur={() => {}}
-														agentConfig={agentConfigs[agent.id] || {}}
-														onConfigChange={(key, value) => {
-															setAgentConfigs((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[key]: value,
-																},
-															}));
-														}}
-														onConfigBlur={(_key, _value) => {}}
-														availableModels={availableModels[agent.id] || []}
-														loadingModels={loadingModels[agent.id] || false}
-														onRefreshModels={() => loadModelsForAgent(agent.id, true)}
-														onRefreshAgent={() => handleRefreshAgent(agent.id)}
-														refreshingAgent={refreshingAgent === agent.id}
-														compact
-														showBuiltInEnvVars
-													/>
-												</div>
-											)}
-										</div>
-									);
-								})}
+								{ac.detectedAgents.map((agent) => (
+									<AgentConfigRow
+										key={agent.id}
+										theme={theme}
+										agent={agent}
+										isSelected={selectedAgent === agent.id}
+										isExpanded={expandedAgent === agent.id}
+										isBeta={BETA_AGENTS.has(agent.id)}
+										refreshing={refreshingAgent === agent.id}
+										onSelect={handleSelectAgent}
+										onRefresh={handleRefreshAgent}
+										customPath={customAgentPaths[agent.id] || ''}
+										onCustomPathChange={(value) => {
+											setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
+										}}
+										onCustomPathClear={() => {
+											setCustomAgentPaths((prev) => {
+												const newPaths = { ...prev };
+												delete newPaths[agent.id];
+												return newPaths;
+											});
+										}}
+										customArgs={customAgentArgs[agent.id] || ''}
+										onCustomArgsChange={(value) => {
+											setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
+										}}
+										onCustomArgsClear={() => {
+											setCustomAgentArgs((prev) => {
+												const newArgs = { ...prev };
+												delete newArgs[agent.id];
+												return newArgs;
+											});
+										}}
+										customEnvVars={customAgentEnvVars[agent.id] || {}}
+										onEnvVarKeyChange={(oldKey, newKey, value) => {
+											const currentVars = { ...customAgentEnvVars[agent.id] };
+											delete currentVars[oldKey];
+											currentVars[newKey] = value;
+											setCustomAgentEnvVars((prev) => ({
+												...prev,
+												[agent.id]: currentVars,
+											}));
+										}}
+										onEnvVarValueChange={(key, value) => {
+											setCustomAgentEnvVars((prev) => ({
+												...prev,
+												[agent.id]: {
+													...prev[agent.id],
+													[key]: value,
+												},
+											}));
+										}}
+										onEnvVarRemove={(key) => {
+											const currentVars = { ...customAgentEnvVars[agent.id] };
+											delete currentVars[key];
+											if (Object.keys(currentVars).length > 0) {
+												setCustomAgentEnvVars((prev) => ({
+													...prev,
+													[agent.id]: currentVars,
+												}));
+											} else {
+												setCustomAgentEnvVars((prev) => {
+													const newVars = { ...prev };
+													delete newVars[agent.id];
+													return newVars;
+												});
+											}
+										}}
+										onEnvVarAdd={() => {
+											const currentVars = customAgentEnvVars[agent.id] || {};
+											let newKey = 'NEW_VAR';
+											let counter = 1;
+											while (currentVars[newKey]) {
+												newKey = `NEW_VAR_${counter}`;
+												counter++;
+											}
+											setCustomAgentEnvVars((prev) => ({
+												...prev,
+												[agent.id]: {
+													...prev[agent.id],
+													[newKey]: '',
+												},
+											}));
+										}}
+										agentConfig={agentConfigs[agent.id] || {}}
+										onConfigChange={(key, value) => {
+											setAgentConfigs((prev) => ({
+												...prev,
+												[agent.id]: {
+													...prev[agent.id],
+													[key]: value,
+												},
+											}));
+										}}
+										onConfigBlur={(_key, _value) => {}}
+										availableModels={availableModels[agent.id] || []}
+										loadingModels={loadingModels[agent.id] || false}
+										onRefreshModels={() => loadModelsForAgent(agent.id, true)}
+									/>
+								))}
 							</div>
 						)}
 					</div>

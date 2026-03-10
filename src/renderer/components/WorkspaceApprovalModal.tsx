@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	ShieldAlert,
 	FolderOpen,
@@ -73,10 +73,14 @@ export function WorkspaceApprovalModal({
 		}
 	}, [showFiles, loadDirectoryFiles]);
 
-	const sortedFiles = [...files].sort((a, b) => {
-		if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-		return a.name.localeCompare(b.name);
-	});
+	const sortedFiles = useMemo(
+		() =>
+			[...files].sort((a, b) => {
+				if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+				return a.name.localeCompare(b.name);
+			}),
+		[files]
+	);
 
 	return (
 		<Modal
