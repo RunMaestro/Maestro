@@ -2043,6 +2043,9 @@ function MaestroConsoleInner() {
 		// Auto-scroll AI mode toggle
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+
+		// Project management
+		handleAddProject,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are

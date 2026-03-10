@@ -13,6 +13,21 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['] },
 	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'] },
+	cycleProjectPrev: {
+		id: 'cycleProjectPrev',
+		label: 'Previous Project',
+		keys: ['Ctrl', 'Shift', '['],
+	},
+	cycleProjectNext: {
+		id: 'cycleProjectNext',
+		label: 'Next Project',
+		keys: ['Ctrl', 'Shift', ']'],
+	},
+	newProject: {
+		id: 'newProject',
+		label: 'New Project',
+		keys: ['Ctrl', 'Shift', 'n'],
+	},
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },

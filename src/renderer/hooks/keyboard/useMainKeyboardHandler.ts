@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { useProjectStore } from '../../stores/projectStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 // Font size keyboard shortcut constants
@@ -266,6 +267,43 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.cycleSession('next');
 				trackShortcut('cycleNext');
+			} else if (ctx.isShortcut(e, 'cycleProjectNext')) {
+				// Cycle to next project
+				e.preventDefault();
+				const { projects, activeProjectId, setActiveProjectId } = useProjectStore.getState();
+				const idx = projects.findIndex((p) => p.id === activeProjectId);
+				const next = (idx + 1) % projects.length;
+				if (projects[next]) {
+					setActiveProjectId(projects[next].id);
+					const projectSessions = ctx.sessions.filter(
+						(s: Session) => s.projectId === projects[next].id
+					);
+					if (projectSessions.length > 0) {
+						ctx.setActiveSessionId(projectSessions[0].id);
+					}
+				}
+				trackShortcut('cycleProjectNext');
+			} else if (ctx.isShortcut(e, 'cycleProjectPrev')) {
+				// Cycle to previous project
+				e.preventDefault();
+				const { projects, activeProjectId, setActiveProjectId } = useProjectStore.getState();
+				const idx = projects.findIndex((p) => p.id === activeProjectId);
+				const prev = (idx - 1 + projects.length) % projects.length;
+				if (projects[prev]) {
+					setActiveProjectId(projects[prev].id);
+					const projectSessions = ctx.sessions.filter(
+						(s: Session) => s.projectId === projects[prev].id
+					);
+					if (projectSessions.length > 0) {
+						ctx.setActiveSessionId(projectSessions[0].id);
+					}
+				}
+				trackShortcut('cycleProjectPrev');
+			} else if (ctx.isShortcut(e, 'newProject')) {
+				// Create a new project
+				e.preventDefault();
+				ctx.handleAddProject();
+				trackShortcut('newProject');
 			} else if (ctx.isShortcut(e, 'navBack')) {
 				// Navigate back in history (through sessions and tabs)
 				e.preventDefault();
