@@ -46,6 +46,11 @@ vi.mock('lucide-react', () => ({
 			⊗
 		</span>
 	),
+	ExternalLink: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="external-link-icon" className={className} style={style}>
+			↗
+		</span>
+	),
 }));
 
 // Mock layer stack context
@@ -698,6 +703,69 @@ describe('ProcessMonitor', () => {
 
 			// Should be a span, not a button
 			expect(screen.queryByTitle('Click to navigate to this session')).not.toBeInTheDocument();
+		});
+
+		it('should show jump-to button on process rows that navigates to agent tab', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(
+				<ProcessMonitor
+					theme={theme}
+					sessions={[session]}
+					groups={[]}
+					onClose={onClose}
+					onNavigateToSession={onNavigateToSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Jump to tab')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Jump to tab'));
+			expect(onNavigateToSession).toHaveBeenCalledWith('session-1', 'tab-1');
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should show jump-to button on session rows that navigates to agent', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(
+				<ProcessMonitor
+					theme={theme}
+					sessions={[session]}
+					groups={[]}
+					onClose={onClose}
+					onNavigateToSession={onNavigateToSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Jump to agent')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTitle('Jump to agent'));
+			expect(onNavigateToSession).toHaveBeenCalledWith('session-1');
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('should not show jump-to buttons when onNavigateToSession is not provided', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('abc12345...')).toBeInTheDocument();
+			});
+
+			expect(screen.queryByTitle('Jump to agent')).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Jump to tab')).not.toBeInTheDocument();
 		});
 	});
 

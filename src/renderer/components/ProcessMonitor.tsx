@@ -14,6 +14,7 @@ import {
 	FolderOpen,
 	Hash,
 	Play,
+	ExternalLink,
 } from 'lucide-react';
 import type { Session, Group, Theme, GroupChat } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -844,13 +845,22 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 			return (
 				<div key={node.id}>
-					<button
-						ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLButtonElement>) : null}
+					<div
+						ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLDivElement>) : null}
+						role="button"
+						tabIndex={0}
 						onClick={() => {
 							setSelectedNodeId(node.id);
 							toggleNode(node.id);
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setSelectedNodeId(node.id);
+								toggleNode(node.id);
+							}
+						}}
+						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5 group"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
@@ -900,7 +910,25 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							)}
 							<span>Session: {node.sessionId?.substring(0, 8)}...</span>
 						</span>
-					</button>
+						{node.sessionId && onNavigateToSession && (
+							<button
+								className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+								style={{ color: theme.colors.accent }}
+								onClick={(e) => {
+									e.stopPropagation();
+									onNavigateToSession(node.sessionId!);
+									onClose();
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+								}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								title="Jump to agent"
+							>
+								<ExternalLink className="w-4 h-4" />
+							</button>
+						)}
+					</div>
 					{isExpanded && hasChildren && (
 						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
 					)}
@@ -1001,6 +1029,44 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							>
 								GENERATING
 							</span>
+						)}
+						{/* Jump to agent button */}
+						{node.sessionId && onNavigateToSession && !isGroupChatProcess && !isWizardProcess && (
+							<button
+								className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+								style={{ color: theme.colors.accent }}
+								onClick={(e) => {
+									e.stopPropagation();
+									onNavigateToSession(node.sessionId!, node.tabId);
+									onClose();
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+								}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								title={node.tabId ? 'Jump to tab' : 'Jump to agent'}
+							>
+								<ExternalLink className="w-4 h-4" />
+							</button>
+						)}
+						{/* Jump to group chat button */}
+						{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
+							<button
+								className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+								style={{ color: theme.colors.accent }}
+								onClick={(e) => {
+									e.stopPropagation();
+									onNavigateToGroupChat(node.groupChatId!);
+									onClose();
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+								}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								title="Jump to group chat"
+							>
+								<ExternalLink className="w-4 h-4" />
+							</button>
 						)}
 						{/* Kill button */}
 						{node.processSessionId && (
