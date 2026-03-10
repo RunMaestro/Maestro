@@ -18,6 +18,7 @@
  */
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { logger } from '../utils/logger';
 import type {
 	AgentSessionStorage,
 	AgentSessionInfo,
@@ -119,29 +120,48 @@ export abstract class BaseSessionStorage implements AgentSessionStorage {
 		const results: SessionSearchResult[] = [];
 
 		for (const session of sessions) {
-			const messages = await this.getSearchableMessages(session.sessionId, projectPath, sshConfig);
+			let messages: SearchableMessage[];
+			try {
+				messages = await this.getSearchableMessages(session.sessionId, projectPath, sshConfig);
+			} catch (error) {
+				const errMsg = error instanceof Error ? error.message : String(error);
+				logger.warn(
+					`searchSessions: failed to load messages for session "${session.sessionId}": ${errMsg}`,
+					'BaseSessionStorage'
+				);
+				continue;
+			}
 
-			let titleMatch = false;
+			// Title match: check session metadata (sessionName / firstMessage) independently
+			const titleText = (session.sessionName || session.firstMessage || '').toLowerCase();
+			const titleMatch = titleText.includes(searchLower);
+			let matchPreview = '';
+
+			if (titleMatch) {
+				matchPreview = BaseSessionStorage.extractMatchPreview(
+					session.sessionName || session.firstMessage || '',
+					titleText,
+					searchLower,
+					query.length
+				);
+			}
+
 			let userMatches = 0;
 			let assistantMatches = 0;
-			let matchPreview = '';
 
 			for (const msg of messages) {
 				const textLower = msg.textContent.toLowerCase();
 
 				if (msg.role === 'user' && textLower.includes(searchLower)) {
-					if (!titleMatch) {
-						titleMatch = true;
-						if (!matchPreview) {
-							matchPreview = BaseSessionStorage.extractMatchPreview(
-								msg.textContent,
-								textLower,
-								searchLower,
-								query.length
-							);
-						}
-					}
 					userMatches++;
+					if (!matchPreview && (searchMode === 'user' || searchMode === 'all')) {
+						matchPreview = BaseSessionStorage.extractMatchPreview(
+							msg.textContent,
+							textLower,
+							searchLower,
+							query.length
+						);
+					}
 				}
 
 				if (msg.role === 'assistant' && textLower.includes(searchLower)) {

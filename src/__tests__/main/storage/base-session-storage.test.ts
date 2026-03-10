@@ -27,6 +27,9 @@ class TestSessionStorage extends BaseSessionStorage {
 	/** Inject searchable messages per session */
 	searchableMessages: Map<string, SearchableMessage[]> = new Map();
 
+	/** Session IDs that should throw when loading messages */
+	failingSessions: Set<string> = new Set();
+
 	async listSessions(
 		_projectPath: string,
 		_sshConfig?: SshRemoteConfig
@@ -66,6 +69,9 @@ class TestSessionStorage extends BaseSessionStorage {
 		_projectPath: string,
 		_sshConfig?: SshRemoteConfig
 	): Promise<SearchableMessage[]> {
+		if (this.failingSessions.has(sessionId)) {
+			throw new Error(`Failed to load messages for ${sessionId}`);
+		}
 		return this.searchableMessages.get(sessionId) || [];
 	}
 }
@@ -436,6 +442,63 @@ describe('BaseSessionStorage', () => {
 			const results = await storage.searchSessions('/test', 'bug', 'all');
 			expect(results).toHaveLength(1);
 			expect(results[0].matchCount).toBe(3); // 2 user + 1 assistant
+		});
+
+		it('matches title from session firstMessage metadata', async () => {
+			const storage = new TestSessionStorage();
+			// makeSession creates firstMessage: 'Session s-1'
+			storage.sessions = [makeSession('s-1')];
+			storage.searchableMessages.set('s-1', [{ role: 'user', textContent: 'unrelated content' }]);
+
+			const results = await storage.searchSessions('/test', 'Session s-1', 'title');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchType).toBe('title');
+			expect(results[0].matchPreview).toContain('Session s-1');
+		});
+
+		it('matches title from sessionName when present', async () => {
+			const storage = new TestSessionStorage();
+			const session = makeSession('s-1');
+			session.sessionName = 'My Custom Session Name';
+			storage.sessions = [session];
+			storage.searchableMessages.set('s-1', [{ role: 'user', textContent: 'unrelated content' }]);
+
+			const results = await storage.searchSessions('/test', 'Custom Session', 'title');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchType).toBe('title');
+		});
+
+		it('does not match title from user message content', async () => {
+			const storage = new TestSessionStorage();
+			storage.sessions = [makeSession('s-1')]; // firstMessage: 'Session s-1'
+			storage.searchableMessages.set('s-1', [
+				{ role: 'user', textContent: 'fix the authentication bug' },
+			]);
+
+			// 'authentication' is in user message but not in firstMessage/sessionName
+			const results = await storage.searchSessions('/test', 'authentication', 'title');
+			expect(results).toHaveLength(0);
+		});
+
+		it('continues searching when getSearchableMessages fails for a session', async () => {
+			const storage = new TestSessionStorage();
+			storage.sessions = [makeSession('s-1'), makeSession('s-2')];
+			storage.failingSessions.add('s-1');
+			storage.searchableMessages.set('s-2', [{ role: 'user', textContent: 'search term here' }]);
+
+			const results = await storage.searchSessions('/test', 'search term', 'user');
+			// s-1 fails but s-2 still returns results
+			expect(results).toHaveLength(1);
+			expect(results[0].sessionId).toBe('s-2');
+		});
+
+		it('returns empty when all sessions fail to load messages', async () => {
+			const storage = new TestSessionStorage();
+			storage.sessions = [makeSession('s-1')];
+			storage.failingSessions.add('s-1');
+
+			const results = await storage.searchSessions('/test', 'anything', 'all');
+			expect(results).toHaveLength(0);
 		});
 	});
 });
