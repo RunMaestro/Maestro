@@ -14,6 +14,7 @@ import {
 	createSettingsApi,
 	createSessionsApi,
 	createGroupsApi,
+	createProjectsApi,
 	createAgentErrorApi,
 } from './settings';
 import { createContextApi } from './context';
@@ -62,6 +63,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Groups persistence API
 	groups: createGroupsApi(),
+
+	// Projects persistence API
+	projects: createProjectsApi(),
 
 	// Process/Session API
 	process: createProcessApi(),
@@ -199,6 +203,7 @@ export {
 	createSettingsApi,
 	createSessionsApi,
 	createGroupsApi,
+	createProjectsApi,
 	createAgentErrorApi,
 	// Context
 	createContextApi,
@@ -272,6 +277,7 @@ export type {
 	SettingsApi,
 	SessionsApi,
 	GroupsApi,
+	ProjectsApi,
 	AgentErrorApi,
 } from './settings';
 export type {

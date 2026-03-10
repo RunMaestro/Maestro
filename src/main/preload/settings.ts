@@ -50,6 +50,16 @@ export function createGroupsApi() {
 }
 
 /**
+ * Creates the projects persistence API object for preload exposure
+ */
+export function createProjectsApi() {
+	return {
+		getAll: () => ipcRenderer.invoke('projects:getAll'),
+		setAll: (projects: any[]) => ipcRenderer.invoke('projects:setAll', projects),
+	};
+}
+
+/**
  * Creates the agent error handling API object for preload exposure
  */
 export function createAgentErrorApi() {
@@ -68,4 +78,5 @@ export function createAgentErrorApi() {
 export type SettingsApi = ReturnType<typeof createSettingsApi>;
 export type SessionsApi = ReturnType<typeof createSessionsApi>;
 export type GroupsApi = ReturnType<typeof createGroupsApi>;
+export type ProjectsApi = ReturnType<typeof createProjectsApi>;
 export type AgentErrorApi = ReturnType<typeof createAgentErrorApi>;
