@@ -28,17 +28,14 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
-	AgentSessionStorage,
 	AgentSessionInfo,
-	PaginatedSessionsResult,
 	SessionMessagesResult,
-	SessionSearchResult,
-	SessionSearchMode,
-	SessionListOptions,
 	SessionReadOptions,
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { BaseSessionStorage } from './base-session-storage';
+import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 
@@ -434,7 +431,7 @@ async function parseSessionFile(
  *
  * Provides access to Codex CLI's local session storage at ~/.codex/sessions/
  */
-export class CodexSessionStorage implements AgentSessionStorage {
+export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
 	/**
@@ -916,32 +913,6 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		return sessions;
 	}
 
-	async listSessionsPaginated(
-		projectPath: string,
-		options?: SessionListOptions,
-		sshConfig?: SshRemoteConfig
-	): Promise<PaginatedSessionsResult> {
-		const allSessions = await this.listSessions(projectPath, sshConfig);
-		const { cursor, limit = 100 } = options || {};
-
-		let startIndex = 0;
-		if (cursor) {
-			const cursorIndex = allSessions.findIndex((s) => s.sessionId === cursor);
-			startIndex = cursorIndex >= 0 ? cursorIndex + 1 : 0;
-		}
-
-		const pageSessions = allSessions.slice(startIndex, startIndex + limit);
-		const hasMore = startIndex + limit < allSessions.length;
-		const nextCursor = hasMore ? pageSessions[pageSessions.length - 1]?.sessionId : null;
-
-		return {
-			sessions: pageSessions,
-			hasMore,
-			totalCount: allSessions.length,
-			nextCursor,
-		};
-	}
-
 	async readSessionMessages(
 		_projectPath: string,
 		sessionId: string,
@@ -1114,19 +1085,7 @@ export class CodexSessionStorage implements AgentSessionStorage {
 				}
 			}
 
-			// Apply offset and limit for lazy loading
-			const offset = options?.offset ?? 0;
-			const limit = options?.limit ?? 20;
-
-			const startIndex = Math.max(0, messages.length - offset - limit);
-			const endIndex = messages.length - offset;
-			const slice = messages.slice(startIndex, endIndex);
-
-			return {
-				messages: slice,
-				total: messages.length,
-				hasMore: startIndex > 0,
-			};
+			return BaseSessionStorage.applyMessagePagination(messages, options);
 		} catch (error) {
 			logger.error(`Error reading Codex session: ${sessionId}`, LOG_CONTEXT, error);
 			captureException(error, { operation: 'codexStorage:readSessionMessages', sessionId });
@@ -1134,137 +1093,66 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		}
 	}
 
-	async searchSessions(
-		projectPath: string,
-		query: string,
-		searchMode: SessionSearchMode,
+	protected async getSearchableMessages(
+		sessionId: string,
+		_projectPath: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<SessionSearchResult[]> {
-		if (!query.trim()) {
+	): Promise<SearchableMessage[]> {
+		let content: string;
+
+		try {
+			if (sshConfig) {
+				const sessionFilePath = await this.findSessionFileRemote(sessionId, sshConfig);
+				if (!sessionFilePath) return [];
+				const result = await readFileRemote(sessionFilePath, sshConfig);
+				if (!result.success || !result.data) return [];
+				content = result.data;
+			} else {
+				const sessionFilePath = await this.findSessionFile(sessionId);
+				if (!sessionFilePath) return [];
+				content = await fs.readFile(sessionFilePath, 'utf-8');
+			}
+		} catch {
 			return [];
 		}
 
-		const sessions = await this.listSessions(projectPath, sshConfig);
-		const searchLower = query.toLowerCase();
-		const results: SessionSearchResult[] = [];
+		const lines = content.split('\n').filter((l) => l.trim());
+		const searchableMessages: SearchableMessage[] = [];
 
-		for (const session of sessions) {
-			let content: string;
-
+		for (const line of lines) {
 			try {
-				if (sshConfig) {
-					const sessionFilePath = await this.findSessionFileRemote(session.sessionId, sshConfig);
-					if (!sessionFilePath) continue;
-					const result = await readFileRemote(sessionFilePath, sshConfig);
-					if (!result.success || !result.data) continue;
-					content = result.data;
-				} else {
-					const sessionFilePath = await this.findSessionFile(session.sessionId);
-					if (!sessionFilePath) continue;
-					content = await fs.readFile(sessionFilePath, 'utf-8');
-				}
-				const lines = content.split('\n').filter((l) => l.trim());
+				const entry = JSON.parse(line);
 
-				let titleMatch = false;
-				let userMatches = 0;
-				let assistantMatches = 0;
-				let matchPreview = '';
+				let textContent = '';
+				let role: 'user' | 'assistant' | null = null;
 
-				for (const line of lines) {
-					try {
-						const entry = JSON.parse(line);
-
-						let textContent = '';
-						let role: 'user' | 'assistant' | null = null;
-
-						// Handle message entries
-						if (entry.type === 'message') {
-							role = entry.role;
-							textContent = extractTextFromContent(entry.content);
-						}
-
-						// Handle item.completed agent_message
-						if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
-							role = 'assistant';
-							textContent = entry.item.text || '';
-						}
-
-						const textLower = textContent.toLowerCase();
-
-						if (role === 'user' && textLower.includes(searchLower)) {
-							if (!titleMatch) {
-								titleMatch = true;
-								if (!matchPreview) {
-									const idx = textLower.indexOf(searchLower);
-									const start = Math.max(0, idx - 60);
-									const end = Math.min(textContent.length, idx + query.length + 60);
-									matchPreview =
-										(start > 0 ? '...' : '') +
-										textContent.slice(start, end) +
-										(end < textContent.length ? '...' : '');
-								}
-							}
-							userMatches++;
-						}
-
-						if (role === 'assistant' && textLower.includes(searchLower)) {
-							assistantMatches++;
-							if (!matchPreview && (searchMode === 'assistant' || searchMode === 'all')) {
-								const idx = textLower.indexOf(searchLower);
-								const start = Math.max(0, idx - 60);
-								const end = Math.min(textContent.length, idx + query.length + 60);
-								matchPreview =
-									(start > 0 ? '...' : '') +
-									textContent.slice(start, end) +
-									(end < textContent.length ? '...' : '');
-							}
-						}
-					} catch {
-						// Skip malformed lines
-					}
+				// Handle message entries (legacy format)
+				if (entry.type === 'message') {
+					role = entry.role;
+					textContent = extractTextFromContent(entry.content);
 				}
 
-				let matches = false;
-				let matchType: 'title' | 'user' | 'assistant' = 'title';
-				let matchCount = 0;
-
-				switch (searchMode) {
-					case 'title':
-						matches = titleMatch;
-						matchType = 'title';
-						matchCount = titleMatch ? 1 : 0;
-						break;
-					case 'user':
-						matches = userMatches > 0;
-						matchType = 'user';
-						matchCount = userMatches;
-						break;
-					case 'assistant':
-						matches = assistantMatches > 0;
-						matchType = 'assistant';
-						matchCount = assistantMatches;
-						break;
-					case 'all':
-						matches = titleMatch || userMatches > 0 || assistantMatches > 0;
-						matchType = titleMatch ? 'title' : userMatches > 0 ? 'user' : 'assistant';
-						matchCount = userMatches + assistantMatches;
-						break;
+				// Handle response_item messages (current Codex format)
+				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+					role = entry.payload.role;
+					textContent = extractTextFromContent(entry.payload.content);
 				}
 
-				if (matches) {
-					results.push({
-						sessionId: session.sessionId,
-						matchType,
-						matchPreview,
-						matchCount,
-					});
+				// Handle item.completed agent_message
+				if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
+					role = 'assistant';
+					textContent = entry.item.text || '';
+				}
+
+				if (role && (role === 'user' || role === 'assistant') && textContent.trim()) {
+					searchableMessages.push({ role, textContent });
 				}
 			} catch {
-				// Skip files that can't be read
+				// Skip malformed lines
 			}
 		}
 
-		return results;
+		return searchableMessages;
 	}
 
 	getSessionPath(

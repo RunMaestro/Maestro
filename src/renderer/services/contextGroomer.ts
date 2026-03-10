@@ -28,7 +28,7 @@ import { contextGroomingPrompt, contextTransferPrompt } from '../../prompts';
  * Each array contains patterns (commands, terms, references) that are specific
  * to that agent and should be removed or converted when sending to a different agent.
  */
-export const AGENT_ARTIFACTS: Record<ToolType, string[]> = {
+export const AGENT_ARTIFACTS: Partial<Record<ToolType, string[]>> = {
 	'claude-code': [
 		// Slash commands
 		'/clear',
@@ -109,7 +109,7 @@ export const AGENT_ARTIFACTS: Record<ToolType, string[]> = {
  * Notes about target agent capabilities that should be included in the transfer prompt.
  * Helps the grooming agent understand what the target can and cannot do.
  */
-export const AGENT_TARGET_NOTES: Record<ToolType, string> = {
+export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
 	'claude-code': `
     Claude Code is an AI coding assistant by Anthropic.
     It can read and edit files, run terminal commands, search code, and interact with git.
@@ -143,7 +143,7 @@ export const AGENT_TARGET_NOTES: Record<ToolType, string> = {
  * Get the human-readable name for an agent type.
  */
 export function getAgentDisplayName(agentType: ToolType): string {
-	const names: Record<ToolType, string> = {
+	const names: Partial<Record<ToolType, string>> = {
 		'claude-code': 'Claude Code',
 		opencode: 'OpenCode',
 		codex: 'OpenAI Codex',

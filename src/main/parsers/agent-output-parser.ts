@@ -27,29 +27,19 @@
  */
 
 import type { ToolType, AgentError } from '../../shared/types';
+import { isValidAgentId } from '../../shared/agentIds';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../shared/types';
 
 /**
- * Valid ToolType values for output parser registration
- * This array is the single source of truth for agent types that can have parsers
- */
-const VALID_TOOL_TYPES: ToolType[] = [
-	'claude-code',
-	'opencode',
-	'codex',
-	'terminal',
-	'factory-droid',
-];
-
-/**
- * Type guard to validate if a string is a valid ToolType
+ * Type guard to validate if a string is a valid ToolType.
+ * Delegates to the single source of truth in shared/agentIds.ts.
  * @param id - The string to check
  * @returns True if the string is a valid ToolType
  */
 export function isValidToolType(id: string): id is ToolType {
-	return VALID_TOOL_TYPES.includes(id as ToolType);
+	return isValidAgentId(id);
 }
 
 /**

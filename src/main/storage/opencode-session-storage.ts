@@ -26,16 +26,12 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
-	AgentSessionStorage,
 	AgentSessionInfo,
-	PaginatedSessionsResult,
 	SessionMessagesResult,
-	SessionSearchResult,
-	SessionSearchMode,
-	SessionListOptions,
 	SessionReadOptions,
 	SessionMessage,
 } from '../agents';
+import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 
@@ -208,7 +204,7 @@ async function listJsonFilesRemote(dirPath: string, sshConfig: SshRemoteConfig):
  *
  * Provides access to OpenCode's local session storage at ~/.local/share/opencode/storage/
  */
-export class OpenCodeSessionStorage implements AgentSessionStorage {
+export class OpenCodeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'opencode';
 
 	/**
@@ -870,32 +866,6 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 		return sessions;
 	}
 
-	async listSessionsPaginated(
-		projectPath: string,
-		options?: SessionListOptions,
-		sshConfig?: SshRemoteConfig
-	): Promise<PaginatedSessionsResult> {
-		const allSessions = await this.listSessions(projectPath, sshConfig);
-		const { cursor, limit = 100 } = options || {};
-
-		let startIndex = 0;
-		if (cursor) {
-			const cursorIndex = allSessions.findIndex((s) => s.sessionId === cursor);
-			startIndex = cursorIndex >= 0 ? cursorIndex + 1 : 0;
-		}
-
-		const pageSessions = allSessions.slice(startIndex, startIndex + limit);
-		const hasMore = startIndex + limit < allSessions.length;
-		const nextCursor = hasMore ? pageSessions[pageSessions.length - 1]?.sessionId : null;
-
-		return {
-			sessions: pageSessions,
-			hasMore,
-			totalCount: allSessions.length,
-			nextCursor,
-		};
-	}
-
 	async readSessionMessages(
 		_projectPath: string,
 		sessionId: string,
@@ -933,118 +903,25 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 			}
 		}
 
-		// Apply offset and limit for lazy loading
-		const offset = options?.offset ?? 0;
-		const limit = options?.limit ?? 20;
-
-		const startIndex = Math.max(0, sessionMessages.length - offset - limit);
-		const endIndex = sessionMessages.length - offset;
-		const slice = sessionMessages.slice(startIndex, endIndex);
-
-		return {
-			messages: slice,
-			total: sessionMessages.length,
-			hasMore: startIndex > 0,
-		};
+		return BaseSessionStorage.applyMessagePagination(sessionMessages, options);
 	}
 
-	async searchSessions(
-		projectPath: string,
-		query: string,
-		searchMode: SessionSearchMode,
+	protected async getSearchableMessages(
+		sessionId: string,
+		_projectPath: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<SessionSearchResult[]> {
-		if (!query.trim()) {
-			return [];
-		}
+	): Promise<SearchableMessage[]> {
+		const { messages, parts } = sshConfig
+			? await this.loadSessionMessagesRemote(sessionId, sshConfig)
+			: await this.loadSessionMessages(sessionId);
 
-		const sessions = await this.listSessions(projectPath, sshConfig);
-		const searchLower = query.toLowerCase();
-		const results: SessionSearchResult[] = [];
-
-		for (const session of sessions) {
-			const { messages, parts } = sshConfig
-				? await this.loadSessionMessagesRemote(session.sessionId, sshConfig)
-				: await this.loadSessionMessages(session.sessionId);
-
-			let titleMatch = false;
-			let userMatches = 0;
-			let assistantMatches = 0;
-			let matchPreview = '';
-
-			for (const msg of messages) {
-				const msgParts = parts.get(msg.id) || [];
-				const textContent = this.extractTextFromParts(msgParts);
-				const textLower = textContent.toLowerCase();
-
-				if (msg.role === 'user' && textLower.includes(searchLower)) {
-					if (!titleMatch) {
-						titleMatch = true;
-						if (!matchPreview) {
-							const idx = textLower.indexOf(searchLower);
-							const start = Math.max(0, idx - 60);
-							const end = Math.min(textContent.length, idx + query.length + 60);
-							matchPreview =
-								(start > 0 ? '...' : '') +
-								textContent.slice(start, end) +
-								(end < textContent.length ? '...' : '');
-						}
-					}
-					userMatches++;
-				}
-
-				if (msg.role === 'assistant' && textLower.includes(searchLower)) {
-					assistantMatches++;
-					if (!matchPreview && (searchMode === 'assistant' || searchMode === 'all')) {
-						const idx = textLower.indexOf(searchLower);
-						const start = Math.max(0, idx - 60);
-						const end = Math.min(textContent.length, idx + query.length + 60);
-						matchPreview =
-							(start > 0 ? '...' : '') +
-							textContent.slice(start, end) +
-							(end < textContent.length ? '...' : '');
-					}
-				}
-			}
-
-			let matches = false;
-			let matchType: 'title' | 'user' | 'assistant' = 'title';
-			let matchCount = 0;
-
-			switch (searchMode) {
-				case 'title':
-					matches = titleMatch;
-					matchType = 'title';
-					matchCount = titleMatch ? 1 : 0;
-					break;
-				case 'user':
-					matches = userMatches > 0;
-					matchType = 'user';
-					matchCount = userMatches;
-					break;
-				case 'assistant':
-					matches = assistantMatches > 0;
-					matchType = 'assistant';
-					matchCount = assistantMatches;
-					break;
-				case 'all':
-					matches = titleMatch || userMatches > 0 || assistantMatches > 0;
-					matchType = titleMatch ? 'title' : userMatches > 0 ? 'user' : 'assistant';
-					matchCount = userMatches + assistantMatches;
-					break;
-			}
-
-			if (matches) {
-				results.push({
-					sessionId: session.sessionId,
-					matchType,
-					matchPreview,
-					matchCount,
-				});
-			}
-		}
-
-		return results;
+		return messages
+			.filter((msg) => msg.role === 'user' || msg.role === 'assistant')
+			.map((msg) => ({
+				role: msg.role as 'user' | 'assistant',
+				textContent: this.extractTextFromParts(parts.get(msg.id) || []),
+			}))
+			.filter((msg) => msg.textContent.length > 0);
 	}
 
 	getSessionPath(
