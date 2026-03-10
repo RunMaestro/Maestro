@@ -158,6 +158,40 @@ describe('filesystem handlers', () => {
 				'SSH remote not found: invalid-remote'
 			);
 		});
+
+		it('should normalize local entry names to NFC Unicode form', async () => {
+			const nfdName = 'caf\u00e9'.normalize('NFD');
+			const nfcName = 'caf\u00e9'.normalize('NFC');
+			// Verify precondition: the names are different byte sequences
+			expect(nfdName).not.toBe(nfcName);
+
+			const mockEntries = [{ name: nfdName, isDirectory: () => false, isFile: () => true }];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].name).toBe(nfcName);
+			expect(result[0].name.normalize('NFC')).toBe(result[0].name);
+		});
+
+		it('should normalize remote entry names to NFC Unicode form', async () => {
+			const nfdName = 'r\u00e9sum\u00e9.md'.normalize('NFD');
+			const nfcName = 'r\u00e9sum\u00e9.md'.normalize('NFC');
+
+			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
+			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
+			vi.mocked(readDirRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: nfdName, isDirectory: false, isSymlink: false }],
+			});
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/remote/path', 'remote-1');
+
+			expect(result[0].name).toBe(nfcName);
+			expect(result[0].name.normalize('NFC')).toBe(result[0].name);
+		});
 	});
 
 	describe('fs:readFile', () => {

@@ -123,14 +123,17 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 	 * - { type: 'tool_use', sessionID, part: { tool, state: { status, input, output }, type: 'tool' } }
 	 * - { type: 'step_finish', sessionID, part: { reason, tokens, type: 'step-finish' } }
 	 */
+	/**
+	 * Parse a single JSON line from OpenCode output.
+	 * Delegates to parseJsonObject after JSON.parse.
+	 */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
 			return null;
 		}
 
 		try {
-			const msg: OpenCodeRawMessage = JSON.parse(line);
-			return this.transformMessage(msg);
+			return this.parseJsonObject(JSON.parse(line));
 		} catch {
 			// Not valid JSON - return as raw text event
 			return {
@@ -139,6 +142,18 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 				raw: line,
 			};
 		}
+	}
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		return this.transformMessage(parsed as OpenCodeRawMessage);
 	}
 
 	/**
@@ -288,70 +303,73 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Detect an error from a line of agent output
-	 *
-	 * IMPORTANT: Only detect errors from structured JSON error events, not from
-	 * arbitrary text content. Pattern matching on conversational text leads to
-	 * false positives (e.g., AI discussing "timeout" triggers timeout error).
-	 *
-	 * Error detection sources (in order of reliability):
-	 * 1. Structured JSON: { error: "message" } or { type: "error", message: "..." }
-	 * 2. stderr output (handled separately by process-manager)
-	 * 3. Non-zero exit code (handled by detectErrorFromExit)
+	 * Detect an error from a line of agent output.
+	 * Delegates to detectErrorFromParsed after JSON.parse.
 	 */
 	detectErrorFromLine(line: string): AgentError | null {
-		// Skip empty lines
 		if (!line.trim()) {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
-		let errorText: string | null = null;
-		let parsedJson: unknown = null;
 		try {
-			const parsed = JSON.parse(line);
-
-			// OpenCode error format: { type: "error", error: { name: "APIError", data: { message: "..." }, ... } }
-			if (parsed.type === 'error' && parsed.error) {
-				// Store the full parsed error for display in the modal
-				parsedJson = parsed;
-
-				// Extract the error message from various possible locations
-				const errorObj = parsed.error;
-				if (errorObj.data?.message) {
-					errorText = errorObj.data.message;
-				} else if (errorObj.message) {
-					errorText = errorObj.message;
-				} else if (errorObj.responseBody?.error?.message) {
-					errorText = errorObj.responseBody.error.message;
-				} else if (typeof errorObj === 'string') {
-					errorText = errorObj;
-				}
+			const error = this.detectErrorFromParsed(JSON.parse(line));
+			if (error) {
+				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
 			}
-			// Simple error format: { error: "message" }
-			else if (typeof parsed.error === 'string') {
-				errorText = parsed.error;
-				parsedJson = parsed;
-			}
-			// Alternative format: { type: "error", message: "..." }
-			else if (parsed.type === 'error' && parsed.message) {
-				errorText = parsed.message;
-				parsedJson = parsed;
-			}
-			// If no error field in JSON, this is normal output - don't check it
+			return error;
 		} catch {
 			// Not JSON - skip pattern matching entirely
-			// Errors should come through structured JSON, stderr, or exit codes
-			// Pattern matching on arbitrary text causes false positives
+			return null;
+		}
+	}
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Core logic extracted from detectErrorFromLine to avoid redundant JSON.parse calls.
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
 		}
 
-		// If no error text was extracted, no error to detect
+		const obj = parsed as Record<string, unknown>;
+		let errorText: string | null = null;
+		let parsedJson: unknown = null;
+
+		// OpenCode error format: { type: "error", error: { name: "APIError", data: { message: "..." }, ... } }
+		if (obj.type === 'error' && obj.error) {
+			parsedJson = parsed;
+			const errorObj = obj.error as Record<string, unknown>;
+			if ((errorObj.data as Record<string, unknown>)?.message) {
+				errorText = (errorObj.data as Record<string, unknown>).message as string;
+			} else if (errorObj.message) {
+				errorText = errorObj.message as string;
+			} else if (
+				((errorObj.responseBody as Record<string, unknown>)?.error as Record<string, unknown>)
+					?.message
+			) {
+				errorText = (
+					(errorObj.responseBody as Record<string, unknown>).error as Record<string, unknown>
+				).message as string;
+			} else if (typeof obj.error === 'string') {
+				errorText = obj.error;
+			}
+		}
+		// Simple error format: { error: "message" }
+		else if (typeof obj.error === 'string') {
+			errorText = obj.error;
+			parsedJson = parsed;
+		}
+		// Alternative format: { type: "error", message: "..." }
+		else if (obj.type === 'error' && obj.message) {
+			errorText = obj.message as string;
+			parsedJson = parsed;
+		}
+
 		if (!errorText) {
 			return null;
 		}
 
-		// Match against error patterns
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -362,14 +380,10 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 				recoverable: match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
 				parsedJson,
 			};
 		}
 
-		// If we found a structured error but no pattern matched, return a generic error
 		if (parsedJson) {
 			return {
 				type: 'unknown',
@@ -377,9 +391,6 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 				recoverable: true,
 				agentId: this.agentId,
 				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
 				parsedJson,
 			};
 		}

@@ -154,9 +154,24 @@ export class StdoutHandler {
 	private processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
 		const { outputParser, toolType } = managedProcess;
 
-		// Error detection from parser
+		// ── Single JSON parse for the entire line ──
+		// Previously JSON.parse was called up to 3× per line (detectErrorFromLine,
+		// outer parse, parseJsonLine). Now we parse once and pass the object downstream.
+		let parsed: unknown = null;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			// Not valid JSON — handled in the else branch below
+		}
+
+		// ── Error detection from parser ──
 		if (outputParser && !managedProcess.errorEmitted) {
-			const agentError = outputParser.detectErrorFromLine(line);
+			// Use pre-parsed object when available; fall back to line-based detection
+			// for non-JSON lines (e.g., Claude embedded JSON in stderr)
+			const agentError =
+				parsed !== null
+					? outputParser.detectErrorFromParsed(parsed)
+					: outputParser.detectErrorFromLine(line);
 			if (agentError) {
 				managedProcess.errorEmitted = true;
 				agentError.sessionId = sessionId;
@@ -176,7 +191,7 @@ export class StdoutHandler {
 			}
 		}
 
-		// SSH error detection
+		// ── SSH error detection (line-based — SSH patterns are plain text) ──
 		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
@@ -200,16 +215,14 @@ export class StdoutHandler {
 			}
 		}
 
-		// Parse JSON line
-		try {
-			const msg = JSON.parse(line);
-
+		// ── Process parsed data ──
+		if (parsed !== null) {
 			if (outputParser) {
-				this.handleParsedEvent(sessionId, managedProcess, line, outputParser);
+				this.handleParsedEvent(sessionId, managedProcess, parsed, outputParser);
 			} else {
-				this.handleLegacyMessage(sessionId, managedProcess, msg);
+				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
-		} catch {
+		} else {
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 	}
@@ -217,10 +230,10 @@ export class StdoutHandler {
 	private handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		line: string,
+		parsed: unknown,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonLine(line);
+		const event = outputParser.parseJsonObject(parsed);
 
 		logger.debug('[ProcessManager] Parsed event from output parser', 'ProcessManager', {
 			sessionId,

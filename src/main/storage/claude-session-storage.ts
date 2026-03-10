@@ -22,12 +22,9 @@ import { calculateClaudeCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
 import type {
-	AgentSessionStorage,
 	AgentSessionInfo,
 	PaginatedSessionsResult,
 	SessionMessagesResult,
-	SessionSearchResult,
-	SessionSearchMode,
 	SessionListOptions,
 	SessionReadOptions,
 	AgentSessionOrigin,
@@ -35,6 +32,8 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { BaseSessionStorage } from './base-session-storage';
+import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
 
@@ -252,12 +251,13 @@ async function parseSessionFileRemote(
  * Provides access to Claude Code's local session storage at ~/.claude/projects/
  * Supports both local filesystem access and remote access via SSH.
  */
-export class ClaudeSessionStorage implements AgentSessionStorage {
+export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
 
 	private originsStore: Store<ClaudeSessionOriginsData>;
 
 	constructor(originsStore?: Store<ClaudeSessionOriginsData>) {
+		super();
 		// Use provided store or create a new one
 		this.originsStore =
 			originsStore ||
@@ -731,187 +731,53 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
 			}
 		}
 
-		// Apply offset and limit for lazy loading
-		const offset = options?.offset ?? 0;
-		const limit = options?.limit ?? 20;
-
-		const startIndex = Math.max(0, messages.length - offset - limit);
-		const endIndex = messages.length - offset;
-		const slice = messages.slice(startIndex, endIndex);
-
-		return {
-			messages: slice,
-			total: messages.length,
-			hasMore: startIndex > 0,
-		};
+		return BaseSessionStorage.applyMessagePagination(messages, options);
 	}
 
-	async searchSessions(
+	protected async getSearchableMessages(
+		sessionId: string,
 		projectPath: string,
-		query: string,
-		searchMode: SessionSearchMode,
 		sshConfig?: SshRemoteConfig
-	): Promise<SessionSearchResult[]> {
-		if (!query.trim()) {
+	): Promise<SearchableMessage[]> {
+		let content: string;
+
+		try {
+			if (sshConfig) {
+				const projectDir = this.getRemoteEncodedProjectDir(projectPath);
+				const sessionFile = `${projectDir}/${sessionId}.jsonl`;
+				const result = await readFileRemote(sessionFile, sshConfig);
+				if (!result.success || !result.data) return [];
+				content = result.data;
+			} else {
+				const projectDir = this.getEncodedProjectDir(projectPath);
+				const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+				content = await fs.readFile(sessionFile, 'utf-8');
+			}
+		} catch {
 			return [];
 		}
 
-		// Get list of session files
-		let sessionFiles: string[];
+		const lines = content.split('\n').filter((l) => l.trim());
+		const searchableMessages: SearchableMessage[] = [];
 
-		if (sshConfig) {
-			const projectDir = this.getRemoteEncodedProjectDir(projectPath);
-			const dirResult = await readDirRemote(projectDir, sshConfig);
-			if (!dirResult.success || !dirResult.data) {
-				return [];
-			}
-			sessionFiles = dirResult.data
-				.filter((entry) => !entry.isDirectory && entry.name.endsWith('.jsonl'))
-				.map((entry) => entry.name);
-		} else {
-			const localProjectDir = this.getEncodedProjectDir(projectPath);
+		for (const line of lines) {
 			try {
-				await fs.access(localProjectDir);
-			} catch {
-				return [];
-			}
-			const files = await fs.readdir(localProjectDir);
-			sessionFiles = files.filter((f) => f.endsWith('.jsonl'));
-		}
-
-		const searchLower = query.toLowerCase();
-		const matchingSessions: SessionSearchResult[] = [];
-
-		// Get the appropriate project directory for path construction
-		const projectDir = sshConfig
-			? this.getRemoteEncodedProjectDir(projectPath)
-			: this.getEncodedProjectDir(projectPath);
-
-		for (const filename of sessionFiles) {
-			const sessionId = filename.replace('.jsonl', '');
-			const filePath = sshConfig ? `${projectDir}/${filename}` : path.join(projectDir, filename);
-
-			try {
-				// Get content either locally or via SSH
-				let content: string;
-				if (sshConfig) {
-					const result = await readFileRemote(filePath, sshConfig);
-					if (!result.success || !result.data) {
-						continue; // Skip files we can't read
-					}
-					content = result.data;
-				} else {
-					content = await fs.readFile(filePath, 'utf-8');
-				}
-				const lines = content.split('\n').filter((l) => l.trim());
-
-				let titleMatch = false;
-				let userMatches = 0;
-				let assistantMatches = 0;
-				let matchPreview = '';
-
-				for (const line of lines) {
-					try {
-						const entry = JSON.parse(line);
-
-						let textContent = '';
-						if (entry.message?.content) {
-							if (typeof entry.message.content === 'string') {
-								textContent = entry.message.content;
-							} else if (Array.isArray(entry.message.content)) {
-								textContent = entry.message.content
-									.filter((b: { type?: string }) => b.type === 'text')
-									.map((b: { text?: string }) => b.text)
-									.join('\n');
-							}
-						}
-
-						const textLower = textContent.toLowerCase();
-
-						if (entry.type === 'user' && !titleMatch && textLower.includes(searchLower)) {
-							titleMatch = true;
-							if (!matchPreview) {
-								const idx = textLower.indexOf(searchLower);
-								const start = Math.max(0, idx - 60);
-								const end = Math.min(textContent.length, idx + query.length + 60);
-								matchPreview =
-									(start > 0 ? '...' : '') +
-									textContent.slice(start, end) +
-									(end < textContent.length ? '...' : '');
-							}
-						}
-
-						if (entry.type === 'user' && textLower.includes(searchLower)) {
-							userMatches++;
-							if (!matchPreview && (searchMode === 'user' || searchMode === 'all')) {
-								const idx = textLower.indexOf(searchLower);
-								const start = Math.max(0, idx - 60);
-								const end = Math.min(textContent.length, idx + query.length + 60);
-								matchPreview =
-									(start > 0 ? '...' : '') +
-									textContent.slice(start, end) +
-									(end < textContent.length ? '...' : '');
-							}
-						}
-
-						if (entry.type === 'assistant' && textLower.includes(searchLower)) {
-							assistantMatches++;
-							if (!matchPreview && (searchMode === 'assistant' || searchMode === 'all')) {
-								const idx = textLower.indexOf(searchLower);
-								const start = Math.max(0, idx - 60);
-								const end = Math.min(textContent.length, idx + query.length + 60);
-								matchPreview =
-									(start > 0 ? '...' : '') +
-									textContent.slice(start, end) +
-									(end < textContent.length ? '...' : '');
-							}
-						}
-					} catch {
-						// Skip malformed lines
+				const entry = JSON.parse(line);
+				if (entry.type === 'user' || entry.type === 'assistant') {
+					const textContent = extractTextFromContent(entry.message?.content);
+					if (textContent.trim()) {
+						searchableMessages.push({
+							role: entry.type as 'user' | 'assistant',
+							textContent,
+						});
 					}
 				}
-
-				let matches = false;
-				let matchType: 'title' | 'user' | 'assistant' = 'title';
-				let matchCount = 0;
-
-				switch (searchMode) {
-					case 'title':
-						matches = titleMatch;
-						matchType = 'title';
-						matchCount = titleMatch ? 1 : 0;
-						break;
-					case 'user':
-						matches = userMatches > 0;
-						matchType = 'user';
-						matchCount = userMatches;
-						break;
-					case 'assistant':
-						matches = assistantMatches > 0;
-						matchType = 'assistant';
-						matchCount = assistantMatches;
-						break;
-					case 'all':
-						matches = titleMatch || userMatches > 0 || assistantMatches > 0;
-						matchType = titleMatch ? 'title' : userMatches > 0 ? 'user' : 'assistant';
-						matchCount = userMatches + assistantMatches;
-						break;
-				}
-
-				if (matches) {
-					matchingSessions.push({
-						sessionId,
-						matchType,
-						matchPreview,
-						matchCount,
-					});
-				}
 			} catch {
-				// Skip files that can't be read
+				// Skip malformed lines
 			}
 		}
 
-		return matchingSessions;
+		return searchableMessages;
 	}
 
 	getSessionPath(

@@ -17,19 +17,8 @@
  */
 
 import type { AgentErrorType, ToolType } from '../../shared/types';
+import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
-
-/**
- * Valid ToolType values that have error patterns registered.
- * Used to validate input to getErrorPatterns and log warnings for unknown agents.
- */
-const VALID_TOOL_TYPES = new Set<string>([
-	'claude-code',
-	'opencode',
-	'codex',
-	'terminal',
-	'factory-droid',
-]);
 
 /**
  * Error pattern definition with regex and user-friendly message
@@ -58,7 +47,7 @@ export type AgentErrorPatterns = {
 // Claude Code Error Patterns
 // ============================================================================
 
-export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
+const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
 			pattern: /invalid api key/i,
@@ -282,7 +271,7 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 // OpenCode Error Patterns
 // ============================================================================
 
-export const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
+const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
 			pattern: /invalid.*key/i,
@@ -393,7 +382,7 @@ export const OPENCODE_ERROR_PATTERNS: AgentErrorPatterns = {
 // Codex Error Patterns
 // ============================================================================
 
-export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
+const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
 			pattern: /invalid.*api.*key/i,
@@ -546,7 +535,7 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 // Factory Droid Error Patterns
 // ============================================================================
 
-export const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
+const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
 			pattern: /invalid.*api.*key/i,
@@ -888,17 +877,15 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
  * @returns Error patterns for the agent, or empty object if not found
  */
 export function getErrorPatterns(agentId: ToolType | string): AgentErrorPatterns {
-	// Validate the agent ID against known ToolTypes
-	if (!VALID_TOOL_TYPES.has(agentId)) {
-		logger.warn(
-			`getErrorPatterns: Unknown agent ID "${agentId}". Valid IDs: ${Array.from(VALID_TOOL_TYPES).join(', ')}`
-		);
+	// Validate the agent ID against the single source of truth
+	if (!isValidAgentId(agentId)) {
+		logger.warn(`getErrorPatterns: Unknown agent ID "${agentId}".`);
 	}
 
 	const patterns = patternRegistry.get(agentId as ToolType);
 
 	// Log debug info when no patterns are found for a valid-looking agent
-	if (!patterns && VALID_TOOL_TYPES.has(agentId)) {
+	if (!patterns && isValidAgentId(agentId)) {
 		logger.debug(
 			`getErrorPatterns: No patterns registered for agent "${agentId}". This agent may not have error pattern support.`
 		);

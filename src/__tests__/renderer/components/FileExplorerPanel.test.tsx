@@ -944,6 +944,27 @@ describe('FileExplorerPanel', () => {
 			expect(screen.getByTitle('src')).toBeInTheDocument();
 			expect(screen.getByTitle('package.json')).toBeInTheDocument();
 		});
+
+		it('deduplicates NFD/NFC sibling entries rendering only one row', () => {
+			const nfcName = 'caf\u00e9.txt'.normalize('NFC');
+			const nfdName = 'caf\u00e9.txt'.normalize('NFD');
+
+			const treeWithDupes = [
+				{ name: nfcName, type: 'file' as const },
+				{ name: nfdName, type: 'file' as const }, // same visual name, different Unicode form
+				{ name: 'other.txt', type: 'file' as const },
+			];
+
+			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			render(<FileExplorerPanel {...defaultProps} filteredFileTree={treeWithDupes} />);
+
+			// Should only render 2 rows (deduplicated café.txt + other.txt), not 3
+			const items = screen.getAllByTitle(nfcName);
+			expect(items).toHaveLength(1);
+			expect(screen.getByText('other.txt')).toBeInTheDocument();
+
+			consoleSpy.mockRestore();
+		});
 	});
 
 	describe('File and Folder Clicks', () => {

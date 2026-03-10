@@ -11,6 +11,7 @@ import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
+import { filterYoloArgs } from '../../utils/agentArgs';
 import { gitService } from '../../services/git';
 // Module-level prompt cache (loaded once via IPC, used throughout session)
 let cachedImageOnlyPrompt = '';
@@ -931,16 +932,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 						// For read-only mode, filter out any YOLO/skip-permissions flags from base args
 						// (they would override the read-only mode we're requesting)
-						// - Claude Code: --dangerously-skip-permissions
-						// - Codex: --dangerously-bypass-approvals-and-sandbox
 						const baseArgs = agent.args ?? [];
-						const spawnArgs = isReadOnly
-							? baseArgs.filter(
-									(arg) =>
-										arg !== '--dangerously-skip-permissions' &&
-										arg !== '--dangerously-bypass-approvals-and-sandbox'
-								)
-							: [...baseArgs];
+						const spawnArgs = isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs];
 
 						// Use agent.path (full path) if available, otherwise fall back to agent.command
 						const commandToUse = agent.path || agent.command;

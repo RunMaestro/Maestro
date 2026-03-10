@@ -20,14 +20,30 @@ The multi-provider refactoring has established the pluggable architecture for su
 
 ### Adding a New Agent
 
-To add support for a new agent (e.g., Gemini CLI, Codex), follow these steps:
+To add support for a new agent, follow this checklist. The agent completeness test (`agent-completeness.test.ts`) will fail CI if any required step is missed.
 
-1. Add agent definition to `src/main/agent-detector.ts`
-2. Define capabilities in `src/main/agent-capabilities.ts`
-3. Create output parser in `src/main/parsers/{agent}-output-parser.ts`
-4. Register parser in `src/main/parsers/index.ts`
-5. (Optional) Create session storage in `src/main/storage/{agent}-session-storage.ts`
-6. (Optional) Add error patterns to `src/main/parsers/error-patterns.ts`
+#### Required Steps
+
+1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
+2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
+3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (19 boolean fields)
+4. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
+
+#### Conditional Steps (based on capabilities)
+
+5. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
+6. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
+7. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+
+#### CI Enforcement
+
+The `agent-completeness.test.ts` test validates:
+
+- Every ID in `AGENT_IDS` has a definition in `AGENT_DEFINITIONS` (and vice versa)
+- Every definition has capabilities in `AGENT_CAPABILITIES` with all required fields
+- Every agent with `supportsJsonOutput` has a registered output parser
+- Every agent with `supportsSessionStorage` has a registered session storage
+- Every agent with an output parser has error patterns registered
 
 See detailed instructions below.
 
@@ -63,8 +79,8 @@ Use these terms consistently throughout the codebase:
 
 Maestro uses a pluggable architecture for AI agents. Each agent integrates through:
 
-1. **Agent Definition** (`src/main/agent-detector.ts`) - CLI binary, arguments, detection
-2. **Capabilities** (`src/main/agent-capabilities.ts`) - Feature flags controlling UI
+1. **Agent Definition** (`src/main/agents/definitions.ts`) - CLI binary, arguments, detection
+2. **Capabilities** (`src/main/agents/capabilities.ts`) - Feature flags controlling UI
 3. **Output Parser** (`src/main/parsers/`) - Translates agent JSON to Maestro events
 4. **Session Storage** (`src/main/storage/`) - Optional browsing of past sessions
 5. **Error Patterns** (`src/main/parsers/error-patterns.ts`) - Error detection and recovery
@@ -104,7 +120,7 @@ Each agent declares capabilities that determine which UI features are available.
 ### Capability Interface
 
 ```typescript
-// src/main/agent-capabilities.ts
+// src/main/agents/capabilities.ts
 
 interface AgentCapabilities {
 	// Core features
@@ -166,7 +182,7 @@ For agents where context window size varies by model (like OpenCode or Codex), M
 **Adding Context Window Config to an Agent:**
 
 ```typescript
-// In agent-detector.ts, add to configOptions:
+// In agents/definitions.ts, add to configOptions:
 configOptions: [
   {
     key: 'contextWindow',
@@ -240,7 +256,7 @@ Document:
 
 ### Step 2: Add Agent Definition
 
-Edit `src/main/agent-detector.ts`:
+Edit `src/main/agents/definitions.ts`:
 
 ```typescript
 const AGENT_DEFINITIONS: AgentConfig[] = [
@@ -267,7 +283,7 @@ const AGENT_DEFINITIONS: AgentConfig[] = [
 
 ### Step 3: Define Capabilities
 
-Edit `src/main/agent-capabilities.ts`:
+Edit `src/main/agents/capabilities.ts`:
 
 ```typescript
 const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
@@ -774,8 +790,8 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 **To Add:**
 
-1. Agent definition in `agent-detector.ts`
-2. Capabilities in `agent-capabilities.ts`
+1. Agent definition in `agents/definitions.ts`
+2. Capabilities in `agents/capabilities.ts`
 3. Output parser for Gemini JSON format
 4. Error patterns for Google API errors
 
@@ -846,7 +862,7 @@ codex exec --json resume <thread_id> "continue"
 
 **To Add:**
 
-1. Agent definition in `agent-detector.ts`
-2. Capabilities in `agent-capabilities.ts` (likely local model, no cost tracking)
+1. Agent definition in `agents/definitions.ts`
+2. Capabilities in `agents/capabilities.ts` (likely local model, no cost tracking)
 3. Output parser for Qwen JSON format
 4. Error patterns (likely minimal for local models)

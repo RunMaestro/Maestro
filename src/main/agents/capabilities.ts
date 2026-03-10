@@ -308,6 +308,35 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
 	},
+
+	/**
+	 * Aider - Open source AI pair programming tool
+	 * https://github.com/paul-gauthier/aider
+	 *
+	 * PLACEHOLDER: Most capabilities set to false until Aider integration is
+	 * implemented and tested. Update this configuration when integrating.
+	 */
+	aider: {
+		supportsResume: false,
+		supportsReadOnlyMode: false,
+		supportsJsonOutput: false,
+		supportsSessionId: false,
+		supportsImageInput: false,
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false,
+		supportsCostTracking: false,
+		supportsUsageStats: false,
+		supportsBatchMode: false,
+		requiresPromptToStart: false,
+		supportsStreaming: true, // Likely streams
+		supportsResultMessages: false,
+		supportsModelSelection: false,
+		supportsStreamJsonInput: false,
+		supportsThinkingDisplay: false,
+		supportsContextMerge: false,
+		supportsContextExport: false,
+	},
 };
 
 /**

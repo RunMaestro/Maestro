@@ -13,12 +13,14 @@ import {
 	getSshErrorPatterns,
 	registerErrorPatterns,
 	clearPatternRegistry,
-	CLAUDE_ERROR_PATTERNS,
-	OPENCODE_ERROR_PATTERNS,
-	CODEX_ERROR_PATTERNS,
 	SSH_ERROR_PATTERNS,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
+
+// Access per-agent patterns via the registry (single public API)
+const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
+const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
+const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {

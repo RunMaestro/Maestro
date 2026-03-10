@@ -44,7 +44,20 @@ vi.mock('../../../cli/services/batch-processor', () => ({
 
 // Mock the agent-spawner service
 vi.mock('../../../cli/services/agent-spawner', () => ({
-	detectClaude: vi.fn(),
+	detectAgent: vi.fn(),
+}));
+
+// Mock agent definitions
+vi.mock('../../../main/agents/definitions', () => ({
+	getAgentDefinition: vi.fn((agentId: string) => {
+		const defs: Record<string, { name: string; binaryName: string }> = {
+			'claude-code': { name: 'Claude Code', binaryName: 'claude' },
+			codex: { name: 'Codex', binaryName: 'codex' },
+			opencode: { name: 'OpenCode', binaryName: 'opencode' },
+			'factory-droid': { name: 'Factory Droid', binaryName: 'droid' },
+		};
+		return defs[agentId] || undefined;
+	}),
 }));
 
 // Mock the jsonl output
@@ -74,7 +87,7 @@ import { runPlaybook } from '../../../cli/commands/run-playbook';
 import { getSessionById } from '../../../cli/services/storage';
 import { findPlaybookById } from '../../../cli/services/playbooks';
 import { runPlaybook as executePlaybook } from '../../../cli/services/batch-processor';
-import { detectClaude } from '../../../cli/services/agent-spawner';
+import { detectAgent } from '../../../cli/services/agent-spawner';
 import { emitError } from '../../../cli/output/jsonl';
 import {
 	formatRunEvent,
@@ -124,10 +137,9 @@ describe('run-playbook command', () => {
 				throw new Error(`process.exit(${code})`);
 			});
 
-		// Default: Claude is available
-		vi.mocked(detectClaude).mockResolvedValue({
+		// Default: agent is available
+		vi.mocked(detectAgent).mockResolvedValue({
 			available: true,
-			version: '1.0.0',
 			path: '/usr/local/bin/claude',
 		});
 
@@ -318,25 +330,25 @@ describe('run-playbook command', () => {
 		});
 	});
 
-	describe('Claude Code not found', () => {
-		it('should error when Claude Code is not available (human-readable)', async () => {
-			vi.mocked(detectClaude).mockResolvedValue({ available: false });
+	describe('agent CLI not found', () => {
+		it('should error when agent CLI is not available (human-readable)', async () => {
+			vi.mocked(detectAgent).mockResolvedValue({ available: false });
 
 			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
 
 			expect(formatError).toHaveBeenCalledWith(
-				'Claude Code not found. Please install claude-code CLI.'
+				'Claude Code CLI not found. Please install Claude Code.'
 			);
 		});
 
-		it('should error when Claude Code is not available (JSON)', async () => {
-			vi.mocked(detectClaude).mockResolvedValue({ available: false });
+		it('should error when agent CLI is not available (JSON)', async () => {
+			vi.mocked(detectAgent).mockResolvedValue({ available: false });
 
 			await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow('process.exit(1)');
 
 			expect(emitError).toHaveBeenCalledWith(
-				'Claude Code not found. Please install claude-code CLI.',
-				'CLAUDE_NOT_FOUND'
+				'Claude Code CLI not found. Please install Claude Code.',
+				'CLAUDE_CODE_NOT_FOUND'
 			);
 		});
 	});

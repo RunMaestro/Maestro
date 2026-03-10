@@ -1169,7 +1169,7 @@ describe('SessionList', () => {
 			expect(menuContainer).toHaveClass('overflow-y-auto');
 			expect(menuContainer).toHaveClass('scrollbar-thin');
 			// Verify max-height is set via inline style for scroll support
-			expect(menuContainer?.style.maxHeight).toBe('calc(100vh - 90px)');
+			expect(menuContainer?.style.maxHeight).toBe('calc(100vh - 120px)');
 		});
 
 		it("shows Director's Notes menu item in hamburger menu", () => {

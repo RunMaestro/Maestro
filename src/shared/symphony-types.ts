@@ -188,6 +188,12 @@ export interface ActiveContribution {
 	agentType: string;
 	/** Error details if failed */
 	error?: string;
+	/** Whether this contribution uses a fork (user lacks push access to upstream) */
+	isFork?: boolean;
+	/** The user's fork slug (e.g., "chris/repo-name") */
+	forkSlug?: string;
+	/** The original upstream repo slug (e.g., "owner/repo-name") */
+	upstreamSlug?: string;
 }
 
 // ============================================================================

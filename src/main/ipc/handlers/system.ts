@@ -246,7 +246,11 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			const message = error instanceof Error ? error.message : String(error);
 			// User or system cancelled the trash operation — not a real error
 			// Fixes MAESTRO-A4
-			if (message.includes('aborted') || message.includes('cancelled') || message.includes('canceled')) {
+			if (
+				message.includes('aborted') ||
+				message.includes('cancelled') ||
+				message.includes('canceled')
+			) {
 				logger.debug(`Trash operation cancelled for ${absolutePath}`, 'Shell');
 				return;
 			}

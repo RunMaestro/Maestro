@@ -1201,7 +1201,7 @@ describe('agent-detector', () => {
 			expect(opencode?.promptArgs).toBeUndefined();
 		});
 
-		it('should have noPromptSeparator true since prompt is positional arg', async () => {
+		it('should not have noPromptSeparator so -- separator prevents prompt misparse (#527)', async () => {
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
 				if (args[0] === 'opencode') {
 					return { stdout: '/usr/bin/opencode\n', stderr: '', exitCode: 0 };
@@ -1212,9 +1212,9 @@ describe('agent-detector', () => {
 			const agents = await detector.detectAgents();
 			const opencode = agents.find((a) => a.id === 'opencode');
 
-			// OpenCode uses noPromptSeparator: true since prompt is positional
-			// (yargs handles positional args without needing '--' separator)
-			expect(opencode?.noPromptSeparator).toBe(true);
+			// noPromptSeparator removed: '--' separator prevents yargs from
+			// misinterpreting leading '---' in prompts as flags
+			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
 
 		it('should have correct jsonOutputArgs for JSON streaming', async () => {

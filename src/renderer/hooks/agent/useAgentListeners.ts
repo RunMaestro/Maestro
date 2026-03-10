@@ -1078,9 +1078,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					const effectiveWindow =
 						usageStats.contextWindow > 0
 							? usageStats.contextWindow
-							: agentToolType && agentToolType in DEFAULT_CONTEXT_WINDOWS
-								? DEFAULT_CONTEXT_WINDOWS[agentToolType as keyof typeof DEFAULT_CONTEXT_WINDOWS]
-								: 200000;
+							: agentToolType
+								? (DEFAULT_CONTEXT_WINDOWS[agentToolType as keyof typeof DEFAULT_CONTEXT_WINDOWS] ??
+									0)
+								: 0;
 					const estimated = estimateAccumulatedGrowth(
 						currentUsage,
 						usageStats.outputTokens,

@@ -37,16 +37,16 @@ export {
 	clearParserRegistry,
 } from './agent-output-parser';
 
-// Re-export error pattern utilities
+// Re-export error pattern utilities (access patterns via getErrorPatterns(agentId))
 export type { ErrorPattern, AgentErrorPatterns } from './error-patterns';
 export {
 	getErrorPatterns,
 	matchErrorPattern,
 	registerErrorPatterns,
 	clearPatternRegistry,
-	CLAUDE_ERROR_PATTERNS,
-	OPENCODE_ERROR_PATTERNS,
-	CODEX_ERROR_PATTERNS,
+	getSshErrorPatterns,
+	matchSshErrorPattern,
+	SSH_ERROR_PATTERNS,
 } from './error-patterns';
 
 // Import parser implementations

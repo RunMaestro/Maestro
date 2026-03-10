@@ -344,11 +344,12 @@ async function loadFileTreeRecursive(
 		const seen = new Set<string>();
 
 		for (const entry of entries) {
-			if (seen.has(entry.name)) {
+			const normalizedName = entry.name.normalize('NFC');
+			if (seen.has(normalizedName)) {
 				console.warn('[loadFileTree] readDir returned duplicate entry:', entry.name, 'in', dirPath);
 				continue;
 			}
-			seen.add(entry.name);
+			seen.add(normalizedName);
 
 			// Skip entries that match ignore patterns
 			if (shouldIgnore(entry.name, state.ignorePatterns)) {

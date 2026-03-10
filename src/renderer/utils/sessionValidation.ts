@@ -119,7 +119,10 @@ export function getProviderDisplayName(toolType: ToolType): string {
 		opencode: 'OpenCode',
 		codex: 'Codex',
 		'factory-droid': 'Factory Droid',
+		'gemini-cli': 'Gemini CLI',
+		'qwen3-coder': 'Qwen3 Coder',
+		aider: 'Aider',
 		terminal: 'Terminal',
 	};
-	return displayNames[toolType] || toolType;
+	return displayNames[toolType];
 }

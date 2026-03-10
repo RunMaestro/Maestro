@@ -632,7 +632,9 @@ describe('system IPC handlers', () => {
 		it('should throw error for non-existent path', async () => {
 			vi.mocked(fsSync.existsSync).mockReturnValue(false);
 			const handler = handlers.get('shell:trashItem');
-			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow('Path does not exist');
+			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow(
+				'Path does not exist'
+			);
 		});
 
 		it('should handle aborted operation gracefully', async () => {

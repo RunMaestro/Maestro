@@ -20,6 +20,7 @@ import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
+import { filterYoloArgs } from '../../utils/agentArgs';
 
 // ============================================================================
 // Dependencies interface
@@ -321,13 +322,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
-				const spawnArgs = isReadOnly
-					? agentArgs.filter(
-							(arg) =>
-								arg !== '--dangerously-skip-permissions' &&
-								arg !== '--dangerously-bypass-approvals-and-sandbox'
-						)
-					: [...agentArgs];
+				const spawnArgs = isReadOnly ? filterYoloArgs(agentArgs, agent) : [...agentArgs];
 
 				// Include tab ID in targetSessionId for proper output routing
 				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;

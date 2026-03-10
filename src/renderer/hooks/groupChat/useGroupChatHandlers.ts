@@ -348,7 +348,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			try {
 				const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
 				if (moderatorSessionId) {
-					setGroupChats((prev) => prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c)));
+					setGroupChats((prev) =>
+						prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c))
+					);
 				}
 			} catch (error) {
 				console.warn(`Failed to start moderator for group chat ${id}:`, error);
