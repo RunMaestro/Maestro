@@ -11,6 +11,7 @@ import {
 	registerAgentSessionsHandlers,
 	getGeminiStatsStore,
 	parseGeminiSessionContent,
+	countGeminiMessages,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
 import { GEMINI_SESSION_STATS_DEFAULTS } from '../../../../main/stores/defaults';
@@ -862,6 +863,110 @@ describe('agentSessions IPC handlers', () => {
 			expect(result.inputTokens).toBe(1000);
 			expect(result.outputTokens).toBe(2000);
 			expect(result.cachedInputTokens).toBe(300);
+		});
+	});
+
+	describe('countGeminiMessages', () => {
+		it('should count user and gemini message types', () => {
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'user', content: 'Hello' },
+					{ type: 'gemini', content: 'Hi' },
+					{ type: 'user', content: 'How are you?' },
+					{ type: 'gemini', content: 'Good' },
+				],
+			});
+			expect(countGeminiMessages(content)).toBe(4);
+		});
+
+		it('should count assistant and human message types', () => {
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'human', content: 'Hello' },
+					{ type: 'assistant', content: 'Hi' },
+				],
+			});
+			expect(countGeminiMessages(content)).toBe(2);
+		});
+
+		it('should return 0 for content with no matching message types', () => {
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'system', content: 'config' },
+					{ type: 'tool', content: 'result' },
+				],
+			});
+			expect(countGeminiMessages(content)).toBe(0);
+		});
+
+		it('should return 0 for empty content', () => {
+			expect(countGeminiMessages('')).toBe(0);
+		});
+
+		it('should return 0 for invalid JSON', () => {
+			expect(countGeminiMessages('not valid json')).toBe(0);
+		});
+
+		it('should handle whitespace variations in JSON formatting', () => {
+			const content = '{"messages": [{"type" : "user"}, {"type":"gemini"}]}';
+			expect(countGeminiMessages(content)).toBe(2);
+		});
+	});
+
+	describe('getGlobalStats lightweight Gemini path (sizeBytes + persistedStats skip)', () => {
+		it('should produce same stats via lightweight path as full parse when persistedStats exist', () => {
+			// Simulate the lightweight path used in getGlobalStats when persistedStats are available
+			const content = JSON.stringify({
+				sessionId: 'test-uuid',
+				messages: [
+					{ type: 'user', content: 'Hello' },
+					{ type: 'gemini', content: 'Hi' },
+					{ type: 'user', content: 'Question' },
+					{ type: 'gemini', content: 'Answer' },
+				],
+			});
+			const persistedStats = {
+				inputTokens: 500,
+				outputTokens: 1200,
+				cacheReadTokens: 100,
+				reasoningTokens: 50,
+			};
+			const sizeBytes = Buffer.byteLength(content, 'utf-8');
+
+			// Lightweight path (used when persistedStats exist)
+			const messageCount = countGeminiMessages(content);
+			const lightweightStats = {
+				messages: messageCount,
+				inputTokens: persistedStats.inputTokens,
+				outputTokens: persistedStats.outputTokens,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				cachedInputTokens: persistedStats.cacheReadTokens,
+				sizeBytes,
+			};
+
+			// Full parse path (used when persistedStats don't exist, with fallback)
+			const fullParseStats = parseGeminiSessionContent(content, sizeBytes, persistedStats);
+
+			// Both paths should produce identical results
+			expect(lightweightStats.messages).toBe(fullParseStats.messages);
+			expect(lightweightStats.inputTokens).toBe(fullParseStats.inputTokens);
+			expect(lightweightStats.outputTokens).toBe(fullParseStats.outputTokens);
+			expect(lightweightStats.cachedInputTokens).toBe(fullParseStats.cachedInputTokens);
+			expect(lightweightStats.sizeBytes).toBe(fullParseStats.sizeBytes);
+		});
+
+		it('should fall back to full parse when no persistedStats exist', () => {
+			const content = JSON.stringify({
+				messages: [{ type: 'user', tokens: { input: 10, output: 20 } }, { type: 'gemini' }],
+			});
+			const sizeBytes = 512;
+
+			// Without persistedStats, full parse is used and extracts token data from messages
+			const result = parseGeminiSessionContent(content, sizeBytes);
+			expect(result.messages).toBe(2);
+			expect(result.inputTokens).toBe(10);
+			expect(result.outputTokens).toBe(20);
 		});
 	});
 });

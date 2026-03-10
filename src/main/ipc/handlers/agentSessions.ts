@@ -117,6 +117,7 @@ interface SessionFileInfo {
 	filePath: string;
 	sessionKey: string;
 	mtimeMs: number;
+	sizeBytes: number;
 }
 
 /**
@@ -335,6 +336,17 @@ export function parseGeminiSessionContent(
 }
 
 /**
+ * Lightweight message counter for Gemini sessions — uses regex instead of JSON.parse.
+ * Used when persisted token stats are available, avoiding expensive full parse.
+ *
+ * @internal Exported for testing only
+ */
+export function countGeminiMessages(content: string): number {
+	const matches = content.match(/"type"\s*:\s*"(user|gemini|assistant|human)"/g);
+	return matches ? matches.length : 0;
+}
+
+/**
  * Discover Claude Code session files from ~/.claude/projects/
  * Returns list of files with their mtime for cache comparison
  */
@@ -367,7 +379,7 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
 					// Skip 0-byte sessions (created but abandoned before any content was written)
 					if (fileStat.size === 0) continue;
 					const sessionKey = `${projectDir}/${filename.replace('.jsonl', '')}`;
-					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
+					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size });
 				} catch {
 					// Skip files we can't stat
 				}
@@ -432,7 +444,12 @@ async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
 									// Skip 0-byte sessions (created but abandoned before any content was written)
 									if (fileStat.size === 0) continue;
 									const sessionKey = `${year}/${month}/${day}/${file.replace('.jsonl', '')}`;
-									files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
+									files.push({
+										filePath,
+										sessionKey,
+										mtimeMs: fileStat.mtimeMs,
+										sizeBytes: fileStat.size,
+									});
 								} catch {
 									// Skip files we can't stat
 								}
@@ -481,7 +498,7 @@ async function discoverGeminiSessionFiles(): Promise<SessionFileInfo[]> {
 					const fileStat = await fs.stat(filePath);
 					if (fileStat.size === 0) continue;
 					const sessionKey = `${projectDir}/${entry.replace('.json', '')}`;
-					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
+					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs, sizeBytes: fileStat.size });
 				} catch {
 					// Skip files we can't read
 				}
@@ -1129,8 +1146,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			for (const file of claudeToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseClaudeSessionContent(content, fileStat.size);
+					const stats = parseClaudeSessionContent(content, file.sizeBytes);
 
 					cache.providers['claude-code'].sessions[file.sessionKey] = {
 						...stats,
@@ -1153,8 +1169,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			for (const file of codexToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseCodexSessionContent(content, fileStat.size);
+					const stats = parseCodexSessionContent(content, file.sizeBytes);
 
 					cache.providers['codex'].sessions[file.sessionKey] = {
 						...stats,
@@ -1180,7 +1195,6 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			for (const file of geminiToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
 
 					// Extract sessionId from the session JSON to look up persisted stats
 					let persistedStats:
@@ -1196,7 +1210,22 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						persistedStats = allGeminiPersistedStats[sessionIdMatch[1]];
 					}
 
-					const stats = parseGeminiSessionContent(content, fileStat.size, persistedStats);
+					// When persisted stats exist, skip full JSON.parse — use lightweight regex for message count
+					let stats: Omit<CachedSessionStats, 'fileMtimeMs'>;
+					if (persistedStats) {
+						const messageCount = countGeminiMessages(content);
+						stats = {
+							messages: messageCount,
+							inputTokens: persistedStats.inputTokens,
+							outputTokens: persistedStats.outputTokens,
+							cacheReadTokens: 0,
+							cacheCreationTokens: 0,
+							cachedInputTokens: persistedStats.cacheReadTokens,
+							sizeBytes: file.sizeBytes,
+						};
+					} else {
+						stats = parseGeminiSessionContent(content, file.sizeBytes);
+					}
 
 					cache.providers['gemini-cli'].sessions[file.sessionKey] = {
 						...stats,
