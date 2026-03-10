@@ -44,7 +44,11 @@ import {
 import { groupChatParticipantRequestPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
-import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
+import {
+	setGetCustomShellPathCallback,
+	getWindowsSpawnConfig,
+	buildGeminiWorkspaceDirArgs,
+} from './group-chat-config';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -95,34 +99,6 @@ let getAgentConfigCallback: GetAgentConfigCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
-
-/**
- * Build additional --include-directories args for Gemini CLI in group chat.
- * Gemini CLI has stricter sandbox enforcement than other agents and needs
- * explicit directory approval for each path it accesses. In group chat,
- * this means the project directories, the group chat shared folder, and
- * the home directory all need to be included.
- *
- * For non-Gemini agents, returns an empty array (no-op).
- */
-function buildGeminiWorkspaceDirArgs(
-	agent: { workingDirArgs?: (dir: string) => string[]; id?: string } | null | undefined,
-	agentId: string,
-	directories: string[]
-): string[] {
-	if (agentId !== 'gemini-cli' || !agent?.workingDirArgs) {
-		return [];
-	}
-	const args: string[] = [];
-	const seen = new Set<string>();
-	for (const dir of directories) {
-		if (dir && dir.trim() && !seen.has(dir)) {
-			seen.add(dir);
-			args.push(...agent.workingDirArgs(dir));
-		}
-	}
-	return args;
-}
 
 /**
  * Tracks pending participant responses for each group chat.

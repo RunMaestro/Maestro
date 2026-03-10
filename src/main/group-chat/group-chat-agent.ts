@@ -29,7 +29,7 @@ import {
 import { groupChatParticipantPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
-import { getWindowsSpawnConfig } from './group-chat-config';
+import { getWindowsSpawnConfig, buildGeminiWorkspaceDirArgs } from './group-chat-config';
 
 /**
  * In-memory store for active participant sessions.
@@ -74,30 +74,6 @@ export interface SessionOverrides {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
-}
-
-/**
- * Build additional --include-directories args for Gemini CLI in group chat.
- * Gemini CLI needs explicit directory approval for each path it accesses.
- * For non-Gemini agents, returns an empty array (no-op).
- */
-function buildGeminiWorkspaceDirArgs(
-	agent: { workingDirArgs?: (dir: string) => string[]; id?: string } | null | undefined,
-	agentId: string,
-	directories: string[]
-): string[] {
-	if (agentId !== 'gemini-cli' || !agent?.workingDirArgs) {
-		return [];
-	}
-	const args: string[] = [];
-	const seen = new Set<string>();
-	for (const dir of directories) {
-		if (dir && dir.trim() && !seen.has(dir)) {
-			seen.add(dir);
-			args.push(...agent.workingDirArgs(dir));
-		}
-	}
-	return args;
 }
 
 /**

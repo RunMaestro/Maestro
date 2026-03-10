@@ -6,6 +6,7 @@
  * group-chat-router.ts and group-chat-agent.ts to avoid duplication.
  */
 
+import path from 'path';
 import { getAgentCapabilities } from '../agents';
 import { getWindowsShellForAgentExecution } from '../process-manager/utils/shellEscape';
 import { isWindows } from '../../shared/platformDetection';
@@ -97,4 +98,37 @@ export function getWindowsSpawnConfig(
 		sendPromptViaStdin: supportsStreamJson,
 		sendPromptViaStdinRaw: !supportsStreamJson,
 	};
+}
+
+/**
+ * Build additional --include-directories args for Gemini CLI in group chat.
+ * Gemini CLI has stricter sandbox enforcement than other agents and needs
+ * explicit directory approval for each path it accesses. In group chat,
+ * this means the project directories, the group chat shared folder, and
+ * the home directory all need to be included.
+ *
+ * Paths are normalized via path.resolve() before dedup so that equivalent
+ * paths (e.g., `/foo/bar` and `/foo/../foo/bar`) are not duplicated.
+ *
+ * For non-Gemini agents, returns an empty array (no-op).
+ */
+export function buildGeminiWorkspaceDirArgs(
+	agent: { workingDirArgs?: (dir: string) => string[]; id?: string } | null | undefined,
+	agentId: string,
+	directories: string[]
+): string[] {
+	if (agentId !== 'gemini-cli' || !agent?.workingDirArgs) {
+		return [];
+	}
+	const args: string[] = [];
+	const seen = new Set<string>();
+	for (const dir of directories) {
+		if (!dir || !dir.trim()) continue;
+		const resolved = path.resolve(dir);
+		if (!seen.has(resolved)) {
+			seen.add(resolved);
+			args.push(...agent.workingDirArgs(resolved));
+		}
+	}
+	return args;
 }
