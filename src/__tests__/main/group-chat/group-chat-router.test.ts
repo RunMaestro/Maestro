@@ -52,9 +52,13 @@ import {
 	routeModeratorResponse,
 	routeAgentResponse,
 	getGroupChatReadOnlyState,
+	getPendingParticipants,
+	markParticipantResponded,
+	clearPendingParticipants,
 	setGetSessionsCallback,
 	setSshStore,
 	spawnModeratorSynthesis,
+	setPendingParticipantTimeout,
 	type SessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -1102,6 +1106,179 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===========================================================================
+	// Test: Pending participant timeout
+	// ===========================================================================
+	describe('pending participant timeout', () => {
+		const SHORT_TIMEOUT = 100; // ms — short timeout for testing with real timers
+
+		beforeEach(() => {
+			setPendingParticipantTimeout(SHORT_TIMEOUT);
+		});
+
+		afterEach(() => {
+			// Restore default timeout
+			setPendingParticipantTimeout(5 * 60 * 1000);
+		});
+
+		/** Helper: wait for a duration plus buffer */
+		const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+		it('triggers synthesis after timeout when participants have not responded', async () => {
+			const chat = await createTestChatWithModerator('Timeout Test');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			const workerSession: SessionInfo = {
+				id: 'ses-worker-1',
+				name: 'Worker',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [workerSession]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Worker: Please implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// Participant should be pending
+			const pending = getPendingParticipants(chat.id);
+			expect(pending.size).toBe(1);
+			expect(pending.has('Worker')).toBe(true);
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			// Wait for timeout + buffer for async operations
+			await wait(SHORT_TIMEOUT + 200);
+
+			// Pending should be cleared
+			expect(getPendingParticipants(chat.id).size).toBe(0);
+
+			// Synthesis should have been spawned (one additional spawn call)
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBeGreaterThan(spawnCountBefore);
+		});
+
+		it('clears timeout when last participant responds', async () => {
+			const chat = await createTestChatWithModerator('Clear On Response Test');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			const workerSession: SessionInfo = {
+				id: 'ses-worker-1',
+				name: 'Worker',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [workerSession]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Worker: Please implement this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(getPendingParticipants(chat.id).size).toBe(1);
+
+			// Mark participant as responded (last one)
+			const isLast = markParticipantResponded(chat.id, 'Worker');
+			expect(isLast).toBe(true);
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			// Wait past timeout — should NOT trigger synthesis since participant already responded
+			await wait(SHORT_TIMEOUT + 200);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
+		});
+
+		it('clears timeout when clearPendingParticipants is called', async () => {
+			const chat = await createTestChatWithModerator('Clear Pending Test');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			const workerSession: SessionInfo = {
+				id: 'ses-worker-1',
+				name: 'Worker',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [workerSession]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Worker: Do the thing',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(getPendingParticipants(chat.id).size).toBe(1);
+
+			// Explicitly clear pending
+			clearPendingParticipants(chat.id);
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			// Wait past timeout — should NOT trigger synthesis
+			await wait(SHORT_TIMEOUT + 200);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			expect(spawnCountAfter).toBe(spawnCountBefore);
+		});
+
+		it('clears timeout when a new user message arrives', async () => {
+			const chat = await createTestChatWithModerator('Clear On User Msg Test');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			const workerSession: SessionInfo = {
+				id: 'ses-worker-1',
+				name: 'Worker',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [workerSession]);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Worker: Implement this',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(getPendingParticipants(chat.id).size).toBe(1);
+
+			const spawnCountBefore = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+
+			// Send a new user message — this should clear the timeout
+			await routeUserMessage(
+				chat.id,
+				'Actually, never mind. Do something else.',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const spawnCountAfterUserMsg = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock
+				.calls.length;
+
+			// Wait past timeout — should NOT trigger synthesis from the old timeout
+			await wait(SHORT_TIMEOUT + 200);
+
+			const spawnCountAfter = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls
+				.length;
+			// No additional spawns beyond what routeUserMessage already did
+			expect(spawnCountAfter).toBe(spawnCountAfterUserMsg);
 		});
 	});
 });

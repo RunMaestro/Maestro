@@ -108,6 +108,32 @@ let sshStore: SshRemoteSettingsStore | null = null;
 const pendingParticipantResponses = new Map<string, Set<string>>();
 
 /**
+ * Timeout handles for pending participant responses.
+ * When all participants haven't responded within the timeout,
+ * we clear the pending set and trigger synthesis with available responses.
+ * Maps groupChatId -> NodeJS.Timeout
+ */
+const pendingParticipantTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Default timeout for pending participant responses (5 minutes).
+ */
+const DEFAULT_PENDING_PARTICIPANT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Current timeout value. Can be overridden via setPendingParticipantTimeout() for testing.
+ */
+let pendingParticipantTimeoutMs = DEFAULT_PENDING_PARTICIPANT_TIMEOUT_MS;
+
+/**
+ * Sets the pending participant timeout duration.
+ * Primarily for testing — production code uses the 5-minute default.
+ */
+export function setPendingParticipantTimeout(ms: number): void {
+	pendingParticipantTimeoutMs = ms;
+}
+
+/**
  * Tracks read-only mode state for each group chat.
  * Set when user sends a message with readOnly flag, cleared on next non-readOnly message.
  * Maps groupChatId -> boolean
@@ -136,15 +162,76 @@ export function getPendingParticipants(groupChatId: string): Set<string> {
 }
 
 /**
- * Clears all pending participants for a group chat.
+ * Clears all pending participants for a group chat and cancels any associated timeout.
  */
 export function clearPendingParticipants(groupChatId: string): void {
 	pendingParticipantResponses.delete(groupChatId);
+	clearPendingTimeout(groupChatId);
+}
+
+/**
+ * Clears the pending participant timeout for a group chat.
+ */
+function clearPendingTimeout(groupChatId: string): void {
+	const timeout = pendingParticipantTimeouts.get(groupChatId);
+	if (timeout) {
+		clearTimeout(timeout);
+		pendingParticipantTimeouts.delete(groupChatId);
+	}
+}
+
+/**
+ * Starts a timeout for pending participant responses.
+ * On expiry: clears pending participants, logs a warning, and triggers
+ * moderator synthesis with whatever responses are available.
+ */
+function startPendingTimeout(
+	groupChatId: string,
+	processManager?: IProcessManager,
+	agentDetector?: AgentDetector
+): void {
+	// Clear any existing timeout first
+	clearPendingTimeout(groupChatId);
+
+	const timeout = setTimeout(async () => {
+		const pending = pendingParticipantResponses.get(groupChatId);
+		if (!pending || pending.size === 0) return;
+
+		const timedOutParticipants = Array.from(pending);
+		logger.warn('Pending participant response timeout expired', LOG_CONTEXT, {
+			groupChatId,
+			timedOutParticipants,
+			timeoutMs: pendingParticipantTimeoutMs,
+		});
+
+		// Clear the pending set and timeout
+		pendingParticipantResponses.delete(groupChatId);
+		pendingParticipantTimeouts.delete(groupChatId);
+
+		// Trigger synthesis with available responses
+		if (processManager && agentDetector) {
+			try {
+				await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+			} catch (error) {
+				logger.error('Failed to spawn synthesis after participant timeout', LOG_CONTEXT, {
+					error,
+					groupChatId,
+				});
+			}
+		} else {
+			// No process manager available — just reset state
+			groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+			powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+		}
+	}, pendingParticipantTimeoutMs);
+
+	pendingParticipantTimeouts.set(groupChatId, timeout);
 }
 
 /**
  * Marks a participant as having responded (removes from pending).
  * Returns true if this was the last pending participant.
+ * Clears the pending timeout when the last participant responds.
  */
 export function markParticipantResponded(groupChatId: string, participantName: string): boolean {
 	const pending = pendingParticipantResponses.get(groupChatId);
@@ -154,6 +241,7 @@ export function markParticipantResponded(groupChatId: string, participantName: s
 
 	if (pending.size === 0) {
 		pendingParticipantResponses.delete(groupChatId);
+		clearPendingTimeout(groupChatId);
 		return true; // Last participant responded
 	}
 	return false;
@@ -289,6 +377,9 @@ export async function routeUserMessage(
 		logger.debug('Moderator not active', LOG_CONTEXT, { groupChatId });
 		throw new Error(`Moderator is not active for group chat: ${groupChatId}`);
 	}
+
+	// Clear any pending participant timeout — user is starting a new conversation round
+	clearPendingTimeout(groupChatId);
 
 	// Auto-add participants mentioned by the user if they match available sessions
 	if (processManager && agentDetector && getSessionsCallback) {
@@ -1072,6 +1163,10 @@ export async function routeModeratorResponse(
 		// Set state to show agents are working
 		groupChatEmitters.emitStateChange?.(groupChatId, 'agent-working');
 		logger.debug('Emitted state change: agent-working', LOG_CONTEXT, { groupChatId });
+
+		// Start timeout — if participants don't respond within the limit,
+		// clear pending and trigger synthesis with whatever responses are available
+		startPendingTimeout(groupChatId, processManager, agentDetector);
 	}
 	logger.debug('Route moderator response complete', LOG_CONTEXT, { groupChatId });
 }
