@@ -1056,6 +1056,247 @@ describe('GeminiSessionStorage', () => {
 			// Only the session dir readdir, not base history dir scan
 			expect(readdirCalls.length).toBeLessThanOrEqual(1);
 		});
+
+		it('should be case-insensitive when matching', async () => {
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'Hello WORLD' },
+						{ type: 'gemini', content: 'response' },
+					],
+					'sess-a'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'hello world', 'user');
+			expect(results).toHaveLength(1);
+			expect(results[0].sessionId).toBe('sess-a');
+		});
+
+		it('should return matchPreview with first matching message content (truncated to 200 chars)', async () => {
+			const longContent = 'A'.repeat(300);
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'user', content: longContent },
+						{ type: 'gemini', content: 'response' },
+					],
+					'sess-a'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'AAAA', 'user');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchPreview).toBe('A'.repeat(200));
+			expect(results[0].matchPreview.length).toBe(200);
+		});
+
+		it('should count multiple user matches in the same session', async () => {
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'keyword first' },
+						{ type: 'gemini', content: 'reply' },
+						{ type: 'user', content: 'keyword second' },
+						{ type: 'gemini', content: 'reply again' },
+						{ type: 'user', content: 'keyword third' },
+					],
+					'sess-a'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'keyword', 'user');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchCount).toBe(3);
+			// Preview should be from the first matching message
+			expect(results[0].matchPreview).toContain('keyword first');
+		});
+
+		it('should count multiple assistant matches in the same session', async () => {
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'question' },
+						{ type: 'gemini', content: 'answer with token' },
+						{ type: 'user', content: 'follow up' },
+						{ type: 'gemini', content: 'another token answer' },
+					],
+					'sess-a'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'token', 'assistant');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchCount).toBe(2);
+		});
+
+		it('should fall through to user match in all mode when title does not match', async () => {
+			const content = JSON.stringify({
+				sessionId: 'sess-a',
+				messages: [
+					{ type: 'user', content: 'findme in user message' },
+					{ type: 'gemini', content: 'no match here' },
+				],
+				summary: 'Unrelated title',
+				startTime: '2026-01-01T00:00:00.000Z',
+				lastUpdated: '2026-01-01T01:00:00.000Z',
+			});
+
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': content,
+			});
+
+			const results = await storage.searchSessions('/test/project', 'findme', 'all');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchType).toBe('user');
+			expect(results[0].matchPreview).toContain('findme in user message');
+		});
+
+		it('should fall through to assistant match in all mode when neither title nor user match', async () => {
+			const content = JSON.stringify({
+				sessionId: 'sess-a',
+				messages: [
+					{ type: 'user', content: 'unrelated question' },
+					{ type: 'gemini', content: 'the secret answer is here' },
+				],
+				summary: 'Unrelated title',
+				startTime: '2026-01-01T00:00:00.000Z',
+				lastUpdated: '2026-01-01T01:00:00.000Z',
+			});
+
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': content,
+			});
+
+			const results = await storage.searchSessions('/test/project', 'secret answer', 'all');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchType).toBe('assistant');
+			expect(results[0].matchPreview).toContain('the secret answer is here');
+		});
+
+		it('should gracefully handle corrupted JSON files during search', async () => {
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				if (filePath.includes('sess-good')) {
+					return Promise.resolve(
+						buildSessionJson(
+							[
+								{ type: 'user', content: 'findme' },
+								{ type: 'gemini', content: 'ok' },
+							],
+							'sess-good'
+						)
+					);
+				}
+				// Corrupted JSON for the other file
+				return Promise.resolve('{ not valid json !!!');
+			});
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+				'session-100-sess-good.json',
+				'session-200-sess-bad.json',
+			]);
+			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 1000,
+				mtimeMs: Date.now(),
+				isDirectory: () => true,
+			});
+
+			const results = await storage.searchSessions('/test/project', 'findme', 'all');
+			// Should still return the good result, not throw
+			expect(results).toHaveLength(1);
+			expect(results[0].sessionId).toBe('sess-good');
+		});
+
+		it('should use title preview as fallback when message preview is empty', async () => {
+			const content = JSON.stringify({
+				sessionId: 'sess-a',
+				messages: [{ type: 'user', content: 'searchterm' }],
+				summary: 'Summary with searchterm',
+				startTime: '2026-01-01T00:00:00.000Z',
+				lastUpdated: '2026-01-01T01:00:00.000Z',
+			});
+
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': content,
+			});
+
+			// Title mode — matchPreview should come from summary
+			const results = await storage.searchSessions('/test/project', 'searchterm', 'title');
+			expect(results).toHaveLength(1);
+			expect(results[0].matchPreview).toContain('Summary with searchterm');
+		});
+
+		it('should search across multiple sessions and return all matches', async () => {
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'common keyword here' },
+						{ type: 'gemini', content: 'response' },
+					],
+					'sess-a'
+				),
+				'session-200-sess-b.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'also has common keyword' },
+						{ type: 'gemini', content: 'reply' },
+					],
+					'sess-b'
+				),
+				'session-300-sess-c.json': buildSessionJson(
+					[
+						{ type: 'user', content: 'no match at all' },
+						{ type: 'gemini', content: 'nothing' },
+					],
+					'sess-c'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'common keyword', 'user');
+			expect(results).toHaveLength(2);
+			const ids = results.map((r) => r.sessionId).sort();
+			expect(ids).toEqual(['sess-a', 'sess-b']);
+		});
+
+		it('should skip info/error/warning messages during search', async () => {
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': buildSessionJson(
+					[
+						{ type: 'info', content: 'keyword in info' },
+						{ type: 'error', content: 'keyword in error' },
+						{ type: 'warning', content: 'keyword in warning' },
+						{ type: 'user', content: 'no match here' },
+						{ type: 'gemini', content: 'no match either' },
+					],
+					'sess-a'
+				),
+			});
+
+			const results = await storage.searchSessions('/test/project', 'keyword', 'all');
+			expect(results).toEqual([]);
+		});
+
+		it('should use query as last-resort matchPreview when no other preview available', async () => {
+			// Edge case: title matches but messages array is empty
+			const content = JSON.stringify({
+				sessionId: 'sess-a',
+				messages: [],
+				summary: 'findme',
+				startTime: '2026-01-01T00:00:00.000Z',
+				lastUpdated: '2026-01-01T01:00:00.000Z',
+			});
+
+			mockMultipleSessionFiles({
+				'session-100-sess-a.json': content,
+			});
+
+			const results = await storage.searchSessions('/test/project', 'findme', 'title');
+			expect(results).toHaveLength(1);
+			// matchPreview should have the title as preview
+			expect(results[0].matchPreview).toBe('findme');
+		});
 	});
 
 	describe('listSessionsPaginated', () => {
@@ -1218,6 +1459,138 @@ describe('GeminiSessionStorage', () => {
 			const result = await storage.listSessionsPaginated('/test/project');
 			expect(result.sessions).toHaveLength(1);
 			expect(result.totalCount).toBe(1);
+		});
+
+		it('should reset to first page when cursor is not found', async () => {
+			mockPaginatedFiles(5);
+
+			const result = await storage.listSessionsPaginated('/test/project', {
+				limit: 3,
+				cursor: 'nonexistent-cursor-id',
+			});
+
+			// When cursor not found, startIndex falls back to 0
+			expect(result.sessions).toHaveLength(3);
+			expect(result.totalCount).toBe(5);
+			expect(result.hasMore).toBe(true);
+			// Should return from the beginning (newest first)
+			expect(result.sessions[0].sessionId).toBe('sess-4');
+		});
+
+		it('should return empty page when cursor is the last session', async () => {
+			mockPaginatedFiles(3);
+
+			// Get sessions to find the last one (oldest, since sorted newest-first)
+			const all = await storage.listSessionsPaginated('/test/project', { limit: 10 });
+			const lastSessionId = all.sessions[all.sessions.length - 1].sessionId;
+
+			const result = await storage.listSessionsPaginated('/test/project', {
+				limit: 10,
+				cursor: lastSessionId,
+			});
+
+			expect(result.sessions).toHaveLength(0);
+			expect(result.hasMore).toBe(false);
+			expect(result.nextCursor).toBeNull();
+			expect(result.totalCount).toBe(3);
+		});
+
+		it('should use default limit of 100 when no options provided', async () => {
+			mockPaginatedFiles(5);
+
+			const result = await storage.listSessionsPaginated('/test/project');
+
+			expect(result.sessions).toHaveLength(5);
+			expect(result.hasMore).toBe(false);
+			expect(result.nextCursor).toBeNull();
+		});
+
+		it('should return empty result when directory has no session files', async () => {
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				return Promise.reject(new Error('ENOENT'));
+			});
+			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 0,
+				mtimeMs: Date.now(),
+				isDirectory: () => true,
+			});
+
+			const result = await storage.listSessionsPaginated('/test/project', { limit: 10 });
+
+			expect(result.sessions).toEqual([]);
+			expect(result.totalCount).toBe(0);
+			expect(result.hasMore).toBe(false);
+			expect(result.nextCursor).toBeNull();
+		});
+
+		it('should handle stat failures gracefully by excluding failed files', async () => {
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+				'session-100-sess-good.json',
+				'session-200-sess-statfail.json',
+			]);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				return Promise.resolve(
+					buildSessionJson(
+						[
+							{ type: 'user', content: 'Hello' },
+							{ type: 'gemini', content: 'Hi' },
+						],
+						'sess-good'
+					)
+				);
+			});
+			(fs.stat as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if ((filePath as string).includes('sess-statfail')) {
+					return Promise.reject(new Error('EACCES'));
+				}
+				return Promise.resolve({
+					size: 1000,
+					mtimeMs: Date.now(),
+					isDirectory: () => true,
+				});
+			});
+
+			const result = await storage.listSessionsPaginated('/test/project');
+
+			expect(result.sessions).toHaveLength(1);
+			expect(result.sessions[0].sessionId).toBe('sess-good');
+			expect(result.totalCount).toBe(1);
+		});
+
+		it('should maintain correct totalCount across paginated requests', async () => {
+			mockPaginatedFiles(7);
+
+			const page1 = await storage.listSessionsPaginated('/test/project', { limit: 3 });
+			const page2 = await storage.listSessionsPaginated('/test/project', {
+				limit: 3,
+				cursor: page1.nextCursor!,
+			});
+			const page3 = await storage.listSessionsPaginated('/test/project', {
+				limit: 3,
+				cursor: page2.nextCursor!,
+			});
+
+			// totalCount should be consistent across all pages
+			expect(page1.totalCount).toBe(7);
+			expect(page2.totalCount).toBe(7);
+			expect(page3.totalCount).toBe(7);
+
+			// Verify page sizes
+			expect(page1.sessions).toHaveLength(3);
+			expect(page1.hasMore).toBe(true);
+			expect(page2.sessions).toHaveLength(3);
+			expect(page2.hasMore).toBe(true);
+			expect(page3.sessions).toHaveLength(1);
+			expect(page3.hasMore).toBe(false);
 		});
 	});
 
