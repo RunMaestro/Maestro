@@ -9,6 +9,17 @@ declare module '*.md?raw' {
 	export default content;
 }
 
+type AgentErrorType =
+	| 'auth_expired'
+	| 'token_exhaustion'
+	| 'rate_limited'
+	| 'network_error'
+	| 'agent_crashed'
+	| 'agent_not_found'
+	| 'permission_denied'
+	| 'session_not_found'
+	| 'unknown';
+
 type AutoRunTreeNode = {
 	name: string;
 	type: 'file' | 'folder';
@@ -74,8 +85,10 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsThinkingDisplay?: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	imageResumeMode?: 'prompt-embed';
 }
 
 interface AgentConfig {
@@ -111,8 +124,10 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsThinkingDisplay?: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	imageResumeMode?: 'prompt-embed';
 }
 
 interface DirectoryEntry {
@@ -334,7 +349,7 @@ interface MaestroAPI {
 			callback: (
 				sessionId: string,
 				error: {
-					type: string;
+					type: AgentErrorType;
 					message: string;
 					recoverable: boolean;
 					agentId: string;

@@ -121,7 +121,7 @@ type GeminiEvent =
  * Transforms Gemini CLI's stream-json NDJSON events into normalized ParsedEvents.
  */
 export class GeminiOutputParser implements AgentOutputParser {
-	readonly agentId: ToolType = 'gemini-cli' as ToolType;
+	readonly agentId: ToolType = 'gemini-cli';
 
 	/** Cached error patterns — resolved once at construction instead of per-line */
 	private readonly cachedErrorPatterns: ReturnType<typeof getErrorPatterns>;

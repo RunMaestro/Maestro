@@ -145,6 +145,10 @@ export interface ProcessManagerEvents {
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
 	'gemini-session-stats': (sessionId: string, stats: GeminiSessionStatsEvent) => void;
+	'workspace-approval-request': (
+		sessionId: string,
+		data: { deniedPath: string; timestamp: number }
+	) => void;
 }
 
 export interface ToolExecution {

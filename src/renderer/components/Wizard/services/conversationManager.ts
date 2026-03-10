@@ -271,7 +271,7 @@ class ConversationManager {
 						available: agent.available,
 						path: agent.path,
 						command: agent.command,
-						customPath: (agent as any).customPath,
+						customPath: agent.customPath,
 					},
 				});
 				return {
@@ -290,7 +290,7 @@ class ConversationManager {
 						remoteId: this.session.sshRemoteConfig?.remoteId,
 						agentCommand: agent.command,
 						agentPath: agent.path,
-						agentCustomPath: (agent as any).customPath,
+						agentCustomPath: agent.customPath,
 					}
 				);
 			}

@@ -815,6 +815,8 @@ export interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	/** Additional workspace directories for Gemini CLI (passed as --include-directories) */
+	additionalWorkspaceDirs?: string[];
 }
 
 // Directory entry from fs:readDir

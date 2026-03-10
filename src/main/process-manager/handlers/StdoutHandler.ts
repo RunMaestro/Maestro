@@ -69,6 +69,25 @@ export function extractDeniedPath(errorMsg: string, projectCwd?: string): string
 }
 
 /**
+ * Extract an error message string from a Gemini CLI tool_use event's toolState.
+ * Handles two shapes:
+ *   - { error: { message: "..." } }  → returns error.message
+ *   - { error: "..." }               → returns error
+ * Returns null if no error string can be extracted.
+ */
+export function extractToolStateError(toolState: unknown): string | null {
+	if (!toolState || typeof toolState !== 'object') return null;
+	const state = toolState as Record<string, unknown>;
+	const err = state.error;
+	if (err && typeof err === 'object') {
+		const nested = (err as Record<string, unknown>).message;
+		if (typeof nested === 'string') return nested;
+	}
+	if (typeof err === 'string') return err;
+	return null;
+}
+
+/**
  * Detects Gemini CLI Axios/API internal dumps in stdout.
  * Hoisted to module scope to avoid regex recompilation per line.
  */
@@ -457,15 +476,7 @@ export class StdoutHandler {
 
 		// Detect Gemini CLI sandbox violations from tool_result error events
 		if (event.type === 'tool_use' && managedProcess.toolType === 'gemini-cli' && event.toolState) {
-			const errorMsg =
-				(event.toolState as Record<string, unknown>)?.error &&
-				typeof ((event.toolState as Record<string, unknown>).error as Record<string, unknown>)
-					?.message === 'string'
-					? (((event.toolState as Record<string, unknown>).error as Record<string, unknown>)
-							.message as string)
-					: typeof (event.toolState as Record<string, unknown>)?.error === 'string'
-						? ((event.toolState as Record<string, unknown>).error as string)
-						: null;
+			const errorMsg = extractToolStateError(event.toolState);
 
 			if (errorMsg && /path.*not.*in.*workspace|permission.*denied.*sandbox/i.test(errorMsg)) {
 				const deniedPath = extractDeniedPath(errorMsg, managedProcess.cwd);

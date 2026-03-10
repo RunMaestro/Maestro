@@ -10,6 +10,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AgentErrorType } from '../../shared/types';
 
 /**
  * Helper to log via the main process logger.
@@ -99,7 +100,7 @@ export interface UsageStats {
  * Agent error information
  */
 export interface AgentError {
-	type: string;
+	type: AgentErrorType;
 	message: string;
 	recoverable: boolean;
 	agentId: string;
