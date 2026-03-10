@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspens
 const SettingsModal = lazy(() =>
 	import('./components/Settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 );
-import { SessionList } from './components/SessionList';
+import { SessionList as _SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
@@ -21,6 +21,7 @@ import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
+import { ProjectSidebar } from './components/ProjectSidebar';
 
 // Lazy-loaded components for performance (rarely-used heavy modals)
 // These are loaded on-demand when the user first opens them
@@ -135,6 +136,8 @@ import {
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
+import { useProjectRestoration } from './hooks/project/useProjectRestoration';
+import { useInboxWatcher } from './hooks/useInboxWatcher';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -146,6 +149,8 @@ import { useGroupChatStore } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import { useSessionStore, selectActiveSession } from './stores/sessionStore';
+import { useProjectStore } from './stores/projectStore';
+import { useInboxStore } from './stores/inboxStore';
 // useAgentStore moved to useQueueProcessing hook
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
@@ -561,14 +566,40 @@ function MaestroConsoleInner() {
 	const { ghCliAvailable, sshRemoteConfigs, speckitCommands, openspecCommands, saveFileGistUrl } =
 		useAppInitialization();
 
+	// Project restoration (loads/migrates on startup)
+	useProjectRestoration();
+
+	// Inbox watcher (creates inbox items on session state transitions)
+	useInboxWatcher();
+
 	// Wrapper for setActiveSessionId that also dismisses active group chat
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null); // Dismiss group chat when selecting an agent
 			setActiveSessionIdFromContext(id);
+			// Auto-dismiss inbox items for the session we're navigating to
+			useInboxStore.getState().dismissAllForSession(id);
 		},
 		[setActiveSessionIdFromContext, setActiveGroupChatId]
 	);
+
+	// Handler for adding a new project from the ProjectSidebar
+	const handleAddProject = useCallback(async () => {
+		const folder = await window.maestro.dialog.selectFolder();
+		if (!folder) return;
+
+		const folderName = folder.split(/[\\/]/).filter(Boolean).pop() || 'New Project';
+
+		const project = {
+			id: generateId(),
+			name: folderName,
+			repoPath: folder,
+			createdAt: Date.now(),
+		};
+
+		useProjectStore.getState().addProject(project);
+		useProjectStore.getState().setActiveProjectId(project.id);
+	}, []);
 
 	// Completion states from InputContext (these change infrequently)
 	const {
@@ -2245,7 +2276,8 @@ function MaestroConsoleInner() {
 		// Helper functions
 		getActiveTab,
 	});
-	const sessionListProps = useSessionListProps({
+	// @ts-expect-error -- sessionListProps temporarily unused while ProjectSidebar replaces SessionList
+	const _sessionListProps = useSessionListProps({
 		// Theme (computed externally from settingsStore + themeId)
 		theme,
 
@@ -2982,7 +3014,7 @@ function MaestroConsoleInner() {
 				{/* --- LEFT SIDEBAR (hidden in mobile landscape and when no sessions) --- */}
 				{!isMobileLandscape && sessions.length > 0 && (
 					<ErrorBoundary>
-						<SessionList {...sessionListProps} />
+						<ProjectSidebar theme={theme} onAddProject={handleAddProject} />
 					</ErrorBoundary>
 				)}
 
