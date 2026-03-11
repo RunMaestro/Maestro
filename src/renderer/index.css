@@ -622,6 +622,18 @@ svg.wand-sparkle-active path:nth-child(8) {
    End Header Bar Container Queries
    ========================================== */
 
+/* ==========================================
+   RTL Directional Icon Flipping
+   ==========================================
+   Icons that represent a directional flow (arrows, chevrons, etc.)
+   need to mirror horizontally in RTL layouts.  The <DirIcon> component
+   adds the `rtl-flip` class automatically for icons in the flip list
+   (see src/renderer/utils/rtlIcons.ts).
+*/
+[dir='rtl'] .rtl-flip {
+	transform: scaleX(-1);
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-pulse,
 	.animate-spin,
