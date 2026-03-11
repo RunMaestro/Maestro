@@ -139,7 +139,7 @@ export class ProcessManager extends EventEmitter {
 				if (isWindows()) {
 					// On Windows, child.kill('SIGINT') is unreliable for shell-spawned
 					// processes. Write Ctrl+C to stdin as a gentle interrupt instead.
-					if (child.stdin && !child.stdin.destroyed) {
+					if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) {
 						child.stdin.write('\x03');
 						logger.debug(
 							'[ProcessManager] Wrote Ctrl+C to stdin for Windows interrupt',
@@ -210,6 +210,13 @@ export class ProcessManager extends EventEmitter {
 				const pid = process.childProcess.pid;
 				if (isWindows() && pid) {
 					this.killWindowsProcessTree(pid, sessionId);
+				} else if (isWindows()) {
+					logger.warn(
+						'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
+						'ProcessManager',
+						{ sessionId }
+					);
+					process.childProcess.kill('SIGTERM');
 				} else {
 					process.childProcess.kill('SIGTERM');
 				}
