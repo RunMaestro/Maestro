@@ -185,7 +185,7 @@ export const MergeProgressOverlay = memo(function MergeProgressOverlay({
 									className="px-2 py-1 rounded text-xs font-medium transition-colors"
 									style={{
 										backgroundColor: theme.colors.error,
-										color: '#fff',
+										color: theme.colors.errorForeground,
 									}}
 								>
 									Cancel

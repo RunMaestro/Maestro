@@ -161,7 +161,6 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
 		workingDirArgs: (dir: string) => ['-C', dir], // Set working directory
 		imageArgs: (imagePath: string) => ['-i', imagePath], // Image attachment: codex exec -i /path/to/image.png
-		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: codex exec -m gpt-5.3-codex
 		// Agent-specific configuration options shown in UI
 		configOptions: [
 			{

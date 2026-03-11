@@ -146,7 +146,7 @@ export class ChartErrorBoundary extends Component<Props, State> {
 						className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
 						style={{
 							backgroundColor: theme.colors.accent,
-							color: '#ffffff',
+							color: theme.colors.accentForeground,
 						}}
 						onMouseEnter={(e) => {
 							e.currentTarget.style.opacity = '0.9';

@@ -439,7 +439,7 @@ export function MaestroWizard({
 	return (
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center wizard-backdrop"
-			style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }}
+			style={{ backgroundColor: theme.colors.overlayHeavy }}
 			onClick={(e) => {
 				// Close on backdrop click
 				if (e.target === e.currentTarget) {

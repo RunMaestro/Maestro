@@ -264,7 +264,10 @@ export function AutoRunDocumentSelector({
 											selectedTaskPercentage === 100
 												? theme.colors.success
 												: theme.colors.accentDim,
-										color: selectedTaskPercentage === 100 ? '#000' : theme.colors.textDim,
+										color:
+											selectedTaskPercentage === 100
+												? theme.colors.successForeground
+												: theme.colors.textDim,
 									}}
 								>
 									{selectedTaskPercentage}%

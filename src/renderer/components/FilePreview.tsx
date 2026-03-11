@@ -1340,7 +1340,7 @@ export const FilePreview = React.memo(
 			// Highlight first match with different color and scroll to it
 			if (matchElements.length > 0) {
 				matchElements[0].style.backgroundColor = theme.colors.accent;
-				matchElements[0].style.color = '#fff';
+				matchElements[0].style.color = theme.colors.accentForeground;
 				matchElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
 
@@ -1355,7 +1355,15 @@ export const FilePreview = React.memo(
 				});
 				matchElementsRef.current = [];
 			};
-		}, [searchQuery, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
+		}, [
+			searchQuery,
+			file?.content,
+			isMarkdown,
+			isImage,
+			isCsv,
+			theme.colors.accent,
+			theme.colors.accentForeground,
+		]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
@@ -1540,7 +1548,7 @@ export const FilePreview = React.memo(
 				// Highlight new current match and scroll to it
 				if (matches[nextIndex]) {
 					matches[nextIndex].style.backgroundColor = theme.colors.accent;
-					matches[nextIndex].style.color = '#fff';
+					matches[nextIndex].style.color = theme.colors.accentForeground;
 					matches[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
 				}
 			}
@@ -1566,7 +1574,7 @@ export const FilePreview = React.memo(
 				// Highlight new current match and scroll to it
 				if (matches[prevIndex]) {
 					matches[prevIndex].style.backgroundColor = theme.colors.accent;
-					matches[prevIndex].style.color = '#fff';
+					matches[prevIndex].style.color = theme.colors.accentForeground;
 					matches[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
 				}
 			}
@@ -2145,7 +2153,7 @@ export const FilePreview = React.memo(
 								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
 								style={{
 									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground ?? '#000',
+									color: theme.colors.accentForeground,
 								}}
 							>
 								Reload
@@ -2616,7 +2624,7 @@ export const FilePreview = React.memo(
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+							textShadow: `0 1px 2px ${theme.colors.shadow}`,
 						}}
 					>
 						{copyNotificationMessage}

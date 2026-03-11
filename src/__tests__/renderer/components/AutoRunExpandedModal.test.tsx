@@ -127,6 +127,7 @@ const createMockTheme = (): Theme => ({
 		success: '#00aa00',
 		warning: '#ffaa00',
 		error: '#ff0000',
+		overlayHeavy: 'rgba(0, 0, 0, 0.8)',
 	},
 });
 
@@ -701,7 +702,7 @@ describe('AutoRunExpandedModal', () => {
 			const { container } = renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			const overlay = container.querySelector('.fixed.inset-0');
-			expect(overlay).toHaveStyle({ backgroundColor: 'rgba(0,0,0,0.7)' });
+			expect(overlay).toHaveStyle({ backgroundColor: props.theme.colors.overlayHeavy });
 		});
 
 		it('should have 90vw width and 80vh height', () => {

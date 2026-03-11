@@ -495,7 +495,7 @@ export function LogViewer({
 							? theme.colors.accent
 							: 'transparent',
 						color: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
-							? 'white'
+							? theme.colors.accentForeground
 							: theme.colors.textDim,
 						border: `1px solid ${Array.from(enabledLevels).every((level) => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`,
 					}}
@@ -527,7 +527,7 @@ export function LogViewer({
 								backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
 								color: isEnabled
 									? isSelected
-										? 'white'
+										? theme.colors.accentForeground
 										: theme.colors.textDim
 									: theme.colors.textDim,
 								border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
@@ -684,7 +684,10 @@ export function LogViewer({
 											return (
 												<span
 													className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-													style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+													style={{
+														backgroundColor: theme.colors.successDim,
+														color: theme.colors.success,
+													}}
 												>
 													<Pencil className="w-3 h-3" />
 													{project}
@@ -695,7 +698,10 @@ export function LogViewer({
 										{log.level === 'autorun' && log.context && (
 											<span
 												className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-												style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+												style={{
+													backgroundColor: theme.colors.successDim,
+													color: theme.colors.success,
+												}}
 											>
 												<Pencil className="w-3 h-3" />
 												{log.context}

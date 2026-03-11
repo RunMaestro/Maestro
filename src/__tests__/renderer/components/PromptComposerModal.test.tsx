@@ -50,6 +50,7 @@ const mockTheme: Theme = {
 		headerBg: '#202020',
 		scrollbarTrack: '#1a1a1a',
 		scrollbarThumb: '#444444',
+		overlayHeavy: 'rgba(0, 0, 0, 0.8)',
 	},
 };
 

@@ -34,6 +34,7 @@ const mockTheme: Theme = {
 		error: '#ff5555',
 		warning: '#ffb86c',
 		success: '#50fa7b',
+		info: '#8be9fd',
 		syntaxComment: '#6272a4',
 		syntaxKeyword: '#ff79c6',
 	},

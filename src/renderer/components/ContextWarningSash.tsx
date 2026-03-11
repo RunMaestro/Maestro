@@ -99,6 +99,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 
 	const iconColor = isRed ? (isLight ? '#dc2626' : '#ef4444') : isLight ? '#ca8a04' : '#eab308';
 	const buttonBgColor = isRed ? '#ef4444' : '#eab308';
+	const buttonTextColor = isRed ? '#ffffff' : '#000000';
 
 	return (
 		<div
@@ -144,7 +145,7 @@ export const ContextWarningSash = memo(function ContextWarningSash({
 					className="px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors hover:opacity-90"
 					style={{
 						backgroundColor: buttonBgColor,
-						color: '#000',
+						color: buttonTextColor,
 					}}
 				>
 					Compact & Continue

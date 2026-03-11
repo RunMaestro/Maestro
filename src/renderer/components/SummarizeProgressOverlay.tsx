@@ -169,7 +169,7 @@ export const SummarizeProgressOverlay = memo(function SummarizeProgressOverlay({
 									className="px-2 py-1 rounded text-xs font-medium transition-colors"
 									style={{
 										backgroundColor: theme.colors.error,
-										color: '#fff',
+										color: theme.colors.errorForeground,
 									}}
 								>
 									Yes

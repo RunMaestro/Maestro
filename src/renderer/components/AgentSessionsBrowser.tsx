@@ -1138,11 +1138,7 @@ export function AgentSessionsBrowser({
 											backgroundColor:
 												msg.type === 'user' ? theme.colors.accent : theme.colors.bgActivity,
 											color:
-												msg.type === 'user'
-													? theme.mode === 'light'
-														? '#fff'
-														: '#000'
-													: theme.colors.textMain,
+												msg.type === 'user' ? theme.colors.accentForeground : theme.colors.textMain,
 										}}
 									>
 										<div className="whitespace-pre-wrap break-words">
@@ -1153,9 +1149,7 @@ export function AgentSessionsBrowser({
 											style={{
 												color:
 													msg.type === 'user'
-														? theme.mode === 'light'
-															? '#fff'
-															: '#000'
+														? theme.colors.accentForeground
 														: theme.colors.textDim,
 											}}
 										>

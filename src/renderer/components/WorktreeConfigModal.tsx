@@ -179,7 +179,11 @@ export function WorktreeConfigModal({
 	return (
 		<div className="fixed inset-0 z-[10000] flex items-center justify-center">
 			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
+			<div
+				className="absolute inset-0"
+				style={{ backgroundColor: theme.colors.overlay }}
+				onClick={onClose}
+			/>
 
 			{/* Modal */}
 			<div
