@@ -2713,6 +2713,14 @@ interface MaestroAPI {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
+
+	// Locale API (system locale detection and language preference)
+	locale: {
+		/** Get the detected system locale mapped to a supported language code */
+		getSystem: () => Promise<string>;
+		/** Store the user's language preference */
+		set: (language: string) => Promise<{ success: boolean; error?: string }>;
+	};
 }
 
 declare global {

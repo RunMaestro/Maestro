@@ -54,6 +54,7 @@ import {
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerWakatimeHandlers,
+	registerLocaleHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -685,6 +686,12 @@ function setupIpcHandlers() {
 
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
+
+	// Register Locale handlers (system locale detection and language preference)
+	registerLocaleHandlers({
+		app,
+		settingsStore: store,
+	});
 }
 
 // Handle process output streaming (set up after initialization)
