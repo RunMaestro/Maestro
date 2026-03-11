@@ -66,18 +66,37 @@ function getTimeUnitLabel(key: string, count: number, fallback: string, locale?:
 }
 
 /**
- * Format a file size in bytes to a human-readable string.
+ * Format a file size in bytes to a locale-aware human-readable string.
  * Automatically scales to appropriate unit (B, KB, MB, GB, TB).
+ * Uses Intl.NumberFormat for locale-aware number formatting (e.g., "1.5 MB" in English, "1,5 MB" in French).
+ * Unit suffixes are kept as international standards (B, KB, MB, GB, TB).
  *
  * @param bytes - The size in bytes
- * @returns Formatted string (e.g., "1.5 MB", "256 KB")
+ * @param locale - Optional BCP 47 locale override (auto-detected from i18n if omitted)
+ * @returns Formatted string (e.g., "1.5 MB", "1,5 MB")
  */
-export function formatSize(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-	return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`;
+export function formatSize(bytes: number, locale?: string): string {
+	const activeLocale = getActiveLocale(locale);
+	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+	let unitIndex = 0;
+	let value = bytes;
+
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+
+	if (unitIndex === 0) {
+		// Bytes are always integers, no decimal formatting needed
+		return `${bytes} ${units[0]}`;
+	}
+
+	const formatted = new Intl.NumberFormat(activeLocale, {
+		minimumFractionDigits: 1,
+		maximumFractionDigits: 1,
+	}).format(value);
+
+	return `${formatted} ${units[unitIndex]}`;
 }
 
 /**

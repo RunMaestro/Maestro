@@ -79,6 +79,20 @@ describe('shared/formatters', () => {
 			expect(formatSize(1024 * 1024 * 1024 * 1024)).toBe('1.0 TB');
 			expect(formatSize(1024 * 1024 * 1024 * 1024 * 5)).toBe('5.0 TB');
 		});
+
+		it('should accept optional locale parameter without breaking output', () => {
+			expect(formatSize(0, 'en')).toBe('0 B');
+			expect(formatSize(1536, 'en')).toBe('1.5 KB');
+			expect(formatSize(1024 * 1024 * 1.5, 'en')).toBe('1.5 MB');
+		});
+
+		it('should use locale-aware decimal separators', () => {
+			// French uses comma as decimal separator
+			expect(formatSize(1536, 'fr')).toBe('1,5 KB');
+			expect(formatSize(1024 * 1024 * 1.5, 'fr')).toBe('1,5 MB');
+			// German also uses comma
+			expect(formatSize(1024 * 1024 * 1024 * 2.5, 'de')).toBe('2,5 GB');
+		});
 	});
 
 	// ==========================================================================
