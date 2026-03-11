@@ -54,6 +54,7 @@ import {
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
+	spawnModeratorSynthesis,
 	type SessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
@@ -877,6 +878,68 @@ describe('group-chat-router', () => {
 				sshRemoteConfig,
 				mockSshStore
 			);
+		});
+
+		it('spawnModeratorSynthesis applies SSH wrapping when moderator has SSH config', async () => {
+			// Create a chat with SSH-enabled moderator config
+			const chat = await createTestChat('SSH Synthesis Test', 'claude-code');
+			const sshModeratorConfig = {
+				sshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/user/project',
+				},
+			};
+
+			// Update the chat to have moderator config with SSH
+			// We need to create the chat with moderator config, then spawn moderator
+			const chatWithSsh = await createGroupChat(
+				'SSH Synthesis Test 2',
+				'claude-code',
+				sshModeratorConfig
+			);
+			createdChats.push(chatWithSsh.id);
+			await spawnModerator(chatWithSsh, mockProcessManager);
+
+			// Add a participant so the synthesis prompt includes participant context
+			await addParticipant(chatWithSsh.id, 'Worker', 'claude-code', mockProcessManager);
+
+			// Set up SSH store
+			setSshStore(mockSshStore);
+			mockWrapSpawnWithSsh.mockClear();
+
+			// Spawn synthesis — should apply SSH wrapping
+			await spawnModeratorSynthesis(chatWithSsh.id, mockProcessManager, mockAgentDetector);
+
+			// Verify SSH wrapping was applied
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: expect.any(String),
+					args: expect.any(Array),
+					agentBinaryName: 'claude',
+				}),
+				sshModeratorConfig.sshRemoteConfig,
+				mockSshStore
+			);
+
+			// Verify spawn used the SSH-wrapped config
+			const spawnCall = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls;
+			const synthesisSpawn = spawnCall.find((call: any[]) => call[0]?.command === 'ssh');
+			expect(synthesisSpawn).toBeDefined();
+		});
+
+		it('spawnModeratorSynthesis does NOT apply SSH wrapping when no SSH config', async () => {
+			// Create a chat without SSH config
+			const chat = await createTestChatWithModerator('No SSH Synthesis Test');
+			await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+			setSshStore(mockSshStore);
+			mockWrapSpawnWithSsh.mockClear();
+
+			await spawnModeratorSynthesis(chat.id, mockProcessManager, mockAgentDetector);
+
+			// SSH wrapping should NOT be called since chat has no moderatorConfig.sshRemoteConfig
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
 		});
 
 		it('does not apply SSH wrapping for non-SSH sessions', async () => {
