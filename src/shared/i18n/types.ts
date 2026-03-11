@@ -13,6 +13,7 @@ import type modalsEn from './locales/en/modals.json';
 import type menusEn from './locales/en/menus.json';
 import type notificationsEn from './locales/en/notifications.json';
 import type accessibilityEn from './locales/en/accessibility.json';
+import type shortcutsEn from './locales/en/shortcuts.json';
 
 /** Map each namespace to its translation key set (derived from English base files) */
 export interface I18nResources {
@@ -22,6 +23,7 @@ export interface I18nResources {
 	menus: typeof menusEn;
 	notifications: typeof notificationsEn;
 	accessibility: typeof accessibilityEn;
+	shortcuts: typeof shortcutsEn;
 }
 
 /** Extract valid translation keys for a given namespace */

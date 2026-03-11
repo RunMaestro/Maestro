@@ -6,7 +6,7 @@
  * bundled JSON resources for translation strings.
  *
  * Supported languages: en, es, fr, de, zh, hi, ar, bn, pt
- * Namespaces: common, settings, modals, menus, notifications, accessibility
+ * Namespaces: common, settings, modals, menus, notifications, accessibility, shortcuts
  */
 
 import i18n from 'i18next';
@@ -20,6 +20,7 @@ import modalsEn from './locales/en/modals.json';
 import menusEn from './locales/en/menus.json';
 import notificationsEn from './locales/en/notifications.json';
 import accessibilityEn from './locales/en/accessibility.json';
+import shortcutsEn from './locales/en/shortcuts.json';
 
 export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'zh', 'hi', 'ar', 'bn', 'pt'] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
@@ -31,6 +32,7 @@ export const I18N_NAMESPACES = [
 	'menus',
 	'notifications',
 	'accessibility',
+	'shortcuts',
 ] as const;
 export type I18nNamespace = (typeof I18N_NAMESPACES)[number];
 
@@ -61,6 +63,7 @@ export function initI18n(): Promise<typeof i18n> {
 					menus: menusEn,
 					notifications: notificationsEn,
 					accessibility: accessibilityEn,
+					shortcuts: shortcutsEn,
 				},
 			},
 
