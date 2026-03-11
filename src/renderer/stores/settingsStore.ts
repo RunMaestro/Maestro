@@ -1361,8 +1361,13 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
 
+		// Custom theme migration: merge saved tokens with defaults so themes
+		// created with 13 tokens gain the 17 new tokens added in the WCAG update.
 		if (allSettings['customThemeColors'] !== undefined)
-			patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
+			patch.customThemeColors = {
+				...DEFAULT_CUSTOM_THEME_COLORS,
+				...(allSettings['customThemeColors'] as ThemeColors),
+			};
 
 		if (allSettings['customThemeBaseId'] !== undefined)
 			patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;

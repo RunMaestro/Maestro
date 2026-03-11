@@ -3164,7 +3164,6 @@ function MaestroConsoleInner() {
 									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
 									messages={groupChatMessages}
 									state={groupChatState}
-									groups={groups}
 									totalCost={(() => {
 										const chat = groupChats.find((c) => c.id === activeGroupChatId);
 										const participantsCost = (chat?.participants || []).reduce(
@@ -3361,7 +3360,7 @@ function MaestroConsoleInner() {
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+							textShadow: `0 1px 2px ${theme.colors.shadow}`,
 						}}
 					>
 						{successFlashNotification}

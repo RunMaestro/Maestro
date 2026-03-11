@@ -31,6 +31,7 @@ const mockTheme: Theme = {
 		success: '#50fa7b',
 		warning: '#ffb86c',
 		error: '#ff5555',
+		info: '#8be9fd',
 	},
 };
 
@@ -835,7 +836,7 @@ describe('DocumentNode', () => {
 
 			const indicator = screen.getByTestId('large-file-indicator');
 			expect(indicator).toHaveStyle({
-				color: '#3b82f6',
+				color: mockTheme.colors.info,
 			});
 		});
 

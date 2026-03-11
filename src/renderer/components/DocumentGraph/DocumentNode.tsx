@@ -182,13 +182,13 @@ export const DocumentNode = memo(function DocumentNode({ data, selected }: Docum
 		[]
 	);
 
-	// Large file indicator style (blue info color)
+	// Large file indicator style (info color)
 	const largeFileIconStyle = useMemo(
 		() => ({
-			color: '#3b82f6', // Blue info color
+			color: theme.colors.info,
 			flexShrink: 0,
 		}),
-		[]
+		[theme.colors.info]
 	);
 
 	// Truncate title if too long

@@ -254,7 +254,7 @@ const LogItemComponent = memo(
 						key={`match-${matchStart}`}
 						style={{
 							backgroundColor: theme.colors.warning,
-							color: theme.mode === 'light' ? '#fff' : '#000',
+							color: theme.colors.warningForeground,
 							padding: '1px 2px',
 							borderRadius: '2px',
 						}}
@@ -497,7 +497,7 @@ const LogItemComponent = memo(
 								className="px-2 py-1 rounded text-xs font-bold uppercase tracking-wide"
 								style={{
 									backgroundColor: theme.colors.error,
-									color: '#fff',
+									color: theme.colors.errorForeground,
 								}}
 							>
 								STDERR
@@ -911,7 +911,10 @@ const LogItemComponent = memo(
 											}
 										}}
 										className="px-2 py-0.5 rounded text-xs font-medium hover:opacity-80"
-										style={{ backgroundColor: theme.colors.error, color: '#fff' }}
+										style={{
+											backgroundColor: theme.colors.error,
+											color: theme.colors.errorForeground,
+										}}
 									>
 										Yes
 									</button>

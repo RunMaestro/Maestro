@@ -1454,7 +1454,7 @@ describe('AgentSessionsModal', () => {
 			await waitFor(() => {
 				const messageBubble = screen.getByText('Dark mode message').closest('.rounded-lg');
 				expect(messageBubble).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
-				expect(messageBubble).toHaveStyle({ color: '#000' }); // Dark mode uses black text
+				expect(messageBubble).toHaveStyle({ color: mockTheme.colors.accentForeground });
 			});
 		});
 
@@ -1487,7 +1487,7 @@ describe('AgentSessionsModal', () => {
 
 			await waitFor(() => {
 				const messageBubble = screen.getByText('Light mode message').closest('.rounded-lg');
-				expect(messageBubble).toHaveStyle({ color: '#fff' }); // Light mode uses white text
+				expect(messageBubble).toHaveStyle({ color: lightTheme.colors.accentForeground });
 			});
 		});
 	});

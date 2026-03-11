@@ -1268,7 +1268,7 @@ export function ConversationScreen({
 								className="px-4 py-1.5 rounded text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1"
 								style={{
 									backgroundColor: theme.colors.error,
-									color: 'white',
+									color: theme.colors.errorForeground,
 									['--tw-ring-color' as any]: theme.colors.error,
 									['--tw-ring-offset-color' as any]: theme.colors.bgMain,
 								}}
@@ -1408,7 +1408,7 @@ export function ConversationScreen({
 							backgroundColor:
 								inputValue.trim() && !state.isConversationLoading
 									? theme.colors.accent
-									: theme.colors.border,
+									: theme.colors.bgActivity,
 							color:
 								inputValue.trim() && !state.isConversationLoading
 									? theme.colors.accentForeground

@@ -1229,7 +1229,9 @@ export const MainPanel = React.memo(
 											backgroundColor: isCurrentSessionStopping
 												? theme.colors.warning
 												: theme.colors.error,
-											color: isCurrentSessionStopping ? theme.colors.bgMain : 'white',
+											color: isCurrentSessionStopping
+												? theme.colors.warningForeground
+												: theme.colors.errorForeground,
 											pointerEvents: isCurrentSessionStopping ? 'none' : 'auto',
 										}}
 										title={
@@ -1619,7 +1621,7 @@ export const MainPanel = React.memo(
 											className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
 											style={{
 												backgroundColor: theme.colors.error,
-												color: '#ffffff',
+												color: theme.colors.errorForeground,
 											}}
 										>
 											View Details
@@ -1975,7 +1977,7 @@ export const MainPanel = React.memo(
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+							textShadow: `0 1px 2px ${theme.colors.shadow}`,
 						}}
 					>
 						{copyNotification}

@@ -30,6 +30,23 @@ export type ThemeCSSProperty =
 	| '--maestro-success'
 	| '--maestro-warning'
 	| '--maestro-error'
+	| '--maestro-info'
+	| '--maestro-success-foreground'
+	| '--maestro-warning-foreground'
+	| '--maestro-error-foreground'
+	| '--maestro-success-dim'
+	| '--maestro-warning-dim'
+	| '--maestro-error-dim'
+	| '--maestro-info-dim'
+	| '--maestro-diff-addition'
+	| '--maestro-diff-addition-bg'
+	| '--maestro-diff-deletion'
+	| '--maestro-diff-deletion-bg'
+	| '--maestro-overlay'
+	| '--maestro-overlay-heavy'
+	| '--maestro-hover-bg'
+	| '--maestro-active-bg'
+	| '--maestro-shadow'
 	| '--maestro-mode';
 
 /**
@@ -50,6 +67,23 @@ const colorToCSSProperty: Partial<Record<keyof ThemeColors, ThemeCSSProperty>> =
 	success: '--maestro-success',
 	warning: '--maestro-warning',
 	error: '--maestro-error',
+	info: '--maestro-info',
+	successForeground: '--maestro-success-foreground',
+	warningForeground: '--maestro-warning-foreground',
+	errorForeground: '--maestro-error-foreground',
+	successDim: '--maestro-success-dim',
+	warningDim: '--maestro-warning-dim',
+	errorDim: '--maestro-error-dim',
+	infoDim: '--maestro-info-dim',
+	diffAddition: '--maestro-diff-addition',
+	diffAdditionBg: '--maestro-diff-addition-bg',
+	diffDeletion: '--maestro-diff-deletion',
+	diffDeletionBg: '--maestro-diff-deletion-bg',
+	overlay: '--maestro-overlay',
+	overlayHeavy: '--maestro-overlay-heavy',
+	hoverBg: '--maestro-hover-bg',
+	activeBg: '--maestro-active-bg',
+	shadow: '--maestro-shadow',
 };
 
 /**
@@ -69,6 +103,23 @@ export const THEME_CSS_PROPERTIES: ThemeCSSProperty[] = [
 	'--maestro-success',
 	'--maestro-warning',
 	'--maestro-error',
+	'--maestro-info',
+	'--maestro-success-foreground',
+	'--maestro-warning-foreground',
+	'--maestro-error-foreground',
+	'--maestro-success-dim',
+	'--maestro-warning-dim',
+	'--maestro-error-dim',
+	'--maestro-info-dim',
+	'--maestro-diff-addition',
+	'--maestro-diff-addition-bg',
+	'--maestro-diff-deletion',
+	'--maestro-diff-deletion-bg',
+	'--maestro-overlay',
+	'--maestro-overlay-heavy',
+	'--maestro-hover-bg',
+	'--maestro-active-bg',
+	'--maestro-shadow',
 	'--maestro-mode',
 ];
 
@@ -94,7 +145,10 @@ export function generateCSSProperties(theme: Theme): Record<ThemeCSSProperty, st
 	const properties: Partial<Record<ThemeCSSProperty, string>> = {};
 
 	// Add color properties (skip ANSI fields which don't have CSS variable mappings)
-	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty) as [string, ThemeCSSProperty][]) {
+	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty) as [
+		string,
+		ThemeCSSProperty,
+	][]) {
 		const colorValue = theme.colors[colorKey as keyof ThemeColors];
 		if (colorValue !== undefined) {
 			properties[cssProperty] = colorValue;

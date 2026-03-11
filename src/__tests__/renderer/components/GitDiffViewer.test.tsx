@@ -138,6 +138,10 @@ const mockTheme = {
 		vibe: '#8855ff',
 		statusBar: '#0d0d1a',
 		scrollbarThumb: '#444466',
+		diffAddition: '#50fa7b',
+		diffAdditionBg: 'rgba(80, 250, 123, 0.15)',
+		diffDeletion: '#ff5555',
+		diffDeletionBg: 'rgba(255, 85, 85, 0.15)',
 	},
 };
 
@@ -830,7 +834,7 @@ describe('GitDiffViewer', () => {
 			const onClose = vi.fn();
 			mockParseGitDiff.mockReturnValue([createMockParsedFile()]);
 
-			render(
+			const { container } = render(
 				<GitDiffViewer
 					diffText="mock diff"
 					cwd="/test/project"
@@ -839,9 +843,15 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// The Plus icon from lucide-react should be present with green color
-			const greenSpans = document.querySelectorAll('.text-green-500');
-			expect(greenSpans.length).toBeGreaterThan(0);
+			// The additions span uses inline style with diffAddition theme color
+			const allSpans = Array.from(container.querySelectorAll('span'));
+			const additionSpan = allSpans.find(
+				(span) =>
+					span.style.color &&
+					(span.style.color === mockTheme.colors.diffAddition ||
+						span.style.color.includes('80, 250, 123'))
+			);
+			expect(additionSpan).toBeTruthy();
 		});
 
 		it('shows deletions in tab for text files with deletions', () => {
@@ -882,7 +892,7 @@ describe('GitDiffViewer', () => {
 				}),
 			]);
 
-			render(
+			const { container } = render(
 				<GitDiffViewer
 					diffText="mock diff"
 					cwd="/test/project"
@@ -891,9 +901,15 @@ describe('GitDiffViewer', () => {
 				/>
 			);
 
-			// There should be red minus sign for deletions
-			const redSpans = document.querySelectorAll('.text-red-500');
-			expect(redSpans.length).toBeGreaterThan(0);
+			// The deletions span uses inline style with diffDeletion theme color
+			const allSpans = Array.from(container.querySelectorAll('span'));
+			const deletionSpan = allSpans.find(
+				(span) =>
+					span.style.color &&
+					(span.style.color === mockTheme.colors.diffDeletion ||
+						span.style.color.includes('255, 85, 85'))
+			);
+			expect(deletionSpan).toBeTruthy();
 		});
 
 		it('shows additions and deletions in footer', () => {
