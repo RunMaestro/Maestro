@@ -148,6 +148,25 @@ describe('shared/formatters', () => {
 			expect(formatTokens(1000000000)).toBe('~1B');
 			expect(formatTokens(2500000000)).toBe('~3B'); // Rounds to nearest B
 		});
+
+		it('should accept optional locale parameter without breaking output', () => {
+			expect(formatTokens(0, 'en')).toBe('0');
+			expect(formatTokens(1000, 'en')).toBe('~1K');
+			expect(formatTokens(1500, 'en')).toBe('~2K');
+			expect(formatTokens(1000000, 'en')).toBe('~1M');
+		});
+
+		it('should produce locale-aware compact notation', () => {
+			// German uses '.' as thousands separator in some contexts
+			const deResult = formatTokens(1000000, 'de');
+			expect(deResult).toContain('~');
+			expect(deResult.length).toBeGreaterThan(1);
+
+			// Spanish compact notation
+			const esResult = formatTokens(1000, 'es');
+			expect(esResult).toContain('~');
+			expect(esResult.length).toBeGreaterThan(1);
+		});
 	});
 
 	// ==========================================================================
@@ -169,6 +188,23 @@ describe('shared/formatters', () => {
 		it('should format millions with M suffix and decimal', () => {
 			expect(formatTokensCompact(1000000)).toBe('1.0M');
 			expect(formatTokensCompact(2500000)).toBe('2.5M');
+		});
+
+		it('should accept optional locale parameter without breaking output', () => {
+			expect(formatTokensCompact(0, 'en')).toBe('0');
+			expect(formatTokensCompact(1000, 'en')).toBe('1.0K');
+			expect(formatTokensCompact(1500, 'en')).toBe('1.5K');
+			expect(formatTokensCompact(1000000, 'en')).toBe('1.0M');
+		});
+
+		it('should use locale-aware number formatting', () => {
+			// French uses comma as decimal separator
+			const frResult = formatTokensCompact(1500, 'fr');
+			expect(frResult).toMatch(/1[,.]5/); // locale may use comma or period
+
+			// German uses comma as decimal separator
+			const deResult = formatTokensCompact(2500000, 'de');
+			expect(deResult).toContain('2,5');
 		});
 	});
 

@@ -952,7 +952,8 @@ describe('ThinkingStatusPill', () => {
 		it('handles large token counts', () => {
 			const item = createThinkingItem({ currentCycleTokens: 999999 });
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText('1000.0K')).toBeInTheDocument();
+			// Intl compact notation correctly rounds 999,999 to 1.0M
+			expect(screen.getByText('1.0M')).toBeInTheDocument();
 		});
 
 		it('handles item with null tab (legacy session)', () => {

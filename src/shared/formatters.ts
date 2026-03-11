@@ -113,31 +113,43 @@ export function formatNumber(num: number): string {
 }
 
 /**
- * Format a token count with K/M/B suffix for compact display.
+ * Format a token count with locale-aware compact notation for display.
  * Uses approximate (~) prefix for larger numbers.
+ * Uses Intl.NumberFormat with compact notation for locale-appropriate suffixes
+ * (e.g., "~1K" in English, "~1 mil" in Spanish).
  *
  * @param tokens - The token count
+ * @param locale - Optional BCP 47 locale override (auto-detected from i18n if omitted)
  * @returns Formatted string (e.g., "500", "~1K", "~2M", "~1B")
  */
-export function formatTokens(tokens: number): string {
-	if (tokens >= 1_000_000_000) return `~${Math.round(tokens / 1_000_000_000)}B`;
-	if (tokens >= 1_000_000) return `~${Math.round(tokens / 1_000_000)}M`;
-	if (tokens >= 1_000) return `~${Math.round(tokens / 1_000)}K`;
-	return tokens.toString();
+export function formatTokens(tokens: number, locale?: string): string {
+	if (tokens < 1000) return tokens.toString();
+	const activeLocale = getActiveLocale(locale);
+	const formatted = new Intl.NumberFormat(activeLocale, {
+		notation: 'compact',
+		maximumFractionDigits: 0,
+	}).format(tokens);
+	return `~${formatted}`;
 }
 
 /**
  * Format a token count compactly without the approximate prefix.
  * Useful for precise token displays.
+ * Uses Intl.NumberFormat with compact notation for locale-aware formatting
+ * (e.g., "1.5K" in English, "1,5 mil" in Spanish).
  *
  * @param tokens - The token count
+ * @param locale - Optional BCP 47 locale override (auto-detected from i18n if omitted)
  * @returns Formatted string (e.g., "500", "1.5K", "2.3M", "5.8B")
  */
-export function formatTokensCompact(tokens: number): string {
-	if (tokens >= 1_000_000_000) return `${(tokens / 1_000_000_000).toFixed(1)}B`;
-	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-	return tokens.toString();
+export function formatTokensCompact(tokens: number, locale?: string): string {
+	if (tokens < 1000) return tokens.toString();
+	const activeLocale = getActiveLocale(locale);
+	return new Intl.NumberFormat(activeLocale, {
+		notation: 'compact',
+		minimumFractionDigits: 1,
+		maximumFractionDigits: 1,
+	}).format(tokens);
 }
 
 /**

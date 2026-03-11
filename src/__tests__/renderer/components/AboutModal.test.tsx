@@ -1108,7 +1108,8 @@ describe('AboutModal', () => {
 				}
 			});
 
-			expect(screen.getByText('1000.0M')).toBeInTheDocument();
+			// Intl compact notation correctly rounds 999,999,999 to 1.0B
+			expect(screen.getByText('1.0B')).toBeInTheDocument();
 		});
 
 		it('should handle very large cost', async () => {
