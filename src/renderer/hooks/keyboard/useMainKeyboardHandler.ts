@@ -312,6 +312,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				}
 				trackShortcut('toggleMode');
+			} else if (ctx.isShortcut(e, 'agentSwitcher')) {
+				e.preventDefault();
+				if (ctx.sessions.length > 0) {
+					ctx.setQuickActionInitialMode('agents');
+					ctx.setQuickActionOpen(true);
+					trackShortcut('agentSwitcher');
+				}
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
 				// In terminal mode, Cmd+K clears the active terminal instead of opening Quick Actions

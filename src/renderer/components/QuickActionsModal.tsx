@@ -30,7 +30,7 @@ interface QuickActionsModalProps {
 	groups: Group[];
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
 	shortcuts: Record<string, Shortcut>;
-	initialMode?: 'main' | 'move-to-group';
+	initialMode?: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
 	setRenameInstanceModalOpen: (open: boolean) => void;
@@ -226,7 +226,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 
 	const [search, setSearch] = useState('');
-	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
+	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
 	const [renamingSession, setRenamingSession] = useState(false);
 	const [renameValue, setRenameValue] = useState('');
 	const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
@@ -1421,7 +1421,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		{ id: 'create-new', label: '+ Create New Group', action: handleCreateGroup },
 	];
 
-	const actions = mode === 'main' ? mainActions : groupActions;
+	const agentActions: QuickAction[] = [...sessionActions, ...groupChatActions];
+
+	const actions = mode === 'agents' ? agentActions : mode === 'main' ? mainActions : groupActions;
 
 	// Filter actions - hide "Debug:" prefixed commands unless user explicitly types "debug"
 	const searchLower = search.toLowerCase();
@@ -1451,7 +1453,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			// Don't close modal if action switches modes
 			const switchesModes = selectedAction.id === 'moveToGroup' || selectedAction.id === 'back';
 			selectedAction.action();
-			if (!renamingSession && mode === 'main' && !switchesModes) {
+			if (!renamingSession && (mode === 'main' || mode === 'agents') && !switchesModes) {
 				setQuickActionOpen(false);
 			}
 		},
@@ -1521,7 +1523,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				ref={modalRef}
 				role="dialog"
 				aria-modal="true"
-				aria-label="Quick Actions"
+				aria-label={mode === 'agents' ? 'Switch Agent' : 'Quick Actions'}
 				tabIndex={-1}
 				className="w-[600px] rounded-xl shadow-2xl border overflow-hidden flex flex-col max-h-[550px] outline-none"
 				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
@@ -1549,7 +1551,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							placeholder={
 								mode === 'move-to-group'
 									? `Move ${activeSession?.name || 'session'} to...`
-									: 'Type a command or jump to agent...'
+									: mode === 'agents'
+										? 'Jump to agent...'
+										: 'Type a command or jump to agent...'
 							}
 							style={{ color: theme.colors.textMain }}
 							value={search}
@@ -1587,7 +1591,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 									onClick={() => {
 										const switchesModes = a.id === 'moveToGroup' || a.id === 'back';
 										a.action();
-										if (mode === 'main' && !switchesModes) setQuickActionOpen(false);
+										if ((mode === 'main' || mode === 'agents') && !switchesModes)
+											setQuickActionOpen(false);
 									}}
 									className={`w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10 ${i === selectedIndex ? 'bg-opacity-10' : ''}`}
 									style={{

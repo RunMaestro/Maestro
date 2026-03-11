@@ -1734,4 +1734,68 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Configure Maestro Cue: Test Session')).toBeInTheDocument();
 		});
 	});
+
+	describe('Agent switcher mode (Cmd+O)', () => {
+		it('shows agent-specific placeholder when initialMode is agents', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByPlaceholderText('Jump to agent...')).toBeInTheDocument();
+		});
+
+		it('shows Switch Agent aria-label when in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toHaveAttribute('aria-label', 'Switch Agent');
+		});
+
+		it('shows only agent jump actions in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			// Agent jump actions should be visible
+			expect(screen.getByText('Jump to: Agent Alpha')).toBeInTheDocument();
+			expect(screen.getByText('Jump to: Agent Beta')).toBeInTheDocument();
+
+			// Non-agent actions should NOT be present
+			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
+			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
+			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('filters agents by search text in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Jump to agent...');
+			fireEvent.change(input, { target: { value: 'alpha' } });
+
+			expect(screen.getByText('Jump to: Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Jump to: Agent Beta')).not.toBeInTheDocument();
+		});
+
+		it('closes modal and switches agent on selection in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+	});
 });

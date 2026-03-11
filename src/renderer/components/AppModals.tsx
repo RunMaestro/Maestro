@@ -488,9 +488,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 }: AppSessionModalsProps) {
 	// Determine if the rename modal is for a terminal tab or an AI tab
 	const terminalTabs = activeSession?.terminalTabs ?? [];
-	const renamingTerminalTab = renameTabId
-		? terminalTabs.find((t) => t.id === renameTabId)
-		: null;
+	const renamingTerminalTab = renameTabId ? terminalTabs.find((t) => t.id === renameTabId) : null;
 	const renamingTerminalTabIndex = renamingTerminalTab
 		? terminalTabs.findIndex((t) => t.id === renameTabId)
 		: -1;
@@ -797,7 +795,7 @@ export interface AppUtilityModalsProps {
 
 	// QuickActionsModal
 	quickActionOpen: boolean;
-	quickActionInitialMode: 'main' | 'move-to-group';
+	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
 	addNewSession: () => void;
@@ -1932,7 +1930,7 @@ export interface AppModalsProps {
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 
 	// --- AppUtilityModals props ---
-	quickActionInitialMode: 'main' | 'move-to-group';
+	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
 	addNewSession: () => void;

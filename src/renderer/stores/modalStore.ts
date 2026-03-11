@@ -63,7 +63,7 @@ export interface EditAgentModalData {
 
 /** Quick action modal data */
 export interface QuickActionModalData {
-	initialMode: 'main' | 'move-to-group';
+	initialMode: 'main' | 'move-to-group' | 'agents';
 }
 
 /** Confirmation modal data */
@@ -492,7 +492,7 @@ export function getModalActions() {
 		// Quick Actions Modal
 		setQuickActionOpen: (open: boolean) =>
 			open ? openModal('quickAction', { initialMode: 'main' }) : closeModal('quickAction'),
-		setQuickActionInitialMode: (mode: 'main' | 'move-to-group') =>
+		setQuickActionInitialMode: (mode: 'main' | 'move-to-group' | 'agents') =>
 			updateModalData('quickAction', { initialMode: mode }),
 
 		// Lightbox Modal
