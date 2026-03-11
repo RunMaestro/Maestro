@@ -5,6 +5,7 @@
  * Director's Notes configuration (provider selection, agent config, lookback period).
  */
 
+import { useTranslation } from 'react-i18next';
 import { Clapperboard, ChevronDown, Settings, Check } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
@@ -19,6 +20,7 @@ export interface EncoreTabProps {
 }
 
 export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
+	const { t } = useTranslation('settings');
 	const { encoreFeatures, setEncoreFeatures, directorNotesSettings, setDirectorNotesSettings } =
 		useSettings();
 
@@ -68,13 +70,10 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			{/* Encore Features Header */}
 			<div>
 				<h3 className="text-sm font-bold mb-2" style={{ color: theme.colors.textMain }}>
-					Encore Features
+					{t('encore.title')}
 				</h3>
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
-					Optional features that extend Maestro's capabilities. Enable the ones you want. Disabled
-					features are completely hidden from shortcuts, menus, and the command palette.
-					Contributors building new features should consider gating them here to keep the core
-					experience focused.
+					{t('encore.description')}
 				</p>
 			</div>
 
@@ -110,7 +109,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								className="text-sm font-bold flex items-center gap-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								Director's Notes
+								{t('encore.director_notes.title')}
 								<span
 									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
 									style={{
@@ -118,11 +117,11 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										color: theme.colors.warning,
 									}}
 								>
-									Beta
+									{t('encore.director_notes.badge_beta')}
 								</span>
 							</div>
 							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-								Unified history view and AI-generated synopsis across all sessions
+								{t('encore.director_notes.description')}
 							</div>
 						</div>
 					</div>
@@ -155,7 +154,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								className="block text-xs font-bold opacity-70 uppercase mb-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								Synopsis Provider
+								{t('encore.director_notes.provider_label')}
 							</div>
 
 							{ac.isDetecting ? (
@@ -168,13 +167,12 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										}}
 									/>
 									<span className="text-sm" style={{ color: theme.colors.textDim }}>
-										Detecting agents...
+										{t('encore.director_notes.detecting_agents')}
 									</span>
 								</div>
 							) : dnAvailableTiles.length === 0 ? (
 								<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
-									No agents available. Please install Claude Code, OpenCode, Codex, or Factory
-									Droid.
+									{t('encore.director_notes.no_agents')}
 								</div>
 							) : (
 								<div className="flex items-center gap-2">
@@ -188,14 +186,14 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 												borderColor: theme.colors.border,
 												color: theme.colors.textMain,
 											}}
-											aria-label="Select synopsis provider agent"
+											aria-label={t('encore.director_notes.provider_aria_label')}
 										>
 											{dnAvailableTiles.map((tile) => {
 												const isBeta = isBetaAgent(tile.id);
 												return (
 													<option key={tile.id} value={tile.id}>
 														{tile.name}
-														{isBeta ? ' (Beta)' : ''}
+														{isBeta ? ` ${t('encore.director_notes.beta_suffix')}` : ''}
 													</option>
 												);
 											})}
@@ -216,10 +214,10 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 												? `${theme.colors.accent}10`
 												: 'transparent',
 										}}
-										title="Customize provider settings"
+										title={t('encore.director_notes.customize_title')}
 									>
 										<Settings className="w-4 h-4" />
-										<span className="text-sm">Customize</span>
+										<span className="text-sm">{t('encore.director_notes.customize_button')}</span>
 										{ac.hasCustomization && (
 											<span
 												className="w-2 h-2 rounded-full"
@@ -240,13 +238,15 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								>
 									<div className="flex items-center justify-between mb-3">
 										<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-											{dnSelectedTile.name} Configuration
+											{t('encore.director_notes.configuration_header', {
+												name: dnSelectedTile.name,
+											})}
 										</span>
 										{ac.hasCustomization && (
 											<div className="flex items-center gap-1">
 												<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
 												<span className="text-xs" style={{ color: theme.colors.success }}>
-													Customized
+													{t('encore.director_notes.customized')}
 												</span>
 											</div>
 										)}
@@ -322,7 +322,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							)}
 
 							<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-								The AI agent used to generate synopsis summaries
+								{t('encore.director_notes.provider_help')}
 							</p>
 						</div>
 
@@ -332,7 +332,9 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								className="block text-xs font-bold mb-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								Default Lookback Period: {directorNotesSettings.defaultLookbackDays} days
+								{t('encore.director_notes.lookback_label', {
+									days: directorNotesSettings.defaultLookbackDays,
+								})}
 							</div>
 							<input
 								type="range"
@@ -351,15 +353,15 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								className="flex justify-between text-[10px] mt-1"
 								style={{ color: theme.colors.textDim }}
 							>
-								<span>1 day</span>
-								<span>7</span>
-								<span>14</span>
-								<span>30</span>
-								<span>60</span>
-								<span>90 days</span>
+								<span>{t('encore.director_notes.lookback_1_day')}</span>
+								<span>{t('encore.director_notes.lookback_7')}</span>
+								<span>{t('encore.director_notes.lookback_14')}</span>
+								<span>{t('encore.director_notes.lookback_30')}</span>
+								<span>{t('encore.director_notes.lookback_60')}</span>
+								<span>{t('encore.director_notes.lookback_90_days')}</span>
 							</div>
 							<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-								How far back to look when generating notes (can be adjusted per-report)
+								{t('encore.director_notes.lookback_help')}
 							</p>
 						</div>
 					</div>

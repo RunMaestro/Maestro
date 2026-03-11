@@ -40,6 +40,30 @@
 	},
 	"encore": {
 		"title": "Encore Features",
+		"description": "Optional features that extend Maestro's capabilities. Enable the ones you want. Disabled features are completely hidden from shortcuts, menus, and the command palette. Contributors building new features should consider gating them here to keep the core experience focused.",
+		"director_notes": {
+			"title": "Director's Notes",
+			"badge_beta": "Beta",
+			"description": "Unified history view and AI-generated synopsis across all sessions",
+			"provider_label": "Synopsis Provider",
+			"detecting_agents": "Detecting agents...",
+			"no_agents": "No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.",
+			"beta_suffix": "(Beta)",
+			"provider_aria_label": "Select synopsis provider agent",
+			"customize_title": "Customize provider settings",
+			"customize_button": "Customize",
+			"configuration_header": "{{name}} Configuration",
+			"customized": "Customized",
+			"provider_help": "The AI agent used to generate synopsis summaries",
+			"lookback_label": "Default Lookback Period: {{days}} days",
+			"lookback_1_day": "1 day",
+			"lookback_7": "7",
+			"lookback_14": "14",
+			"lookback_30": "30",
+			"lookback_60": "60",
+			"lookback_90_days": "90 days",
+			"lookback_help": "How far back to look when generating notes (can be adjusted per-report)"
+		},
 		"virtuosos_title": "Virtuosos"
 	}
 }
