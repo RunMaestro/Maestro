@@ -68,6 +68,10 @@ describe('Exit Listener', () => {
 				updateGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),
 				updateParticipant: vi.fn().mockResolvedValue(createMockGroupChat()),
 			},
+			groupChatLock: {
+				releaseChatLock: vi.fn(),
+				clearSynthesisInProgress: vi.fn(),
+			},
 			sessionRecovery: {
 				needsSessionRecovery: vi.fn().mockReturnValue(false),
 				initiateSessionRecovery: vi.fn().mockResolvedValue(true),

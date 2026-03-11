@@ -46,11 +46,13 @@ export interface IProcessManager {
 	write(sessionId: string, data: string): boolean;
 
 	kill(sessionId: string): boolean;
+
+	killByPrefix(prefix: string): number;
 }
 
 /**
  * In-memory store for active moderator sessions.
- * Maps groupChatId -> sessionId
+ * Maps groupChatId -> sessionIdPrefix
  */
 const activeModeratorSessions = new Map<string, string>();
 
@@ -225,10 +227,13 @@ export async function killModerator(
 	groupChatId: string,
 	processManager?: IProcessManager
 ): Promise<void> {
-	const sessionId = activeModeratorSessions.get(groupChatId);
+	const sessionIdPrefix = activeModeratorSessions.get(groupChatId);
 
-	if (sessionId && processManager) {
-		processManager.kill(sessionId);
+	if (sessionIdPrefix && processManager) {
+		// Kill by prefix because batch mode spawns processes with timestamp suffixes
+		// (e.g., "group-chat-{id}-moderator-1771743188276") while the active sessions
+		// map stores the prefix ("group-chat-{id}-moderator").
+		processManager.killByPrefix(sessionIdPrefix);
 	}
 
 	activeModeratorSessions.delete(groupChatId);
@@ -270,6 +275,27 @@ export function isModeratorActive(groupChatId: string): boolean {
  * Useful for cleanup during shutdown or testing.
  */
 export function clearAllModeratorSessions(): void {
+	activeModeratorSessions.clear();
+	sessionActivityTimestamps.clear();
+}
+
+/**
+ * Kills all active moderator processes and clears session tracking.
+ * Used during application shutdown to prevent zombie processes.
+ *
+ * @param processManager - The process manager for killing processes (optional)
+ */
+export function killAllModerators(processManager?: IProcessManager): void {
+	for (const [groupChatId, sessionIdPrefix] of activeModeratorSessions) {
+		if (processManager) {
+			// Kill by prefix because batch mode spawns processes with timestamp suffixes
+			// (e.g., "group-chat-{id}-moderator-1771743188276") while the active sessions
+			// map stores the prefix ("group-chat-{id}-moderator").
+			processManager.killByPrefix(sessionIdPrefix);
+		}
+		// Remove power block reason for each moderator
+		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+	}
 	activeModeratorSessions.clear();
 	sessionActivityTimestamps.clear();
 }

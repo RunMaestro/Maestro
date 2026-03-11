@@ -77,6 +77,16 @@ vi.mock('../../../../main/agent-detector', () => ({
 	AgentDetector: vi.fn(),
 }));
 
+// Mock validation to pass through (we're testing handler logic, not validation)
+vi.mock('../../../../main/group-chat/validation', () => ({
+	validateGroupChatId: vi.fn((id: unknown) => String(id)),
+	validateParticipantName: vi.fn((name: unknown) => String(name).trim()),
+	validateMessageContent: vi.fn((content: unknown) => String(content)),
+	validateBase64Image: vi.fn((data: unknown) => String(data)),
+	validateCustomArgs: vi.fn((args: unknown) => (args == null ? undefined : String(args))),
+	sanitizeCustomEnvVars: vi.fn((vars: unknown) => (vars == null ? undefined : vars)),
+}));
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -101,6 +111,7 @@ describe('groupChat IPC handlers', () => {
 		spawn: ReturnType<typeof vi.fn>;
 		write: ReturnType<typeof vi.fn>;
 		kill: ReturnType<typeof vi.fn>;
+		killByPrefix: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: object;
 	let mockDeps: GroupChatHandlerDependencies;
@@ -128,6 +139,7 @@ describe('groupChat IPC handlers', () => {
 			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
+			killByPrefix: vi.fn().mockReturnValue(0),
 		};
 
 		// Setup mock agent detector
@@ -172,6 +184,7 @@ describe('groupChat IPC handlers', () => {
 				'groupChat:getModeratorSessionId',
 				// Participant handlers
 				'groupChat:addParticipant',
+				'groupChat:addFreshParticipant',
 				'groupChat:sendToParticipant',
 				'groupChat:removeParticipant',
 				'groupChat:resetParticipantContext',

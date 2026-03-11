@@ -229,6 +229,53 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- skipBatchForReadOnly --
+	it('skips all batchModeArgs when readOnlyMode is true and agent has readOnlyArgs', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['exec'],
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git'],
+			readOnlyArgs: ['--sandbox', 'read-only'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'hello',
+			readOnlyMode: true,
+		});
+		// batchModePrefix should still be added
+		expect(result).toContain('exec');
+		expect(result).toContain('--sandbox');
+		// All batchModeArgs should be skipped in read-only mode
+		expect(result).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+		expect(result).not.toContain('--skip-git');
+	});
+
+	it('skips batchModeArgs when readOnlyMode is true even without readOnlyArgs', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['--skip-git'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: 'hello',
+			readOnlyMode: true,
+		});
+		expect(result).not.toContain('--skip-git');
+	});
+
+	it('includes batchModeArgs when readOnlyMode is false even with readOnlyArgs', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['--dangerously-bypass', '--skip-git'],
+			readOnlyArgs: ['--sandbox', 'read-only'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: 'hello',
+			readOnlyMode: false,
+		});
+		expect(result).toContain('--dangerously-bypass');
+		expect(result).toContain('--skip-git');
+		expect(result).not.toContain('--sandbox');
+	});
+
 	// -- combined --
 	it('combines multiple options together', () => {
 		const agent = makeAgent({
@@ -242,6 +289,7 @@ describe('buildAgentArgs', () => {
 			resumeArgs: (sid: string) => ['--resume', sid],
 		});
 
+		// When readOnlyMode is true, all batchModeArgs are skipped
 		const result = buildAgentArgs(agent, {
 			baseArgs: ['--print'],
 			prompt: 'do stuff',

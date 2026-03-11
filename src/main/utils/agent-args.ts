@@ -56,14 +56,11 @@ export function buildAgentArgs(
 		finalArgs = [...agent.batchModePrefix, ...finalArgs];
 	}
 
-	if (agent.batchModeArgs && options.prompt) {
-		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
-		// when readOnlyMode is active. Batch mode args grant write/approval permissions
-		// that conflict with read-only intent, regardless of whether the agent has
-		// CLI-enforced read-only mode or prompt-only enforcement.
-		if (!options.readOnlyMode) {
-			finalArgs = [...finalArgs, ...agent.batchModeArgs];
-		}
+	// When readOnlyMode is active, skip all batchModeArgs since they grant write
+	// permissions (e.g., --dangerously-bypass-approvals-and-sandbox, -y) that conflict
+	// with read-only intent. The agent's readOnlyArgs (if any) replace them.
+	if (agent.batchModeArgs && options.prompt && !options.readOnlyMode) {
+		finalArgs = [...finalArgs, ...agent.batchModeArgs];
 	}
 
 	if (agent.jsonOutputArgs && !finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))) {

@@ -17,6 +17,16 @@ import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandle
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 
+// Input validation
+import {
+	validateGroupChatId,
+	validateParticipantName,
+	validateMessageContent,
+	validateBase64Image,
+	validateCustomArgs,
+	sanitizeCustomEnvVars,
+} from '../../group-chat/validation';
+
 // Group chat storage imports
 import {
 	createGroupChat,
@@ -57,6 +67,7 @@ export type { _IProcessManager as IProcessManager };
 // Group chat agent imports
 import {
 	addParticipant,
+	addFreshParticipant,
 	sendToParticipant,
 	removeParticipant,
 	clearAllParticipantSessions,
@@ -64,6 +75,9 @@ import {
 
 // Group chat router imports
 import { routeUserMessage } from '../../group-chat/group-chat-router';
+
+// Group chat lock imports
+import { isChatLocked } from '../../group-chat/group-chat-lock';
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
@@ -129,10 +143,16 @@ interface GenericProcessManager {
 		prompt?: string;
 		customEnvVars?: Record<string, string>;
 		contextWindow?: number;
+		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
+		shell?: string;
+		runInShell?: boolean;
+		sendPromptViaStdin?: boolean;
+		sendPromptViaStdinRaw?: boolean;
 	}): { pid: number; success: boolean };
 	write(sessionId: string, data: string): boolean;
 	kill(sessionId: string): boolean;
+	killByPrefix(prefix: string): number;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
 }
@@ -177,6 +197,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					customEnvVars?: Record<string, string>;
 				}
 			): Promise<GroupChat> => {
+				validateParticipantName(name);
+				validateCustomArgs(moderatorConfig?.customArgs);
+				sanitizeCustomEnvVars(moderatorConfig?.customEnvVars);
 				logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, {
 					moderatorAgentId,
 					hasConfig: !!moderatorConfig,
@@ -218,6 +241,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:load',
 		withIpcErrorLogging(handlerOpts('load'), async (id: string): Promise<GroupChat | null> => {
+			id = validateGroupChatId(id);
 			logger.debug(`Loading group chat: ${id}`, LOG_CONTEXT);
 			return loadGroupChat(id);
 		})
@@ -227,7 +251,18 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:delete',
 		withIpcErrorLogging(handlerOpts('delete'), async (id: string): Promise<boolean> => {
+			id = validateGroupChatId(id);
 			logger.info(`Deleting group chat: ${id}`, LOG_CONTEXT);
+
+			// Check if a concurrent operation is in progress
+			const lockState = isChatLocked(id);
+			if (lockState.locked) {
+				throw new Error(
+					'Cannot delete group chat while ' +
+						lockState.operation +
+						' is in progress. Try again after the operation completes.'
+				);
+			}
 
 			// Kill moderator and all participants first
 			const processManager = getProcessManager();
@@ -269,6 +304,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('rename'),
 			async (id: string, name: string): Promise<GroupChat> => {
+				id = validateGroupChatId(id);
+				validateParticipantName(name);
 				logger.info(`Renaming group chat ${id} to: ${name}`, LOG_CONTEXT);
 				const updated = await updateGroupChat(id, { name });
 				return updated;
@@ -293,6 +330,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					};
 				}
 			): Promise<GroupChat> => {
+				id = validateGroupChatId(id);
+				validateCustomArgs(updates.moderatorConfig?.customArgs);
+				sanitizeCustomEnvVars(updates.moderatorConfig?.customEnvVars);
 				logger.info(`Updating group chat ${id}`, LOG_CONTEXT, updates);
 
 				const chat = await loadGroupChat(id);
@@ -306,6 +346,14 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 
 				// Kill existing moderator if agent is changing
 				if (moderatorChanged) {
+					const lockState = isChatLocked(id);
+					if (lockState.locked) {
+						throw new Error(
+							'Cannot change moderator while ' +
+								lockState.operation +
+								' is in progress. Try again after the operation completes.'
+						);
+					}
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 				}
@@ -347,6 +395,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('appendMessage'),
 			async (id: string, from: string, content: string): Promise<void> => {
+				id = validateGroupChatId(id);
+				validateParticipantName(from);
+				validateMessageContent(content);
 				const chat = await loadGroupChat(id);
 				if (!chat) {
 					throw new Error(`Group chat not found: ${id}`);
@@ -363,6 +414,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('getMessages'),
 			async (id: string): Promise<GroupChatMessage[]> => {
+				id = validateGroupChatId(id);
 				const chat = await loadGroupChat(id);
 				if (!chat) {
 					throw new Error(`Group chat not found: ${id}`);
@@ -401,6 +453,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('saveImage'),
 			async (id: string, imageData: string, filename: string): Promise<string> => {
+				id = validateGroupChatId(id);
+				validateBase64Image(imageData);
 				const chat = await loadGroupChat(id);
 				if (!chat) {
 					throw new Error(`Group chat not found: ${id}`);
@@ -419,6 +473,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:startModerator',
 		withIpcErrorLogging(handlerOpts('startModerator'), async (id: string): Promise<string> => {
+			id = validateGroupChatId(id);
 			const chat = await loadGroupChat(id);
 			if (!chat) {
 				throw new Error(`Group chat not found: ${id}`);
@@ -441,33 +496,22 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		'groupChat:sendToModerator',
 		withIpcErrorLogging(
 			handlerOpts('sendToModerator'),
+			// TODO: Image embedding in moderator prompts not yet implemented — images saved separately via groupChat:saveImage
 			async (id: string, message: string, images?: string[], readOnly?: boolean): Promise<void> => {
-				console.log(`[GroupChat:Debug] ========== USER MESSAGE RECEIVED ==========`);
-				console.log(`[GroupChat:Debug] Group Chat ID: ${id}`);
-				console.log(
-					`[GroupChat:Debug] Message: "${message.substring(0, 200)}${message.length > 200 ? '...' : ''}"`
-				);
-				console.log(`[GroupChat:Debug] Read-only: ${readOnly ?? false}`);
-				console.log(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
+				id = validateGroupChatId(id);
+				validateMessageContent(message);
 
 				const processManager = getProcessManager();
+				if (!processManager) {
+					throw new Error('Process manager not initialized');
+				}
 				const agentDetector = getAgentDetector();
-
-				console.log(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
-				console.log(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
 
 				// Route through the user message router which handles logging and forwarding
-				await routeUserMessage(
-					id,
-					message,
-					processManager ?? undefined,
-					agentDetector ?? undefined,
-					readOnly,
-					images
-				);
-
-				console.log(`[GroupChat:Debug] User message routed to moderator`);
-				console.log(`[GroupChat:Debug] ===========================================`);
+				await routeUserMessage(id, message, processManager, agentDetector, readOnly, images);
 
 				logger.debug(`Sent message to moderator in ${id}`, LOG_CONTEXT, {
 					messageLength: message.length,
@@ -482,6 +526,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:stopModerator',
 		withIpcErrorLogging(handlerOpts('stopModerator'), async (id: string): Promise<void> => {
+			id = validateGroupChatId(id);
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			logger.info(`Stopped moderator for group chat: ${id}`, LOG_CONTEXT);
@@ -494,6 +539,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('getModeratorSessionId'),
 			async (id: string): Promise<string | null> => {
+				id = validateGroupChatId(id);
 				return getModeratorSessionId(id) ?? null;
 			}
 		)
@@ -512,12 +558,17 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				agentId: string,
 				cwd?: string
 			): Promise<GroupChatParticipant> => {
+				id = validateGroupChatId(id);
+				validateParticipantName(name);
 				const processManager = getProcessManager();
 				if (!processManager) {
 					throw new Error('Process manager not initialized');
 				}
 
 				const agentDetector = getAgentDetector();
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
 				const customEnvVars = getCustomEnvVars?.(agentId);
 				const agentConfigValues = getAgentConfig?.(agentId) || {};
 
@@ -528,11 +579,51 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					agentId,
 					processManager,
 					cwd || os.homedir(),
-					agentDetector ?? undefined,
+					agentDetector,
 					agentConfigValues,
 					customEnvVars
 				);
 				logger.info(`Added participant: ${name}`, LOG_CONTEXT);
+				return participant;
+			}
+		)
+	);
+
+	// Add a fresh participant (by agent type, no session overrides)
+	ipcMain.handle(
+		'groupChat:addFreshParticipant',
+		withIpcErrorLogging(
+			handlerOpts('addFreshParticipant'),
+			async (
+				id: string,
+				name: string,
+				agentId: string,
+				cwd?: string
+			): Promise<GroupChatParticipant> => {
+				id = validateGroupChatId(id);
+				validateParticipantName(name);
+				const processManager = getProcessManager();
+				if (!processManager) {
+					throw new Error('Process manager not initialized');
+				}
+
+				const agentDetector = getAgentDetector();
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
+				const agentConfigValues = getAgentConfig?.(agentId) || {};
+
+				logger.info(`Adding fresh participant ${name} (${agentId}) to ${id}`, LOG_CONTEXT);
+				const participant = await addFreshParticipant(
+					id,
+					name,
+					agentId,
+					processManager,
+					cwd || os.homedir(),
+					agentDetector,
+					agentConfigValues
+				);
+				logger.info(`Added fresh participant: ${name}`, LOG_CONTEXT);
 				return participant;
 			}
 		)
@@ -544,8 +635,14 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('sendToParticipant'),
 			async (id: string, name: string, message: string, images?: string[]): Promise<void> => {
+				id = validateGroupChatId(id);
+				validateParticipantName(name);
+				validateMessageContent(message);
 				const processManager = getProcessManager();
-				await sendToParticipant(id, name, message, processManager ?? undefined);
+				if (!processManager) {
+					throw new Error('Process manager not initialized');
+				}
+				await sendToParticipant(id, name, message, processManager);
 
 				logger.debug(`Sent message to participant ${name} in ${id}`, LOG_CONTEXT, {
 					messageLength: message.length,
@@ -561,6 +658,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(
 			handlerOpts('removeParticipant'),
 			async (id: string, name: string): Promise<void> => {
+				id = validateGroupChatId(id);
 				const processManager = getProcessManager();
 				await removeParticipant(id, name, processManager ?? undefined);
 				logger.info(`Removed participant ${name} from ${id}`, LOG_CONTEXT);
@@ -578,6 +676,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				participantName: string,
 				cwd?: string
 			): Promise<{ newAgentSessionId: string }> => {
+				groupChatId = validateGroupChatId(groupChatId);
 				logger.info(
 					`Resetting context for participant ${participantName} in ${groupChatId}`,
 					LOG_CONTEXT
@@ -681,6 +780,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		withIpcErrorLogging(
 			handlerOpts('getHistory'),
 			async (id: string): Promise<GroupChatHistoryEntry[]> => {
+				id = validateGroupChatId(id);
 				logger.debug(`Getting history for group chat: ${id}`, LOG_CONTEXT);
 				const entries = await getGroupChatHistory(id);
 				logger.debug(`Retrieved ${entries.length} history entries for ${id}`, LOG_CONTEXT);
@@ -698,6 +798,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 				id: string,
 				entry: Omit<GroupChatHistoryEntry, 'id'>
 			): Promise<GroupChatHistoryEntry> => {
+				id = validateGroupChatId(id);
 				logger.debug(`Adding history entry to ${id}`, LOG_CONTEXT, {
 					type: entry.type,
 					participant: entry.participantName,
@@ -716,6 +817,8 @@ Respond with ONLY the summary text, no additional commentary.`;
 		withIpcErrorLogging(
 			handlerOpts('deleteHistoryEntry'),
 			async (groupChatId: string, entryId: string): Promise<boolean> => {
+				groupChatId = validateGroupChatId(groupChatId);
+				validateGroupChatId(entryId);
 				logger.debug(`Deleting history entry ${entryId} from ${groupChatId}`, LOG_CONTEXT);
 				return deleteGroupChatHistoryEntry(groupChatId, entryId);
 			}
@@ -726,6 +829,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	ipcMain.handle(
 		'groupChat:clearHistory',
 		withIpcErrorLogging(handlerOpts('clearHistory'), async (id: string): Promise<void> => {
+			id = validateGroupChatId(id);
 			logger.info(`Clearing history for group chat: ${id}`, LOG_CONTEXT);
 			await clearGroupChatHistory(id);
 		})
@@ -737,6 +841,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		withIpcErrorLogging(
 			handlerOpts('getHistoryFilePath'),
 			async (id: string): Promise<string | null> => {
+				id = validateGroupChatId(id);
 				return getGroupChatHistoryFilePath(id);
 			}
 		)
@@ -748,6 +853,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		withIpcErrorLogging(
 			handlerOpts('getImages'),
 			async (id: string): Promise<Record<string, string>> => {
+				id = validateGroupChatId(id);
 				const chat = await loadGroupChat(id);
 				if (!chat) {
 					throw new Error(`Group chat not found: ${id}`);
@@ -863,9 +969,6 @@ Respond with ONLY the summary text, no additional commentary.`;
 		participantName: string,
 		state: ParticipantState
 	): void => {
-		console.log(
-			`[GroupChat:IPC] emitParticipantState: chatId=${groupChatId}, participant=${participantName}, state=${state}`
-		);
 		const mainWindow = getMainWindow();
 		if (isWebContentsAvailable(mainWindow)) {
 			mainWindow.webContents.send(
@@ -874,11 +977,11 @@ Respond with ONLY the summary text, no additional commentary.`;
 				participantName,
 				state
 			);
-			console.log(`[GroupChat:IPC] Sent 'groupChat:participantState' event`);
 		} else {
-			console.warn(
-				`[GroupChat:IPC] WARNING: mainWindow not available, cannot send participant state`
-			);
+			logger.warn('mainWindow not available, cannot send participant state', LOG_CONTEXT, {
+				groupChatId,
+				participantName,
+			});
 		}
 	};
 

@@ -316,6 +316,8 @@ function MaestroConsoleInner() {
 		showDeleteGroupChatModal,
 		showRenameGroupChatModal,
 		showEditGroupChatModal,
+		showGroupChatInfo: _showGroupChatInfo,
+		showAddGroupChatParticipantModal,
 		// Git Diff Viewer
 		gitDiffPreview,
 		setGitDiffPreview,
@@ -866,6 +868,10 @@ function MaestroConsoleInner() {
 		handleRenameGroupChatFromModal,
 		handleCloseEditGroupChatModal,
 		handleCloseGroupChatInfo,
+		handleOpenAddParticipantModal,
+		handleCloseAddParticipantModal,
+		handleAddExistingParticipant,
+		handleAddFreshParticipant,
 	} = useGroupChatHandlers();
 
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
@@ -2820,6 +2826,10 @@ function MaestroConsoleInner() {
 					groupChatMessages={groupChatMessages}
 					onCloseGroupChatInfo={handleCloseGroupChatInfo}
 					onOpenModeratorSession={handleOpenModeratorSession}
+					showAddParticipantModal={showAddGroupChatParticipantModal}
+					onCloseAddParticipantModal={handleCloseAddParticipantModal}
+					onAddExistingParticipant={handleAddExistingParticipant}
+					onAddFreshParticipant={handleAddFreshParticipant}
 					// AppAgentModals props
 					onCloseLeaderboardRegistration={handleCloseLeaderboardRegistration}
 					leaderboardRegistration={leaderboardRegistration}
@@ -3164,7 +3174,6 @@ function MaestroConsoleInner() {
 									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
 									messages={groupChatMessages}
 									state={groupChatState}
-									groups={groups}
 									totalCost={(() => {
 										const chat = groupChats.find((c) => c.id === activeGroupChatId);
 										const participantsCost = (chat?.participants || []).reduce(
@@ -3263,6 +3272,9 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								onAddParticipant={() =>
+									activeGroupChatId && handleOpenAddParticipantModal(activeGroupChatId)
+								}
 							/>
 						</>
 					)}

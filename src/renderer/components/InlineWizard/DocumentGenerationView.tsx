@@ -65,7 +65,8 @@ export interface DocumentGenerationViewProps {
 /**
  * Document selector dropdown for switching between generated documents
  */
-function DocumentSelector({
+// @ts-expect-error Unused component kept for future use
+function _DocumentSelector({
 	documents,
 	selectedIndex,
 	onSelect,
@@ -313,7 +314,8 @@ function MarkdownImage({
 /**
  * Document editor component with edit/preview modes
  */
-function DocumentEditor({
+// @ts-expect-error Unused component kept for future use
+function _DocumentEditor({
 	content,
 	onContentChange,
 	mode,

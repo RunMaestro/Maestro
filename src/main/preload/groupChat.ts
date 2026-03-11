@@ -115,6 +115,9 @@ export function createGroupChatApi() {
 		addParticipant: (id: string, name: string, agentId: string, cwd?: string) =>
 			ipcRenderer.invoke('groupChat:addParticipant', id, name, agentId, cwd),
 
+		addFreshParticipant: (id: string, name: string, agentId: string, cwd?: string) =>
+			ipcRenderer.invoke('groupChat:addFreshParticipant', id, name, agentId, cwd),
+
 		sendToParticipant: (id: string, name: string, message: string, images?: string[]) =>
 			ipcRenderer.invoke('groupChat:sendToParticipant', id, name, message, images),
 

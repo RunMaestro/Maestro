@@ -30,6 +30,7 @@ export function setupExitListener(
 		| 'groupChatEmitters'
 		| 'groupChatRouter'
 		| 'groupChatStorage'
+		| 'groupChatLock'
 		| 'sessionRecovery'
 		| 'debugLog'
 		| 'logger'
@@ -49,6 +50,7 @@ export function setupExitListener(
 		groupChatEmitters,
 		groupChatRouter,
 		groupChatStorage,
+		groupChatLock,
 		sessionRecovery,
 		debugLog,
 		logger,
@@ -118,6 +120,38 @@ export function setupExitListener(
 						debugLog('GroupChat:Debug', ` Chat loaded for parsing: ${chat?.name || 'null'}`);
 						const agentType = chat?.moderatorAgentId;
 						debugLog('GroupChat:Debug', ` Agent type for parsing: ${agentType}`);
+
+						// Check for session_not_found error (resume failure)
+						// If the moderator's resumed session was deleted/expired, clear the
+						// stored session ID so the next turn uses a full prompt
+						if (
+							chat?.moderatorAgentSessionId &&
+							sessionRecovery.needsSessionRecovery(bufferedOutput, agentType)
+						) {
+							debugLog(
+								'GroupChat:Debug',
+								` Moderator session_not_found detected - clearing stored session ID for fallback`
+							);
+							logger.info(
+								'[GroupChat] Moderator session expired, clearing for fallback to full prompt',
+								'ProcessListener',
+								{ groupChatId }
+							);
+							await groupChatStorage.updateGroupChat(groupChatId, {
+								moderatorAgentSessionId: undefined,
+							});
+							// Notify UI about the session recovery
+							groupChatEmitters.emitMessage?.(groupChatId, {
+								timestamp: new Date().toISOString(),
+								from: 'system',
+								content: 'Moderator session expired. Please resend your message to continue.',
+							});
+							// Release lock and reset state
+							groupChatLock.releaseChatLock(groupChatId);
+							groupChatLock.clearSynthesisInProgress(groupChatId);
+							return;
+						}
+
 						const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput, agentType);
 						debugLog('GroupChat:Debug', ` Parsed text length: ${parsedText.length}`);
 						debugLog(
@@ -143,6 +177,15 @@ export function setupExitListener(
 									ad ?? undefined,
 									readOnly
 								)
+								.then(() => {
+									// After routing, check if this was a final response (no new pending participants)
+									const pending = groupChatRouter.getPendingParticipants(groupChatId);
+									if (!pending || pending.size === 0) {
+										groupChatLock.releaseChatLock(groupChatId);
+									}
+									// Clear synthesis flag (no-op if synthesis wasn't in progress)
+									groupChatLock.clearSynthesisInProgress(groupChatId);
+								})
 								.catch((err) => {
 									debugLog('GroupChat:Debug', ` ERROR routing moderator response:`, err);
 									logger.error(
@@ -150,6 +193,9 @@ export function setupExitListener(
 										'ProcessListener',
 										{ error: String(err) }
 									);
+									// Release lock on error - conversation round failed
+									groupChatLock.releaseChatLock(groupChatId);
+									groupChatLock.clearSynthesisInProgress(groupChatId);
 								});
 						} else {
 							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty!`);
@@ -158,6 +204,9 @@ export function setupExitListener(
 								'ProcessListener',
 								{ groupChatId, bufferedLength: bufferedOutput.length }
 							);
+							// Release lock — empty response means conversation round is over
+							groupChatLock.releaseChatLock(groupChatId);
+							groupChatLock.clearSynthesisInProgress(groupChatId);
 						}
 					} catch (err) {
 						debugLog('GroupChat:Debug', ` ERROR loading chat after retry:`, err);
@@ -174,8 +223,9 @@ export function setupExitListener(
 								parsedTextLength: parsedTextForLog.length,
 							}
 						);
-						// Do NOT attempt to route the response if chat load still fails after retry
-						// The failure indicates a persistent issue that should be investigated.
+						// Release lock — chat load failure means we can't continue the round
+						groupChatLock.releaseChatLock(groupChatId);
+						groupChatLock.clearSynthesisInProgress(groupChatId);
 					}
 				})().finally(() => {
 					outputBuffer.clearGroupChatBuffer(sessionId);
@@ -187,6 +237,10 @@ export function setupExitListener(
 					groupChatId,
 					sessionId,
 				});
+				// Release lock when moderator exits without producing output (e.g., agent error/crash)
+				// Without this, the chat stays locked and becomes undeletable
+				groupChatLock.releaseChatLock(groupChatId);
+				groupChatLock.clearSynthesisInProgress(groupChatId);
 			}
 			groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 			debugLog('GroupChat:Debug', ` Emitted state change: idle`);
