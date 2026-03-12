@@ -385,8 +385,10 @@ async function spawnJsonLineAgent(
 
 		// In read-only mode, filter out YOLO/bypass args from batchModeArgs
 		// (they override read-only flags). In normal mode, apply all batchModeArgs.
+		// Skip filtering for agents without CLI-level read-only enforcement
+		// (e.g., Gemini CLI needs -y to avoid interactive prompts that hang with closed stdin).
 		if (def?.batchModeArgs) {
-			if (readOnlyMode && def.yoloModeArgs?.length) {
+			if (readOnlyMode && def.readOnlyCliEnforced !== false && def.yoloModeArgs?.length) {
 				const yoloSet = new Set(def.yoloModeArgs);
 				args.push(...def.batchModeArgs.filter((a) => !yoloSet.has(a)));
 			} else {
