@@ -14,7 +14,7 @@ interface Session {
 	id: string;
 	name: string;
 	groupId?: string; // Agent grouping
-	toolType: ToolType; // 'claude-code' | 'codex' | 'opencode' | 'terminal'
+	toolType: ToolType; // 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | 'terminal' | etc.
 	state: SessionState; // 'idle' | 'busy' | 'error' | 'connecting'
 	inputMode: 'ai' | 'terminal'; // Which process receives input
 	bookmarked?: boolean; // Pinned to top

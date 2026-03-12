@@ -503,8 +503,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+0 (reset)
-			// These take priority over tab shortcuts (Cmd+0 was previously goToLastTab)
+			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+Shift+0 (reset)
 			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				if (e.key === '=' || e.key === '+') {
 					e.preventDefault();
@@ -522,13 +521,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut('fontSizeDecrease');
 					return;
 				}
-				if (e.key === '0') {
-					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
-					trackShortcut('fontSizeReset');
-					return;
-				}
+			}
+			// Cmd+Shift+0: Reset font size (Cmd+0 is reserved for "Go to Last Tab")
+			if (ctx.isShortcut(e, 'fontSizeReset')) {
+				e.preventDefault();
+				const { fontSize, setFontSize } = useSettingsStore.getState();
+				if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
+				trackShortcut('fontSizeReset');
+				return;
 			}
 
 			// Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)
@@ -569,10 +569,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						// File tab was already closed by handleCloseCurrentTab
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'ai' && closeResult.tabId) {
-						// AI tab - need to handle wizard confirmation
+						// AI tab - need to handle wizard, draft, or regular confirmation
 						if (closeResult.isWizardTab) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'Close this wizard? Your progress will be lost and cannot be restored.',
+								onConfirm: () => {
+									ctx.performTabClose(closeResult.tabId);
+									trackShortcut('closeTab');
+								},
+							});
+						} else if (closeResult.hasDraft) {
+							useModalStore.getState().openModal('confirm', {
+								message: 'This tab has an unsent draft. Are you sure you want to close it?',
 								onConfirm: () => {
 									ctx.performTabClose(closeResult.tabId);
 									trackShortcut('closeTab');

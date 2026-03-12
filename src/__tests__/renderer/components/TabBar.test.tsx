@@ -1713,6 +1713,37 @@ describe('TabBar', () => {
 
 			rafSpy.mockRestore();
 		});
+
+		it('renders sticky elements with refs for scroll-into-view calculations', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2' }),
+			];
+
+			const { container } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tabBarContainer = container.querySelector('.overflow-x-auto') as HTMLElement;
+			expect(tabBarContainer).toBeTruthy();
+
+			// Verify sticky left element (search/filter buttons) exists
+			const stickyLeft = tabBarContainer.querySelector('.sticky.left-0');
+			expect(stickyLeft).toBeTruthy();
+
+			// Verify the new tab button container exists (sticky right when overflowing)
+			// It contains the "+" button
+			const plusButton = tabBarContainer.querySelector('button[title*="New tab"]');
+			expect(plusButton).toBeTruthy();
+			expect(plusButton?.parentElement).toBeTruthy();
+		});
 	});
 
 	describe('styling', () => {

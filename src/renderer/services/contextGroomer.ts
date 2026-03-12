@@ -13,6 +13,7 @@
  */
 
 import type { ToolType } from '../../shared/types';
+import { getAgentDisplayName as getDisplayName } from '../../shared/agentMetadata';
 import type { ContextSource, MergeRequest, GroomingProgress } from '../types/contextMerge';
 import type { LogEntry } from '../types';
 import {
@@ -180,14 +181,7 @@ export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
  * Get the human-readable name for an agent type.
  */
 export function getAgentDisplayName(agentType: ToolType): string {
-	const names: Partial<Record<ToolType, string>> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		codex: 'OpenAI Codex',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return names[agentType] || agentType;
+	return getDisplayName(agentType);
 }
 
 /**

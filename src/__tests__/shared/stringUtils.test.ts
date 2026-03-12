@@ -117,6 +117,11 @@ describe('stripAnsiCodes', () => {
 		expect(stripAnsiCodes('\x1b[mText')).toBe('Text');
 	});
 
+	it('should strip DEC private mode and keypad control sequences', () => {
+		const input = '\x1b[?1h\x1b=\x1b[?2004hRemote ready\x1b[?2004l\x1b>';
+		expect(stripAnsiCodes(input)).toBe('Remote ready');
+	});
+
 	it('should preserve unicode characters', () => {
 		expect(stripAnsiCodes('\x1b[32m🚀 Rocket\x1b[0m')).toBe('🚀 Rocket');
 		expect(stripAnsiCodes('\x1b[31m日本語\x1b[0m')).toBe('日本語');

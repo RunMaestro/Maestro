@@ -10,6 +10,7 @@ import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { isBetaAgent, getAgentDisplayName } from '../../shared/agentMetadata';
 
 // Maximum character length for nudge message
 const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -808,9 +809,7 @@ export function NewInstanceModal({
 													)}
 													<span className="font-medium">{agent.name}</span>
 													{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
-													{(agent.id === 'codex' ||
-														agent.id === 'opencode' ||
-														agent.id === 'factory-droid') && (
+													{isBetaAgent(agent.id) && (
 														<span
 															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
 															style={{
@@ -1548,14 +1547,7 @@ export function EditAgentModal({
 
 	if (!isOpen || !session) return null;
 
-	// Get agent name for display
-	const agentNameMap: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		codex: 'Codex',
-		opencode: 'OpenCode',
-		'factory-droid': 'Factory Droid',
-	};
-	const agentName = agentNameMap[selectedToolType] || selectedToolType;
+	const agentName = getAgentDisplayName(selectedToolType);
 
 	return (
 		<div onKeyDown={handleKeyDown} role="group" aria-label="Edit agent dialog">
@@ -1647,7 +1639,7 @@ export function EditAgentModal({
 						>
 							{SUPPORTED_AGENTS.map((agentId) => (
 								<option key={agentId} value={agentId}>
-									{agentNameMap[agentId] || agentId}
+									{getAgentDisplayName(agentId)}
 								</option>
 							))}
 						</select>

@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Settings, ChevronDown, Check } from 'lucide-react';
+import { isBetaAgent } from '../../shared/agentMetadata';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput } from './ui';
@@ -331,8 +332,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									aria-label="Select moderator agent"
 								>
 									{availableTiles.map((tile) => {
-										const isBeta =
-											tile.id === 'codex' || tile.id === 'opencode' || tile.id === 'factory-droid';
+										const isBeta = isBetaAgent(tile.id);
 										return (
 											<option key={tile.id} value={tile.id}>
 												{tile.name}

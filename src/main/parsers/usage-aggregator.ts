@@ -7,7 +7,11 @@
  */
 
 import type { ToolType } from '../../shared/types';
-import { DEFAULT_CONTEXT_WINDOWS, COMBINED_CONTEXT_AGENTS } from '../../shared/agentConstants';
+import {
+	DEFAULT_CONTEXT_WINDOWS,
+	COMBINED_CONTEXT_AGENTS,
+	FALLBACK_CONTEXT_WINDOW,
+} from '../../shared/agentConstants';
 
 // Re-export for consumers that import from this module
 export { DEFAULT_CONTEXT_WINDOWS } from '../../shared/agentConstants';
@@ -167,7 +171,7 @@ export function aggregateModelUsage(
 	let maxOutputTokens = 0;
 	let maxCacheReadTokens = 0;
 	let maxCacheCreationTokens = 0;
-	let contextWindow = 200000; // Default for Claude
+	let contextWindow = FALLBACK_CONTEXT_WINDOW; // Default for Claude
 
 	if (modelUsage) {
 		for (const modelStats of Object.values(modelUsage)) {

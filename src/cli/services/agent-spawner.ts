@@ -10,6 +10,7 @@ import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser'
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
+import { hasCapability } from '../../main/agents/capabilities';
 import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
@@ -26,9 +27,6 @@ const CLAUDE_ARGS = [
 
 // Cached paths per agent type (resolved once at startup)
 const cachedPaths: Map<string, string> = new Map();
-
-// Agent types that support CLI batch mode via JSON line parsing
-const JSON_LINE_AGENTS: ToolType[] = ['codex', 'opencode', 'factory-droid'];
 
 // Result from spawning an agent
 export interface AgentResult {
@@ -471,7 +469,7 @@ export async function spawnAgent(
 		return spawnClaudeAgent(cwd, prompt, agentSessionId);
 	}
 
-	if (JSON_LINE_AGENTS.includes(toolType)) {
+	if (hasCapability(toolType, 'usesJsonLineOutput')) {
 		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId);
 	}
 

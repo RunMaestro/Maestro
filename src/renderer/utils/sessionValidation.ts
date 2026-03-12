@@ -1,4 +1,5 @@
 import type { Session, ToolType } from '../types';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 export interface SessionValidationResult {
 	valid: boolean;
@@ -49,7 +50,7 @@ export function validateNewSession(
 	const conflictingAgents = existingSessions.filter((session) => {
 		const sessionDir = normalizeDirectory(session.projectRoot || session.cwd);
 		if (sessionDir !== normalizedDir) return false;
-		const existingRemoteId = session.sshRemoteId || session.sshRemote?.id || null;
+		const existingRemoteId = getSessionSshRemoteId(session);
 		return existingRemoteId === newRemoteId;
 	});
 
@@ -98,6 +99,19 @@ export function validateEditSession(
 }
 
 /**
+ * Resolve the SSH remote ID from a session, checking all possible locations.
+ * Returns null for local sessions.
+ */
+function getSessionSshRemoteId(session: Session): string | null {
+	// sessionSshRemoteConfig is the canonical per-session SSH config
+	if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
+		return session.sessionSshRemoteConfig.remoteId;
+	}
+	// Fallback to flattened fields set during session lifecycle
+	return session.sshRemoteId || session.sshRemote?.id || null;
+}
+
+/**
  * Normalize directory path for comparison.
  * Removes trailing slashes and resolves common variations.
  */
@@ -114,15 +128,5 @@ function normalizeDirectory(dir: string): string {
  * Get a human-readable display name for a provider/tool type.
  */
 export function getProviderDisplayName(toolType: ToolType): string {
-	const displayNames: Record<ToolType, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		codex: 'Codex',
-		'factory-droid': 'Factory Droid',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		aider: 'Aider',
-		terminal: 'Terminal',
-	};
-	return displayNames[toolType];
+	return getAgentDisplayName(toolType);
 }

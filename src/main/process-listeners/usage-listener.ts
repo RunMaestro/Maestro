@@ -5,6 +5,7 @@
 
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies, type UsageStats } from './types';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 
 /**
  * Sets up the usage listener for token/cost statistics.
@@ -52,7 +53,8 @@ export function setupUsageListener(
 			// Calculate context usage percentage using agent-specific logic
 			// Note: For group chat, we don't have agent type here, defaults to Claude behavior
 			const totalContextTokens = usageAggregator.calculateContextTokens(usageStats);
-			const effectiveWindow = usageStats.contextWindow > 0 ? usageStats.contextWindow : 200000;
+			const effectiveWindow =
+				usageStats.contextWindow > 0 ? usageStats.contextWindow : FALLBACK_CONTEXT_WINDOW;
 
 			// Skip update if values are accumulated (total > window) from multi-tool turns
 			const contextUsage =
@@ -98,7 +100,8 @@ export function setupUsageListener(
 			// Calculate context usage percentage using agent-specific logic
 			// Note: Moderator is typically Claude, defaults to Claude behavior
 			const totalContextTokens = usageAggregator.calculateContextTokens(usageStats);
-			const effectiveWindow = usageStats.contextWindow > 0 ? usageStats.contextWindow : 200000;
+			const effectiveWindow =
+				usageStats.contextWindow > 0 ? usageStats.contextWindow : FALLBACK_CONTEXT_WINDOW;
 
 			// Skip context update if values are accumulated (total > window) from multi-tool turns.
 			// When accumulated, emit with contextUsage/tokenCount as -1 so the handler

@@ -536,7 +536,7 @@ describe('SessionPillBar', () => {
 		it('shows correct tool type labels', async () => {
 			const testCases = [
 				{ toolType: 'claude-code', label: 'Claude Code' },
-				{ toolType: 'openai-codex', label: 'OpenAI Codex' },
+				{ toolType: 'codex', label: 'Codex' },
 				{ toolType: 'gemini-cli', label: 'Gemini CLI' },
 				{ toolType: 'qwen3-coder', label: 'Qwen3 Coder' },
 				{ toolType: 'unknown-tool', label: 'unknown-tool' }, // fallback

@@ -108,12 +108,16 @@ describe('terminalFilter', () => {
 				expect(result).toBe('visible');
 			});
 
-			it('should preserve DECSET/DECRST private mode sequences with ?', () => {
-				// The current implementation does NOT remove private mode sequences (with ?)
-				// This is intentional to preserve certain terminal features
+			it('should remove DECSET/DECRST private mode sequences with ?', () => {
 				const input = '\x1b[?25hvisible\x1b[?25l';
 				const result = stripControlSequences(input);
-				expect(result).toBe('\x1b[?25hvisible\x1b[?25l');
+				expect(result).toBe('visible');
+			});
+
+			it('should remove application keypad mode toggles', () => {
+				const input = '\x1b[?1h\x1b=ready\x1b>';
+				const result = stripControlSequences(input);
+				expect(result).toBe('ready');
 			});
 
 			it('should remove soft cursor sequences (p)', () => {
@@ -541,6 +545,12 @@ describe('terminalFilter', () => {
 				const input = 'overwrite\rtext';
 				const result = stripAllAnsiCodes(input);
 				expect(result).toBe('overwrite\rtext');
+			});
+
+			it('should remove DEC private mode and keypad control sequences', () => {
+				const input = '\x1b[?1h\x1b=\x1b[?2004hready\x1b[?2004l\x1b>';
+				const result = stripAllAnsiCodes(input);
+				expect(result).toBe('ready');
 			});
 		});
 

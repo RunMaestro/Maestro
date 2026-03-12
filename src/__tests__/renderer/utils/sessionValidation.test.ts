@@ -500,6 +500,49 @@ describe('sessionValidation', () => {
 				expect(result.conflictingAgents).toEqual(['Local Agent 1']);
 			});
 
+			it('resolves SSH remote from sessionSshRemoteConfig (canonical source)', () => {
+				const existingSessions = [
+					createMockSession({
+						name: 'SSH Agent',
+						projectRoot: '/home/user/project',
+						toolType: 'claude-code',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-1' },
+					}),
+				];
+				// Same SSH remote should warn
+				const sameResult = validateNewSession(
+					'SSH Agent 2',
+					'/home/user/project',
+					'claude-code',
+					existingSessions,
+					'ssh-remote-1'
+				);
+				expect(sameResult.valid).toBe(true);
+				expect(sameResult.warning).toBeDefined();
+				expect(sameResult.conflictingAgents).toEqual(['SSH Agent']);
+
+				// Different SSH remote should not warn
+				const diffResult = validateNewSession(
+					'SSH Agent 3',
+					'/home/user/project',
+					'claude-code',
+					existingSessions,
+					'ssh-remote-2'
+				);
+				expect(diffResult.valid).toBe(true);
+				expect(diffResult.warning).toBeUndefined();
+
+				// Local agent should not warn
+				const localResult = validateNewSession(
+					'Local Agent',
+					'/home/user/project',
+					'claude-code',
+					existingSessions
+				);
+				expect(localResult.valid).toBe(true);
+				expect(localResult.warning).toBeUndefined();
+			});
+
 			it('uses sshRemote.id as fallback when sshRemoteId is not set', () => {
 				const existingSessions = [
 					createMockSession({

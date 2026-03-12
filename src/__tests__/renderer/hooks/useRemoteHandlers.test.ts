@@ -41,6 +41,15 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
+// Mock hasCapabilityCached — agents with batch mode support
+const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
+vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
+	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
+		if (capability === 'supportsBatchMode') return BATCH_MODE_AGENTS.has(agentId);
+		return false;
+	}),
+}));
+
 // ============================================================================
 // Now import the hook and stores
 // ============================================================================
@@ -866,8 +875,27 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
-		it('rejects factory-droid agent type (not in supportedBatchAgents)', async () => {
+		it('accepts factory-droid agent type (has supportsBatchMode capability)', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'factory-droid' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+
+		it('rejects terminal agent type (no supportsBatchMode capability)', async () => {
+			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
 

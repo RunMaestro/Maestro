@@ -134,22 +134,26 @@ function createMockGroupChat(overrides: Partial<GroupChat> = {}): GroupChat {
 // =============================================================================
 
 describe('GroupChatModal', () => {
-	beforeEach(() => {
-		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
-		mockUnregisterLayer.mockClear();
-		mockUpdateLayerHandler.mockClear();
-
-		// Setup default mock implementations
-		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-			createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
-		]);
+	/**
+	 * Setup fresh mocks before each test.
+	 * Uses mockResolvedValue for agent IPC methods (detect, getConfig, setConfig, getModels).
+	 * Called in beforeEach; individual tests only need to call this again if they
+	 * need different agents than the default single claude-code agent.
+	 */
+	function setupDefaultMocks(agents?: AgentConfig[]) {
+		const defaultAgents = agents ?? [createMockAgent({ id: 'claude-code', name: 'Claude Code' })];
+		vi.mocked(window.maestro.agents.detect).mockResolvedValue(defaultAgents);
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
-	});
+	}
 
-	afterEach(() => {
+	beforeEach(() => {
 		vi.clearAllMocks();
+		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
+		mockUnregisterLayer.mockClear();
+		mockUpdateLayerHandler.mockClear();
+		setupDefaultMocks();
 	});
 
 	describe('create mode', () => {
@@ -168,9 +172,12 @@ describe('GroupChatModal', () => {
 			);
 
 			// Wait for agent detection and verify dropdown is rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify Claude Code is selected in dropdown
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
@@ -191,7 +198,7 @@ describe('GroupChatModal', () => {
 
 		it('should show all available agents in dropdown', async () => {
 			// Setup multiple agents
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+			setupDefaultMocks([
 				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
 				createMockAgent({ id: 'codex', name: 'Codex' }),
 				createMockAgent({ id: 'opencode', name: 'OpenCode' }),
@@ -212,9 +219,12 @@ describe('GroupChatModal', () => {
 			);
 
 			// Wait for dropdown to be rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify all agents appear as options
 			expect(screen.getByRole('option', { name: /Claude Code/i })).toBeInTheDocument();
@@ -242,9 +252,12 @@ describe('GroupChatModal', () => {
 			);
 
 			// Wait for dropdown to be rendered
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Verify Claude Code is pre-selected
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });
@@ -265,7 +278,7 @@ describe('GroupChatModal', () => {
 
 		it('should show warning when changing moderator agent', async () => {
 			// Setup multiple agents
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+			setupDefaultMocks([
 				createMockAgent({ id: 'claude-code', name: 'Claude Code' }),
 				createMockAgent({ id: 'codex', name: 'Codex' }),
 			]);
@@ -286,9 +299,12 @@ describe('GroupChatModal', () => {
 			);
 
 			// Wait for dropdown
-			await waitFor(() => {
-				expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
-			});
+			await waitFor(
+				() => {
+					expect(screen.getByRole('combobox', { name: /select moderator/i })).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
 
 			// Change to different agent
 			const dropdown = screen.getByRole('combobox', { name: /select moderator/i });

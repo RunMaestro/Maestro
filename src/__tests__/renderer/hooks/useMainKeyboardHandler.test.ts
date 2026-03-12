@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 
 /**
  * Creates a minimal mock context with all required handler functions.
@@ -44,6 +45,8 @@ describe('useMainKeyboardHandler', () => {
 			addedListeners = addedListeners.filter((l) => !(l.type === type && l.handler === handler));
 			originalRemoveEventListener.call(window, type, handler as EventListener);
 		});
+		// Reset modal store so draft/wizard confirmation tests start clean
+		useModalStore.getState().closeModal('confirm');
 	});
 
 	afterEach(() => {
@@ -1047,6 +1050,52 @@ describe('useMainKeyboardHandler', () => {
 				expect(mockPerformTabClose).toHaveBeenCalledWith('ai-tab-2');
 			});
 
+			it('should show confirmation modal when tab has unsent draft', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockHandleCloseCurrentTab = vi.fn().mockReturnValue({
+					type: 'ai',
+					tabId: 'ai-tab-2',
+					isWizardTab: false,
+					hasDraft: true,
+				});
+				const mockPerformTabClose = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'closeTab',
+					handleCloseCurrentTab: mockHandleCloseCurrentTab,
+					performTabClose: mockPerformTabClose,
+					activeSession: {
+						id: 'session-1',
+						aiTabs: [
+							{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] },
+							{ id: 'ai-tab-2', name: 'AI Tab 2', logs: [] },
+						],
+						activeTabId: 'ai-tab-2',
+						filePreviewTabs: [],
+						activeFileTabId: null,
+						unifiedTabOrder: ['ai-tab-1', 'ai-tab-2'],
+						inputMode: 'ai',
+					},
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'w',
+							metaKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				// Should NOT close directly — should show confirmation modal
+				expect(mockPerformTabClose).not.toHaveBeenCalled();
+				expect(useModalStore.getState().isOpen('confirm')).toBe(true);
+				const modal = useModalStore.getState().modals.get('confirm');
+				expect((modal?.data as any)?.message).toContain('unsent draft');
+			});
+
 			it('should prevent closing when it is the last AI tab', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
@@ -1394,18 +1443,23 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
-		describe('Cmd+0 (font size reset takes priority over goToLastTab)', () => {
-			it('should reset font size instead of jumping to last tab', () => {
+		describe('Cmd+0 jumps to last tab, Cmd+Shift+0 resets font size', () => {
+			it('should jump to last tab on Cmd+0', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				// Set font size to non-default
+				// Set font size to non-default to verify it does NOT reset
 				useSettingsStore.setState({ fontSize: 20 });
 
-				const mockNavigateToLastUnifiedTab = vi.fn();
+				const mockNavigateToLastUnifiedTab = vi.fn().mockReturnValue({
+					session: { id: 'session-1' },
+				});
+
+				const mockSetSessions = vi.fn();
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToLastTab',
 					navigateToLastUnifiedTab: mockNavigateToLastUnifiedTab,
+					setSessions: mockSetSessions,
 					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
 				});
 
@@ -1419,8 +1473,34 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Font size reset takes priority - goToLastTab should NOT fire
-				expect(mockNavigateToLastUnifiedTab).not.toHaveBeenCalled();
+				// Cmd+0 should trigger tab navigation, NOT reset font size
+				expect(mockSetSessions).toHaveBeenCalled();
+				expect(useSettingsStore.getState().fontSize).toBe(20);
+			});
+
+			it('should reset font size on Cmd+Shift+0', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				// Set font size to non-default
+				useSettingsStore.setState({ fontSize: 20 });
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: ')',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				// Cmd+Shift+0 should reset font size
 				expect(useSettingsStore.getState().fontSize).toBe(14);
 			});
 		});
@@ -1550,6 +1630,14 @@ describe('useMainKeyboardHandler', () => {
 				expect(mockCreateTab).not.toHaveBeenCalled();
 			});
 		});
+
+		// NOTE: Terminal tab keyboard shortcuts are not implemented.
+		// Tab shortcuts (Cmd+W, Cmd+Shift+[/], Cmd+1-9, Cmd+0) are gated behind
+		// inputMode === 'ai' in useMainKeyboardHandler.ts (line 531) and use the
+		// unified tab system (navigateToNextUnifiedTab, etc.) — there are no
+		// separate terminal-specific handlers (handleCloseTerminalTab,
+		// handleSelectTerminalTab). Tests for phantom terminal tab shortcuts
+		// were removed as they tested non-existent functionality.
 	});
 
 	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {
@@ -1823,19 +1911,21 @@ describe('useMainKeyboardHandler', () => {
 			expect(useSettingsStore.getState().fontSize).toBe(12);
 		});
 
-		it('should reset font size to default (14) with Cmd+0', () => {
+		it('should reset font size to default (14) with Cmd+Shift+0', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
 			// Set font size to something other than default
 			useSettingsStore.setState({ fontSize: 20 });
 
 			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'fontSizeReset',
 				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
 			});
 
 			const event = new KeyboardEvent('keydown', {
-				key: '0',
+				key: ')',
 				metaKey: true,
+				shiftKey: true,
 				bubbles: true,
 			});
 			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');

@@ -121,6 +121,14 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | Page Up/Down             | `Alt+Up/Down Arrow` while in output               |
 | Jump to Top/Bottom       | `Cmd+Up/Down Arrow` while in output               |
 
+## Font Size
+
+| Action             | macOS         | Windows/Linux  |
+| ------------------ | ------------- | -------------- |
+| Increase Font Size | `Cmd+=`       | `Ctrl+=`       |
+| Decrease Font Size | `Cmd+-`       | `Ctrl+-`       |
+| Reset Font Size    | `Cmd+Shift+0` | `Ctrl+Shift+0` |
+
 ## Tab Completion (Command Terminal)
 
 The Command Terminal provides intelligent tab completion for faster command entry:

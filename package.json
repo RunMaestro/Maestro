@@ -44,6 +44,7 @@
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
 		"format:check:all": "prettier --check .",
+		"validate:push": "npm run build:prompts && npm run format:check:all && npm run lint && npm run lint:eslint && npm run test",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",

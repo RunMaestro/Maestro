@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
 import {
 	Search,
 	Clock,
@@ -592,7 +593,7 @@ export function AgentSessionsBrowser({
 			cacheReadInputTokens: 0,
 			cacheCreationInputTokens: 0,
 			totalCostUsd: session.costUsd || 0,
-			contextWindow: 200000, // Default Claude context window
+			contextWindow: FALLBACK_CONTEXT_WINDOW, // Default Claude context window
 		};
 	}, []);
 
@@ -989,7 +990,8 @@ export function AgentSessionsBrowser({
 											style={{
 												color: (() => {
 													const usagePercent =
-														((viewingSession.inputTokens + viewingSession.outputTokens) / 200000) *
+														((viewingSession.inputTokens + viewingSession.outputTokens) /
+															FALLBACK_CONTEXT_WINDOW) *
 														100;
 													if (usagePercent >= 90) return theme.colors.error;
 													if (usagePercent >= 70) return theme.colors.warning;
@@ -999,7 +1001,9 @@ export function AgentSessionsBrowser({
 										>
 											{Math.min(
 												100,
-												((viewingSession.inputTokens + viewingSession.outputTokens) / 200000) * 100
+												((viewingSession.inputTokens + viewingSession.outputTokens) /
+													FALLBACK_CONTEXT_WINDOW) *
+													100
 											).toFixed(1)}
 											%
 										</span>

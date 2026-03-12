@@ -3,6 +3,7 @@ import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
 import { createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import type { RightPanelHandle } from '../../components/RightPanel';
+import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 
 /**
  * History entry for the addHistoryEntry function.
@@ -249,7 +250,7 @@ export function useAgentSessionManagement(
 				// The context calculation is: (inputTokens + cacheRead + cacheCreation) / contextWindow * 100
 				// So we set inputTokens = contextUsage * contextWindow / 100 to get the correct percentage
 				if (storedContextUsage !== undefined && storedContextUsage > 0) {
-					const contextWindow = finalUsageStats?.contextWindow || 200000;
+					const contextWindow = finalUsageStats?.contextWindow || FALLBACK_CONTEXT_WINDOW;
 					finalUsageStats = {
 						inputTokens: Math.round((storedContextUsage * contextWindow) / 100),
 						outputTokens: finalUsageStats?.outputTokens || 0,

@@ -124,6 +124,11 @@ beforeEach(() => {
 // Test Suites
 // ============================================================================
 
+// Helper: wait for hook to finish loading with generous timeout for full-suite runs
+async function waitForLoaded(result: { current: { isLoading: boolean } }) {
+	await waitFor(() => expect(result.current.isLoading).toBe(false), { timeout: 3000 });
+}
+
 describe('useSymphony', () => {
 	// ──────────────────────────────────────────────────────────────────────────
 	// Initial State Tests
@@ -549,9 +554,7 @@ describe('useSymphony', () => {
 
 			const { result } = renderHook(() => useSymphony());
 
-			await waitFor(() => {
-				expect(result.current.isLoading).toBe(false);
-			});
+			await waitForLoaded(result);
 
 			// Select repo
 			await act(async () => {

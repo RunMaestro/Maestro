@@ -22,8 +22,17 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 };
 
 /**
+ * Fallback context window size when an agent has no entry in DEFAULT_CONTEXT_WINDOWS
+ * and hasn't reported its own value.  Matches Claude's default (200k tokens).
+ */
+export const FALLBACK_CONTEXT_WINDOW = 200000;
+
+/**
  * Agents that use combined input+output context windows.
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.
+ *
+ * NOTE: This is kept as a static set for cross-process use (shared/).
+ * The canonical flag is `usesCombinedContextWindow` in AgentCapabilities.
  */
 export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['codex']);

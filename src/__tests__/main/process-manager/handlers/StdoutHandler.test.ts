@@ -132,6 +132,19 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Hello, world!');
 		});
 
+		it('should strip leaked terminal mode sequences in plain text mode', () => {
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: false,
+				isBatchMode: false,
+			});
+
+			handler.handleData(sessionId, '\x1b[?1h\x1b=Hello, remote world!');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Hello, remote world!'
+			);
+		});
+
 		it('should accumulate to jsonBuffer in batch mode', () => {
 			const { handler, bufferManager, sessionId, proc } = createTestContext({
 				isBatchMode: true,
@@ -154,6 +167,23 @@ describe('StdoutHandler', () => {
 			// to the catch block and be emitted via bufferManager
 			handler.handleData(sessionId, 'plain text output\n');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'plain text output');
+		});
+
+		it('should strip terminal mode sequences before parsing stream JSON lines', () => {
+			const { handler, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: undefined,
+			});
+
+			handler.handleData(
+				sessionId,
+				'\x1b[?1h\x1b={"type":"result","result":"Recovered remote output"}\n'
+			);
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Recovered remote output'
+			);
 		});
 
 		it('should buffer incomplete lines in stream JSON mode until newline arrives', () => {

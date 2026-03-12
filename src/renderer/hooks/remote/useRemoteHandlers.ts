@@ -11,7 +11,8 @@
  */
 
 import { useEffect, useMemo, useCallback } from 'react';
-import type { Session, ToolType, SessionState, LogEntry, CustomAICommand } from '../../types';
+import type { Session, SessionState, LogEntry, CustomAICommand } from '../../types';
+import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -214,9 +215,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Handle AI mode for batch-mode agents (Claude Code, Codex, OpenCode)
-			const supportedBatchAgents: ToolType[] = ['claude-code', 'codex', 'opencode'];
-			if (!supportedBatchAgents.includes(session.toolType)) {
+			// Handle AI mode for batch-mode agents
+			if (!hasCapabilityCached(session.toolType, 'supportsBatchMode')) {
 				console.log('[Remote] Not a batch-mode agent, skipping');
 				return;
 			}

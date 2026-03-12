@@ -682,15 +682,16 @@ describe('ssh-command-builder', () => {
 		 * - The prompt is NEVER parsed by any shell - it flows through as raw bytes
 		 */
 
-		it('returns ssh command with /bin/bash as remote command', async () => {
+		it('returns ssh command with non-interactive bash as remote command', async () => {
 			const result = await buildSshCommandWithStdin(baseConfig, {
 				command: 'opencode',
 				args: ['run', '--format', 'json'],
 			});
 
 			expect(result.command).toBe('ssh');
-			// Last arg should be /bin/bash (the remote command)
-			expect(result.args[result.args.length - 1]).toBe('/bin/bash');
+			expect(result.args).toEqual(
+				expect.arrayContaining(['/bin/bash', '--norc', '--noprofile', '-s'])
+			);
 		});
 
 		it('includes PATH setup in stdin script', async () => {

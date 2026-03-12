@@ -29,6 +29,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
+import { isBetaAgent } from '../../shared/agentMetadata';
 
 // ============================================================================
 // Types
@@ -355,7 +356,7 @@ export function AgentCreationDialog({
 								{ac.detectedAgents.map((agent) => {
 									const isSelected = selectedAgent === agent.id;
 									const isExpanded = expandedAgent === agent.id;
-									const isBetaAgent = agent.id === 'codex' || agent.id === 'opencode';
+									const agentIsBeta = isBetaAgent(agent.id);
 
 									return (
 										<div
@@ -387,7 +388,7 @@ export function AgentCreationDialog({
 														style={{ color: theme.colors.textDim }}
 													/>
 													<span className="font-medium">{agent.name}</span>
-													{isBetaAgent && (
+													{agentIsBeta && (
 														<span
 															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
 															style={{

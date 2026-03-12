@@ -10,8 +10,11 @@
  * as the remote shell's .bashrc/.zshrc may emit shell integration escape sequences.
  */
 
-// Match ANSI escape sequences: ESC[ followed by parameters and a letter
-const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[a-zA-Z]/g;
+// Match ANSI CSI sequences, including DEC private-mode toggles like ESC[?1h
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+
+// Match standalone keypad/application mode toggles like ESC= and ESC>
+const ESC_TOGGLE_PATTERN = /\x1b[=>]/g;
 
 // Match OSC sequences: ESC] followed by content until BEL (\x07) or ST (ESC\)
 // This handles iTerm2 shell integration sequences like ]1337;RemoteHost=...
@@ -47,5 +50,6 @@ export function stripAnsi(str: string): string {
 		.replace(BARE_OSC_WITH_BEL, '')
 		.replace(ITERM2_OSC_WITH_NEXT, '')
 		.replace(ITERM2_OSC_LAST, '')
+		.replace(ESC_TOGGLE_PATTERN, '')
 		.replace(ANSI_ESCAPE_PATTERN, '');
 }

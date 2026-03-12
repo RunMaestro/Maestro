@@ -19,6 +19,7 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../../shared/t
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
+import { isBetaAgent } from '../../../../shared/agentMetadata';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -1327,20 +1328,17 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 									)}
 
 									{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
-									{isSupported &&
-										(tile.id === 'codex' ||
-											tile.id === 'opencode' ||
-											tile.id === 'factory-droid') && (
-											<span
-												className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
-												style={{
-													backgroundColor: theme.colors.warning + '30',
-													color: theme.colors.warning,
-												}}
-											>
-												Beta
-											</span>
-										)}
+									{isSupported && isBetaAgent(tile.id) && (
+										<span
+											className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
+											style={{
+												backgroundColor: theme.colors.warning + '30',
+												color: theme.colors.warning,
+											}}
+										>
+											Beta
+										</span>
+									)}
 
 									{/* Customize button for supported agents (shown even if not detected, so user can set custom path) */}
 									{/* Note: Using div with role="button" to avoid nested button warning */}

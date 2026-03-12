@@ -83,6 +83,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	fontSizeReset: {
+		id: 'fontSizeReset',
+		label: 'Reset Font Size',
+		keys: ['Meta', 'Shift', '0'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -123,6 +128,16 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'filePreviewForward',
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
+	},
+	fontSizeIncrease: {
+		id: 'fontSizeIncrease',
+		label: 'Increase Font Size',
+		keys: ['Meta', '='],
+	},
+	fontSizeDecrease: {
+		id: 'fontSizeDecrease',
+		label: 'Decrease Font Size',
+		keys: ['Meta', '-'],
 	},
 };
 

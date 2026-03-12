@@ -11,19 +11,7 @@ describe('agent-capabilities', () => {
 	describe('AgentCapabilities interface', () => {
 		it('should have all required capability fields', () => {
 			const capabilities: AgentCapabilities = {
-				supportsResume: false,
-				supportsReadOnlyMode: false,
-				supportsJsonOutput: false,
-				supportsSessionId: false,
-				supportsImageInput: false,
-				supportsImageInputOnResume: false,
-				supportsSlashCommands: false,
-				supportsSessionStorage: false,
-				supportsCostTracking: false,
-				supportsUsageStats: false,
-				supportsBatchMode: false,
-				supportsStreaming: false,
-				supportsResultMessages: false,
+				...DEFAULT_CAPABILITIES,
 			};
 
 			expect(capabilities.supportsResume).toBe(false);
@@ -39,6 +27,10 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsBatchMode).toBe(false);
 			expect(capabilities.supportsStreaming).toBe(false);
 			expect(capabilities.supportsResultMessages).toBe(false);
+			expect(capabilities.supportsWizard).toBe(false);
+			expect(capabilities.supportsGroupChatModeration).toBe(false);
+			expect(capabilities.usesJsonLineOutput).toBe(false);
+			expect(capabilities.usesCombinedContextWindow).toBe(false);
 		});
 	});
 
@@ -57,6 +49,10 @@ describe('agent-capabilities', () => {
 			expect(DEFAULT_CAPABILITIES.supportsBatchMode).toBe(false);
 			expect(DEFAULT_CAPABILITIES.supportsStreaming).toBe(false);
 			expect(DEFAULT_CAPABILITIES.supportsResultMessages).toBe(false);
+			expect(DEFAULT_CAPABILITIES.supportsWizard).toBe(false);
+			expect(DEFAULT_CAPABILITIES.supportsGroupChatModeration).toBe(false);
+			expect(DEFAULT_CAPABILITIES.usesJsonLineOutput).toBe(false);
+			expect(DEFAULT_CAPABILITIES.usesCombinedContextWindow).toBe(false);
 		});
 
 		it('should be a conservative default (all false)', () => {
@@ -147,6 +143,8 @@ describe('agent-capabilities', () => {
 				'gemini-cli',
 				'qwen3-coder',
 				'opencode',
+				'factory-droid',
+				'aider',
 			];
 
 			for (const agentId of knownAgents) {
@@ -165,6 +163,10 @@ describe('agent-capabilities', () => {
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsBatchMode).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsStreaming).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsResultMessages).toBe('boolean');
+				expect(typeof AGENT_CAPABILITIES[agentId].supportsWizard).toBe('boolean');
+				expect(typeof AGENT_CAPABILITIES[agentId].supportsGroupChatModeration).toBe('boolean');
+				expect(typeof AGENT_CAPABILITIES[agentId].usesJsonLineOutput).toBe('boolean');
+				expect(typeof AGENT_CAPABILITIES[agentId].usesCombinedContextWindow).toBe('boolean');
 			}
 		});
 	});
@@ -215,21 +217,7 @@ describe('agent-capabilities', () => {
 		});
 
 		it('should work for all capability types', () => {
-			const capabilityKeys: (keyof AgentCapabilities)[] = [
-				'supportsResume',
-				'supportsReadOnlyMode',
-				'supportsJsonOutput',
-				'supportsSessionId',
-				'supportsImageInput',
-				'supportsImageInputOnResume',
-				'supportsSlashCommands',
-				'supportsSessionStorage',
-				'supportsCostTracking',
-				'supportsUsageStats',
-				'supportsBatchMode',
-				'supportsStreaming',
-				'supportsResultMessages',
-			];
+			const capabilityKeys = Object.keys(DEFAULT_CAPABILITIES) as (keyof AgentCapabilities)[];
 
 			for (const key of capabilityKeys) {
 				// Should not throw for any capability
@@ -237,6 +225,34 @@ describe('agent-capabilities', () => {
 				// Result should be a boolean
 				expect(typeof hasCapability('claude-code', key)).toBe('boolean');
 			}
+		});
+
+		it('should return correct values for new capability flags', () => {
+			// supportsWizard
+			expect(hasCapability('claude-code', 'supportsWizard')).toBe(true);
+			expect(hasCapability('codex', 'supportsWizard')).toBe(true);
+			expect(hasCapability('opencode', 'supportsWizard')).toBe(true);
+			expect(hasCapability('factory-droid', 'supportsWizard')).toBe(false);
+			expect(hasCapability('terminal', 'supportsWizard')).toBe(false);
+
+			// supportsGroupChatModeration
+			expect(hasCapability('claude-code', 'supportsGroupChatModeration')).toBe(true);
+			expect(hasCapability('codex', 'supportsGroupChatModeration')).toBe(true);
+			expect(hasCapability('opencode', 'supportsGroupChatModeration')).toBe(true);
+			expect(hasCapability('factory-droid', 'supportsGroupChatModeration')).toBe(true);
+			expect(hasCapability('terminal', 'supportsGroupChatModeration')).toBe(false);
+
+			// usesJsonLineOutput
+			expect(hasCapability('claude-code', 'usesJsonLineOutput')).toBe(false);
+			expect(hasCapability('codex', 'usesJsonLineOutput')).toBe(true);
+			expect(hasCapability('opencode', 'usesJsonLineOutput')).toBe(true);
+			expect(hasCapability('factory-droid', 'usesJsonLineOutput')).toBe(true);
+			expect(hasCapability('terminal', 'usesJsonLineOutput')).toBe(false);
+
+			// usesCombinedContextWindow
+			expect(hasCapability('codex', 'usesCombinedContextWindow')).toBe(true);
+			expect(hasCapability('claude-code', 'usesCombinedContextWindow')).toBe(false);
+			expect(hasCapability('opencode', 'usesCombinedContextWindow')).toBe(false);
 		});
 	});
 
@@ -262,6 +278,10 @@ describe('agent-capabilities', () => {
 				'supportsThinkingDisplay',
 				'supportsContextMerge',
 				'supportsContextExport',
+				'supportsWizard',
+				'supportsGroupChatModeration',
+				'usesJsonLineOutput',
+				'usesCombinedContextWindow',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

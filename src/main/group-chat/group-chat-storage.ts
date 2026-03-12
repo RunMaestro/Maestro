@@ -14,14 +14,8 @@ import * as path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
-import type { ToolType } from '../../shared/types';
 import type { ModeratorConfig, GroupChatHistoryEntry } from '../../shared/group-chat-types';
-
-/**
- * Valid agent IDs that can be used as moderators.
- * Must match available agents from agent-detector.
- */
-const VALID_MODERATOR_AGENT_IDS: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
+import { hasCapability } from '../agents/capabilities';
 
 // ---------------------------------------------------------------------------
 // Write serialization & atomic file I/O
@@ -222,10 +216,10 @@ export async function createGroupChat(
 	moderatorAgentId: string,
 	moderatorConfig?: ModeratorConfig
 ): Promise<GroupChat> {
-	// Validate agent ID against whitelist
-	if (!VALID_MODERATOR_AGENT_IDS.includes(moderatorAgentId as ToolType)) {
+	// Validate agent ID supports group chat moderation
+	if (!hasCapability(moderatorAgentId, 'supportsGroupChatModeration')) {
 		throw new Error(
-			`Invalid moderator agent ID: ${moderatorAgentId}. Must be one of: ${VALID_MODERATOR_AGENT_IDS.join(', ')}`
+			`Invalid moderator agent ID: ${moderatorAgentId}. Agent does not support group chat moderation.`
 		);
 	}
 

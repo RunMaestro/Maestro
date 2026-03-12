@@ -34,10 +34,11 @@
  * ```
  */
 export function stripAnsiCodes(text: string): string {
-	// Matches ANSI escape sequences: ESC[ followed by params and command letter
-	// ESC is \x1b (decimal 27), followed by [ and then zero or more params
-	// (digits or semicolons) ending with a letter command
-	let result = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
+	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+
+	// Remove standalone keypad/application mode toggles used by interactive CLIs.
+	result = result.replace(/\x1b[=>]/g, '');
 
 	// Remove OSC sequences WITH ESC prefix: ESC ] ... (BEL or ST)
 	// Common patterns: window title, hyperlinks, shell integration

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Run repo-wide validation before allowing a push.
+# This mirrors the main CI gate: prompts, repo-wide Prettier, type checks, ESLint, and tests.
+npm run validate:push

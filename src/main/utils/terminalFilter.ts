@@ -92,11 +92,14 @@ export function stripControlSequences(
 	// Examples: window title changes, hyperlinks, custom sequences
 	cleaned = cleaned.replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
 
-	// Remove CSI (Control Sequence Introducer) sequences that aren't color codes
-	// Format: ESC [ ... letter
-	// Keep: SGR color codes (end with 'm')
-	// Remove: cursor movement, scrolling, etc.
-	cleaned = cleaned.replace(/\x1b\[[\d;]*[A-KSTfHJhlp]/gi, '');
+	// Remove CSI (Control Sequence Introducer) sequences that aren't color codes.
+	// This also strips DEC private-mode toggles like ESC[?1h and bracketed paste.
+	cleaned = cleaned.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, (sequence) =>
+		sequence.endsWith('m') ? sequence : ''
+	);
+
+	// Remove standalone escape sequences used for keypad/application mode switching.
+	cleaned = cleaned.replace(/\x1b[=>]/g, '');
 
 	// Remove shell integration markers (VSCode, iTerm2, etc.)
 	// Format: ESC ] 133 ; ... BEL/ST
@@ -164,13 +167,12 @@ export function stripControlSequences(
  */
 export function stripAllAnsiCodes(text: string): string {
 	// Remove all ANSI escape sequences including color codes
-	// Format: ESC [ ... m (SGR sequences for colors/styles)
-	// Format: ESC [ ... other letters (cursor, scrolling, etc.)
+	// Format: ESC [ ... final byte (CSI sequences, including DEC private modes)
 	// Format: ESC ] ... BEL/ST (OSC sequences)
 	return text
-		.replace(/\x1b\[[0-9;]*m/g, '') // SGR color/style codes
-		.replace(/\x1b\[[\d;]*[A-Za-z]/g, '') // Other CSI sequences
+		.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '') // All CSI sequences
 		.replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '') // OSC sequences
+		.replace(/\x1b[=>]/g, '') // Keypad/application mode toggles
 		.replace(/\x1b[()][AB012]/g, '') // Character set selection
 		.replace(/\x07/g, '') // BEL character
 		.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1A\x1C-\x1F]/g, ''); // Other control chars

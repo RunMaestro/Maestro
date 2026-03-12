@@ -11,6 +11,7 @@ import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguratio
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
+import { isBetaAgent } from '../../../../shared/agentMetadata';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -190,10 +191,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											aria-label="Select synopsis provider agent"
 										>
 											{dnAvailableTiles.map((tile) => {
-												const isBeta =
-													tile.id === 'codex' ||
-													tile.id === 'opencode' ||
-													tile.id === 'factory-droid';
+												const isBeta = isBetaAgent(tile.id);
 												return (
 													<option key={tile.id} value={tile.id}>
 														{tile.name}

@@ -73,8 +73,13 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsThinkingDisplay: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsWizard: boolean;
+	supportsGroupChatModeration: boolean;
+	usesJsonLineOutput: boolean;
+	usesCombinedContextWindow: boolean;
 }
 
 interface AgentConfig {
@@ -112,6 +117,10 @@ interface AgentCapabilities {
 	supportsStreamJsonInput: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsWizard: boolean;
+	supportsGroupChatModeration: boolean;
+	usesJsonLineOutput: boolean;
+	usesCombinedContextWindow: boolean;
 }
 
 interface DirectoryEntry {
