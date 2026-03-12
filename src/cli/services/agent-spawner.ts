@@ -355,7 +355,7 @@ async function spawnJsonLineAgent(
 	cwd: string,
 	prompt: string,
 	agentSessionId?: string,
-	_readOnlyMode?: boolean
+	readOnlyMode?: boolean
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv();
@@ -368,11 +368,17 @@ async function spawnJsonLineAgent(
 			}
 		}
 
+		// Apply read-only mode env overrides from agent definition
+		if (readOnlyMode && def?.readOnlyEnvOverrides) {
+			Object.assign(env, def.readOnlyEnvOverrides);
+		}
+
 		// Build args from agent definition
 		const args: string[] = [];
 		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
 		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
+		if (readOnlyMode && def?.readOnlyArgs) args.push(...def.readOnlyArgs);
 
 		if (agentSessionId && def?.resumeArgs) {
 			args.push(...def.resumeArgs(agentSessionId));
@@ -496,7 +502,7 @@ export async function spawnAgent(
 	}
 
 	if (hasCapability(toolType, 'usesJsonLineOutput')) {
-		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId);
+		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId, readOnly);
 	}
 
 	return {
