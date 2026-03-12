@@ -981,6 +981,7 @@ class PhaseGenerator {
 			const sshRemoteId = config.sshRemoteConfig?.enabled
 				? (config.sshRemoteConfig.remoteId ?? undefined)
 				: undefined;
+
 			window.maestro.autorun
 				.watchFolder(autoRunPath, sshRemoteId)
 				.then((result) => {
@@ -1229,7 +1230,8 @@ class PhaseGenerator {
 		directoryPath: string,
 		documents: GeneratedDocument[],
 		onFileCreated?: (file: CreatedFileInfo) => void,
-		subfolder?: string
+		subfolder?: string,
+		sshRemoteId?: string
 	): Promise<{ success: boolean; savedPaths: string[]; error?: string; subfolderPath?: string }> {
 		const baseAutoRunPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 		const autoRunPath = subfolder ? `${baseAutoRunPath}/${subfolder}` : baseAutoRunPath;
@@ -1246,7 +1248,13 @@ class PhaseGenerator {
 				console.log('[PhaseGenerator] Saving document:', filename);
 
 				// Write the document (autorun:writeDoc creates the folder if needed)
-				const result = await window.maestro.autorun.writeDoc(autoRunPath, filename, doc.content);
+				// Pass sshRemoteId for remote sessions
+				const result = await window.maestro.autorun.writeDoc(
+					autoRunPath,
+					filename,
+					doc.content,
+					sshRemoteId
+				);
 
 				if (result.success) {
 					const fullPath = `${autoRunPath}/${filename}`;
