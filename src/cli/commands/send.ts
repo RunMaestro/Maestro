@@ -110,6 +110,7 @@ export async function send(
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally
 	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session, {
 		readOnlyMode: options.readOnly,
+		customModel: agent.customModel,
 	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
