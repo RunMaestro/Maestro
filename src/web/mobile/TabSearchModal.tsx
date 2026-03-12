@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { AITabData } from '../hooks/useWebSocket';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -25,8 +26,12 @@ interface TabCardProps {
 }
 
 function TabCard({ tab, isActive, colors, onSelect }: TabCardProps) {
+	const { t } = useTranslation('common');
 	const displayName =
-		tab.name || (tab.agentSessionId ? tab.agentSessionId.split('-')[0].toUpperCase() : 'New Tab');
+		tab.name ||
+		(tab.agentSessionId
+			? tab.agentSessionId.split('-')[0].toUpperCase()
+			: t('mobile.new_tab_title'));
 
 	// Get status color (state is 'idle' | 'busy')
 	const getStatusColor = () => {
@@ -110,7 +115,7 @@ function TabCard({ tab, isActive, colors, onSelect }: TabCardProps) {
 						flexShrink: 0,
 					}}
 				>
-					ACTIVE
+					{t('mobile.active_indicator')}
 				</span>
 			)}
 		</button>
@@ -118,6 +123,7 @@ function TabCard({ tab, isActive, colors, onSelect }: TabCardProps) {
 }
 
 export function TabSearchModal({ tabs, activeTabId, onSelectTab, onClose }: TabSearchModalProps) {
+	const { t } = useTranslation('common');
 	const colors = useThemeColors();
 	const [searchQuery, setSearchQuery] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -207,7 +213,7 @@ export function TabSearchModal({ tabs, activeTabId, onSelectTab, onClose }: TabS
 						cursor: 'pointer',
 						flexShrink: 0,
 					}}
-					title="Close"
+					title={t('close')}
 				>
 					<svg
 						width="16"
@@ -255,7 +261,7 @@ export function TabSearchModal({ tabs, activeTabId, onSelectTab, onClose }: TabS
 						type="text"
 						value={searchQuery}
 						onChange={(e) => setSearchQuery(e.target.value)}
-						placeholder={`Search ${tabs.length} tabs...`}
+						placeholder={t('mobile.search_tabs_placeholder', { count: tabs.length })}
 						style={{
 							flex: 1,
 							border: 'none',
@@ -308,7 +314,7 @@ export function TabSearchModal({ tabs, activeTabId, onSelectTab, onClose }: TabS
 							fontSize: '14px',
 						}}
 					>
-						{searchQuery ? 'No tabs match your search' : 'No tabs available'}
+						{searchQuery ? t('mobile.no_tabs_match') : t('mobile.no_tabs_available')}
 					</div>
 				) : (
 					<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

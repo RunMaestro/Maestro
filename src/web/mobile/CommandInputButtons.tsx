@@ -15,6 +15,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { InputMode } from './CommandInputBar';
 import { triggerHaptic, MIN_TOUCH_TARGET } from './constants';
@@ -65,6 +66,8 @@ export function InputModeToggleButton({
 	disabled,
 }: InputModeToggleButtonProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const isAiMode = inputMode === 'ai';
 
 	const handleClick = () => {
@@ -94,7 +97,10 @@ export function InputModeToggleButton({
 			onTouchEnd={(e) => {
 				e.currentTarget.style.transform = 'scale(1)';
 			}}
-			aria-label={`Switch to ${isAiMode ? 'terminal' : 'AI'} mode. Currently in ${isAiMode ? 'AI' : 'terminal'} mode.`}
+			aria-label={tA('mobile.switch_mode', {
+				target: isAiMode ? 'terminal' : 'AI',
+				current: isAiMode ? 'AI' : 'terminal',
+			})}
 			aria-pressed={isAiMode}
 		>
 			{/* Mode icon - AI sparkle or Terminal prompt */}
@@ -137,7 +143,7 @@ export function InputModeToggleButton({
 					letterSpacing: '0.5px',
 				}}
 			>
-				{isAiMode ? 'AI' : 'CLI'}
+				{isAiMode ? t('mobile.mode_ai') : t('mobile.mode_cli')}
 			</span>
 		</button>
 	);
@@ -164,6 +170,7 @@ export interface VoiceInputButtonProps {
  */
 export function VoiceInputButton({ isListening, onToggle, disabled }: VoiceInputButtonProps) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	return (
 		<button
@@ -186,7 +193,7 @@ export function VoiceInputButton({ isListening, onToggle, disabled }: VoiceInput
 			onTouchEnd={(e) => {
 				e.currentTarget.style.transform = 'scale(1)';
 			}}
-			aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+			aria-label={isListening ? tA('mobile.stop_voice') : tA('mobile.start_voice')}
 			aria-pressed={isListening}
 		>
 			{/* Microphone icon */}
@@ -229,6 +236,7 @@ export interface SlashCommandButtonProps {
  */
 export function SlashCommandButton({ isOpen, onOpen, disabled }: SlashCommandButtonProps) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	return (
 		<button
@@ -250,7 +258,7 @@ export function SlashCommandButton({ isOpen, onOpen, disabled }: SlashCommandBut
 			onTouchEnd={(e) => {
 				e.currentTarget.style.transform = 'scale(1)';
 			}}
-			aria-label="Open slash commands"
+			aria-label={tA('mobile.open_slash_commands')}
 		>
 			{/* Slash icon */}
 			<span
@@ -304,6 +312,7 @@ export function SendInterruptButton({
 	onTouchMove,
 }: SendInterruptButtonProps) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	const handleInterrupt = () => {
 		triggerHaptic(50);
@@ -331,7 +340,7 @@ export function SendInterruptButton({
 					e.currentTarget.style.transform = 'scale(1)';
 					e.currentTarget.style.backgroundColor = '#ef4444';
 				}}
-				aria-label="Cancel running command or AI query"
+				aria-label={tA('mobile.cancel_command')}
 			>
 				{/* X icon for interrupt */}
 				<svg
@@ -369,7 +378,7 @@ export function SendInterruptButton({
 			onTouchStart={onTouchStart}
 			onTouchEnd={onTouchEnd}
 			onTouchMove={onTouchMove}
-			aria-label="Send command (long press for quick actions)"
+			aria-label={tA('mobile.send_long_press')}
 		>
 			{/* Arrow up icon for send */}
 			<svg
@@ -414,6 +423,8 @@ export function ExpandedModeSendInterruptButton({
 	onInterrupt,
 }: ExpandedModeSendInterruptButtonProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 
 	const handleInterrupt = () => {
 		triggerHaptic(50);
@@ -452,7 +463,7 @@ export function ExpandedModeSendInterruptButton({
 				onTouchEnd={(e) => {
 					e.currentTarget.style.backgroundColor = '#ef4444';
 				}}
-				aria-label="Cancel running AI query"
+				aria-label={tA('mobile.cancel_ai')}
 			>
 				<svg
 					width="18"
@@ -467,7 +478,7 @@ export function ExpandedModeSendInterruptButton({
 					<line x1="18" y1="6" x2="6" y2="18" />
 					<line x1="6" y1="6" x2="18" y2="18" />
 				</svg>
-				<span>Stop</span>
+				<span>{t('mobile.stop_button')}</span>
 			</button>
 		);
 	}
@@ -483,7 +494,7 @@ export function ExpandedModeSendInterruptButton({
 				cursor: isSendDisabled ? 'default' : 'pointer',
 				opacity: isSendDisabled ? 0.5 : 1,
 			}}
-			aria-label="Send message"
+			aria-label={tA('mobile.send_message')}
 		>
 			<svg
 				width="18"
@@ -498,7 +509,7 @@ export function ExpandedModeSendInterruptButton({
 				<line x1="12" y1="19" x2="12" y2="5" />
 				<polyline points="5 12 12 5 19 12" />
 			</svg>
-			<span>Send</span>
+			<span>{t('mobile.send_button')}</span>
 		</button>
 	);
 }

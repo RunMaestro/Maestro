@@ -19,6 +19,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
@@ -240,6 +241,8 @@ export function ResponseViewer({
 	onClose,
 	sessionName,
 }: ResponseViewerProps) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 	const { isDark } = useTheme();
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -645,7 +648,7 @@ export function ResponseViewer({
 			onTouchEnd={handleTouchEnd}
 			aria-modal="true"
 			role="dialog"
-			aria-label="Full response viewer"
+			aria-label={tA('mobile.full_response_viewer')}
 		>
 			{/* Header bar */}
 			<header
@@ -674,7 +677,7 @@ export function ResponseViewer({
 							whiteSpace: 'nowrap',
 						}}
 					>
-						Response
+						{t('mobile.response_header')}
 					</h2>
 					<div
 						style={{
@@ -723,7 +726,7 @@ export function ResponseViewer({
 						marginLeft: '12px',
 						flexShrink: 0,
 					}}
-					aria-label="Close response viewer"
+					aria-label={tA('mobile.close_response_viewer')}
 				>
 					×
 				</button>
@@ -771,7 +774,7 @@ export function ResponseViewer({
 							fontSize: '14px',
 						}}
 					>
-						Loading full response...
+						{t('mobile.loading_full_response')}
 					</div>
 				) : (
 					<>
@@ -807,7 +810,7 @@ export function ResponseViewer({
 										fontWeight: 500,
 										cursor: 'pointer',
 									}}
-									aria-label="Reset zoom"
+									aria-label={t('mobile.reset_zoom_label')}
 								>
 									<svg
 										width="14"
@@ -877,7 +880,7 @@ export function ResponseViewer({
 												>
 													{segment.language && segment.language !== 'text'
 														? segment.language
-														: 'code'}
+														: t('mobile.code_block_label')}
 												</span>
 												{/* Copy button */}
 												<button
@@ -896,7 +899,7 @@ export function ResponseViewer({
 														cursor: 'pointer',
 														transition: 'all 0.2s ease',
 													}}
-													aria-label={isCopied ? 'Copied!' : 'Copy code'}
+													aria-label={isCopied ? t('mobile.copied_code') : t('mobile.copy_code')}
 												>
 													{isCopied ? (
 														<>
@@ -912,7 +915,7 @@ export function ResponseViewer({
 															>
 																<polyline points="20 6 9 17 4 12" />
 															</svg>
-															Copied
+															{t('mobile.copied_label')}
 														</>
 													) : (
 														<>
@@ -929,7 +932,7 @@ export function ResponseViewer({
 																<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
 																<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 															</svg>
-															Copy
+															{t('copy')}
 														</>
 													)}
 												</button>
@@ -988,10 +991,12 @@ export function ResponseViewer({
 									textAlign: 'center',
 								}}
 							>
-								Showing preview ({displayResponse.text.length} of {displayResponse.fullLength}{' '}
-								characters).
+								{t('mobile.showing_preview', {
+									current: displayResponse.text.length,
+									total: displayResponse.fullLength,
+								})}
 								<br />
-								Full response loading not available.
+								{t('mobile.full_response_unavailable')}
 							</div>
 						)}
 					</>
@@ -1021,7 +1026,10 @@ export function ResponseViewer({
 							justifyContent: 'center',
 							gap: '6px',
 						}}
-						aria-label={`Response ${currentIndex + 1} of ${allResponses.length}`}
+						aria-label={t('mobile.response_counter', {
+							current: currentIndex + 1,
+							total: allResponses.length,
+						})}
 					>
 						{allResponses.map((_, index) => (
 							<button
@@ -1042,7 +1050,7 @@ export function ResponseViewer({
 									cursor: 'pointer',
 									transition: 'all 0.2s ease',
 								}}
-								aria-label={`Go to response ${index + 1}`}
+								aria-label={t('mobile.go_to_response', { index: index + 1 })}
 								aria-current={index === currentIndex ? 'true' : undefined}
 							/>
 						))}
@@ -1058,10 +1066,10 @@ export function ResponseViewer({
 					}}
 				>
 					{zoomScale > 1
-						? 'Double-tap or tap reset to zoom out'
+						? t('mobile.zoom_out_hint')
 						: canNavigate
-							? 'Pinch to zoom • Swipe left/right to navigate • Swipe down to dismiss'
-							: 'Pinch to zoom • Swipe down to dismiss'}
+							? t('mobile.navigate_hint')
+							: t('mobile.dismiss_hint')}
 				</span>
 			</footer>
 		</div>

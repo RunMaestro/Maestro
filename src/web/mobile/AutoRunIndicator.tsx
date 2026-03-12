@@ -6,6 +6,7 @@
  * This banner is designed to be highly visible on mobile devices.
  */
 
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { AutoRunState } from '../hooks/useWebSocket';
 
@@ -22,6 +23,7 @@ interface AutoRunIndicatorProps {
  * PROMINENT: Uses bold colors and large text for visibility
  */
 export function AutoRunIndicator({ state, sessionName }: AutoRunIndicatorProps) {
+	const { t } = useTranslation('common');
 	const colors = useThemeColors();
 
 	// Don't render if no state or not running
@@ -106,7 +108,7 @@ export function AutoRunIndicator({ state, sessionName }: AutoRunIndicatorProps) 
 								textOverflow: 'ellipsis',
 							}}
 						>
-							{isStopping ? 'Stopping...' : 'AutoRun Active'}
+							{isStopping ? t('mobile.autorun_stopping') : t('mobile.autorun_active')}
 						</div>
 						<div
 							style={{
@@ -116,8 +118,9 @@ export function AutoRunIndicator({ state, sessionName }: AutoRunIndicatorProps) 
 							}}
 						>
 							{sessionName && <span>{sessionName} - </span>}
-							Task {currentTask} of {totalTasks}
-							{completedTasks > 0 && ` (${completedTasks} done)`}
+							{t('mobile.autorun_task_progress', { current: currentTask, total: totalTasks })}
+							{completedTasks > 0 &&
+								` ${t('mobile.autorun_done_count', { count: completedTasks })}`}
 						</div>
 					</div>
 

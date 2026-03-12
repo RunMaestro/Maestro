@@ -7,6 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useLongPress } from '../hooks/useLongPress';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -45,6 +46,8 @@ function Tab({
 	onClose,
 	onLongPress,
 }: TabProps) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const [isHovered, setIsHovered] = useState(false);
 	const [isCloseHovered, setIsCloseHovered] = useState(false);
 
@@ -59,7 +62,10 @@ function Tab({
 	});
 
 	const displayName =
-		tab.name || (tab.agentSessionId ? tab.agentSessionId.split('-')[0].toUpperCase() : 'New');
+		tab.name ||
+		(tab.agentSessionId
+			? tab.agentSessionId.split('-')[0].toUpperCase()
+			: t('mobile.tab_default_name'));
 
 	return (
 		<div
@@ -177,7 +183,7 @@ function Tab({
 						zIndex: 2,
 						transition: 'background-color 0.1s ease, color 0.1s ease',
 					}}
-					aria-label="Close tab"
+					aria-label={tA('mobile.close_tab')}
 				>
 					×
 				</button>
@@ -220,6 +226,8 @@ function TabActionsPopover({
 	onMoveLeft?: () => void;
 	onMoveRight?: () => void;
 }) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 	const popoverRef = useRef<HTMLDivElement>(null);
 	const [isRenaming, setIsRenaming] = useState(false);
@@ -227,7 +235,10 @@ function TabActionsPopover({
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	const displayName =
-		tab.name || (tab.agentSessionId ? tab.agentSessionId.split('-')[0].toUpperCase() : 'New');
+		tab.name ||
+		(tab.agentSessionId
+			? tab.agentSessionId.split('-')[0].toUpperCase()
+			: t('mobile.tab_default_name'));
 	const isFirst = tabIndex === 0;
 	const isLast = tabIndex === tabCount - 1;
 
@@ -338,7 +349,7 @@ function TabActionsPopover({
 			<div
 				ref={popoverRef}
 				role="dialog"
-				aria-label={`Actions for tab ${displayName}`}
+				aria-label={tA('mobile.tab_actions', { name: displayName })}
 				style={{
 					...calculatePosition(),
 					backgroundColor: colors.bgSidebar,
@@ -385,7 +396,7 @@ function TabActionsPopover({
 							borderRadius: '4px',
 							lineHeight: 1,
 						}}
-						aria-label="Close"
+						aria-label={tA('mobile.close_button')}
 					>
 						×
 					</button>
@@ -404,7 +415,7 @@ function TabActionsPopover({
 									if (e.key === 'Enter') handleSaveRename();
 									if (e.key === 'Escape') setIsRenaming(false);
 								}}
-								placeholder="Tab name"
+								placeholder={t('mobile.tab_name_placeholder')}
 								style={{
 									width: '100%',
 									padding: '8px 10px',
@@ -433,7 +444,7 @@ function TabActionsPopover({
 										cursor: 'pointer',
 									}}
 								>
-									Save
+									{t('save')}
 								</button>
 								<button
 									onClick={() => setIsRenaming(false)}
@@ -448,7 +459,7 @@ function TabActionsPopover({
 										cursor: 'pointer',
 									}}
 								>
-									Cancel
+									{t('cancel')}
 								</button>
 							</div>
 						</div>
@@ -468,7 +479,7 @@ function TabActionsPopover({
 									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>
 										{tab.starred ? '★' : '☆'}
 									</span>
-									{tab.starred ? 'Unstar' : 'Star'}
+									{tab.starred ? t('mobile.unstar_action') : t('mobile.star_action')}
 								</button>
 							)}
 
@@ -482,7 +493,7 @@ function TabActionsPopover({
 									style={actionButtonStyle()}
 								>
 									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>✎</span>
-									Rename
+									{t('mobile.rename_action')}
 								</button>
 							)}
 
@@ -499,7 +510,7 @@ function TabActionsPopover({
 									disabled={isFirst}
 								>
 									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>←</span>
-									Move Left
+									{t('mobile.move_left_action')}
 								</button>
 							)}
 
@@ -516,7 +527,7 @@ function TabActionsPopover({
 									disabled={isLast}
 								>
 									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>→</span>
-									Move Right
+									{t('mobile.move_right_action')}
 								</button>
 							)}
 						</>
@@ -545,6 +556,7 @@ export function TabBar({
 	onReorderTab,
 	onOpenTabSearch,
 }: TabBarProps) {
+	const { t } = useTranslation('common');
 	const colors = useThemeColors();
 	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
 
@@ -599,7 +611,7 @@ export function TabBar({
 							cursor: 'pointer',
 							marginBottom: '4px',
 						}}
-						title={`Search ${tabs.length} tabs`}
+						title={t('mobile.search_tabs_title', { count: tabs.length })}
 					>
 						<svg
 							width="14"
@@ -633,7 +645,7 @@ export function TabBar({
 						cursor: 'pointer',
 						marginBottom: '4px',
 					}}
-					title="New Tab"
+					title={t('mobile.new_tab_title')}
 				>
 					<svg
 						width="14"

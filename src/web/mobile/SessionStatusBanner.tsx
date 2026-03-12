@@ -19,6 +19,7 @@
  */
 
 import React, { useState, useCallback, useEffect, memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, UsageStats, LastResponsePreview } from '../hooks/useSessions';
@@ -55,6 +56,7 @@ export interface SessionStatusBannerProps {
  */
 function CostTracker({ usageStats }: { usageStats?: UsageStats | null }) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	// Don't render if no usage stats or no cost data
 	if (!usageStats || usageStats.totalCostUsd === undefined || usageStats.totalCostUsd === null) {
@@ -78,8 +80,8 @@ function CostTracker({ usageStats }: { usageStats?: UsageStats | null }) {
 				lineHeight: 1,
 				flexShrink: 0,
 			}}
-			title={`Session cost: ${formatCost(cost)}`}
-			aria-label={`Session cost: ${formatCost(cost)}`}
+			title={tA('mobile.session_cost', { cost: formatCost(cost) })}
+			aria-label={tA('mobile.session_cost', { cost: formatCost(cost) })}
 		>
 			{/* Dollar icon using Unicode */}
 			<span style={{ fontSize: '10px' }}>💰</span>
@@ -110,6 +112,7 @@ function ContextUsageBar({
 	toolType?: string;
 }) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	const percentage = usageStats ? estimateContextUsage(usageStats, toolType) : null;
 
@@ -128,8 +131,8 @@ function ContextUsageBar({
 				gap: '4px',
 				flexShrink: 0,
 			}}
-			title={`Context window: ${percentage}% used`}
-			aria-label={`Context window ${percentage}% used`}
+			title={tA('mobile.context_window_title', { percent: percentage })}
+			aria-label={tA('mobile.context_window_label', { percent: percentage })}
 			role="progressbar"
 			aria-valuenow={percentage}
 			aria-valuemin={0}
@@ -177,6 +180,7 @@ function ContextUsageBar({
  */
 function ThinkingIndicator() {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	return (
 		<span
@@ -186,7 +190,7 @@ function ThinkingIndicator() {
 				gap: '2px',
 				marginLeft: '4px',
 			}}
-			aria-label="AI is thinking"
+			aria-label={tA('mobile.ai_thinking')}
 		>
 			{[0, 1, 2].map((index) => (
 				<span
@@ -227,6 +231,7 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
 	thinkingStartTime: number;
 }) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 	const [elapsedSeconds, setElapsedSeconds] = useState(
 		Math.floor((Date.now() - thinkingStartTime) / 1000)
 	);
@@ -259,8 +264,8 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
 				lineHeight: 1,
 				flexShrink: 0,
 			}}
-			title={`Thinking for ${formatElapsedTimeColon(elapsedSeconds)}`}
-			aria-label={`AI has been thinking for ${formatElapsedTimeColon(elapsedSeconds)}`}
+			title={tA('mobile.thinking_for', { time: formatElapsedTimeColon(elapsedSeconds) })}
+			aria-label={tA('mobile.ai_thinking_for', { time: formatElapsedTimeColon(elapsedSeconds) })}
 		>
 			<span style={{ fontSize: '10px' }}>⏱</span>
 			<span>{formatElapsedTimeColon(elapsedSeconds)}</span>
@@ -274,6 +279,7 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
  */
 function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 	const colors = useThemeColors();
+	const { t: tA } = useTranslation('accessibility');
 
 	// Don't render if no usage stats or no token data
 	if (!usageStats) {
@@ -315,8 +321,14 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
 				lineHeight: 1,
 				flexShrink: 0,
 			}}
-			title={`Input: ${inputTokens.toLocaleString(getActiveLocale())} | Output: ${outputTokens.toLocaleString(getActiveLocale())} | Total: ${totalTokens.toLocaleString(getActiveLocale())} tokens`}
-			aria-label={`${totalTokens.toLocaleString(getActiveLocale())} tokens used`}
+			title={tA('mobile.token_title', {
+				input: inputTokens.toLocaleString(getActiveLocale()),
+				output: outputTokens.toLocaleString(getActiveLocale()),
+				total: totalTokens.toLocaleString(getActiveLocale()),
+			})}
+			aria-label={tA('mobile.tokens_used', {
+				count: totalTokens.toLocaleString(getActiveLocale()),
+			} as any)}
 		>
 			<span style={{ fontSize: '10px' }}>📊</span>
 			<span>{formatTokens(totalTokens)}</span>
@@ -353,6 +365,8 @@ function LastResponsePreviewSection({
 	onShare,
 }: LastResponsePreviewSectionProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
 
 	// Don't render if no last response
@@ -443,7 +457,7 @@ function LastResponsePreviewSection({
 						padding: 0,
 					}}
 					aria-expanded={isExpanded}
-					aria-label={isExpanded ? 'Collapse last response' : 'Expand last response'}
+					aria-label={isExpanded ? tA('mobile.collapse_response') : tA('mobile.expand_response')}
 				>
 					<span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
 						{/* Chevron icon */}
@@ -457,7 +471,7 @@ function LastResponsePreviewSection({
 						>
 							▶
 						</span>
-						<span>Last Response</span>
+						<span>{t('mobile.last_response')}</span>
 						<span style={{ opacity: 0.7 }}>({formatRelativeTime(lastResponse.timestamp)})</span>
 					</span>
 				</button>
@@ -466,7 +480,7 @@ function LastResponsePreviewSection({
 				<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
 					{hasMoreContent && !isExpanded && (
 						<span style={{ opacity: 0.7, fontSize: '10px', color: colors.textDim }}>
-							{lastResponse.fullLength} chars
+							{t('mobile.chars_count', { count: lastResponse.fullLength })}
 						</span>
 					)}
 
@@ -501,22 +515,22 @@ function LastResponsePreviewSection({
 						}}
 						aria-label={
 							copyState === 'copied'
-								? 'Copied to clipboard'
+								? tA('mobile.copied_to_clipboard')
 								: copyState === 'error'
-									? 'Failed to copy'
-									: 'Copy response to clipboard'
+									? tA('mobile.failed_to_copy')
+									: tA('mobile.copy_response')
 						}
-						title="Copy response to clipboard"
+						title={tA('mobile.copy_response')}
 					>
 						{copyState === 'copied' ? (
 							<>
 								<span aria-hidden="true">✓</span>
-								<span>Copied</span>
+								<span>{t('mobile.copied_label')}</span>
 							</>
 						) : copyState === 'error' ? (
 							<>
 								<span aria-hidden="true">✗</span>
-								<span>Failed</span>
+								<span>{t('mobile.failed_label')}</span>
 							</>
 						) : (
 							<>
@@ -524,7 +538,7 @@ function LastResponsePreviewSection({
 								<span aria-hidden="true" style={{ fontSize: '11px' }}>
 									📋
 								</span>
-								<span>Copy</span>
+								<span>{t('copy')}</span>
 							</>
 						)}
 					</button>
@@ -559,7 +573,7 @@ function LastResponsePreviewSection({
 						}}
 						role={onExpand ? 'button' : undefined}
 						tabIndex={onExpand ? 0 : undefined}
-						aria-label={onExpand ? 'Tap to view full response' : undefined}
+						aria-label={onExpand ? tA('mobile.tap_view_full') : undefined}
 					>
 						{stripAnsiCodes(lastResponse.text)}
 
@@ -590,7 +604,7 @@ function LastResponsePreviewSection({
 								opacity: 0.8,
 							}}
 						>
-							Tap to view full response
+							{t('mobile.tap_view_full')}
 						</div>
 					)}
 				</div>
@@ -617,6 +631,8 @@ export function SessionStatusBanner({
 	onExpandResponse,
 }: SessionStatusBannerProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const [isResponseExpanded, setIsResponseExpanded] = useState(false);
 
 	// Toggle handler for the collapsible last response preview
@@ -656,7 +672,7 @@ export function SessionStatusBanner({
 			}}
 			role="status"
 			aria-live="polite"
-			aria-label={`Current session: ${session.name}, status: ${status}`}
+			aria-label={tA('mobile.current_session', { name: session.name, status })}
 		>
 			{/* Main status row */}
 			<div
@@ -712,7 +728,7 @@ export function SessionStatusBanner({
 								flexShrink: 0,
 							}}
 						>
-							{session.inputMode === 'ai' ? 'AI' : 'Terminal'}
+							{session.inputMode === 'ai' ? t('mobile.mode_ai') : t('mobile.mode_terminal')}
 						</span>
 
 						{/* Cost tracker */}

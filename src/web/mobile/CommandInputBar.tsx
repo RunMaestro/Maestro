@@ -24,6 +24,7 @@
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useSwipeUp } from '../hooks/useSwipeUp';
 import { useVoiceInput } from '../hooks/useVoiceInput';
@@ -165,6 +166,8 @@ export function CommandInputBar({
 	showRecentCommands = true,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -263,16 +266,16 @@ export function CommandInputBar({
 
 	// Get placeholder text based on state
 	const getPlaceholder = () => {
-		if (isOffline) return 'Offline...';
-		if (!isConnected) return 'Connecting...';
+		if (isOffline) return t('mobile.offline_placeholder');
+		if (!isConnected) return t('mobile.connecting_placeholder');
 		// In AI mode when busy, show helpful hint that user can still type
-		if (inputMode === 'ai' && isSessionBusy) return 'AI thinking... (type your next message)';
+		if (inputMode === 'ai' && isSessionBusy) return t('mobile.ai_thinking_placeholder');
 		// In terminal mode, show shortened cwd as placeholder hint
 		if (inputMode === 'terminal' && cwd) {
 			const shortCwd = cwd.replace(/^\/Users\/[^/]+/, '~');
 			return shortCwd;
 		}
-		return placeholder || 'Enter command...';
+		return placeholder || t('mobile.enter_command_placeholder');
 	};
 
 	/**
@@ -519,7 +522,7 @@ export function CommandInputBar({
 						cursor: 'pointer',
 					}}
 					onClick={onHistoryOpen}
-					aria-label="Open command history"
+					aria-label={tA('mobile.open_command_history')}
 				>
 					<div
 						style={{
@@ -620,7 +623,7 @@ export function CommandInputBar({
 							}, 150);
 							onInputBlur?.();
 						}}
-						aria-label="AI message input. Press the send button to submit."
+						aria-label={tA('mobile.ai_input')}
 						aria-multiline="true"
 					/>
 
@@ -744,7 +747,7 @@ export function CommandInputBar({
 									if (container) container.style.borderColor = colors.border;
 									onInputBlur?.();
 								}}
-								aria-label="Shell command input"
+								aria-label={tA('mobile.shell_input')}
 							/>
 						</div>
 					) : (
@@ -819,7 +822,7 @@ export function CommandInputBar({
 								e.currentTarget.style.boxShadow = 'none';
 								onInputBlur?.();
 							}}
-							aria-label="AI message input. Press the send button to submit."
+							aria-label={tA('mobile.ai_input')}
 							aria-multiline="true"
 						/>
 					)}

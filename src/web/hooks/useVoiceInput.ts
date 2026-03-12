@@ -13,6 +13,7 @@
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react';
+import i18n from '../../shared/i18n/config';
 import { webLogger } from '../utils/logger';
 
 /**
@@ -193,7 +194,7 @@ export function useVoiceInput({
 		const recognition = new SpeechRecognitionClass();
 		recognition.continuous = false;
 		recognition.interimResults = true;
-		recognition.lang = navigator.language || 'en-US';
+		recognition.lang = navigator.language || i18n.language || 'en-US';
 		recognition.maxAlternatives = 1;
 
 		// Store reference for cleanup

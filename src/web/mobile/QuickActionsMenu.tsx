@@ -14,6 +14,7 @@
  */
 
 import React, { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { MIN_TOUCH_TARGET } from './constants';
 
@@ -49,6 +50,8 @@ export function QuickActionsMenu({
 	hasActiveSession,
 }: QuickActionsMenuProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const menuRef = useRef<HTMLDivElement>(null);
 
 	// Close menu when clicking outside
@@ -119,7 +122,7 @@ export function QuickActionsMenu({
 	}> = [
 		{
 			action: 'switch_mode',
-			label: inputMode === 'ai' ? 'Switch to Terminal' : 'Switch to AI',
+			label: inputMode === 'ai' ? t('mobile.switch_to_terminal') : t('mobile.switch_to_ai'),
 			icon:
 				inputMode === 'ai' ? (
 					// Terminal icon
@@ -181,7 +184,7 @@ export function QuickActionsMenu({
 			/>
 
 			{/* Menu container */}
-			<div ref={menuRef} role="menu" aria-label="Quick actions" style={menuStyle}>
+			<div ref={menuRef} role="menu" aria-label={tA('mobile.quick_actions')} style={menuStyle}>
 				{menuItems.map((item, index) => (
 					<button
 						key={item.action}

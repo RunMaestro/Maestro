@@ -13,6 +13,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { Badge } from '../components/Badge';
 import type { QueuedCommand, QueueStatus } from '../hooks/useOfflineQueue';
@@ -46,6 +47,8 @@ export function OfflineQueueBanner({
 	isConnected,
 }: OfflineQueueBannerProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const [isExpanded, setIsExpanded] = useState(false);
 
 	const isProcessing = status === 'processing';
@@ -136,13 +139,13 @@ export function OfflineQueueBanner({
 							color: colors.textMain,
 						}}
 					>
-						{queue.length} command{queue.length !== 1 ? 's' : ''} queued
+						{t('mobile.commands_queued', { count: queue.length })}
 					</span>
 
 					{/* Processing indicator */}
 					{isProcessing && (
 						<Badge variant="connecting" badgeStyle="subtle" size="sm" pulse>
-							Sending...
+							{t('mobile.sending_label')}
 						</Badge>
 					)}
 
@@ -183,7 +186,7 @@ export function OfflineQueueBanner({
 								WebkitTapHighlightColor: 'transparent',
 							}}
 						>
-							Send Now
+							{t('mobile.send_now')}
 						</button>
 					)}
 
@@ -204,7 +207,7 @@ export function OfflineQueueBanner({
 							WebkitTapHighlightColor: 'transparent',
 						}}
 					>
-						Clear
+						{t('clear')}
 					</button>
 				</div>
 			</div>
@@ -219,10 +222,10 @@ export function OfflineQueueBanner({
 				}}
 			>
 				{isOffline
-					? 'Commands will be sent when you reconnect.'
+					? t('mobile.offline_queue_will_send')
 					: isProcessing
-						? 'Sending queued commands...'
-						: 'Commands ready to send.'}
+						? t('mobile.offline_queue_sending')
+						: t('mobile.offline_queue_ready')}
 			</p>
 
 			{/* Expanded queue list */}
@@ -278,8 +281,7 @@ export function OfflineQueueBanner({
 										}}
 									>
 										{formatRelativeTime(cmd.timestamp)}
-										{cmd.attempts > 0 &&
-											` - ${cmd.attempts} attempt${cmd.attempts !== 1 ? 's' : ''}`}
+										{cmd.attempts > 0 && ` - ${t('mobile.attempt_count', { count: cmd.attempts })}`}
 										{cmd.lastError && (
 											<span style={{ color: colors.error }}> - {cmd.lastError}</span>
 										)}
@@ -292,7 +294,7 @@ export function OfflineQueueBanner({
 									badgeStyle="subtle"
 									size="sm"
 								>
-									{cmd.inputMode === 'ai' ? 'AI' : 'CLI'}
+									{cmd.inputMode === 'ai' ? t('mobile.mode_ai') : t('mobile.mode_cli')}
 								</Badge>
 
 								{/* Remove button */}
@@ -308,7 +310,7 @@ export function OfflineQueueBanner({
 										opacity: isProcessing ? 0.5 : 1,
 										WebkitTapHighlightColor: 'transparent',
 									}}
-									aria-label="Remove command"
+									aria-label={tA('mobile.remove_command')}
 								>
 									<svg
 										width="16"

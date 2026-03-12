@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { type WebSocketState } from '../hooks/useWebSocket';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -174,6 +175,8 @@ export function ConnectionStatusIndicator({
 	onRetry,
 	style,
 }: ConnectionStatusIndicatorProps) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 	const [isDismissed, setIsDismissed] = useState(false);
 	const [showDetails, setShowDetails] = useState(false);
@@ -218,8 +221,8 @@ export function ConnectionStatusIndicator({
 	const getStatusConfig = (): StatusConfig => {
 		if (isOffline) {
 			return {
-				message: 'No internet connection',
-				subMessage: 'Will reconnect automatically when online',
+				message: t('mobile.no_internet'),
+				subMessage: t('mobile.will_reconnect'),
 				showRetry: false,
 				icon: 'wifi-off',
 				bgColor: `${colors.error}15`,
@@ -231,10 +234,13 @@ export function ConnectionStatusIndicator({
 		if (connectionState === 'connecting' || connectionState === 'authenticating') {
 			const attemptText =
 				reconnectAttempts > 0
-					? `Attempt ${reconnectAttempts} of ${maxReconnectAttempts}`
-					: 'Establishing connection...';
+					? t('mobile.attempt_of', { current: reconnectAttempts, max: maxReconnectAttempts })
+					: t('mobile.establishing_connection');
 			return {
-				message: connectionState === 'connecting' ? 'Connecting...' : 'Authenticating...',
+				message:
+					connectionState === 'connecting'
+						? t('mobile.connecting_label')
+						: t('mobile.authenticating_label'),
 				subMessage: attemptText,
 				showRetry: reconnectAttempts > 2, // Show retry after a few attempts
 				icon: 'loading',
@@ -247,12 +253,14 @@ export function ConnectionStatusIndicator({
 		if (connectionState === 'disconnected') {
 			const isMaxAttemptsReached = reconnectAttempts >= maxReconnectAttempts;
 			return {
-				message: isMaxAttemptsReached ? 'Connection failed' : 'Disconnected',
+				message: isMaxAttemptsReached
+					? t('mobile.connection_failed')
+					: t('mobile.disconnected_label'),
 				subMessage:
 					error ||
 					(isMaxAttemptsReached
-						? `Failed after ${maxReconnectAttempts} attempts`
-						: 'Tap retry to reconnect'),
+						? t('mobile.failed_after_attempts', { max: maxReconnectAttempts })
+						: t('mobile.tap_retry')),
 				showRetry: true,
 				icon: 'disconnect',
 				bgColor: `${colors.error}15`,
@@ -263,7 +271,7 @@ export function ConnectionStatusIndicator({
 
 		// Fallback
 		return {
-			message: 'Unknown state',
+			message: t('mobile.unknown_state'),
 			showRetry: true,
 			icon: 'disconnect',
 			bgColor: `${colors.warning}15`,
@@ -392,10 +400,10 @@ export function ConnectionStatusIndicator({
 								cursor: 'pointer',
 								whiteSpace: 'nowrap',
 							}}
-							aria-label="Retry connection"
+							aria-label={tA('mobile.retry_connection')}
 						>
 							<RetryIcon />
-							Retry
+							{t('retry')}
 						</button>
 					)}
 
@@ -414,7 +422,7 @@ export function ConnectionStatusIndicator({
 								border: 'none',
 								cursor: 'pointer',
 							}}
-							aria-label="Dismiss notification"
+							aria-label={tA('mobile.dismiss_notification')}
 						>
 							<CloseIcon />
 						</button>
@@ -438,7 +446,7 @@ export function ConnectionStatusIndicator({
 							marginBottom: '4px',
 						}}
 					>
-						Error details:
+						{t('mobile.error_details_label')}
 					</div>
 					<div
 						style={{

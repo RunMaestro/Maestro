@@ -16,6 +16,7 @@ import {
 	useContext,
 	useCallback,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ThemeProvider } from './components/ThemeProvider';
 import { registerServiceWorker, isOffline } from './utils/serviceWorker';
 import { getMaestroConfig } from './utils/config';
@@ -154,6 +155,7 @@ const WebApp = lazy(() =>
  * or if there's an error loading the app module
  */
 function PlaceholderApp() {
+	const { t } = useTranslation('common');
 	return (
 		<div
 			style={{
@@ -168,12 +170,12 @@ function PlaceholderApp() {
 				backgroundColor: 'var(--color-background)',
 			}}
 		>
-			<h1 style={{ marginBottom: '16px', fontSize: '24px' }}>Maestro Web</h1>
+			<h1 style={{ marginBottom: '16px', fontSize: '24px' }}>{t('mobile.web_title')}</h1>
 			<p style={{ marginBottom: '8px', color: 'var(--color-text-muted)' }}>
-				Remote control interface
+				{t('mobile.web_subtitle')}
 			</p>
 			<p style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
-				Connect to your Maestro desktop app to get started
+				{t('mobile.web_connect_hint')}
 			</p>
 		</div>
 	);

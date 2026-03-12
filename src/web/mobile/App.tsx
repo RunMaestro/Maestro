@@ -6,6 +6,7 @@
  */
 
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import {
 	useWebSocket,
@@ -63,6 +64,7 @@ interface MobileHeaderProps {
 
 function MobileHeader({ activeSession }: MobileHeaderProps) {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
 	const { isSession, goToDashboard } = useMaestroMode();
 
 	// Get active tab for per-tab data (agentSessionId, usageStats)
@@ -111,7 +113,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 					cursor: isSession ? 'pointer' : 'default',
 					flexShrink: 0,
 				}}
-				title={isSession ? 'Go to dashboard' : undefined}
+				title={isSession ? t('mobile.go_to_dashboard') : undefined}
 			>
 				{/* Wand icon */}
 				<svg
@@ -140,7 +142,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 						color: colors.textMain,
 					}}
 				>
-					Maestro
+					{t('mobile.app_name')}
 				</span>
 			</div>
 
@@ -167,7 +169,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 							flexShrink: 0,
 							animation: isThinking ? 'pulse 1.5s ease-in-out infinite' : 'none',
 						}}
-						title={`Session ${sessionState}`}
+						title={t('mobile.session_state', { state: sessionState })}
 					/>
 
 					{/* Session name */}
@@ -196,7 +198,9 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 								borderRadius: '3px',
 								flexShrink: 0,
 							}}
-							title={`Claude Session: ${activeTab?.agentSessionId || activeSession.agentSessionId}`}
+							title={t('mobile.claude_session', {
+								sessionId: activeTab?.agentSessionId || activeSession.agentSessionId,
+							})}
 						>
 							{(activeTab?.agentSessionId || activeSession.agentSessionId)?.slice(0, 8)}
 						</span>
@@ -213,7 +217,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 								borderRadius: '3px',
 								flexShrink: 0,
 							}}
-							title={`Session cost: ${formatCost(cost)}`}
+							title={t('mobile.session_cost', { cost: formatCost(cost) })}
 						>
 							{formatCost(cost)}
 						</span>
@@ -228,7 +232,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 								gap: '3px',
 								flexShrink: 0,
 							}}
-							title={`Context: ${contextUsage}%`}
+							title={t('mobile.context_percent', { percent: contextUsage })}
 						>
 							<div
 								style={{
@@ -275,6 +279,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
  */
 export default function MobileApp() {
 	const colors = useThemeColors();
+	const { t } = useTranslation('common');
 	const isOffline = useOfflineStatus();
 	const { setDesktopTheme } = useDesktopTheme();
 
@@ -352,28 +357,31 @@ export default function MobileApp() {
 	 * Get the first line of a response for notification display
 	 * Strips markdown/code markers and truncates to reasonable length
 	 */
-	const getFirstLineOfResponse = useCallback((text: string): string => {
-		if (!text) return 'Response completed';
+	const getFirstLineOfResponse = useCallback(
+		(text: string): string => {
+			if (!text) return t('mobile.response_completed');
 
-		// Split by newlines and find first non-empty, non-markdown line
-		const lines = text.split('\n');
-		for (const line of lines) {
-			const trimmed = line.trim();
-			// Skip empty lines and common markdown markers
-			if (!trimmed) continue;
-			if (trimmed.startsWith('```')) continue;
-			if (trimmed === '---') continue;
+			// Split by newlines and find first non-empty, non-markdown line
+			const lines = text.split('\n');
+			for (const line of lines) {
+				const trimmed = line.trim();
+				// Skip empty lines and common markdown markers
+				if (!trimmed) continue;
+				if (trimmed.startsWith('```')) continue;
+				if (trimmed === '---') continue;
 
-			// Found a content line - truncate if too long
-			const maxLength = 100;
-			if (trimmed.length > maxLength) {
-				return trimmed.substring(0, maxLength) + '...';
+				// Found a content line - truncate if too long
+				const maxLength = 100;
+				if (trimmed.length > maxLength) {
+					return trimmed.substring(0, maxLength) + '...';
+				}
+				return trimmed;
 			}
-			return trimmed;
-		}
 
-		return 'Response completed';
-	}, []);
+			return t('mobile.response_completed');
+		},
+		[t]
+	);
 
 	// Ref to WebSocket send function (updated after useWebSocket is initialized)
 	const wsSendRef = useRef<((message: Record<string, unknown>) => boolean) | null>(null);
@@ -400,10 +408,10 @@ export default function MobileApp() {
 				return;
 			}
 
-			const title = `${session.name} - Response Ready`;
+			const title = t('mobile.response_ready', { name: session.name });
 			const firstLine = lastResponse?.text
 				? getFirstLineOfResponse(lastResponse.text)
-				: 'AI response completed';
+				: t('mobile.ai_response_completed');
 
 			const notification = showNotification(title, {
 				body: firstLine,
@@ -426,6 +434,7 @@ export default function MobileApp() {
 			}
 		},
 		[
+			t,
 			notificationPermission,
 			showNotification,
 			getFirstLineOfResponse,
@@ -831,15 +840,12 @@ export default function MobileApp() {
 					}}
 				>
 					<h2 style={{ fontSize: '16px', marginBottom: '8px', color: colors.textMain }}>
-						You're Offline
+						{t('mobile.offline_title')}
 					</h2>
 					<p style={{ fontSize: '14px', color: colors.textDim, marginBottom: '12px' }}>
-						No internet connection. Maestro requires a network connection to communicate with your
-						desktop app.
+						{t('mobile.offline_message')}
 					</p>
-					<p style={{ fontSize: '12px', color: colors.textDim }}>
-						The app will automatically reconnect when you're back online.
-					</p>
+					<p style={{ fontSize: '12px', color: colors.textDim }}>{t('mobile.offline_reconnect')}</p>
 				</div>
 			);
 		}
@@ -857,14 +863,15 @@ export default function MobileApp() {
 					}}
 				>
 					<h2 style={{ fontSize: '16px', marginBottom: '8px', color: colors.textMain }}>
-						Connection Lost
+						{t('mobile.connection_lost_title')}
 					</h2>
 					<p style={{ fontSize: '14px', color: colors.textDim, marginBottom: '12px' }}>
-						{error || 'Unable to connect to Maestro desktop app.'}
+						{error || t('mobile.unable_to_connect')}
 					</p>
 					<p style={{ fontSize: '12px', color: colors.textDim, marginBottom: '12px' }}>
-						Reconnecting in {reconnectCountdown}s...
-						{reconnectAttempts > 0 && ` (attempt ${reconnectAttempts})`}
+						{t('mobile.reconnecting_countdown', { seconds: reconnectCountdown })}
+						{reconnectAttempts > 0 &&
+							` ${t('mobile.reconnect_attempt', { count: reconnectAttempts })}`}
 					</p>
 					<button
 						onClick={handleRetry}
@@ -879,7 +886,7 @@ export default function MobileApp() {
 							cursor: 'pointer',
 						}}
 					>
-						Retry Now
+						{t('mobile.retry_now')}
 					</button>
 				</div>
 			);
@@ -898,10 +905,10 @@ export default function MobileApp() {
 					}}
 				>
 					<h2 style={{ fontSize: '16px', marginBottom: '8px', color: colors.textMain }}>
-						Connecting to Maestro...
+						{t('mobile.connecting_title')}
 					</h2>
 					<p style={{ fontSize: '14px', color: colors.textDim }}>
-						Please wait while we establish a connection to your desktop app.
+						{t('mobile.connecting_message')}
 					</p>
 				</div>
 			);
@@ -917,9 +924,7 @@ export default function MobileApp() {
 						textAlign: 'center',
 					}}
 				>
-					<p style={{ fontSize: '14px', color: colors.textDim }}>
-						Select a session above to get started
-					</p>
+					<p style={{ fontSize: '14px', color: colors.textDim }}>{t('mobile.select_session')}</p>
 				</div>
 			);
 		}
@@ -952,7 +957,7 @@ export default function MobileApp() {
 							fontSize: '13px',
 						}}
 					>
-						Loading conversation...
+						{t('mobile.loading_conversation')}
 					</div>
 				) : currentLogs.length === 0 ? (
 					<div
@@ -964,8 +969,8 @@ export default function MobileApp() {
 						}}
 					>
 						{activeSession.inputMode === 'ai'
-							? 'Ask your AI assistant anything'
-							: 'Run shell commands'}
+							? t('mobile.ask_ai_anything')
+							: t('mobile.run_shell_commands')}
 					</div>
 				) : (
 					<MessageHistory
@@ -1125,7 +1130,7 @@ export default function MobileApp() {
 					{/* Show help text only when disconnected/connecting */}
 					{connectionState !== 'connected' && connectionState !== 'authenticated' && (
 						<p style={{ fontSize: '12px', color: colors.textDim }}>
-							Make sure Maestro desktop app is running
+							{t('mobile.desktop_app_hint')}
 						</p>
 					)}
 				</div>
@@ -1140,12 +1145,18 @@ export default function MobileApp() {
 				onSubmit={handleCommandSubmit}
 				placeholder={
 					!activeSessionId
-						? 'Select a session first...'
+						? t('mobile.placeholder_no_session')
 						: activeSession?.inputMode === 'ai'
 							? isSmallScreen
-								? 'Query AI...'
-								: `Ask ${activeSession?.toolType === 'claude-code' ? 'Claude' : activeSession?.toolType || 'AI'} about ${activeSession?.name || 'this session'}...`
-							: 'Run shell command...'
+								? t('mobile.placeholder_query_ai')
+								: t('mobile.placeholder_ask_agent', {
+										agent:
+											activeSession?.toolType === 'claude-code'
+												? 'Claude'
+												: activeSession?.toolType || 'AI',
+										session: activeSession?.name || 'this session',
+									})
+							: t('mobile.placeholder_shell')
 				}
 				disabled={!activeSessionId}
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}

@@ -15,6 +15,7 @@
  */
 
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useThemeColors } from '../components/ThemeProvider';
 import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, GroupInfo } from '../hooks/useSessions';
@@ -43,6 +44,8 @@ function MobileSessionCard({
 	onSelect,
 	displayName,
 }: MobileSessionCardPropsInternal) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 
 	// Map session state to status for StatusDot
@@ -57,10 +60,10 @@ function MobileSessionCard({
 	// Get status label
 	const getStatusLabel = (): string => {
 		const state = session.state as string;
-		if (state === 'idle') return 'Ready';
-		if (state === 'busy') return 'Thinking...';
-		if (state === 'connecting') return 'Connecting...';
-		return 'Error';
+		if (state === 'idle') return t('mobile.status_ready');
+		if (state === 'busy') return t('mobile.status_thinking');
+		if (state === 'connecting') return t('mobile.status_connecting');
+		return t('mobile.status_error');
 	};
 
 	// Get tool type display name
@@ -96,7 +99,19 @@ function MobileSessionCard({
 				WebkitUserSelect: 'none',
 			}}
 			aria-pressed={isActive}
-			aria-label={`${displayName} session, ${getStatusLabel()}, ${session.inputMode} mode${isActive ? ', active' : ''}`}
+			aria-label={
+				isActive
+					? tA('mobile.session_card_active', {
+							name: displayName,
+							status: getStatusLabel(),
+							mode: session.inputMode,
+						})
+					: tA('mobile.session_card', {
+							name: displayName,
+							status: getStatusLabel(),
+							mode: session.inputMode,
+						})
+			}
 		>
 			{/* Top row: Status dot, name, and mode badge */}
 			<div
@@ -133,7 +148,7 @@ function MobileSessionCard({
 						flexShrink: 0,
 					}}
 				>
-					{session.inputMode === 'ai' ? 'AI' : 'Terminal'}
+					{session.inputMode === 'ai' ? t('mobile.mode_ai') : t('mobile.mode_terminal')}
 				</span>
 			</div>
 
@@ -316,6 +331,7 @@ function GroupSection({
 	onToggleCollapse,
 	allSessions,
 }: GroupSectionProps) {
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 
 	const handleToggle = useCallback(() => {
@@ -350,7 +366,11 @@ function GroupSection({
 					transition: 'all 0.15s ease',
 				}}
 				aria-expanded={!isCollapsed}
-				aria-label={`${name} group with ${sessions.length} sessions. ${isCollapsed ? 'Tap to expand' : 'Tap to collapse'}`}
+				aria-label={
+					isCollapsed
+						? tA('mobile.group_expand', { name, count: sessions.length })
+						: tA('mobile.group_collapse', { name, count: sessions.length })
+				}
 			>
 				{/* Collapse/expand indicator */}
 				<span
@@ -439,6 +459,8 @@ export function AllSessionsView({
 	onClose,
 	searchQuery = '',
 }: AllSessionsViewProps) {
+	const { t } = useTranslation('common');
+	const { t: tA } = useTranslation('accessibility');
 	const colors = useThemeColors();
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string> | null>(null);
 	const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
@@ -472,7 +494,7 @@ export function AllSessionsView({
 		if (bookmarkedSessions.length > 0) {
 			groups['bookmarks'] = {
 				id: 'bookmarks',
-				name: 'Bookmarks',
+				name: t('mobile.bookmarks_label'),
 				emoji: '★',
 				sessions: bookmarkedSessions,
 			};
@@ -487,7 +509,7 @@ export function AllSessionsView({
 			if (!groups[groupKey]) {
 				groups[groupKey] = {
 					id: effectiveGroup.groupId,
-					name: effectiveGroup.groupName || 'Ungrouped',
+					name: effectiveGroup.groupName || t('mobile.ungrouped_label'),
 					emoji: effectiveGroup.groupEmoji,
 					sessions: [],
 				};
@@ -631,7 +653,7 @@ export function AllSessionsView({
 						color: colors.textMain,
 					}}
 				>
-					All Agents
+					{t('mobile.all_agents_title')}
 				</h1>
 				<button
 					onClick={handleClose}
@@ -647,9 +669,9 @@ export function AllSessionsView({
 						touchAction: 'manipulation',
 						WebkitTapHighlightColor: 'transparent',
 					}}
-					aria-label="Close All Agents view"
+					aria-label={tA('mobile.close_all_agents')}
 				>
-					Done
+					{t('done')}
 				</button>
 			</header>
 
@@ -677,7 +699,7 @@ export function AllSessionsView({
 					<span style={{ color: colors.textDim, fontSize: '14px' }}>🔍</span>
 					<input
 						type="text"
-						placeholder="Search agents..."
+						placeholder={t('mobile.search_agents_placeholder')}
 						value={localSearchQuery}
 						onChange={handleSearchChange}
 						style={{
@@ -701,7 +723,7 @@ export function AllSessionsView({
 								fontSize: '12px',
 								cursor: 'pointer',
 							}}
-							aria-label="Clear search"
+							aria-label={tA('mobile.clear_search')}
 						>
 							✕
 						</button>
@@ -731,12 +753,12 @@ export function AllSessionsView({
 						}}
 					>
 						<p style={{ fontSize: '15px', color: colors.textMain, marginBottom: '8px' }}>
-							{localSearchQuery ? 'No sessions found' : 'No sessions available'}
+							{localSearchQuery ? t('mobile.no_sessions_found') : t('mobile.no_sessions_available')}
 						</p>
 						<p style={{ fontSize: '13px', color: colors.textDim }}>
 							{localSearchQuery
-								? `No sessions match "${localSearchQuery}"`
-								: 'Create a session in the desktop app to get started'}
+								? t('mobile.no_sessions_match', { query: localSearchQuery })
+								: t('mobile.create_session_hint')}
 						</p>
 					</div>
 				) : sortedGroupKeys.length === 1 && sortedGroupKeys[0] === 'ungrouped' ? (
