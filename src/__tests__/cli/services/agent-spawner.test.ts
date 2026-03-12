@@ -45,12 +45,15 @@ vi.mock('child_process', async (importOriginal) => {
 	};
 });
 
-// Mock fs module
+// Mock fs module — existsSync must be a deterministic mock (not the real one)
+// so that detectNodeVersionManagerBinPaths() doesn't probe the host filesystem,
+// keeping tests host-independent.
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
 		...actual,
-		existsSync: actual.existsSync,
+		existsSync: vi.fn(() => false),
+		readdirSync: vi.fn(() => []),
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
 		promises: {
