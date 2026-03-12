@@ -596,6 +596,31 @@ describe('CommandInputBar', () => {
 
 			expect(screen.getByTestId('slash-autocomplete')).toBeInTheDocument();
 		});
+
+		it('keeps phone AI drafts readable by expanding the textarea and collapsing extra actions', () => {
+			Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+			Object.defineProperty(window, 'ontouchstart', { value: () => {}, writable: true });
+
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(160);
+
+			renderComponent({
+				inputMode: 'ai',
+				value:
+					'Summarize the working directory status, current branch, and whether there are uncommitted changes in this project.',
+			});
+
+			const textarea = screen.getByRole('textbox');
+			expect(
+				screen.queryByRole('button', { name: /open slash commands/i })
+			).not.toBeInTheDocument();
+			expect(Number.parseInt((textarea as HTMLTextAreaElement).style.height, 10)).toBeGreaterThan(
+				48
+			);
+
+			scrollHeightSpy.mockRestore();
+		});
 	});
 
 	describe('Swipe Up Handle', () => {

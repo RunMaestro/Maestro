@@ -62,6 +62,9 @@ const TEXTAREA_VERTICAL_PADDING = 28; // 14px top + 14px bottom
 /** Maximum height for textarea based on max lines */
 const MAX_TEXTAREA_HEIGHT = LINE_HEIGHT * MAX_LINES + TEXTAREA_VERTICAL_PADDING;
 
+/** Maximum collapsed height for phone AI drafts before the full editor is needed */
+const MOBILE_COLLAPSED_MAX_HEIGHT = LINE_HEIGHT * 3 + TEXTAREA_VERTICAL_PADDING;
+
 /** Mobile breakpoint - phones only, not tablets */
 const MOBILE_MAX_WIDTH = 480;
 
@@ -477,6 +480,8 @@ export function CommandInputBar({
 	);
 
 	// Calculate textarea height for mobile expanded mode
+	const shouldCompressPhoneActions = isMobilePhone && inputMode === 'ai' && value.trim().length > 0;
+	const collapsedMobileTextareaHeight = Math.min(textareaHeight, MOBILE_COLLAPSED_MAX_HEIGHT);
 	const mobileExpandedHeight =
 		isMobilePhone && inputMode === 'ai' && isExpanded
 			? `${MOBILE_EXPANDED_HEIGHT_VH}vh`
@@ -655,7 +660,7 @@ export function CommandInputBar({
 					/>
 
 					{/* Voice input button - only shown if speech recognition is supported */}
-					{voiceSupported && (
+					{voiceSupported && !shouldCompressPhoneActions && (
 						<VoiceInputButton
 							isListening={isListening}
 							onToggle={handleVoiceToggle}
@@ -664,7 +669,7 @@ export function CommandInputBar({
 					)}
 
 					{/* Slash command button - only shown in AI mode */}
-					{inputMode === 'ai' && (
+					{inputMode === 'ai' && !shouldCompressPhoneActions && (
 						<SlashCommandButton
 							isOpen={slashCommandOpen}
 							onOpen={openSlashCommandAutocomplete}
@@ -781,12 +786,15 @@ export function CommandInputBar({
 								fontFamily: 'inherit',
 								lineHeight: `${LINE_HEIGHT}px`,
 								outline: 'none',
-								// On mobile: force single-line height to match buttons (48px)
-								// On desktop: use auto-expanding height
-								height: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${textareaHeight}px`,
+								// Phones stay compact when empty, but expand enough to keep drafts readable.
+								height: isMobilePhone
+									? `${value.trim() ? collapsedMobileTextareaHeight : MIN_INPUT_HEIGHT}px`
+									: `${textareaHeight}px`,
 								// Large minimum height for easy touch targeting
 								minHeight: `${MIN_INPUT_HEIGHT}px`,
-								maxHeight: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${MAX_TEXTAREA_HEIGHT}px`,
+								maxHeight: isMobilePhone
+									? `${MOBILE_COLLAPSED_MAX_HEIGHT}px`
+									: `${MAX_TEXTAREA_HEIGHT}px`,
 								// Reset appearance for consistent styling
 								WebkitAppearance: 'none',
 								appearance: 'none',
@@ -800,7 +808,9 @@ export function CommandInputBar({
 								// On mobile collapsed: hide overflow (single line)
 								// On desktop: enable scrolling when content exceeds max height
 								overflowY: isMobilePhone
-									? 'hidden'
+									? collapsedMobileTextareaHeight >= MOBILE_COLLAPSED_MAX_HEIGHT
+										? 'auto'
+										: 'hidden'
 									: textareaHeight >= MAX_TEXTAREA_HEIGHT
 										? 'auto'
 										: 'hidden',
