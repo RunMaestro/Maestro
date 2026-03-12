@@ -13,7 +13,6 @@ import ReactFlow, {
 	Controls,
 	MiniMap,
 	ReactFlowProvider,
-	MarkerType,
 	useReactFlow,
 	type Node,
 	type Edge,
@@ -37,7 +36,6 @@ import type {
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
 import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
 import { edgeTypes } from './edges/PipelineEdge';
-import type { PipelineEdgeData } from './edges/PipelineEdge';
 import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
 import { PipelineSelector } from './PipelineSelector';
@@ -47,6 +45,11 @@ import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 import { graphSessionsToPipelines } from './utils/yamlToPipeline';
 import { pipelinesToYaml } from './utils/pipelineToYaml';
 import { mergePipelinesWithSavedLayout } from './utils/pipelineLayout';
+import {
+	getTriggerConfigSummary,
+	convertToReactFlowNodes,
+	convertToReactFlowEdges,
+} from './utils/pipelineGraph';
 import { CueSettingsPanel } from './panels/CueSettingsPanel';
 import type { CueSettings } from '../../../main/cue/cue-types';
 import { DEFAULT_CUE_SETTINGS } from '../../../main/cue/cue-types';
@@ -113,209 +116,6 @@ const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'github.issue': 'Issue',
 	'task.pending': 'Pending Task',
 };
-
-function getTriggerConfigSummary(data: TriggerNodeData): string {
-	const { eventType, config } = data;
-	switch (eventType) {
-		case 'time.heartbeat':
-			return config.interval_minutes ? `every ${config.interval_minutes}min` : 'heartbeat';
-		case 'time.scheduled': {
-			const times = config.schedule_times ?? [];
-			const days = config.schedule_days ?? [];
-			if (times.length === 0) return 'scheduled';
-			const timeStr = times.length <= 2 ? times.join(', ') : `${times.length} times`;
-			const dayStr = days.length > 0 && days.length < 7 ? ` (${days.join(', ')})` : '';
-			return `${timeStr}${dayStr}`;
-		}
-		case 'file.changed':
-			return config.watch ?? '**/*';
-		case 'github.pull_request':
-		case 'github.issue':
-			return config.repo ?? 'repo';
-		case 'task.pending':
-			return config.watch ?? 'tasks';
-		case 'agent.completed':
-			return 'agent done';
-		default:
-			return '';
-	}
-}
-
-function convertToReactFlowNodes(
-	pipelines: CuePipelineState['pipelines'],
-	selectedPipelineId: string | null,
-	onConfigureNode?: (compositeId: string) => void
-): Node[] {
-	const nodes: Node[] = [];
-	const agentPipelineMap = new Map<string, string[]>();
-
-	// When showing all pipelines, compute vertical offsets to prevent overlap
-	const pipelineYOffsets = new Map<string, number>();
-	if (selectedPipelineId === null && pipelines.length > 1) {
-		const PIPELINE_GAP = 100; // px between pipeline groups
-		const NODE_HEIGHT = 100; // approximate node height
-		let currentY = 0;
-		for (const pipeline of pipelines) {
-			if (pipeline.nodes.length === 0) continue;
-			let minY = Infinity;
-			let maxY = -Infinity;
-			for (const node of pipeline.nodes) {
-				minY = Math.min(minY, node.position.y);
-				maxY = Math.max(maxY, node.position.y);
-			}
-			// Offset so this pipeline's top starts at currentY
-			pipelineYOffsets.set(pipeline.id, currentY - minY);
-			currentY += maxY - minY + NODE_HEIGHT + PIPELINE_GAP;
-		}
-	}
-
-	// First pass: compute pipeline colors per agent (by sessionId)
-	for (const pipeline of pipelines) {
-		for (const pNode of pipeline.nodes) {
-			if (pNode.type === 'agent') {
-				const agentData = pNode.data as AgentNodeData;
-				const existing = agentPipelineMap.get(agentData.sessionId) ?? [];
-				if (!existing.includes(pipeline.color)) {
-					existing.push(pipeline.color);
-				}
-				agentPipelineMap.set(agentData.sessionId, existing);
-			}
-		}
-	}
-
-	// Count pipelines per agent
-	const agentPipelineCount = new Map<string, number>();
-	for (const pipeline of pipelines) {
-		for (const pNode of pipeline.nodes) {
-			if (pNode.type === 'agent') {
-				const agentData = pNode.data as AgentNodeData;
-				agentPipelineCount.set(
-					agentData.sessionId,
-					(agentPipelineCount.get(agentData.sessionId) ?? 0) + 1
-				);
-			}
-		}
-	}
-
-	// Track which agent sessionIds are in the selected pipeline (for shared agent dimming)
-	const selectedPipelineAgentIds = new Set<string>();
-	if (selectedPipelineId) {
-		const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
-		if (selectedPipeline) {
-			for (const pNode of selectedPipeline.nodes) {
-				if (pNode.type === 'agent') {
-					selectedPipelineAgentIds.add((pNode.data as AgentNodeData).sessionId);
-				}
-			}
-		}
-	}
-
-	for (const pipeline of pipelines) {
-		const isActive = selectedPipelineId === null || pipeline.id === selectedPipelineId;
-
-		for (const pNode of pipeline.nodes) {
-			if (pNode.type === 'trigger') {
-				// Triggers from non-selected pipelines are hidden
-				if (!isActive) continue;
-
-				const triggerData = pNode.data as TriggerNodeData;
-				const compositeId = `${pipeline.id}:${pNode.id}`;
-				const yOffset = pipelineYOffsets.get(pipeline.id) ?? 0;
-				const nodeData: TriggerNodeDataProps = {
-					compositeId,
-					eventType: triggerData.eventType,
-					label: triggerData.customLabel || triggerData.label,
-					configSummary: getTriggerConfigSummary(triggerData),
-					onConfigure: onConfigureNode,
-				};
-				nodes.push({
-					id: compositeId,
-					type: 'trigger',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
-					data: nodeData,
-					dragHandle: '.drag-handle',
-				});
-			} else {
-				const agentData = pNode.data as AgentNodeData;
-				const isShared = (agentPipelineCount.get(agentData.sessionId) ?? 1) > 1;
-
-				// Non-selected pipeline: hide non-shared agents, dim shared ones
-				if (!isActive) {
-					if (!isShared) continue;
-					if (!selectedPipelineAgentIds.has(agentData.sessionId)) continue;
-				}
-
-				const pipelineColors = agentPipelineMap.get(agentData.sessionId) ?? [pipeline.color];
-				const compositeId = `${pipeline.id}:${pNode.id}`;
-				const yOffset = pipelineYOffsets.get(pipeline.id) ?? 0;
-				const hasOutgoingEdge = pipeline.edges.some((e) => e.source === pNode.id);
-				const hasEdgePrompt = pipeline.edges.some((e) => e.target === pNode.id && !!e.prompt);
-				const nodeData: AgentNodeDataProps = {
-					compositeId,
-					sessionId: agentData.sessionId,
-					sessionName: agentData.sessionName,
-					toolType: agentData.toolType,
-					hasPrompt: !!(agentData.inputPrompt || agentData.outputPrompt || hasEdgePrompt),
-					hasOutgoingEdge,
-					pipelineColor: pipeline.color,
-					pipelineCount: agentPipelineCount.get(agentData.sessionId) ?? 1,
-					pipelineColors,
-					onConfigure: onConfigureNode,
-				};
-				nodes.push({
-					id: compositeId,
-					type: 'agent',
-					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
-					data: nodeData,
-					dragHandle: '.drag-handle',
-					style: !isActive ? { opacity: 0.4 } : undefined,
-				});
-			}
-		}
-	}
-
-	return nodes;
-}
-
-function convertToReactFlowEdges(
-	pipelines: CuePipelineState['pipelines'],
-	selectedPipelineId: string | null,
-	runningPipelineIds?: Set<string>,
-	selectedEdgeId?: string | null
-): Edge[] {
-	const edges: Edge[] = [];
-
-	for (const pipeline of pipelines) {
-		const isActive = selectedPipelineId === null || pipeline.id === selectedPipelineId;
-		const isRunning = runningPipelineIds?.has(pipeline.id) ?? false;
-
-		for (const pEdge of pipeline.edges) {
-			const compositeId = `${pipeline.id}:${pEdge.id}`;
-			const edgeData: PipelineEdgeData = {
-				pipelineColor: pipeline.color,
-				mode: pEdge.mode,
-				isActivePipeline: isActive,
-				isRunning,
-			};
-			edges.push({
-				id: compositeId,
-				source: `${pipeline.id}:${pEdge.source}`,
-				target: `${pipeline.id}:${pEdge.target}`,
-				type: 'pipeline',
-				data: edgeData,
-				selected: compositeId === selectedEdgeId,
-				markerEnd: {
-					type: MarkerType.ArrowClosed,
-					color: pipeline.color,
-					width: selectedEdgeId === compositeId ? 18 : 16,
-					height: selectedEdgeId === compositeId ? 18 : 16,
-				},
-			});
-		}
-	}
-
-	return edges;
-}
 
 /** Validates pipeline graph before save. Returns array of error messages. */
 function validatePipelines(pipelines: CuePipeline[]): string[] {
