@@ -1134,11 +1134,11 @@ Persistent PTY-backed terminal tabs that integrate into the unified tab bar alon
 
 ```typescript
 interface TerminalTab {
-	id: string;            // Unique tab ID (UUID)
-	name: string;          // Display name (custom or auto "Terminal N")
-	shellType: string;     // Shell binary (e.g., "zsh", "bash")
-	cwd: string;           // Working directory
-	pid: number;           // PTY process ID (0 = not yet spawned)
+	id: string; // Unique tab ID (UUID)
+	name: string; // Display name (custom or auto "Terminal N")
+	shellType: string; // Shell binary (e.g., "zsh", "bash")
+	cwd: string; // Working directory
+	pid: number; // PTY process ID (0 = not yet spawned)
 	state: 'idle' | 'running' | 'exited';
 	exitCode: number | null;
 	createdAt: number;
@@ -1155,13 +1155,13 @@ activeTerminalTabId: string | null;   // Active terminal tab (null if not in ter
 
 ### Key Files
 
-| File                        | Purpose                                                              |
-| --------------------------- | -------------------------------------------------------------------- |
-| `XTerminal.tsx`             | xterm.js wrapper; handles PTY data I/O and terminal lifecycle        |
-| `TerminalView.tsx`          | Layout container; manages tab selection and spawn/exit state         |
-| `terminalTabHelpers.ts`     | CRUD helpers (`createTerminalTab`, `addTerminalTab`, `closeTerminalTab`, etc.) |
-| `tabStore.ts`               | Zustand selectors for terminal tab state                             |
-| `src/main/ipc/handlers/process.ts` | `process:spawnTerminalTab` IPC handler with SSH support       |
+| File                               | Purpose                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `XTerminal.tsx`                    | xterm.js wrapper; handles PTY data I/O and terminal lifecycle                  |
+| `TerminalView.tsx`                 | Layout container; manages tab selection and spawn/exit state                   |
+| `terminalTabHelpers.ts`            | CRUD helpers (`createTerminalTab`, `addTerminalTab`, `closeTerminalTab`, etc.) |
+| `tabStore.ts`                      | Zustand selectors for terminal tab state                                       |
+| `src/main/ipc/handlers/process.ts` | `process:spawnTerminalTab` IPC handler with SSH support                        |
 
 ---
 

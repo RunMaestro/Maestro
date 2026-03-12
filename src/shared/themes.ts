@@ -19,10 +19,22 @@ import type { Theme, ThemeId, ThemeColors } from './theme-types';
 
 type AnsiPalette = Pick<
 	ThemeColors,
-	| 'ansiBlack' | 'ansiRed' | 'ansiGreen' | 'ansiYellow'
-	| 'ansiBlue' | 'ansiMagenta' | 'ansiCyan' | 'ansiWhite'
-	| 'ansiBrightBlack' | 'ansiBrightRed' | 'ansiBrightGreen' | 'ansiBrightYellow'
-	| 'ansiBrightBlue' | 'ansiBrightMagenta' | 'ansiBrightCyan' | 'ansiBrightWhite'
+	| 'ansiBlack'
+	| 'ansiRed'
+	| 'ansiGreen'
+	| 'ansiYellow'
+	| 'ansiBlue'
+	| 'ansiMagenta'
+	| 'ansiCyan'
+	| 'ansiWhite'
+	| 'ansiBrightBlack'
+	| 'ansiBrightRed'
+	| 'ansiBrightGreen'
+	| 'ansiBrightYellow'
+	| 'ansiBrightBlue'
+	| 'ansiBrightMagenta'
+	| 'ansiBrightCyan'
+	| 'ansiBrightWhite'
 	| 'selection'
 >;
 

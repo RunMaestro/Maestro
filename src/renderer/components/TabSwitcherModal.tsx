@@ -915,7 +915,9 @@ export function TabSwitcherModal({
 											<span
 												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 												style={{
-													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+													backgroundColor: isSelected
+														? 'rgba(255,255,255,0.2)'
+														: theme.colors.bgMain,
 													color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
 												}}
 											>

@@ -110,7 +110,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	);
 	const newActiveTerminalTabId = activeTerminalTabExists
 		? session.activeTerminalTabId
-		: cleanedTerminalTabs[0]?.id ?? null;
+		: (cleanedTerminalTabs[0]?.id ?? null);
 
 	return {
 		...sessionWithoutRuntimeFields,

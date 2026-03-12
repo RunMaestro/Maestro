@@ -1153,7 +1153,7 @@ describe('process IPC handlers', () => {
 		});
 	});
 
-		describe('SSH remote execution (session-level only)', () => {
+	describe('SSH remote execution (session-level only)', () => {
 		// SSH is SESSION-LEVEL ONLY - no agent-level or global defaults
 		const mockSshRemote = {
 			id: 'remote-1',

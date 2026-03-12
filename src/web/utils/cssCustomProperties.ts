@@ -94,7 +94,10 @@ export function generateCSSProperties(theme: Theme): Record<ThemeCSSProperty, st
 	const properties: Partial<Record<ThemeCSSProperty, string>> = {};
 
 	// Add color properties (skip ANSI fields which don't have CSS variable mappings)
-	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty) as [string, ThemeCSSProperty][]) {
+	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty) as [
+		string,
+		ThemeCSSProperty,
+	][]) {
 		const colorValue = theme.colors[colorKey as keyof ThemeColors];
 		if (colorValue !== undefined) {
 			properties[cssProperty] = colorValue;

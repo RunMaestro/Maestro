@@ -140,9 +140,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 
 	const tabIndex = terminalTabs.findIndex((tab) => tab.id === tabId);
 	const unifiedOrder = session.unifiedTabOrder || [];
-	const unifiedIndex = unifiedOrder.findIndex(
-		(ref) => ref.type === 'terminal' && ref.id === tabId
-	);
+	const unifiedIndex = unifiedOrder.findIndex((ref) => ref.type === 'terminal' && ref.id === tabId);
 
 	// Build the closed tab entry for unified history
 	const closedTabEntry: ClosedTabEntry = {
@@ -165,7 +163,8 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 	if (session.activeTerminalTabId === tabId) {
 		if (updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1) {
 			const fallbackIndex = Math.max(0, unifiedIndex - 1);
-			fallbackRef = updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
+			fallbackRef =
+				updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
 		} else {
 			// unifiedTabOrder out of sync — fall back to terminalTabs position
 			const newIndex = Math.max(0, tabIndex - 1);
@@ -174,10 +173,10 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 	}
 
 	// Prepend to unified closed history, capped at MAX_CLOSED_UNIFIED_HISTORY
-	const updatedUnifiedHistory = [
-		closedTabEntry,
-		...(session.unifiedClosedTabHistory || []),
-	].slice(0, MAX_CLOSED_UNIFIED_HISTORY);
+	const updatedUnifiedHistory = [closedTabEntry, ...(session.unifiedClosedTabHistory || [])].slice(
+		0,
+		MAX_CLOSED_UNIFIED_HISTORY
+	);
 
 	const baseSession = {
 		...session,
@@ -272,11 +271,7 @@ export function renameTerminalTab(session: Session, tabId: string, name: string)
  * @param toIndex - Zero-based destination index
  * @returns New session with reordered terminalTabs, or original session if indices are invalid
  */
-export function reorderTerminalTabs(
-	session: Session,
-	fromIndex: number,
-	toIndex: number
-): Session {
+export function reorderTerminalTabs(session: Session, fromIndex: number, toIndex: number): Session {
 	const terminalTabs = [...(session.terminalTabs || [])];
 
 	if (
@@ -319,11 +314,7 @@ export function updateTerminalTabState(
 	const terminalTabs = session.terminalTabs || [];
 	return {
 		...session,
-		terminalTabs: terminalTabs.map((tab) =>
-			tab.id === tabId
-				? { ...tab, state, exitCode }
-				: tab
-		),
+		terminalTabs: terminalTabs.map((tab) => (tab.id === tabId ? { ...tab, state, exitCode } : tab)),
 	};
 }
 

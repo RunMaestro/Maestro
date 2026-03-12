@@ -61,10 +61,7 @@ export const TerminalTabRenameModal = memo(function TerminalTabRenameModal(
 				onSubmit={handleSave}
 				placeholder={defaultName}
 			/>
-			<p
-				className="mt-2 text-xs"
-				style={{ color: theme.colors.textDim }}
-			>
+			<p className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
 				Leave empty to use the default name ({defaultName}).
 			</p>
 		</Modal>

@@ -155,15 +155,17 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							state: 'busy' as SessionState,
 							busySource: 'terminal',
 							// TODO: Remove shellLogs once terminal tabs migration is complete
-							...(!(s.terminalTabs?.length) && { shellLogs: [
-								...s.shellLogs,
-								{
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'user',
-									text: command,
-								},
-							] }),
+							...(!s.terminalTabs?.length && {
+								shellLogs: [
+									...s.shellLogs,
+									{
+										id: generateId(),
+										timestamp: Date.now(),
+										source: 'user',
+										text: command,
+									},
+								],
+							}),
 						};
 					})
 				);
@@ -201,15 +203,17 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								busySource: undefined,
 								thinkingStartTime: undefined,
 								// TODO: Remove shellLogs once terminal tabs migration is complete
-								...(!(s.terminalTabs?.length) && { shellLogs: [
-									...s.shellLogs,
-									{
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'system',
-										text: `Error: Failed to run command - ${errorMessage}`,
-									},
-								] }),
+								...(!s.terminalTabs?.length && {
+									shellLogs: [
+										...s.shellLogs,
+										{
+											id: generateId(),
+											timestamp: Date.now(),
+											source: 'system',
+											text: `Error: Failed to run command - ${errorMessage}`,
+										},
+									],
+								}),
 							};
 						})
 					);

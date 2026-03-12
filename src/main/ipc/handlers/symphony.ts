@@ -418,7 +418,10 @@ async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null
 		logger.info(`Fetched ${data.repositories.length} repos from ${safeUrl}`, LOG_CONTEXT);
 		return data;
 	} catch (error) {
-		logger.warn(`Network error fetching registry from ${safeUrl}: ${error instanceof Error ? error.message : String(error)}`, LOG_CONTEXT);
+		logger.warn(
+			`Network error fetching registry from ${safeUrl}: ${error instanceof Error ? error.message : String(error)}`,
+			LOG_CONTEXT
+		);
 		return null;
 	}
 }
@@ -429,7 +432,10 @@ async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null
  * Custom URL failures are isolated — other registries still load.
  */
 async function fetchRegistries(customUrls: string[]): Promise<SymphonyRegistry> {
-	logger.info(`Fetching Symphony registries (1 default + ${customUrls.length} custom)`, LOG_CONTEXT);
+	logger.info(
+		`Fetching Symphony registries (1 default + ${customUrls.length} custom)`,
+		LOG_CONTEXT
+	);
 
 	const allUrls = [SYMPHONY_REGISTRY_URL, ...customUrls];
 	const results = await Promise.allSettled(allUrls.map(fetchSingleRegistry));
@@ -452,7 +458,10 @@ async function fetchRegistries(customUrls: string[]): Promise<SymphonyRegistry> 
 		throw new SymphonyError('Failed to fetch registry from all configured URLs', 'network');
 	}
 
-	logger.info(`Merged registry: ${mergedRepos.length} repos from ${allUrls.length} sources`, LOG_CONTEXT);
+	logger.info(
+		`Merged registry: ${mergedRepos.length} repos from ${allUrls.length} sources`,
+		LOG_CONTEXT
+	);
 
 	return {
 		schemaVersion: '1.0',
