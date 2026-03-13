@@ -414,6 +414,58 @@ describe('useAgentListeners', () => {
 				expect.any(Number)
 			);
 		});
+
+		it('removes a recovered agent error log when successful data resumes', () => {
+			const deps = createMockDeps();
+			const recoveredError: AgentError = {
+				type: 'permission_denied',
+				message: 'Permission denied. Check file and directory permissions.',
+				recoverable: false,
+				agentId: 'copilot',
+				timestamp: 1700000000000,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'error',
+				toolType: 'copilot',
+				agentError: recoveredError,
+				agentErrorTabId: 'tab-1',
+				agentErrorPaused: true,
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						agentError: recoveredError,
+						logs: [
+							{
+								id: 'log-error',
+								timestamp: recoveredError.timestamp,
+								source: 'error',
+								text: recoveredError.message,
+								agentError: recoveredError,
+							},
+						],
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onDataHandler?.('sess-1-ai-tab-1', 'Final answer');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.agentError).toBeUndefined();
+			expect(updated?.agentErrorTabId).toBeUndefined();
+			expect(updated?.agentErrorPaused).toBe(false);
+			expect(updated?.state).toBe('busy');
+			expect(updated?.aiTabs[0]?.agentError).toBeUndefined();
+			expect(updated?.aiTabs[0]?.logs).toEqual([]);
+			expect(window.maestro.agentError.clearError).toHaveBeenCalledWith('sess-1');
+		});
 	});
 
 	// ========================================================================

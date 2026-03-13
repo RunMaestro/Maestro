@@ -71,6 +71,13 @@ describe('agent-definitions', () => {
 			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
 
+		it('should have copilot configured to use a PTY for interactive sessions', () => {
+			const copilot = AGENT_DEFINITIONS.find((def) => def.id === 'copilot');
+			expect(copilot).toBeDefined();
+			expect(copilot?.requiresPty).toBe(true);
+			expect(copilot?.jsonOutputArgs).toEqual(['--output-format', 'json']);
+		});
+
 		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode?.defaultEnvVars).toBeDefined();
@@ -194,6 +201,14 @@ describe('agent-definitions', () => {
 
 			const args = codex?.workingDirArgs?.('/path/to/project');
 			expect(args).toEqual(['-C', '/path/to/project']);
+		});
+
+		it('should use = syntax for Copilot resume args', () => {
+			const copilot = getAgentDefinition('copilot');
+			expect(copilot?.resumeArgs).toBeDefined();
+
+			const args = copilot?.resumeArgs?.('session-789');
+			expect(args).toEqual(['--resume=session-789']);
 		});
 
 		it('should have imageArgs function for codex', () => {

@@ -132,6 +132,29 @@ export interface UseAgentListenersDeps {
 // Helpers
 // ============================================================================
 
+function isMatchingAgentErrorLog(log: LogEntry, agentError: AgentError): boolean {
+	if (log.source !== 'error' || !log.agentError) {
+		return false;
+	}
+
+	return (
+		log.agentError.timestamp === agentError.timestamp &&
+		log.agentError.type === agentError.type &&
+		log.agentError.message === agentError.message &&
+		log.agentError.agentId === agentError.agentId
+	);
+}
+
+function removeMatchingAgentErrorLog(logs: LogEntry[], agentError: AgentError): LogEntry[] {
+	for (let index = logs.length - 1; index >= 0; index -= 1) {
+		if (isMatchingAgentErrorLog(logs[index], agentError)) {
+			return [...logs.slice(0, index), ...logs.slice(index + 1)];
+		}
+	}
+
+	return logs;
+}
+
 /**
  * Get a human-readable title for an agent error type.
  * Used for toast notifications and history entries.
@@ -248,11 +271,23 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			// Clear error state if session had an error but is now receiving successful data
 			const sessionForErrorCheck = getSessions().find((s) => s.id === actualSessionId);
 			if (sessionForErrorCheck?.agentError) {
+				const activeAgentError = sessionForErrorCheck.agentError;
+				const errorTabId = sessionForErrorCheck.agentErrorTabId ?? targetTabId;
+
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 						const updatedAiTabs = s.aiTabs.map((tab) =>
-							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+							tab.id === targetTabId || tab.id === errorTabId
+								? {
+										...tab,
+										logs:
+											tab.id === errorTabId
+												? removeMatchingAgentErrorLog(tab.logs, activeAgentError)
+												: tab.logs,
+										agentError: undefined,
+									}
+								: tab
 						);
 						return {
 							...s,

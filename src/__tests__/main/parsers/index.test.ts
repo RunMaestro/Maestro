@@ -9,6 +9,7 @@ import {
 	ClaudeOutputParser,
 	OpenCodeOutputParser,
 	CodexOutputParser,
+	CopilotOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -49,21 +50,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('factory-droid')).toBe(true);
 		});
 
-		it('should register exactly 4 parsers', () => {
+		it('should register Copilot parser', () => {
+			expect(hasOutputParser('copilot')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('copilot')).toBe(true);
+		});
+
+		it('should register exactly 5 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(4); // Claude, OpenCode, Codex, Factory Droid
+			expect(parsers.length).toBe(5); // Claude, OpenCode, Codex, Factory Droid, Copilot
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 
-			// Second initialization should still have exactly 4
+			// Second initialization should still have exactly 5
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 	});
 
@@ -73,7 +82,7 @@ describe('parsers/index', () => {
 
 			ensureParsersInitialized();
 
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 
 		it('should be idempotent after first call', () => {
@@ -119,6 +128,12 @@ describe('parsers/index', () => {
 			const parser = getOutputParser('unknown');
 			expect(parser).toBeNull();
 		});
+
+		it('should return CopilotOutputParser for copilot', () => {
+			const parser = getOutputParser('copilot');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(CopilotOutputParser);
+		});
 	});
 
 	describe('parser exports', () => {
@@ -135,6 +150,11 @@ describe('parsers/index', () => {
 		it('should export CodexOutputParser class', () => {
 			const parser = new CodexOutputParser();
 			expect(parser.agentId).toBe('codex');
+		});
+
+		it('should export CopilotOutputParser class', () => {
+			const parser = new CopilotOutputParser();
+			expect(parser.agentId).toBe('copilot');
 		});
 	});
 

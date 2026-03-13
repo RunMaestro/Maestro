@@ -4,13 +4,14 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name          | Status     | Notes                                                            |
-| --------------- | ------------- | ---------- | ---------------------------------------------------------------- |
-| `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`   |
-| `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                        |
-| `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage |
-| `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                  |
-| `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                          |
+| ID              | Name           | Status     | Notes                                                            |
+| --------------- | -------------- | ---------- | ---------------------------------------------------------------- |
+| `claude-code`   | Claude Code    | **Active** | Primary agent, `--print --verbose --output-format stream-json`   |
+| `codex`         | Codex          | **Active** | Full support, `--json`, YOLO mode default                        |
+| `opencode`      | OpenCode       | **Active** | Multi-provider support (75+ LLMs), stub provider session storage |
+| `factory-droid` | Factory Droid  | **Active** | Factory's AI coding assistant, `-o stream-json`                  |
+| `copilot`       | GitHub Copilot | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, session-state |
+| `terminal`      | Terminal       | Internal   | Hidden from UI, used for shell sessions                          |
 
 ## Agent Capabilities
 
@@ -89,6 +90,15 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 - **Read-only:** `--agent plan`
 - **YOLO Mode:** Auto-enabled in batch mode (no flag needed)
 - **Multi-Provider:** Supports 75+ LLMs including Ollama, LM Studio, llama.cpp
+
+### GitHub Copilot CLI
+
+- **Binary:** `copilot`
+- **JSON Output:** `--output-format json`
+- **Batch Mode:** `-p, --prompt <text>`
+- **Resume:** `--continue`, `--resume[=session-id]`
+- **Read-only:** Interactive `/plan` only (no verified startup flag)
+- **Session Storage:** `~/.copilot/session-state/<session-id>/`
 
 ## Adding New Agents
 

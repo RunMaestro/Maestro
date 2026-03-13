@@ -51,7 +51,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 vi.mock('../../../../main/parsers', () => ({
-	getOutputParser: vi.fn(() => ({
+	createOutputParser: vi.fn(() => ({
 		agentId: 'claude-code',
 		parseJsonLine: vi.fn(),
 		extractUsage: vi.fn(),
@@ -94,6 +94,7 @@ vi.mock('../../../../main/process-manager/utils/shellEscape', () => ({
 import { ChildProcessSpawner } from '../../../../main/process-manager/spawners/ChildProcessSpawner';
 import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../main/agents';
+import { buildChildProcessEnv } from '../../../../main/process-manager/utils/envBuilder';
 import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/streamJsonBuilder';
 import {
 	saveImageToTempFile,
@@ -176,6 +177,38 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.isStreamJsonMode).toBe(true);
+		});
+
+		it('should enable stream-json mode when args contain "--output-format" and "json"', () => {
+			const { processes, spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'copilot',
+					command: 'copilot',
+					args: ['--output-format', 'json'],
+					prompt: 'test prompt',
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.isStreamJsonMode).toBe(true);
+			expect(proc?.isBatchMode).toBe(true);
+		});
+
+		it('treats --resume=<id> as a resumed session when building env', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'copilot',
+					command: 'copilot',
+					args: ['--output-format', 'json', '--resume=session-123'],
+					prompt: 'continue',
+				})
+			);
+
+			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined);
 		});
 
 		it('should enable stream-json mode when sendPromptViaStdin is true', () => {

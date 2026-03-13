@@ -75,6 +75,7 @@ function formatAgentName(agentType: string): string {
 		'gemini-cli': 'Gemini CLI',
 		'qwen3-coder': 'Qwen3 Coder',
 		'factory-droid': 'Factory Droid',
+		copilot: 'GitHub Copilot',
 		terminal: 'Terminal',
 	};
 	return names[agentType] || agentType;

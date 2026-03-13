@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
+import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
@@ -208,7 +208,9 @@ export class ChildProcessSpawner {
 
 		try {
 			// Build environment
-			const isResuming = finalArgs.includes('--resume') || finalArgs.includes('--session');
+			const isResuming =
+				finalArgs.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
+				finalArgs.includes('--session');
 			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
 
 			// Log environment variable application for troubleshooting
@@ -337,16 +339,23 @@ export class ChildProcessSpawner {
 			// parser won't process JSON output from remote agents, causing raw JSON to display.
 			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
 			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			const argsHaveFlagValue = (flag: string, value: string) =>
+				finalArgs.some(
+					(arg, index) =>
+						arg === `${flag}=${value}` || (arg === flag && finalArgs[index + 1] === value)
+				);
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
-				(argsContain('--format') && argsContain('json')) ||
+				argsHaveFlagValue('--format', 'json') ||
+				argsHaveFlagValue('--output-format', 'json') ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
 				!!config.sshStdinScript;
 
-			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+			// Create a fresh output parser instance for this process (not the shared singleton)
+			// to isolate mutable state like tool name tracking across concurrent sessions
+			const outputParser = createOutputParser(toolType) || undefined;
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
