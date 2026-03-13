@@ -122,6 +122,7 @@ interface FanInSourceCompletion {
 	sessionId: string;
 	sessionName: string;
 	output: string;
+	truncated: boolean;
 }
 
 /** A queued event waiting for a concurrency slot */
@@ -543,6 +544,7 @@ export class CueEngine {
 							exitCode: completionData?.exitCode ?? null,
 							durationMs: completionData?.durationMs ?? 0,
 							sourceOutput: (completionData?.stdout ?? '').slice(-SOURCE_OUTPUT_MAX_CHARS),
+							outputTruncated: (completionData?.stdout ?? '').length > SOURCE_OUTPUT_MAX_CHARS,
 							triggeredBy: completionData?.triggeredBy,
 						},
 					};
@@ -663,10 +665,12 @@ export class CueEngine {
 			this.fanInTrackers.set(key, new Map());
 		}
 		const tracker = this.fanInTrackers.get(key)!;
+		const rawOutput = completionData?.stdout ?? '';
 		tracker.set(completedSessionId, {
 			sessionId: completedSessionId,
 			sessionName: completedSessionName,
-			output: (completionData?.stdout ?? '').slice(-SOURCE_OUTPUT_MAX_CHARS),
+			output: rawOutput.slice(-SOURCE_OUTPUT_MAX_CHARS),
+			truncated: rawOutput.length > SOURCE_OUTPUT_MAX_CHARS,
 		});
 
 		// Start timeout timer on first source completion
@@ -705,6 +709,7 @@ export class CueEngine {
 				completedSessions: completions.map((c) => c.sessionId),
 				sourceSession: completions.map((c) => c.sessionName).join(', '),
 				sourceOutput: completions.map((c) => c.output).join('\n---\n'),
+				outputTruncated: completions.some((c) => c.truncated),
 			},
 		};
 		this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`);
