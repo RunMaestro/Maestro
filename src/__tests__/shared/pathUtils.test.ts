@@ -14,6 +14,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
 	expandTilde,
 	parseVersion,
@@ -28,6 +30,7 @@ vi.mock('os', async () => {
 	return {
 		...actual,
 		homedir: vi.fn(() => '/Users/testuser'),
+		tmpdir: () => '/tmp',
 	};
 });
 
@@ -274,6 +277,35 @@ describe('buildExpandedPath', () => {
 			const homebrewIndex = result.indexOf('/opt/homebrew/bin');
 			const customIndex = result.indexOf('/custom/path');
 			expect(homebrewIndex).toBeLessThan(customIndex);
+		});
+
+		it('should prepend detected Node version manager bin paths', () => {
+			process.env.PATH = '/usr/bin';
+			const originalNvmDir = process.env.NVM_DIR;
+			const tempNvmDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-nvm-'));
+			process.env.NVM_DIR = tempNvmDir;
+			fs.mkdirSync(path.join(tempNvmDir, 'current', 'bin'), { recursive: true });
+			fs.mkdirSync(path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin'), {
+				recursive: true,
+			});
+
+			try {
+				const result = buildExpandedPath();
+				const pathParts = result.split(':');
+				const currentBin = path.join(tempNvmDir, 'current', 'bin');
+				const versionedBin = path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin');
+
+				expect(pathParts[0]).toBe(currentBin);
+				expect(pathParts).toContain(versionedBin);
+				expect(pathParts.indexOf(currentBin)).toBeLessThan(pathParts.indexOf(versionedBin));
+			} finally {
+				if (originalNvmDir === undefined) {
+					delete process.env.NVM_DIR;
+				} else {
+					process.env.NVM_DIR = originalNvmDir;
+				}
+				fs.rmSync(tempNvmDir, { recursive: true, force: true });
+			}
 		});
 
 		it('should accept custom paths that are prepended first', () => {

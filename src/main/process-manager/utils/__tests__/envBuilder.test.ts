@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { buildChildProcessEnv, buildPtyTerminalEnv } from '../envBuilder';
@@ -303,6 +304,37 @@ describe('envBuilder - Global Environment Variables', () => {
 			expect(typeof env.PATH).toBe('string');
 			// The actual value depends on the system, but it should exist
 			expect((env.PATH as string).length).toBeGreaterThan(0);
+		});
+
+		it('should include detected Node version manager bins in PATH', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+			const originalNvmDir = process.env.NVM_DIR;
+			const tempNvmDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-nvm-'));
+			process.env.NVM_DIR = tempNvmDir;
+			fs.mkdirSync(path.join(tempNvmDir, 'current', 'bin'), { recursive: true });
+			fs.mkdirSync(path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin'), {
+				recursive: true,
+			});
+
+			try {
+				const env = buildChildProcessEnv();
+				const pathParts = env.PATH?.split(path.delimiter) || [];
+				const currentBin = path.join(tempNvmDir, 'current', 'bin');
+				const versionedBin = path.join(tempNvmDir, 'versions', 'node', 'v22.10.0', 'bin');
+
+				expect(pathParts[0]).toBe(currentBin);
+				expect(pathParts).toContain(versionedBin);
+				expect(pathParts.indexOf(currentBin)).toBeLessThan(pathParts.indexOf(versionedBin));
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+				if (originalNvmDir === undefined) {
+					delete process.env.NVM_DIR;
+				} else {
+					process.env.NVM_DIR = originalNvmDir;
+				}
+				fs.rmSync(tempNvmDir, { recursive: true, force: true });
+			}
 		});
 	});
 

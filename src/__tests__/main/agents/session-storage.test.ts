@@ -22,6 +22,7 @@ vi.mock('os', async () => {
 	const mocked = {
 		...actual,
 		homedir: vi.fn(() => '/tmp/maestro-session-storage-home'),
+		tmpdir: vi.fn(() => '/tmp'),
 	};
 	return {
 		...mocked,
