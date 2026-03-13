@@ -173,7 +173,7 @@ The big changes in the v0.12.x line are the following three:
 
 ## GitHub Spec-Kit Integration
 
-🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built-in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
+🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built-in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Worktrees from v0.11.x allows us to run in parallel!
 
 ## Context Management Tools
 
