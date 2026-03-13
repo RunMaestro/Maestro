@@ -94,6 +94,7 @@ const mockSetEnableBetaUpdates = vi.fn();
 const mockSetCrashReportingEnabled = vi.fn();
 const mockSetStatsCollectionEnabled = vi.fn();
 const mockSetDefaultStatsTimeRange = vi.fn();
+const mockSetLanguage = vi.fn();
 const mockSetWakatimeEnabled = vi.fn();
 const mockSetWakatimeApiKey = vi.fn();
 const mockSetWakatimeDetailedTracking = vi.fn();
@@ -102,6 +103,9 @@ const mockSetWakatimeDetailedTracking = vi.fn();
 let mockUseSettingsOverrides: Record<string, any> = {};
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
+		// Language
+		language: 'en',
+		setLanguage: mockSetLanguage,
 		// Conductor Profile
 		conductorProfile: '',
 		setConductorProfile: mockSetConductorProfile,
@@ -226,6 +230,7 @@ describe('GeneralTab', () => {
 			});
 
 			expect(screen.getByText('Conductor Profile (aka, About Me)')).toBeInTheDocument();
+			expect(screen.getByText('Language')).toBeInTheDocument();
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 			expect(screen.getByText('System Log Level')).toBeInTheDocument();
 			expect(screen.getByText('GitHub CLI (gh) Path')).toBeInTheDocument();
@@ -315,6 +320,112 @@ describe('GeneralTab', () => {
 			fireEvent.change(textarea, { target: { value: 'Test profile' } });
 
 			expect(mockSetConductorProfile).toHaveBeenCalledWith('Test profile');
+		});
+	});
+
+	// =========================================================================
+	// 2b. Language Selector
+	// =========================================================================
+	describe('Language Selector', () => {
+		it('should render a language dropdown with all 9 languages', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language') as HTMLSelectElement;
+			expect(select).toBeInTheDocument();
+			expect(select.tagName).toBe('SELECT');
+
+			const options = within(select).getAllByRole('option');
+			expect(options).toHaveLength(9);
+		});
+
+		it('should display languages in their native names', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language') as HTMLSelectElement;
+			const options = within(select).getAllByRole('option') as HTMLOptionElement[];
+
+			const nativeNames = options.map((o) => o.textContent);
+			expect(nativeNames).toEqual([
+				'English',
+				'Español',
+				'Français',
+				'Deutsch',
+				'中文',
+				'हिन्दी',
+				'العربية',
+				'বাংলা',
+				'Português',
+			]);
+		});
+
+		it('should have correct ISO codes as option values', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language') as HTMLSelectElement;
+			const options = within(select).getAllByRole('option') as HTMLOptionElement[];
+
+			const values = options.map((o) => o.value);
+			expect(values).toEqual(['en', 'es', 'fr', 'de', 'zh', 'hi', 'ar', 'bn', 'pt']);
+		});
+
+		it('should show current language as selected', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language') as HTMLSelectElement;
+			expect(select.value).toBe('en');
+		});
+
+		it('should call setLanguage when a different language is selected', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language');
+			fireEvent.change(select, { target: { value: 'es' } });
+
+			expect(mockSetLanguage).toHaveBeenCalledWith('es');
+		});
+
+		it('should show description and help text', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText('Select your preferred display language')).toBeInTheDocument();
+			expect(
+				screen.getByText('Changes take effect immediately. Some system prompts remain in English.')
+			).toBeInTheDocument();
+		});
+
+		it('should have an aria-label on the select element', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Language');
+			expect(select).toHaveAttribute('aria-label', 'Language');
 		});
 	});
 

@@ -42,6 +42,19 @@ export const LANGUAGE_STORAGE_KEY = 'maestro-language';
 /** RTL languages in our supported set */
 export const RTL_LANGUAGES: SupportedLanguage[] = ['ar'];
 
+/** Native display names for each supported language */
+export const LANGUAGE_NATIVE_NAMES: Record<SupportedLanguage, string> = {
+	en: 'English',
+	es: 'Español',
+	fr: 'Français',
+	de: 'Deutsch',
+	zh: '中文',
+	hi: 'हिन्दी',
+	ar: 'العربية',
+	bn: 'বাংলা',
+	pt: 'Português',
+};
+
 /**
  * Initialize i18next with all plugins and configuration.
  * Returns a promise that resolves when i18n is ready.

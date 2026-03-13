@@ -19,6 +19,7 @@
 		"theme_label": "Theme",
 		"language_label": "Language",
 		"language_description": "Select your preferred display language",
+		"language_help": "Changes take effect immediately. Some system prompts remain in English.",
 		"conductor_profile_header": "Conductor Profile (aka, About Me)",
 		"conductor_profile_description": "Tell us a little about yourself so that agents created under Maestro know how to work and communicate with you. As the conductor, you orchestrate the symphony of AI agents. (Optional, max 1000 characters)",
 		"conductor_profile_placeholder": "e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns...",

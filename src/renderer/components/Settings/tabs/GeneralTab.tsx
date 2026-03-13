@@ -1,7 +1,7 @@
 /**
  * GeneralTab - General settings tab for SettingsModal
  *
- * Contains: About Me, Shell, Log Level, GitHub CLI, Input Behavior,
+ * Contains: About Me, Language, Shell, Log Level, GitHub CLI, Input Behavior,
  * History, Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
  * Updates, Pre-release, Privacy, Stats & WakaTime, Storage Location.
  */
@@ -35,9 +35,11 @@ import {
 	ExternalLink,
 	Keyboard,
 	Trash2,
+	Globe,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
+import { SUPPORTED_LANGUAGES, LANGUAGE_NATIVE_NAMES } from '../../../../shared/i18n/config';
 import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
@@ -51,6 +53,9 @@ export interface GeneralTabProps {
 
 export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const {
+		// Language
+		language,
+		setLanguage,
 		// Conductor Profile
 		conductorProfile,
 		setConductorProfile,
@@ -308,6 +313,33 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						{conductorProfile.length}/1000
 					</div>
 				</div>
+			</div>
+
+			{/* Language */}
+			<div>
+				<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
+					<Globe className="w-3 h-3" />
+					{t('general.language_label')}
+				</div>
+				<p className="text-xs opacity-50 mb-2">{t('general.language_description')}</p>
+				<select
+					value={language}
+					onChange={(e) => setLanguage(e.target.value)}
+					aria-label={t('general.language_label')}
+					className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					{SUPPORTED_LANGUAGES.map((code) => (
+						<option key={code} value={code}>
+							{LANGUAGE_NATIVE_NAMES[code]}
+						</option>
+					))}
+				</select>
+				<p className="text-xs opacity-40 mt-1">{t('general.language_help')}</p>
 			</div>
 
 			{/* Default Shell */}
