@@ -832,6 +832,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 		state.directoryPath,
 		state.agentName,
 		state.conversationHistory,
+		state.sessionSshRemoteConfig,
 		setGeneratingDocuments,
 		setGeneratedDocuments,
 		setGenerationError,

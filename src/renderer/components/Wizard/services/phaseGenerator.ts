@@ -1022,7 +1022,7 @@ class PhaseGenerator {
 									const readWithRetry = async (retries = 3, delayMs = 200): Promise<void> => {
 										for (let attempt = 1; attempt <= retries; attempt++) {
 											try {
-												const content = await window.maestro.fs.readFile(fullPath);
+												const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 												if (content && typeof content === 'string' && content.length > 0) {
 													console.log(
 														'[PhaseGenerator] File read successful:',
