@@ -1281,8 +1281,8 @@ function SessionListInner(props: SessionListProps) {
 					}}
 					onEdit={() => onEditAgent(contextMenuSession)}
 					onDuplicate={() => {
-						setDuplicatingSessionId(contextMenuSession.id);
 						onNewAgentSession();
+						setDuplicatingSessionId(contextMenuSession.id);
 						setContextMenu(null);
 					}}
 					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
