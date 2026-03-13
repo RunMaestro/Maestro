@@ -197,9 +197,13 @@ export interface LogEntry {
 	// For tool execution entries - stores tool state and details
 	metadata?: {
 		toolState?: {
-			status?: 'running' | 'completed' | 'error';
+			status?: 'running' | 'completed' | 'error' | 'failed';
 			input?: unknown;
 			output?: unknown;
+		};
+		hiddenProgress?: {
+			kind: 'thinking' | 'tool';
+			toolName?: string;
 		};
 	};
 }

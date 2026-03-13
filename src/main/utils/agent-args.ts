@@ -28,6 +28,7 @@ type AgentConfigResolution = {
 	modelSource: 'session' | 'agent' | 'default';
 };
 
+/** Parse a space-separated custom args string into an array, respecting quoted segments. */
 function parseCustomArgs(customArgs?: string): string[] {
 	if (!customArgs || typeof customArgs !== 'string') {
 		return [];
@@ -42,6 +43,34 @@ function parseCustomArgs(customArgs?: string): string[] {
 	});
 }
 
+/** Check whether jsonOutputArgs (exact sequence or flag key) are already present in the args list. */
+function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolean {
+	if (jsonOutputArgs.length === 0) return true;
+
+	// Check if the exact arg sequence is already present
+	for (let i = 0; i <= haystack.length - jsonOutputArgs.length; i++) {
+		let match = true;
+		for (let j = 0; j < jsonOutputArgs.length; j++) {
+			if (haystack[i + j] !== jsonOutputArgs[j]) {
+				match = false;
+				break;
+			}
+		}
+		if (match) return true;
+	}
+
+	// Also check if the flag key (e.g., --format, --output-format) is already
+	// present with a different value — avoid appending a conflicting duplicate
+	// that the dedup step would mangle.
+	const flagKey = jsonOutputArgs[0];
+	if (flagKey?.startsWith('-') && jsonOutputArgs.length > 1) {
+		return haystack.includes(flagKey);
+	}
+
+	return false;
+}
+
+/** Build the final CLI arguments for an agent process based on mode, config, and user options. */
 export function buildAgentArgs(
 	agent: AgentConfig | null | undefined,
 	options: BuildAgentArgsOptions
@@ -66,7 +95,15 @@ export function buildAgentArgs(
 		}
 	}
 
-	if (agent.jsonOutputArgs && !finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))) {
+	// Only inject JSON output args when a prompt is provided (batch/non-interactive mode).
+	// Interactive sessions must not receive these flags (e.g., Copilot rejects --output-format json
+	// in interactive mode). Agents that need JSON output in interactive mode should include
+	// the relevant flags in their base `args` or `batchModeArgs` instead.
+	if (
+		agent.jsonOutputArgs &&
+		options.prompt &&
+		!hasJsonOutputFlag(finalArgs, agent.jsonOutputArgs)
+	) {
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}
 
@@ -115,6 +152,7 @@ export function buildAgentArgs(
 	return dedupedArgs;
 }
 
+/** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
 export function applyAgentConfigOverrides(
 	agent: AgentConfig | null | undefined,
 	baseArgs: string[],
@@ -202,6 +240,7 @@ export function applyAgentConfigOverrides(
 	};
 }
 
+/** Resolve the effective context window size from session, agent config, or defaults. */
 export function getContextWindowValue(
 	agent: AgentConfig | null | undefined,
 	agentConfigValues: Record<string, any>,

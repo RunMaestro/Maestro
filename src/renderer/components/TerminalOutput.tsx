@@ -66,6 +66,28 @@ const summarizeTodos = (v: unknown): string | null => {
 	return `${label} (${completed}/${todos.length})`;
 };
 
+/** Extract a concise tool detail string from common tool input shapes */
+const extractToolDetail = (toolInput: Record<string, unknown> | undefined): string | null =>
+	toolInput
+		? safeCommand(toolInput.command) ||
+			safeStr(toolInput.pattern) ||
+			safeStr(toolInput.file_path) ||
+			safeStr(toolInput.filePath) || // OpenCode read tool
+			safeStr(toolInput.query) ||
+			safeStr(toolInput.description) || // Task tool
+			safeStr(toolInput.prompt) || // Task tool fallback
+			safeStr(toolInput.task_id) || // TaskOutput tool
+			summarizeTodos(toolInput.todos) || // TodoWrite tool
+			safeStr(toolInput.path) || // Codex file operations
+			safeStr(toolInput.cmd) || // Codex shell commands
+			safeStr(toolInput.code) || // Codex code execution
+			truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
+			null
+		: null;
+
+const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -537,6 +559,51 @@ const LogItemComponent = memo(
 							</div>
 						</div>
 					)}
+					{isHiddenProgressEntry(log) && (
+						<div
+							className="px-4 py-1.5 text-xs border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<div className="flex items-start gap-2">
+								<span
+									className="px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}30`,
+										color: theme.colors.accent,
+									}}
+								>
+									{log.metadata?.hiddenProgress?.kind === 'tool'
+										? log.metadata.hiddenProgress.toolName || 'working'
+										: 'thinking'}
+								</span>
+								{log.metadata?.toolState?.status === 'completed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
+										✓
+									</span>
+								) : log.metadata?.toolState?.status === 'failed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+										!
+									</span>
+								) : (
+									<span
+										className="animate-pulse shrink-0 pt-0.5"
+										style={{ color: theme.colors.warning }}
+									>
+										●
+									</span>
+								)}
+								<span
+									className="break-words whitespace-pre-wrap opacity-80"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</span>
+							</div>
+						</div>
+					)}
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
@@ -544,23 +611,7 @@ const LogItemComponent = memo(
 							const toolInput = log.metadata?.toolState?.input as
 								| Record<string, unknown>
 								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
+							const toolDetail = extractToolDetail(toolInput);
 
 							return (
 								<div
@@ -593,6 +644,11 @@ const LogItemComponent = memo(
 												✓
 											</span>
 										)}
+										{log.metadata?.toolState?.status === 'failed' && (
+											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+												!
+											</span>
+										)}
 										{toolDetail && (
 											<span
 												className="opacity-70 break-words whitespace-pre-wrap"
@@ -605,7 +661,8 @@ const LogItemComponent = memo(
 								</div>
 							);
 						})()}
-					{log.source !== 'error' &&
+					{!isHiddenProgressEntry(log) &&
+						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
 						(hasNoMatches ? (

@@ -135,6 +135,27 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsResultMessages).toBe(true);
 		});
 
+		it('should have verified capabilities for copilot', () => {
+			const capabilities = AGENT_CAPABILITIES['copilot'];
+			expect(capabilities).toBeDefined();
+			expect(capabilities.supportsResume).toBe(true);
+			expect(capabilities.supportsReadOnlyMode).toBe(true);
+			expect(capabilities.supportsJsonOutput).toBe(true);
+			expect(capabilities.supportsSessionId).toBe(true);
+			expect(capabilities.supportsImageInput).toBe(true);
+			expect(capabilities.supportsImageInputOnResume).toBe(true);
+			expect(capabilities.supportsSlashCommands).toBe(true);
+			expect(capabilities.supportsSessionStorage).toBe(true);
+			expect(capabilities.supportsBatchMode).toBe(true);
+			expect(capabilities.supportsStreaming).toBe(true);
+			expect(capabilities.supportsResultMessages).toBe(true);
+			expect(capabilities.supportsThinkingDisplay).toBe(true);
+			expect(capabilities.supportsContextMerge).toBe(true);
+			expect(capabilities.supportsContextExport).toBe(true);
+			expect(capabilities.supportsWizard).toBe(true);
+			expect(capabilities.supportsGroupChatModeration).toBe(true);
+		});
+
 		it('should define capabilities for all known agents', () => {
 			const knownAgents = [
 				'claude-code',
@@ -145,6 +166,7 @@ describe('agent-capabilities', () => {
 				'opencode',
 				'factory-droid',
 				'aider',
+				'copilot',
 			];
 
 			for (const agentId of knownAgents) {
@@ -232,6 +254,7 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('claude-code', 'supportsWizard')).toBe(true);
 			expect(hasCapability('codex', 'supportsWizard')).toBe(true);
 			expect(hasCapability('opencode', 'supportsWizard')).toBe(true);
+			expect(hasCapability('copilot', 'supportsWizard')).toBe(true);
 			expect(hasCapability('factory-droid', 'supportsWizard')).toBe(false);
 			expect(hasCapability('terminal', 'supportsWizard')).toBe(false);
 
@@ -239,6 +262,7 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('claude-code', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('codex', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('opencode', 'supportsGroupChatModeration')).toBe(true);
+			expect(hasCapability('copilot', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('factory-droid', 'supportsGroupChatModeration')).toBe(true);
 			expect(hasCapability('terminal', 'supportsGroupChatModeration')).toBe(false);
 

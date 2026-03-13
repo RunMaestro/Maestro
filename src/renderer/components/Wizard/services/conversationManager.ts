@@ -790,6 +790,7 @@ class ConversationManager {
 	 * Extract the result text from agent JSON output.
 	 * Handles different agent output formats:
 	 * - Claude Code: stream-json with { type: 'result', result: '...' }
+	 * - Copilot: JSONL with { type: 'assistant.message', data: { phase: 'final_answer', content: '...' } }
 	 * - OpenCode: JSONL with { type: 'text', part: { text: '...' } }
 	 * - Codex: JSONL with { type: 'message', content: '...' } or similar
 	 */
@@ -844,6 +845,21 @@ class ConversationManager {
 				}
 				if (textParts.length > 0) {
 					return textParts.join('');
+				}
+			}
+
+			// For Copilot: look for the final assistant message
+			if (agentType === 'copilot') {
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant.message' && msg.data?.phase === 'final_answer') {
+							return typeof msg.data?.content === 'string' ? msg.data.content : null;
+						}
+					} catch {
+						// Ignore non-JSON lines
+					}
 				}
 			}
 

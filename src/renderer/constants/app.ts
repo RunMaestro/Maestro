@@ -89,16 +89,50 @@ export const CLAUDE_BUILTIN_COMMANDS: Record<string, string> = {
 };
 
 /**
- * Get description for Claude Code slash commands
- * Built-in commands have known descriptions, custom ones use a generic description
+ * Built-in GitHub Copilot CLI slash commands with their descriptions
  */
-export function getSlashCommandDescription(cmd: string): string {
+export const COPILOT_BUILTIN_COMMANDS: Record<string, string> = {
+	help: 'Show available commands and their usage',
+	clear: 'Clear conversation history and start fresh',
+	compact: 'Summarize conversation to reduce context usage',
+	context: 'Show current context window and token usage',
+	model: 'Switch to a different AI model',
+	usage: 'Show token and premium request usage',
+	session: 'Display session details and metrics',
+	share: 'Export session as markdown or Gist',
+	mcp: 'Manage MCP server configurations',
+	fleet: 'Run tasks in parallel with multiple subagents',
+	tasks: 'Monitor and manage fleet subtask progress',
+	delegate: 'Delegate a task to another Copilot agent',
+	review: 'Review code changes',
+};
+
+/**
+ * Agent-specific built-in command maps, keyed by agent ID
+ */
+const AGENT_BUILTIN_COMMANDS: Record<string, Record<string, string>> = {
+	'claude-code': CLAUDE_BUILTIN_COMMANDS,
+	copilot: COPILOT_BUILTIN_COMMANDS,
+};
+
+/**
+ * Get description for agent slash commands.
+ * Checks agent-specific built-in command maps first, then falls back to generic description.
+ */
+export function getSlashCommandDescription(cmd: string, agentId?: string): string {
 	// Remove leading slash if present
 	const cmdName = cmd.startsWith('/') ? cmd.slice(1) : cmd;
 
-	// Check for built-in command
-	if (CLAUDE_BUILTIN_COMMANDS[cmdName]) {
-		return CLAUDE_BUILTIN_COMMANDS[cmdName];
+	// If a specific agent is provided, check that agent's commands first
+	if (agentId && AGENT_BUILTIN_COMMANDS[agentId]?.[cmdName]) {
+		return AGENT_BUILTIN_COMMANDS[agentId][cmdName];
+	}
+
+	// Check all agent command maps (for backwards compatibility when agentId is not provided)
+	for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
+		if (commands[cmdName]) {
+			return commands[cmdName];
+		}
 	}
 
 	// For plugin commands (e.g., "plugin-name:command"), use the full name as description hint
@@ -108,5 +142,5 @@ export function getSlashCommandDescription(cmd: string): string {
 	}
 
 	// Generic description for unknown commands
-	return 'Claude Code command';
+	return 'Agent command';
 }

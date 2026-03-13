@@ -30,6 +30,7 @@ describe('agentMetadata', () => {
 			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
 			expect(AGENT_DISPLAY_NAMES['qwen3-coder']).toBe('Qwen3 Coder');
 			expect(AGENT_DISPLAY_NAMES['aider']).toBe('Aider');
+			expect(AGENT_DISPLAY_NAMES['copilot']).toBe('GitHub Copilot');
 			expect(AGENT_DISPLAY_NAMES['terminal']).toBe('Terminal');
 		});
 
@@ -77,6 +78,7 @@ describe('agentMetadata', () => {
 			expect(BETA_AGENTS.has('codex')).toBe(true);
 			expect(BETA_AGENTS.has('opencode')).toBe(true);
 			expect(BETA_AGENTS.has('factory-droid')).toBe(true);
+			expect(BETA_AGENTS.has('copilot')).toBe(true);
 		});
 
 		it('should not contain non-beta agents', () => {
@@ -99,6 +101,7 @@ describe('agentMetadata', () => {
 			expect(isBetaAgent('codex')).toBe(true);
 			expect(isBetaAgent('opencode')).toBe(true);
 			expect(isBetaAgent('factory-droid')).toBe(true);
+			expect(isBetaAgent('copilot')).toBe(true);
 		});
 
 		it('should return false for non-beta agents', () => {

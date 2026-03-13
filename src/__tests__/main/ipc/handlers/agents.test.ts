@@ -1091,6 +1091,39 @@ describe('agents IPC handlers', () => {
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
+		it('should return built-in commands for copilot', async () => {
+			const mockAgent = {
+				id: 'copilot',
+				available: true,
+				path: '/usr/bin/copilot',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'copilot', '/test');
+
+			expect(result).toEqual(
+				expect.arrayContaining([
+					'help',
+					'clear',
+					'compact',
+					'context',
+					'model',
+					'review',
+					'usage',
+					'session',
+					'share',
+					'mcp',
+					'fleet',
+					'tasks',
+					'delegate',
+				])
+			);
+			expect(result).toHaveLength(13);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
 		it('should return null when agent is not available', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', available: false });
 

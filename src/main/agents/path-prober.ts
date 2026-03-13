@@ -308,6 +308,25 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm (has known issues on Windows, but check anyway)
 			...npmGlobal('opencode'),
 		],
+		copilot: [
+			// WinGet installation (primary method on Windows)
+			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
+			// npm global installation
+			...npmGlobal('copilot'),
+			// Scoop installation
+			path.join(home, 'scoop', 'shims', 'copilot.exe'),
+			path.join(home, 'scoop', 'apps', 'copilot', 'current', 'copilot.exe'),
+			// Chocolatey installation
+			path.join(
+				process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey',
+				'bin',
+				'copilot.exe'
+			),
+			// Standalone installation
+			...localBin('copilot'),
+			// Winget
+			...wingetLinks('copilot'),
+		],
 		gemini: [
 			// npm global installation
 			...npmGlobal('gemini'),
@@ -409,6 +428,19 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('opencode'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('opencode'),
+		],
+		copilot: [
+			// Homebrew installation (primary method on macOS)
+			...homebrew('copilot'),
+			// GitHub CLI installation
+			'/usr/local/bin/copilot',
+			path.join(home, '.local', 'bin', 'copilot'),
+			// npm global
+			...npmGlobal('copilot'),
+			// User bin
+			path.join(home, 'bin', 'copilot'),
+			// Node version managers
+			...nodeVersionManagers('copilot'),
 		],
 		gemini: [
 			// npm global paths

@@ -1036,6 +1036,28 @@ describe('ssh-command-builder', () => {
 			expect(result.stdinScript).toContain('; rm -f');
 		});
 
+		it('embeds Copilot image @mentions when imagePromptBuilder is provided', async () => {
+			const testImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'copilot',
+				args: ['--output-format', 'json'],
+				stdinInput: 'describe this image',
+				images: [testImage],
+				imagePromptBuilder: (paths: string[]) =>
+					`Use these attached images as context:\n${paths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`,
+			});
+
+			expect(result.stdinScript).toContain('base64 -d >');
+			const cmdLine = result.stdinScript?.split('\n').find((line) => line.startsWith('copilot '));
+			expect(cmdLine).toBeDefined();
+			expect(cmdLine).not.toContain("'-i'");
+			expect(cmdLine).toContain('; rm -f');
+
+			const afterCmd = result.stdinScript?.split(cmdLine + '\n')[1];
+			expect(afterCmd).toContain('@/tmp/maestro-image-');
+			expect(afterCmd).toContain('describe this image');
+		});
+
 		it('does not embed image paths when imageResumeMode is not set (default behavior)', async () => {
 			const testImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
 			const result = await buildSshCommandWithStdin(baseConfig, {

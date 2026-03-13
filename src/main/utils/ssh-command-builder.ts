@@ -300,6 +300,8 @@ export async function buildSshCommandWithStdin(
 		images?: string[];
 		/** Function to build CLI args for each image path (e.g., (path) => ['-i', path]) */
 		imageArgs?: (imagePath: string) => string[];
+		/** Function to embed image references into the prompt/stdinInput (e.g., Copilot @mentions). */
+		imagePromptBuilder?: (imagePaths: string[]) => string;
 		/** When set to 'prompt-embed', embed image paths in the prompt/stdinInput instead of adding -i CLI args.
 		 * Used for resumed Codex sessions where the resume command doesn't support -i flag. */
 		imageResumeMode?: 'prompt-embed';
@@ -374,7 +376,11 @@ export async function buildSshCommandWithStdin(
 	const remoteImagePaths: string[] = [];
 	/** All remote temp file paths created during image decoding (for cleanup) */
 	const allRemoteTempPaths: string[] = [];
-	if (remoteOptions.images && remoteOptions.images.length > 0 && remoteOptions.imageArgs) {
+	if (
+		remoteOptions.images &&
+		remoteOptions.images.length > 0 &&
+		(remoteOptions.imageArgs || remoteOptions.imagePromptBuilder)
+	) {
 		const timestamp = Date.now();
 		for (let i = 0; i < remoteOptions.images.length; i++) {
 			const parsed = parseDataUrl(remoteOptions.images[i]);
@@ -388,10 +394,13 @@ export async function buildSshCommandWithStdin(
 			scriptLines.push(`base64 -d > ${shellEscape(remoteTempPath)} <<'MAESTRO_IMG_${i}_EOF'`);
 			scriptLines.push(parsed.base64);
 			scriptLines.push(`MAESTRO_IMG_${i}_EOF`);
-			if (remoteOptions.imageResumeMode === 'prompt-embed') {
+			if (remoteOptions.imagePromptBuilder || remoteOptions.imageResumeMode === 'prompt-embed') {
 				// Resume mode: collect paths for prompt embedding instead of CLI args
 				remoteImagePaths.push(remoteTempPath);
 			} else {
+				if (!remoteOptions.imageArgs) {
+					continue;
+				}
 				// Normal mode: add -i (or equivalent) CLI args
 				imageArgParts.push(
 					...remoteOptions.imageArgs(remoteTempPath).map((arg) => shellEscape(arg))
@@ -410,7 +419,9 @@ export async function buildSshCommandWithStdin(
 
 	// For prompt-embed mode (resumed sessions), prepend image paths to stdinInput/prompt
 	if (remoteImagePaths.length > 0) {
-		const imagePrefix = buildImagePromptPrefix(remoteImagePaths);
+		const imagePrefix = remoteOptions.imagePromptBuilder
+			? remoteOptions.imagePromptBuilder(remoteImagePaths)
+			: buildImagePromptPrefix(remoteImagePaths);
 		if (remoteOptions.stdinInput !== undefined) {
 			remoteOptions.stdinInput = imagePrefix + remoteOptions.stdinInput;
 		} else if (remoteOptions.prompt) {

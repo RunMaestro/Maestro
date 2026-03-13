@@ -1911,6 +1911,68 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('hidden progress rendering', () => {
+		it('renders hidden tool progress with the polished activity treatment', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'hidden-progress:tab-1',
+					text: 'Reading src/renderer/App.tsx',
+					source: 'system',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { path: 'src/renderer/App.tsx' },
+						},
+						hiddenProgress: {
+							kind: 'tool',
+							toolName: 'view',
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('view')).toBeInTheDocument();
+			expect(screen.getByText('Reading src/renderer/App.tsx')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+		});
+
+		it('uses the standard failed icon treatment for hidden progress', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'hidden-progress:tab-1',
+					text: 'Command failed',
+					source: 'system',
+					metadata: {
+						toolState: {
+							status: 'failed',
+						},
+						hiddenProgress: {
+							kind: 'tool',
+							toolName: 'bash',
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('!')).toBeInTheDocument();
+			expect(screen.queryByText('×')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('local filter functionality', () => {
 		it('shows filter button for terminal output entries', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
