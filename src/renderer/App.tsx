@@ -357,11 +357,19 @@ function MaestroConsoleInner() {
 	const openWizardModal = useCallback(async () => {
 		try {
 			const saved = await window.maestro.settings.get('wizardResumeState');
+			// Validate saved state has a resumable step before casting
+			const resumableSteps = [
+				'directory-selection',
+				'conversation',
+				'preparing-plan',
+				'phase-review',
+			];
 			if (
 				saved &&
 				typeof saved === 'object' &&
 				'currentStep' in saved &&
-				saved.currentStep !== 'agent-selection'
+				typeof saved.currentStep === 'string' &&
+				resumableSteps.includes(saved.currentStep)
 			) {
 				useModalStore
 					.getState()
