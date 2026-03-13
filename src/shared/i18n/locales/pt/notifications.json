@@ -1,1 +1,150 @@
-{}
+{
+	"task": {
+		"completed_title": "Tarefa Concluída",
+		"completed_message": "{{agent}} finalizou em {{duration}}",
+		"failed_title": "Tarefa Falhou",
+		"failed_message": "{{agent}} encontrou um erro"
+	},
+	"connection": {
+		"lost_title": "Conexão Perdida",
+		"restored_title": "Conexão Restaurada"
+	},
+	"group_chat": {
+		"error_title": "Chat em Grupo",
+		"create_failed_message": "Falha ao criar chat em grupo",
+		"create_failed_dynamic_message": "{{message}}"
+	},
+	"worktree": {
+		"discovered_title": "Worktrees Descobertas",
+		"discovered_message_one": "{{count}} subagente de worktree encontrado",
+		"discovered_message_other": "{{count}} subagentes de worktree encontrados",
+		"disabled_title": "Worktrees Desativadas",
+		"disabled_message": "Configuração de worktree limpa para este agente.",
+		"disabled_with_removed_message_one": "Configuração de worktree limpa para este agente. {{count}} subagente de worktree removido.",
+		"disabled_with_removed_message_other": "Configuração de worktree limpa para este agente. {{count}} subagentes de worktree removidos.",
+		"no_directory_title": "Erro",
+		"no_directory_message": "Nenhum diretório de worktree configurado",
+		"created_title": "Worktree Criada",
+		"created_message": "{{branch}}",
+		"create_failed_title": "Falha ao Criar Worktree",
+		"create_failed_message": "{{message}}",
+		"new_discovered_title": "Nova Worktree Descoberta",
+		"new_discovered_message": "{{name}}",
+		"agent_not_found_title": "Agente de Worktree Não Encontrado",
+		"agent_not_found_message": "O agente de worktree selecionado foi removido. Executando no agente ativo.",
+		"target_busy_title": "Agente de Destino Ocupado",
+		"target_busy_message": "O agente de destino está ocupado. Por favor, tente novamente.",
+		"error_title": "Erro de Worktree",
+		"error_message": "{{message}}"
+	},
+	"autorun": {
+		"started_title": "Auto Run Iniciado",
+		"started_message_one": "{{count}} tarefa em {{docCount}} documento",
+		"started_message_other": "{{count}} tarefas em {{docCount}} documentos",
+		"complete_title": "Auto Run Concluído",
+		"complete_stopped_message": "Parado após concluir {{completed}} de {{total}} tarefas",
+		"complete_all_message_one": "Toda {{total}} tarefa concluída com sucesso",
+		"complete_all_message_other": "Todas as {{total}} tarefas concluídas com sucesso",
+		"complete_partial_message": "{{completed}} de {{total}} tarefas concluídas",
+		"error_title": "Auto Run: {{errorTitle}}",
+		"error_message": "{{message}}"
+	},
+	"leaderboard": {
+		"updated_title": "Ranking Atualizado",
+		"updated_message": "{{message}}"
+	},
+	"symphony": {
+		"pr_ready_title": "Symphony: PR Pronto para Revisão",
+		"pr_ready_message": "PR aberto: {{prUrl}}",
+		"manual_needed_title": "Symphony: Finalização Manual Necessária",
+		"manual_needed_message": "{{message}}",
+		"manual_needed_default_message": "Não foi possível finalizar o PR automaticamente. Abra o Symphony para finalizar.",
+		"auto_finalize_failed_title": "Symphony: Falha na Finalização Automática",
+		"auto_finalize_failed_message": "O PR permanece como rascunho. Abra o Symphony para finalizar manualmente.",
+		"error_title": "Erro do Symphony",
+		"agent_not_found_message": "Agente não encontrado: {{agentType}}"
+	},
+	"pr": {
+		"created_title": "PR Criado",
+		"created_message": "{{message}}",
+		"created_default_message": "Pull request criado com sucesso",
+		"failed_title": "Falha na Criação do PR",
+		"failed_message": "{{message}}",
+		"failed_default_message": "Falha ao criar pull request",
+		"app_created_title": "Pull Request Criado",
+		"app_created_message": "{{title}}"
+	},
+	"merge": {
+		"session_merged_title": "Sessão Mesclada",
+		"session_merged_message": "\"{{sessionName}}\" criada a partir de {{sourceInfo}}{{tokenInfo}}.{{savedInfo}}",
+		"context_merged_title": "Contexto Mesclado",
+		"context_merged_message": "\"{{source}}\" → \"{{target}}\"{{tokenInfo}}.{{savedInfo}}",
+		"context_transferred_title": "Contexto Transferido",
+		"context_transferred_message": "\"{{sessionName}}\" criada com contexto transferido",
+		"failed_title": "Falha na Mesclagem",
+		"failed_message": "{{message}}",
+		"failed_default_message": "Falha ao mesclar contextos",
+		"context_sent_title": "Contexto Enviado",
+		"context_sent_message": "\"{{source}}\" → \"{{target}}\"{{tokenInfo}}"
+	},
+	"compact": {
+		"cannot_title": "Não é Possível Compactar",
+		"cannot_message": "Contexto muito pequeno. É necessário pelo menos {{percent}}% de uso, ~2k tokens ou 8+ mensagens para compactar.",
+		"success_title": "Contexto Compactado",
+		"success_message": "Contexto reduzido em {{percent}}%. Clique para ver a nova aba.",
+		"failed_title": "Falha na Compactação",
+		"failed_message": "Falha ao compactar contexto. Verifique a aba para detalhes.",
+		"failed_unexpected_message": "Ocorreu um erro inesperado durante a compactação."
+	},
+	"agent": {
+		"creation_failed_title": "Falha na Criação do Agente",
+		"creation_failed_message": "{{message}}",
+		"creation_failed_default_message": "Não é possível criar agente duplicado"
+	},
+	"session": {
+		"group_removed_title": "Grupo Removido",
+		"group_removed_message_one": "\"{{name}}\" removido e {{count}} agente",
+		"group_removed_message_other": "\"{{name}}\" removido e {{count}} agentes",
+		"erase_failed_title": "Falha ao Apagar Diretório",
+		"erase_failed_message": "{{message}}"
+	},
+	"export": {
+		"nothing_to_copy_title": "Nada para Copiar",
+		"nothing_to_copy_message": "Nenhuma mensagem de usuário ou assistente para copiar.",
+		"context_copied_title": "Contexto Copiado",
+		"context_copied_message": "Conversa copiada para a área de transferência.",
+		"copy_failed_title": "Falha ao Copiar",
+		"copy_failed_message": "Falha ao copiar contexto para a área de transferência.",
+		"export_complete_title": "Exportação Concluída",
+		"export_complete_message": "Conversa exportada como HTML.",
+		"export_failed_title": "Falha na Exportação",
+		"export_failed_message": "Falha ao exportar conversa como HTML.",
+		"nothing_to_publish_title": "Nada para Publicar",
+		"nothing_to_publish_message": "Nenhuma mensagem de usuário ou assistente para publicar."
+	},
+	"stats": {
+		"database_title": "Banco de Dados de Estatísticas",
+		"database_message": "{{message}}"
+	},
+	"history": {
+		"entry_added_title": "Entrada de Histórico Adicionada",
+		"entry_added_message": "{{message}}"
+	},
+	"synopsis": {
+		"title": "Sinopse",
+		"message": "{{message}}"
+	},
+	"playbook": {
+		"imported_title": "Playbook Importado",
+		"imported_message": "Playbook importado com sucesso para {{folder}}"
+	},
+	"gist": {
+		"published_title": "Gist Publicado",
+		"published_public_message": "Gist público criado! URL copiada para a área de transferência.",
+		"published_secret_message": "Gist secreto criado! URL copiada para a área de transferência."
+	},
+	"debug": {
+		"test_title": "Notificação de Teste",
+		"test_message": "Esta é uma notificação de teste do console!"
+	}
+}

@@ -57,7 +57,8 @@
 		"test:performance": "vitest run --config vitest.performance.config.mts",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
-		"i18n:audit": "npx tsx scripts/i18n-audit.ts"
+		"i18n:audit": "npx tsx scripts/i18n-audit.ts",
+		"i18n:validate": "npx tsx scripts/i18n-validate.ts"
 	},
 	"build": {
 		"npmRebuild": false,
