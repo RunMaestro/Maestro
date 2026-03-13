@@ -586,6 +586,9 @@ class PhaseGenerator {
 			// For SSH remote sessions, skip the availability check since we're executing remotely
 			// The agent detector checks for binaries locally, but we need to execute on the remote host
 			const isRemoteSession = config.sshRemoteConfig?.enabled && config.sshRemoteConfig?.remoteId;
+			const sshRemoteId = config.sshRemoteConfig?.enabled
+				? (config.sshRemoteConfig.remoteId ?? undefined)
+				: undefined;
 
 			if (!agent) {
 				wizardDebugLogger.log('error', 'Agent configuration not found', {
@@ -706,7 +709,7 @@ class PhaseGenerator {
 			if (!hasValidParsedDocs) {
 				callbacks?.onProgress?.('Checking for documents on disk...');
 				wizardDebugLogger.log('info', 'Checking for documents on disk (parsed docs invalid)');
-				const diskDocs = await this.readDocumentsFromDisk(config.directoryPath);
+				const diskDocs = await this.readDocumentsFromDisk(config.directoryPath, sshRemoteId);
 				if (diskDocs.length > 0) {
 					console.log('[PhaseGenerator] Found documents on disk:', diskDocs.length);
 					wizardDebugLogger.log('info', 'Found documents on disk', {
@@ -1157,13 +1160,16 @@ class PhaseGenerator {
 	 * This is a fallback for when the agent writes files directly
 	 * instead of outputting them with markers.
 	 */
-	private async readDocumentsFromDisk(directoryPath: string): Promise<ParsedDocument[]> {
+	private async readDocumentsFromDisk(
+		directoryPath: string,
+		sshRemoteId?: string
+	): Promise<ParsedDocument[]> {
 		const autoRunPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 		const documents: ParsedDocument[] = [];
 
 		try {
 			// List files in the Auto Run folder
-			const listResult = await window.maestro.autorun.listDocs(autoRunPath);
+			const listResult = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
 			if (!listResult.success || !listResult.files) {
 				return [];
 			}
@@ -1174,7 +1180,11 @@ class PhaseGenerator {
 			for (const fileBaseName of listResult.files) {
 				const filename = fileBaseName.endsWith('.md') ? fileBaseName : `${fileBaseName}.md`;
 
-				const readResult = await window.maestro.autorun.readDoc(autoRunPath, fileBaseName);
+				const readResult = await window.maestro.autorun.readDoc(
+					autoRunPath,
+					fileBaseName,
+					sshRemoteId
+				);
 				if (readResult.success && readResult.content) {
 					// Extract phase number from filename
 					const phaseMatch = filename.match(/Phase-(\d+)/i);
