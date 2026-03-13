@@ -1,6 +1,7 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
+import { execFile } from 'child_process';
 import type {
 	ProcessConfig,
 	ManagedProcess,
@@ -15,6 +16,7 @@ import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
+import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 
 /**
@@ -116,8 +118,12 @@ export class ProcessManager extends EventEmitter {
 
 	/**
 	 * Send interrupt signal (SIGINT/Ctrl+C) to a process.
-	 * For child processes, escalates to SIGTERM if the process doesn't exit
+	 * For child processes, escalates to kill() if the process doesn't exit
 	 * within a short timeout (Claude Code may not immediately exit on SIGINT).
+	 *
+	 * On Windows, POSIX signals are not supported for shell-spawned processes,
+	 * so we write Ctrl+C (\x03) to stdin instead. If that doesn't work, the
+	 * escalation timer falls through to kill() which uses taskkill /t /f.
 	 */
 	interrupt(sessionId: string): boolean {
 		const process = this.processes.get(sessionId);
@@ -129,15 +135,38 @@ export class ProcessManager extends EventEmitter {
 				return true;
 			} else if (process.childProcess) {
 				const child = process.childProcess;
-				child.kill('SIGINT');
 
-				// Escalate to SIGTERM if the process doesn't exit promptly.
+				if (isWindows()) {
+					// On Windows, child.kill('SIGINT') is unreliable for shell-spawned
+					// processes. Write Ctrl+C to stdin as a gentle interrupt instead.
+					if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) {
+						child.stdin.write('\x03');
+						logger.debug(
+							'[ProcessManager] Wrote Ctrl+C to stdin for Windows interrupt',
+							'ProcessManager',
+							{ sessionId }
+						);
+					} else {
+						logger.warn(
+							'[ProcessManager] stdin unavailable for Windows interrupt, will escalate to kill',
+							'ProcessManager',
+							{ sessionId }
+						);
+					}
+				} else {
+					child.kill('SIGINT');
+				}
+
+				// Escalate to forceful kill if the process doesn't exit promptly.
 				// Some agents (e.g., Claude Code --print) may not exit on SIGINT alone.
+				// On Windows, we don't call child.kill('SIGINT') because it's unreliable
+				// for shell-spawned processes. The .killed flag remains false, which
+				// correctly allows the escalation timer to fire.
 				const escalationTimer = setTimeout(() => {
 					const stillRunning = this.processes.get(sessionId);
 					if (stillRunning?.childProcess && !stillRunning.childProcess.killed) {
 						logger.warn(
-							'[ProcessManager] Process did not exit after SIGINT, escalating to SIGTERM',
+							'[ProcessManager] Process did not exit after interrupt, escalating to kill',
 							'ProcessManager',
 							{ sessionId, pid: stillRunning.pid }
 						);
@@ -178,7 +207,19 @@ export class ProcessManager extends EventEmitter {
 			if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.kill();
 			} else if (process.childProcess) {
-				process.childProcess.kill('SIGTERM');
+				const pid = process.childProcess.pid;
+				if (isWindows() && pid) {
+					this.killWindowsProcessTree(pid, sessionId);
+				} else if (isWindows()) {
+					logger.warn(
+						'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
+						'ProcessManager',
+						{ sessionId }
+					);
+					process.childProcess.kill('SIGTERM');
+				} else {
+					process.childProcess.kill('SIGTERM');
+				}
 			}
 			this.processes.delete(sessionId);
 			return true;
@@ -189,6 +230,29 @@ export class ProcessManager extends EventEmitter {
 			});
 			return false;
 		}
+	}
+
+	/**
+	 * Kill a process and its entire child tree on Windows using taskkill.
+	 * This is necessary because POSIX signals (SIGINT/SIGTERM) don't reliably
+	 * terminate shell-spawned processes on Windows.
+	 */
+	private killWindowsProcessTree(pid: number, sessionId: string): void {
+		logger.info(
+			'[ProcessManager] Using taskkill to terminate process tree on Windows',
+			'ProcessManager',
+			{ sessionId, pid }
+		);
+		execFile('taskkill', ['/pid', String(pid), '/t', '/f'], (error) => {
+			if (error) {
+				// taskkill returns non-zero if the process is already dead, which is fine
+				logger.debug(
+					'[ProcessManager] taskkill exited with error (process may already be terminated)',
+					'ProcessManager',
+					{ sessionId, pid, error: String(error) }
+				);
+			}
+		});
 	}
 
 	/**
