@@ -3,6 +3,7 @@ import { Copy, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { useDirection } from '../../hooks/useDirection';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
 
@@ -49,6 +50,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	setLiveOverlayOpen,
 	restartWebServer,
 }: LiveOverlayPanelProps) {
+	const { isForward, isBackward } = useDirection();
 	const containerRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		containerRef.current?.focus();
@@ -62,9 +64,9 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				if (tunnelStatus === 'connected') {
-					if (e.key === 'ArrowLeft') {
+					if (isBackward(e.key)) {
 						setActiveUrlTab('local');
-					} else if (e.key === 'ArrowRight') {
+					} else if (isForward(e.key)) {
 						setActiveUrlTab('remote');
 					}
 				}

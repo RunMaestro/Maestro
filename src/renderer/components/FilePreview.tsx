@@ -54,6 +54,7 @@ import type { FileNode } from '../types/fileTree';
 import { isImageFile } from '../../shared/gitUtils';
 import { useTranslation } from 'react-i18next';
 import { CodeText } from './shared/CodeText';
+import { useDirection } from '../hooks/useDirection';
 
 // Global cache for loaded images to prevent re-fetching and flickering
 // Maps resolved path -> { dataUrl, dimensions }
@@ -662,6 +663,7 @@ export const FilePreview = React.memo(
 		ref
 	) {
 		const { t } = useTranslation('common');
+		const { isForward, isBackward } = useDirection();
 		// Search state - use initialSearchQuery if provided, and notify parent of changes
 		const [internalSearchQuery, setInternalSearchQuery] = useState(initialSearchQuery ?? '');
 		// Wrapper to update state and notify parent
@@ -1765,8 +1767,8 @@ export const FilePreview = React.memo(
 					// Arrow Down: Scroll down
 					container.scrollTop += 40;
 				}
-			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Left: Navigate back in history (disabled in edit mode)
+			} else if (isBackward(e.key) && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				// Cmd+Backward: Navigate back in history (disabled in edit mode)
 				if (isEditableText && markdownEditMode) return;
 				e.preventDefault();
 				e.stopPropagation();
@@ -1774,8 +1776,8 @@ export const FilePreview = React.memo(
 					onNavigateBack();
 					onShortcutUsed?.('filePreviewBack');
 				}
-			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				// Cmd+Right: Navigate forward in history (disabled in edit mode)
+			} else if (isForward(e.key) && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				// Cmd+Forward: Navigate forward in history (disabled in edit mode)
 				if (isEditableText && markdownEditMode) return;
 				e.preventDefault();
 				e.stopPropagation();

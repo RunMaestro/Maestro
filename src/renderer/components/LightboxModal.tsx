@@ -7,6 +7,7 @@ import { ConfirmModal } from './ConfirmModal';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { useDirection } from '../hooks/useDirection';
 
 interface LightboxModalProps {
 	image: string;
@@ -28,6 +29,7 @@ export function LightboxModal({
 	theme,
 }: LightboxModalProps) {
 	const { t } = useTranslation('modals');
+	const { isForward, isBackward } = useDirection();
 	const lightboxRef = useRef<HTMLDivElement>(null);
 	const currentIndex = stagedImages.indexOf(image);
 	const canNavigate = stagedImages.length > 1;
@@ -168,10 +170,10 @@ export function LightboxModal({
 			onClick={onClose}
 			onKeyDown={(e) => {
 				e.stopPropagation();
-				if (e.key === 'ArrowLeft') {
+				if (isBackward(e.key)) {
 					e.preventDefault();
 					goToPrev();
-				} else if (e.key === 'ArrowRight') {
+				} else if (isForward(e.key)) {
 					e.preventDefault();
 					goToNext();
 				} else if ((e.key === 'Delete' || e.key === 'Backspace') && canDelete) {

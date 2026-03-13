@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { Session, Group, FocusArea } from '../../types';
+import { useDirection } from '../useDirection';
 
 /**
  * Dependencies for useKeyboardNavigation hook
@@ -97,6 +98,9 @@ export function useKeyboardNavigation(
 	const activeFocusRef = useRef(activeFocus);
 	activeFocusRef.current = activeFocus;
 
+	// RTL-aware arrow key helpers
+	const { isForward, isBackward } = useDirection();
+
 	/**
 	 * Handle sidebar navigation with arrow keys.
 	 * Supports collapse/expand of groups and bookmarks sections.
@@ -138,8 +142,8 @@ export function useKeyboardNavigation(
 
 			const currentSession = sessions[currentIndex];
 
-			// ArrowLeft: Collapse the current group or bookmarks section
-			if (e.key === 'ArrowLeft' && currentSession) {
+			// Backward arrow (ArrowLeft in LTR, ArrowRight in RTL): Collapse
+			if (isBackward(e.key) && currentSession) {
 				// Check if session is bookmarked and bookmarks section is expanded
 				if (currentSession.bookmarked && !isBookmarksCollapsed) {
 					setBookmarksCollapsed(true);
@@ -159,8 +163,8 @@ export function useKeyboardNavigation(
 				return true;
 			}
 
-			// ArrowRight: Expand the current group or bookmarks section (if collapsed)
-			if (e.key === 'ArrowRight' && currentSession) {
+			// Forward arrow (ArrowRight in LTR, ArrowLeft in RTL): Expand
+			if (isForward(e.key) && currentSession) {
 				// Check if session is bookmarked and bookmarks section is collapsed
 				if (currentSession.bookmarked && isBookmarksCollapsed) {
 					setBookmarksCollapsed(false);
@@ -319,7 +323,14 @@ export function useKeyboardNavigation(
 
 			return false;
 		},
-		[setSelectedSidebarIndex, setActiveSessionId, setGroups, setBookmarksCollapsed]
+		[
+			setSelectedSidebarIndex,
+			setActiveSessionId,
+			setGroups,
+			setBookmarksCollapsed,
+			isForward,
+			isBackward,
+		]
 	);
 
 	/**

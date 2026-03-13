@@ -29,6 +29,7 @@ import { calculateContextDisplay } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useDirection } from '../hooks/useDirection';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -66,6 +67,7 @@ export function HistoryDetailModal({
 	onFileClick,
 }: HistoryDetailModalProps) {
 	const { t } = useTranslation('modals');
+	const { isForward, isBackward } = useDirection();
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
@@ -143,10 +145,10 @@ export function HistoryDetailModal({
 			// Don't handle if delete confirmation is showing
 			if (showDeleteConfirm) return;
 
-			if (e.key === 'ArrowLeft') {
+			if (isBackward(e.key)) {
 				e.preventDefault();
 				goToPrev();
-			} else if (e.key === 'ArrowRight') {
+			} else if (isForward(e.key)) {
 				e.preventDefault();
 				goToNext();
 			}
@@ -154,7 +156,7 @@ export function HistoryDetailModal({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [goToPrev, goToNext, showDeleteConfirm]);
+	}, [goToPrev, goToNext, showDeleteConfirm, isForward, isBackward]);
 
 	// Format timestamp
 	const formatTime = (timestamp: number) => {

@@ -60,6 +60,8 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import type { FileNode } from '../../types/fileTree';
+import { useI18n } from '../../hooks/useI18n';
+import { useDirection } from '../../hooks/useDirection';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -204,6 +206,9 @@ export function DocumentGraphView({
 	onLayoutTypeChange,
 	sshRemoteId,
 }: DocumentGraphViewProps) {
+	const { t: ta } = useI18n('accessibility');
+	const { isForward, isBackward } = useDirection();
+
 	// Graph data state
 	const [nodes, setNodes] = useState<MindMapNode[]>([]);
 	const [links, setLinks] = useState<MindMapLink[]>([]);
@@ -1138,15 +1143,15 @@ export function DocumentGraphView({
 			// Only handle arrow keys without modifiers
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 
-			if (e.key === 'ArrowLeft' && canGoBack) {
+			if (isBackward(e.key) && canGoBack) {
 				e.preventDefault();
 				handlePreviewBack();
-			} else if (e.key === 'ArrowRight' && canGoForward) {
+			} else if (isForward(e.key) && canGoForward) {
 				e.preventDefault();
 				handlePreviewForward();
 			}
 		},
-		[canGoBack, canGoForward, handlePreviewBack, handlePreviewForward]
+		[canGoBack, canGoForward, handlePreviewBack, handlePreviewForward, isForward, isBackward]
 	);
 
 	/**
@@ -1270,7 +1275,7 @@ export function DocumentGraphView({
 				tabIndex={-1}
 				role="dialog"
 				aria-modal="true"
-				aria-label="Document Graph"
+				aria-label={ta('modal.document_graph')}
 				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
 					backgroundColor: theme.colors.bgActivity,
@@ -1335,7 +1340,7 @@ export function DocumentGraphView({
 										? theme.colors.accent
 										: 'transparent')
 								}
-								aria-label="Search documents in graph"
+								aria-label={ta('navigation.search_documents')}
 							/>
 							{searchQuery && (
 								<button
@@ -1347,8 +1352,8 @@ export function DocumentGraphView({
 									style={{ color: theme.colors.textDim }}
 									onMouseEnter={(e) => (e.currentTarget.style.color = theme.colors.textMain)}
 									onMouseLeave={(e) => (e.currentTarget.style.color = theme.colors.textDim)}
-									title="Clear search"
-									aria-label="Clear search"
+									title={ta('navigation.clear_search')}
+									aria-label={ta('navigation.clear_search')}
 								>
 									<X className="w-3 h-3" />
 								</button>
@@ -1596,7 +1601,7 @@ export function DocumentGraphView({
 								onMouseLeave={(e) =>
 									(e.currentTarget.style.backgroundColor = `${theme.colors.warning}20`)
 								}
-								title="Reset all node positions to algorithmic layout"
+								title={ta('action.reset_layout')}
 							>
 								<RotateCcw className="w-4 h-4" />
 								Reset Layout
@@ -1612,7 +1617,7 @@ export function DocumentGraphView({
 								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 							}
 							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-							title="Refresh graph"
+							title={ta('action.refresh_graph')}
 							disabled={loading}
 						>
 							<RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -1627,7 +1632,7 @@ export function DocumentGraphView({
 								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 							}
 							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-							title="Close (Esc)"
+							title={ta('action.close_esc')}
 						>
 							<X className="w-4 h-4" />
 						</button>
@@ -1853,7 +1858,7 @@ export function DocumentGraphView({
 											}
 											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 											title={canGoBack ? 'Go back (←)' : 'No previous document'}
-											aria-label="Go back"
+											aria-label={ta('navigation.go_back')}
 										>
 											<ChevronLeft className="w-4 h-4" />
 										</button>
@@ -1872,7 +1877,7 @@ export function DocumentGraphView({
 											}
 											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 											title={canGoForward ? 'Go forward (→)' : 'No next document'}
-											aria-label="Go forward"
+											aria-label={ta('navigation.go_forward')}
 										>
 											<ChevronRight className="w-4 h-4" />
 										</button>
@@ -1899,7 +1904,7 @@ export function DocumentGraphView({
 												backgroundColor: `${theme.colors.accent}20`,
 												color: theme.colors.accent,
 											}}
-											title="Open in file preview"
+											title={ta('action.open_file_preview')}
 										>
 											Open
 										</button>
@@ -1908,7 +1913,7 @@ export function DocumentGraphView({
 										onClick={handlePreviewClose}
 										className="p-1 rounded transition-colors"
 										style={{ color: theme.colors.textDim }}
-										title="Close preview (Esc)"
+										title={ta('action.close_preview_esc')}
 									>
 										<X className="w-4 h-4" />
 									</button>
@@ -2032,7 +2037,7 @@ export function DocumentGraphView({
 									backgroundColor: `${theme.colors.accent}15`,
 									color: theme.colors.textDim,
 								}}
-								title="Scanning for documents that link to the current graph"
+								title={ta('action.scanning_links')}
 							>
 								<Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.colors.accent }} />
 								<span>
@@ -2049,7 +2054,7 @@ export function DocumentGraphView({
 						<div className="flex items-center gap-4" style={{ color: theme.colors.textDim }}>
 							{/* Task counts */}
 							{selectedNodeTasks && (
-								<div className="flex items-center gap-1.5" title="Markdown tasks">
+								<div className="flex items-center gap-1.5" title={ta('action.markdown_tasks')}>
 									<CheckSquare className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									<span>
 										<span style={{ color: theme.colors.success }}>
@@ -2063,14 +2068,14 @@ export function DocumentGraphView({
 							)}
 							{/* Created date */}
 							{selectedNodeStats?.createdAt && (
-								<div className="flex items-center gap-1.5" title="Created date">
+								<div className="flex items-center gap-1.5" title={ta('action.created_date')}>
 									<Calendar className="w-3.5 h-3.5" />
 									<span>Created {formatDate(selectedNodeStats.createdAt)}</span>
 								</div>
 							)}
 							{/* Modified date */}
 							{selectedNodeStats?.modifiedAt && (
-								<div className="flex items-center gap-1.5" title="Modified date">
+								<div className="flex items-center gap-1.5" title={ta('action.modified_date')}>
 									<Calendar className="w-3.5 h-3.5" />
 									<span>Modified {formatDate(selectedNodeStats.modifiedAt)}</span>
 								</div>
@@ -2084,7 +2089,7 @@ export function DocumentGraphView({
 			{showCloseConfirmation && (
 				<Modal
 					theme={theme}
-					title="Close Document Graph?"
+					title={ta('action.close_graph_confirm')}
 					priority={MODAL_PRIORITIES.DOCUMENT_GRAPH + 1}
 					onClose={() => setShowCloseConfirmation(false)}
 					width={400}

@@ -32,6 +32,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useMarketplace } from '../hooks/batch/useMarketplace';
 import { generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { useDirection } from '../hooks/useDirection';
 
 // ============================================================================
 // Types
@@ -731,6 +732,7 @@ export function MarketplaceModal({
 }: MarketplaceModalProps) {
 	const { t } = useTranslation('modals');
 	const { t: tA } = useTranslation('accessibility');
+	const { isForward, isBackward } = useDirection();
 	// Layer stack for escape handling
 	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
@@ -1035,7 +1037,7 @@ export function MarketplaceModal({
 				const input = e.target as HTMLInputElement;
 				// For left/right arrows, only navigate tiles if the input is empty
 				// (otherwise let user move cursor in the text)
-				if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+				if (isForward(e.key) || isBackward(e.key)) {
 					if (input.value.length > 0) {
 						return; // Let cursor move in non-empty input
 					}
@@ -1048,15 +1050,15 @@ export function MarketplaceModal({
 				}
 			}
 
+			if (isForward(e.key)) {
+				e.preventDefault();
+				setSelectedTileIndex((i) => Math.min(total - 1, i + 1));
+			} else if (isBackward(e.key)) {
+				e.preventDefault();
+				setSelectedTileIndex((i) => Math.max(0, i - 1));
+			}
+
 			switch (e.key) {
-				case 'ArrowRight':
-					e.preventDefault();
-					setSelectedTileIndex((i) => Math.min(total - 1, i + 1));
-					break;
-				case 'ArrowLeft':
-					e.preventDefault();
-					setSelectedTileIndex((i) => Math.max(0, i - 1));
-					break;
 				case 'ArrowDown':
 					e.preventDefault();
 					setSelectedTileIndex((i) => Math.min(total - 1, i + gridColumns));

@@ -26,6 +26,7 @@ import { useI18n } from '../hooks/useI18n';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
+import { useDirection } from '../hooks/useDirection';
 
 /**
  * View modes for the modal
@@ -170,6 +171,7 @@ export function MergeSessionModal({
 }: MergeSessionModalProps) {
 	const { t } = useTranslation('modals');
 	const { t: ta } = useI18n('accessibility');
+	const { isForward, isBackward } = useDirection();
 
 	// View mode state
 	const [viewMode, setViewMode] = useState<ViewMode>('search');
@@ -510,14 +512,14 @@ export function MergeSessionModal({
 				return;
 			}
 
-			// Arrow left/right to expand/collapse in search mode
+			// Arrow forward/backward to expand/collapse in search mode (RTL-aware)
 			if (viewMode === 'search') {
-				if (e.key === 'ArrowRight' && filteredItems[selectedIndex]) {
+				if (isForward(e.key) && filteredItems[selectedIndex]) {
 					e.preventDefault();
 					setExpandedSessions((prev) => new Set([...prev, filteredItems[selectedIndex].sessionId]));
 					return;
 				}
-				if (e.key === 'ArrowLeft' && filteredItems[selectedIndex]) {
+				if (isBackward(e.key) && filteredItems[selectedIndex]) {
 					e.preventDefault();
 					setExpandedSessions((prev) => {
 						const next = new Set(prev);
