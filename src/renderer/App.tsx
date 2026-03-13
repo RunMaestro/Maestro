@@ -47,6 +47,8 @@ const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
 
+import { captureException } from './utils/sentry';
+
 // SymphonyContributionData type moved to useSymphonyContribution hook
 
 // Group Chat Components
@@ -367,6 +369,7 @@ function MaestroConsoleInner() {
 				return;
 			}
 		} catch (e) {
+			captureException(e, { extra: { context: 'openWizardModal', setting: 'wizardResumeState' } });
 			console.error('[App] Failed to check wizard resume state:', e);
 		}
 		_baseOpenWizardModal();
