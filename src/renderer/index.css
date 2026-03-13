@@ -375,28 +375,28 @@ textarea::placeholder {
 /* Wizard markdown lists render <li><p><strong>...</strong></p><ul>...</ul></li> */
 .wizard-markdown ol,
 .wizard-markdown ul {
-  list-style-position: outside;
+	list-style-position: outside;
 }
 
 .wizard-markdown li {
-  display: list-item;
+	display: list-item;
 }
 
 .wizard-markdown li > p:first-child {
-  display: inline;
-  margin: 0;
-  vertical-align: baseline;
-  line-height: inherit;
+	display: inline;
+	margin: 0;
+	vertical-align: baseline;
+	line-height: inherit;
 }
 
 .wizard-markdown li > p:not(:first-child) {
-  display: block;
-  margin: 0.5em 0 0;
+	display: block;
+	margin: 0.5em 0 0;
 }
 
 .wizard-markdown li > p:first-child + ul,
 .wizard-markdown li > p:first-child + ol {
-  margin-top: 0;
+	margin-top: 0;
 }
 
 .wizard-markdown li > p:first-child > strong:first-child,
@@ -404,12 +404,12 @@ textarea::placeholder {
 .wizard-markdown li > p:first-child > em:first-child,
 .wizard-markdown li > p:first-child > code:first-child,
 .wizard-markdown li > p:first-child > a:first-child {
-  vertical-align: baseline;
-  line-height: inherit;
+	vertical-align: baseline;
+	line-height: inherit;
 }
 
 .wizard-markdown li::marker {
-  font-weight: normal;
+	font-weight: normal;
 }
 
 /* Nested lists */

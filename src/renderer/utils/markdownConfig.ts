@@ -584,7 +584,8 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 		ol: ({ children }: any) =>
 			React.createElement('ol', { className: 'list-decimal ml-4 mb-2' }, children),
 		li: ({ children }: any) => React.createElement('li', { className: 'mb-1' }, children),
-		strong: ({ children }: any) => React.createElement('strong', { className: 'font-semibold' }, children),
+		strong: ({ children }: any) =>
+			React.createElement('strong', { className: 'font-semibold' }, children),
 		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
 		code: ({ children, className }: any) => {
 			const isInline = !className;
@@ -619,9 +620,12 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 				},
 				children
 			),
-		h1: ({ children }: any) => React.createElement('h1', { className: 'text-lg font-bold mb-2' }, children),
-		h2: ({ children }: any) => React.createElement('h2', { className: 'text-base font-bold mb-2' }, children),
-		h3: ({ children }: any) => React.createElement('h3', { className: 'text-sm font-bold mb-1' }, children),
+		h1: ({ children }: any) =>
+			React.createElement('h1', { className: 'text-lg font-bold mb-2' }, children),
+		h2: ({ children }: any) =>
+			React.createElement('h2', { className: 'text-base font-bold mb-2' }, children),
+		h3: ({ children }: any) =>
+			React.createElement('h3', { className: 'text-sm font-bold mb-1' }, children),
 		blockquote: ({ children }: any) =>
 			React.createElement(
 				'blockquote',
@@ -677,9 +681,17 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 				children
 			),
 		ul: ({ children }: any) =>
-			React.createElement('ul', { className: 'list-disc list-inside my-1.5 space-y-0.5' }, children),
+			React.createElement(
+				'ul',
+				{ className: 'list-disc list-inside my-1.5 space-y-0.5' },
+				children
+			),
 		ol: ({ children }: any) =>
-			React.createElement('ol', { className: 'list-decimal list-inside my-1.5 space-y-0.5' }, children),
+			React.createElement(
+				'ol',
+				{ className: 'list-decimal list-inside my-1.5 space-y-0.5' },
+				children
+			),
 		li: ({ children }: any) =>
 			React.createElement('li', { style: { color: theme.colors.textDim } }, children),
 		code: ({ children }: any) =>

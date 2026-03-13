@@ -23,7 +23,11 @@ import type { Theme } from '../../../types';
 import { MermaidRenderer } from '../../MermaidRenderer';
 import type { GeneratedDocument } from '../WizardContext';
 import { DocumentSelector } from './DocumentSelector';
-import { REMARK_GFM_PLUGINS, generateProseStyles, createMarkdownComponents } from '../../../utils/markdownConfig';
+import {
+	REMARK_GFM_PLUGINS,
+	generateProseStyles,
+	createMarkdownComponents,
+} from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 // Memoize plugin arrays - they never change

@@ -118,8 +118,12 @@ vi.mock('rehype-slug', () => ({
 
 // Mock markdownConfig utilities
 vi.mock('../../../../renderer/utils/markdownConfig', () => ({
+	REMARK_GFM_PLUGINS: [],
 	generateProseStyles: () => '',
+	generateInlineWizardPreviewProseStyles: () => '',
 	createMarkdownComponents: () => ({}),
+	createWizardBubbleMarkdownComponents: () => ({}),
+	createReleaseNotesMarkdownComponents: () => ({}),
 }));
 
 // Mock MermaidRenderer

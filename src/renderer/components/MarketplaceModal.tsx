@@ -28,7 +28,11 @@ import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useMarketplace } from '../hooks/batch/useMarketplace';
-import { REMARK_GFM_PLUGINS, generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
+import {
+	REMARK_GFM_PLUGINS,
+	generateProseStyles,
+	createMarkdownComponents,
+} from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 
 // ============================================================================
