@@ -28,6 +28,7 @@ type AgentConfigResolution = {
 	modelSource: 'session' | 'agent' | 'default';
 };
 
+/** Parse a space-separated custom args string into an array, respecting quoted segments. */
 function parseCustomArgs(customArgs?: string): string[] {
 	if (!customArgs || typeof customArgs !== 'string') {
 		return [];
@@ -42,6 +43,7 @@ function parseCustomArgs(customArgs?: string): string[] {
 	});
 }
 
+/** Check whether jsonOutputArgs (exact sequence or flag key) are already present in the args list. */
 function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolean {
 	if (jsonOutputArgs.length === 0) return true;
 
@@ -68,6 +70,7 @@ function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolea
 	return false;
 }
 
+/** Build the final CLI arguments for an agent process based on mode, config, and user options. */
 export function buildAgentArgs(
 	agent: AgentConfig | null | undefined,
 	options: BuildAgentArgsOptions
@@ -149,6 +152,7 @@ export function buildAgentArgs(
 	return dedupedArgs;
 }
 
+/** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
 export function applyAgentConfigOverrides(
 	agent: AgentConfig | null | undefined,
 	baseArgs: string[],
@@ -236,6 +240,7 @@ export function applyAgentConfigOverrides(
 	};
 }
 
+/** Resolve the effective context window size from session, agent config, or defaults. */
 export function getContextWindowValue(
 	agent: AgentConfig | null | undefined,
 	agentConfigValues: Record<string, any>,

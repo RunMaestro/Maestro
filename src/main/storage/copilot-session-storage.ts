@@ -15,6 +15,7 @@ import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[CopilotSessionStorage]';
 
+/** Resolve the local Copilot session state directory, respecting COPILOT_CONFIG_DIR. */
 function getLocalCopilotSessionStateDir(): string {
 	const configDir = process.env.COPILOT_CONFIG_DIR || path.join(os.homedir(), '.copilot');
 	return path.join(configDir, 'session-state');
@@ -80,6 +81,7 @@ interface CopilotEvent {
 	};
 }
 
+/** Strip surrounding quotes and unescape common YAML sequences in scalar values. */
 function normalizeYamlScalar(value: string): string {
 	let trimmed = value.trim();
 	if (
@@ -110,6 +112,7 @@ const WORKSPACE_METADATA_KEYS = new Set<keyof CopilotWorkspaceMetadata>([
 	'updated_at',
 ]);
 
+/** Normalize a workspace metadata key from camelCase/kebab-case to the canonical snake_case form. */
 function normalizeWorkspaceMetadataKey(key: string): keyof CopilotWorkspaceMetadata | null {
 	const normalized = key
 		.trim()
@@ -122,6 +125,7 @@ function normalizeWorkspaceMetadataKey(key: string): keyof CopilotWorkspaceMetad
 		: null;
 }
 
+/** Parse workspace.yaml content into typed metadata, tolerating format variations. */
 function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWorkspaceMetadata {
 	const metadata: CopilotWorkspaceMetadata = { id: sessionId };
 
@@ -144,11 +148,13 @@ function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWork
 	return metadata;
 }
 
+/** Normalize a filesystem path for cross-platform comparison. */
 function normalizePath(value?: string): string | null {
 	if (!value) return null;
 	return value.replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
+/** Check whether session metadata matches the given project path. */
 function matchesProject(metadata: CopilotWorkspaceMetadata, projectPath: string): boolean {
 	const normalizedProject = normalizePath(projectPath);
 	const gitRoot = normalizePath(metadata.git_root);
@@ -162,6 +168,7 @@ function matchesProject(metadata: CopilotWorkspaceMetadata, projectPath: string)
 	);
 }
 
+/** Convert Copilot tool requests into a normalized tool-use structure. */
 function buildToolUse(toolRequests?: CopilotToolRequest[]): unknown {
 	if (!toolRequests?.length) return undefined;
 	return toolRequests
@@ -173,6 +180,7 @@ function buildToolUse(toolRequests?: CopilotToolRequest[]): unknown {
 		}));
 }
 
+/** Parse events.jsonl content into messages, statistics, and content indicators. */
 function parseEvents(content: string): ParsedCopilotSessionData {
 	const messages: SessionMessage[] = [];
 	let firstAssistantMessage = '';
@@ -268,6 +276,7 @@ function parseEvents(content: string): ParsedCopilotSessionData {
 	};
 }
 
+/** Recursively calculate the total size of a local directory in bytes. */
 async function getLocalDirectorySize(sessionDir: string): Promise<number> {
 	try {
 		const entries = await fs.readdir(sessionDir, { withFileTypes: true });
@@ -287,35 +296,47 @@ async function getLocalDirectorySize(sessionDir: string): Promise<number> {
 	}
 }
 
+/**
+ * Session storage implementation for GitHub Copilot CLI.
+ *
+ * Reads session metadata from `~/.copilot/session-state/<sessionId>/workspace.yaml`
+ * and conversation history from `events.jsonl`. Supports both local and SSH remote access.
+ */
 export class CopilotSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'copilot';
 
+	/** Remote session state directory path using POSIX tilde expansion. */
 	private getRemoteSessionStateDir(): string {
 		return '~/.copilot/session-state';
 	}
 
+	/** Resolve the session state base directory (local or remote). */
 	private getSessionStateDir(sshConfig?: SshRemoteConfig): string {
 		return sshConfig ? this.getRemoteSessionStateDir() : getLocalCopilotSessionStateDir();
 	}
 
+	/** Resolve the directory path for a specific session. */
 	private getSessionDir(sessionId: string, sshConfig?: SshRemoteConfig): string {
 		return sshConfig
 			? path.posix.join(this.getRemoteSessionStateDir(), sessionId)
 			: path.join(getLocalCopilotSessionStateDir(), sessionId);
 	}
 
+	/** Resolve the workspace.yaml path for a specific session. */
 	private getWorkspacePath(sessionId: string, sshConfig?: SshRemoteConfig): string {
 		return sshConfig
 			? path.posix.join(this.getSessionDir(sessionId, sshConfig), 'workspace.yaml')
 			: path.join(this.getSessionDir(sessionId), 'workspace.yaml');
 	}
 
+	/** Resolve the events.jsonl path for a specific session. */
 	private getEventsPath(sessionId: string, sshConfig?: SshRemoteConfig): string {
 		return sshConfig
 			? path.posix.join(this.getSessionDir(sessionId, sshConfig), 'events.jsonl')
 			: path.join(this.getSessionDir(sessionId), 'events.jsonl');
 	}
 
+	/** List all Copilot sessions matching the given project path. */
 	async listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig
@@ -330,6 +351,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
 	}
 
+	/** Read messages from a Copilot session's events.jsonl file. */
 	async readSessionMessages(
 		_projectPath: string,
 		sessionId: string,
@@ -345,6 +367,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		return BaseSessionStorage.applyMessagePagination(messages, options);
 	}
 
+	/** Get searchable user/assistant messages for session search. */
 	protected async getSearchableMessages(
 		sessionId: string,
 		_projectPath: string,
@@ -364,6 +387,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 			.filter((message) => message.textContent.trim().length > 0);
 	}
 
+	/** Get the filesystem path to a session's events.jsonl file. */
 	getSessionPath(
 		_projectPath: string,
 		sessionId: string,
@@ -372,6 +396,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		return this.getEventsPath(sessionId, sshConfig);
 	}
 
+	/** Delete a message pair. Not supported for Copilot sessions. */
 	async deleteMessagePair(
 		_projectPath: string,
 		_sessionId: string,
@@ -385,6 +410,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		};
 	}
 
+	/** List all session directory names from the session state directory. */
 	private async listSessionIds(sshConfig?: SshRemoteConfig): Promise<string[]> {
 		const sessionStateDir = this.getSessionStateDir(sshConfig);
 		if (sshConfig) {
@@ -403,6 +429,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		}
 	}
 
+	/** Load session metadata and event statistics for a single session. Returns null if the session doesn't match the project or lacks meaningful content. */
 	private async loadSessionInfo(
 		projectPath: string,
 		sessionId: string,
@@ -477,6 +504,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		}
 	}
 
+	/** Read the events.jsonl file content for a session. Returns null on missing/unreadable files. */
 	private async readEventsFile(
 		sessionId: string,
 		sshConfig?: SshRemoteConfig
@@ -492,6 +520,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		}
 	}
 
+	/** Read a file from a remote host via SSH. Returns null on failure. */
 	private async readRemoteFile(
 		filePath: string,
 		sshConfig: SshRemoteConfig
@@ -500,6 +529,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		return result.success && result.data ? result.data : null;
 	}
 
+	/** Calculate the total size of a session directory on a remote host. */
 	private async getRemoteDirectorySize(
 		sessionDir: string,
 		sshConfig: SshRemoteConfig

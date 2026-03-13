@@ -53,6 +53,7 @@ interface CopilotRawMessage {
 	error?: string | { message?: string };
 }
 
+/** Extract a human-readable error message from a string or { message } object. */
 function extractErrorText(value: unknown): string | null {
 	if (!value) return null;
 	if (typeof value === 'string' && value.trim()) return value.trim();
@@ -65,16 +66,25 @@ function extractErrorText(value: unknown): string | null {
 	return null;
 }
 
+/** Extract tool output text from a Copilot tool execution result. */
 function extractToolOutput(result: CopilotToolExecutionResult | undefined): string {
 	if (!result) return '';
 	return result.content || result.detailedContent || '';
 }
 
+/**
+ * Parses GitHub Copilot CLI JSON output into normalized ParsedEvents.
+ *
+ * Handles concatenated JSON objects (no newline separators), tracks tool
+ * names across execution_start/complete events, and detects agent errors
+ * from structured error events and non-zero exit codes.
+ */
 export class CopilotOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'copilot';
 
 	private toolNames = new Map<string, string>();
 
+	/** Parse a single JSON line from Copilot's JSONL output stream. */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
 			return null;
@@ -91,6 +101,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		}
 	}
 
+	/** Parse an already-deserialized JSON object into a normalized ParsedEvent. */
 	parseJsonObject(parsed: unknown): ParsedEvent | null {
 		if (!parsed || typeof parsed !== 'object') {
 			return null;
@@ -143,6 +154,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		}
 	}
 
+	/** Parse assistant.message events, detecting final_answer phase as result events. */
 	private parseAssistantMessage(msg: CopilotRawMessage): ParsedEvent {
 		const content = msg.data?.content || '';
 		const phase = msg.data?.phase;
@@ -181,6 +193,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
+	/** Parse assistant.message_delta events as partial streaming text. */
 	private parseAssistantMessageDelta(msg: CopilotRawMessage): ParsedEvent | null {
 		const deltaContent = msg.data?.deltaContent || '';
 		if (!deltaContent) {
@@ -195,6 +208,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
+	/** Parse tool.execution_start and register the tool name for later correlation. */
 	private parseToolExecutionStart(msg: CopilotRawMessage): ParsedEvent {
 		const callId = msg.data?.toolCallId;
 		const toolName = msg.data?.toolName;
@@ -214,6 +228,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
+	/** Parse tool.execution_complete, resolving tool name from the tracked map. */
 	private parseToolExecutionComplete(msg: CopilotRawMessage): ParsedEvent {
 		const callId = msg.data?.toolCallId;
 		const toolName = (callId && this.toolNames.get(callId)) || msg.data?.toolName || undefined;
@@ -237,6 +252,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
+	/** Check whether a parsed event represents a completed agent response. */
 	isResultMessage(event: ParsedEvent): boolean {
 		if (event.type !== 'result') return false;
 
@@ -247,6 +263,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		return !!event.text || !!event.toolUseBlocks?.length;
 	}
 
+	/** Extract the Copilot session ID from a parsed event, if present. */
 	extractSessionId(event: ParsedEvent): string | null {
 		if (event.sessionId) return event.sessionId;
 
@@ -254,14 +271,17 @@ export class CopilotOutputParser implements AgentOutputParser {
 		return raw?.sessionId || raw?.data?.sessionId || null;
 	}
 
+	/** Extract usage/token statistics from a parsed event. */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
 		return event.usage || null;
 	}
 
+	/** Extract slash commands from events. Returns null — Copilot slash commands are interactive-only. */
 	extractSlashCommands(_event: ParsedEvent): string[] | null {
 		return null;
 	}
 
+	/** Detect agent errors from a raw JSON line string. */
 	detectErrorFromLine(line: string): AgentError | null {
 		if (!line.trim()) {
 			return null;
@@ -278,6 +298,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		}
 	}
 
+	/** Detect agent errors from an already-parsed JSON object. Skips bare exit codes to allow detectErrorFromExit to classify with full context. */
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
 		if (!parsed || typeof parsed !== 'object') {
 			return null;
@@ -324,6 +345,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
+	/** Detect agent errors from process exit code and stderr/stdout content. */
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
 		if (exitCode === 0) {
 			return null;

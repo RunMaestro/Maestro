@@ -99,6 +99,7 @@ function normalizeUsageToDelta(
 	};
 }
 
+/** Split a buffer of concatenated JSON objects (no newline separators) into individual complete objects and a partial remainder. */
 function extractConcatenatedJsonObjects(buffer: string): { messages: string[]; remainder: string } {
 	const messages: string[] = [];
 	let start = -1;
@@ -170,6 +171,7 @@ function extractConcatenatedJsonObjects(buffer: string): { messages: string[]; r
 	};
 }
 
+/** Extract the Copilot session ID from a parsed JSON event's top-level or nested data field. */
 function extractCopilotSessionId(parsed: unknown): string | null {
 	if (!parsed || typeof parsed !== 'object') {
 		return null;
@@ -193,6 +195,7 @@ function extractCopilotSessionId(parsed: unknown): string | null {
 	return null;
 }
 
+/** Extract the status string from a tool execution state object. */
 function getToolStatus(toolState: unknown): string | null {
 	if (!toolState || typeof toolState !== 'object') {
 		return null;
@@ -202,6 +205,7 @@ function getToolStatus(toolState: unknown): string | null {
 	return typeof status === 'string' ? status : null;
 }
 
+/** Get or lazily initialize the per-process set of emitted tool call IDs for deduplication. */
 function getEmittedToolCallIds(managedProcess: ManagedProcess): Set<string> {
 	if (!managedProcess.emittedToolCallIds) {
 		managedProcess.emittedToolCallIds = new Set<string>();
@@ -209,6 +213,7 @@ function getEmittedToolCallIds(managedProcess: ManagedProcess): Set<string> {
 	return managedProcess.emittedToolCallIds;
 }
 
+/** Drop the Copilot JSON remainder buffer if it exceeds the safety limit. Sets the corrupted flag and clears stale tool state. */
 function resetOversizedCopilotJsonBuffer(sessionId: string, managedProcess: ManagedProcess): void {
 	const bufferLength = managedProcess.jsonBuffer?.length || 0;
 	if (bufferLength <= MAX_COPILOT_JSON_BUFFER_LENGTH) {
@@ -272,6 +277,7 @@ export class StdoutHandler {
 		}
 	}
 
+	/** Process stdout data in stream-JSON mode. Handles Copilot concatenated JSON and standard newline-delimited JSON. */
 	private handleStreamJsonData(
 		sessionId: string,
 		managedProcess: ManagedProcess,
@@ -343,6 +349,7 @@ export class StdoutHandler {
 		}
 	}
 
+	/** Parse a single JSON line: detect errors, extract session IDs, and dispatch to the event handler. */
 	private processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
 		const { outputParser, toolType } = managedProcess;
 
@@ -423,6 +430,7 @@ export class StdoutHandler {
 		}
 	}
 
+	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
 	private handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
@@ -632,6 +640,7 @@ export class StdoutHandler {
 		}
 	}
 
+	/** Handle legacy (non-parser) JSON messages for Claude Code's native format. */
 	private handleLegacyMessage(
 		sessionId: string,
 		managedProcess: ManagedProcess,
@@ -687,6 +696,7 @@ export class StdoutHandler {
 		}
 	}
 
+	/** Build a normalized UsageStats object from parser-extracted token counts. */
 	private buildUsageStats(
 		managedProcess: ManagedProcess,
 		usage: {
@@ -712,6 +722,7 @@ export class StdoutHandler {
 		};
 	}
 
+	/** Emit session-id event at most once per managed process lifecycle. */
 	private emitSessionIdIfNeeded(
 		sessionId: string,
 		managedProcess: ManagedProcess,
