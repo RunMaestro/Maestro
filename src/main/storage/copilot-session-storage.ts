@@ -86,7 +86,9 @@ function normalizeYamlScalar(value: string): string {
 		(trimmed.startsWith('"') && trimmed.endsWith('"')) ||
 		(trimmed.startsWith("'") && trimmed.endsWith("'"))
 	) {
-		return trimmed.slice(1, -1);
+		const inner = trimmed.slice(1, -1);
+		// Unescape common sequences within double-quoted scalars
+		return trimmed.startsWith('"') ? inner.replace(/\\"/g, '"').replace(/\\\\/g, '\\') : inner;
 	}
 
 	const inlineCommentIndex = trimmed.search(/\s+#/);
@@ -445,7 +447,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 				? await this.getRemoteDirectorySize(sessionDir, sshConfig)
 				: await getLocalDirectorySize(sessionDir);
 			const projectRoot = metadata.git_root || metadata.cwd || projectPath;
-			const timestamp = metadata.created_at || new Date().toISOString();
+			const timestamp = metadata.created_at || metadata.updated_at || new Date().toISOString();
 			const modifiedAt = metadata.updated_at || timestamp;
 			const preview =
 				parsedEvents.firstAssistantMessage ||

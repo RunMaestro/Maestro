@@ -238,7 +238,13 @@ export class CopilotOutputParser implements AgentOutputParser {
 	}
 
 	isResultMessage(event: ParsedEvent): boolean {
-		return event.type === 'result' && (!!event.text || !!event.toolUseBlocks?.length);
+		if (event.type !== 'result') return false;
+
+		// Treat any final_answer event as a result, including empty ones (tool-only responses)
+		const raw = event.raw as CopilotRawMessage | undefined;
+		if (raw?.data?.phase === 'final_answer') return true;
+
+		return !!event.text || !!event.toolUseBlocks?.length;
 	}
 
 	extractSessionId(event: ParsedEvent): string | null {
@@ -285,10 +291,11 @@ export class CopilotOutputParser implements AgentOutputParser {
 		const errorText =
 			extractErrorText(msg.error) ||
 			extractErrorText(msg.data?.error) ||
-			(msg.type === 'result' && msg.exitCode && msg.exitCode !== 0
-				? `Copilot exited with code ${msg.exitCode}`
-				: null);
+			extractErrorText(msg.data?.message);
 
+		// Do NOT synthesize an error for bare non-zero exit codes.
+		// Returning null here lets detectErrorFromExit() run with full
+		// stderr+stdout context for richer error classification.
 		if (!errorText) {
 			return null;
 		}

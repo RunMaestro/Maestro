@@ -225,6 +225,8 @@ function resetOversizedCopilotJsonBuffer(sessionId: string, managedProcess: Mana
 		}
 	);
 	managedProcess.jsonBuffer = '';
+	// Mark corrupted so subsequent chunks discard until a clean resync point
+	managedProcess.jsonBufferCorrupted = true;
 }
 
 /**
@@ -277,6 +279,18 @@ export class StdoutHandler {
 		managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + output;
 
 		if (managedProcess.toolType === 'copilot') {
+			// If a previous buffer overflow corrupted state, discard data until
+			// we find a top-level '{' that starts a fresh JSON object.
+			if (managedProcess.jsonBufferCorrupted) {
+				const resyncIndex = managedProcess.jsonBuffer.indexOf('{');
+				if (resyncIndex === -1) {
+					managedProcess.jsonBuffer = '';
+					return;
+				}
+				managedProcess.jsonBuffer = managedProcess.jsonBuffer.slice(resyncIndex);
+				managedProcess.jsonBufferCorrupted = false;
+			}
+
 			const firstNonWhitespaceIndex = managedProcess.jsonBuffer.search(/\S/);
 			if (
 				firstNonWhitespaceIndex >= 0 &&

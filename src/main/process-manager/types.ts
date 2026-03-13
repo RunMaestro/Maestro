@@ -52,6 +52,9 @@ export interface ManagedProcess {
 	isBatchMode?: boolean;
 	isStreamJsonMode?: boolean;
 	jsonBuffer?: string;
+	/** When true, the JSON buffer was force-cleared after exceeding size limits.
+	 *  Subsequent chunks are discarded until a clean top-level `{` resync point. */
+	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
 	resultEmitted?: boolean;

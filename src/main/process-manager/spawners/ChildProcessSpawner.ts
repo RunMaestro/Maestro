@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
+import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
@@ -353,8 +353,9 @@ export class ChildProcessSpawner {
 				!!config.sendPromptViaStdin ||
 				!!config.sshStdinScript;
 
-			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+			// Create a fresh output parser instance for this process (not the shared singleton)
+			// to isolate mutable state like tool name tracking across concurrent sessions
+			const outputParser = createOutputParser(toolType) || undefined;
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,

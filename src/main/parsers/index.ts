@@ -37,6 +37,9 @@ export {
 	clearParserRegistry,
 } from './agent-output-parser';
 
+// Re-export factory function
+export { createOutputParser } from './parser-factory';
+
 // Re-export error pattern utilities (access patterns via getErrorPatterns(agentId))
 export type { ErrorPattern, AgentErrorPatterns } from './error-patterns';
 export {

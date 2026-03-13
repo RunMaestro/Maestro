@@ -42,6 +42,32 @@ function parseCustomArgs(customArgs?: string): string[] {
 	});
 }
 
+function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolean {
+	if (jsonOutputArgs.length === 0) return true;
+
+	// Check if the exact arg sequence is already present
+	for (let i = 0; i <= haystack.length - jsonOutputArgs.length; i++) {
+		let match = true;
+		for (let j = 0; j < jsonOutputArgs.length; j++) {
+			if (haystack[i + j] !== jsonOutputArgs[j]) {
+				match = false;
+				break;
+			}
+		}
+		if (match) return true;
+	}
+
+	// Also check if the flag key (e.g., --format, --output-format) is already
+	// present with a different value — avoid appending a conflicting duplicate
+	// that the dedup step would mangle.
+	const flagKey = jsonOutputArgs[0];
+	if (flagKey?.startsWith('-') && jsonOutputArgs.length > 1) {
+		return haystack.includes(flagKey);
+	}
+
+	return false;
+}
+
 export function buildAgentArgs(
 	agent: AgentConfig | null | undefined,
 	options: BuildAgentArgsOptions
@@ -66,10 +92,14 @@ export function buildAgentArgs(
 		}
 	}
 
+	// Only inject JSON output args when a prompt is provided (batch/non-interactive mode).
+	// Interactive sessions must not receive these flags (e.g., Copilot rejects --output-format json
+	// in interactive mode). Agents that need JSON output in interactive mode should include
+	// the relevant flags in their base `args` or `batchModeArgs` instead.
 	if (
 		agent.jsonOutputArgs &&
 		options.prompt &&
-		!finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))
+		!hasJsonOutputFlag(finalArgs, agent.jsonOutputArgs)
 	) {
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}

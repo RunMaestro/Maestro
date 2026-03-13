@@ -309,6 +309,7 @@ describe('StdoutHandler', () => {
 
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.jsonBuffer).toBe('');
+			expect(proc.jsonBufferCorrupted).toBe(true);
 			expect(logger.warn).toHaveBeenCalledWith(
 				'[ProcessManager] Dropping oversized Copilot JSON buffer remainder',
 				'ProcessManager',
@@ -318,6 +319,34 @@ describe('StdoutHandler', () => {
 					maxBufferLength: 1024 * 1024,
 				})
 			);
+		});
+
+		it('should resync after corrupted buffer on the next valid JSON object', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Force corrupted state
+			proc.jsonBufferCorrupted = true;
+
+			// Send trailing garbage from old object, then a clean new object
+			const payload =
+				'leftover junk from old object"}' +
+				JSON.stringify({
+					type: 'assistant.message',
+					data: { content: 'Recovered', phase: 'final_answer' },
+				});
+
+			handler.handleData(sessionId, payload);
+
+			expect(proc.jsonBufferCorrupted).toBe(false);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Recovered');
+			expect(proc.jsonBuffer).toBe('');
 		});
 
 		it('should discard Copilot preamble noise once JSON output begins', () => {
@@ -384,8 +413,11 @@ describe('StdoutHandler', () => {
 				})
 			);
 
+			// Session ID should still be extracted from bare exit-code result events
 			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-error');
-			expect(errorSpy).toHaveBeenCalledTimes(1);
+			// Bare exit codes without error text should NOT trigger an inline error —
+			// the richer detectErrorFromExit() runs at process exit with stderr context
+			expect(errorSpy).not.toHaveBeenCalled();
 		});
 
 		it('should dedupe Copilot tool starts emitted from tool.execution_start and final toolUseBlocks', () => {

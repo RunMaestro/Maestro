@@ -98,14 +98,34 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
-	it('does not duplicate jsonOutputArgs when already present', () => {
+	it('does not duplicate jsonOutputArgs when exact sequence already present', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print', '--format', 'json'],
+			prompt: 'hello',
+		});
+		// '--format json' exact sequence is already in baseArgs, so jsonOutputArgs should not be added
+		expect(result).toEqual(['--print', '--format', 'json']);
+	});
+
+	it('does not duplicate jsonOutputArgs when same flag key present with different value', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
 		const result = buildAgentArgs(agent, {
 			baseArgs: ['--print', '--format', 'stream'],
 			prompt: 'hello',
 		});
-		// '--format' is already in baseArgs, so jsonOutputArgs should not be added
+		// '--format' flag key is already present, so jsonOutputArgs should not be added
 		expect(result).toEqual(['--print', '--format', 'stream']);
+	});
+
+	it('does not false-match jsonOutputArgs on bare value token', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--output-format', 'json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print', 'json'],
+			prompt: 'hello',
+		});
+		// 'json' is a positional arg, not the '--output-format' flag, so jsonOutputArgs should be added
+		expect(result).toEqual(['--print', 'json', '--output-format', 'json']);
 	});
 
 	// -- workingDirArgs --
