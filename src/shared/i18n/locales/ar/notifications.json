@@ -1,1 +1,170 @@
-{}
+{
+	"task": {
+		"completed_title": "اكتملت المهمة",
+		"completed_message": "أنهى {{agent}} في {{duration}}",
+		"failed_title": "فشلت المهمة",
+		"failed_message": "واجه {{agent}} خطأً"
+	},
+	"connection": {
+		"lost_title": "انقطع الاتصال",
+		"restored_title": "تم استعادة الاتصال"
+	},
+	"group_chat": {
+		"error_title": "محادثة جماعية",
+		"create_failed_message": "فشل إنشاء المحادثة الجماعية",
+		"create_failed_dynamic_message": "{{message}}"
+	},
+	"worktree": {
+		"discovered_title": "تم اكتشاف \u200FWorktrees\u200E",
+		"discovered_message_zero": "لم يتم العثور على وكلاء \u200FWorktree\u200E فرعيين",
+		"discovered_message_one": "تم العثور على وكيل \u200FWorktree\u200E فرعي واحد",
+		"discovered_message_two": "تم العثور على وكيلَي \u200FWorktree\u200E فرعيَّين",
+		"discovered_message_few": "تم العثور على {{count}} وكلاء \u200FWorktree\u200E فرعيين",
+		"discovered_message_many": "تم العثور على {{count}} وكيل \u200FWorktree\u200E فرعيًا",
+		"discovered_message_other": "تم العثور على {{count}} وكيل \u200FWorktree\u200E فرعي",
+		"disabled_title": "تم تعطيل \u200FWorktrees\u200E",
+		"disabled_message": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل.",
+		"disabled_with_removed_message_zero": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. لم تتم إزالة أي وكلاء فرعيين.",
+		"disabled_with_removed_message_one": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. تمت إزالة وكيل فرعي واحد.",
+		"disabled_with_removed_message_two": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. تمت إزالة وكيلَين فرعيَّين.",
+		"disabled_with_removed_message_few": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. تمت إزالة {{count}} وكلاء فرعيين.",
+		"disabled_with_removed_message_many": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. تمت إزالة {{count}} وكيلًا فرعيًا.",
+		"disabled_with_removed_message_other": "تم مسح تكوين \u200FWorktree\u200E لهذا الوكيل. تمت إزالة {{count}} وكيل فرعي.",
+		"no_directory_title": "خطأ",
+		"no_directory_message": "لم يتم تكوين مجلد \u200FWorktree\u200E",
+		"created_title": "تم إنشاء \u200FWorktree\u200E",
+		"created_message": "{{branch}}",
+		"create_failed_title": "فشل إنشاء \u200FWorktree\u200E",
+		"create_failed_message": "{{message}}",
+		"new_discovered_title": "تم اكتشاف \u200FWorktree\u200E جديد",
+		"new_discovered_message": "{{name}}",
+		"agent_not_found_title": "لم يتم العثور على وكيل \u200FWorktree\u200E",
+		"agent_not_found_message": "تمت إزالة وكيل \u200FWorktree\u200E المحدد. سيتم التشغيل على الوكيل النشط بدلاً من ذلك.",
+		"target_busy_title": "الوكيل المستهدف مشغول",
+		"target_busy_message": "الوكيل المستهدف مشغول. يُرجى المحاولة مرة أخرى.",
+		"error_title": "خطأ في \u200FWorktree\u200E",
+		"error_message": "{{message}}"
+	},
+	"autorun": {
+		"started_title": "بدأ \u200FAuto Run\u200E",
+		"started_message_zero": "لا توجد مهام عبر {{docCount}} مستند",
+		"started_message_one": "مهمة واحدة عبر {{docCount}} مستند",
+		"started_message_two": "مهمتان عبر {{docCount}} مستند",
+		"started_message_few": "{{count}} مهام عبر {{docCount}} مستند",
+		"started_message_many": "{{count}} مهمة عبر {{docCount}} مستند",
+		"started_message_other": "{{count}} مهمة عبر {{docCount}} مستند",
+		"complete_title": "اكتمل \u200FAuto Run\u200E",
+		"complete_stopped_message": "توقف بعد إكمال {{completed}} من {{total}} مهمة",
+		"complete_all_message_zero": "لا توجد مهام لإكمالها",
+		"complete_all_message_one": "تم إكمال المهمة الوحيدة ({{total}}) بنجاح",
+		"complete_all_message_two": "تم إكمال المهمتين ({{total}}) بنجاح",
+		"complete_all_message_few": "تم إكمال جميع المهام ({{total}}) بنجاح",
+		"complete_all_message_many": "تم إكمال جميع المهام ({{total}}) بنجاح",
+		"complete_all_message_other": "تم إكمال جميع المهام ({{total}}) بنجاح",
+		"complete_partial_message": "تم إكمال {{completed}} من {{total}} مهمة",
+		"error_title": "\u200FAuto Run\u200E: {{errorTitle}}",
+		"error_message": "{{message}}"
+	},
+	"leaderboard": {
+		"updated_title": "تم تحديث لوحة المتصدرين",
+		"updated_message": "{{message}}"
+	},
+	"symphony": {
+		"pr_ready_title": "\u200FSymphony\u200E: طلب السحب جاهز للمراجعة",
+		"pr_ready_message": "تم فتح طلب السحب: {{prUrl}}",
+		"manual_needed_title": "\u200FSymphony\u200E: يلزم الإنهاء اليدوي",
+		"manual_needed_message": "{{message}}",
+		"manual_needed_default_message": "تعذّر الإنهاء التلقائي لطلب السحب. افتح \u200FSymphony\u200E للإنهاء.",
+		"auto_finalize_failed_title": "\u200FSymphony\u200E: فشل الإنهاء التلقائي",
+		"auto_finalize_failed_message": "يبقى طلب السحب كمسودة. افتح \u200FSymphony\u200E للإنهاء يدويًا.",
+		"error_title": "خطأ في \u200FSymphony\u200E",
+		"agent_not_found_message": "لم يتم العثور على الوكيل: {{agentType}}"
+	},
+	"pr": {
+		"created_title": "تم إنشاء طلب السحب",
+		"created_message": "{{message}}",
+		"created_default_message": "تم إنشاء طلب السحب بنجاح",
+		"failed_title": "فشل إنشاء طلب السحب",
+		"failed_message": "{{message}}",
+		"failed_default_message": "فشل إنشاء طلب السحب",
+		"app_created_title": "تم إنشاء طلب السحب",
+		"app_created_message": "{{title}}"
+	},
+	"merge": {
+		"session_merged_title": "تم دمج الجلسة",
+		"session_merged_message": "تم إنشاء \"{{sessionName}}\" من {{sourceInfo}}{{tokenInfo}}.{{savedInfo}}",
+		"context_merged_title": "تم دمج السياق",
+		"context_merged_message": "\"{{source}}\" ← \"{{target}}\"{{tokenInfo}}.{{savedInfo}}",
+		"context_transferred_title": "تم نقل السياق",
+		"context_transferred_message": "تم إنشاء \"{{sessionName}}\" مع السياق المنقول",
+		"failed_title": "فشل الدمج",
+		"failed_message": "{{message}}",
+		"failed_default_message": "فشل دمج السياقات",
+		"context_sent_title": "تم إرسال السياق",
+		"context_sent_message": "\"{{source}}\" ← \"{{target}}\"{{tokenInfo}}"
+	},
+	"compact": {
+		"cannot_title": "لا يمكن الضغط",
+		"cannot_message": "السياق صغير جدًا. يجب أن يكون الاستخدام {{percent}}% على الأقل، أو ~2000 رمز، أو أكثر من 8 رسائل للضغط.",
+		"success_title": "تم ضغط السياق",
+		"success_message": "تم تقليل السياق بنسبة {{percent}}%. انقر لعرض علامة التبويب الجديدة.",
+		"failed_title": "فشل الضغط",
+		"failed_message": "فشل ضغط السياق. تحقق من علامة التبويب للتفاصيل.",
+		"failed_unexpected_message": "حدث خطأ غير متوقع أثناء الضغط."
+	},
+	"agent": {
+		"creation_failed_title": "فشل إنشاء الوكيل",
+		"creation_failed_message": "{{message}}",
+		"creation_failed_default_message": "لا يمكن إنشاء وكيل مكرر"
+	},
+	"session": {
+		"group_removed_title": "تمت إزالة المجموعة",
+		"group_removed_message_zero": "تمت إزالة \"{{name}}\" بدون وكلاء",
+		"group_removed_message_one": "تمت إزالة \"{{name}}\" ووكيل واحد",
+		"group_removed_message_two": "تمت إزالة \"{{name}}\" ووكيلَين",
+		"group_removed_message_few": "تمت إزالة \"{{name}}\" و{{count}} وكلاء",
+		"group_removed_message_many": "تمت إزالة \"{{name}}\" و{{count}} وكيلًا",
+		"group_removed_message_other": "تمت إزالة \"{{name}}\" و{{count}} وكيل",
+		"erase_failed_title": "فشل مسح المجلد",
+		"erase_failed_message": "{{message}}"
+	},
+	"export": {
+		"nothing_to_copy_title": "لا شيء للنسخ",
+		"nothing_to_copy_message": "لا توجد رسائل مستخدم أو مساعد للنسخ.",
+		"context_copied_title": "تم نسخ السياق",
+		"context_copied_message": "تم نسخ المحادثة إلى الحافظة.",
+		"copy_failed_title": "فشل النسخ",
+		"copy_failed_message": "فشل نسخ السياق إلى الحافظة.",
+		"export_complete_title": "اكتمل التصدير",
+		"export_complete_message": "تم تصدير المحادثة بتنسيق \u200FHTML\u200E.",
+		"export_failed_title": "فشل التصدير",
+		"export_failed_message": "فشل تصدير المحادثة بتنسيق \u200FHTML\u200E.",
+		"nothing_to_publish_title": "لا شيء للنشر",
+		"nothing_to_publish_message": "لا توجد رسائل مستخدم أو مساعد للنشر."
+	},
+	"stats": {
+		"database_title": "قاعدة بيانات الإحصائيات",
+		"database_message": "{{message}}"
+	},
+	"history": {
+		"entry_added_title": "تمت إضافة إدخال في السجل",
+		"entry_added_message": "{{message}}"
+	},
+	"synopsis": {
+		"title": "الملخّص",
+		"message": "{{message}}"
+	},
+	"playbook": {
+		"imported_title": "تم استيراد \u200FPlaybook\u200E",
+		"imported_message": "تم استيراد \u200FPlaybook\u200E بنجاح إلى {{folder}}"
+	},
+	"gist": {
+		"published_title": "تم نشر \u200FGist\u200E",
+		"published_public_message": "تم إنشاء \u200FGist\u200E عام! تم نسخ الرابط إلى الحافظة.",
+		"published_secret_message": "تم إنشاء \u200FGist\u200E سري! تم نسخ الرابط إلى الحافظة."
+	},
+	"debug": {
+		"test_title": "إشعار تجريبي",
+		"test_message": "هذا إشعار منبثق تجريبي من وحدة التحكم!"
+	}
+}

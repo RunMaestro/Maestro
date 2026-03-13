@@ -1,1 +1,150 @@
-{}
+{
+	"task": {
+		"completed_title": "कार्य पूर्ण",
+		"completed_message": "{{agent}} ने {{duration}} में कार्य पूरा किया",
+		"failed_title": "कार्य विफल",
+		"failed_message": "{{agent}} में त्रुटि आई"
+	},
+	"connection": {
+		"lost_title": "कनेक्शन टूट गया",
+		"restored_title": "कनेक्शन पुनः स्थापित"
+	},
+	"group_chat": {
+		"error_title": "समूह चैट",
+		"create_failed_message": "समूह चैट बनाने में विफल",
+		"create_failed_dynamic_message": "{{message}}"
+	},
+	"worktree": {
+		"discovered_title": "Worktree खोजे गए",
+		"discovered_message_one": "{{count}} Worktree सब-Agent मिला",
+		"discovered_message_other": "{{count}} Worktree सब-Agent मिले",
+		"disabled_title": "Worktree अक्षम",
+		"disabled_message": "इस Agent के लिए Worktree कॉन्फ़िगरेशन हटा दिया गया।",
+		"disabled_with_removed_message_one": "इस Agent के लिए Worktree कॉन्फ़िगरेशन हटा दिया गया। {{count}} Worktree सब-Agent हटाया गया।",
+		"disabled_with_removed_message_other": "इस Agent के लिए Worktree कॉन्फ़िगरेशन हटा दिया गया। {{count}} Worktree सब-Agent हटाए गए।",
+		"no_directory_title": "त्रुटि",
+		"no_directory_message": "कोई Worktree डायरेक्टरी कॉन्फ़िगर नहीं है",
+		"created_title": "Worktree बनाया गया",
+		"created_message": "{{branch}}",
+		"create_failed_title": "Worktree बनाने में विफल",
+		"create_failed_message": "{{message}}",
+		"new_discovered_title": "नया Worktree मिला",
+		"new_discovered_message": "{{name}}",
+		"agent_not_found_title": "Worktree Agent नहीं मिला",
+		"agent_not_found_message": "चयनित Worktree Agent हटा दिया गया है। इसके बजाय सक्रिय Agent पर चलाया जाएगा।",
+		"target_busy_title": "लक्ष्य Agent व्यस्त",
+		"target_busy_message": "लक्ष्य Agent व्यस्त है। कृपया पुनः प्रयास करें।",
+		"error_title": "Worktree त्रुटि",
+		"error_message": "{{message}}"
+	},
+	"autorun": {
+		"started_title": "Auto Run शुरू हुआ",
+		"started_message_one": "{{docCount}} दस्तावेज़ में {{count}} कार्य",
+		"started_message_other": "{{docCount}} दस्तावेज़ों में {{count}} कार्य",
+		"complete_title": "Auto Run पूर्ण",
+		"complete_stopped_message": "{{total}} में से {{completed}} कार्य पूरे करने के बाद रोका गया",
+		"complete_all_message_one": "सभी {{total}} कार्य सफलतापूर्वक पूर्ण हुआ",
+		"complete_all_message_other": "सभी {{total}} कार्य सफलतापूर्वक पूर्ण हुए",
+		"complete_partial_message": "{{total}} में से {{completed}} कार्य पूर्ण हुए",
+		"error_title": "Auto Run: {{errorTitle}}",
+		"error_message": "{{message}}"
+	},
+	"leaderboard": {
+		"updated_title": "लीडरबोर्ड अपडेट हुआ",
+		"updated_message": "{{message}}"
+	},
+	"symphony": {
+		"pr_ready_title": "Symphony: PR समीक्षा के लिए तैयार",
+		"pr_ready_message": "PR खोला गया: {{prUrl}}",
+		"manual_needed_title": "Symphony: मैनुअल फ़ाइनलाइज़ेशन आवश्यक",
+		"manual_needed_message": "{{message}}",
+		"manual_needed_default_message": "PR को स्वतः फ़ाइनलाइज़ नहीं किया जा सका। फ़ाइनलाइज़ करने के लिए Symphony खोलें।",
+		"auto_finalize_failed_title": "Symphony: स्वतः फ़ाइनलाइज़ विफल",
+		"auto_finalize_failed_message": "PR ड्राफ़्ट के रूप में बना हुआ है। मैन्युअल रूप से फ़ाइनलाइज़ करने के लिए Symphony खोलें।",
+		"error_title": "Symphony त्रुटि",
+		"agent_not_found_message": "Agent नहीं मिला: {{agentType}}"
+	},
+	"pr": {
+		"created_title": "PR बनाया गया",
+		"created_message": "{{message}}",
+		"created_default_message": "Pull Request सफलतापूर्वक बनाया गया",
+		"failed_title": "PR बनाने में विफल",
+		"failed_message": "{{message}}",
+		"failed_default_message": "Pull Request बनाने में विफल",
+		"app_created_title": "Pull Request बनाया गया",
+		"app_created_message": "{{title}}"
+	},
+	"merge": {
+		"session_merged_title": "सत्र मर्ज किया गया",
+		"session_merged_message": "{{sourceInfo}}{{tokenInfo}} से \"{{sessionName}}\" बनाया गया।{{savedInfo}}",
+		"context_merged_title": "संदर्भ मर्ज किया गया",
+		"context_merged_message": "\"{{source}}\" → \"{{target}}\"{{tokenInfo}}।{{savedInfo}}",
+		"context_transferred_title": "संदर्भ स्थानांतरित किया गया",
+		"context_transferred_message": "स्थानांतरित संदर्भ के साथ \"{{sessionName}}\" बनाया गया",
+		"failed_title": "मर्ज विफल",
+		"failed_message": "{{message}}",
+		"failed_default_message": "संदर्भ मर्ज करने में विफल",
+		"context_sent_title": "संदर्भ भेजा गया",
+		"context_sent_message": "\"{{source}}\" → \"{{target}}\"{{tokenInfo}}"
+	},
+	"compact": {
+		"cannot_title": "कॉम्पैक्ट नहीं कर सकते",
+		"cannot_message": "संदर्भ बहुत छोटा है। कॉम्पैक्ट करने के लिए कम से कम {{percent}}% उपयोग, ~2k Token, या 8+ संदेश आवश्यक हैं।",
+		"success_title": "संदर्भ कॉम्पैक्ट किया गया",
+		"success_message": "संदर्भ {{percent}}% कम किया गया। नया Tab देखने के लिए क्लिक करें।",
+		"failed_title": "कॉम्पैक्शन विफल",
+		"failed_message": "संदर्भ कॉम्पैक्ट करने में विफल। विवरण के लिए Tab देखें।",
+		"failed_unexpected_message": "कॉम्पैक्शन के दौरान एक अप्रत्याशित त्रुटि आई।"
+	},
+	"agent": {
+		"creation_failed_title": "Agent बनाने में विफल",
+		"creation_failed_message": "{{message}}",
+		"creation_failed_default_message": "डुप्लिकेट Agent नहीं बनाया जा सकता"
+	},
+	"session": {
+		"group_removed_title": "समूह हटाया गया",
+		"group_removed_message_one": "\"{{name}}\" और {{count}} Agent हटाया गया",
+		"group_removed_message_other": "\"{{name}}\" और {{count}} Agent हटाए गए",
+		"erase_failed_title": "डायरेक्टरी मिटाने में विफल",
+		"erase_failed_message": "{{message}}"
+	},
+	"export": {
+		"nothing_to_copy_title": "कॉपी करने के लिए कुछ नहीं",
+		"nothing_to_copy_message": "कॉपी करने के लिए कोई उपयोगकर्ता या सहायक संदेश नहीं है।",
+		"context_copied_title": "संदर्भ कॉपी किया गया",
+		"context_copied_message": "वार्तालाप क्लिपबोर्ड पर कॉपी किया गया।",
+		"copy_failed_title": "कॉपी विफल",
+		"copy_failed_message": "संदर्भ को क्लिपबोर्ड पर कॉपी करने में विफल।",
+		"export_complete_title": "एक्सपोर्ट पूर्ण",
+		"export_complete_message": "वार्तालाप HTML के रूप में एक्सपोर्ट किया गया।",
+		"export_failed_title": "एक्सपोर्ट विफल",
+		"export_failed_message": "वार्तालाप को HTML के रूप में एक्सपोर्ट करने में विफल।",
+		"nothing_to_publish_title": "प्रकाशित करने के लिए कुछ नहीं",
+		"nothing_to_publish_message": "प्रकाशित करने के लिए कोई उपयोगकर्ता या सहायक संदेश नहीं है।"
+	},
+	"stats": {
+		"database_title": "सांख्यिकी डेटाबेस",
+		"database_message": "{{message}}"
+	},
+	"history": {
+		"entry_added_title": "इतिहास प्रविष्टि जोड़ी गई",
+		"entry_added_message": "{{message}}"
+	},
+	"synopsis": {
+		"title": "सारांश",
+		"message": "{{message}}"
+	},
+	"playbook": {
+		"imported_title": "Playbook आयात किया गया",
+		"imported_message": "Playbook सफलतापूर्वक {{folder}} में आयात किया गया"
+	},
+	"gist": {
+		"published_title": "Gist प्रकाशित",
+		"published_public_message": "सार्वजनिक Gist बनाया गया! URL क्लिपबोर्ड पर कॉपी किया गया।",
+		"published_secret_message": "गोपनीय Gist बनाया गया! URL क्लिपबोर्ड पर कॉपी किया गया।"
+	},
+	"debug": {
+		"test_title": "परीक्षण सूचना",
+		"test_message": "यह कंसोल से एक परीक्षण टोस्ट सूचना है!"
+	}
+}
