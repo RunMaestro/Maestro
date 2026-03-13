@@ -16,7 +16,12 @@ import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
 import { WindowsWarningModal } from './components/WindowsWarningModal';
 import { GistPublishModal } from './components/GistPublishModal';
-import { MaestroWizard, useWizard, WizardResumeModal } from './components/Wizard';
+import {
+	MaestroWizard,
+	useWizard,
+	WizardResumeModal,
+	type SerializableWizardState,
+} from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
@@ -337,7 +342,7 @@ function MaestroConsoleInner() {
 	// --- WIZARD (onboarding wizard for new users) ---
 	const {
 		state: wizardState,
-		openWizard: openWizardModal,
+		openWizard: _baseOpenWizardModal,
 		restoreState: restoreWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
@@ -346,6 +351,26 @@ function MaestroConsoleInner() {
 		goToStep: wizardGoToStep,
 	} = useWizard();
 
+	// Wrapper for openWizard that checks for resume state
+	const openWizardModal = useCallback(async () => {
+		try {
+			const saved = await window.maestro.settings.get('wizardResumeState');
+			if (
+				saved &&
+				typeof saved === 'object' &&
+				'currentStep' in saved &&
+				saved.currentStep !== 'agent-selection'
+			) {
+				useModalStore
+					.getState()
+					.openModal('wizardResume', { state: saved as SerializableWizardState });
+				return;
+			}
+		} catch (e) {
+			console.error('[App] Failed to check wizard resume state:', e);
+		}
+		_baseOpenWizardModal();
+	}, [_baseOpenWizardModal]);
 	// --- SETTINGS (from useSettings hook) ---
 	const settings = useSettings();
 	const {

@@ -843,7 +843,7 @@ export async function generateInlineDocuments(
 				// Set up file watcher for real-time document streaming
 				// The agent writes files directly, and we detect them here
 				window.maestro.autorun
-					.watchFolder(subfolderPath)
+					.watchFolder(subfolderPath, sshRemoteId || undefined)
 					.then((watchResult) => {
 						if (watchResult.success) {
 							console.log('[InlineWizardDocGen] Started watching folder:', subfolderPath);
