@@ -225,7 +225,6 @@ function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | 
 			return null;
 		}
 		const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-		db.pragma('journal_mode = WAL');
 		return db;
 	} catch (error) {
 		logger.warn(`Failed to open OpenCode SQLite database: ${error}`, LOG_CONTEXT);
@@ -789,11 +788,12 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			// Also include global project sessions that match by directory field
 			if (hasGlobalProject) {
+				const escapedPath = normalizedPath.replace(/[%_\\]/g, '\\$&');
 				const globalSessions = db
 					.prepare(
-						"SELECT id, project_id, directory, title, version, time_created, time_updated, summary_additions, summary_deletions, summary_files FROM session WHERE project_id = 'global' AND (directory = ? OR directory LIKE ?) ORDER BY time_updated DESC"
+						"SELECT id, project_id, directory, title, version, time_created, time_updated, summary_additions, summary_deletions, summary_files FROM session WHERE project_id = 'global' AND (directory = ? OR directory LIKE ? ESCAPE '\\') ORDER BY time_updated DESC"
 					)
-					.all(normalizedPath, normalizedPath + '/%') as SqliteSessionRow[];
+					.all(normalizedPath, escapedPath + '/%') as SqliteSessionRow[];
 				if (globalSessions.length > 0) {
 					const existingIds = new Set(sessions.map((s) => s.id));
 					for (const gs of globalSessions) {
@@ -902,6 +902,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 							const partData = safeJsonParse<SqlitePartData>(part.data);
 							if (partData?.type === 'text' && partData.text?.trim()) {
 								firstMessage = partData.text;
+								foundPreview = true;
 								break;
 							}
 						}
@@ -959,7 +960,18 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				)
 				.all(sessionId) as SqliteMessageRow[];
 
-			if (messageRows.length === 0) return null;
+			// Session exists in SQLite but has no messages yet — return empty result
+			if (messageRows.length === 0) {
+				return {
+					messages: [],
+					parts: new Map(),
+					totalInputTokens: 0,
+					totalOutputTokens: 0,
+					totalCacheReadTokens: 0,
+					totalCacheWriteTokens: 0,
+					totalCost: 0,
+				};
+			}
 
 			const hasPartTable = tableExists(db, 'part');
 			const messages: OpenCodeMessage[] = [];
@@ -1417,9 +1429,19 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		if (sshConfig) {
 			return this.getRemoteMessageDir(sessionId);
 		}
-		// For SQLite-backed sessions, return the database path
+		// Check if session exists in SQLite before returning DB path
 		if (fsSync.existsSync(OPENCODE_DB_PATH)) {
-			return OPENCODE_DB_PATH;
+			const db = openOpenCodeDb();
+			if (db) {
+				try {
+					const exists = tableExists(db, 'session')
+						? db.prepare('SELECT 1 FROM session WHERE id = ? LIMIT 1').get(sessionId)
+						: null;
+					if (exists) return OPENCODE_DB_PATH;
+				} finally {
+					db.close();
+				}
+			}
 		}
 		// Fallback to JSON message directory
 		return this.getMessageDir(sessionId);
