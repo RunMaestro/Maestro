@@ -605,7 +605,12 @@ export class StdoutHandler {
 			!managedProcess.resultEmitted
 		) {
 			managedProcess.resultEmitted = true;
-			const resultText = event.text || managedProcess.streamedText || '';
+			// For Copilot, streamedText holds transient commentary that was already
+			// emitted as partial text — falling back to it would duplicate content.
+			// Only Codex-style agents use streamedText as the final answer accumulator.
+			const resultText =
+				event.text ||
+				(managedProcess.toolType !== 'copilot' ? managedProcess.streamedText || '' : '');
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
 			if (sessionId.includes('-synopsis-')) {
