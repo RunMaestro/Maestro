@@ -680,6 +680,8 @@ interface MaestroAPI {
 		disableAll: () => Promise<{ success: boolean; count: number }>;
 		startServer: () => Promise<{ success: boolean; url?: string; error?: string }>;
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
+		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
+		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;

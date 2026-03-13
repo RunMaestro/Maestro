@@ -404,6 +404,18 @@ const mockMaestro = {
 		importPlaybook: vi.fn().mockResolvedValue({ success: true, playbook: {}, importedDocs: [] }),
 		onManifestChanged: vi.fn().mockReturnValue(() => {}),
 	},
+	live: {
+		toggle: vi.fn().mockResolvedValue({ live: false, url: null }),
+		getStatus: vi.fn().mockResolvedValue({ live: false, url: null }),
+		getDashboardUrl: vi.fn().mockResolvedValue(null),
+		getLiveSessions: vi.fn().mockResolvedValue([]),
+		broadcastActiveSession: vi.fn().mockResolvedValue(undefined),
+		startServer: vi.fn().mockResolvedValue({ success: true, url: 'http://localhost:3000' }),
+		stopServer: vi.fn().mockResolvedValue({ success: true }),
+		persistCurrentToken: vi.fn().mockResolvedValue({ success: true }),
+		clearPersistentToken: vi.fn().mockResolvedValue({ success: true }),
+		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
+	},
 	web: {
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),

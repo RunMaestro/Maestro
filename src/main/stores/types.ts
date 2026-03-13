@@ -57,6 +57,8 @@ export interface MaestroSettings {
 	// Web interface authentication
 	webAuthEnabled: boolean;
 	webAuthToken: string | null;
+	// Persistent web link (reuse token across restarts)
+	persistentWebLink: boolean;
 	// Web interface custom port
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
@@ -148,4 +150,18 @@ export interface AgentSessionOriginsData {
 			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
 		>
 	>;
+}
+
+// ============================================================================
+// Shared Store Interfaces (used across main process modules)
+// ============================================================================
+
+/** Generic read/write store interface for settings */
+export interface SettingsStoreInterface {
+	get<T>(key: string, defaultValue?: T): T;
+	/** Type-safe set for known settings keys */
+	set<K extends keyof MaestroSettings>(key: K, value: MaestroSettings[K]): void;
+	/** Fallback for dynamic keys — used by the generic settings:set IPC handler
+	 *  in persistence.ts which accepts arbitrary key/value pairs from the renderer */
+	set(key: string, value: unknown): void;
 }

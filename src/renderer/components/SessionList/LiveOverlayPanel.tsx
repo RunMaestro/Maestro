@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect } from 'react';
+import { memo, useRef, useEffect, useState, useCallback } from 'react';
 import { Copy, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Theme } from '../../types';
@@ -18,6 +18,8 @@ interface LiveOverlayPanelProps {
 	copyFlash: string | null;
 	setCopyFlash: (msg: string | null) => void;
 	handleTunnelToggle: () => void;
+	persistentWebLink: boolean;
+	setPersistentWebLink: (v: boolean) => Promise<void>;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	setWebInterfaceUseCustomPort: (v: boolean) => void;
@@ -40,6 +42,8 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	copyFlash,
 	setCopyFlash,
 	handleTunnelToggle,
+	persistentWebLink,
+	setPersistentWebLink,
 	webInterfaceUseCustomPort,
 	webInterfaceCustomPort,
 	setWebInterfaceUseCustomPort,
@@ -50,9 +54,19 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	restartWebServer,
 }: LiveOverlayPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const [isPersistPending, setIsPersistPending] = useState(false);
 	useEffect(() => {
 		containerRef.current?.focus();
 	}, []);
+
+	const handlePersistToggle = useCallback(async () => {
+		setIsPersistPending(true);
+		try {
+			await setPersistentWebLink(!persistentWebLink);
+		} finally {
+			setIsPersistPending(false);
+		}
+	}, [setPersistentWebLink, persistentWebLink]);
 
 	return (
 		<div
@@ -170,6 +184,47 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							</button>
 						</div>
 					)}
+				</div>
+
+				{/* Persistent Web Link Toggle Section */}
+				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+					<div className="flex items-center justify-between">
+						<div>
+							<div
+								className="text-[10px] uppercase font-bold"
+								style={{ color: theme.colors.textDim }}
+							>
+								Persistent Web Link
+							</div>
+							<div
+								className="text-[9px] mt-0.5"
+								style={{ color: theme.colors.textDim, opacity: 0.7 }}
+							>
+								Keep the same access token across restarts
+							</div>
+						</div>
+
+						{/* Toggle Switch */}
+						<button
+							type="button"
+							onClick={() => void handlePersistToggle()}
+							disabled={isPersistPending}
+							className={`relative w-10 h-5 rounded-full transition-colors ${
+								persistentWebLink ? 'bg-green-500' : 'bg-gray-600 hover:bg-gray-500'
+							} ${isPersistPending ? 'opacity-50 cursor-wait' : ''}`}
+							role="switch"
+							aria-checked={persistentWebLink}
+							aria-busy={isPersistPending}
+							aria-label="Persistent Web Link"
+							title={persistentWebLink ? 'Disable persistent link' : 'Enable persistent link'}
+						>
+							<div
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									persistentWebLink ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
 				</div>
 
 				{/* Custom Port Toggle Section */}
