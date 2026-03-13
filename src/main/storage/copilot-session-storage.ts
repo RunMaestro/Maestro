@@ -551,7 +551,12 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 			return sshConfig
 				? await this.readRemoteFile(eventsPath, sshConfig)
 				: await fs.readFile(eventsPath, 'utf8');
-		} catch {
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM') {
+				return null;
+			}
+			captureException(error, { operation: 'copilotStorage:readEventsFile', sessionId });
 			return null;
 		}
 	}
