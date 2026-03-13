@@ -68,19 +68,26 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<string[]> {
 
 	// Helper: read command names from an opencode.json config file
 	const addCommandsFromConfig = async (configPath: string) => {
+		let content: string;
 		try {
-			const content = await fs.promises.readFile(configPath, 'utf-8');
-			const config = JSON.parse(content);
-			if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
-				for (const name of Object.keys(config.command)) {
-					commands.add(name);
-				}
-			}
+			content = await fs.promises.readFile(configPath, 'utf-8');
 		} catch (error: any) {
 			if (error?.code === 'ENOENT') {
 				logger.debug(`OpenCode config not found: ${configPath}`, LOG_CONTEXT);
-			} else {
-				throw error;
+				return;
+			}
+			throw error;
+		}
+		let config: any;
+		try {
+			config = JSON.parse(content);
+		} catch {
+			logger.warn(`OpenCode config has invalid JSON, skipping: ${configPath}`, LOG_CONTEXT);
+			return;
+		}
+		if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
+			for (const name of Object.keys(config.command)) {
+				commands.add(name);
 			}
 		}
 	};

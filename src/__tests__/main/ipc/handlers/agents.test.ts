@@ -1201,6 +1201,33 @@ describe('agents IPC handlers', () => {
 			expect(result).not.toContain('not');
 		});
 
+		it('should gracefully handle malformed opencode.json and still return built-in commands', async () => {
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				path: '/usr/bin/opencode',
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoent);
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath) => {
+				if (String(filePath).includes('/test/opencode.json')) {
+					return '{ invalid json, }';
+				}
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'opencode', '/test');
+
+			// Malformed JSON should be skipped gracefully — built-ins still present
+			expect(result).toEqual(
+				expect.arrayContaining(['init', 'review', 'undo', 'redo', 'share', 'help', 'models'])
+			);
+		});
+
 		it('should rethrow non-ENOENT errors for opencode discovery', async () => {
 			const mockAgent = {
 				id: 'opencode',
