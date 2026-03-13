@@ -38,82 +38,60 @@ const OPENCODE_BUILTIN_COMMANDS = ['init', 'review', 'undo', 'redo', 'share', 'h
  * OpenCode commands come from three sources:
  * 1. Built-in commands (init, review, undo, redo, share, help, models)
  * 2. Project-local custom commands: .opencode/commands/*.md
- * 3. Global custom commands: ~/.config/opencode/commands/*.md
+ * 3. Global custom commands: $XDG_CONFIG_HOME/opencode/commands/*.md
  * 4. Config-based commands: opencode.json "command" property
  *
  * Unlike Claude Code (which emits commands via init event), OpenCode commands
  * are statically defined on disk and can be discovered without spawning the agent.
  */
-function discoverOpenCodeSlashCommands(cwd: string): string[] {
+async function discoverOpenCodeSlashCommands(cwd: string): Promise<string[]> {
 	const commands = new Set<string>(OPENCODE_BUILTIN_COMMANDS);
+	const globalConfigBase = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 
-	// Project-local custom commands: .opencode/commands/*.md
-	const projectCommandsDir = path.join(cwd, '.opencode', 'commands');
-	try {
-		if (fs.existsSync(projectCommandsDir)) {
-			const files = fs.readdirSync(projectCommandsDir);
+	// Helper: read .md filenames from a commands directory
+	const addCommandsFromDir = async (dir: string) => {
+		try {
+			const files = await fs.promises.readdir(dir);
 			for (const file of files) {
 				if (file.endsWith('.md')) {
 					commands.add(file.replace(/\.md$/, ''));
 				}
 			}
-		}
-	} catch (error) {
-		logger.debug(`Failed to read project OpenCode commands from ${projectCommandsDir}`, LOG_CONTEXT, {
-			error: String(error),
-		});
-	}
-
-	// Global custom commands: ~/.config/opencode/commands/*.md
-	const globalCommandsDir = path.join(os.homedir(), '.config', 'opencode', 'commands');
-	try {
-		if (fs.existsSync(globalCommandsDir)) {
-			const files = fs.readdirSync(globalCommandsDir);
-			for (const file of files) {
-				if (file.endsWith('.md')) {
-					commands.add(file.replace(/\.md$/, ''));
-				}
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode commands directory not found: ${dir}`, LOG_CONTEXT);
+			} else {
+				throw error;
 			}
 		}
-	} catch (error) {
-		logger.debug(`Failed to read global OpenCode commands from ${globalCommandsDir}`, LOG_CONTEXT, {
-			error: String(error),
-		});
-	}
+	};
 
-	// Config-based commands: opencode.json "command" property (project-level)
-	const projectConfigPath = path.join(cwd, 'opencode.json');
-	try {
-		if (fs.existsSync(projectConfigPath)) {
-			const config = JSON.parse(fs.readFileSync(projectConfigPath, 'utf-8'));
+	// Helper: read command names from an opencode.json config file
+	const addCommandsFromConfig = async (configPath: string) => {
+		try {
+			const content = await fs.promises.readFile(configPath, 'utf-8');
+			const config = JSON.parse(content);
 			if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
 				for (const name of Object.keys(config.command)) {
 					commands.add(name);
 				}
 			}
-		}
-	} catch (error) {
-		logger.debug(`Failed to read OpenCode config from ${projectConfigPath}`, LOG_CONTEXT, {
-			error: String(error),
-		});
-	}
-
-	// Config-based commands: global opencode.json
-	const globalConfigPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
-	try {
-		if (fs.existsSync(globalConfigPath)) {
-			const config = JSON.parse(fs.readFileSync(globalConfigPath, 'utf-8'));
-			if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
-				for (const name of Object.keys(config.command)) {
-					commands.add(name);
-				}
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode config not found: ${configPath}`, LOG_CONTEXT);
+			} else {
+				throw error;
 			}
 		}
-	} catch (error) {
-		logger.debug(`Failed to read global OpenCode config from ${globalConfigPath}`, LOG_CONTEXT, {
-			error: String(error),
-		});
-	}
+	};
+
+	// Read all four sources concurrently
+	await Promise.all([
+		addCommandsFromDir(path.join(cwd, '.opencode', 'commands')),
+		addCommandsFromDir(path.join(globalConfigBase, 'opencode', 'commands')),
+		addCommandsFromConfig(path.join(cwd, 'opencode.json')),
+		addCommandsFromConfig(path.join(globalConfigBase, 'opencode', 'opencode.json')),
+	]);
 
 	const commandList = Array.from(commands);
 	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);

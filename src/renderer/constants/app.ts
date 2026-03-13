@@ -122,10 +122,12 @@ export function getSlashCommandDescription(cmd: string, agentId?: string): strin
 		return AGENT_BUILTIN_COMMANDS[agentId][cmdName];
 	}
 
-	// Check all agent command maps (for backwards compatibility when agentId is not provided)
-	for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
-		if (commands[cmdName]) {
-			return commands[cmdName];
+	// Check all agent command maps only when no specific agent was requested
+	if (!agentId) {
+		for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
+			if (commands[cmdName]) {
+				return commands[cmdName];
+			}
 		}
 	}
 
