@@ -27,6 +27,10 @@ describe('agentIds', () => {
 			expect(AGENT_IDS).toContain('aider');
 		});
 
+		it('should contain beta agents', () => {
+			expect(AGENT_IDS).toContain('copilot');
+		});
+
 		it('should have no duplicates', () => {
 			const unique = new Set(AGENT_IDS);
 			expect(unique.size).toBe(AGENT_IDS.length);

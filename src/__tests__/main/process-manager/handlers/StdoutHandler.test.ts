@@ -42,12 +42,15 @@ vi.mock('../../../../main/parsers/usage-aggregator', () => ({
 }));
 
 vi.mock('../../../../main/parsers/error-patterns', () => ({
+	getErrorPatterns: vi.fn(() => ({})),
+	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -206,6 +209,248 @@ describe('StdoutHandler', () => {
 
 			handler.handleData(sessionId, '\n\n\n');
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+
+		it('should process concatenated Copilot JSON objects without newlines', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			const payload = [
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: 'Working on it...',
+						phase: 'commentary',
+					},
+				}),
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: 'Final answer',
+						phase: 'final_answer',
+					},
+				}),
+				JSON.stringify({
+					type: 'result',
+					sessionId: 'copilot-session-123',
+					exitCode: 0,
+				}),
+			].join(' ');
+
+			handler.handleData(sessionId, payload);
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-123');
+			expect(proc.jsonBuffer).toBe('');
+		});
+
+		it('should buffer partial Copilot JSON objects across chunks', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			const chunkOne = JSON.stringify({
+				type: 'assistant.message',
+				data: {
+					content: 'Working on it...',
+					phase: 'commentary',
+				},
+			});
+			const chunkTwo = [
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: 'Final answer',
+						phase: 'final_answer',
+					},
+				}),
+				JSON.stringify({
+					type: 'result',
+					sessionId: 'copilot-session-456',
+					exitCode: 0,
+				}),
+			].join('');
+
+			handler.handleData(sessionId, chunkOne.slice(0, 25));
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(proc.jsonBuffer).toBe(chunkOne.slice(0, 25));
+
+			handler.handleData(sessionId, chunkOne.slice(25) + chunkTwo);
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Final answer');
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-456');
+			expect(proc.jsonBuffer).toBe('');
+		});
+
+		it('should discard Copilot preamble noise once JSON output begins', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+
+			handler.handleData(
+				sessionId,
+				'Authenticating...\n' +
+					JSON.stringify({
+						type: 'assistant.message',
+						data: {
+							content: 'Final answer',
+							phase: 'final_answer',
+						},
+					})
+			);
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(
+				1,
+				sessionId,
+				'Authenticating...'
+			);
+			expect(bufferManager.emitDataBuffered).toHaveBeenNthCalledWith(2, sessionId, 'Final answer');
+			expect(proc.jsonBuffer).toBe('');
+		});
+
+		it('should emit non-JSON Copilot output immediately when no JSON payload follows', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+
+			handler.handleData(sessionId, 'Authenticating...');
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Authenticating...');
+			expect(proc.jsonBuffer).toBe('');
+		});
+
+		it('should still emit Copilot session IDs from result events with non-zero exit codes', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const sessionIdSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'result',
+					sessionId: 'copilot-session-error',
+					exitCode: 1,
+				})
+			);
+
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'copilot-session-error');
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('should dedupe Copilot tool starts emitted from tool.execution_start and final toolUseBlocks', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'tool.execution_start',
+					data: {
+						toolCallId: 'call_123',
+						toolName: 'view',
+						arguments: { path: '/tmp/project' },
+					},
+				})
+			);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: 'Done',
+						phase: 'final_answer',
+						toolRequests: [
+							{
+								toolCallId: 'call_123',
+								name: 'view',
+								arguments: { path: '/tmp/project' },
+							},
+						],
+					},
+				})
+			);
+
+			expect(toolSpy).toHaveBeenCalledTimes(1);
+			expect(toolSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					toolName: 'view',
+					state: {
+						status: 'running',
+						input: { path: '/tmp/project' },
+					},
+				})
+			);
+		});
+
+		it('should keep failed Copilot tool executions as tool events instead of agent errors', () => {
+			const parser = new CopilotOutputParser();
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot',
+				outputParser: parser,
+			});
+			const toolSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('tool-execution', toolSpy);
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'tool.execution_complete',
+					data: {
+						toolCallId: 'call_456',
+						toolName: 'read_bash',
+						success: false,
+						error:
+							'Invalid shell ID: $SHELL_2. Please supply a valid shell ID to read output from. <no active shell sessions>',
+					},
+				})
+			);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(toolSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					state: {
+						status: 'failed',
+						output:
+							'Invalid shell ID: $SHELL_2. Please supply a valid shell ID to read output from. <no active shell sessions>',
+					},
+				})
+			);
 		});
 	});
 

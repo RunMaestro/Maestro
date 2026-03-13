@@ -22,6 +22,7 @@ vi.mock('os', async () => {
 	const mocked = {
 		...actual,
 		homedir: vi.fn(() => '/tmp/maestro-session-storage-home'),
+		tmpdir: vi.fn(() => '/tmp'),
 	};
 	return {
 		...mocked,
@@ -365,6 +366,67 @@ describe('CodexSessionStorage', () => {
 
 		const searchWhitespace = await storage.searchSessions('/test/project', '   ', 'all');
 		expect(searchWhitespace).toEqual([]);
+	});
+});
+
+describe('CopilotSessionStorage', () => {
+	it('should be importable', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		expect(CopilotSessionStorage).toBeDefined();
+	});
+
+	it('should have copilot as agentId', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+		expect(storage.agentId).toBe('copilot');
+	});
+
+	it('should return empty results for non-existent projects', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessions = await storage.listSessions('/test/nonexistent/project');
+		expect(sessions).toEqual([]);
+
+		const messages = await storage.readSessionMessages('/test/nonexistent/project', 'session-123');
+		expect(messages.messages).toEqual([]);
+		expect(messages.total).toBe(0);
+	});
+
+	it('should return local events path for getSessionPath', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessionPath = storage.getSessionPath('/test/project', 'session-123');
+		expect(sessionPath).toContain('.copilot');
+		expect(sessionPath).toContain('session-state');
+		expect(sessionPath).toContain('session-123');
+		expect(sessionPath).toContain('events.jsonl');
+	});
+
+	it('should return remote events path for getSessionPath with sshConfig', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessionPath = storage.getSessionPath('/test/project', 'session-123', {
+			id: 'test-ssh',
+			name: 'Test SSH Server',
+			host: 'test-server.example.com',
+			port: 22,
+			username: 'testuser',
+			useSshConfig: false,
+			enabled: true,
+		});
+		expect(sessionPath).toBe('~/.copilot/session-state/session-123/events.jsonl');
+	});
+
+	it('should report delete as unsupported', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const result = await storage.deleteMessagePair('/test/project', 'session-123', 'uuid-456');
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not supported');
 	});
 });
 

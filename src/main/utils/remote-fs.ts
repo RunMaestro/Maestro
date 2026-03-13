@@ -11,7 +11,7 @@
 
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
-import { shellEscape } from './shell-escape';
+import { shellEscape, shellEscapeForDoubleQuotes } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -191,6 +191,26 @@ async function execRemoteCommand(
 	return lastResult!;
 }
 
+function shellEscapeRemotePath(filePath: string): string {
+	if (filePath === '~') {
+		return '"$HOME"';
+	}
+
+	if (filePath.startsWith('~/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice(2))}"`;
+	}
+
+	if (filePath === '$HOME') {
+		return '"$HOME"';
+	}
+
+	if (filePath.startsWith('$HOME/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice('$HOME/'.length))}"`;
+	}
+
+	return shellEscape(filePath);
+}
+
 /**
  * Read directory contents from a remote host via SSH.
  *
@@ -217,7 +237,7 @@ export async function readDirRemote(
 	// -F: Append indicator (/ for dirs, @ for symlinks, * for executables)
 	// --color=never: Disable color codes in output
 	// We avoid -l because parsing long format is complex and locale-dependent
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const remoteCommand = `ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -297,7 +317,7 @@ export async function readFileRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<string>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 	// Use cat with explicit error handling
 	const remoteCommand = `cat ${escapedPath}`;
 
@@ -343,7 +363,7 @@ export async function statRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<RemoteStatResult>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 	// Use stat with format string:
 	// %s = size in bytes
 	// %F = file type (regular file, directory, symbolic link, etc.)
@@ -421,7 +441,7 @@ export async function directorySizeRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<number>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	// Use du with:
 	// -s: summarize (total only)
 	// -b: apparent size in bytes (GNU)
@@ -490,7 +510,7 @@ export async function writeFileRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 
 	// Use base64 encoding to safely transfer the content
 	// This avoids issues with special characters, quotes, and newlines
@@ -532,7 +552,7 @@ export async function existsRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<boolean>> {
-	const escapedPath = shellEscape(remotePath);
+	const escapedPath = shellEscapeRemotePath(remotePath);
 	const remoteCommand = `test -e ${escapedPath} && echo "EXISTS" || echo "NOT_EXISTS"`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -565,7 +585,7 @@ export async function mkdirRemote(
 	recursive: boolean = true,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const mkdirFlag = recursive ? '-p' : '';
 	const remoteCommand = `mkdir ${mkdirFlag} ${escapedPath}`;
 
@@ -601,8 +621,8 @@ export async function renameRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedOldPath = shellEscape(oldPath);
-	const escapedNewPath = shellEscape(newPath);
+	const escapedOldPath = shellEscapeRemotePath(oldPath);
+	const escapedNewPath = shellEscapeRemotePath(newPath);
 	const remoteCommand = `mv ${escapedOldPath} ${escapedNewPath}`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -637,7 +657,7 @@ export async function deleteRemote(
 	recursive: boolean = true,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(targetPath);
+	const escapedPath = shellEscapeRemotePath(targetPath);
 	// Use rm -rf for recursive delete (directories), rm -f for files
 	// The -f flag prevents errors if file doesn't exist
 	const rmFlags = recursive ? '-rf' : '-f';
@@ -673,7 +693,7 @@ export async function countItemsRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<{ fileCount: number; folderCount: number }>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	// Use find to count files and directories separately
 	// -type f for files, -type d for directories (excluding the root dir itself)
 	const remoteCommand = `echo "FILES:$(find ${escapedPath} -type f 2>/dev/null | wc -l)" && echo "DIRS:$(find ${escapedPath} -mindepth 1 -type d 2>/dev/null | wc -l)"`;
@@ -745,7 +765,7 @@ export async function incrementalScanRemote(
 	sinceTimestamp: number,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<IncrementalScanResult>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const scanTime = Math.floor(Date.now() / 1000);
 
 	// Use find with -newermt to find files modified after the given timestamp
@@ -805,7 +825,7 @@ export async function listAllFilesRemote(
 	maxDepth: number = 10,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<string[]>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 
 	// Use find with -maxdepth to list all files
 	// Exclude node_modules and __pycache__

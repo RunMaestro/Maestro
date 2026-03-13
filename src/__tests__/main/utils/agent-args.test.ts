@@ -86,16 +86,23 @@ describe('buildAgentArgs', () => {
 	});
 
 	// -- jsonOutputArgs --
-	it('adds jsonOutputArgs when not already present', () => {
+	it('adds jsonOutputArgs when prompt provided and not already present', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
+		const result = buildAgentArgs(agent, { baseArgs: ['--print'], prompt: 'hello' });
+		expect(result).toEqual(['--print', '--format', 'json']);
+	});
+
+	it('does not add jsonOutputArgs for interactive sessions without a prompt', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
 		const result = buildAgentArgs(agent, { baseArgs: ['--print'] });
-		expect(result).toEqual(['--print', '--format', 'json']);
+		expect(result).toEqual(['--print']);
 	});
 
 	it('does not duplicate jsonOutputArgs when already present', () => {
 		const agent = makeAgent({ jsonOutputArgs: ['--format', 'json'] });
 		const result = buildAgentArgs(agent, {
 			baseArgs: ['--print', '--format', 'stream'],
+			prompt: 'hello',
 		});
 		// '--format' is already in baseArgs, so jsonOutputArgs should not be added
 		expect(result).toEqual(['--print', '--format', 'stream']);

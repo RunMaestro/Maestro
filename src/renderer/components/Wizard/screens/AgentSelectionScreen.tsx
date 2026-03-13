@@ -38,7 +38,7 @@ export interface AgentTile {
 
 /**
  * Define the agents to display in the grid
- * Supported agents: Claude Code, Codex, OpenCode (shown first)
+ * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, Copilot (shown first)
  * Unsupported agents: shown ghosted with "Coming soon" (at bottom)
  */
 export const AGENT_TILES: AgentTile[] = [
@@ -71,6 +71,13 @@ export const AGENT_TILES: AgentTile[] = [
 		description: "Factory's AI coding assistant",
 		brandColor: '#3B82F6', // Factory blue
 	},
+	{
+		id: 'copilot',
+		name: 'GitHub Copilot',
+		supported: true,
+		description: "GitHub's AI coding assistant",
+		brandColor: '#24292F', // GitHub dark gray
+	},
 	// Coming soon agents at the bottom
 	{
 		id: 'gemini-cli',
@@ -88,9 +95,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 6 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
 
 /**
  * Get SVG logo for an agent with brand colors
@@ -272,6 +279,27 @@ export function AgentLogo({
 						fillOpacity="0.9"
 						transform="rotate(120 13.6 18)"
 					/>
+				</svg>
+			);
+
+		case 'copilot':
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 9c-7.2 0-13 5.4-13 12 0 4.5 2.3 8 6.4 10.3V37l6.6-3.4L30.6 37v-5.7C34.7 29 37 25.5 37 21c0-6.6-5.8-12-13-12Z"
+						stroke={color}
+						strokeWidth="2"
+						fill="none"
+					/>
+					<circle cx="19" cy="21" r="2.5" fill={color} />
+					<circle cx="29" cy="21" r="2.5" fill={color} />
+					<path d="M18 27.5h12" stroke={color} strokeWidth="2" strokeLinecap="round" />
 				</svg>
 			);
 

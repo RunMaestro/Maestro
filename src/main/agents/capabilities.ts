@@ -385,6 +385,39 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
+
+	/**
+	 * GitHub Copilot CLI - AI coding assistant from GitHub
+	 * https://github.com/github/copilot-cli
+	 *
+	 * Capabilities based on verified CLI help output (copilot --help).
+	 * Conservative approach: only mark capabilities as true if explicitly verified.
+	 */
+	copilot: {
+		supportsResume: true, // --continue, --resume[=sessionId]
+		supportsReadOnlyMode: false, // Interactive /plan exists, but no verified startup flag for batch mode
+		supportsJsonOutput: true, // --output-format json (JSONL)
+		supportsSessionId: true, // result event includes sessionId
+		supportsImageInput: false, // Not verified in help output
+		supportsImageInputOnResume: false, // Not verified
+		supportsSlashCommands: true, // Interactive mode supports slash commands
+		supportsSessionStorage: true, // ~/.copilot/session-state/<session-id>/
+		supportsCostTracking: false, // Not verified
+		supportsUsageStats: false, // Live JSON output reports request stats but not token counts
+		supportsBatchMode: true, // -p, --prompt <text> for batch mode
+		requiresPromptToStart: false, // Default interactive mode works without prompt, -i flag allows initial prompt
+		supportsStreaming: true, // Streams assistant/tool execution events as JSONL
+		supportsResultMessages: true, // assistant.message with phase=final_answer
+		supportsModelSelection: true, // --model <model>
+		supportsStreamJsonInput: false, // Not verified
+		supportsThinkingDisplay: false, // Reasoning events exist, but we do not render them separately yet
+		supportsContextMerge: false, // Not verified - PLACEHOLDER
+		supportsContextExport: false, // Not verified - PLACEHOLDER
+		supportsWizard: false, // PLACEHOLDER - not verified
+		supportsGroupChatModeration: false, // PLACEHOLDER - not verified
+		usesJsonLineOutput: true, // --output-format json produces JSONL
+		usesCombinedContextWindow: false, // Default Copilot model is Claude Sonnet; model-specific behavior varies
+	},
 };
 
 /**

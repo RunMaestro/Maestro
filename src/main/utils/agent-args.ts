@@ -66,7 +66,11 @@ export function buildAgentArgs(
 		}
 	}
 
-	if (agent.jsonOutputArgs && !finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))) {
+	if (
+		agent.jsonOutputArgs &&
+		options.prompt &&
+		!finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))
+	) {
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}
 

@@ -67,6 +67,7 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;

@@ -106,6 +106,7 @@ npm run dev
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - Anthropic's AI coding assistant
   - [OpenAI Codex](https://github.com/openai/codex) - OpenAI's coding agent
   - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant
+  - [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent
 - Git (optional, for git-aware features)
 
 ### Essential Keyboard Shortcuts

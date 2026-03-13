@@ -644,13 +644,14 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 
 ### Supported Agents Reference
 
-| Agent         | Resume                | Read-Only                   | JSON | Images | Sessions                      | Cost             | Status      |
-| ------------- | --------------------- | --------------------------- | ---- | ------ | ----------------------------- | ---------------- | ----------- |
-| Claude Code   | ✅ `--resume`         | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`               | ✅               | ✅ Complete |
-| Codex         | ✅ `exec resume`      | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                | ❌ (tokens only) | ✅ Complete |
-| OpenCode      | ✅ `--session`        | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/` | ✅               | ✅ Complete |
-| Factory Droid | ✅ `-s, --session-id` | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`              | ❌ (tokens only) | ✅ Complete |
-| Gemini CLI    | TBD                   | TBD                         | TBD  | TBD    | TBD                           | ✅               | 📋 Planned  |
+| Agent              | Resume                       | Read-Only                   | JSON | Images | Sessions                       | Cost             | Status      |
+| ------------------ | ---------------------------- | --------------------------- | ---- | ------ | ------------------------------ | ---------------- | ----------- |
+| Claude Code        | ✅ `--resume`                | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`                | ✅               | ✅ Complete |
+| Codex              | ✅ `exec resume`             | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                 | ❌ (tokens only) | ✅ Complete |
+| OpenCode           | ✅ `--session`               | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/`  | ✅               | ✅ Complete |
+| Factory Droid      | ✅ `-s, --session-id`        | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`               | ❌ (tokens only) | ✅ Complete |
+| GitHub Copilot CLI | ✅ `--resume` / `--continue` | ⚠️ Interactive `/plan` only | ✅   | ❌     | ✅ `~/.copilot/session-state/` | ❌               | 🧪 Beta     |
+| Gemini CLI         | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅               | 📋 Planned  |
 
 For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
 

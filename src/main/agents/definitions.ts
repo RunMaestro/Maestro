@@ -399,6 +399,53 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
 	},
+	{
+		id: 'copilot',
+		name: 'GitHub Copilot',
+		binaryName: 'copilot',
+		command: 'copilot',
+		args: [], // Base args for interactive mode (default copilot)
+		requiresPty: true, // Interactive Copilot exits immediately when launched over plain pipes without a TTY
+		// GitHub Copilot CLI argument builders
+		// Interactive mode: copilot (default)
+		// Interactive with initial prompt: copilot -i "prompt"
+		// Batch mode: copilot -p "prompt" (or --prompt "prompt")
+		// Silent/non-interactive: -s, --silent
+		batchModePrefix: [], // No exec subcommand needed
+		batchModeArgs: ['--allow-all-tools', '--silent'], // Non-interactive mode requires tool auto-approval
+		jsonOutputArgs: ['--output-format', 'json'], // JSONL output
+		resumeArgs: (sessionId: string) => [`--resume=${sessionId}`], // Resume with session ID (--continue or --resume=sessionId)
+		readOnlyArgs: [], // No verified startup flag for read-only mode (interactive /plan exists but no batch flag confirmed)
+		readOnlyCliEnforced: false, // No CLI-enforced read-only mode verified from help
+		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
+		yoloModeArgs: ['--allow-all-tools'], // Auto-approve all tools (--allow-all-tools or --allow-all)
+		promptArgs: (prompt: string) => ['-p', prompt], // Batch mode prompt arg
+		// Agent-specific configuration options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., claude-sonnet-4.6, gpt-5.3-codex). Leave empty for default.',
+				default: '', // Empty = use Copilot's default model
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000, // Default for Claude/GPT-5 models
+			},
+		],
+	},
 ];
 
 /**

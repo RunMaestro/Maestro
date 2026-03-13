@@ -208,7 +208,9 @@ export class ChildProcessSpawner {
 
 		try {
 			// Build environment
-			const isResuming = finalArgs.includes('--resume') || finalArgs.includes('--session');
+			const isResuming =
+				finalArgs.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
+				finalArgs.includes('--session');
 			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
 
 			// Log environment variable application for troubleshooting
@@ -337,10 +339,16 @@ export class ChildProcessSpawner {
 			// parser won't process JSON output from remote agents, causing raw JSON to display.
 			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
 			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			const argsHaveFlagValue = (flag: string, value: string) =>
+				finalArgs.some(
+					(arg, index) =>
+						arg === `${flag}=${value}` || (arg === flag && finalArgs[index + 1] === value)
+				);
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
-				(argsContain('--format') && argsContain('json')) ||
+				argsHaveFlagValue('--format', 'json') ||
+				argsHaveFlagValue('--output-format', 'json') ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
 				!!config.sshStdinScript;

@@ -167,6 +167,20 @@ describe('remote-fs', () => {
 			// Path should be properly escaped in the command
 			expect(remoteCommand).toContain("'/path/with spaces/and'\\''quotes'");
 		});
+
+		it('expands remote home-relative paths before executing over SSH', async () => {
+			const deps = createMockDeps({
+				stdout: 'file.txt\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await readDirRemote('~/.copilot/session-state', baseConfig, deps);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toContain('"$HOME/.copilot/session-state"');
+		});
 	});
 
 	describe('readFileRemote', () => {

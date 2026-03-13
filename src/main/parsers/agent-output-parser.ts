@@ -75,6 +75,11 @@ export interface ParsedEvent {
 	toolName?: string;
 
 	/**
+	 * Tool call identifier (for agents that provide stable tool call IDs)
+	 */
+	toolCallId?: string;
+
+	/**
 	 * Tool execution state (for 'tool_use' type)
 	 * Format varies by agent, preserved for UI rendering
 	 */

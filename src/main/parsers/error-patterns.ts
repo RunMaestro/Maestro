@@ -856,6 +856,96 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// GitHub Copilot CLI Error Patterns
+// ============================================================================
+
+const COPILOT_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /authentication failed/i,
+			message: 'Authentication failed. Please run "gh auth login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /not authenticated/i,
+			message: 'Not authenticated. Please run "gh auth login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized/i,
+			message: 'Unauthorized. Please check your GitHub authentication.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*token/i,
+			message: 'Invalid GitHub token. Please re-authenticate with "gh auth login".',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit exceeded/i,
+			message: 'GitHub API rate limit exceeded. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection failed/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /network error/i,
+			message: 'Network error. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /timeout/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /permission denied/i,
+			message: 'Permission denied. Check file and directory permissions.',
+			recoverable: false,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not found/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /no prompt provided.*interactive terminal/i,
+			message:
+				'GitHub Copilot was launched without a terminal. Interactive Copilot sessions require PTY mode.',
+			recoverable: true,
+		},
+		{
+			pattern: /unexpected error/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // Pattern Registry
 // ============================================================================
 
@@ -864,6 +954,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
+	['copilot', COPILOT_ERROR_PATTERNS],
 ]);
 
 /**

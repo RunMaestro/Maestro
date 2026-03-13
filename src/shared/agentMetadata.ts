@@ -21,6 +21,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
 	aider: 'Aider',
+	copilot: 'GitHub Copilot',
 };
 
 /**
@@ -42,6 +43,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'codex',
 	'opencode',
 	'factory-droid',
+	'copilot',
 ]);
 
 /**

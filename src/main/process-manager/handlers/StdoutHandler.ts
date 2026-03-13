@@ -97,6 +97,116 @@ function normalizeUsageToDelta(
 	};
 }
 
+function extractConcatenatedJsonObjects(buffer: string): { messages: string[]; remainder: string } {
+	const messages: string[] = [];
+	let start = -1;
+	let depth = 0;
+	let inString = false;
+	let isEscaped = false;
+
+	for (let i = 0; i < buffer.length; i++) {
+		const char = buffer[i];
+
+		if (start === -1) {
+			if (/\s/.test(char)) {
+				continue;
+			}
+
+			if (char !== '{') {
+				return {
+					messages,
+					remainder: buffer.slice(i),
+				};
+			}
+
+			start = i;
+			depth = 1;
+			inString = false;
+			isEscaped = false;
+			continue;
+		}
+
+		if (inString) {
+			if (isEscaped) {
+				isEscaped = false;
+				continue;
+			}
+
+			if (char === '\\') {
+				isEscaped = true;
+				continue;
+			}
+
+			if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+
+		if (char === '{') {
+			depth++;
+			continue;
+		}
+
+		if (char === '}') {
+			depth--;
+			if (depth === 0) {
+				messages.push(buffer.slice(start, i + 1));
+				start = -1;
+			}
+		}
+	}
+
+	return {
+		messages,
+		remainder: start === -1 ? '' : buffer.slice(start),
+	};
+}
+
+function extractCopilotSessionId(parsed: unknown): string | null {
+	if (!parsed || typeof parsed !== 'object') {
+		return null;
+	}
+
+	const raw = parsed as {
+		sessionId?: unknown;
+		data?: {
+			sessionId?: unknown;
+		};
+	};
+
+	if (typeof raw.sessionId === 'string' && raw.sessionId.trim()) {
+		return raw.sessionId;
+	}
+
+	if (typeof raw.data?.sessionId === 'string' && raw.data.sessionId.trim()) {
+		return raw.data.sessionId;
+	}
+
+	return null;
+}
+
+function getToolStatus(toolState: unknown): string | null {
+	if (!toolState || typeof toolState !== 'object') {
+		return null;
+	}
+
+	const status = (toolState as { status?: unknown }).status;
+	return typeof status === 'string' ? status : null;
+}
+
+function getEmittedToolCallIds(managedProcess: ManagedProcess): Set<string> {
+	if (!managedProcess.emittedToolCallIds) {
+		managedProcess.emittedToolCallIds = new Set<string>();
+	}
+	return managedProcess.emittedToolCallIds;
+}
+
 /**
  * Handles stdout data processing for child processes.
  * Extracts session IDs, usage stats, and result data from agent output.
@@ -146,6 +256,44 @@ export class StdoutHandler {
 	): void {
 		managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + output;
 
+		if (managedProcess.toolType === 'copilot') {
+			const firstNonWhitespaceIndex = managedProcess.jsonBuffer.search(/\S/);
+			if (
+				firstNonWhitespaceIndex >= 0 &&
+				managedProcess.jsonBuffer[firstNonWhitespaceIndex] !== '{'
+			) {
+				const firstJsonStart = managedProcess.jsonBuffer.indexOf('{', firstNonWhitespaceIndex);
+				if (firstJsonStart === -1) {
+					const plainText = managedProcess.jsonBuffer.trim();
+					if (plainText) {
+						this.bufferManager.emitDataBuffered(sessionId, plainText);
+					}
+					managedProcess.jsonBuffer = '';
+					return;
+				}
+
+				if (firstJsonStart > firstNonWhitespaceIndex) {
+					const prefix = managedProcess.jsonBuffer.slice(0, firstJsonStart).trim();
+					if (prefix) {
+						this.bufferManager.emitDataBuffered(sessionId, prefix);
+					}
+					managedProcess.jsonBuffer = managedProcess.jsonBuffer.slice(firstJsonStart);
+				}
+			}
+
+			const { messages, remainder } = extractConcatenatedJsonObjects(managedProcess.jsonBuffer);
+			managedProcess.jsonBuffer = remainder;
+
+			for (const message of messages) {
+				managedProcess.stdoutBuffer = appendToBuffer(
+					managedProcess.stdoutBuffer || '',
+					message + '\n'
+				);
+				this.processLine(sessionId, managedProcess, message);
+			}
+			return;
+		}
+
 		const lines = managedProcess.jsonBuffer.split('\n');
 		managedProcess.jsonBuffer = lines.pop() || '';
 
@@ -169,6 +317,10 @@ export class StdoutHandler {
 			parsed = JSON.parse(line);
 		} catch {
 			// Not valid JSON — handled in the else branch below
+		}
+
+		if (parsed !== null && toolType === 'copilot') {
+			this.emitSessionIdIfNeeded(sessionId, managedProcess, extractCopilotSessionId(parsed));
 		}
 
 		// ── Error detection from parser ──
@@ -298,15 +450,7 @@ export class StdoutHandler {
 
 		// Extract session ID
 		const eventSessionId = outputParser.extractSessionId(event);
-		if (eventSessionId && !managedProcess.sessionIdEmitted) {
-			managedProcess.sessionIdEmitted = true;
-			logger.debug('[ProcessManager] Emitting session-id event', 'ProcessManager', {
-				sessionId,
-				eventSessionId,
-				toolType: managedProcess.toolType,
-			});
-			this.emitter.emit('session-id', sessionId, eventSessionId);
-		}
+		this.emitSessionIdIfNeeded(sessionId, managedProcess, eventSessionId);
 
 		// Extract slash commands
 		const slashCommands = outputParser.extractSlashCommands(event);
@@ -338,6 +482,17 @@ export class StdoutHandler {
 
 		// Handle tool execution events (OpenCode, Codex)
 		if (event.type === 'tool_use' && event.toolName) {
+			const toolStatus = getToolStatus(event.toolState);
+			if (event.toolCallId && toolStatus === 'running') {
+				const emittedToolCallIds = getEmittedToolCallIds(managedProcess);
+				if (emittedToolCallIds.has(event.toolCallId)) {
+					return;
+				}
+				emittedToolCallIds.add(event.toolCallId);
+			} else if (event.toolCallId && (toolStatus === 'completed' || toolStatus === 'failed')) {
+				getEmittedToolCallIds(managedProcess).delete(event.toolCallId);
+			}
+
 			this.emitter.emit('tool-execution', sessionId, {
 				toolName: event.toolName,
 				state: event.toolState,
@@ -348,6 +503,14 @@ export class StdoutHandler {
 		// Handle tool_use blocks embedded in text events (Claude Code mixed content)
 		if (event.toolUseBlocks?.length) {
 			for (const tool of event.toolUseBlocks) {
+				if (tool.id) {
+					const emittedToolCallIds = getEmittedToolCallIds(managedProcess);
+					if (emittedToolCallIds.has(tool.id)) {
+						continue;
+					}
+					emittedToolCallIds.add(tool.id);
+				}
+
 				this.emitter.emit('tool-execution', sessionId, {
 					toolName: tool.name,
 					state: { status: 'running', input: tool.input },
@@ -510,5 +673,23 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+	}
+
+	private emitSessionIdIfNeeded(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		eventSessionId: string | null | undefined
+	): void {
+		if (!eventSessionId || managedProcess.sessionIdEmitted) {
+			return;
+		}
+
+		managedProcess.sessionIdEmitted = true;
+		logger.debug('[ProcessManager] Emitting session-id event', 'ProcessManager', {
+			sessionId,
+			eventSessionId,
+			toolType: managedProcess.toolType,
+		});
+		this.emitter.emit('session-id', sessionId, eventSessionId);
 	}
 }
