@@ -27,6 +27,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getAgentDisplayName } from '../services/contextGroomer';
 import { useI18n } from '../hooks/useI18n';
+import { CodeText } from './shared/CodeText';
 
 /**
  * Progress stage definition for transfer display
@@ -214,7 +215,7 @@ function AgentTransferIndicator({
 
 	return (
 		<div className="flex items-center justify-center gap-2 mb-4">
-			<span
+			<CodeText
 				className="text-xs font-medium px-2 py-1 rounded"
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -222,9 +223,9 @@ function AgentTransferIndicator({
 				}}
 			>
 				{sourceName}
-			</span>
+			</CodeText>
 			<ArrowRight className="w-4 h-4" style={{ color: theme.colors.accent }} />
-			<span
+			<CodeText
 				className="text-xs font-medium px-2 py-1 rounded"
 				style={{
 					backgroundColor: `${theme.colors.accent}20`,
@@ -232,7 +233,7 @@ function AgentTransferIndicator({
 				}}
 			>
 				{targetName}
-			</span>
+			</CodeText>
 		</div>
 	);
 }

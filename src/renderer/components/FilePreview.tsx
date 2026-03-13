@@ -53,6 +53,7 @@ import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import type { FileNode } from '../types/fileTree';
 import { isImageFile } from '../../shared/gitUtils';
 import { useTranslation } from 'react-i18next';
+import { CodeText } from './shared/CodeText';
 
 // Global cache for loaded images to prevent re-fetching and flickering
 // Maps resolved path -> { dataUrl, dimensions }
@@ -1838,12 +1839,12 @@ export const FilePreview = React.memo(
 						<div className="flex items-center justify-between">
 							<div className="flex items-center gap-3 min-w-0">
 								<FileCode className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
-								<div
+								<CodeText
 									className="text-sm font-medium truncate"
 									style={{ color: theme.colors.textMain }}
 								>
 									{file.name}
-								</div>
+								</CodeText>
 							</div>
 							<div className="flex items-center gap-2 shrink-0">
 								{/* Save button - shown in edit mode with changes for any editable text file */}

@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { Bot, RefreshCw } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../types';
 import { isBetaAgent } from '../../../shared/agentMetadata';
+import { CodeText } from './CodeText';
 
 // ============================================================================
 // Types
@@ -110,9 +111,9 @@ export function AgentCard({
 				/>
 				<div className="flex-1 min-w-0">
 					<div className="flex items-center gap-2">
-						<h4 className="font-medium" style={{ color: theme.colors.textMain }}>
+						<CodeText as="span" className="font-medium" style={{ color: theme.colors.textMain }}>
 							{agent.name}
-						</h4>
+						</CodeText>
 						{showBetaBadge && agentIsBeta && (
 							<span
 								className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
@@ -125,9 +126,9 @@ export function AgentCard({
 							</span>
 						)}
 					</div>
-					<p className="text-xs truncate" style={{ color: theme.colors.textDim }}>
+					<CodeText as="span" className="text-xs truncate" style={{ color: theme.colors.textDim }}>
 						{agent.path ?? agent.command}
-					</p>
+					</CodeText>
 				</div>
 				<div className="flex items-center gap-2">
 					{isSupported ? (

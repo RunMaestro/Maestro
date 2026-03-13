@@ -7,6 +7,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys, getShortcutLabel } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
+import { CodeText } from './shared/CodeText';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
 
 interface ShortcutsHelpModalProps {
@@ -205,7 +206,8 @@ export function ShortcutsHelpModal({
 									{getShortcutLabel(sc.id, sc.label)}
 								</span>
 							</div>
-							<kbd
+							<CodeText
+								as="kbd"
 								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
 								style={{
 									backgroundColor: theme.colors.bgActivity,
@@ -214,7 +216,7 @@ export function ShortcutsHelpModal({
 								}}
 							>
 								{formatShortcutKeys(sc.keys)}
-							</kbd>
+							</CodeText>
 						</div>
 					);
 				})}

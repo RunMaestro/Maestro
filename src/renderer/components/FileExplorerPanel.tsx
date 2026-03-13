@@ -41,6 +41,7 @@ import { getRevealLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
+import { CodeText } from './shared/CodeText';
 
 /**
  * RetryCountdown component - shows time remaining until auto-retry.
@@ -1020,12 +1021,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							? getExplorerFolderIcon(node.name, isExpanded, theme)
 							: getExplorerFileIcon(node.name, theme, change?.type)}
 					</span>
-					<span
+					<CodeText
 						className={`truncate min-w-0 flex-1 ${change ? 'font-medium' : ''}`}
 						title={node.name}
 					>
 						{node.name}
-					</span>
+					</CodeText>
 					{change && (
 						<span
 							className="flex-shrink-0 text-[9px] px-1 rounded uppercase"

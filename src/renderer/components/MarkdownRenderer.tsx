@@ -170,7 +170,7 @@ interface CodeBlockWithCopyProps {
 const CodeBlockWithCopy = memo(
 	({ language, codeContent, theme, onCopy }: CodeBlockWithCopyProps) => {
 		return (
-			<div className="relative group/codeblock">
+			<div className="relative group/codeblock" lang="en">
 				<button
 					onClick={() => onCopy(codeContent)}
 					className="absolute bottom-2 right-2 p-1.5 rounded opacity-0 group-hover/codeblock:opacity-70 hover:!opacity-100 transition-opacity z-10"
@@ -377,7 +377,7 @@ export const MarkdownRenderer = memo(
 						code: ({ node: _node, className, children, ...props }: any) => {
 							// Inline code only — block code is handled by the pre component above
 							return (
-								<code className={className} {...props}>
+								<code className={className} lang="en" {...props}>
 									{children}
 								</code>
 							);
