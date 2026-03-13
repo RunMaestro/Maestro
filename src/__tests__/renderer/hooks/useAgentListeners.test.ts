@@ -693,6 +693,39 @@ describe('useAgentListeners', () => {
 			expect(agentErrorOpen).toBe(false);
 		});
 
+		it('clears agentSessionId on session_not_found so next prompt starts fresh', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'stale-session-abc123',
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				agentSessionId: 'stale-session-abc123',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onAgentErrorHandler?.('sess-1-ai-tab-1', {
+				...baseError,
+				type: 'session_not_found',
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			// Tab-level agentSessionId must be cleared
+			expect(updatedTab?.agentSessionId).toBeUndefined();
+			// Session-level agentSessionId must also be cleared
+			expect(updated?.agentSessionId).toBeUndefined();
+		});
+
 		it('appends error log entry to the target tab', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1', logs: [] });
