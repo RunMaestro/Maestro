@@ -66,6 +66,8 @@ export interface AgentNodeData {
 	toolType: string;
 	inputPrompt?: string;
 	outputPrompt?: string;
+	/** Whether to auto-include {{CUE_SOURCE_OUTPUT}} in generated chain prompts. Default: true. */
+	includeUpstreamOutput?: boolean;
 }
 
 export type PipelineNodeType = 'trigger' | 'agent';

@@ -643,3 +643,101 @@ describe('graphSessionsToPipelines', () => {
 		expect(agentNames).toContain('tester');
 	});
 });
+
+describe('auto-injected source output prefix stripping', () => {
+	it('strips auto-injected {{CUE_SOURCE_OUTPUT}} prefix from chain prompt', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'pipe',
+				event: 'file.changed',
+				enabled: true,
+				watch: '**/*',
+				prompt: 'Build',
+				agent_id: 's1',
+			},
+			{
+				name: 'pipe-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				source_session: 'builder',
+				prompt: '{{CUE_SOURCE_OUTPUT}}\n\nTest it',
+				agent_id: 's2',
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{ id: 's1', name: 'builder', toolType: 'claude-code', workingDirectory: '' },
+			{ id: 's2', name: 'tester', toolType: 'claude-code', workingDirectory: '' },
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const testerNode = pipelines[0].nodes.find(
+			(n) => n.type === 'agent' && (n.data as { sessionName: string }).sessionName === 'tester'
+		);
+		expect(testerNode).toBeDefined();
+		expect((testerNode!.data as { inputPrompt?: string }).inputPrompt).toBe('Test it');
+	});
+
+	it('preserves manually placed {{CUE_SOURCE_OUTPUT}} in middle of prompt', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'pipe',
+				event: 'file.changed',
+				enabled: true,
+				watch: '**/*',
+				prompt: 'Build',
+				agent_id: 's1',
+			},
+			{
+				name: 'pipe-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				source_session: 'builder',
+				prompt: 'Review this: {{CUE_SOURCE_OUTPUT}} and summarize',
+				agent_id: 's2',
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{ id: 's1', name: 'builder', toolType: 'claude-code', workingDirectory: '' },
+			{ id: 's2', name: 'tester', toolType: 'claude-code', workingDirectory: '' },
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const testerNode = pipelines[0].nodes.find(
+			(n) => n.type === 'agent' && (n.data as { sessionName: string }).sessionName === 'tester'
+		);
+		expect((testerNode!.data as { inputPrompt?: string }).inputPrompt).toBe(
+			'Review this: {{CUE_SOURCE_OUTPUT}} and summarize'
+		);
+	});
+
+	it('sets inputPrompt to undefined when prompt is only the auto-injected variable', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'pipe',
+				event: 'file.changed',
+				enabled: true,
+				watch: '**/*',
+				prompt: 'Build',
+				agent_id: 's1',
+			},
+			{
+				name: 'pipe-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				source_session: 'builder',
+				prompt: '{{CUE_SOURCE_OUTPUT}}\n\n',
+				agent_id: 's2',
+			},
+		];
+		const sessions: SessionInfo[] = [
+			{ id: 's1', name: 'builder', toolType: 'claude-code', workingDirectory: '' },
+			{ id: 's2', name: 'tester', toolType: 'claude-code', workingDirectory: '' },
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const testerNode = pipelines[0].nodes.find(
+			(n) => n.type === 'agent' && (n.data as { sessionName: string }).sessionName === 'tester'
+		);
+		expect((testerNode!.data as { inputPrompt?: string }).inputPrompt).toBeUndefined();
+	});
+});

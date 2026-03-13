@@ -348,7 +348,12 @@ export function subscriptionsToPipelines(
 				sessionRow.set(targetSessionName, existingRows);
 
 				if (sub.prompt) {
-					(targetNode.data as AgentNodeData).inputPrompt = sub.prompt;
+					// Strip auto-injected {{CUE_SOURCE_OUTPUT}} prefix to prevent accumulation on round-trip
+					const AUTO_PREFIX = '{{CUE_SOURCE_OUTPUT}}\n\n';
+					const strippedPrompt = sub.prompt.startsWith(AUTO_PREFIX)
+						? sub.prompt.slice(AUTO_PREFIX.length)
+						: sub.prompt;
+					(targetNode.data as AgentNodeData).inputPrompt = strippedPrompt || undefined;
 				}
 				if (sub.output_prompt) {
 					(targetNode.data as AgentNodeData).outputPrompt = sub.output_prompt;

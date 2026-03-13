@@ -569,12 +569,14 @@ function CuePipelineEditorInner({
 		selectedNode,
 		selectedNodePipelineId,
 		selectedNodeHasOutgoingEdge,
+		hasIncomingAgentEdges,
 		incomingTriggerEdges,
 	} = useMemo(() => {
 		const empty = {
 			selectedNode: null as PipelineNode | null,
 			selectedNodePipelineId: null as string | null,
 			selectedNodeHasOutgoingEdge: false,
+			hasIncomingAgentEdges: false,
 			incomingTriggerEdges: [] as IncomingTriggerEdgeInfo[],
 		};
 		if (!selectedNodeId) return empty;
@@ -587,8 +589,9 @@ function CuePipelineEditorInner({
 		const node = pipeline?.nodes.find((n) => n.id === nodeId);
 		const hasOutgoing = pipeline?.edges.some((e) => e.source === nodeId) ?? false;
 
-		// Compute incoming trigger edges for agent nodes
+		// Compute incoming trigger edges and check for incoming agent edges
 		const triggerEdges: IncomingTriggerEdgeInfo[] = [];
+		let hasAgentIncoming = false;
 		if (node?.type === 'agent' && pipeline) {
 			const incomingEdges = pipeline.edges.filter((e) => e.target === nodeId);
 			for (const edge of incomingEdges) {
@@ -601,6 +604,8 @@ function CuePipelineEditorInner({
 						configSummary: getTriggerConfigSummary(triggerData),
 						prompt: edge.prompt ?? (node.data as AgentNodeData).inputPrompt ?? '',
 					});
+				} else if (sourceNode?.type === 'agent') {
+					hasAgentIncoming = true;
 				}
 			}
 		}
@@ -609,6 +614,7 @@ function CuePipelineEditorInner({
 			selectedNode: node ?? null,
 			selectedNodePipelineId: node ? pipelineId : null,
 			selectedNodeHasOutgoingEdge: hasOutgoing,
+			hasIncomingAgentEdges: hasAgentIncoming,
 			incomingTriggerEdges: triggerEdges,
 		};
 	}, [selectedNodeId, pipelineState.pipelines]);
@@ -1504,6 +1510,7 @@ function CuePipelineEditorInner({
 						selectedNode={selectedNode}
 						pipelines={pipelineState.pipelines}
 						hasOutgoingEdge={selectedNodeHasOutgoingEdge}
+						hasIncomingAgentEdges={hasIncomingAgentEdges}
 						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
 						onUpdateEdgePrompt={onUpdateEdgePrompt}

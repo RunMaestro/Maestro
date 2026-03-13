@@ -39,6 +39,8 @@ interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
+	/** Whether the selected agent has incoming edges from other agents (not triggers) */
+	hasIncomingAgentEdges?: boolean;
 	/** Incoming trigger edges for the selected agent node (for per-edge prompts) */
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
@@ -403,6 +405,7 @@ function AgentConfig({
 	node,
 	pipelines,
 	hasOutgoingEdge,
+	hasIncomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
 	onUpdateEdgePrompt,
@@ -412,6 +415,7 @@ function AgentConfig({
 	node: PipelineNode;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
+	hasIncomingAgentEdges?: boolean;
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: NodeConfigPanelProps['onUpdateNode'];
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
@@ -510,7 +514,11 @@ function AgentConfig({
 								value={localInputPrompt}
 								onChange={handleInputPromptChange}
 								rows={expanded ? undefined : 3}
-								placeholder="Prompt sent when this agent receives data from the pipeline..."
+								placeholder={
+									hasIncomingAgentEdges
+										? 'Instructions for this agent. Upstream output is auto-included via {{CUE_SOURCE_OUTPUT}}.'
+										: 'Prompt sent when this agent receives data from the pipeline...'
+								}
 								style={{
 									...inputStyle,
 									resize: 'vertical',
@@ -520,6 +528,36 @@ function AgentConfig({
 								}}
 							/>
 						</label>
+						{hasIncomingAgentEdges && (
+							<>
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: 6,
+										fontSize: 11,
+										color: '#9ca3af',
+										cursor: 'pointer',
+										marginTop: 2,
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={data.includeUpstreamOutput !== false}
+										onChange={(e) =>
+											onUpdateNode(node.id, {
+												includeUpstreamOutput: e.target.checked,
+											} as Partial<AgentNodeData>)
+										}
+										style={{ accentColor: '#06b6d4' }}
+									/>
+									Auto-include upstream output
+								</label>
+								<div style={{ color: '#6b7280', fontSize: 10, marginTop: 2 }}>
+									Use {'{{CUE_SOURCE_OUTPUT}}'} in your prompt to control placement.
+								</div>
+							</>
+						)}
 						<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
 							{localInputPrompt.length} chars
 						</div>
@@ -635,6 +673,7 @@ export function NodeConfigPanel({
 	selectedNode,
 	pipelines,
 	hasOutgoingEdge,
+	hasIncomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
 	onUpdateEdgePrompt,
@@ -794,6 +833,7 @@ export function NodeConfigPanel({
 						node={selectedNode}
 						pipelines={pipelines}
 						hasOutgoingEdge={hasOutgoingEdge}
+						hasIncomingAgentEdges={hasIncomingAgentEdges}
 						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
 						onUpdateEdgePrompt={onUpdateEdgePrompt}

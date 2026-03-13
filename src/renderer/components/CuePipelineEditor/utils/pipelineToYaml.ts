@@ -222,11 +222,14 @@ function buildChain(
 
 		const subName = `${pipelineName}-chain-${subscriptions.length}`;
 
+		const shouldInjectSource = targetData.includeUpstreamOutput !== false;
 		const sub: CueSubscription = {
 			name: subName,
 			event: 'agent.completed',
 			enabled: true,
-			prompt: ensureSourceOutputVariable(targetData.inputPrompt ?? ''),
+			prompt: shouldInjectSource
+				? ensureSourceOutputVariable(targetData.inputPrompt ?? '')
+				: (targetData.inputPrompt ?? ''),
 			output_prompt: targetData.outputPrompt || undefined,
 		};
 

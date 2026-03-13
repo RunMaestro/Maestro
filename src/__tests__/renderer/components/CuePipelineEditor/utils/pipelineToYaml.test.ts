@@ -771,6 +771,94 @@ describe('pipelinesToYaml', () => {
 	});
 });
 
+describe('includeUpstreamOutput toggle', () => {
+	it('respects includeUpstreamOutput: false by not injecting variable', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'file.changed', label: 'Files', config: { watch: '**/*' } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'builder',
+						toolType: 'claude-code',
+						inputPrompt: 'Build',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 600, y: 0 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'tester',
+						toolType: 'claude-code',
+						inputPrompt: 'Test only',
+						includeUpstreamOutput: false,
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[1].prompt).toBe('Test only');
+	});
+
+	it('injects variable when includeUpstreamOutput is explicitly true', () => {
+		const pipeline = makePipeline({
+			nodes: [
+				{
+					id: 't1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'file.changed', label: 'Files', config: { watch: '**/*' } },
+				},
+				{
+					id: 'a1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'builder',
+						toolType: 'claude-code',
+						inputPrompt: 'Build',
+					},
+				},
+				{
+					id: 'a2',
+					type: 'agent',
+					position: { x: 600, y: 0 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'tester',
+						toolType: 'claude-code',
+						inputPrompt: 'Test it',
+						includeUpstreamOutput: true,
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 't1', target: 'a1', mode: 'pass' },
+				{ id: 'e2', source: 'a1', target: 'a2', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		expect(subs[1].prompt).toBe('{{CUE_SOURCE_OUTPUT}}\n\nTest it');
+	});
+});
+
 describe('ensureSourceOutputVariable', () => {
 	it('auto-injects when prompt is missing it', () => {
 		expect(ensureSourceOutputVariable('Review the code')).toBe(
