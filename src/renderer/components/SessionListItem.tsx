@@ -16,19 +16,10 @@
  */
 
 import React from 'react';
-import {
-	Star,
-	Play,
-	Edit3,
-	Clock,
-	MessageSquare,
-	HardDrive,
-	DollarSign,
-	Search,
-} from 'lucide-react';
+import { Star, Play, Edit3, Clock, MessageSquare, HardDrive, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Theme } from '../types';
-import { formatSize, formatRelativeTime } from '../utils/formatters';
+import { formatCost, formatSize, formatRelativeTime } from '../utils/formatters';
 import type { ClaudeSession } from '../hooks';
 
 /**
@@ -275,8 +266,7 @@ export function SessionListItem({
 							className="flex items-center gap-1 font-mono"
 							style={{ color: theme.colors.success }}
 						>
-							<DollarSign className="w-3 h-3" />
-							{(session.costUsd ?? 0).toFixed(2)}
+							{formatCost(session.costUsd ?? 0)}
 						</span>
 					)}
 

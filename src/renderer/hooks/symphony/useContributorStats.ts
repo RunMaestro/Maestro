@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ContributorStats, CompletedContribution } from '../../../shared/symphony-types';
+import { formatCost } from '../../utils/formatters';
 
 // ============================================================================
 // Types
@@ -138,10 +139,6 @@ function formatTokenCount(count: number): string {
 		return `${(count / 1_000).toFixed(1)}K`;
 	}
 	return count.toString();
-}
-
-function formatCost(cost: number): string {
-	return `$${cost.toFixed(2)}`;
 }
 
 function formatDuration(ms: number): string {
