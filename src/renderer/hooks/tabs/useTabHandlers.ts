@@ -77,6 +77,7 @@ export interface TabHandlersReturn {
 		agentSessionId: string,
 		updates: { name?: string | null; starred?: boolean }
 	) => void;
+	handleUpdateTabDescription: (tabId: string, description: string) => void;
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
@@ -1064,6 +1065,22 @@ export function useTabHandlers(): TabHandlersReturn {
 	// Tab Properties
 	// ========================================================================
 
+	const handleUpdateTabDescription = useCallback((tabId: string, description: string) => {
+		const trimmed = description.trim();
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === tabId ? { ...tab, description: trimmed || undefined } : tab
+					),
+				};
+			})
+		);
+	}, []);
+
 	const handleRequestTabRename = useCallback((tabId: string) => {
 		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
 		const session = sessions.find((s) => s.id === activeSessionId);
@@ -1491,6 +1508,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleCloseTabsRight,
 		handleCloseCurrentTab,
 		handleRequestTabRename,
+		handleUpdateTabDescription,
 		handleUpdateTabByClaudeSessionId,
 		handleTabStar,
 		handleTabMarkUnread,
