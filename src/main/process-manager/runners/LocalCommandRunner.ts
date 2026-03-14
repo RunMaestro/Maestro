@@ -4,18 +4,37 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import { EventEmitter } from 'events';
+import * as pty from 'node-pty';
 import { logger } from '../../utils/logger';
 import type { CommandResult } from '../types';
 import { buildUnixBasePath } from '../utils/envBuilder';
-import { resolveShellPath, buildWrappedCommand } from '../utils/pathResolver';
+import {
+	resolveShellPath,
+	buildInteractiveShellArgs,
+	buildWrappedCommand,
+} from '../utils/pathResolver';
 import { isWindows } from '../../../shared/platformDetection';
+import { captureException } from '../../utils/sentry';
+import { stripControlSequences } from '../../utils/terminalFilter';
 
 /**
  * Runs single commands locally and captures stdout/stderr cleanly.
- * Does NOT use PTY - spawns commands directly via shell -c.
+ * On Unix, uses a transient PTY so interactive shell aliases behave correctly.
  */
 export class LocalCommandRunner {
 	constructor(private emitter: EventEmitter) {}
+
+	private isRecoverablePtySpawnError(error: unknown): boolean {
+		const errorCode =
+			typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+		const message = error instanceof Error ? error.message : String(error);
+
+		if (['ENOENT', 'EACCES', 'ENOTDIR'].includes(errorCode)) {
+			return true;
+		}
+
+		return /no such file|not found|not a directory|permission denied|cwd/i.test(message);
+	}
 
 	/**
 	 * Run a single command and capture stdout/stderr cleanly
@@ -47,7 +66,7 @@ export class LocalCommandRunner {
 					.pop()
 					?.replace(/\.exe$/i, '') || shellToUse;
 
-			const wrappedCommand = buildWrappedCommand(command, shellName);
+			const shellPath = resolveShellPath(shellToUse);
 
 			// Build environment for command execution
 			let env: NodeJS.ProcessEnv;
@@ -86,8 +105,78 @@ export class LocalCommandRunner {
 				);
 			}
 
-			// Resolve shell to full path
-			const shellPath = resolveShellPath(shellToUse);
+			if (!isWindows()) {
+				const ptyArgs = buildInteractiveShellArgs(command, shellName);
+
+				logger.debug('[ProcessManager] runCommand spawning PTY', 'ProcessManager', {
+					shell: shellToUse,
+					shellPath,
+					ptyArgs,
+					cwd,
+					PATH: env.PATH?.substring(0, 100),
+				});
+
+				let ptyProcess: pty.IPty;
+				try {
+					ptyProcess = pty.spawn(shellPath, ptyArgs, {
+						name: 'xterm-256color',
+						cols: 120,
+						rows: 40,
+						cwd,
+						env: env as Record<string, string>,
+					});
+				} catch (error) {
+					if (!this.isRecoverablePtySpawnError(error)) {
+						captureException(error, {
+							operation: 'process-runner:pty-spawn',
+							sessionId,
+							shell: shellToUse,
+							shellPath,
+							cwd,
+						});
+						throw error;
+					}
+
+					const message = error instanceof Error ? error.message : String(error);
+					logger.error('[ProcessManager] runCommand PTY spawn error', 'ProcessManager', {
+						sessionId,
+						error: message,
+						shell: shellToUse,
+						shellPath,
+					});
+					this.emitter.emit('stderr', sessionId, `Error: ${message}`);
+					this.emitter.emit('command-exit', sessionId, 1);
+					resolve({ exitCode: 1 });
+					return;
+				}
+
+				ptyProcess.onData((data) => {
+					const output = stripControlSequences(data, command, true);
+					logger.debug('[ProcessManager] runCommand PTY stdout FILTERED', 'ProcessManager', {
+						sessionId,
+						filteredLength: output.length,
+						filteredPreview: output.substring(0, 200),
+						trimmedEmpty: !output.trim(),
+					});
+
+					if (output.trim()) {
+						this.emitter.emit('data', sessionId, output);
+					}
+				});
+
+				ptyProcess.onExit(({ exitCode }) => {
+					logger.debug('[ProcessManager] runCommand PTY exit', 'ProcessManager', {
+						sessionId,
+						exitCode,
+					});
+					this.emitter.emit('command-exit', sessionId, exitCode);
+					resolve({ exitCode });
+				});
+
+				return;
+			}
+
+			const wrappedCommand = buildWrappedCommand(command, shellName);
 
 			logger.debug('[ProcessManager] runCommand spawning', 'ProcessManager', {
 				shell: shellToUse,
@@ -117,6 +206,7 @@ export class LocalCommandRunner {
 				output = output.replace(/\x1b?\]133;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
 				output = output.replace(/\x1b?\]7;[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
 				output = output.replace(/\x1b?\][0-9];[^\x07\x1b\n]*(\x07|\x1b\\)?/g, '');
+				output = stripControlSequences(output, command, true);
 
 				logger.debug('[ProcessManager] runCommand stdout FILTERED', 'ProcessManager', {
 					sessionId,

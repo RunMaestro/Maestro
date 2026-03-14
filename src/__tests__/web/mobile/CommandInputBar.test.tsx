@@ -596,6 +596,34 @@ describe('CommandInputBar', () => {
 
 			expect(screen.getByTestId('slash-autocomplete')).toBeInTheDocument();
 		});
+
+		it('stacks phone AI drafts into a full-width preview when they exceed the compact height', () => {
+			Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
+
+			const scrollHeightSpy = vi
+				.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+				.mockReturnValue(160);
+
+			renderComponent({
+				inputMode: 'ai',
+				value:
+					'Summarize the working directory status, current branch, and whether there are uncommitted changes in this project.',
+			});
+
+			const textarea = screen.getByRole('textbox');
+			const form = textarea.closest('form');
+			expect(
+				screen.queryByRole('button', { name: /open slash commands/i })
+			).not.toBeInTheDocument();
+			expect(form).toHaveStyle({ flexDirection: 'column' });
+			expect(Number.parseInt((textarea as HTMLTextAreaElement).style.height, 10)).toBeGreaterThan(
+				48
+			);
+			expect(screen.getByRole('button', { name: /switch to terminal mode/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /send command/i })).toBeInTheDocument();
+
+			scrollHeightSpy.mockRestore();
+		});
 	});
 
 	describe('Swipe Up Handle', () => {
@@ -1041,42 +1069,55 @@ describe('useIsMobilePhone hook', () => {
 		Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, writable: true });
 	});
 
-	it('detects mobile phone when touch and small screen', () => {
+	it('treats narrow screens as phone layouts even without touch capability', () => {
 		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
-		Object.defineProperty(window, 'ontouchstart', { value: () => {}, writable: true });
 
-		renderComponent({ inputMode: 'ai' });
+		const scrollHeightSpy = vi
+			.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+			.mockReturnValue(160);
 
-		// On mobile phone in AI mode, clicking textarea should expand
-		// We can verify the hook is working through behavior
+		renderComponent({
+			inputMode: 'ai',
+			value:
+				'Summarize the working directory status, current branch, and whether there are uncommitted changes in this project.',
+		});
+
+		expect(screen.getByRole('textbox').closest('form')).toHaveStyle({ flexDirection: 'column' });
+
+		scrollHeightSpy.mockRestore();
 	});
 
-	it('does not detect mobile on large screens', () => {
+	it('keeps large screens on the desktop/tablet layout', () => {
 		Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true });
-		Object.defineProperty(window, 'ontouchstart', { value: () => {}, writable: true });
 
-		renderComponent({ inputMode: 'ai' });
+		const scrollHeightSpy = vi
+			.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+			.mockReturnValue(160);
 
-		// Large screen = not mobile, even with touch
-	});
+		renderComponent({
+			inputMode: 'ai',
+			value:
+				'Summarize the working directory status, current branch, and whether there are uncommitted changes in this project.',
+		});
 
-	it('does not detect mobile without touch capability', () => {
-		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
-		Object.defineProperty(window, 'ontouchstart', { value: undefined, writable: true });
-		Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, writable: true });
+		expect(screen.getByRole('textbox').closest('form')).toHaveStyle({ flexDirection: 'row' });
 
-		renderComponent({ inputMode: 'ai' });
-
-		// Small screen but no touch = not mobile phone
+		scrollHeightSpy.mockRestore();
 	});
 
 	it('responds to resize events', () => {
 		Object.defineProperty(window, 'innerWidth', { value: 800, writable: true });
-		Object.defineProperty(window, 'ontouchstart', { value: () => {}, writable: true });
+		const scrollHeightSpy = vi
+			.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+			.mockReturnValue(160);
 
-		renderComponent({ inputMode: 'ai' });
+		renderComponent({
+			inputMode: 'ai',
+			value:
+				'Summarize the working directory status, current branch, and whether there are uncommitted changes in this project.',
+		});
 
-		// Initially not mobile (800px wide)
+		expect(screen.getByRole('textbox').closest('form')).toHaveStyle({ flexDirection: 'row' });
 
 		// Simulate resize to mobile width
 		Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
@@ -1085,7 +1126,9 @@ describe('useIsMobilePhone hook', () => {
 			fireEvent(window, new Event('resize'));
 		});
 
-		// The resize handler runs synchronously, state change will be reflected
+		expect(screen.getByRole('textbox').closest('form')).toHaveStyle({ flexDirection: 'column' });
+
+		scrollHeightSpy.mockRestore();
 	});
 });
 

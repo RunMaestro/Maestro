@@ -114,8 +114,7 @@ export class StaticRoutes {
 		}
 
 		const indexPath = path.join(this.webAssetsPath, 'index.html');
-		const cachedHtml = getCachedFile(indexPath);
-		if (cachedHtml === null) {
+		if (!existsSync(indexPath)) {
 			reply.code(404).send({
 				error: 'Not Found',
 				message: 'Web interface index.html not found.',
@@ -124,8 +123,8 @@ export class StaticRoutes {
 		}
 
 		try {
-			// Use cached HTML and transform asset paths
-			let html = cachedHtml;
+			// Read index.html fresh so rebuilt asset hashes are reflected immediately.
+			let html = readFileSync(indexPath, 'utf-8');
 
 			// Transform relative paths to use the token-prefixed absolute paths
 			html = html.replace(/\.\/assets\//g, `/${this.securityToken}/assets/`);

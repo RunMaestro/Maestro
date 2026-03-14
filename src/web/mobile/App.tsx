@@ -45,6 +45,21 @@ import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
 import { useMobileViewState } from '../hooks/useMobileViewState';
 import { useMobileAutoReconnect } from '../hooks/useMobileAutoReconnect';
 
+interface SessionCommandDrafts {
+	aiByTab: Record<string, string>;
+	terminal: string;
+}
+
+type CommandDraftStore = Record<string, SessionCommandDrafts>;
+const SESSION_LEVEL_AI_DRAFT_KEY = '__session__';
+
+function getEmptyDrafts(): SessionCommandDrafts {
+	return {
+		aiByTab: {},
+		terminal: '',
+	};
+}
+
 /**
  * Get the active tab from a session
  */
@@ -292,7 +307,7 @@ export default function MobileApp() {
 	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
 	const [showHistoryPanel, setShowHistoryPanel] = useState(savedState.showHistoryPanel);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
-	const [commandInput, setCommandInput] = useState('');
+	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
@@ -612,6 +627,144 @@ export default function MobileApp() {
 		connect();
 	}, [connect]);
 
+	const currentInputMode = ((activeSession?.inputMode as InputMode | undefined) ||
+		'ai') as InputMode;
+	const activeAiTabId = activeSession?.activeTabId || activeTabId || null;
+	const activeAiTab = activeSession?.aiTabs?.find((tab) => tab.id === activeAiTabId);
+	const activeAiDraftKey = activeAiTabId || SESSION_LEVEL_AI_DRAFT_KEY;
+
+	const commandInput = useMemo(() => {
+		if (!activeSessionId || !activeSession) return '';
+
+		const draftsForSession = commandDrafts[activeSessionId] || getEmptyDrafts();
+
+		if (currentInputMode === 'terminal') {
+			return draftsForSession.terminal;
+		}
+
+		return draftsForSession.aiByTab[activeAiDraftKey] ?? activeAiTab?.inputValue ?? '';
+	}, [
+		activeAiDraftKey,
+		activeAiTab,
+		activeSession,
+		activeSessionId,
+		commandDrafts,
+		currentInputMode,
+	]);
+
+	const updateCommandDraft = useCallback(
+		(nextValue: string, mode: InputMode = currentInputMode) => {
+			if (!activeSessionId) return;
+
+			setCommandDrafts((prev) => {
+				const currentDrafts = prev[activeSessionId] || getEmptyDrafts();
+
+				if (mode === 'terminal') {
+					if (currentDrafts.terminal === nextValue) {
+						return prev;
+					}
+
+					return {
+						...prev,
+						[activeSessionId]: {
+							...currentDrafts,
+							terminal: nextValue,
+						},
+					};
+				}
+
+				if (currentDrafts.aiByTab[activeAiDraftKey] === nextValue) {
+					return prev;
+				}
+
+				return {
+					...prev,
+					[activeSessionId]: {
+						...currentDrafts,
+						aiByTab: {
+							...currentDrafts.aiByTab,
+							[activeAiDraftKey]: nextValue,
+						},
+					},
+				};
+			});
+		},
+		[activeAiDraftKey, activeSessionId, currentInputMode]
+	);
+
+	const clearCommandDraft = useCallback(
+		(mode: InputMode = currentInputMode) => {
+			if (!activeSessionId) return;
+
+			setCommandDrafts((prev) => {
+				const currentDrafts = prev[activeSessionId] || getEmptyDrafts();
+
+				if (mode === 'terminal') {
+					if (currentDrafts.terminal === '') {
+						return prev;
+					}
+
+					return {
+						...prev,
+						[activeSessionId]: {
+							...currentDrafts,
+							terminal: '',
+						},
+					};
+				}
+
+				if (!(activeAiDraftKey in currentDrafts.aiByTab)) {
+					return prev;
+				}
+
+				const nextAiByTab = { ...currentDrafts.aiByTab };
+				delete nextAiByTab[activeAiDraftKey];
+
+				return {
+					...prev,
+					[activeSessionId]: {
+						...currentDrafts,
+						aiByTab: nextAiByTab,
+					},
+				};
+			});
+		},
+		[activeAiDraftKey, activeSessionId, currentInputMode]
+	);
+
+	useEffect(() => {
+		setCommandDrafts((prev) => {
+			const validSessionIds = new Set(sessions.map((session) => session.id));
+			let changed = false;
+			const nextDrafts: CommandDraftStore = {};
+
+			for (const [sessionId, drafts] of Object.entries(prev)) {
+				if (!validSessionIds.has(sessionId)) {
+					changed = true;
+					continue;
+				}
+
+				const session = sessions.find((item) => item.id === sessionId);
+				const validTabIds = new Set(session?.aiTabs?.map((tab) => tab.id) || []);
+				validTabIds.add(SESSION_LEVEL_AI_DRAFT_KEY);
+				const aiByTab = Object.fromEntries(
+					Object.entries(drafts.aiByTab).filter(([tabId]) => validTabIds.has(tabId))
+				);
+
+				if (Object.keys(aiByTab).length !== Object.keys(drafts.aiByTab).length) {
+					changed = true;
+				}
+
+				nextDrafts[sessionId] = {
+					aiByTab,
+					terminal: drafts.terminal,
+				};
+			}
+
+			return changed ? nextDrafts : prev;
+		});
+	}, [sessions]);
+
 	// Auto-reconnect with countdown timer (extracted to hook)
 	const { reconnectCountdown } = useMobileAutoReconnect({
 		connectionState,
@@ -658,7 +811,7 @@ export default function MobileApp() {
 			if (!activeSessionId) return;
 
 			// Find the active session to get input mode
-			const currentMode = (activeSession?.inputMode as InputMode) || 'ai';
+			const currentMode = currentInputMode;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
@@ -692,11 +845,12 @@ export default function MobileApp() {
 			}
 
 			// Clear the input
-			setCommandInput('');
+			clearCommandDraft(currentMode);
 		},
 		[
 			activeSessionId,
-			activeSession,
+			clearCommandDraft,
+			currentInputMode,
 			send,
 			isOffline,
 			isActuallyConnected,
@@ -706,9 +860,12 @@ export default function MobileApp() {
 	);
 
 	// Handle command input change
-	const handleCommandChange = useCallback((value: string) => {
-		setCommandInput(value);
-	}, []);
+	const handleCommandChange = useCallback(
+		(value: string) => {
+			updateCommandDraft(value);
+		},
+		[updateCommandDraft]
+	);
 
 	// Handle mode toggle between AI and Terminal
 	const handleModeToggle = useCallback(
@@ -1143,7 +1300,7 @@ export default function MobileApp() {
 						? 'Select a session first...'
 						: activeSession?.inputMode === 'ai'
 							? isSmallScreen
-								? 'Query AI...'
+								? 'Ask AI...'
 								: `Ask ${activeSession?.toolType === 'claude-code' ? 'Claude' : activeSession?.toolType || 'AI'} about ${activeSession?.name || 'this session'}...`
 							: 'Run shell command...'
 				}

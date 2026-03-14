@@ -79,6 +79,26 @@ export function buildWrappedCommand(command: string, shellName: string): string 
 }
 
 /**
+ * Build shell arguments for interactive one-off PTY commands.
+ * Terminal aliases like `ls` -> `eza` only render correctly when the shell has a real PTY.
+ */
+export function buildInteractiveShellArgs(command: string, shellName: string): string[] {
+	if (isWindows()) {
+		return [command];
+	}
+
+	if (shellName === 'zsh' || shellName === 'bash') {
+		return ['-l', '-i', '-c', command];
+	}
+
+	if (shellName === 'fish') {
+		return ['-i', '-c', command];
+	}
+
+	return ['-c', command];
+}
+
+/**
  * Clear the shell path cache (useful for testing)
  */
 export function clearShellPathCache(): void {
