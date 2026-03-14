@@ -1071,7 +1071,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(screen.getByText('1 MB/s')).toBeInTheDocument();
+				expect(screen.getByText('1.0 MB/s')).toBeInTheDocument();
 			});
 		});
 
@@ -1094,7 +1094,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(screen.getByText('5 MB / 10 MB')).toBeInTheDocument();
+				expect(screen.getByText('5.0 MB / 10.0 MB')).toBeInTheDocument();
 			});
 		});
 

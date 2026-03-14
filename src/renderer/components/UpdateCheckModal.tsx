@@ -18,7 +18,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { getActiveLocale } from '../utils/formatters';
+import { formatSize, getActiveLocale } from '../utils/formatters';
 
 interface Release {
 	tag_name: string;
@@ -133,14 +133,6 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			month: 'short',
 			day: 'numeric',
 		});
-	};
-
-	const formatBytes = (bytes: number) => {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 	};
 
 	const handleDownloadUpdate = async () => {
@@ -478,10 +470,10 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									style={{ color: theme.colors.textDim }}
 								>
 									<span>
-										{formatBytes(downloadStatus.progress.transferred)} /{' '}
-										{formatBytes(downloadStatus.progress.total)}
+										{formatSize(downloadStatus.progress.transferred)} /{' '}
+										{formatSize(downloadStatus.progress.total)}
 									</span>
-									<span>{formatBytes(downloadStatus.progress.bytesPerSecond)}/s</span>
+									<span>{formatSize(downloadStatus.progress.bytesPerSecond)}/s</span>
 								</div>
 							</div>
 						)}
