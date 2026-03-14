@@ -22,7 +22,7 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
-import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
+import { getDefaultBatchPrompt, loadBatchPrompts } from '../batch/batchUtils';
 
 // ============================================================================
 // Dependencies interface
@@ -30,7 +30,11 @@ import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 
 export interface UseSymphonyContributionDeps {
 	/** Start a batch run for a session */
-	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => void;
+	startBatchRun: (
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	) => Promise<void>;
 	/** Ref to input element for focus */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -192,6 +196,30 @@ export function useSymphonyContribution(
 				},
 			};
 
+			let batchConfig: BatchRunConfig | null = null;
+			if (data.autoRunPath && data.issue.documentPaths.length > 0) {
+				try {
+					await loadBatchPrompts();
+					batchConfig = {
+						documents: data.issue.documentPaths.map((doc) => ({
+							id: generateId(),
+							filename: doc.name.replace(/\.md$/, ''),
+							resetOnCompletion: false,
+							isDuplicate: false,
+						})),
+						prompt: getDefaultBatchPrompt(),
+						loopEnabled: false,
+					};
+				} catch (error) {
+					console.error('[Symphony] Failed to auto-start batch run:', error);
+					notifyToast({
+						type: 'error',
+						title: 'Symphony Error',
+						message: 'Failed to start Auto Run.',
+					});
+				}
+			}
+
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
 			setSymphonyModalOpen(false);
@@ -234,18 +262,7 @@ export function useSymphonyContribution(
 			setActiveRightTab('autorun');
 
 			// Auto-start batch run with all contribution documents
-			if (data.autoRunPath && data.issue.documentPaths.length > 0) {
-				const batchConfig: BatchRunConfig = {
-					documents: data.issue.documentPaths.map((doc) => ({
-						id: generateId(),
-						filename: doc.name.replace(/\.md$/, ''),
-						resetOnCompletion: false,
-						isDuplicate: false,
-					})),
-					prompt: DEFAULT_BATCH_PROMPT,
-					loopEnabled: false,
-				};
-
+			if (batchConfig && data.autoRunPath) {
 				// Small delay to ensure session state is fully propagated
 				setTimeout(() => {
 					console.log(
@@ -253,11 +270,18 @@ export function useSymphonyContribution(
 						batchConfig.documents.length,
 						'documents'
 					);
-					startBatchRun(newId, batchConfig, data.autoRunPath!);
+					void startBatchRun(newId, batchConfig, data.autoRunPath).catch((error) => {
+						console.error('[Symphony] Failed to auto-start batch run:', error);
+						notifyToast({
+							type: 'error',
+							title: 'Symphony Error',
+							message: 'Failed to start Auto Run.',
+						});
+					});
 				}, 500);
 			}
 		},
-		[sessions, defaultSaveToHistory, startBatchRun]
+		[sessions, defaultSaveToHistory, startBatchRun, inputRef]
 	);
 
 	return { handleStartContribution };

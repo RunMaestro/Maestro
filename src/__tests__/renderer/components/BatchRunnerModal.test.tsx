@@ -1,12 +1,33 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import React from 'react';
+import { loadBatchPrompts } from '../../../renderer/hooks/batch/batchUtils';
 import {
 	BatchRunnerModal,
-	DEFAULT_BATCH_PROMPT,
+	getDefaultBatchPrompt,
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
 import type { Theme, Playbook } from '../../../renderer/types';
+
+// Realistic mock prompt with markdown task references that validateAgentPromptHasTaskReference expects
+const MOCK_AUTORUN_DEFAULT_PROMPT = `Process the markdown task document at {{DOCUMENT_PATH}}.
+Agent: {{AGENT_NAME}} at {{AGENT_PATH}}.
+Work through each unchecked task - [ ] sequentially and check off task when completed.`;
+
+// Set up window.maestro.prompts and load batch prompts before tests
+beforeAll(async () => {
+	if (!(window as any).maestro) {
+		(window as any).maestro = {};
+	}
+	(window as any).maestro.prompts = {
+		get: vi.fn((id: string) => {
+			if (id === 'autorun-default') return { success: true, content: MOCK_AUTORUN_DEFAULT_PROMPT };
+			if (id === 'autorun-synopsis') return { success: true, content: 'Generate a synopsis.' };
+			return { success: false, error: `Unknown prompt: ${id}` };
+		}),
+	};
+	await loadBatchPrompts(true);
+});
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
@@ -116,7 +137,7 @@ function createMockPlaybook(overrides: Partial<Playbook> = {}): Playbook {
 			{ filename: 'doc2', resetOnCompletion: true },
 		],
 		loopEnabled: false,
-		prompt: DEFAULT_BATCH_PROMPT,
+		prompt: getDefaultBatchPrompt(),
 		...overrides,
 	};
 }
@@ -553,12 +574,12 @@ describe('BatchRunnerModal', () => {
 			});
 		});
 
-		it('displays default prompt in textarea', async () => {
-			render(<BatchRunnerModal {...createDefaultProps()} />);
+			it('displays default prompt in textarea', async () => {
+				render(<BatchRunnerModal {...createDefaultProps()} />);
 
-			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
-			expect(textarea).toHaveValue(DEFAULT_BATCH_PROMPT);
-		});
+				const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+				expect(textarea).toHaveValue(getDefaultBatchPrompt());
+			});
 
 		it('displays CUSTOMIZED badge when prompt is modified', async () => {
 			render(<BatchRunnerModal {...createDefaultProps()} />);
@@ -577,11 +598,11 @@ describe('BatchRunnerModal', () => {
 			fireEvent.change(textarea, { target: { value: 'Custom prompt' } });
 
 			const resetButton = screen.getByTitle('Reset to default prompt');
-			fireEvent.click(resetButton);
+				fireEvent.click(resetButton);
 
-			expect(props.showConfirmation).toHaveBeenCalled();
-			expect(textarea).toHaveValue(DEFAULT_BATCH_PROMPT);
-		});
+				expect(props.showConfirmation).toHaveBeenCalled();
+				expect(textarea).toHaveValue(getDefaultBatchPrompt());
+			});
 
 		it('opens prompt composer modal when expand button is clicked', async () => {
 			render(<BatchRunnerModal {...createDefaultProps()} />);
@@ -906,16 +927,16 @@ describe('BatchRunnerModal', () => {
 
 			expect(props.onGo).toHaveBeenCalledWith(
 				expect.objectContaining({
-					documents: expect.arrayContaining([
-						expect.objectContaining({
-							filename: 'test-doc',
-							resetOnCompletion: false,
-						}),
-					]),
-					prompt: DEFAULT_BATCH_PROMPT,
-					loopEnabled: false,
-				})
-			);
+						documents: expect.arrayContaining([
+							expect.objectContaining({
+								filename: 'test-doc',
+								resetOnCompletion: false,
+							}),
+						]),
+						prompt: getDefaultBatchPrompt(),
+						loopEnabled: false,
+					})
+				);
 			expect(props.onClose).toHaveBeenCalled();
 		});
 
@@ -961,6 +982,43 @@ describe('BatchRunnerModal', () => {
 
 			const saveButton = screen.getByRole('button', { name: /Save/ });
 			expect(saveButton).toBeDisabled();
+		});
+
+		it('preserves an explicitly empty saved prompt after default prompt loads', async () => {
+			const props = createDefaultProps();
+			props.initialPrompt = '';
+			render(<BatchRunnerModal {...props} />);
+
+			const resetButton = screen.getByTitle('Reset to default prompt');
+			await waitFor(() => {
+				expect(resetButton).toBeEnabled();
+			});
+
+			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+			expect(textarea).toHaveValue('');
+
+			const saveButton = screen.getByRole('button', { name: /Save/ });
+			expect(saveButton).toBeDisabled();
+		});
+
+		it('allows saving when resetting a previously customized prompt to default', async () => {
+			const props = createDefaultProps();
+			props.initialPrompt = 'Previously customized prompt';
+			render(<BatchRunnerModal {...props} />);
+
+			const saveButton = screen.getByRole('button', { name: /Save/ });
+			expect(saveButton).toBeDisabled();
+
+			fireEvent.click(screen.getByTitle('Reset to default prompt'));
+
+			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+			await waitFor(() => {
+				expect(textarea).toHaveValue(getDefaultBatchPrompt());
+			});
+
+			await waitFor(() => {
+				expect(saveButton).toBeEnabled();
+			});
 		});
 	});
 
@@ -1141,13 +1199,11 @@ describe('Helper Functions', () => {
 	});
 });
 
-describe('DEFAULT_BATCH_PROMPT export', () => {
-	it('exports DEFAULT_BATCH_PROMPT constant', () => {
-		expect(DEFAULT_BATCH_PROMPT).toBeDefined();
-		expect(typeof DEFAULT_BATCH_PROMPT).toBe('string');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{DOCUMENT_PATH}}');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{AGENT_NAME}}');
-		expect(DEFAULT_BATCH_PROMPT).toContain('{{AGENT_PATH}}');
+describe('getDefaultBatchPrompt export', () => {
+	it('returns default batch prompt as a string', () => {
+		const prompt = getDefaultBatchPrompt();
+		expect(prompt).toBeDefined();
+		expect(typeof prompt).toBe('string');
 	});
 });
 
@@ -1200,8 +1256,8 @@ describe('validateAgentPromptHasTaskReference', () => {
 		);
 	});
 
-	it('returns true for the DEFAULT_BATCH_PROMPT', () => {
-		expect(validateAgentPromptHasTaskReference(DEFAULT_BATCH_PROMPT)).toBe(true);
+	it('returns true for the default batch prompt', () => {
+		expect(validateAgentPromptHasTaskReference(getDefaultBatchPrompt())).toBe(true);
 	});
 });
 

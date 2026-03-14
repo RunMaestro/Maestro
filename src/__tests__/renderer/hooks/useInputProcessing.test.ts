@@ -108,12 +108,12 @@ describe('useInputProcessing', () => {
 	// Store original window.maestro
 	const originalMaestro = { ...window.maestro };
 
-	beforeEach(() => {
-		vi.clearAllMocks();
-		mockGetBatchState.mockReturnValue(defaultBatchState);
+beforeEach(async () => {
+	vi.clearAllMocks();
+	mockGetBatchState.mockReturnValue(defaultBatchState);
 
-		// Mock window.maestro.process.spawn
-		window.maestro = {
+	// Mock window.maestro.process.spawn
+	window.maestro = {
 			...window.maestro,
 			process: {
 				...window.maestro?.process,
@@ -121,7 +121,7 @@ describe('useInputProcessing', () => {
 				write: vi.fn().mockResolvedValue(undefined),
 				runCommand: vi.fn().mockResolvedValue(undefined),
 			},
-			agents: {
+		agents: {
 				...window.maestro?.agents,
 				get: vi.fn().mockResolvedValue({
 					id: 'claude-code',
@@ -129,13 +129,30 @@ describe('useInputProcessing', () => {
 					path: '/usr/local/bin/claude',
 					args: ['--print', '--verbose'],
 				}),
-			},
-			web: {
-				...window.maestro?.web,
-				broadcastUserInput: vi.fn().mockResolvedValue(undefined),
-			},
-		} as typeof window.maestro;
-	});
+		},
+		prompts: {
+			...window.maestro?.prompts,
+			get: vi.fn((id: string) => {
+				if (id === 'image-only-default') {
+					return Promise.resolve({ success: true, content: 'Describe this image' });
+				}
+				if (id === 'maestro-system-prompt') {
+					return Promise.resolve({ success: true, content: 'You are Maestro' });
+				}
+				return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+			}),
+		},
+		web: {
+			...window.maestro?.web,
+			broadcastUserInput: vi.fn().mockResolvedValue(undefined),
+		},
+	} as typeof window.maestro;
+
+	const { loadInputProcessingPrompts } = await import(
+		'../../../renderer/hooks/input/useInputProcessing'
+	);
+	await loadInputProcessingPrompts(true);
+});
 
 	afterEach(() => {
 		Object.assign(window.maestro, originalMaestro);

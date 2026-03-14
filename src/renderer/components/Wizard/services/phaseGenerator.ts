@@ -8,11 +8,32 @@
 
 import type { ToolType } from '../../../types';
 import type { WizardMessage, GeneratedDocument } from '../WizardContext';
-import { wizardDocumentGenerationPrompt } from '../../../../prompts';
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+
+// Module-level prompt cache
+let cachedWizardDocumentGenerationPrompt: string = '';
+let phaseGeneratorPromptsLoaded = false;
+
+export async function loadPhaseGeneratorPrompts(force = false): Promise<void> {
+	if (phaseGeneratorPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('wizard-document-generation');
+	if (!result.success || result.content === undefined) {
+		throw new Error(result.error || 'Failed to load prompt: wizard-document-generation');
+	}
+	cachedWizardDocumentGenerationPrompt = result.content;
+	phaseGeneratorPromptsLoaded = true;
+}
+
+function getWizardDocumentGenerationPrompt(): string {
+	if (!phaseGeneratorPromptsLoaded) {
+		throw new Error('Wizard document generation prompt not loaded');
+	}
+	return cachedWizardDocumentGenerationPrompt;
+}
 
 /**
  * Configuration for document generation
@@ -346,7 +367,7 @@ export function generateDocumentGenerationPrompt(config: GenerationConfig): stri
 	// First, handle wizard-specific variables that have different semantics
 	// from the central template system. We do this BEFORE the central function
 	// so they take precedence over central defaults.
-	let prompt = wizardDocumentGenerationPrompt
+	let prompt = getWizardDocumentGenerationPrompt()
 		.replace(/\{\{PROJECT_NAME\}\}/gi, projectDisplay)
 		.replace(/\{\{DIRECTORY_PATH\}\}/gi, directoryPath)
 		.replace(/\{\{AUTO_RUN_FOLDER_NAME\}\}/gi, autoRunFolderPath)

@@ -47,7 +47,7 @@ import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from '../..
 import { getActiveTab, getWriteModeTab } from '../../utils/tabHelpers';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
-import { autorunSynopsisPrompt } from '../../../prompts';
+import { getAutorunSynopsisPrompt } from '../batch/batchUtils';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
@@ -804,9 +804,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					let SYNOPSIS_PROMPT: string;
 					if (synopsisData.lastSynopsisTime) {
 						const timeAgo = formatRelativeTime(synopsisData.lastSynopsisTime);
-						SYNOPSIS_PROMPT = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+						SYNOPSIS_PROMPT = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
 					} else {
-						SYNOPSIS_PROMPT = autorunSynopsisPrompt;
+						SYNOPSIS_PROMPT = getAutorunSynopsisPrompt();
 					}
 					const startTime = Date.now();
 					const synopsisTime = Date.now();

@@ -991,6 +991,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		{
+			id: 'goToMaestroPrompts',
+			label: 'Go to Prompts Tab',
+			shortcut: shortcuts.goToMaestroPrompts,
+			action: () => {
+				setRightPanelOpen(true);
+				setActiveRightTab('maestro-prompts');
+				setQuickActionOpen(false);
+			},
+		},
 		// Playbook Exchange - browse and import community playbooks
 		...(onOpenPlaybookExchange
 			? [

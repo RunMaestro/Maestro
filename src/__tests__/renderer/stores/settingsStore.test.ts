@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
 	useSettingsStore,
+	loadSettingsStorePrompts,
 	loadAllSettings,
 	getBadgeLevelForTime,
 	selectIsLeaderboardRegistered,
@@ -117,8 +118,8 @@ describe('settingsStore', () => {
 	// 1. Initial State
 	// ========================================================================
 
-	describe('initial state', () => {
-		it('has correct default values for all 65 fields', () => {
+		describe('initial state', () => {
+			it('has correct default values for all 65 fields', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -218,6 +219,30 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setApiKey('sk-test-key');
 				expect(useSettingsStore.getState().apiKey).toBe('sk-test-key');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('apiKey', 'sk-test-key');
+			});
+		});
+
+		describe('prompt loading', () => {
+			it('throws when commit command prompt is blank and does not overwrite state', async () => {
+				const initialCommitPrompt = useSettingsStore
+					.getState()
+					.customAICommands.find((command) => command.id === 'commit')?.prompt;
+
+				(window.maestro.prompts as any) = {
+					get: vi.fn().mockResolvedValue({
+						success: true,
+						content: '   ',
+					}),
+				};
+
+				await expect(loadSettingsStorePrompts(true)).rejects.toThrow(
+					'Failed to load prompt: commit-command'
+				);
+
+				const commitCommand = useSettingsStore
+					.getState()
+					.customAICommands.find((command) => command.id === 'commit');
+				expect(commitCommand?.prompt).toBe(initialCommitPrompt);
 			});
 		});
 

@@ -35,12 +35,15 @@ import { getActiveTab, createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { autorunSynopsisPrompt } from '../../../prompts';
+import {
+	getAutorunSynopsisPrompt,
+	getDefaultBatchPrompt,
+	loadBatchPrompts,
+} from '../batch/batchUtils';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { gitService } from '../../services/git';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
-import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
 import type { PreviousUIState, UseInlineWizardReturn } from '../batch/useInlineWizard';
 import type { WizardState } from '../../components/Wizard/WizardContext';
 import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
@@ -521,12 +524,14 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		addLogToTab(currentSession.id, pendingLog);
 
 		try {
+			await loadBatchPrompts();
+
 			let synopsisPrompt: string;
 			if (activeTab.lastSynopsisTime) {
 				const timeAgo = formatRelativeTime(activeTab.lastSynopsisTime);
-				synopsisPrompt = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+				synopsisPrompt = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
 			} else {
-				synopsisPrompt = autorunSynopsisPrompt;
+				synopsisPrompt = getAutorunSynopsisPrompt();
 			}
 			const synopsisTime = Date.now();
 
@@ -1203,6 +1208,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			const firstDocWithTasks = generatedDocuments.find((doc) => doc.taskCount > 0);
 			if (firstDocWithTasks && autoRunFolderPath) {
+				await loadBatchPrompts();
+
 				const batchConfig: BatchRunConfig = {
 					documents: [
 						{
@@ -1212,7 +1219,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 							isDuplicate: false,
 						},
 					],
-					prompt: DEFAULT_BATCH_PROMPT,
+					prompt: getDefaultBatchPrompt(),
 					loopEnabled: false,
 				};
 

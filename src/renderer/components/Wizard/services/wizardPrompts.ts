@@ -6,11 +6,51 @@
  */
 
 import { getRandomInitialQuestion } from './fillerPhrases';
-import { wizardSystemPrompt, wizardSystemContinuationPrompt } from '../../../../prompts';
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+
+// Module-level prompt cache
+let cachedWizardSystemPrompt: string = '';
+let cachedWizardSystemContinuationPrompt: string = '';
+let wizardPromptsLoaded = false;
+
+export async function loadWizardPrompts(force = false): Promise<void> {
+	if (wizardPromptsLoaded && !force) return;
+
+	const [systemResult, continuationResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-system'),
+		window.maestro.prompts.get('wizard-system-continuation'),
+	]);
+
+	if (!systemResult.success || systemResult.content === undefined) {
+		throw new Error(systemResult.error || 'Failed to load prompt: wizard-system');
+	}
+	if (!continuationResult.success || continuationResult.content === undefined) {
+		throw new Error(
+			continuationResult.error || 'Failed to load prompt: wizard-system-continuation'
+		);
+	}
+
+	cachedWizardSystemPrompt = systemResult.content;
+	cachedWizardSystemContinuationPrompt = continuationResult.content;
+	wizardPromptsLoaded = true;
+}
+
+export function getWizardSystemPrompt(): string {
+	if (!wizardPromptsLoaded) {
+		throw new Error('Wizard system prompt not loaded');
+	}
+	return cachedWizardSystemPrompt;
+}
+
+export function getWizardSystemContinuationPrompt(): string {
+	if (!wizardPromptsLoaded) {
+		throw new Error('Wizard continuation prompt not loaded');
+	}
+	return cachedWizardSystemContinuationPrompt;
+}
 
 /**
  * Structured response format expected from the agent
@@ -136,7 +176,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 		const docsContent = existingDocs
 			.map((doc) => `### ${doc.filename}\n\n${doc.content}\n`)
 			.join('\n---\n\n');
-		existingDocsSection = wizardSystemContinuationPrompt.replace('{{EXISTING_DOCS}}', docsContent);
+		existingDocsSection = getWizardSystemContinuationPrompt().replace('{{EXISTING_DOCS}}', docsContent);
 	}
 
 	// First, handle wizard-specific variables that have different semantics
@@ -145,7 +185,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	// - PROJECT_NAME: wizard uses user-provided agentName (or "this project"),
 	//   not the path-derived name from the central system
 	// - READY_CONFIDENCE_THRESHOLD: wizard-specific constant
-	let prompt = wizardSystemPrompt
+	let prompt = getWizardSystemPrompt()
 		.replace(/\{\{PROJECT_NAME\}\}/gi, projectName)
 		.replace(/\{\{READY_CONFIDENCE_THRESHOLD\}\}/gi, String(READY_CONFIDENCE_THRESHOLD));
 

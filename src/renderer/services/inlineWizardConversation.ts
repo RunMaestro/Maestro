@@ -14,11 +14,54 @@ import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
-import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
+import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+
+// Module-level prompt cache (loaded once via IPC)
+let cachedWizardInlineIteratePrompt = '';
+let cachedWizardInlineNewPrompt = '';
+let inlineWizardConversationPromptsLoaded = false;
+
+/**
+ * Load inline wizard conversation prompts from disk via IPC.
+ * Called once at startup before components mount.
+ */
+export async function loadInlineWizardConversationPrompts(force = false): Promise<void> {
+	if (inlineWizardConversationPromptsLoaded && !force) return;
+
+	const [iterateResult, newResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-inline-iterate'),
+		window.maestro.prompts.get('wizard-inline-new'),
+	]);
+
+	if (!iterateResult.success || iterateResult.content === undefined) {
+		throw new Error(iterateResult.error || 'Failed to load prompt: wizard-inline-iterate');
+	}
+	if (!newResult.success || newResult.content === undefined) {
+		throw new Error(newResult.error || 'Failed to load prompt: wizard-inline-new');
+	}
+
+	cachedWizardInlineIteratePrompt = iterateResult.content;
+	cachedWizardInlineNewPrompt = newResult.content;
+	inlineWizardConversationPromptsLoaded = true;
+}
+
+function getWizardInlineIteratePrompt(): string {
+	if (!inlineWizardConversationPromptsLoaded) {
+		throw new Error('Inline wizard iterate prompt not loaded');
+	}
+	return cachedWizardInlineIteratePrompt;
+}
+
+function getWizardInlineNewPrompt(): string {
+	if (!inlineWizardConversationPromptsLoaded) {
+		throw new Error('Inline wizard new prompt not loaded');
+	}
+	return cachedWizardInlineNewPrompt;
+}
 
 /**
  * Extended ExistingDocument interface that includes loaded content.
@@ -42,7 +85,6 @@ export type ExistingDocument = BaseExistingDocument | ExistingDocumentWithConten
 function hasContent(doc: ExistingDocument): doc is ExistingDocumentWithContent {
 	return 'content' in doc && typeof doc.content === 'string';
 }
-import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 
 /**
  * Structured response format expected from the agent.
@@ -201,10 +243,10 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 	// Select the base prompt based on mode
 	let basePrompt: string;
 	if (mode === 'iterate') {
-		basePrompt = wizardInlineIteratePrompt;
+		basePrompt = getWizardInlineIteratePrompt();
 	} else {
 		// 'new' mode uses the new plan prompt
-		basePrompt = wizardInlineNewPrompt;
+		basePrompt = getWizardInlineNewPrompt();
 	}
 
 	// Handle wizard-specific variables that have different semantics from the central template system

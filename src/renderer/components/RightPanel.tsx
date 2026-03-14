@@ -27,6 +27,7 @@ import { useResizablePanel } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { MaestroPromptsTab } from './MaestroPromptsTab';
 import { useBatchStore } from '../stores/batchStore';
 import { useSessionStore } from '../stores/sessionStore';
 
@@ -403,7 +404,7 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{['files', 'history', 'autorun'].map((tab) => (
+					{(['files', 'history', 'autorun', 'maestro-prompts'] as const).map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -414,7 +415,11 @@ export const RightPanel = memo(
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'autorun'
+								? 'Auto Run'
+								: tab === 'maestro-prompts'
+									? 'Prompts'
+									: tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
 
@@ -514,6 +519,14 @@ export const RightPanel = memo(
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
 						</div>
 					)}
+
+						<div
+							data-tour="maestro-prompts-panel"
+							className="h-full"
+							style={{ display: activeRightTab === 'maestro-prompts' ? undefined : 'none' }}
+						>
+							<MaestroPromptsTab theme={theme} />
+						</div>
 				</div>
 
 				{/* Auto Run Expanded Modal */}

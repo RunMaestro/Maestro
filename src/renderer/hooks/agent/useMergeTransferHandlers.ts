@@ -23,7 +23,7 @@ import { getModalActions } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
-import { maestroSystemPrompt } from '../../../prompts';
+import { getMaestroSystemPrompt } from '../input/useInputProcessing';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
@@ -470,6 +470,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const conductorProfile = useSettingsStore.getState().conductorProfile;
 
 					// Prepend Maestro system prompt since this is a new session
+					const maestroSystemPrompt = getMaestroSystemPrompt();
 					if (maestroSystemPrompt) {
 						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 							session: targetSession,

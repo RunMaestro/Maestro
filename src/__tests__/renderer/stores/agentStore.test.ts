@@ -113,12 +113,23 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
-// Mock prompts
-vi.mock('../../../prompts', () => ({
-	maestroSystemPrompt: 'Mock system prompt for {{CWD}}',
-	autorunSynopsisPrompt: '',
-	imageOnlyDefaultPrompt: 'Describe this image',
-}));
+// Mock prompts module (now provides only PROMPT_IDS constants)
+vi.mock('../../../prompts', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../prompts')>();
+	return {
+		...actual,
+	};
+});
+
+// Mock the input processing prompt getters (loaded from disk via IPC at runtime)
+vi.mock('../../../renderer/hooks/input/useInputProcessing', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/hooks/input/useInputProcessing')>();
+	return {
+		...actual,
+		getMaestroSystemPrompt: vi.fn(() => 'Mock system prompt for {{CWD}}'),
+		getImageOnlyPrompt: vi.fn(() => 'Describe this image'),
+	};
+});
 
 // Mock substituteTemplateVariables — pass through the template as-is for simplicity
 vi.mock('../../../renderer/utils/templateVariables', () => ({

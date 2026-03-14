@@ -4,7 +4,7 @@
  * These tests verify the document parsing and iterate mode functionality.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import {
 	parseGeneratedDocuments,
 	splitIntoPhases,
@@ -12,10 +12,93 @@ import {
 	generateWizardFolderBaseName,
 	countTasks,
 	generateDocumentPrompt,
+	loadInlineWizardDocGenPrompts,
 	type DocumentGenerationConfig,
 } from '../../../renderer/services/inlineWizardDocumentGeneration';
 
+// Mock prompt content with the template variables used by generateDocumentPrompt
+const MOCK_DOC_GEN_PROMPT = `You are creating documents for "{{PROJECT_NAME}}".
+
+**WRITE ACCESS:**
+Write to: {{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/
+
+**READ ACCESS:**
+Read any file in: \`{{DIRECTORY_PATH}}\`
+
+## Conversation Summary
+{{CONVERSATION_SUMMARY}}`;
+
+const MOCK_ITERATE_GEN_PROMPT = `You are updating documents for "{{PROJECT_NAME}}".
+
+**WRITE ACCESS:**
+Write to: {{DIRECTORY_PATH}}/{{AUTO_RUN_FOLDER_NAME}}/
+
+**READ ACCESS:**
+Read any file in: \`{{DIRECTORY_PATH}}\`
+
+## Existing Documents
+{{EXISTING_DOCS}}
+
+## Goal
+{{ITERATE_GOAL}}
+
+## Conversation Summary
+{{CONVERSATION_SUMMARY}}`;
+
+const getPromptsMock = () => window.maestro.prompts.get as ReturnType<typeof vi.fn>;
+const setDefaultPromptMockResponses = () => {
+	getPromptsMock().mockImplementation((id: string) => {
+		if (id === 'wizard-document-generation') return { success: true, content: MOCK_DOC_GEN_PROMPT };
+		if (id === 'wizard-inline-iterate-generation') {
+			return { success: true, content: MOCK_ITERATE_GEN_PROMPT };
+		}
+		return { success: false, error: `Unknown prompt: ${id}` };
+	});
+};
+
+// Set up window.maestro.prompts mock before import resolves
+beforeAll(async () => {
+	if (!(window as any).maestro) {
+		(window as any).maestro = {};
+	}
+	(window as any).maestro.prompts = {
+		get: vi.fn(),
+	};
+	setDefaultPromptMockResponses();
+	await loadInlineWizardDocGenPrompts();
+});
+
 describe('inlineWizardDocumentGeneration', () => {
+	describe('loadInlineWizardDocGenPrompts', () => {
+		it('rejects blank wizard-document-generation prompt content', async () => {
+			getPromptsMock().mockImplementation((id: string) => {
+				if (id === 'wizard-document-generation') return { success: true, content: '   ' };
+				if (id === 'wizard-inline-iterate-generation') {
+					return { success: true, content: MOCK_ITERATE_GEN_PROMPT };
+				}
+				return { success: false, error: `Unknown prompt: ${id}` };
+			});
+
+			await expect(loadInlineWizardDocGenPrompts(true)).rejects.toThrow(
+				'Failed to load prompt: wizard-document-generation'
+			);
+			setDefaultPromptMockResponses();
+		});
+
+		it('rejects blank wizard-inline-iterate-generation prompt content', async () => {
+			getPromptsMock().mockImplementation((id: string) => {
+				if (id === 'wizard-document-generation') return { success: true, content: MOCK_DOC_GEN_PROMPT };
+				if (id === 'wizard-inline-iterate-generation') return { success: true, content: '\n\t' };
+				return { success: false, error: `Unknown prompt: ${id}` };
+			});
+
+			await expect(loadInlineWizardDocGenPrompts(true)).rejects.toThrow(
+				'Failed to load prompt: wizard-inline-iterate-generation'
+			);
+			setDefaultPromptMockResponses();
+		});
+	});
+
 	describe('parseGeneratedDocuments', () => {
 		it('should parse documents with standard markers', () => {
 			const output = `

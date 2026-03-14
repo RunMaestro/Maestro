@@ -28,6 +28,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useNotificationStore, notifyToast } from '../../stores/notificationStore';
 import { getSpeckitCommands } from '../../services/speckit';
 import { getOpenSpecCommands } from '../../services/openspec';
+import { initializeRendererPrompts } from '../../services/promptInit';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
 
@@ -70,6 +71,13 @@ export function useAppInitialization(): AppInitializationReturn {
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
 	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
+
+	// --- Load disk-based prompts into module caches ---
+	useEffect(() => {
+		initializeRendererPrompts().catch((error) => {
+			console.error('[useAppInitialization] Failed to load renderer prompts:', error);
+		});
+	}, []);
 
 	// --- Splash screen coordination ---
 	useEffect(() => {

@@ -1342,7 +1342,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.getAllByRole('button')).toHaveLength(4); // toggle + 3 tabs
+			expect(screen.getAllByRole('button')).toHaveLength(5); // toggle + 4 tabs
 		});
 	});
 

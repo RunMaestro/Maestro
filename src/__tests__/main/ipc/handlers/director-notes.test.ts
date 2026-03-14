@@ -52,9 +52,12 @@ vi.mock('../../../../main/utils/context-groomer', () => ({
 	groomContext: vi.fn(),
 }));
 
-// Mock the prompts module
-vi.mock('../../../../../prompts', () => ({
-	directorNotesPrompt: 'Mock director notes prompt',
+// Mock the prompt-manager
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'director-notes') return 'Mock director notes prompt';
+		throw new Error(`Unexpected prompt id: ${id}`);
+	}),
 }));
 
 describe('director-notes IPC handlers', () => {

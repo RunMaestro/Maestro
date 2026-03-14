@@ -42,6 +42,17 @@ vi.mock('electron-store', () => {
 	};
 });
 
+// Mock the prompt-manager
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'group-chat-moderator-system') return 'Coordinate the group chat between @agents. Review responses and decide next steps.';
+		if (id === 'group-chat-moderator-synthesis') return 'Synthesize the agents responses into a coherent answer.';
+		if (id === 'group-chat-participant') return 'You are {{PARTICIPANT_NAME}} in {{GROUP_CHAT_NAME}}. Log path: {{LOG_PATH}}';
+		if (id === 'group-chat-participant-request') return '{{PARTICIPANT_NAME}} in {{GROUP_CHAT_NAME}}: {{MESSAGE}}';
+		throw new Error(`Unexpected prompt ID in test: ${id}`);
+	}),
+}));
+
 import {
 	spawnModerator,
 	sendToModerator,

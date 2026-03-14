@@ -167,46 +167,47 @@ src/
 
 ## Key Files for Common Tasks
 
-| Task                         | Primary Files                                                                                                                                                           |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add IPC handler              | `src/main/index.ts`, `src/main/preload.ts`                                                                                                                              |
-| Add UI component             | `src/renderer/components/`                                                                                                                                              |
-| Add web/mobile component     | `src/web/components/`, `src/web/mobile/`                                                                                                                                |
-| Add keyboard shortcut        | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                                                        |
-| Add theme                    | `src/renderer/constants/themes.ts`                                                                                                                                      |
-| Add modal                    | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                 |
-| Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                            |
-| Add setting                  | `src/renderer/hooks/useSettings.ts`, `src/main/index.ts`                                                                                                                |
-| Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                            |
-| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                                                             |
-| Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                   |
-| Add OpenSpec command         | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                 |
-| Add CLI command              | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                 |
-| Add new agent                | `src/shared/agentIds.ts`, `src/main/agents/definitions.ts`, `src/main/agents/capabilities.ts`, `src/shared/agentMetadata.ts` — see [AGENT_SUPPORT.md](AGENT_SUPPORT.md) |
-| Add agent output parser      | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                                                        |
-| Add agent session storage    | `src/main/storage/` (extend `BaseSessionStorage`), `src/main/storage/index.ts`                                                                                          |
-| Add agent error patterns     | `src/main/parsers/error-patterns.ts`                                                                                                                                    |
-| Add agent context window     | `src/shared/agentConstants.ts` (`DEFAULT_CONTEXT_WINDOWS`, `FALLBACK_CONTEXT_WINDOW`)                                                                                   |
-| Add playbook feature         | `src/cli/services/playbooks.ts`                                                                                                                                         |
-| Add marketplace playbook     | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                                                             |
-| Playbook import/export       | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                                                         |
-| Modify wizard flow           | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                                                            |
-| Add tour step                | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                                                      |
-| Modify file linking          | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                                                   |
-| Add documentation page       | `docs/*.md`, `docs/docs.json` (navigation)                                                                                                                              |
-| Add documentation screenshot | `docs/screenshots/` (PNG, kebab-case naming)                                                                                                                            |
-| MCP server integration       | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                                                            |
-| Add stats/analytics feature  | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                                                                |
-| Add Usage Dashboard chart    | `src/renderer/components/UsageDashboard/`                                                                                                                               |
-| Add Document Graph feature   | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                                                      |
-| Add colorblind palette       | `src/renderer/constants/colorblindPalettes.ts`                                                                                                                          |
-| Add performance metrics      | `src/shared/performance-metrics.ts`                                                                                                                                     |
-| Add power management         | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                                                          |
-| Spawn agent with SSH support | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                                                               |
-| Modify file preview tabs     | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                                                        |
-| Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                                                     |
-| Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler                                   |
-| Modify history components    | `src/renderer/components/History/`                                                                                                                                      |
+| Task                         | Primary Files                                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Add IPC handler              | `src/main/index.ts`, `src/main/preload.ts`                                                                                            |
+| Add UI component             | `src/renderer/components/`                                                                                                            |
+| Add web/mobile component     | `src/web/components/`, `src/web/mobile/`                                                                                              |
+| Add keyboard shortcut        | `src/renderer/constants/shortcuts.ts`, `App.tsx`                                                                                      |
+| Add theme                    | `src/renderer/constants/themes.ts`                                                                                                    |
+| Add modal                    | Component + `src/renderer/constants/modalPriorities.ts`                                                                               |
+| Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                          |
+| Add setting                  | `src/renderer/hooks/useSettings.ts`, `src/main/index.ts`                                                                              |
+| Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                          |
+| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                           |
+| Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                 |
+| Add OpenSpec command         | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                               |
+| Add CLI command              | `src/cli/commands/`, `src/cli/index.ts`                                                                                               |
+| Configure agent              | `src/main/agent-detector.ts`, `src/main/agent-capabilities.ts`                                                                        |
+| Add agent output parser      | `src/main/parsers/`, `src/main/parsers/index.ts`                                                                                      |
+| Add agent session storage    | `src/main/storage/`, `src/main/agent-session-storage.ts`                                                                              |
+| Add agent error patterns     | `src/main/parsers/error-patterns.ts`                                                                                                  |
+| Add playbook feature         | `src/cli/services/playbooks.ts`                                                                                                       |
+| Add marketplace playbook     | `src/main/ipc/handlers/marketplace.ts` (import from GitHub)                                                                           |
+| Playbook import/export       | `src/main/ipc/handlers/playbooks.ts` (ZIP handling with assets)                                                                       |
+| Modify wizard flow           | `src/renderer/components/Wizard/` (see [[CLAUDE-WIZARD.md]])                                                                          |
+| Add tour step                | `src/renderer/components/Wizard/tour/tourSteps.ts`                                                                                    |
+| Modify file linking          | `src/renderer/utils/remarkFileLinks.ts` (remark plugin for `[[wiki]]` and path links)                                                 |
+| Add documentation page       | `docs/*.md`, `docs/docs.json` (navigation)                                                                                            |
+| Add documentation screenshot | `docs/screenshots/` (PNG, kebab-case naming)                                                                                          |
+| MCP server integration       | See [MCP Server docs](https://docs.runmaestro.ai/mcp-server)                                                                          |
+| Add stats/analytics feature  | `src/main/stats-db.ts`, `src/main/ipc/handlers/stats.ts`                                                                              |
+| Add Usage Dashboard chart    | `src/renderer/components/UsageDashboard/`                                                                                             |
+| Add Document Graph feature   | `src/renderer/components/DocumentGraph/`, `src/main/ipc/handlers/documentGraph.ts`                                                    |
+| Add colorblind palette       | `src/renderer/constants/colorblindPalettes.ts`                                                                                        |
+| Add performance metrics      | `src/shared/performance-metrics.ts`                                                                                                   |
+| Add power management         | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts`                                                                        |
+| Spawn agent with SSH support | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution)                                                             |
+| Modify file preview tabs     | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System)                                      |
+| Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                   |
+| Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler |
+| Modify history components    | `src/renderer/components/History/`                                                                                                    |
+| Customize prompts            | Use "Maestro Prompts" tab in Right Bar, or edit `userData/core-prompts-customizations.json`                                            |
+| Add new prompt               | `src/prompts/*.md`, `src/main/prompt-manager.ts` (add to CORE_PROMPTS array)                                                          |
 
 ---
 
@@ -352,3 +353,27 @@ Maestro provides a hosted MCP (Model Context Protocol) server for AI application
 ```
 
 See [MCP Server documentation](https://docs.runmaestro.ai/mcp-server) for full details.
+
+---
+
+## Prompt Customization
+
+Core system prompts can be customized via the **Maestro Prompts** tab in the Right Bar.
+
+### Using the UI
+1. Open the Right Bar
+2. Select the "Maestro Prompts" tab
+3. Browse prompts by category (Wizard, Auto Run, Group Chat, etc.)
+4. Edit prompt content in the editor
+5. Click "Save" to apply changes (takes effect immediately)
+
+### How It Works
+- **Bundled prompts**: Ship with the app in `Resources/prompts/core/`
+- **User customizations**: Stored in `userData/core-prompts-customizations.json`
+- **Load priority**: User customization wins if present, else bundled default
+- **Immediate effect**: Changes are applied to the in-memory cache immediately (no restart required)
+
+### Resetting Prompts
+Click "Reset to Default" to restore the bundled version (takes effect immediately).
+
+**Note:** Unlike SpecKit/OpenSpec, core prompts do not have an "Update from GitHub" button since they ship with each release.

@@ -40,7 +40,8 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
-import { groupChatParticipantRequestPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
+import { PROMPT_IDS } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
@@ -108,6 +109,12 @@ const pendingParticipantResponses = new Map<string, Set<string>>();
  * Maps groupChatId -> boolean
  */
 const groupChatReadOnlyState = new Map<string, boolean>();
+
+const PROMPT_TOKEN_PATTERN = /\{\{([A-Z_]+)\}\}/g;
+
+function applyPromptTemplate(prompt: string, replacements: Record<string, string>): string {
+	return prompt.replace(PROMPT_TOKEN_PATTERN, (match, token: string) => replacements[token] ?? match);
+}
 
 /**
  * Gets the current read-only state for a group chat.
@@ -835,15 +842,19 @@ export async function routeModeratorResponse(
 			// Get the group chat folder path for file access permissions
 			const groupChatFolder = getGroupChatDir(groupChatId);
 
-			const participantPrompt = groupChatParticipantRequestPrompt
-				.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
-				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
-				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
-				.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
-				.replace(/\{\{HISTORY_CONTEXT\}\}/g, historyContext)
-				.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
-				.replace(/\{\{MESSAGE\}\}/g, message)
-				.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
+				const participantPrompt = applyPromptTemplate(
+					getPrompt(PROMPT_IDS.GROUP_CHAT_PARTICIPANT_REQUEST),
+					{
+						PARTICIPANT_NAME: participantName,
+						GROUP_CHAT_NAME: updatedChat.name,
+						READ_ONLY_NOTE: readOnlyNote,
+						GROUP_CHAT_FOLDER: groupChatFolder,
+						HISTORY_CONTEXT: historyContext,
+						READ_ONLY_LABEL: readOnlyLabel,
+						MESSAGE: message,
+						READ_ONLY_INSTRUCTION: readOnlyInstruction,
+					}
+				);
 
 			// Create a unique session ID for this batch process
 			const sessionId = `group-chat-${groupChatId}-participant-${participantName}-${Date.now()}`;
@@ -1385,18 +1396,16 @@ export async function respawnParticipantWithRecovery(
 	const groupChatFolder = getGroupChatDir(groupChatId);
 
 	// Build the recovery prompt - includes standard prompt plus recovery context
-	const basePrompt = groupChatParticipantRequestPrompt
-		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
-		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, chat.name)
-		.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
-		.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
-		.replace(/\{\{HISTORY_CONTEXT\}\}/g, historyContext)
-		.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
-		.replace(
-			/\{\{MESSAGE\}\}/g,
-			'Please continue from where you left off based on the recovery context below.'
-		)
-		.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
+		const basePrompt = applyPromptTemplate(getPrompt(PROMPT_IDS.GROUP_CHAT_PARTICIPANT_REQUEST), {
+			PARTICIPANT_NAME: participantName,
+			GROUP_CHAT_NAME: chat.name,
+			READ_ONLY_NOTE: readOnlyNote,
+			GROUP_CHAT_FOLDER: groupChatFolder,
+			HISTORY_CONTEXT: historyContext,
+			READ_ONLY_LABEL: readOnlyLabel,
+			MESSAGE: 'Please continue from where you left off based on the recovery context below.',
+			READ_ONLY_INSTRUCTION: readOnlyInstruction,
+		});
 
 	// Prepend recovery context
 	const fullPrompt = `${recoveryContext}\n\n${basePrompt}`;

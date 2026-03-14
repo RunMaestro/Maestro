@@ -339,6 +339,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.handleSetActiveRightTab('autorun');
 				ctx.setActiveFocus('right');
 				trackShortcut('goToAutoRun');
+			} else if (ctx.isShortcut(e, 'goToMaestroPrompts')) {
+				e.preventDefault();
+				ctx.setRightPanelOpen(true);
+				ctx.handleSetActiveRightTab('maestro-prompts');
+				ctx.setActiveFocus('right');
+				trackShortcut('goToMaestroPrompts');
 			} else if (ctx.isShortcut(e, 'fuzzyFileSearch')) {
 				e.preventDefault();
 				if (ctx.activeSession) {
