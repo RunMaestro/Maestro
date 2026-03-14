@@ -2669,13 +2669,7 @@ interface MaestroAPI {
 				validated?: boolean;
 				agentName?: string;
 				sourceSessionId: string;
-				usageStats?: {
-					totalCostUsd: number;
-					inputTokens: number;
-					outputTokens: number;
-					cacheReadTokens: number;
-					cacheWriteTokens: number;
-				};
+				usageStats?: UsageStats;
 			}>;
 			total: number;
 			limit: number;
@@ -2706,6 +2700,28 @@ interface MaestroAPI {
 			};
 			error?: string;
 		}>;
+		/** Subscribe to new history entries as they are added in real-time. Returns cleanup function. */
+		onHistoryEntryAdded: (
+			callback: (
+				entry: {
+					id: string;
+					type: HistoryEntryType;
+					timestamp: number;
+					summary: string;
+					fullResponse?: string;
+					agentSessionId?: string;
+					sessionName?: string;
+					projectPath: string;
+					sessionId?: string;
+					contextUsage?: number;
+					success?: boolean;
+					elapsedTimeMs?: number;
+					validated?: boolean;
+					usageStats?: UsageStats;
+				},
+				sourceSessionId: string
+			) => void
+		) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)

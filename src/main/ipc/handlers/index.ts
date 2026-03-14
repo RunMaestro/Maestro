@@ -12,7 +12,7 @@ import Store from 'electron-store';
 import { registerGitHandlers, GitHandlerDependencies } from './git';
 import { registerAutorunHandlers } from './autorun';
 import { registerPlaybooksHandlers } from './playbooks';
-import { registerHistoryHandlers } from './history';
+import { registerHistoryHandlers, HistoryHandlerDependencies } from './history';
 import { registerAgentsHandlers, AgentsHandlerDependencies } from './agents';
 import { registerProcessHandlers, ProcessHandlerDependencies } from './process';
 import {
@@ -57,6 +57,7 @@ import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
+import { createSafeSend } from '../../utils/safe-send';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -66,6 +67,7 @@ export { registerGitHandlers };
 export { registerAutorunHandlers };
 export { registerPlaybooksHandlers };
 export { registerHistoryHandlers };
+export type { HistoryHandlerDependencies };
 export { registerAgentsHandlers };
 export { registerProcessHandlers };
 export { registerPersistenceHandlers };
@@ -172,7 +174,9 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	registerAutorunHandlers(deps);
 	registerPlaybooksHandlers(deps);
-	registerHistoryHandlers();
+	registerHistoryHandlers({
+		safeSend: createSafeSend(deps.getMainWindow),
+	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
