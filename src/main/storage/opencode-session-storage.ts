@@ -259,6 +259,17 @@ function tableExists(db: Database.Database, tableName: string): boolean {
 	return !!row;
 }
 
+/**
+ * Check if an error is an expected SQLite schema/migration issue (e.g., missing tables)
+ * that should be swallowed, as opposed to unexpected errors that should reach Sentry.
+ */
+function isExpectedSqliteError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /no such table|no such column|SQLITE_ERROR|database is locked|database disk image is malformed/.test(
+		message
+	);
+}
+
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -536,14 +547,14 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	private sessionMatchesPath(sessionDirectory: string | undefined, projectPath: string): boolean {
 		if (!sessionDirectory) return false;
 
-		const normalizedSessionDir = path.resolve(sessionDirectory).replace(/\/+$/, '');
-		const normalizedProjectPath = path.resolve(projectPath).replace(/\/+$/, '');
+		const normalizedSessionDir = path.resolve(sessionDirectory).replace(TRAILING_SEP_RE, '');
+		const normalizedProjectPath = path.resolve(projectPath).replace(TRAILING_SEP_RE, '');
 
 		// Exact match
 		if (normalizedSessionDir === normalizedProjectPath) return true;
 
 		// Session is in a subdirectory of the project
-		if (normalizedSessionDir.startsWith(normalizedProjectPath + '/')) return true;
+		if (normalizedSessionDir.startsWith(normalizedProjectPath + path.sep)) return true;
 
 		return false;
 	}
@@ -825,8 +836,13 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			return this.convertSqliteSessionRows(sessions, projectPath, db);
 		} catch (error) {
-			logger.warn(`Error reading OpenCode SQLite database: ${error}`, LOG_CONTEXT);
-			return null;
+			if (isExpectedSqliteError(error)) {
+				logger.warn(`Error reading OpenCode SQLite database: ${error}`, LOG_CONTEXT);
+				return null;
+			}
+			logger.error(`Unexpected error reading OpenCode SQLite database: ${error}`, LOG_CONTEXT);
+			captureException(error instanceof Error ? error : new Error(String(error)));
+			throw error;
 		} finally {
 			db.close();
 		}
@@ -873,6 +889,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 				// Aggregate stats and find preview message
 				let foundPreview = false;
+				let candidateUserPreview: string | undefined;
 				for (const msg of messages) {
 					const data = safeJsonParse<SqliteMessageData>(msg.data);
 					if (!data) continue;
@@ -887,7 +904,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 						totalCost += data.cost;
 					}
 
-					// Get preview from first assistant message with text
+					// Get preview from first assistant message with text (preferred)
 					if (!foundPreview && data.role === 'assistant' && hasPartTable) {
 						const parts = db
 							.prepare('SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC')
@@ -902,20 +919,24 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 						}
 					}
 
-					// Fall back to first user message if no assistant text found
-					if (!foundPreview && data.role === 'user' && hasPartTable) {
+					// Collect first user message as fallback candidate (don't set foundPreview)
+					if (!candidateUserPreview && data.role === 'user' && hasPartTable) {
 						const parts = db
 							.prepare('SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC')
 							.all(msg.id) as Array<{ data: string }>;
 						for (const part of parts) {
 							const partData = safeJsonParse<SqlitePartData>(part.data);
 							if (partData?.type === 'text' && partData.text?.trim()) {
-								firstMessage = partData.text;
-								foundPreview = true;
+								candidateUserPreview = partData.text;
 								break;
 							}
 						}
 					}
+				}
+
+				// Fall back to user preview if no assistant text was found
+				if (!foundPreview && candidateUserPreview) {
+					firstMessage = candidateUserPreview;
 				}
 			}
 
@@ -1057,8 +1078,13 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 				totalCost,
 			};
 		} catch (error) {
-			logger.warn(`Error loading messages from OpenCode SQLite: ${error}`, LOG_CONTEXT);
-			return null;
+			if (isExpectedSqliteError(error)) {
+				logger.warn(`Error loading messages from OpenCode SQLite: ${error}`, LOG_CONTEXT);
+				return null;
+			}
+			logger.error(`Unexpected error loading messages from OpenCode SQLite: ${error}`, LOG_CONTEXT);
+			captureException(error instanceof Error ? error : new Error(String(error)));
+			throw error;
 		} finally {
 			db.close();
 		}
