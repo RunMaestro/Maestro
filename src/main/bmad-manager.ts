@@ -18,6 +18,9 @@ import { logger } from './utils/logger';
 
 const LOG_CONTEXT = '[BMAD]';
 const BMAD_REPO_URL = 'https://github.com/bmad-code-org/BMAD-METHOD';
+const BMAD_RAW_BASE = 'https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/main';
+const REFERENCE_TOKEN_REGEX =
+	/`((?:\.\.?\/)?[A-Za-z0-9_./-]+\.md|\{project-root\}\/_bmad\/[^`]+\.md|\{installed_path\}\/[^`]+\.md)`/g;
 
 const BMAD_COMMANDS = bmadCatalog.map((entry) => ({
 	id: entry.id,
@@ -147,6 +150,98 @@ function fetchWithTimeout(url: string, timeoutMs = 15000): Promise<Response> {
 		});
 		throw error;
 	});
+}
+
+function resolveReferenceToRepoPath(reference: string, sourcePath: string): string | null {
+	if (reference.startsWith('{project-root}/_bmad/')) {
+		return `src/${reference.slice('{project-root}/_bmad/'.length)}`;
+	}
+
+	if (reference.startsWith('{installed_path}/')) {
+		return path.posix.join(
+			path.posix.dirname(sourcePath),
+			reference.slice('{installed_path}/'.length)
+		);
+	}
+
+	if (reference.startsWith('./') || reference.startsWith('../')) {
+		return path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), reference));
+	}
+
+	if (reference.endsWith('.md')) {
+		return path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), reference));
+	}
+
+	return null;
+}
+
+async function collectReferencedAssets(
+	sourcePath: string,
+	content: string,
+	seen = new Set([sourcePath]),
+	depth = 0
+): Promise<Array<{ path: string; content: string }>> {
+	if (depth > 1) {
+		return [];
+	}
+
+	const references = new Set<string>();
+	for (const match of content.matchAll(REFERENCE_TOKEN_REGEX)) {
+		if (match[1]) {
+			references.add(match[1]);
+		}
+	}
+
+	const assets: Array<{ path: string; content: string }> = [];
+	for (const reference of references) {
+		const repoPath = resolveReferenceToRepoPath(reference, sourcePath);
+		if (!repoPath || seen.has(repoPath)) {
+			continue;
+		}
+
+		seen.add(repoPath);
+		try {
+			const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/${repoPath}`);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch referenced asset ${repoPath}: ${response.statusText}`);
+			}
+			const assetContent = await response.text();
+			assets.push({ path: repoPath, content: assetContent.trim() });
+			const nestedAssets = await collectReferencedAssets(repoPath, assetContent, seen, depth + 1);
+			assets.push(...nestedAssets);
+		} catch (error) {
+			logger.warn(`Could not fetch referenced BMAD asset ${repoPath}: ${error}`, LOG_CONTEXT);
+		}
+	}
+
+	return assets;
+}
+
+function appendReferencedAssets(
+	prompt: string,
+	assets: Array<{ path: string; content: string }>
+): string {
+	if (assets.length === 0) {
+		return prompt;
+	}
+
+	return `${prompt.trimEnd()}
+
+---
+
+# Bundled Reference Assets
+
+The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
+
+${assets
+	.map(
+		(asset) => `## ${asset.path}
+
+\`\`\`md
+${asset.content}
+\`\`\``
+	)
+	.join('\n\n')}`;
 }
 
 function applyMaestroRuntimePromptFixes(id: string, prompt: string): string {
@@ -438,15 +533,14 @@ export async function refreshBmadPrompts(): Promise<BmadMetadata> {
 		const downloadedPrompts: Array<{ id: string; prompt: string }> = [];
 
 		for (const cmd of BMAD_COMMANDS) {
-			const response = await fetchWithTimeout(
-				`https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/main/${cmd.sourcePath}`
-			);
+			const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/${cmd.sourcePath}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch ${cmd.sourcePath}: ${response.statusText}`);
 			}
 
 			const prompt = applyMaestroRuntimePromptFixes(cmd.id, await response.text());
-			downloadedPrompts.push({ id: cmd.id, prompt });
+			const assets = await collectReferencedAssets(cmd.sourcePath, prompt);
+			downloadedPrompts.push({ id: cmd.id, prompt: appendReferencedAssets(prompt, assets) });
 		}
 
 		const userPromptsDir = getUserPromptsPath();

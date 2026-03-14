@@ -23,8 +23,11 @@ const RAW_GITHUB = 'https://raw.githubusercontent.com';
 const REPO_OWNER = 'bmad-code-org';
 const REPO_NAME = 'BMAD-METHOD';
 const REPO_REF = 'main';
+const RAW_BASE = `${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}`;
 
 const MODULE_HELP_FILES = ['src/core/module-help.csv', 'src/bmm/module-help.csv'];
+const REFERENCE_TOKEN_REGEX =
+	/`((?:\.\.?\/)?[A-Za-z0-9_./-]+\.md|\{project-root\}\/_bmad\/[^`]+\.md|\{installed_path\}\/[^`]+\.md)`/g;
 
 function applyMaestroPromptFixes(id, prompt) {
 	let fixed = prompt;
@@ -141,6 +144,91 @@ async function getText(url) {
 		},
 	});
 	return data;
+}
+
+function resolveReferenceToRepoPath(reference, sourcePath) {
+	if (reference.startsWith('{project-root}/_bmad/')) {
+		return `src/${reference.slice('{project-root}/_bmad/'.length)}`;
+	}
+
+	if (reference.startsWith('{installed_path}/')) {
+		return path.posix.join(
+			path.posix.dirname(sourcePath),
+			reference.slice('{installed_path}/'.length)
+		);
+	}
+
+	if (reference.startsWith('./') || reference.startsWith('../')) {
+		return path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), reference));
+	}
+
+	if (reference.endsWith('.md')) {
+		return path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), reference));
+	}
+
+	return null;
+}
+
+async function collectReferencedAssets(
+	sourcePath,
+	content,
+	seen = new Set([sourcePath]),
+	depth = 0
+) {
+	if (depth > 1) {
+		return [];
+	}
+
+	const references = new Set();
+	for (const match of content.matchAll(REFERENCE_TOKEN_REGEX)) {
+		if (match[1]) {
+			references.add(match[1]);
+		}
+	}
+
+	const assets = [];
+	for (const reference of references) {
+		const repoPath = resolveReferenceToRepoPath(reference, sourcePath);
+		if (!repoPath || seen.has(repoPath)) {
+			continue;
+		}
+
+		seen.add(repoPath);
+		try {
+			const assetContent = await getText(`${RAW_BASE}/${repoPath}`);
+			assets.push({ path: repoPath, content: assetContent.trim() });
+			const nestedAssets = await collectReferencedAssets(repoPath, assetContent, seen, depth + 1);
+			assets.push(...nestedAssets);
+		} catch (error) {
+			console.warn(`   Warning: Could not fetch referenced asset ${repoPath}: ${error.message}`);
+		}
+	}
+
+	return assets;
+}
+
+function appendReferencedAssets(prompt, assets) {
+	if (assets.length === 0) {
+		return prompt;
+	}
+
+	return `${prompt.trimEnd()}
+
+---
+
+# Bundled Reference Assets
+
+The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
+
+${assets
+	.map(
+		(asset) => `## ${asset.path}
+
+\`\`\`md
+${asset.content}
+\`\`\``
+	)
+	.join('\n\n')}`;
 }
 
 function parseCsv(text) {
@@ -372,13 +460,15 @@ async function refreshBmad() {
 	for (const entry of catalog) {
 		const prompt = applyMaestroPromptFixes(
 			entry.id,
-			await getText(`${RAW_GITHUB}/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}/${entry.sourcePath}`)
+			await getText(`${RAW_BASE}/${entry.sourcePath}`)
 		);
+		const assets = await collectReferencedAssets(entry.sourcePath, prompt);
+		const fullPrompt = appendReferencedAssets(prompt, assets);
 		const promptPath = path.join(BMAD_DIR, `bmad.${entry.id}.md`);
 		const existing = fs.existsSync(promptPath) ? fs.readFileSync(promptPath, 'utf8') : '';
 
-		if (existing !== prompt) {
-			fs.writeFileSync(promptPath, prompt);
+		if (existing !== fullPrompt) {
+			fs.writeFileSync(promptPath, fullPrompt);
 			updatedCount++;
 			console.log(`   ✓ Updated: bmad.${entry.id}.md`);
 		} else {

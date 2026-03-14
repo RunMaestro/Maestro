@@ -83,8 +83,7 @@ For UI features, generate tests that:
 
 Execute tests to verify they pass (use project's test command).
 
-If failures occur, report them clearly with likely causes and suggested fixes, but do not modify product code in this workflow.
-Set `tests_verified = true` only when the relevant test command passes; otherwise set `tests_verified = false`.
+If failures occur, fix them immediately.
 
 ### Step 5: Create Summary
 
@@ -145,5 +144,48 @@ If the project needs:
 
 Save summary to: `{default_output_file}`
 
-- If `tests_verified = true`: `**Done!** Tests generated and verified. Validate against `{checklist}`.`
-- If `tests_verified = false`: `**Done!** Tests were generated, but verification failed. Review the reported failures before treating them as passing.`
+**Done!** Tests generated and verified. Validate against `{checklist}`.
+
+---
+
+# Bundled Reference Assets
+
+The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
+
+## src/bmm/workflows/qa-generate-e2e-tests/checklist.md
+
+```md
+# Quinn Automate - Validation Checklist
+
+## Test Generation
+
+- [ ] API tests generated (if applicable)
+- [ ] E2E tests generated (if UI exists)
+- [ ] Tests use standard test framework APIs
+- [ ] Tests cover happy path
+- [ ] Tests cover 1-2 critical error cases
+
+## Test Quality
+
+- [ ] All generated tests run successfully
+- [ ] Tests use proper locators (semantic, accessible)
+- [ ] Tests have clear descriptions
+- [ ] No hardcoded waits or sleeps
+- [ ] Tests are independent (no order dependency)
+
+## Output
+
+- [ ] Test summary created
+- [ ] Tests saved to appropriate directories
+- [ ] Summary includes coverage metrics
+
+## Validation
+
+Run the tests using your project's test command.
+
+**Expected**: All tests pass ✅
+
+---
+
+**Need more comprehensive testing?** Install [Test Architect (TEA)](https://bmad-code-org.github.io/bmad-method-test-architecture-enterprise/) for advanced workflows.
+```

@@ -73,9 +73,8 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 <step n="1" goal="Parse epic files and extract all work items">
 <action>Load {project_context} for project-wide patterns and conventions (if exists)</action>
 <action>Communicate in {communication_language} with {user_name}</action>
-<action>Look for whole-document candidates first: `epics.md`, `bmm-epics.md`, `user-stories.md`, and files matching `{epics_pattern}` in {epics_location}</action>
-<action>If no whole document is found, look for `epics/index.md` and then load every epic file referenced there</action>
-<action>If both whole and sharded sources exist, use the whole document only</action>
+<action>Look for all files matching `{epics_pattern}` in {epics_location}</action>
+<action>Could be a single `epics.md` file or multiple `epic-1.md`, `epic-2.md` files</action>
 
 <action>For each epic file found, extract:</action>
 
@@ -119,8 +118,6 @@ development_status:
 
 - Check: `{story_location_absolute}/{story-key}.md` (e.g., `stories/1-1-user-authentication.md`)
 - If exists → upgrade status to at least `ready-for-dev`
-- If a story is upgraded to at least `ready-for-dev`, upgrade its parent epic to at least `in-progress`
-- Preserve `done` if the epic is already complete
 
 **Preservation rule:**
 
@@ -272,3 +269,48 @@ optional ↔ done
 3. **Parallel Work Supported**: Multiple stories can be `in-progress` if team capacity allows
 4. **Review Before Done**: Stories should pass through `review` before `done`
 5. **Learning Transfer**: SM typically creates next story after previous one is `done` to incorporate learnings
+
+---
+
+# Bundled Reference Assets
+
+The following upstream BMAD files are embedded so this Maestro prompt remains self-contained.
+
+## src/bmm/workflows/4-implementation/sprint-planning/checklist.md
+
+```md
+# Sprint Planning Validation Checklist
+
+## Core Validation
+
+### Complete Coverage Check
+
+- [ ] Every epic found in epic\*.md files appears in sprint-status.yaml
+- [ ] Every story found in epic\*.md files appears in sprint-status.yaml
+- [ ] Every epic has a corresponding retrospective entry
+- [ ] No items in sprint-status.yaml that don't exist in epic files
+
+### Parsing Verification
+
+Compare epic files against generated sprint-status.yaml:
+```
+
+Epic Files Contains: Sprint Status Contains:
+✓ Epic 1 ✓ epic-1: [status]
+✓ Story 1.1: User Auth ✓ 1-1-user-auth: [status]
+✓ Story 1.2: Account Mgmt ✓ 1-2-account-mgmt: [status]
+✓ Story 1.3: Plant Naming ✓ 1-3-plant-naming: [status]
+✓ epic-1-retrospective: [status]
+✓ Epic 2 ✓ epic-2: [status]
+✓ Story 2.1: Personality Model ✓ 2-1-personality-model: [status]
+✓ Story 2.2: Chat Interface ✓ 2-2-chat-interface: [status]
+✓ epic-2-retrospective: [status]
+
+```
+
+### Final Check
+
+- [ ] Total count of epics matches
+- [ ] Total count of stories matches
+- [ ] All items are in the expected order (epic, stories, retrospective)
+```

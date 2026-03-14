@@ -416,7 +416,7 @@ Alice (Product Owner): "Good thinking - helps us connect what we learned to what
 
 **Fallback to whole document:**
 <check if="sharded epic not found">
-<action>Check if file exists: {planning*artifacts}/\_epic*.md</action>
+<action>Check if file exists: {planning_artifacts}/epic\*.md</action>
 
   <check if="whole epic file found">
     <action>Load entire epics document</action>

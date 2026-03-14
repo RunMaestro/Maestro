@@ -19,7 +19,7 @@
 
 ### Step 2: Adversarial Analysis
 
-Review with skepticism and evidence. Report only substantiated issues to fix or improve in the provided content.
+Review with extreme skepticism — assume problems exist. Find at least ten issues to fix or improve in the provided content.
 
 ### Step 3: Present Findings
 
@@ -27,5 +27,5 @@ Output findings as a Markdown list (descriptions only).
 
 ## HALT CONDITIONS
 
-- If zero findings, return "No material issues found" with a brief confidence note
+- HALT if zero findings — this is suspicious, re-analyze or ask for guidance
 - HALT if content is empty or unreadable

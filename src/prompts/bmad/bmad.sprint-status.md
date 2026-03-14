@@ -80,8 +80,7 @@ Run `/bmad:bmm:workflows:sprint-planning` to generate it, then rerun sprint-stat
   - Stories: everything else (e.g., 1-2-login-form)
   <action>Map legacy story status "drafted" → "ready-for-dev"</action>
   <action>Count story statuses: backlog, ready-for-dev, in-progress, review, done</action>
-  <action>Store grouped story keys as: stories_backlog, stories_ready_for_dev, stories_in_progress, stories_in_review, stories_done</action>
-  <action>Map legacy epic status "contexted" → "in-progress"</action>
+  <action>Map legacy epic status "contexted" �� "in-progress"</action>
   <action>Count epic statuses: backlog, in-progress, done</action>
   <action>Count retrospective statuses: optional, done</action>
 
@@ -135,7 +134,7 @@ Enter corrections (e.g., "1=in-progress, 2=backlog") or "skip" to continue witho
   3. Else if any story status == ready-for-dev → recommend `dev-story`
   4. Else if any story status == backlog → recommend `create-story`
   5. Else if any retrospective status == optional → recommend `retrospective`
-  6. Else → set `all_done = true`, clear `next_workflow_id`, `next_story_id`, and `next_agent`, then congratulate the user - you both did amazing work together!
+  6. Else → All implementation items done; congratulate the user - you both did amazing work together!
   <action>Store selected recommendation as: next_story_id, next_workflow_id, next_agent (SM/DEV as appropriate)</action>
 </step>
 
@@ -151,11 +150,7 @@ Enter corrections (e.g., "1=in-progress, 2=backlog") or "skip" to continue witho
 
 **Epics:** backlog {{epic_backlog}}, in-progress {{epic_in_progress}}, done {{epic_done}}
 
-{{#if next_workflow_id}}
 **Next Recommendation:** /bmad:bmm:workflows:{{next_workflow_id}} ({{next_story_id}})
-{{else}}
-**Next Recommendation:** All implementation items are complete. Celebrate, archive your notes, and exit cleanly.
-{{/if}}
 
 {{#if risks}}
 **Risks:**
@@ -170,20 +165,18 @@ Enter corrections (e.g., "1=in-progress, 2=backlog") or "skip" to continue witho
 
 <step n="5" goal="Offer actions">
   <ask>Pick an option:
-{{#if next_workflow_id}}1) Run recommended workflow now
+1) Run recommended workflow now
 2) Show all stories grouped by status
 3) Show raw sprint-status.yaml
-4) Exit{{else}}1) Show all stories grouped by status
-2) Show raw sprint-status.yaml
-3) Exit{{/if}}
+4) Exit
 Choice:</ask>
 
-  <check if="next_workflow_id and choice == 1">
+  <check if="choice == 1">
     <output>Run `/bmad:bmm:workflows:{{next_workflow_id}}`.
 If the command targets a story, set `story_key={{next_story_id}}` when prompted.</output>
   </check>
 
-  <check if="(next_workflow_id and choice == 2) or (not next_workflow_id and choice == 1)">
+  <check if="choice == 2">
     <output>
 ### Stories by Status
 - In Progress: {{stories_in_progress}}
@@ -194,11 +187,11 @@ If the command targets a story, set `story_key={{next_story_id}}` when prompted.
     </output>
   </check>
 
-  <check if="(next_workflow_id and choice == 3) or (not next_workflow_id and choice == 2)">
+  <check if="choice == 3">
     <action>Display the full contents of {sprint_status_file}</action>
   </check>
 
-  <check if="(next_workflow_id and choice == 4) or (not next_workflow_id and choice == 3)">
+  <check if="choice == 4">
     <action>Exit workflow</action>
   </check>
 </step>
@@ -208,10 +201,8 @@ If the command targets a story, set `story_key={{next_story_id}}` when prompted.
 <!-- ========================= -->
 
 <step n="20" goal="Data mode output">
-  <action>Load and parse {sprint_status_file} non-interactively. Do not prompt for corrections in data mode.</action>
-  <action>If {sprint_status_file} is missing or invalid, return explicit empty/default template outputs instead of asking the user for input.</action>
-  <action>Compute recommendation same as Step 3 using deterministic selection rules only</action>
-  <template-output>all_done = {{all_done}}</template-output>
+  <action>Load and parse {sprint_status_file} same as Step 2</action>
+  <action>Compute recommendation same as Step 3</action>
   <template-output>next_workflow_id = {{next_workflow_id}}</template-output>
   <template-output>next_story_id = {{next_story_id}}</template-output>
   <template-output>count_backlog = {{count_backlog}}</template-output>

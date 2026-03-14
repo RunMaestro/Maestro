@@ -32,7 +32,7 @@
 ### Step 3: Execute Sharding
 
 - Inform user that sharding is beginning
-- Execute command: `npx @kayvan/markdown-tree-parser explode "[source-document]" "[destination-folder]"`
+- Execute command: `npx @kayvan/markdown-tree-parser explode [source-document] [destination-folder]`
 - Capture command output and any errors
 - If command fails: HALT and display error to user
 
