@@ -39,6 +39,7 @@ import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -811,21 +812,13 @@ export function SshRemoteModal({
 							{t('ssh_modal.disabled_description')}
 						</div>
 					</div>
-					<button
-						type="button"
-						onClick={() => setEnabled(!enabled)}
-						className="w-12 h-6 rounded-full transition-colors relative"
-						style={{
-							backgroundColor: enabled ? theme.colors.accent : theme.colors.bgActivity,
-						}}
-					>
-						<div
-							className="absolute top-1 w-4 h-4 rounded-full bg-white transition-transform"
-							style={{
-								transform: enabled ? 'translateX(26px)' : 'translateX(4px)',
-							}}
-						/>
-					</button>
+					<ToggleSwitch
+						checked={enabled}
+						onChange={() => setEnabled(!enabled)}
+						theme={theme}
+						size="lg"
+						inactiveColor={theme.colors.bgActivity}
+					/>
 				</div>
 			</div>
 		</Modal>

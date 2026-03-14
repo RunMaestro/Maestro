@@ -183,7 +183,7 @@ describe('DurationTrendsChart', () => {
 		it('toggles smoothing on when clicked', () => {
 			render(<DurationTrendsChart data={mockData} timeRange="week" theme={theme} />);
 
-			const toggleButton = screen.getByRole('button', { name: /smoothing/i });
+			const toggleButton = screen.getByRole('switch', { name: /smoothing/i });
 			fireEvent.click(toggleButton);
 
 			// Legend should now show "Moving Average"
@@ -193,7 +193,7 @@ describe('DurationTrendsChart', () => {
 		it('shows window size when smoothing is on', () => {
 			render(<DurationTrendsChart data={mockData} timeRange="week" theme={theme} />);
 
-			const toggleButton = screen.getByRole('button', { name: /smoothing/i });
+			const toggleButton = screen.getByRole('switch', { name: /smoothing/i });
 			fireEvent.click(toggleButton);
 
 			expect(screen.getByText(/Window: \d+ periods/)).toBeInTheDocument();
@@ -202,7 +202,7 @@ describe('DurationTrendsChart', () => {
 		it('toggles smoothing off when clicked again', () => {
 			render(<DurationTrendsChart data={mockData} timeRange="week" theme={theme} />);
 
-			const toggleButton = screen.getByRole('button', { name: /smoothing/i });
+			const toggleButton = screen.getByRole('switch', { name: /smoothing/i });
 
 			// Turn on
 			fireEvent.click(toggleButton);
@@ -292,7 +292,7 @@ describe('DurationTrendsChart', () => {
 		it('applies border color to toggle button', () => {
 			render(<DurationTrendsChart data={mockData} timeRange="week" theme={theme} />);
 
-			const toggleButton = screen.getByRole('button', { name: /smoothing/i });
+			const toggleButton = screen.getByRole('switch', { name: /smoothing/i });
 			expect(toggleButton).toHaveStyle({
 				backgroundColor: expect.stringMatching(/^(rgb|#)/),
 			});

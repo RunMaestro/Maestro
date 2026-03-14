@@ -13,6 +13,7 @@ import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -125,21 +126,12 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							</div>
 						</div>
 					</div>
-					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.directorNotes ? '' : 'opacity-50'}`}
-						style={{
-							backgroundColor: encoreFeatures.directorNotes
-								? theme.colors.accent
-								: theme.colors.border,
-						}}
-					>
-						<div
-							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-							style={{
-								transform: encoreFeatures.directorNotes ? 'translateX(22px)' : 'translateX(2px)',
-							}}
-						/>
-					</div>
+					<ToggleSwitch
+						checked={encoreFeatures.directorNotes}
+						theme={theme}
+						size="md"
+						className={encoreFeatures.directorNotes ? '' : 'opacity-50'}
+					/>
 				</button>
 
 				{/* Director's Notes Settings (shown when enabled) */}

@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 
 // Data point for the chart
 interface DataPoint {
@@ -320,21 +321,15 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 						style={{ color: theme.colors.textDim }}
 					>
 						<span className="text-xs">Smoothing:</span>
-						<button
-							onClick={() => setShowSmoothed((prev) => !prev)}
-							className="relative w-9 h-5 rounded-full transition-colors"
-							style={{
-								backgroundColor: showSmoothed ? primaryColor : `${theme.colors.border}80`,
-							}}
-							aria-label={showSmoothed ? 'Disable smoothing' : 'Enable smoothing'}
-						>
-							<span
-								className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform shadow-sm"
-								style={{
-									transform: showSmoothed ? 'translateX(16px)' : 'translateX(0)',
-								}}
-							/>
-						</button>
+						<ToggleSwitch
+							checked={showSmoothed}
+							onChange={() => setShowSmoothed((prev) => !prev)}
+							theme={theme}
+							size="sm"
+							activeColor={primaryColor}
+							inactiveColor={`${theme.colors.border}80`}
+							ariaLabel={showSmoothed ? 'Disable smoothing' : 'Enable smoothing'}
+						/>
 					</label>
 				</div>
 			</div>
