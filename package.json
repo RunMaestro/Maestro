@@ -56,7 +56,8 @@
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
-		"refresh-openspec": "node scripts/refresh-openspec.mjs"
+		"refresh-openspec": "node scripts/refresh-openspec.mjs",
+		"refresh-bmad": "node scripts/refresh-bmad.mjs"
 	},
 	"build": {
 		"npmRebuild": false,
@@ -116,6 +117,10 @@
 				{
 					"from": "src/prompts/openspec",
 					"to": "prompts/openspec"
+				},
+				{
+					"from": "src/prompts/bmad",
+					"to": "prompts/bmad"
 				}
 			]
 		},
@@ -148,6 +153,10 @@
 				{
 					"from": "src/prompts/openspec",
 					"to": "prompts/openspec"
+				},
+				{
+					"from": "src/prompts/bmad",
+					"to": "prompts/bmad"
 				}
 			]
 		},
@@ -172,6 +181,10 @@
 				{
 					"from": "src/prompts/openspec",
 					"to": "prompts/openspec"
+				},
+				{
+					"from": "src/prompts/bmad",
+					"to": "prompts/bmad"
 				}
 			]
 		},
@@ -314,7 +327,7 @@
 		"node": ">=22.0.0"
 	},
 	"lint-staged": {
-		"*": [
+		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts,md,json,yml,yaml,css,scss,less,html,svg}": [
 			"prettier --write"
 		],
 		"*.{js,cjs,mjs,jsx,ts,tsx,mts,cts}": [

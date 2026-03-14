@@ -558,8 +558,14 @@ function MaestroConsoleInner() {
 	} = useGroupChatStore.getState();
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
-	const { ghCliAvailable, sshRemoteConfigs, speckitCommands, openspecCommands, saveFileGistUrl } =
-		useAppInitialization();
+	const {
+		ghCliAvailable,
+		sshRemoteConfigs,
+		speckitCommands,
+		openspecCommands,
+		bmadCommands,
+		saveFileGistUrl,
+	} = useAppInitialization();
 
 	// Wrapper for setActiveSessionId that also dismisses active group chat
 	const setActiveSessionId = useCallback(
@@ -662,7 +668,7 @@ function MaestroConsoleInner() {
 	);
 
 	// Startup effects (splash, GitHub CLI, Windows warning, gist URLs, beta updates,
-	// update check, leaderboard sync, SpecKit/OpenSpec loading, SSH configs, stats DB check,
+	// update check, leaderboard sync, SpecKit/OpenSpec/BMAD loading, SSH configs, stats DB check,
 	// notification settings sync, playground debug) — provided by useAppInitialization hook
 
 	// Expose debug helpers to window for console access
@@ -693,10 +699,12 @@ function MaestroConsoleInner() {
 	const customAICommandsRef = useRef(customAICommands);
 	const speckitCommandsRef = useRef(speckitCommands);
 	const openspecCommandsRef = useRef(openspecCommands);
+	const bmadCommandsRef = useRef(bmadCommands);
 	const fileTabAutoRefreshEnabledRef = useRef(fileTabAutoRefreshEnabled);
 	customAICommandsRef.current = customAICommands;
 	speckitCommandsRef.current = speckitCommands;
 	openspecCommandsRef.current = openspecCommands;
+	bmadCommandsRef.current = bmadCommands;
 	fileTabAutoRefreshEnabledRef.current = fileTabAutoRefreshEnabled;
 
 	// Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now provided by useAgentExecution hook
@@ -1044,51 +1052,58 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 	} = useSummarizeAndContinue(activeSession ?? null);
 
-	// Combine custom AI commands with spec-kit and openspec commands for input processing (slash command execution)
-	// This ensures speckit and openspec commands are processed the same way as custom commands
+	// Combine custom AI commands with bundled methodology commands for input processing.
 	const allCustomCommands = useMemo((): CustomAICommand[] => {
-		// Convert speckit commands to CustomAICommand format
 		const speckitAsCustom: CustomAICommand[] = speckitCommands.map((cmd) => ({
 			id: `speckit-${cmd.id}`,
 			command: cmd.command,
 			description: cmd.description,
 			prompt: cmd.prompt,
-			isBuiltIn: true, // Speckit commands are built-in (bundled)
+			isBuiltIn: true,
 		}));
-		// Convert openspec commands to CustomAICommand format
 		const openspecAsCustom: CustomAICommand[] = openspecCommands.map((cmd) => ({
 			id: `openspec-${cmd.id}`,
 			command: cmd.command,
 			description: cmd.description,
 			prompt: cmd.prompt,
-			isBuiltIn: true, // OpenSpec commands are built-in (bundled)
+			isBuiltIn: true,
 		}));
-		return [...customAICommands, ...speckitAsCustom, ...openspecAsCustom];
-	}, [customAICommands, speckitCommands, openspecCommands]);
+		const bmadAsCustom: CustomAICommand[] = bmadCommands.map((cmd) => ({
+			id: `bmad-${cmd.id}`,
+			command: cmd.command,
+			description: cmd.description,
+			prompt: cmd.prompt,
+			isBuiltIn: true,
+		}));
+		return [...customAICommands, ...speckitAsCustom, ...openspecAsCustom, ...bmadAsCustom];
+	}, [customAICommands, speckitCommands, openspecCommands, bmadCommands]);
 
-	// Combine built-in slash commands with custom AI commands, spec-kit commands, openspec commands, AND agent-specific commands for autocomplete
+	// Combine built-in slash commands with custom AI commands, bundled methodology
+	// commands, and agent-specific commands for autocomplete.
 	const allSlashCommands = useMemo(() => {
 		const customCommandsAsSlash = customAICommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
-			aiOnly: true, // Custom AI commands are only available in AI mode
-			prompt: cmd.prompt, // Include prompt for execution
+			aiOnly: true,
+			prompt: cmd.prompt,
 		}));
-		// Spec Kit commands (bundled from github/spec-kit)
 		const speckitCommandsAsSlash = speckitCommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
-			aiOnly: true, // Spec-kit commands are only available in AI mode
-			prompt: cmd.prompt, // Include prompt for execution
-			isSpeckit: true, // Mark as spec-kit command for special handling
+			aiOnly: true,
+			prompt: cmd.prompt,
 		}));
-		// OpenSpec commands (bundled from Fission-AI/OpenSpec)
 		const openspecCommandsAsSlash = openspecCommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
-			aiOnly: true, // OpenSpec commands are only available in AI mode
-			prompt: cmd.prompt, // Include prompt for execution
-			isOpenspec: true, // Mark as openspec command for special handling
+			aiOnly: true,
+			prompt: cmd.prompt,
+		}));
+		const bmadCommandsAsSlash = bmadCommands.map((cmd) => ({
+			command: cmd.command,
+			description: cmd.description,
+			aiOnly: true,
+			prompt: cmd.prompt,
 		}));
 		// Only include agent-specific commands if the agent supports slash commands
 		// This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
@@ -1109,12 +1124,14 @@ function MaestroConsoleInner() {
 			...customCommandsAsSlash,
 			...speckitCommandsAsSlash,
 			...openspecCommandsAsSlash,
+			...bmadCommandsAsSlash,
 			...agentCommands,
 		];
 	}, [
 		customAICommands,
 		speckitCommands,
 		openspecCommands,
+		bmadCommands,
 		activeSession?.agentCommands,
 		activeSession?.toolType,
 		hasActiveSessionCapability,
@@ -1599,6 +1616,7 @@ function MaestroConsoleInner() {
 		customAICommandsRef,
 		speckitCommandsRef,
 		openspecCommandsRef,
+		bmadCommandsRef,
 		toggleGlobalLive,
 		isLiveMode,
 		sshRemoteConfigs,
@@ -1623,6 +1641,7 @@ function MaestroConsoleInner() {
 		customAICommandsRef,
 		speckitCommandsRef,
 		openspecCommandsRef,
+		bmadCommandsRef,
 	});
 	// Bridge: keep the original processQueuedItemRef in sync
 	processQueuedItemRef.current = processQueuedItem;

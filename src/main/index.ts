@@ -39,6 +39,7 @@ import {
 	registerDebugHandlers,
 	registerSpeckitHandlers,
 	registerOpenSpecHandlers,
+	registerBmadHandlers,
 	registerContextHandlers,
 	registerMarketplaceHandlers,
 	registerStatsHandlers,
@@ -573,6 +574,9 @@ function setupIpcHandlers() {
 
 	// Register OpenSpec handlers (no dependencies needed)
 	registerOpenSpecHandlers();
+
+	// Register BMAD handlers (no dependencies needed)
+	registerBmadHandlers();
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

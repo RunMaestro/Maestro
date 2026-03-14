@@ -2117,6 +2117,64 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 	};
+	bmad: {
+		getMetadata: () => Promise<{
+			success: boolean;
+			metadata?: {
+				lastRefreshed: string;
+				commitSha: string;
+				sourceVersion: string;
+				sourceUrl: string;
+			};
+			error?: string;
+		}>;
+		getPrompts: () => Promise<{
+			success: boolean;
+			commands?: Array<{
+				id: string;
+				command: string;
+				description: string;
+				prompt: string;
+				isCustom: boolean;
+				isModified: boolean;
+			}>;
+			error?: string;
+		}>;
+		getCommand: (slashCommand: string) => Promise<{
+			success: boolean;
+			command?: {
+				id: string;
+				command: string;
+				description: string;
+				prompt: string;
+				isCustom: boolean;
+				isModified: boolean;
+			};
+			error?: string;
+		}>;
+		savePrompt: (
+			id: string,
+			content: string
+		) => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
+		resetPrompt: (id: string) => Promise<{
+			success: boolean;
+			prompt?: string;
+			error?: string;
+		}>;
+		refresh: () => Promise<{
+			success: boolean;
+			metadata?: {
+				lastRefreshed: string;
+				commitSha: string;
+				sourceVersion: string;
+				sourceUrl: string;
+			};
+			error?: string;
+		}>;
+	};
 	// Stats tracking API (global AI interaction statistics)
 	stats: {
 		// Record a query event (interactive conversation turn)

@@ -1,9 +1,11 @@
 /**
  * Preload API for slash commands
  *
- * Provides the window.maestro.speckit and window.maestro.openspec namespaces for:
+ * Provides the window.maestro.speckit, window.maestro.openspec, and
+ * window.maestro.bmad namespaces for:
  * - Spec-Kit slash commands
  * - OpenSpec slash commands
+ * - BMAD slash commands
  */
 
 import { ipcRenderer } from 'electron';
@@ -128,5 +130,55 @@ export function createOpenspecApi() {
 	};
 }
 
+/**
+ * Creates the BMAD API object for preload exposure
+ */
+export function createBmadApi() {
+	return {
+		getMetadata: (): Promise<{
+			success: boolean;
+			metadata?: CommandMetadata;
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:getMetadata'),
+
+		getPrompts: (): Promise<{
+			success: boolean;
+			commands?: CommandDefinition[];
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:getPrompts'),
+
+		getCommand: (
+			slashCommand: string
+		): Promise<{
+			success: boolean;
+			command?: CommandDefinition | null;
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:getCommand', slashCommand),
+
+		savePrompt: (
+			id: string,
+			content: string
+		): Promise<{
+			success: boolean;
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:savePrompt', id, content),
+
+		resetPrompt: (
+			id: string
+		): Promise<{
+			success: boolean;
+			prompt?: string;
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:resetPrompt', id),
+
+		refresh: (): Promise<{
+			success: boolean;
+			metadata?: CommandMetadata;
+			error?: string;
+		}> => ipcRenderer.invoke('bmad:refresh'),
+	};
+}
+
 export type SpeckitApi = ReturnType<typeof createSpeckitApi>;
 export type OpenspecApi = ReturnType<typeof createOpenspecApi>;
+export type BmadApi = ReturnType<typeof createBmadApi>;

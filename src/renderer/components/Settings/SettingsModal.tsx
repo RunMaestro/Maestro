@@ -18,6 +18,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AICommandsPanel } from '../AICommandsPanel';
 import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
 import { OpenSpecCommandsPanel } from '../OpenSpecCommandsPanel';
+import { BmadCommandsPanel } from '../BmadCommandsPanel';
 import { NotificationsPanel } from '../NotificationsPanel';
 import { SshRemotesSection } from './SshRemotesSection';
 import { SshRemoteIgnoreSection } from './SshRemoteIgnoreSection';
@@ -568,6 +569,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 							{/* OpenSpec Commands Section */}
 							<OpenSpecCommandsPanel theme={theme} />
+
+							{/* Divider */}
+							<div className="border-t" style={{ borderColor: theme.colors.border }} />
+
+							{/* BMAD Commands Section */}
+							<BmadCommandsPanel theme={theme} />
 						</div>
 					)}
 

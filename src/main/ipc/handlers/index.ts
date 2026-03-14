@@ -33,6 +33,7 @@ import { registerGroupChatHandlers, GroupChatHandlerDependencies } from './group
 import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
 import { registerOpenSpecHandlers } from './openspec';
+import { registerBmadHandlers } from './bmad';
 import {
 	registerContextHandlers,
 	ContextHandlerDependencies,
@@ -76,6 +77,7 @@ export { registerGroupChatHandlers };
 export { registerDebugHandlers };
 export { registerSpeckitHandlers };
 export { registerOpenSpecHandlers };
+export { registerBmadHandlers };
 export { registerContextHandlers, cleanupAllGroomingSessions, getActiveGroomingSessionCount };
 export { registerMarketplaceHandlers };
 export type { MarketplaceHandlerDependencies };
@@ -224,6 +226,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerSpeckitHandlers();
 	// Register OpenSpec handlers (no dependencies needed)
 	registerOpenSpecHandlers();
+	// Register BMAD handlers (no dependencies needed)
+	registerBmadHandlers();
 	registerContextHandlers({
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,

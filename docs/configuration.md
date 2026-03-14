@@ -17,7 +17,7 @@ Settings are organized into tabs:
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                           |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                          |
-| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), and [OpenSpec](./openspec-commands) prompts                                                                                            |
+| **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                   |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                             |
 | **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                         |
 

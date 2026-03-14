@@ -24,6 +24,7 @@ import type {
 	CustomAICommand,
 	SpecKitCommand,
 	OpenSpecCommand,
+	BmadCommand,
 } from '../types';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
@@ -117,6 +118,7 @@ export interface ProcessQueuedItemDeps {
 	customAICommands: CustomAICommand[];
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
+	bmadCommands?: BmadCommand[];
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -354,7 +356,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
-					deps.openspecCommands.find((cmd) => cmd.command === item.command);
+					deps.openspecCommands.find((cmd) => cmd.command === item.command) ||
+					deps.bmadCommands?.find((cmd) => cmd.command === item.command);
 
 				if (matchingCommand) {
 					let gitBranch: string | undefined;

@@ -34,7 +34,7 @@ import { createSshRemoteApi } from './sshRemote';
 import { createLoggerApi } from './logger';
 import { createClaudeApi, createAgentSessionsApi } from './sessions';
 import { createTempfileApi, createHistoryApi, createCliApi } from './files';
-import { createSpeckitApi, createOpenspecApi } from './commands';
+import { createSpeckitApi, createOpenspecApi, createBmadApi } from './commands';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
 import { createGroupChatApi } from './groupChat';
@@ -144,6 +144,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// OpenSpec API
 	openspec: createOpenspecApi(),
 
+	// BMAD API
+	bmad: createBmadApi(),
+
 	// Notification API
 	notification: createNotificationApi(),
 
@@ -231,6 +234,7 @@ export {
 	// Commands
 	createSpeckitApi,
 	createOpenspecApi,
+	createBmadApi,
 	// Auto Run
 	createAutorunApi,
 	createPlaybooksApi,

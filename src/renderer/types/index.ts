@@ -853,6 +853,24 @@ export interface OpenSpecMetadata {
 	sourceUrl: string; // GitHub repo URL
 }
 
+// BMAD command definition (bundled from bmad-code-org/BMAD-METHOD)
+export interface BmadCommand {
+	id: string; // e.g., 'create-prd'
+	command: string; // e.g., '/bmad-bmm-create-prd'
+	description: string;
+	prompt: string;
+	isCustom: boolean; // BMAD currently ships only upstream commands
+	isModified: boolean; // true if user has edited
+}
+
+// BMAD metadata for tracking version and refresh status
+export interface BmadMetadata {
+	lastRefreshed: string; // ISO date
+	commitSha: string; // Git commit SHA or version tag
+	sourceVersion: string; // Semantic version
+	sourceUrl: string; // GitHub repo URL
+}
+
 // Leaderboard registration data for runmaestro.ai integration
 export interface LeaderboardRegistration {
 	// Required fields
