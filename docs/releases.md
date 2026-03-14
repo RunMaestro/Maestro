@@ -263,7 +263,7 @@ The big changes in the v0.12.x line are the following three:
 - Implemented fuzzy file search in quick actions for instant navigation 🔍
 - Added "clear" command support to clean terminal shell logs 🧹
 - Simplified search highlighting by integrating into markdown pipeline ✨
-- Enhanced update checker to filter prerelease tags like -rc, -beta 🚀
+- Enhanced update checker to filter pre-release tags like -rc, -beta 🚀
 - Fixed RPM package compatibility for OpenSUSE Tumbleweed 🐧 (H/T @JOduMonT)
 - Added libuuid1 support alongside standard libuuid dependency 📦
 - Introduced Cmd+Shift+U shortcut for tab unread toggle ⌨️
