@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { AgentDetector, AGENT_DEFINITIONS, getAgentCapabilities } from '../../agents';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
@@ -26,6 +28,82 @@ const handlerOpts = (
 	context,
 	operation,
 });
+
+// OpenCode built-in slash commands (always available)
+const OPENCODE_BUILTIN_COMMANDS = ['init', 'review', 'undo', 'redo', 'share', 'help', 'models'];
+
+/**
+ * Discover OpenCode slash commands by reading from disk.
+ *
+ * OpenCode commands come from three sources:
+ * 1. Built-in commands (init, review, undo, redo, share, help, models)
+ * 2. Project-local custom commands: .opencode/commands/*.md
+ * 3. Global custom commands: $XDG_CONFIG_HOME/opencode/commands/*.md
+ * 4. Config-based commands: opencode.json "command" property
+ *
+ * Unlike Claude Code (which emits commands via init event), OpenCode commands
+ * are statically defined on disk and can be discovered without spawning the agent.
+ */
+async function discoverOpenCodeSlashCommands(cwd: string): Promise<string[]> {
+	const commands = new Set<string>(OPENCODE_BUILTIN_COMMANDS);
+	const globalConfigBase = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+
+	// Helper: read .md filenames from a commands directory
+	const addCommandsFromDir = async (dir: string) => {
+		try {
+			const files = await fs.promises.readdir(dir);
+			for (const file of files) {
+				if (file.endsWith('.md')) {
+					commands.add(file.replace(/\.md$/, ''));
+				}
+			}
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode commands directory not found: ${dir}`, LOG_CONTEXT);
+			} else {
+				throw error;
+			}
+		}
+	};
+
+	// Helper: read command names from an opencode.json config file
+	const addCommandsFromConfig = async (configPath: string) => {
+		let content: string;
+		try {
+			content = await fs.promises.readFile(configPath, 'utf-8');
+		} catch (error: any) {
+			if (error?.code === 'ENOENT') {
+				logger.debug(`OpenCode config not found: ${configPath}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		let config: any;
+		try {
+			config = JSON.parse(content);
+		} catch {
+			logger.warn(`OpenCode config has invalid JSON, skipping: ${configPath}`, LOG_CONTEXT);
+			return;
+		}
+		if (config.command && typeof config.command === 'object' && !Array.isArray(config.command)) {
+			for (const name of Object.keys(config.command)) {
+				commands.add(name);
+			}
+		}
+	};
+
+	// Read all four sources concurrently
+	await Promise.all([
+		addCommandsFromDir(path.join(cwd, '.opencode', 'commands')),
+		addCommandsFromDir(path.join(globalConfigBase, 'opencode', 'commands')),
+		addCommandsFromConfig(path.join(cwd, 'opencode.json')),
+		addCommandsFromConfig(path.join(globalConfigBase, 'opencode', 'opencode.json')),
+	]);
+
+	const commandList = Array.from(commands);
+	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
+	return commandList;
+}
 
 /**
  * Interface for agent configuration store data
@@ -850,7 +928,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return null;
 				}
 
-				// Only Claude Code supports slash command discovery via init message
+				// Agent-specific discovery paths
+				if (agentId === 'opencode') {
+					return discoverOpenCodeSlashCommands(cwd);
+				}
+
 				if (agentId !== 'claude-code') {
 					logger.debug(`Agent ${agentId} does not support slash command discovery`, LOG_CONTEXT);
 					return null;

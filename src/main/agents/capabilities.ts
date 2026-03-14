@@ -302,7 +302,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsSessionId: true, // sessionID in JSON output (camelCase) - Verified
 		supportsImageInput: true, // -f, --file flag documented - Documented
 		supportsImageInputOnResume: true, // -f flag works with --session flag - Documented
-		supportsSlashCommands: false, // Not investigated
+		supportsSlashCommands: true, // Built-in + custom commands via .opencode/commands/ and opencode.json
 		supportsSessionStorage: true, // ~/.local/share/opencode/storage/ (JSON files) - Verified
 		supportsCostTracking: true, // part.cost in step_finish events - Verified
 		supportsUsageStats: true, // part.tokens in step_finish events - Verified

@@ -89,16 +89,46 @@ export const CLAUDE_BUILTIN_COMMANDS: Record<string, string> = {
 };
 
 /**
- * Get description for Claude Code slash commands
- * Built-in commands have known descriptions, custom ones use a generic description
+ * Built-in OpenCode slash commands with their descriptions
  */
-export function getSlashCommandDescription(cmd: string): string {
+export const OPENCODE_BUILTIN_COMMANDS: Record<string, string> = {
+	init: 'Create or update AGENTS.md for the project',
+	review: 'Review changes (commit, branch, or PR)',
+	undo: 'Revert changes made by OpenCode',
+	redo: 'Restore previously undone changes',
+	share: 'Create a shareable link to the conversation',
+	help: 'List available commands',
+	models: 'Switch models interactively',
+};
+
+/**
+ * Agent-specific built-in command maps, keyed by agent ID
+ */
+const AGENT_BUILTIN_COMMANDS: Record<string, Record<string, string>> = {
+	'claude-code': CLAUDE_BUILTIN_COMMANDS,
+	opencode: OPENCODE_BUILTIN_COMMANDS,
+};
+
+/**
+ * Get description for agent slash commands.
+ * Checks all known agent built-in command maps, then falls back to generic description.
+ */
+export function getSlashCommandDescription(cmd: string, agentId?: string): string {
 	// Remove leading slash if present
 	const cmdName = cmd.startsWith('/') ? cmd.slice(1) : cmd;
 
-	// Check for built-in command
-	if (CLAUDE_BUILTIN_COMMANDS[cmdName]) {
-		return CLAUDE_BUILTIN_COMMANDS[cmdName];
+	// If a specific agent is provided, check that agent's commands first
+	if (agentId && AGENT_BUILTIN_COMMANDS[agentId]?.[cmdName]) {
+		return AGENT_BUILTIN_COMMANDS[agentId][cmdName];
+	}
+
+	// Check all agent command maps only when no specific agent was requested
+	if (!agentId) {
+		for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
+			if (commands[cmdName]) {
+				return commands[cmdName];
+			}
+		}
 	}
 
 	// For plugin commands (e.g., "plugin-name:command"), use the full name as description hint
@@ -108,5 +138,5 @@ export function getSlashCommandDescription(cmd: string): string {
 	}
 
 	// Generic description for unknown commands
-	return 'Claude Code command';
+	return 'Agent command';
 }

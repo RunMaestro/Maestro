@@ -180,7 +180,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			.getState()
 			.sessions.find((s) => s.id === activeSession?.id);
 		if (!currentSession) return;
-		if (currentSession.toolType !== 'claude-code') return;
+		if (currentSession.toolType !== 'claude-code' && currentSession.toolType !== 'opencode') return;
 		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
 
 		const sessionId = currentSession.id;
@@ -242,7 +242,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const agentCommandObjects = ((agentSlashCommands || []) as string[]).map((cmd) => ({
 					command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-					description: getSlashCommandDescription(cmd),
+					description: getSlashCommandDescription(cmd, currentSession.toolType),
 				}));
 
 				if (agentCommandObjects.length > 0) {
@@ -264,7 +264,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			}
 		};
 
-		fetchCustomCommands();
+		if (currentSession.toolType === 'claude-code') {
+			fetchCustomCommands();
+		}
 		discoverAgentCommands();
 
 		return () => {
