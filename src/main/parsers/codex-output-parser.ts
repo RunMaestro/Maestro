@@ -25,7 +25,7 @@ import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { captureException } from '../utils/sentry';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
-import * as fs from 'fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -69,6 +69,149 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	default: 400000,
 };
 
+const DEFAULT_CODEX_MODEL = 'gpt-5.2-codex-max';
+const CODEX_CONFIG_CACHE_TTL_MS = 60_000;
+
+interface CodexConfig {
+	model?: string;
+	contextWindow?: number;
+}
+
+interface CachedCodexConfig {
+	value: CodexConfig;
+	loadedAt: number;
+	configPath: string;
+}
+
+let cachedCodexConfig: CachedCodexConfig | null = null;
+let loadCodexConfigPromise: Promise<CodexConfig> | null = null;
+let loadCodexConfigPath: string | null = null;
+let configInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getDefaultCodexConfig(): CodexConfig {
+	return {
+		model: DEFAULT_CODEX_MODEL,
+		contextWindow: getModelContextWindow(DEFAULT_CODEX_MODEL),
+	};
+}
+
+function getCodexConfigPath(): string {
+	const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+	return path.join(codexHome, 'config.toml');
+}
+
+function parseCodexConfigContent(content: string): CodexConfig {
+	const result: CodexConfig = {};
+
+	// Simple TOML parsing for the fields we care about
+	// model = "gpt-5.1"
+	const modelMatch = content.match(/^\s*model\s*=\s*"([^"]+)"/m);
+	if (modelMatch) {
+		result.model = modelMatch[1];
+	}
+
+	// model_context_window = 128000
+	const windowMatch = content.match(/^\s*model_context_window\s*=\s*(\d+)/m);
+	if (windowMatch) {
+		result.contextWindow = parseInt(windowMatch[1], 10);
+	}
+
+	return result;
+}
+
+function hasValidCachedCodexConfig(configPath: string): boolean {
+	return (
+		!!cachedCodexConfig &&
+		cachedCodexConfig.configPath === configPath &&
+		Date.now() - cachedCodexConfig.loadedAt < CODEX_CONFIG_CACHE_TTL_MS
+	);
+}
+
+function scheduleCodexConfigInvalidation(): void {
+	if (configInvalidationTimer) {
+		clearTimeout(configInvalidationTimer);
+	}
+	configInvalidationTimer = setTimeout(() => {
+		cachedCodexConfig = null;
+	}, CODEX_CONFIG_CACHE_TTL_MS);
+}
+
+export function invalidateCodexConfigCache(): void {
+	cachedCodexConfig = null;
+	loadCodexConfigPromise = null;
+	loadCodexConfigPath = null;
+	if (configInvalidationTimer) {
+		clearTimeout(configInvalidationTimer);
+		configInvalidationTimer = null;
+	}
+}
+
+export async function loadCodexConfig(): Promise<CodexConfig> {
+	const configPath = getCodexConfigPath();
+	const requestedConfigPath = configPath;
+
+	if (hasValidCachedCodexConfig(configPath) && cachedCodexConfig) {
+		return cachedCodexConfig.value;
+	}
+
+	if (loadCodexConfigPromise && loadCodexConfigPath === configPath) {
+		return loadCodexConfigPromise;
+	}
+
+	loadCodexConfigPath = configPath;
+	loadCodexConfigPromise = (async () => {
+		try {
+			await fs.access(configPath);
+			const content = await fs.readFile(configPath, 'utf8');
+			const parsedConfig = parseCodexConfigContent(content);
+			if (loadCodexConfigPath === requestedConfigPath) {
+				cachedCodexConfig = {
+					value: parsedConfig,
+					loadedAt: Date.now(),
+					configPath,
+				};
+				scheduleCodexConfigInvalidation();
+			}
+			return parsedConfig;
+		} catch {
+			if (loadCodexConfigPath === requestedConfigPath) {
+				cachedCodexConfig = {
+					value: {},
+					loadedAt: Date.now(),
+					configPath,
+				};
+				scheduleCodexConfigInvalidation();
+			}
+			return {};
+		}
+	})();
+
+	try {
+		return await loadCodexConfigPromise;
+	} finally {
+		if (loadCodexConfigPath === configPath) {
+			loadCodexConfigPromise = null;
+			loadCodexConfigPath = null;
+		}
+	}
+}
+
+function getCachedCodexConfigSnapshot(): CodexConfig {
+	const configPath = getCodexConfigPath();
+	if (hasValidCachedCodexConfig(configPath) && cachedCodexConfig) {
+		return cachedCodexConfig.value;
+	}
+	return {};
+}
+
+function resolveCodexConfig(config: CodexConfig): { model: string; contextWindow: number } {
+	const model = config.model || DEFAULT_CODEX_MODEL;
+	return {
+		model,
+		contextWindow: config.contextWindow || getModelContextWindow(model),
+	};
+}
+
 /**
  * Get the context window size for a given model
  */
@@ -84,42 +227,6 @@ function getModelContextWindow(model: string): number {
 		}
 	}
 	return MODEL_CONTEXT_WINDOWS['default'];
-}
-
-/**
- * Read Codex configuration from ~/.codex/config.toml
- * Returns the model name and context window override if set
- */
-function readCodexConfig(): { model?: string; contextWindow?: number } {
-	try {
-		const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
-		const configPath = path.join(codexHome, 'config.toml');
-
-		if (!fs.existsSync(configPath)) {
-			return {};
-		}
-
-		const content = fs.readFileSync(configPath, 'utf8');
-		const result: { model?: string; contextWindow?: number } = {};
-
-		// Simple TOML parsing for the fields we care about
-		// model = "gpt-5.1"
-		const modelMatch = content.match(/^\s*model\s*=\s*"([^"]+)"/m);
-		if (modelMatch) {
-			result.model = modelMatch[1];
-		}
-
-		// model_context_window = 128000
-		const windowMatch = content.match(/^\s*model_context_window\s*=\s*(\d+)/m);
-		if (windowMatch) {
-			result.contextWindow = parseInt(windowMatch[1], 10);
-		}
-
-		return result;
-	} catch {
-		// Config file doesn't exist or can't be read - use defaults
-		return {};
-	}
 }
 
 /**
@@ -183,7 +290,6 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
-	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
@@ -191,12 +297,20 @@ export class CodexOutputParser implements AgentOutputParser {
 	private lastToolName: string | null = null;
 
 	constructor() {
-		// Read config once at initialization
-		const config = readCodexConfig();
-		this.model = config.model || 'gpt-5.2-codex-max';
+		const initialConfig = resolveCodexConfig({
+			...getDefaultCodexConfig(),
+			...getCachedCodexConfigSnapshot(),
+		});
+		this.contextWindow = initialConfig.contextWindow;
 
-		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
-		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+		// Refresh config asynchronously and cache it for parser instances.
+		void loadCodexConfig().then((freshConfig) => {
+			const resolvedConfig = resolveCodexConfig({
+				...getDefaultCodexConfig(),
+				...freshConfig,
+			});
+			this.contextWindow = resolvedConfig.contextWindow;
+		});
 	}
 
 	/**

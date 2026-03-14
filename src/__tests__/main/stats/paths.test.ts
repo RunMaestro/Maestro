@@ -69,9 +69,21 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsAccess = vi.fn((pathArg: string) => {
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
+const mockFsMkdir = vi.fn(() => Promise.resolve());
+const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
+const mockFsCopyFile = vi.fn(() => Promise.resolve());
+const mockFsUnlink = vi.fn(() => Promise.resolve());
+const mockFsRename = vi.fn(() => Promise.resolve());
+const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
 
 // Mock fs
-vi.mock('fs', () => ({
+const mockFsModule = {
 	existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
 	mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
 	copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
@@ -80,6 +92,20 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+};
+
+vi.mock('fs', () => ({
+	...mockFsModule,
+	default: mockFsModule,
 }));
 
 // Mock logger
@@ -127,7 +153,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(macOsUserData, 'stats.db'));
 		});
@@ -152,7 +178,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(macOsUserData, 'stats.db'));
 		});
@@ -178,7 +204,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// path.join will use the platform's native separator
 			expect(lastDbPath).toBe(path.join(windowsUserData, 'stats.db'));
@@ -205,7 +231,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(windowsUserData, 'stats.db'));
 		});
@@ -217,7 +243,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(windowsUncPath, 'stats.db'));
 		});
@@ -230,7 +256,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(portablePath, 'stats.db'));
 		});
@@ -245,7 +271,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(linuxUserData, 'stats.db'));
 		});
@@ -258,7 +284,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(customConfigHome, 'stats.db'));
 		});
@@ -270,7 +296,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(linuxUserData, 'stats.db'));
 		});
@@ -294,7 +320,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(snapPath, 'stats.db'));
 		});
@@ -360,7 +386,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(mockFsMkdirSync).toHaveBeenCalledWith(macOsUserData, { recursive: true });
 		});
@@ -373,7 +399,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(mockFsMkdirSync).toHaveBeenCalledWith(windowsUserData, { recursive: true });
 		});
@@ -386,7 +412,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(mockFsMkdirSync).toHaveBeenCalledWith(linuxUserData, { recursive: true });
 		});
@@ -399,7 +425,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(mockFsMkdirSync).toHaveBeenCalledWith(deepPath, { recursive: true });
 		});
@@ -413,7 +439,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(unicodePath, 'stats.db'));
 		});
@@ -425,7 +451,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(emojiPath, 'stats.db'));
 		});
@@ -450,7 +476,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(quotedPath, 'stats.db'));
 		});
@@ -475,7 +501,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(lastDbPath).toBe(path.join(ampersandPath, 'stats.db'));
 		});
@@ -520,7 +546,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 				const { StatsDB } = await import('../../../main/stats');
 				const db = new StatsDB();
-				db.initialize();
+				await db.initialize();
 
 				expect(db.isReady()).toBe(true);
 			}
@@ -546,7 +572,7 @@ describe('Cross-platform database path resolution (macOS, Windows, Linux)', () =
 
 				const { StatsDB } = await import('../../../main/stats');
 				const db = new StatsDB();
-				db.initialize();
+				await db.initialize();
 
 				expect(mockFsMkdirSync).toHaveBeenCalledWith(platformPath, { recursive: true });
 			}
@@ -701,7 +727,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should normalize Windows projectPath to forward slashes', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.insertQueryEvent({
 				sessionId: 'session-1',
@@ -731,7 +757,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should preserve Unix projectPath unchanged', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.insertQueryEvent({
 				sessionId: 'session-1',
@@ -760,7 +786,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should store null for undefined projectPath', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.insertQueryEvent({
 				sessionId: 'session-1',
@@ -804,7 +830,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Query with Windows-style path (backslashes)
 			const events = db.getQueryEvents('day', {
@@ -824,7 +850,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('week', {
 				projectPath: '/Users/testuser/Projects/MyApp',
@@ -839,7 +865,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should normalize Windows documentPath and projectPath', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.insertAutoRunSession({
 				sessionId: 'session-1',
@@ -868,7 +894,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should handle null paths correctly', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.insertAutoRunSession({
 				sessionId: 'session-1',
@@ -896,7 +922,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should normalize Windows documentPath on update', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.updateAutoRunSession('auto-run-1', {
 				duration: 120000,
@@ -911,7 +937,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 		it('should handle undefined documentPath in update (no change)', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.updateAutoRunSession('auto-run-1', {
 				duration: 120000,
@@ -956,7 +982,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 
 			const { StatsDB, normalizePath } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Both Windows and Unix style filters should normalize to the same value
 			const windowsFilter = 'C:\\Users\\TestUser\\Projects\\MyApp';

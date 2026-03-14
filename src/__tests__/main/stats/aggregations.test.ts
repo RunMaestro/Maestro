@@ -69,9 +69,20 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsAccess = vi.fn((pathArg: string) => {
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
+const mockFsMkdir = vi.fn(() => Promise.resolve());
+const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
+const mockFsCopyFile = vi.fn(() => Promise.resolve());
+const mockFsUnlink = vi.fn(() => Promise.resolve());
+const mockFsRename = vi.fn(() => Promise.resolve());
+const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
 
-// Mock fs
-vi.mock('fs', () => ({
+const mockFsModule = {
 	existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
 	mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
 	copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
@@ -80,6 +91,22 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+};
+
+// Mock fs
+vi.mock('fs', () => ({
+	...mockFsModule,
+	default: mockFsModule,
 }));
 
 // Mock logger
@@ -125,7 +152,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('day');
 
@@ -147,7 +174,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('week');
 
@@ -168,7 +195,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('month');
 
@@ -189,7 +216,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('year');
 
@@ -207,7 +234,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should filter by "all" range (from epoch/timestamp 0)', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('all');
 
@@ -229,7 +256,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('day');
 
@@ -249,7 +276,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('week');
 
@@ -269,7 +296,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('month');
 
@@ -289,7 +316,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('year');
 
@@ -306,7 +333,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should filter Auto Run sessions by "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('all');
 
@@ -327,7 +354,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 			mockStatement.get.mockClear();
 
 			db.getAggregatedStats('day');
@@ -349,7 +376,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 			mockStatement.get.mockClear();
 
 			db.getAggregatedStats('week');
@@ -370,7 +397,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 			mockStatement.get.mockClear();
 
 			db.getAggregatedStats('month');
@@ -391,7 +418,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 			mockStatement.get.mockClear();
 
 			db.getAggregatedStats('year');
@@ -409,7 +436,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should aggregate stats for "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 			mockStatement.get.mockClear();
 
 			db.getAggregatedStats('all');
@@ -431,7 +458,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.exportToCsv('day');
 
@@ -448,7 +475,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should export CSV for "all" range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.exportToCsv('all');
 
@@ -466,7 +493,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should include start_time >= ? in getQueryEvents SQL', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('week');
 
@@ -482,7 +509,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should include start_time >= ? in getAutoRunSessions SQL', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAutoRunSessions('month');
 
@@ -498,7 +525,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should include start_time >= ? in aggregation queries', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('year');
 
@@ -555,7 +582,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const events = db.getQueryEvents('day');
 
@@ -569,7 +596,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			// We verify this by checking the SQL structure
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('day');
 
@@ -585,7 +612,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should return consistent results for multiple calls with same range', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Call twice in quick succession
 			db.getQueryEvents('week');
@@ -607,7 +634,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should combine time range with agentType filter', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('week', { agentType: 'claude-code' });
 
@@ -623,7 +650,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should combine time range with source filter', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('month', { source: 'auto' });
 
@@ -639,7 +666,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		it('should combine time range with multiple filters', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getQueryEvents('year', {
 				agentType: 'opencode',
@@ -694,7 +721,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -707,7 +734,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('month');
 
@@ -720,7 +747,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -734,7 +761,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('year');
 
@@ -750,7 +777,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('all');
 
@@ -766,7 +793,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -779,7 +806,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -794,7 +821,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('month');
 
@@ -808,7 +835,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -822,7 +849,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -841,7 +868,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Reset to control exact mock responses for getAggregatedStats
 			mockStatement.all.mockReset();
@@ -873,7 +900,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('month');
 
@@ -899,7 +926,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -919,7 +946,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -949,7 +976,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -966,7 +993,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('month');
 
@@ -983,7 +1010,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('year');
 
@@ -997,7 +1024,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -1016,7 +1043,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('all');
 
@@ -1040,7 +1067,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -1056,7 +1083,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -1074,7 +1101,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -1098,7 +1125,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -1122,7 +1149,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -1145,7 +1172,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -1164,7 +1191,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats1 = db.getAggregatedStats('week');
 			const stats2 = db.getAggregatedStats('week');
@@ -1180,7 +1207,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Simulate concurrent calls
 			const [result1, result2, result3] = [
@@ -1202,7 +1229,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('week');
 
@@ -1221,7 +1248,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('month');
 
@@ -1241,7 +1268,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('year');
 
@@ -1255,13 +1282,33 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(bySourceCall).toBeDefined();
 		});
 
+		it('should pre-group queryEvents by time bucket for byAgent to align compound index usage', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			await db.initialize();
+
+			db.getAggregatedStats('year');
+
+			const prepareCalls = mockDb.prepare.mock.calls;
+			const byAgentCall = prepareCalls.find(
+				(call) =>
+					(call[0] as string).includes('GROUP BY start_time, agent_type') &&
+					(call[0] as string).includes('FROM query_events')
+			);
+
+			expect(byAgentCall).toBeDefined();
+		});
+
 		it('should use date() function for daily grouping', async () => {
 			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
 			mockStatement.all.mockReturnValue([]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('all');
 
@@ -1279,7 +1326,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.getAggregatedStats('week');
 
@@ -1302,7 +1349,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('day');
 
@@ -1318,7 +1365,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('all');
 
@@ -1338,7 +1385,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 
@@ -1359,7 +1406,7 @@ describe('Aggregation queries return correct calculations', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const stats = db.getAggregatedStats('week');
 

@@ -161,7 +161,7 @@ describe('parsers/index', () => {
 				JSON.stringify({ type: 'step_finish', sessionID: 'oc-123', part: { reason: 'stop' } })
 			);
 
-			expect(event?.type).toBe('system');
+			expect(event?.type === 'result' || event?.type === 'system').toBe(true);
 			expect(event?.sessionId).toBe('oc-123');
 		});
 

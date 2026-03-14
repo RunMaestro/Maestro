@@ -2,6 +2,10 @@ import { useMemo, useState, useEffect, type ReactNode } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
 
+const NUMBER_VALUE_REGEX = /^[($\-]*[\d,]+(\.\d+)?[%)]*$/;
+const REGEX_ESCAPE_REGEX = /[.*+?^${}()|[\]\\]/g;
+const NUMERIC_CLEANUP_REGEX = /[,$%()]/g;
+
 interface CsvTableRendererProps {
 	content: string;
 	theme: Theme;
@@ -82,7 +86,9 @@ function isNumericValue(value: string): boolean {
 	const trimmed = value.trim();
 	if (trimmed === '') return false;
 	// Match: optional currency/sign prefix, digits with optional commas, optional decimal, optional suffix
-	return /^[($\-]*[\d,]+(\.\d+)?[%)]*$/.test(trimmed);
+	return /^(?:-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?%?|\(\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\)%?)$/.test(
+		trimmed
+	);
 }
 
 /**
@@ -125,8 +131,8 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 	if (bVal === '') return -1;
 
 	// Try numeric comparison
-	const aNum = parseFloat(aVal.replace(/[,$%()]/g, ''));
-	const bNum = parseFloat(bVal.replace(/[,$%()]/g, ''));
+	const aNum = parseFloat(aVal.replace(NUMERIC_CLEANUP_REGEX, ''));
+	const bNum = parseFloat(bVal.replace(NUMERIC_CLEANUP_REGEX, ''));
 
 	if (!isNaN(aNum) && !isNaN(bNum)) {
 		return direction === 'asc' ? aNum - bNum : bNum - aNum;
@@ -140,19 +146,22 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 /**
  * Highlight matching substrings within a cell value.
  */
-function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const regex = new RegExp(`(${escaped})`, 'gi');
-	const parts = text.split(regex);
+function highlightMatches(
+	text: string,
+	searchRegex: RegExp | null,
+	accentColor: string
+): ReactNode {
+	if (!searchRegex) return text;
+	const parts = text.split(searchRegex);
 	if (parts.length === 1) return text;
 	// Use running character offset as key to guarantee uniqueness across
 	// identical substrings appearing at different positions.
 	let offset = 0;
-	return parts.map((part) => {
-		const key = offset;
+	return parts.map((part, index) => {
+		const key = `${offset}-${index}`;
 		offset += part.length;
-		return regex.test(part) ? (
+		const isMatch = index % 2 === 1;
+		return isMatch ? (
 			<mark
 				key={key}
 				style={{
@@ -181,6 +190,11 @@ export function CsvTableRenderer({
 	const query = (searchQuery?.trim() ?? '').slice(0, 200);
 
 	const allRows = useMemo(() => parseCsv(content, delimiter), [content, delimiter]);
+	const searchMatchRegex = useMemo(() => {
+		if (!query) return null;
+		const escapedQuery = query.replace(REGEX_ESCAPE_REGEX, '\\$&');
+		return new RegExp(`(${escapedQuery})`, 'gi');
+	}, [query]);
 
 	const headerRow = allRows[0] ?? [];
 	const columnCount = useMemo(
@@ -364,8 +378,8 @@ export function CsvTableRenderer({
 										}}
 										title={row[colIdx] ?? ''}
 									>
-										{query
-											? highlightMatches(row[colIdx] ?? '', query, theme.colors.accent)
+										{searchMatchRegex
+											? highlightMatches(row[colIdx] ?? '', searchMatchRegex, theme.colors.accent)
 											: (row[colIdx] ?? '')}
 									</td>
 								))}

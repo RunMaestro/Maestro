@@ -51,7 +51,7 @@ export class ChildProcessSpawner {
 	/**
 	 * Spawn a child process for a session
 	 */
-	spawn(config: ProcessConfig): SpawnResult {
+	async spawn(config: ProcessConfig): Promise<SpawnResult> {
 		const {
 			sessionId,
 			toolType,
@@ -110,13 +110,9 @@ export class ChildProcessSpawner {
 		} else if (hasImages && prompt && imageArgs) {
 			// For agents that use file-based image args (like Codex, OpenCode)
 			finalArgs = [...args];
-			tempImageFiles = [];
-			for (let i = 0; i < images.length; i++) {
-				const tempPath = saveImageToTempFile(images[i], i);
-				if (tempPath) {
-					tempImageFiles.push(tempPath);
-				}
-			}
+			tempImageFiles = (
+				await Promise.all(images.map((image, i) => saveImageToTempFile(image, i)))
+			).filter((tempPath): tempPath is string => tempPath !== null);
 
 			const isResumeWithPromptEmbed =
 				capabilities.imageResumeMode === 'prompt-embed' && args.some((a) => a === 'resume');

@@ -1,5 +1,43 @@
-import { describe, it, expect } from 'vitest';
-import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import {
+	CodexOutputParser,
+	invalidateCodexConfigCache,
+	loadCodexConfig,
+} from '../../../main/parsers/codex-output-parser';
+
+const originalCodexHome = process.env.CODEX_HOME;
+let tempCodexHome: string | null = null;
+
+async function createTempCodexConfig(content: string): Promise<string> {
+	const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-codex-config-'));
+	await fs.writeFile(path.join(codexHome, 'config.toml'), content);
+	tempCodexHome = codexHome;
+	process.env.CODEX_HOME = codexHome;
+	return codexHome;
+}
+
+async function cleanupTempCodexConfig(): Promise<void> {
+	if (!tempCodexHome) {
+		return;
+	}
+	await fs.rm(tempCodexHome, { recursive: true, force: true });
+	tempCodexHome = null;
+}
+
+afterEach(async () => {
+	await cleanupTempCodexConfig();
+	if (originalCodexHome === undefined) {
+		delete process.env.CODEX_HOME;
+	} else {
+		process.env.CODEX_HOME = originalCodexHome;
+	}
+	invalidateCodexConfigCache();
+	vi.restoreAllMocks();
+});
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -630,6 +668,83 @@ describe('CodexOutputParser', () => {
 				exitCode: 1,
 				stderr: 'error stderr',
 				stdout: 'output stdout',
+			});
+		});
+	});
+
+	describe('codex config cache', () => {
+		it('loads config asynchronously and applies contextWindow from cache', async () => {
+			await createTempCodexConfig('model = "gpt-5.1"\nmodel_context_window = 123000');
+
+			const parser = new CodexOutputParser();
+			await vi.waitFor(async () => {
+				const event = parser.parseJsonLine(
+					JSON.stringify({
+						type: 'turn.completed',
+						usage: {
+							input_tokens: 100,
+							output_tokens: 20,
+						},
+					})
+				);
+				expect(event?.usage?.contextWindow).toBe(123000);
+			});
+		});
+
+		it('reads codex config from disk once and reuses cached value for additional parser instances', async () => {
+			await createTempCodexConfig('model = "gpt-5.1"\nmodel_context_window = 77777');
+
+			const config = await loadCodexConfig();
+			expect(config.contextWindow).toBe(77777);
+
+			const parserA = new CodexOutputParser();
+			const eventA = parserA.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 20 },
+				})
+			);
+			expect(eventA?.usage?.contextWindow).toBe(77777);
+
+			const parserB = new CodexOutputParser();
+			const eventB = parserB.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 20 },
+				})
+			);
+			expect(eventB?.usage?.contextWindow).toBe(77777);
+		});
+
+		it('re-reads config after invalidation', async () => {
+			await createTempCodexConfig('model = "gpt-5.1"\nmodel_context_window = 55555');
+			const parserA = new CodexOutputParser();
+			await vi.waitFor(async () => {
+				const eventA = parserA.parseJsonLine(
+					JSON.stringify({
+						type: 'turn.completed',
+						usage: { input_tokens: 100, output_tokens: 20 },
+					})
+				);
+				expect(eventA?.usage?.contextWindow).toBe(55555);
+			});
+
+			await fs.writeFile(
+				path.join(tempCodexHome!, 'config.toml'),
+				'model = "gpt-5.1"\nmodel_context_window = 88888'
+			);
+			invalidateCodexConfigCache();
+			await loadCodexConfig();
+
+			const parserB = new CodexOutputParser();
+			await vi.waitFor(async () => {
+				const eventB = parserB.parseJsonLine(
+					JSON.stringify({
+						type: 'turn.completed',
+						usage: { input_tokens: 100, output_tokens: 20 },
+					})
+				);
+				expect(eventB?.usage?.contextWindow).toBe(88888);
 			});
 		});
 	});

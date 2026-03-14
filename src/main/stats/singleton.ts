@@ -27,9 +27,9 @@ export function getStatsDB(): StatsDB {
 /**
  * Initialize the stats database (call on app ready)
  */
-export function initializeStatsDB(): void {
+export async function initializeStatsDB(): Promise<void> {
 	const db = getStatsDB();
-	db.initialize();
+	await db.initialize();
 }
 
 /**

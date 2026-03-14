@@ -23,12 +23,9 @@ export interface GroupChatInfo {
 /**
  * Count messages in a group chat log file without loading content.
  */
-function countMessages(logPath: string): number {
+async function countMessages(logPath: string): Promise<number> {
 	try {
-		if (!fs.existsSync(logPath)) {
-			return 0;
-		}
-		const content = fs.readFileSync(logPath, 'utf-8');
+		const content = await fs.promises.readFile(logPath, 'utf-8');
 		// Each line is a JSON message
 		return content.split('\n').filter((line) => line.trim()).length;
 	} catch {
@@ -44,49 +41,46 @@ export async function collectGroupChats(): Promise<GroupChatInfo[]> {
 
 	const groupChatsPath = path.join(app.getPath('userData'), 'group-chats');
 
-	if (!fs.existsSync(groupChatsPath)) {
+	let files: string[];
+	try {
+		files = await fs.promises.readdir(groupChatsPath);
+	} catch {
 		return groupChats;
 	}
 
-	try {
-		const files = fs.readdirSync(groupChatsPath);
-
-		for (const file of files) {
-			if (!file.endsWith('.json') || file.endsWith('.log.json')) {
-				continue;
-			}
-
-			const filePath = path.join(groupChatsPath, file);
-
-			try {
-				const content = fs.readFileSync(filePath, 'utf-8');
-				const chat = JSON.parse(content);
-
-				// Get corresponding log file for message count
-				const logPath = path.join(groupChatsPath, `${path.basename(file, '.json')}.log.json`);
-				const messageCount = countMessages(logPath);
-
-				const chatInfo: GroupChatInfo = {
-					id: chat.id || path.basename(file, '.json'),
-					moderatorAgentId: chat.moderatorAgentId || chat.moderator?.agentId || 'unknown',
-					participantCount: Array.isArray(chat.participants) ? chat.participants.length : 0,
-					participants: Array.isArray(chat.participants)
-						? chat.participants.map((p: any) => ({
-								agentId: p.agentId || 'unknown',
-							}))
-						: [],
-					messageCount,
-					createdAt: chat.createdAt || 0,
-					updatedAt: chat.updatedAt || 0,
-				};
-
-				groupChats.push(chatInfo);
-			} catch {
-				// Skip files that can't be parsed
-			}
+	for (const file of files) {
+		if (!file.endsWith('.json') || file.endsWith('.log.json')) {
+			continue;
 		}
-	} catch {
-		// Directory read failed
+
+		const filePath = path.join(groupChatsPath, file);
+
+		try {
+			const content = await fs.promises.readFile(filePath, 'utf-8');
+			const chat = JSON.parse(content);
+
+			// Get corresponding log file for message count
+			const logPath = path.join(groupChatsPath, `${path.basename(file, '.json')}.log.json`);
+			const messageCount = await countMessages(logPath);
+
+			const chatInfo: GroupChatInfo = {
+				id: chat.id || path.basename(file, '.json'),
+				moderatorAgentId: chat.moderatorAgentId || chat.moderator?.agentId || 'unknown',
+				participantCount: Array.isArray(chat.participants) ? chat.participants.length : 0,
+				participants: Array.isArray(chat.participants)
+					? chat.participants.map((p: any) => ({
+							agentId: p.agentId || 'unknown',
+						}))
+					: [],
+				messageCount,
+				createdAt: chat.createdAt || 0,
+				updatedAt: chat.updatedAt || 0,
+			};
+
+			groupChats.push(chatInfo);
+		} catch {
+			// Skip files that can't be parsed
+		}
 	}
 
 	return groupChats;

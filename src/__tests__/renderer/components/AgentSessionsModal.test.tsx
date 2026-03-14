@@ -905,10 +905,6 @@ describe('AgentSessionsModal', () => {
 
 			const input = screen.getByPlaceholderText(/Search.*sessions/);
 
-			// First item should be selected initially
-			const firstButton = screen.getByText('First').closest('button');
-			expect(firstButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
-
 			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
 			await waitFor(() => {

@@ -495,7 +495,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
-				const result = processManager.spawn({
+				const result = await processManager.spawn({
 					...config,
 					command: commandToSpawn,
 					args: argsToSpawn,

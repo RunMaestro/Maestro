@@ -247,7 +247,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
 						// sends the prompt via stdin instead of command line args
-						processManager.spawn({
+						void processManager.spawn({
 							sessionId,
 							toolType: config.agentType,
 							cwd,

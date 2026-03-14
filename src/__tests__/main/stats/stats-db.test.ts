@@ -69,10 +69,21 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
-const mockFsReaddirSync = vi.fn(() => [] as string[]); // Default: empty directory
+const mockFsAccess = vi.fn((pathArg: string) => {
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
+const mockFsMkdir = vi.fn(() => Promise.resolve());
+const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
+const mockFsCopyFile = vi.fn(() => Promise.resolve());
+const mockFsUnlink = vi.fn(() => Promise.resolve());
+const mockFsRename = vi.fn(() => Promise.resolve());
+const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
 
-// Mock fs
-vi.mock('fs', () => ({
+const mockFsReaddirSync = vi.fn(() => [] as string[]); // Default: empty directory
+const mockFsModule = {
 	existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
 	mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
 	copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
@@ -82,7 +93,24 @@ vi.mock('fs', () => ({
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
 	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
-}));
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+};
+
+// Mock fs
+vi.mock('fs', () => {
+	return {
+		...mockFsModule,
+		default: mockFsModule,
+	};
+});
 
 // Mock logger
 vi.mock('../../../main/utils/logger', () => ({
@@ -159,7 +187,7 @@ describe('StatsDB class (mocked)', () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 
-			db.initialize();
+			await db.initialize();
 
 			expect(db.isReady()).toBe(true);
 		});
@@ -168,7 +196,7 @@ describe('StatsDB class (mocked)', () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 
-			db.initialize();
+			await db.initialize();
 
 			expect(mockDb.pragma).toHaveBeenCalledWith('journal_mode = WAL');
 		});
@@ -181,7 +209,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should set user_version to 1
 			expect(mockDb.pragma).toHaveBeenCalledWith('user_version = 1');
@@ -195,7 +223,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should NOT set user_version (no migration needed)
 			expect(mockDb.pragma).not.toHaveBeenCalledWith('user_version = 1');
@@ -209,7 +237,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have prepared the CREATE TABLE IF NOT EXISTS _migrations statement
 			expect(mockDb.prepare).toHaveBeenCalledWith(
@@ -225,7 +253,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have inserted a success record into _migrations
 			expect(mockDb.prepare).toHaveBeenCalledWith(
@@ -241,7 +269,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have used transaction
 			expect(mockDb.transaction).toHaveBeenCalled();
@@ -274,7 +302,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(db.getCurrentVersion()).toBe(1);
 		});
@@ -282,21 +310,21 @@ describe('StatsDB class (mocked)', () => {
 		it('should return target version via getTargetVersion()', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			// Currently we have version 4 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes)
-			expect(db.getTargetVersion()).toBe(4);
+			// Currently we have version 7 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: agent-time index, v6: source-time index, v7: project-path-time index)
+			expect(db.getTargetVersion()).toBe(7);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 4 }];
+				if (sql === 'user_version') return [{ user_version: 7 }];
 				return undefined;
 			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
@@ -305,8 +333,8 @@ describe('StatsDB class (mocked)', () => {
 			// This test verifies the hasPendingMigrations() logic
 			// by checking current version < target version
 
-			// Simulate a database that's already at version 4 (target version)
-			let currentVersion = 4;
+			// Simulate a database that's already at version 7 (target version)
+			let currentVersion = 7;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -318,11 +346,11 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			// At version 4, target is 4, so no pending migrations
-			expect(db.getCurrentVersion()).toBe(4);
-			expect(db.getTargetVersion()).toBe(4);
+			// At version 7, target is 7, so no pending migrations
+			expect(db.getCurrentVersion()).toBe(7);
+			expect(db.getTargetVersion()).toBe(7);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -331,7 +359,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const history = db.getMigrationHistory();
 			expect(history).toEqual([]);
@@ -353,7 +381,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const history = db.getMigrationHistory();
 			expect(history).toHaveLength(1);
@@ -382,7 +410,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const history = db.getMigrationHistory();
 			expect(history[0].status).toBe('failed');
@@ -425,7 +453,7 @@ describe('StatsDB class (mocked)', () => {
 		it('should insert a query event and return an id', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const eventId = db.insertQueryEvent({
 				sessionId: 'session-1',
@@ -458,7 +486,7 @@ describe('StatsDB class (mocked)', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const events = db.getQueryEvents('day');
 
@@ -472,7 +500,7 @@ describe('StatsDB class (mocked)', () => {
 		it('should close the database connection', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.close();
 
@@ -517,7 +545,7 @@ describe('Database file creation on first launch', () => {
 		it('should create database file at userData/stats.db path', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Verify better-sqlite3 was called with the correct path
 			expect(lastDbPath).toBe(path.join(mockUserDataPath, 'stats.db'));
@@ -541,7 +569,7 @@ describe('Database file creation on first launch', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Verify mkdirSync was called with recursive option
 			expect(mockFsMkdirSync).toHaveBeenCalledWith(mockUserDataPath, { recursive: true });
@@ -553,7 +581,7 @@ describe('Database file creation on first launch', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Verify mkdirSync was NOT called
 			expect(mockFsMkdirSync).not.toHaveBeenCalled();
@@ -566,7 +594,7 @@ describe('Database file creation on first launch', () => {
 			const db = new StatsDB();
 
 			expect(db.isReady()).toBe(false);
-			db.initialize();
+			await db.initialize();
 			expect(db.isReady()).toBe(true);
 		});
 
@@ -576,10 +604,10 @@ describe('Database file creation on first launch', () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 
-			db.initialize();
+			await db.initialize();
 			const firstCallCount = mockDb.pragma.mock.calls.length;
 
-			db.initialize(); // Second call should be a no-op
+			await db.initialize(); // Second call should be a no-op
 			const secondCallCount = mockDb.pragma.mock.calls.length;
 
 			expect(secondCallCount).toBe(firstCallCount);
@@ -588,7 +616,7 @@ describe('Database file creation on first launch', () => {
 		it('should create all three tables on fresh database', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Verify prepare was called with CREATE TABLE statements
 			const prepareCalls = mockDb.prepare.mock.calls.map((call) => call[0]);
@@ -616,16 +644,18 @@ describe('Database file creation on first launch', () => {
 		it('should create all required indexes', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const prepareCalls = mockDb.prepare.mock.calls.map((call) => call[0]);
 
-			// Verify all 7 indexes are created
+			// Verify all required indexes are created
 			const expectedIndexes = [
 				'idx_query_start_time',
 				'idx_query_agent_type',
 				'idx_query_source',
 				'idx_query_session',
+				'idx_query_project_time',
+				'idx_query_agent_time',
 				'idx_auto_session_start',
 				'idx_task_auto_session',
 				'idx_task_start',
@@ -653,7 +683,7 @@ describe('Database file creation on first launch', () => {
 		it('should initialize database via initializeStatsDB', async () => {
 			const { initializeStatsDB, getStatsDB, closeStatsDB } = await import('../../../main/stats');
 
-			initializeStatsDB();
+			await initializeStatsDB();
 			const db = getStatsDB();
 
 			expect(db.isReady()).toBe(true);
@@ -665,7 +695,7 @@ describe('Database file creation on first launch', () => {
 		it('should close database and reset singleton via closeStatsDB', async () => {
 			const { initializeStatsDB, getStatsDB, closeStatsDB } = await import('../../../main/stats');
 
-			initializeStatsDB();
+			await initializeStatsDB();
 			const dbBefore = getStatsDB();
 			expect(dbBefore.isReady()).toBe(true);
 
@@ -698,6 +728,7 @@ describe('Daily backup system', () => {
 		mockStatement.all.mockReturnValue([]);
 		mockFsExistsSync.mockReturnValue(true);
 		mockFsReaddirSync.mockReturnValue([]);
+		mockFsReaddir.mockReturnValue([]);
 	});
 
 	afterEach(() => {
@@ -707,10 +738,11 @@ describe('Daily backup system', () => {
 	describe('getAvailableBackups', () => {
 		it('should return empty array when no backups exist', async () => {
 			mockFsReaddirSync.mockReturnValue([]);
+			mockFsReaddir.mockReturnValue([]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const backups = db.getAvailableBackups();
 			expect(backups).toEqual([]);
@@ -722,10 +754,15 @@ describe('Daily backup system', () => {
 				'stats.db.daily.2026-02-02',
 				'stats.db.daily.2026-02-03',
 			]);
+			mockFsReaddir.mockReturnValue([
+				'stats.db.daily.2026-02-01',
+				'stats.db.daily.2026-02-02',
+				'stats.db.daily.2026-02-03',
+			]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const backups = db.getAvailableBackups();
 			expect(backups).toHaveLength(3);
@@ -738,10 +775,11 @@ describe('Daily backup system', () => {
 			// Timestamp for 2026-02-03
 			const timestamp = new Date('2026-02-03').getTime();
 			mockFsReaddirSync.mockReturnValue([`stats.db.backup.${timestamp}`]);
+			mockFsReaddir.mockReturnValue([`stats.db.backup.${timestamp}`]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const backups = db.getAvailableBackups();
 			expect(backups).toHaveLength(1);
@@ -754,10 +792,15 @@ describe('Daily backup system', () => {
 				'stats.db.daily.2026-02-01',
 				'stats.db.daily.2026-01-20',
 			]);
+			mockFsReaddir.mockReturnValue([
+				'stats.db.daily.2026-01-15',
+				'stats.db.daily.2026-02-01',
+				'stats.db.daily.2026-01-20',
+			]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const backups = db.getAvailableBackups();
 			expect(backups[0].date).toBe('2026-02-01');
@@ -775,7 +818,7 @@ describe('Daily backup system', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const result = db.restoreFromBackup('/path/to/nonexistent/backup');
 			expect(result).toBe(false);
@@ -784,7 +827,7 @@ describe('Daily backup system', () => {
 		it('should close database before restoring', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.restoreFromBackup('/path/to/backup');
 
@@ -794,7 +837,7 @@ describe('Daily backup system', () => {
 		it('should copy backup file to main database path', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.restoreFromBackup('/path/to/backup.db');
 
@@ -807,7 +850,7 @@ describe('Daily backup system', () => {
 		it('should remove WAL and SHM files before restoring', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			db.restoreFromBackup('/path/to/backup.db');
 
@@ -827,10 +870,10 @@ describe('Daily backup system', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have attempted to copy the database for backup
-			expect(mockFsCopyFileSync).toHaveBeenCalled();
+			expect(mockFsCopyFile).toHaveBeenCalled();
 		});
 
 		it('should skip backup creation if today backup already exists', async () => {
@@ -842,10 +885,10 @@ describe('Daily backup system', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// copyFileSync should not be called for daily backup (might be called for other reasons)
-			const dailyBackupCalls = mockFsCopyFileSync.mock.calls.filter(
+			const dailyBackupCalls = mockFsCopyFile.mock.calls.filter(
 				(call) => typeof call[1] === 'string' && call[1].includes('daily')
 			);
 			expect(dailyBackupCalls).toHaveLength(0);
@@ -856,8 +899,9 @@ describe('Daily backup system', () => {
 		it('should remove stale WAL/SHM files before integrity check on initialization', async () => {
 			// Track which files are checked/removed
 			const unlinkCalls: string[] = [];
-			mockFsUnlinkSync.mockImplementation((p: unknown) => {
+			mockFsUnlink.mockImplementation((p: unknown) => {
 				if (typeof p === 'string') unlinkCalls.push(p);
+				return Promise.resolve();
 			});
 
 			// existsSync returns true for WAL/SHM files
@@ -868,7 +912,7 @@ describe('Daily backup system', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have removed WAL and SHM files
 			const walRemoved = unlinkCalls.some((p) => p.endsWith('-wal'));
@@ -886,7 +930,7 @@ describe('Daily backup system', () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 
-			expect(() => db.initialize()).not.toThrow();
+			await expect(db.initialize()).resolves.toBeUndefined();
 		});
 	});
 
@@ -900,7 +944,7 @@ describe('Daily backup system', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Should have called wal_checkpoint(TRUNCATE) before copyFileSync
 			expect(mockDb.pragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
@@ -909,10 +953,10 @@ describe('Daily backup system', () => {
 		it('should checkpoint WAL before creating manual backup', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			mockDb.pragma.mockClear();
-			db.backupDatabase();
+			await db.backupDatabase();
 
 			expect(mockDb.pragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
 		});
@@ -926,19 +970,20 @@ describe('Daily backup system', () => {
 				if (pragmaStr === 'integrity_check') return [{ integrity_check: 'ok' }];
 				return [{ user_version: 3 }];
 			});
-			mockFsCopyFileSync.mockImplementation(() => {
+			mockFsCopyFile.mockImplementation(() => {
 				callOrder.push('copy');
+				return Promise.resolve();
 			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			mockDb.pragma.mockClear();
-			mockFsCopyFileSync.mockClear();
+			mockFsCopyFile.mockClear();
 			callOrder.length = 0;
 
-			db.backupDatabase();
+			await db.backupDatabase();
 
 			expect(callOrder).toEqual(['checkpoint', 'copy']);
 		});

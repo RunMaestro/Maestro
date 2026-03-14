@@ -48,7 +48,7 @@ vi.mock('child_process', async (importOriginal) => {
 // Mock fs module
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
-	return {
+	const mockFsModule = {
 		...actual,
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
@@ -59,6 +59,10 @@ vi.mock('fs', async (importOriginal) => {
 		constants: {
 			X_OK: 1,
 		},
+	};
+	return {
+		...mockFsModule,
+		default: mockFsModule,
 	};
 });
 

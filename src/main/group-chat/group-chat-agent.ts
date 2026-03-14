@@ -221,7 +221,7 @@ export async function addParticipant(
 
 	// Spawn the participant agent
 	console.log(`[GroupChat:Debug] Spawning participant agent...`);
-	const result = processManager.spawn({
+	const result = await processManager.spawn({
 		sessionId,
 		toolType: agentId,
 		cwd: spawnCwd,
