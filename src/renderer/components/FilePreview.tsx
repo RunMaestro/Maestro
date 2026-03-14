@@ -1705,7 +1705,14 @@ export const FilePreview = React.memo(
 					textarea.scrollTop = Math.max(0, targetScroll);
 				}
 			}
-		}, [editModeSearchMatches, currentMatchIndex, isEditableText, markdownEditMode, searchQuery, editContent]);
+		}, [
+			editModeSearchMatches,
+			currentMatchIndex,
+			isEditableText,
+			markdownEditMode,
+			searchQuery,
+			editContent,
+		]);
 
 		// Helper to check if a shortcut matches
 		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) => {

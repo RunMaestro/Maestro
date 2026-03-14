@@ -28,7 +28,8 @@ export async function isWsl(): Promise<boolean> {
 
 	try {
 		const version = await fs.readFile('/proc/version', 'utf8');
-		wslDetectionCache = version.toLowerCase().includes('microsoft') || version.toLowerCase().includes('wsl');
+		wslDetectionCache =
+			version.toLowerCase().includes('microsoft') || version.toLowerCase().includes('wsl');
 		return wslDetectionCache;
 	} catch {
 		// Ignore read errors

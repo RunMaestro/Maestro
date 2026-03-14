@@ -122,7 +122,11 @@ describe('HistoryManager', () => {
 			return mockReadFileSync(p);
 		});
 		mockFsWriteFile.mockImplementation(async (pathLike, data, options) => {
-			return mockWriteFileSync(pathLike as string | Buffer | number, data as string, options as string);
+			return mockWriteFileSync(
+				pathLike as string | Buffer | number,
+				data as string,
+				options as string
+			);
 		});
 		mockFsReaddir.mockImplementation(async () => mockReaddirSync() as unknown as fs.Dirent[]);
 		mockFsUnlink.mockResolvedValue(undefined);
@@ -1112,7 +1116,10 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const count = await manager.updateSessionNameByClaudeSessionId('agent-123', 'already-correct');
+			const count = await manager.updateSessionNameByClaudeSessionId(
+				'agent-123',
+				'already-correct'
+			);
 			expect(count).toBe(0);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});

@@ -70,18 +70,17 @@ const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
 const mockFsAccess = vi.fn((pathArg: string) => {
-		if (mockFsExistsSync(pathArg)) {
-			return Promise.resolve();
-		}
-		return Promise.reject(new Error('ENOENT'));
-	});
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
 const mockFsMkdir = vi.fn(() => Promise.resolve());
 const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
 const mockFsCopyFile = vi.fn(() => Promise.resolve());
 const mockFsUnlink = vi.fn(() => Promise.resolve());
 const mockFsRename = vi.fn(() => Promise.resolve());
 const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
-
 
 // Mock fs
 const mockFsModule = {

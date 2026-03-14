@@ -70,11 +70,11 @@ const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
 const mockFsAccess = vi.fn((pathArg: string) => {
-		if (mockFsExistsSync(pathArg)) {
-			return Promise.resolve();
-		}
-		return Promise.reject(new Error('ENOENT'));
-	});
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
 const mockFsMkdir = vi.fn(() => Promise.resolve());
 const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
 const mockFsCopyFile = vi.fn(() => Promise.resolve());
@@ -489,7 +489,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		});
 	});
 
-		describe('SQL query structure verification', () => {
+	describe('SQL query structure verification', () => {
 		it('should include start_time >= ? in getQueryEvents SQL', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();

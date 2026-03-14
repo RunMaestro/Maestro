@@ -35,11 +35,11 @@ vi.mock('../../../../main/agents', () => ({
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
-	info: vi.fn(),
-	warn: vi.fn(),
-	error: vi.fn(),
-	debug: vi.fn(),
-},
+		info: vi.fn(),
+		warn: vi.fn(),
+		error: vi.fn(),
+		debug: vi.fn(),
+	},
 }));
 // Mock fs/promises for global stats discovery scanning
 vi.mock('fs/promises', () => {

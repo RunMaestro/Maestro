@@ -843,10 +843,7 @@ export function AgentSessionsBrowser({
 								>
 									<span>{totalMessages} messages</span>
 									<span>•</span>
-									<span
-										className="relative group cursor-default"
-										title={viewingSessionTimestamp}
-									>
+									<span className="relative group cursor-default" title={viewingSessionTimestamp}>
 										{formatRelativeTime(viewingSession.modifiedAt)}
 										<span
 											className="absolute left-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity px-1 rounded whitespace-nowrap"

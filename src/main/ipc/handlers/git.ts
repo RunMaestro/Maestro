@@ -1062,15 +1062,15 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							}));
 					}
 
-						// Process subdirectories sequentially to preserve command order and avoid
-						// changing existing call-sequencing behavior relied on by tests and callers.
-						const gitSubdirs: Array<{
-							path: string;
-							name: string;
-							isWorktree: boolean;
-							branch: string | null;
-							repoRoot: string | null;
-						}> = [];
+					// Process subdirectories sequentially to preserve command order and avoid
+					// changing existing call-sequencing behavior relied on by tests and callers.
+					const gitSubdirs: Array<{
+						path: string;
+						name: string;
+						isWorktree: boolean;
+						branch: string | null;
+						repoRoot: string | null;
+					}> = [];
 
 					for (const subdir of subdirs) {
 						// Use POSIX path joining for remote paths

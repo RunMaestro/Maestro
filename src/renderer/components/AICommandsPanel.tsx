@@ -221,20 +221,14 @@ export function AICommandsPanel({
 			</div>
 
 			{/* Template Variables Documentation */}
-			<div
-				className="rounded-lg border overflow-hidden"
-				style={commandStyles.mainPanel}
-			>
+			<div className="rounded-lg border overflow-hidden" style={commandStyles.mainPanel}>
 				<button
 					onClick={() => setVariablesExpanded(!variablesExpanded)}
 					className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
 				>
 					<div className="flex items-center gap-2">
 						<Variable className="w-3.5 h-3.5" style={commandStyles.textAccent} />
-						<span
-							className="text-xs font-bold uppercase"
-							style={commandStyles.textDim}
-						>
+						<span className="text-xs font-bold uppercase" style={commandStyles.textDim}>
 							Template Variables
 						</span>
 					</div>
@@ -272,7 +266,7 @@ export function AICommandsPanel({
 			{!isCreating && (
 				<div className="flex justify-start">
 					<button
-			onClick={() => setIsCreating(true)}
+						onClick={() => setIsCreating(true)}
 						className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-all"
 						style={commandStyles.addButton}
 					>
@@ -284,10 +278,7 @@ export function AICommandsPanel({
 
 			{/* Create new command form */}
 			{isCreating && (
-				<div
-					className="p-4 rounded-lg border space-y-3"
-					style={commandStyles.createPanel}
-				>
+				<div className="p-4 rounded-lg border space-y-3" style={commandStyles.createPanel}>
 					<div className="text-xs font-bold uppercase" style={commandStyles.textAccent}>
 						New Command
 					</div>
@@ -298,22 +289,22 @@ export function AICommandsPanel({
 								type="text"
 								value={newCommand.command}
 								onChange={(e) => setNewCommand({ ...newCommand, command: e.target.value })}
-									placeholder="/mycommand"
-									className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-									style={commandStyles.fieldBase}
-								/>
-							</div>
+								placeholder="/mycommand"
+								className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
+								style={commandStyles.fieldBase}
+							/>
+						</div>
 						<div>
 							<label className="block text-xs font-medium opacity-70 mb-1">Description</label>
 							<input
 								type="text"
 								value={newCommand.description}
 								onChange={(e) => setNewCommand({ ...newCommand, description: e.target.value })}
-									placeholder="Short description for autocomplete"
-									className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-									style={commandStyles.fieldBase}
-								/>
-							</div>
+								placeholder="Short description for autocomplete"
+								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+								style={commandStyles.fieldBase}
+							/>
+						</div>
 					</div>
 					<div className="relative">
 						<label className="block text-xs font-medium opacity-70 mb-1">Prompt</label>
@@ -375,212 +366,190 @@ export function AICommandsPanel({
 
 			{/* Existing commands list - collapsible style */}
 			<div className="space-y-2 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
-					{sortedCommands.map((cmd) => (
-							<div
-								key={cmd.id}
-								className="rounded-lg border overflow-hidden"
-								style={commandStyles.mainPanel}
-							>
-							{editingCommand?.id === cmd.id ? (
-								// Editing mode
-								<div className="p-3 space-y-3">
-									<div className="flex items-center justify-between">
-										<span
-											className="font-mono font-bold text-sm"
-											style={commandStyles.commandText}
+				{sortedCommands.map((cmd) => (
+					<div
+						key={cmd.id}
+						className="rounded-lg border overflow-hidden"
+						style={commandStyles.mainPanel}
+					>
+						{editingCommand?.id === cmd.id ? (
+							// Editing mode
+							<div className="p-3 space-y-3">
+								<div className="flex items-center justify-between">
+									<span className="font-mono font-bold text-sm" style={commandStyles.commandText}>
+										{cmd.command}
+									</span>
+									<div className="flex items-center gap-1">
+										<button
+											onClick={handleCancelEdit}
+											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
+											style={commandStyles.actionButton}
 										>
-											{cmd.command}
-										</span>
-										<div className="flex items-center gap-1">
-											<button
-													onClick={handleCancelEdit}
-													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-													style={commandStyles.actionButton}
-												>
-													<X className="w-3 h-3" />
-													Cancel
-												</button>
-												<button
-													onClick={handleSaveEdit}
-													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-													style={commandStyles.successButton}
-												>
-													<Save className="w-3 h-3" />
-													Save
-												</button>
-										</div>
+											<X className="w-3 h-3" />
+											Cancel
+										</button>
+										<button
+											onClick={handleSaveEdit}
+											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
+											style={commandStyles.successButton}
+										>
+											<Save className="w-3 h-3" />
+											Save
+										</button>
 									</div>
-									<div className="grid grid-cols-2 gap-3">
-										<div>
-											<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
-												<input
-													type="text"
-													value={editingCommand.command}
-													onChange={(e) =>
-														setEditingCommand({ ...editingCommand, command: e.target.value })
-													}
-													className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-													style={commandStyles.fieldBase}
-												/>
-										</div>
-										<div>
-											<label className="block text-xs font-medium opacity-70 mb-1">
-												Description
-											</label>
-												<input
-													type="text"
-													value={editingCommand.description}
-													onChange={(e) =>
-														setEditingCommand({ ...editingCommand, description: e.target.value })
-													}
-													className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-													style={commandStyles.fieldBase}
-												/>
-										</div>
+								</div>
+								<div className="grid grid-cols-2 gap-3">
+									<div>
+										<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
+										<input
+											type="text"
+											value={editingCommand.command}
+											onChange={(e) =>
+												setEditingCommand({ ...editingCommand, command: e.target.value })
+											}
+											className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
+											style={commandStyles.fieldBase}
+										/>
 									</div>
-									<div className="relative">
-										<textarea
-													ref={editCommandTextareaRef}
-													value={editingCommand.prompt}
-													onChange={handleEditAutocompleteChange}
-											onKeyDown={(e) => {
-												if (handleEditAutocompleteKeyDown(e)) {
-													return;
-												}
-												if (e.key === 'Tab') {
-													e.preventDefault();
-													const textarea = e.currentTarget;
-													const start = textarea.selectionStart;
-													const end = textarea.selectionEnd;
-													const value = textarea.value;
-													const newValue = value.substring(0, start) + '\t' + value.substring(end);
-													setEditingCommand({ ...editingCommand, prompt: newValue });
-													setTimeout(() => {
-														textarea.selectionStart = textarea.selectionEnd = start + 1;
-													}, 0);
-												}
-											}}
-													rows={15}
-													className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-													style={commandStyles.fieldBase}
-												/>
-										<TemplateAutocompleteDropdown
-											ref={editAutocompleteRef}
-											theme={theme}
-											state={editAutocompleteState}
-											onSelect={selectEditVariable}
+									<div>
+										<label className="block text-xs font-medium opacity-70 mb-1">Description</label>
+										<input
+											type="text"
+											value={editingCommand.description}
+											onChange={(e) =>
+												setEditingCommand({ ...editingCommand, description: e.target.value })
+											}
+											className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+											style={commandStyles.fieldBase}
 										/>
 									</div>
 								</div>
-							) : (
-								// Display mode - collapsible
-								<>
-									<button
-										onClick={() => toggleExpanded(cmd.id)}
-										className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/5 transition-colors"
-									>
-										<div className="flex items-center gap-2">
-												{expandedCommands.has(cmd.id) ? (
-													<ChevronDown
-														className="w-3.5 h-3.5"
-														style={commandStyles.textDim}
-													/>
-												) : (
-													<ChevronRight
-														className="w-3.5 h-3.5"
-														style={commandStyles.textDim}
-													/>
-												)}
-												<span
-													className="font-mono font-bold text-sm"
-													style={commandStyles.commandText}
-												>
-													{cmd.command}
-												</span>
-												{cmd.isBuiltIn && (
-													<span
-														className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-														style={commandStyles.builtInBadge}
-													>
-														<Lock className="w-2.5 h-2.5" />
-														Built-in
-													</span>
-												)}
-											</div>
+								<div className="relative">
+									<textarea
+										ref={editCommandTextareaRef}
+										value={editingCommand.prompt}
+										onChange={handleEditAutocompleteChange}
+										onKeyDown={(e) => {
+											if (handleEditAutocompleteKeyDown(e)) {
+												return;
+											}
+											if (e.key === 'Tab') {
+												e.preventDefault();
+												const textarea = e.currentTarget;
+												const start = textarea.selectionStart;
+												const end = textarea.selectionEnd;
+												const value = textarea.value;
+												const newValue = value.substring(0, start) + '\t' + value.substring(end);
+												setEditingCommand({ ...editingCommand, prompt: newValue });
+												setTimeout(() => {
+													textarea.selectionStart = textarea.selectionEnd = start + 1;
+												}, 0);
+											}
+										}}
+										rows={15}
+										className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
+										style={commandStyles.fieldBase}
+									/>
+									<TemplateAutocompleteDropdown
+										ref={editAutocompleteRef}
+										theme={theme}
+										state={editAutocompleteState}
+										onSelect={selectEditVariable}
+									/>
+								</div>
+							</div>
+						) : (
+							// Display mode - collapsible
+							<>
+								<button
+									onClick={() => toggleExpanded(cmd.id)}
+									className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/5 transition-colors"
+								>
+									<div className="flex items-center gap-2">
+										{expandedCommands.has(cmd.id) ? (
+											<ChevronDown className="w-3.5 h-3.5" style={commandStyles.textDim} />
+										) : (
+											<ChevronRight className="w-3.5 h-3.5" style={commandStyles.textDim} />
+										)}
+										<span className="font-mono font-bold text-sm" style={commandStyles.commandText}>
+											{cmd.command}
+										</span>
+										{cmd.isBuiltIn && (
 											<span
-												className="text-xs truncate max-w-[300px]"
-												style={commandStyles.textDim}
+												className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+												style={commandStyles.builtInBadge}
 											>
-												{cmd.description}
+												<Lock className="w-2.5 h-2.5" />
+												Built-in
 											</span>
-									</button>
-									{expandedCommands.has(cmd.id) && (
-												<div
-													className="px-3 pb-3 pt-1 border-t"
-													style={commandStyles.borderOnly}
+										)}
+									</div>
+									<span className="text-xs truncate max-w-[300px]" style={commandStyles.textDim}>
+										{cmd.description}
+									</span>
+								</button>
+								{expandedCommands.has(cmd.id) && (
+									<div className="px-3 pb-3 pt-1 border-t" style={commandStyles.borderOnly}>
+										<div className="flex items-center justify-end gap-1 mb-2">
+											<button
+												onClick={() =>
+													setEditingCommand({
+														id: cmd.id,
+														command: cmd.command,
+														description: cmd.description,
+														prompt: cmd.prompt,
+													})
+												}
+												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
+												style={commandStyles.textDim}
+												title="Edit command"
+											>
+												<Edit2 className="w-3 h-3" />
+												Edit
+											</button>
+											{!cmd.isBuiltIn && (
+												<button
+													onClick={() => handleDelete(cmd.id)}
+													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
+													style={commandStyles.errorText}
+													title="Delete command"
 												>
-													<div className="flex items-center justify-end gap-1 mb-2">
-														<button
-															onClick={() =>
-																setEditingCommand({
-															id: cmd.id,
-															command: cmd.command,
-															description: cmd.description,
-															prompt: cmd.prompt,
-															})
-															}
-															className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-															style={commandStyles.textDim}
-															title="Edit command"
-														>
-															<Edit2 className="w-3 h-3" />
-															Edit
-														</button>
-														{!cmd.isBuiltIn && (
-															<button
-																onClick={() => handleDelete(cmd.id)}
-																className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-																style={commandStyles.errorText}
-																title="Delete command"
-															>
-																<Trash2 className="w-3 h-3" />
-																Delete
-															</button>
-														)}
-													</div>
-													<div
-														className="text-xs p-2 rounded font-mono overflow-y-auto max-h-48 scrollbar-thin whitespace-pre-wrap"
-														style={commandStyles.promptPreview}
-													>
-														{cmd.prompt.length > 500
-															? cmd.prompt.substring(0, 500) + '...'
-													: cmd.prompt}
-											</div>
+													<Trash2 className="w-3 h-3" />
+													Delete
+												</button>
+											)}
 										</div>
-									)}
-								</>
-							)}
-						</div>
-					))}
+										<div
+											className="text-xs p-2 rounded font-mono overflow-y-auto max-h-48 scrollbar-thin whitespace-pre-wrap"
+											style={commandStyles.promptPreview}
+										>
+											{cmd.prompt.length > 500 ? cmd.prompt.substring(0, 500) + '...' : cmd.prompt}
+										</div>
+									</div>
+								)}
+							</>
+						)}
+					</div>
+				))}
 			</div>
 
-				{customAICommands.length === 0 && !isCreating && (
-					<div
-						className="p-6 rounded-lg border border-dashed text-center"
-						style={commandStyles.borderOnly}
+			{customAICommands.length === 0 && !isCreating && (
+				<div
+					className="p-6 rounded-lg border border-dashed text-center"
+					style={commandStyles.borderOnly}
+				>
+					<Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
+					<p className="text-sm opacity-50" style={commandStyles.textDim}>
+						No custom AI commands configured
+					</p>
+					<button
+						onClick={() => setIsCreating(true)}
+						className="mt-2 text-xs font-medium"
+						style={commandStyles.textAccent}
 					>
-						<Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
-						<p className="text-sm opacity-50" style={commandStyles.textDim}>
-							No custom AI commands configured
-						</p>
-						<button
-							onClick={() => setIsCreating(true)}
-							className="mt-2 text-xs font-medium"
-							style={commandStyles.textAccent}
-						>
-							Create your first command
-						</button>
-					</div>
+						Create your first command
+					</button>
+				</div>
 			)}
 		</div>
 	);

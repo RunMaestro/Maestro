@@ -3139,36 +3139,38 @@ export function Component() {
 				exitCode: number;
 			}>();
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd: string, args?: string[]) => {
-				if (args?.includes('show')) {
-					callOrder.push('remote');
-					return {
-						stdout: `* remote origin
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(
+				async (_cmd: string, args?: string[]) => {
+					if (args?.includes('show')) {
+						callOrder.push('remote');
+						return {
+							stdout: `* remote origin
   Fetch URL: git@github.com:user/repo.git
   Push  URL: git@github.com:user/repo.git
   Remote branches:
     feature tracked`,
-						stderr: '',
-						exitCode: 0,
+							stderr: '',
+							exitCode: 0,
+						};
+					}
+
+					if (args?.includes('--verify') && args?.includes('main')) {
+						callOrder.push('main');
+						return mainDeferred.promise;
+					}
+
+					if (args?.includes('--verify') && args?.includes('master')) {
+						callOrder.push('master');
+						return masterDeferred.promise;
+					}
+
+					return {
+						stdout: '',
+						stderr: `Unexpected command: ${args?.join(' ')}`,
+						exitCode: 1,
 					};
 				}
-
-				if (args?.includes('--verify') && args?.includes('main')) {
-					callOrder.push('main');
-					return mainDeferred.promise;
-				}
-
-				if (args?.includes('--verify') && args?.includes('master')) {
-					callOrder.push('master');
-					return masterDeferred.promise;
-				}
-
-				return {
-					stdout: '',
-					stderr: `Unexpected command: ${args?.join(' ')}`,
-					exitCode: 1,
-				};
-			});
+			);
 
 			const handler = handlers.get('git:getDefaultBranch');
 			const handlerPromise = handler!({} as any, '/test/repo');
@@ -3591,7 +3593,9 @@ branch refs/heads/bugfix-123
 				exitCode: number;
 			}>();
 
-			vi.mocked(mockFs.readdir).mockResolvedValue([{ name: 'main-repo', isDirectory: () => true }] as any);
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'main-repo', isDirectory: () => true },
+			] as any);
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
 				const command = args?.join(' ') || '';

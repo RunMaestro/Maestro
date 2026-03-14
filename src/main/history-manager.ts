@@ -271,7 +271,11 @@ export class HistoryManager {
 	/**
 	 * Update a specific entry in a session's history
 	 */
-	async updateEntry(sessionId: string, entryId: string, updates: Partial<HistoryEntry>): Promise<boolean> {
+	async updateEntry(
+		sessionId: string,
+		entryId: string,
+		updates: Partial<HistoryEntry>
+	): Promise<boolean> {
 		const filePath = this.getSessionFilePath(sessionId);
 		try {
 			await fs.promises.access(filePath);
@@ -360,7 +364,9 @@ export class HistoryManager {
 		const sessions = await this.listSessionsWithHistory();
 		const allEntries: HistoryEntry[] = [];
 
-		const allSessionEntries = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
+		const allSessionEntries = await Promise.all(
+			sessions.map((sessionId) => this.getEntries(sessionId))
+		);
 		allEntries.push(...allSessionEntries.flat());
 
 		const sorted = sortEntriesByTimestamp(allEntries);
@@ -377,7 +383,9 @@ export class HistoryManager {
 		const sessions = await this.listSessionsWithHistory();
 		const allEntries: HistoryEntry[] = [];
 
-		const allSessionEntries = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
+		const allSessionEntries = await Promise.all(
+			sessions.map((sessionId) => this.getEntries(sessionId))
+		);
 		allEntries.push(...allSessionEntries.flat());
 
 		const sorted = sortEntriesByTimestamp(allEntries);
@@ -438,7 +446,10 @@ export class HistoryManager {
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
 	 */
-	async updateSessionNameByClaudeSessionId(agentSessionId: string, sessionName: string): Promise<number> {
+	async updateSessionNameByClaudeSessionId(
+		agentSessionId: string,
+		sessionName: string
+	): Promise<number> {
 		const sessions = await this.listSessionsWithHistory();
 		let updatedCount = 0;
 		const parsedSessions = await Promise.all(
@@ -486,7 +497,10 @@ export class HistoryManager {
 						`Failed to update sessionName in session ${parsed.sessionId}: ${error}`,
 						LOG_CONTEXT
 					);
-					captureException(error, { operation: 'history:updateSessionNameWrite', sessionId: parsed.sessionId });
+					captureException(error, {
+						operation: 'history:updateSessionNameWrite',
+						sessionId: parsed.sessionId,
+					});
 				}
 
 				break;

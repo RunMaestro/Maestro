@@ -351,9 +351,6 @@ export async function groomContext(
 				sessionSshRemoteConfig,
 				// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
 				customEnvVars: resolvedEnvVars,
-				sessionCustomPath,
-				sessionCustomArgs,
-				sessionCustomEnvVars,
 			})
 		)
 			.then((spawnResult) => {

@@ -201,7 +201,7 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
-describe('callback registrations', () => {
+	describe('callback registrations', () => {
 		let createWebServer: ReturnType<typeof createWebServerFactory>;
 		let server: ReturnType<typeof createWebServer>;
 
