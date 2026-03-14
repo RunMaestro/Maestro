@@ -120,6 +120,13 @@ export default defineConfig(({ mode }) => ({
 						return 'vendor-diff';
 					}
 
+					// Group locale files by language for lazy-loaded i18n chunks.
+					// English is bundled statically; other languages are loaded on demand.
+					const localeMatch = id.match(/i18n\/locales\/(es|fr|de|zh|hi|ar|bn|pt)\//);
+					if (localeMatch) {
+						return `locale-${localeMatch[1]}`;
+					}
+
 					// Return undefined to let Rollup handle other modules automatically
 					return undefined;
 				},

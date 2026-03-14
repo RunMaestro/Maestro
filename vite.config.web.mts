@@ -129,6 +129,13 @@ export default defineConfig(({ mode }) => ({
 					// Shared web components stay in main bundle or get split automatically
 					// This allows React.lazy() to create async chunks for mobile/desktop
 
+					// Group locale files by language for lazy-loaded i18n chunks.
+					// English is bundled statically; other languages are loaded on demand.
+					const localeMatch = id.match(/i18n\/locales\/(es|fr|de|zh|hi|ar|bn|pt)\//);
+					if (localeMatch) {
+						return `locale-${localeMatch[1]}`;
+					}
+
 					// Return undefined for other modules to let Rollup handle them
 					return undefined;
 				},

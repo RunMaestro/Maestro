@@ -246,6 +246,7 @@
 		"i18next-browser-languagedetector": "^8.2.1",
 		"i18next-fs-backend": "^2.6.1",
 		"i18next-http-backend": "^3.0.2",
+		"i18next-resources-to-backend": "^1.2.1",
 		"js-tiktoken": "^1.0.21",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",

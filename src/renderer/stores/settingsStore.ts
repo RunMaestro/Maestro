@@ -704,18 +704,22 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 		set({ language: value });
 		window.maestro.settings.set('language', value);
 		localStorage.setItem(LANGUAGE_STORAGE_KEY, value);
-		i18n.changeLanguage(value);
-		// Notify main process so it can update native menus if needed
-		window.maestro.locale?.set(value);
-		// Direction attributes are applied reactively by DirectionProvider.
-		// We also set them here for immediate feedback before the next React render.
-		const rtl = RTL_LANGUAGES.includes(value as SupportedLanguage);
-		const dir = rtl ? 'rtl' : 'ltr';
-		document.documentElement.lang = value;
-		document.documentElement.dir = dir;
-		document.documentElement.setAttribute('data-dir', dir);
-		document.documentElement.style.setProperty('--dir-start', rtl ? 'right' : 'left');
-		document.documentElement.style.setProperty('--dir-end', rtl ? 'left' : 'right');
+		// changeLanguage returns a promise — with lazy-loaded translations,
+		// the resources are fetched on demand. Direction attributes are set
+		// after the language loads to ensure translated text and layout update together.
+		i18n.changeLanguage(value).then(() => {
+			// Notify main process so it can update native menus if needed
+			window.maestro.locale?.set(value);
+			// Direction attributes are applied reactively by DirectionProvider.
+			// We also set them here for immediate feedback before the next React render.
+			const rtl = RTL_LANGUAGES.includes(value as SupportedLanguage);
+			const dir = rtl ? 'rtl' : 'ltr';
+			document.documentElement.lang = value;
+			document.documentElement.dir = dir;
+			document.documentElement.setAttribute('data-dir', dir);
+			document.documentElement.style.setProperty('--dir-start', rtl ? 'right' : 'left');
+			document.documentElement.style.setProperty('--dir-end', rtl ? 'left' : 'right');
+		});
 	},
 
 	setDocumentGraphShowExternalLinks: (value) => {
