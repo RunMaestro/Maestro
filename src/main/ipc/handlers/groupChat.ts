@@ -61,7 +61,13 @@ import {
 } from '../../group-chat/group-chat-agent';
 
 // Group chat router imports
-import { routeUserMessage } from '../../group-chat/group-chat-router';
+import {
+	routeUserMessage,
+	clearPendingParticipants,
+	routeAgentResponse,
+	markParticipantResponded,
+	spawnModeratorSynthesis,
+} from '../../group-chat/group-chat-router';
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
@@ -100,6 +106,10 @@ export const groupChatEmitters: {
 		state: ParticipantState
 	) => void;
 	emitModeratorSessionIdChanged?: (groupChatId: string, sessionId: string) => void;
+	emitParticipantLiveOutput?: (groupChatId: string, participantName: string, chunk: string) => void;
+	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
+	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
+	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
 } = {};
 
 // Helper to create handler options with consistent context
@@ -462,6 +472,87 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			await killModerator(id, processManager ?? undefined);
 			logger.info(`Stopped moderator for group chat: ${id}`, LOG_CONTEXT);
 		})
+	);
+
+	// Stop all activity in a group chat (moderator + all participants)
+	ipcMain.handle(
+		'groupChat:stopAll',
+		withIpcErrorLogging(handlerOpts('stopAll'), async (id: string): Promise<void> => {
+			const processManager = getProcessManager();
+			logger.info(`Stopping all activity in group chat: ${id}`, LOG_CONTEXT);
+
+			// Kill moderator and all participant sessions
+			await killModerator(id, processManager ?? undefined);
+			await clearAllParticipantSessions(id, processManager ?? undefined);
+
+			// Clear pending participant tracking so next round starts clean.
+			// Without this, a subsequent user message would inherit the old pending Set
+			// and trigger synthesis prematurely when those (now-dead) processes "respond".
+			clearPendingParticipants(id);
+
+			// Load participants to emit idle states for each
+			const chat = await loadGroupChat(id);
+			if (chat) {
+				for (const participant of chat.participants) {
+					groupChatEmitters.emitParticipantState?.(id, participant.name, 'idle');
+				}
+			}
+
+			// Emit idle state for the group chat
+			groupChatEmitters.emitStateChange?.(id, 'idle');
+
+			logger.info(`Stopped all activity in group chat: ${id}`, LOG_CONTEXT);
+		})
+	);
+
+	// Report that an Auto Run batch triggered by !autorun has completed
+	// Called by the renderer's batch processor onComplete handler to notify the
+	// group chat router so it can trigger the synthesis round.
+	ipcMain.handle(
+		'groupChat:reportAutoRunComplete',
+		withIpcErrorLogging(
+			handlerOpts('reportAutoRunComplete'),
+			async (groupChatId: string, participantName: string, summary: string): Promise<void> => {
+				logger.info(
+					`Auto Run complete for participant ${participantName} in ${groupChatId}`,
+					LOG_CONTEXT
+				);
+				const processManager = getProcessManager();
+
+				// Log the autorun summary as the participant's response
+				await routeAgentResponse(
+					groupChatId,
+					participantName,
+					summary,
+					processManager ?? undefined
+				);
+
+				// Reset participant state to idle (mirrors what exit-listener does for regular participants).
+				// Without this the participant card stays "Working" because no process exit fires for
+				// autorun participants (the batch runs in a separate Maestro session, not a group-chat session).
+				groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
+
+				// Signal the renderer to definitively complete the batch run for this participant.
+				// In the happy path this is a no-op (COMPLETE_BATCH was already dispatched by startBatchRun).
+				// In edge cases (synthesis re-triggered a second batch, or the process was slow to exit)
+				// this ensures the AUTO badge and progress bar are always cleared.
+				groupChatEmitters.emitAutoRunBatchComplete?.(groupChatId, participantName);
+
+				// Mark participant as done and trigger synthesis if all participants have responded.
+				// Unlike regular participants (whose process exit triggers this via exit-listener),
+				// autorun participants never exit a group-chat process — the batch runs as a separate
+				// Maestro session — so we must call markParticipantResponded here.
+				const agentDetector = getAgentDetector();
+				const isLast = markParticipantResponded(groupChatId, participantName);
+				if (isLast && processManager && agentDetector) {
+					logger.info(
+						`All participants responded after autorun, spawning synthesis for ${groupChatId}`,
+						LOG_CONTEXT
+					);
+					await spawnModeratorSynthesis(groupChatId, processManager, agentDetector);
+				}
+			}
+		)
 	);
 
 	// Get the moderator session ID (for checking if active)
@@ -869,6 +960,63 @@ Respond with ONLY the summary text, no additional commentary.`;
 		const mainWindow = getMainWindow();
 		if (isWebContentsAvailable(mainWindow)) {
 			mainWindow.webContents.send('groupChat:moderatorSessionIdChanged', groupChatId, sessionId);
+		}
+	};
+
+	/**
+	 * Emit an Auto Run trigger event to the renderer.
+	 * Called when the moderator issues !autorun @AgentName so the renderer can
+	 * start a proper batch run through useBatchProcessor for full UI feedback.
+	 */
+	groupChatEmitters.emitAutoRunTriggered = (
+		groupChatId: string,
+		participantName: string,
+		filename?: string
+	): void => {
+		const mainWindow = getMainWindow();
+		if (isWebContentsAvailable(mainWindow)) {
+			mainWindow.webContents.send(
+				'groupChat:autoRunTriggered',
+				groupChatId,
+				participantName,
+				filename
+			);
+		}
+	};
+
+	/**
+	 * Tell the renderer to force-complete the batch run for an autorun participant.
+	 * Fired on both normal completion (reportAutoRunComplete) and on the timeout path,
+	 * so the AUTO badge and progress bar are always cleaned up regardless of how the
+	 * participant's involvement ends.
+	 */
+	groupChatEmitters.emitAutoRunBatchComplete = (
+		groupChatId: string,
+		participantName: string
+	): void => {
+		const mainWindow = getMainWindow();
+		if (isWebContentsAvailable(mainWindow)) {
+			mainWindow.webContents.send('groupChat:autoRunBatchComplete', groupChatId, participantName);
+		}
+	};
+
+	/**
+	 * Emit live output chunks from a participant to the renderer.
+	 * Called as data streams in from participant processes.
+	 */
+	groupChatEmitters.emitParticipantLiveOutput = (
+		groupChatId: string,
+		participantName: string,
+		chunk: string
+	): void => {
+		const mainWindow = getMainWindow();
+		if (isWebContentsAvailable(mainWindow)) {
+			mainWindow.webContents.send(
+				'groupChat:participantLiveOutput',
+				groupChatId,
+				participantName,
+				chunk
+			);
 		}
 	};
 

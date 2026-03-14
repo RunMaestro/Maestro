@@ -14,10 +14,12 @@ import type { QueuedItem } from '../../types';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useBatchStore } from '../../stores/batchStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
+import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -67,6 +69,9 @@ export interface GroupChatHandlersReturn {
 
 	// Right panel
 	handleGroupChatRightTabChange: (tab: GroupChatRightTab) => void;
+
+	// Stop All
+	handleStopAll: () => Promise<void>;
 
 	// Messages & queue
 	handleSendGroupChatMessage: (
@@ -159,6 +164,8 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setGroupChats,
 			setAllGroupChatParticipantStates,
 			setParticipantStates,
+			appendParticipantLiveOutput,
+			clearParticipantLiveOutput,
 		} = useGroupChatStore.getState();
 
 		const unsubState = window.maestro.groupChat.onStateChange((id, state) => {
@@ -199,6 +206,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 						return next;
 					});
 				}
+				// Clear live output when participant becomes idle
+				if (state === 'idle') {
+					clearParticipantLiveOutput(`${id}:${participantName}`);
+				}
+			}
+		);
+
+		const unsubLiveOutput = window.maestro.groupChat.onParticipantLiveOutput?.(
+			(id, participantName, chunk) => {
+				if (id === useGroupChatStore.getState().activeGroupChatId) {
+					appendParticipantLiveOutput(`${id}:${participantName}`, chunk);
+				}
 			}
 		);
 
@@ -212,11 +231,44 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 		);
 
+		// Force-complete the batch run for an autorun participant.
+		// Fired by the main process on both normal completion (reportAutoRunComplete) and
+		// on the participant timeout, so the AUTO badge and progress bar always clear.
+		const unsubBatchComplete = window.maestro.groupChat.onAutoRunBatchComplete?.(
+			(groupChatId, participantName) => {
+				// Prefer group-chat-scoped autorun registry to avoid name collisions across chats.
+				// Only complete the specific participant's session, not all sessions for the chat.
+				const autoRunSessionIds = getAutoRunSessionsForGroupChat(groupChatId);
+				if (autoRunSessionIds.length > 0) {
+					const sessions = useSessionStore.getState().sessions;
+					const matchingSessionId = autoRunSessionIds.find((sid) =>
+						sessions.some((s) => s.id === sid && s.name === participantName)
+					);
+					if (matchingSessionId) {
+						useBatchStore.getState().dispatchBatch({
+							type: 'COMPLETE_BATCH',
+							sessionId: matchingSessionId,
+						});
+						return;
+					}
+				}
+				// Fallback: resolve by participant name if registry entry was already consumed
+				const session = useSessionStore.getState().sessions.find((s) => s.name === participantName);
+				if (!session) return;
+				useBatchStore.getState().dispatchBatch({
+					type: 'COMPLETE_BATCH',
+					sessionId: session.id,
+				});
+			}
+		);
+
 		return () => {
 			unsubState();
 			unsubParticipants();
 			unsubParticipantState?.();
+			unsubLiveOutput?.();
 			unsubModeratorSessionId?.();
+			unsubBatchComplete?.();
 		};
 	}, []); // Mount once — global listeners read activeGroupChatId from store at call time
 
@@ -566,6 +618,31 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		[]
 	);
 
+	const handleStopAll = useCallback(async () => {
+		const { activeGroupChatId } = useGroupChatStore.getState();
+		if (!activeGroupChatId) return;
+		try {
+			// Cancel any in-flight autorun batch runs for this group chat.
+			// These run in the agent's own Maestro session (not group-chat-prefixed),
+			// so the main process's clearAllParticipantSessions won't reach them.
+			const autoRunSessionIds = getAutoRunSessionsForGroupChat(activeGroupChatId);
+			for (const sessionId of autoRunSessionIds) {
+				useBatchStore.getState().dispatchBatch({
+					type: 'COMPLETE_BATCH',
+					sessionId,
+				});
+			}
+			await window.maestro.groupChat.stopAll(activeGroupChatId);
+		} catch (error) {
+			console.error('[GroupChat] Failed to stop all:', error);
+			notifyToast({
+				type: 'error',
+				title: 'Stop Failed',
+				message: 'Failed to stop all group chat conversations. Please try again.',
+			});
+		}
+	}, []);
+
 	const handleGroupChatDraftChange = useCallback((draft: string) => {
 		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
 		if (!activeGroupChatId) return;
@@ -682,6 +759,9 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 
 		// Right panel
 		handleGroupChatRightTabChange,
+
+		// Stop All
+		handleStopAll,
 
 		// Messages & queue
 		handleSendGroupChatMessage,

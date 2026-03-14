@@ -10,6 +10,7 @@ import {
 	FlaskConical,
 	Server,
 	Monitor,
+	Users,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -45,6 +46,7 @@ interface SettingsModalProps {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'groupchat'
 		| 'ssh'
 		| 'encore';
 	hasNoAgents?: boolean;
@@ -92,6 +94,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 		setSshRemoteHonorGitignore,
+		// Group Chat settings
+		moderatorStandingInstructions,
+		setModeratorStandingInstructions,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
@@ -102,6 +107,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'groupchat'
 		| 'ssh'
 		| 'encore'
 	>('general');
@@ -166,6 +172,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'theme'
 				| 'notifications'
 				| 'aicommands'
+				| 'groupchat'
 				| 'ssh'
 				| 'encore'
 			> = FEATURE_FLAGS.LLM_SETTINGS
@@ -177,6 +184,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'groupchat',
 						'ssh',
 						'encore',
 					]
@@ -187,6 +195,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'groupchat',
 						'ssh',
 						'encore',
 					];
@@ -392,6 +401,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'aicommands' && <span>AI Commands</span>}
 					</button>
 					<button
+						onClick={() => setActiveTab('groupchat')}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'groupchat' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						title="Group Chat"
+					>
+						<Users className="w-4 h-4" />
+						{activeTab === 'groupchat' && <span>Group Chat</span>}
+					</button>
+					<button
 						onClick={() => setActiveTab('ssh')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'ssh' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						title="SSH Hosts"
@@ -568,6 +585,39 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 							{/* OpenSpec Commands Section */}
 							<OpenSpecCommandsPanel theme={theme} />
+						</div>
+					)}
+
+					{activeTab === 'groupchat' && (
+						<div className="space-y-5">
+							<div>
+								<h3
+									className="text-sm font-bold uppercase tracking-wider mb-1"
+									style={{ color: theme.colors.textMain }}
+								>
+									Moderator Standing Instructions
+								</h3>
+								<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+									These instructions are included in every group chat moderator prompt. Use them for
+									standing practices like branch workflows, autorun setup, or coding standards.
+								</p>
+								<textarea
+									value={moderatorStandingInstructions}
+									onChange={(e) => setModeratorStandingInstructions(e.target.value)}
+									placeholder={`Example:\n- Always instruct agents to work in git branches, not directly on main\n- When delegating tasks, tell agents to enable autorun with: /autorun on\n- Prefer TypeScript strict mode in all new files`}
+									className="w-full p-3 rounded border bg-transparent outline-none resize-vertical text-sm font-mono"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										minHeight: '150px',
+									}}
+									maxLength={2000}
+									rows={8}
+								/>
+								<div className="text-xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
+									{moderatorStandingInstructions.length} / 2000
+								</div>
+							</div>
 						</div>
 					)}
 

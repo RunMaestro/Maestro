@@ -308,6 +308,10 @@ export interface UseSettingsReturn {
 	setUseNativeTitleBar: (value: boolean) => void;
 	autoHideMenuBar: boolean;
 	setAutoHideMenuBar: (value: boolean) => void;
+
+	// Group Chat settings
+	moderatorStandingInstructions: string;
+	setModeratorStandingInstructions: (value: string) => void;
 }
 
 export function useSettings(): UseSettingsReturn {

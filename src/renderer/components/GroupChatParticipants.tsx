@@ -13,6 +13,7 @@ import { ParticipantCard } from './ParticipantCard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildParticipantColorMap } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
+import { useGroupChatStore } from '../stores/groupChatStore';
 
 interface GroupChatParticipantsProps {
 	theme: Theme;
@@ -61,6 +62,8 @@ export function GroupChatParticipants({
 		setWidth: setWidthState,
 		side: 'right',
 	});
+
+	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
 
 	// Generate consistent colors for all participants (including "Moderator" for the moderator card)
 	const participantColors = useMemo(() => {
@@ -164,10 +167,11 @@ export function GroupChatParticipants({
 							key={participant.sessionId}
 							theme={theme}
 							participant={participant}
-							state={participantStates.get(participant.sessionId) || 'idle'}
+							state={participantStates.get(participant.name) || 'idle'}
 							color={participantColors[participant.name]}
 							groupChatId={groupChatId}
 							onContextReset={handleContextReset}
+							liveOutput={participantLiveOutput.get(participant.name)}
 						/>
 					))
 				)}

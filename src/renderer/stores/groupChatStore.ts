@@ -54,6 +54,9 @@ export interface GroupChatStoreState {
 	groupChatParticipantColors: Record<string, string>;
 	groupChatStagedImages: string[];
 
+	// Live output peek
+	participantLiveOutput: Map<string, string>;
+
 	// Error
 	groupChatError: GroupChatErrorState | null;
 }
@@ -109,6 +112,10 @@ export interface GroupChatStoreActions {
 	) => void;
 	setGroupChatStagedImages: (v: string[] | ((prev: string[]) => string[])) => void;
 
+	// Live output peek
+	appendParticipantLiveOutput: (participantName: string, chunk: string) => void;
+	clearParticipantLiveOutput: (participantName?: string) => void;
+
 	// Error
 	setGroupChatError: (
 		v:
@@ -156,6 +163,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 	groupChatRightTab: 'participants' as GroupChatRightTab,
 	groupChatParticipantColors: {},
 	groupChatStagedImages: [],
+	participantLiveOutput: new Map(),
 	groupChatError: null,
 
 	// --- Actions ---
@@ -181,6 +189,26 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 		set((s) => ({ groupChatStagedImages: resolve(v, s.groupChatStagedImages) })),
 	setGroupChatError: (v) => set((s) => ({ groupChatError: resolve(v, s.groupChatError) })),
 
+	appendParticipantLiveOutput: (participantName, chunk) =>
+		set((s) => {
+			const next = new Map(s.participantLiveOutput);
+			const existing = next.get(participantName) || '';
+			// Cap at ~50KB per participant to prevent unbounded growth
+			const combined = existing + chunk;
+			next.set(participantName, combined.length > 50000 ? combined.slice(-50000) : combined);
+			return { participantLiveOutput: next };
+		}),
+
+	clearParticipantLiveOutput: (participantName) =>
+		set((s) => {
+			if (participantName) {
+				const next = new Map(s.participantLiveOutput);
+				next.delete(participantName);
+				return { participantLiveOutput: next };
+			}
+			return { participantLiveOutput: new Map() };
+		}),
+
 	clearGroupChatError: () => set({ groupChatError: null }),
 
 	resetGroupChatState: () =>
@@ -189,6 +217,7 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			groupChatMessages: [],
 			groupChatState: 'idle' as GroupChatState,
 			participantStates: new Map(),
+			participantLiveOutput: new Map(),
 			groupChatError: null,
 		}),
 }));
@@ -225,6 +254,8 @@ export function getGroupChatActions() {
 		setGroupChatParticipantColors: state.setGroupChatParticipantColors,
 		setGroupChatStagedImages: state.setGroupChatStagedImages,
 		setGroupChatError: state.setGroupChatError,
+		appendParticipantLiveOutput: state.appendParticipantLiveOutput,
+		clearParticipantLiveOutput: state.clearParticipantLiveOutput,
 		clearGroupChatError: state.clearGroupChatError,
 		resetGroupChatState: state.resetGroupChatState,
 	};

@@ -24,6 +24,11 @@ vi.mock('lucide-react', () => ({
 			$
 		</span>
 	),
+	StopCircle: ({ className }: { className?: string }) => (
+		<span data-testid="stop-circle-icon" className={className}>
+			⏹
+		</span>
+	),
 }));
 
 const mockTheme = {
@@ -44,6 +49,8 @@ const defaultProps = {
 	theme: mockTheme,
 	name: 'Test Chat',
 	participantCount: 3,
+	state: 'idle' as const,
+	onStopAll: vi.fn(),
 	onRename: vi.fn(),
 	onShowInfo: vi.fn(),
 	rightPanelOpen: false,
@@ -96,5 +103,24 @@ describe('GroupChatHeader', () => {
 	it('uses singular "participant" for count of 1', () => {
 		render(<GroupChatHeader {...defaultProps} participantCount={1} />);
 		expect(screen.getByText('1 participant')).toBeTruthy();
+	});
+
+	it('shows Stop All button when state is not idle', () => {
+		render(<GroupChatHeader {...defaultProps} state="moderator-thinking" />);
+		expect(screen.getByText('Stop All')).toBeTruthy();
+	});
+
+	it('hides Stop All button when state is idle', () => {
+		render(<GroupChatHeader {...defaultProps} state="idle" />);
+		expect(screen.queryByText('Stop All')).toBeNull();
+	});
+
+	it('calls onStopAll when Stop All button is clicked', () => {
+		const onStopAll = vi.fn();
+		render(
+			<GroupChatHeader {...defaultProps} state="participants-working" onStopAll={onStopAll} />
+		);
+		fireEvent.click(screen.getByText('Stop All'));
+		expect(onStopAll).toHaveBeenCalledOnce();
 	});
 });

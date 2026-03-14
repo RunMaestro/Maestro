@@ -5,6 +5,7 @@
  */
 
 import type { ProcessManager } from '../process-manager';
+import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 
 /**
@@ -241,6 +242,17 @@ export function setupExitListener(
 						debugLog('GroupChat:Debug', ` ERROR spawning synthesis:`, err);
 						logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
 							error: String(err),
+							groupChatId,
+						});
+						// Reset to idle so user is not stuck waiting indefinitely
+						groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
+						groupChatEmitters.emitMessage?.(groupChatId, {
+							timestamp: new Date().toISOString(),
+							from: 'system',
+							content: `⚠️ Synthesis failed. You can send another message to continue.`,
+						});
+						captureException(err, {
+							operation: 'groupChat:spawnModeratorSynthesis',
 							groupChatId,
 						});
 					});

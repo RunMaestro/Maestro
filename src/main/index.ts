@@ -66,6 +66,7 @@ import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
 	setGetAgentConfigCallback,
+	setGetModeratorSettingsCallback,
 	setSshStore,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
@@ -626,6 +627,8 @@ function setupIpcHandlers() {
 				sshRemoteName,
 				// Pass full SSH config for remote execution support
 				sshRemoteConfig: s.sessionSshRemoteConfig,
+				autoRunFolderPath: s.autoRunFolderPath,
+				worktreeBasePath: s.worktreeConfig?.basePath,
 			};
 		});
 	});
@@ -633,6 +636,12 @@ function setupIpcHandlers() {
 	// Set up callback for group chat router to lookup custom env vars for agents
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
+
+	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	setGetModeratorSettingsCallback(() => ({
+		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
+		conductorProfile: (store.get('conductorProfile', '') as string) || '',
+	}));
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
