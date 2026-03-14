@@ -1057,6 +1057,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customArgs,
 				customEnvVars,
 				sessionSshRemoteConfig,
+				runAllDocuments,
 			} = wizardState;
 
 			if (!selectedAgent || !directoryPath) {
@@ -1201,25 +1202,24 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			setActiveFocus('main');
 			setTimeout(() => inputRef.current?.focus(), 100);
 
-			const firstDocWithTasks = generatedDocuments.find((doc) => doc.taskCount > 0);
-			if (firstDocWithTasks && autoRunFolderPath) {
+			const docsWithTasks = generatedDocuments.filter((doc) => doc.taskCount > 0);
+			if (docsWithTasks.length > 0 && autoRunFolderPath) {
+				const docsToRun = runAllDocuments ? docsWithTasks : [docsWithTasks[0]];
 				const batchConfig: BatchRunConfig = {
-					documents: [
-						{
-							id: generateId(),
-							filename: firstDocWithTasks.filename.replace(/\.md$/, ''),
-							resetOnCompletion: false,
-							isDuplicate: false,
-						},
-					],
+					documents: docsToRun.map((doc) => ({
+						id: generateId(),
+						filename: doc.filename.replace(/\.md$/, ''),
+						resetOnCompletion: false,
+						isDuplicate: false,
+					})),
 					prompt: DEFAULT_BATCH_PROMPT,
 					loopEnabled: false,
 				};
 
 				setTimeout(() => {
 					console.log(
-						'[Wizard] Auto-starting batch run with first document:',
-						firstDocWithTasks.filename
+						`[Wizard] Auto-starting batch run with ${docsToRun.length} document(s):`,
+						docsToRun.map((d) => d.filename).join(', ')
 					);
 					startBatchRun(newId, batchConfig, autoRunFolderPath);
 				}, 500);

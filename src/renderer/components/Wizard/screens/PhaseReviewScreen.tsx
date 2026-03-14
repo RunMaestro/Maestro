@@ -21,6 +21,7 @@ import { useWizard } from '../WizardContext';
 import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 // Auto-save debounce delay in milliseconds
@@ -67,8 +68,14 @@ function DocumentReview({
 	) => void;
 	wizardStartTime?: number;
 }): JSX.Element {
-	const { state, setEditedPhase1Content, getPhase1Content, setWantsTour, setCurrentDocumentIndex } =
-		useWizard();
+	const {
+		state,
+		setEditedPhase1Content,
+		getPhase1Content,
+		setWantsTour,
+		setCurrentDocumentIndex,
+		setRunAllDocuments,
+	} = useWizard();
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
 	const currentDoc = generatedDocuments[currentDocumentIndex] || generatedDocuments[0];
@@ -479,6 +486,38 @@ function DocumentReview({
 					backgroundColor: theme.colors.bgSidebar,
 				}}
 			>
+				{/* Run All toggle - only shown when there are multiple documents */}
+				{generatedDocuments.length > 1 && (
+					<div
+						className="flex items-center gap-3 mb-3 px-3 py-2.5 rounded-lg border cursor-pointer"
+						style={{
+							borderColor: theme.colors.border,
+							backgroundColor: theme.colors.bgMain,
+						}}
+						onClick={() => setRunAllDocuments(!state.runAllDocuments)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setRunAllDocuments(!state.runAllDocuments);
+							}
+						}}
+					>
+						<ToggleSwitch
+							checked={state.runAllDocuments}
+							onChange={setRunAllDocuments}
+							theme={theme}
+							ariaLabel={
+								state.runAllDocuments ? 'Auto Run All Phases' : 'Auto Run First Phase Only For Now'
+							}
+						/>
+						<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							{state.runAllDocuments ? 'Auto Run All Phases' : 'Auto Run First Phase Only For Now'}
+						</span>
+					</div>
+				)}
+
 				<div className="flex flex-col sm:flex-row gap-3">
 					{/* Primary button - Ready to Go */}
 					<button

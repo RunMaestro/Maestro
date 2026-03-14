@@ -456,7 +456,7 @@ export function MaestroWizard({
 
 			<div
 				ref={modalRef}
-				className="w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
+				className="w-[1200px] max-w-[95vw] h-[85vh] rounded-xl border shadow-2xl flex flex-col overflow-hidden wizard-modal"
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,

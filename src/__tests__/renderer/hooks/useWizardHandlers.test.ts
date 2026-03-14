@@ -1888,6 +1888,76 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		it('auto-starts batch run with all documents when runAllDocuments is true', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+			const deps = createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'review' as any,
+						isOpen: true,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 90,
+						isReadyToProceed: true,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [
+							{ filename: 'phase-1.md', content: '# Phase 1', taskCount: 3 },
+							{ filename: 'phase-2.md', content: '# Phase 2', taskCount: 5 },
+							{ filename: 'phase-3.md', content: '# Phase 3', taskCount: 2 },
+						],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						runAllDocuments: true,
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn(),
+					clearResumeState: vi.fn(),
+				},
+			});
+
+			const { result } = renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleWizardLaunchSession(false);
+			});
+
+			// Wait for the setTimeout batch run
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 600));
+			});
+
+			expect(deps.startBatchRun).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.objectContaining({
+					documents: expect.arrayContaining([
+						expect.objectContaining({ filename: 'phase-1' }),
+						expect.objectContaining({ filename: 'phase-2' }),
+						expect.objectContaining({ filename: 'phase-3' }),
+					]),
+				}),
+				expect.stringContaining('Auto Run Docs')
+			);
+
+			// Should have exactly 3 documents in the batch
+			const batchConfig = deps.startBatchRun.mock.calls[0][1];
+			expect(batchConfig.documents).toHaveLength(3);
+		});
+
 		it('starts tour when wantsTour is true', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
 
