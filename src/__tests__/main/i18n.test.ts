@@ -173,6 +173,64 @@ describe('Main process i18n', () => {
 		});
 	});
 
+	describe('dialog title translations', () => {
+		const DIALOG_KEYS = [
+			'common:dialog.select_working_directory',
+			'common:dialog.save_file',
+			'common:dialog.select_settings_folder',
+			'common:dialog.select_settings_folder_message',
+			'common:dialog.save_debug_package',
+			'common:dialog.export_playbook',
+			'common:dialog.import_playbook',
+		];
+
+		it('all dialog keys resolve in English', async () => {
+			await initMainI18n('en');
+			for (const key of DIALOG_KEYS) {
+				const value = mainT(key);
+				expect(value, `${key} should not return the raw key`).not.toBe(key.split(':')[1]);
+				expect(value.length, `${key} should be a non-empty string`).toBeGreaterThan(0);
+			}
+		});
+
+		it('returns correct English dialog titles', async () => {
+			await initMainI18n('en');
+			expect(mainT('common:dialog.select_working_directory')).toBe('Select Working Directory');
+			expect(mainT('common:dialog.save_file')).toBe('Save File');
+			expect(mainT('common:dialog.save_debug_package')).toBe('Save Debug Package');
+			expect(mainT('common:dialog.export_playbook')).toBe('Export Playbook');
+			expect(mainT('common:dialog.import_playbook')).toBe('Import Playbook');
+		});
+
+		it('returns translated dialog titles in Spanish', async () => {
+			await initMainI18n('es');
+			expect(mainT('common:dialog.select_working_directory')).toBe(
+				'Seleccionar directorio de trabajo'
+			);
+			expect(mainT('common:dialog.save_file')).toBe('Guardar archivo');
+			expect(mainT('common:dialog.export_playbook')).toBe('Exportar playbook');
+			expect(mainT('common:dialog.import_playbook')).toBe('Importar playbook');
+		});
+
+		it('dialog keys exist in all supported languages', async () => {
+			for (const lang of SUPPORTED_LANGUAGES) {
+				await changeMainLanguage(lang);
+				for (const key of DIALOG_KEYS) {
+					const value = mainT(key);
+					expect(value, `${key} should resolve in ${lang}`).not.toBe(key.split(':')[1]);
+				}
+			}
+		});
+
+		it('settings folder message is a full sentence', async () => {
+			await initMainI18n('en');
+			const message = mainT('common:dialog.select_settings_folder_message');
+			expect(message).toContain('Maestro');
+			expect(message).toContain('iCloud Drive');
+			expect(message.length).toBeGreaterThan(50);
+		});
+	});
+
 	describe('non-Latin script languages', () => {
 		it('Arabic translations contain Arabic script', async () => {
 			await initMainI18n('ar');

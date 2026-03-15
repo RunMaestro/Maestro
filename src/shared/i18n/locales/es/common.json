@@ -32,6 +32,15 @@
 	"refresh": "Actualizar",
 	"settings": "Configuracion",
 	"help": "Ayuda",
+	"dialog": {
+		"select_working_directory": "Seleccionar directorio de trabajo",
+		"save_file": "Guardar archivo",
+		"select_settings_folder": "Seleccionar carpeta de configuración",
+		"select_settings_folder_message": "Elija una carpeta para la configuración de Maestro. Use una carpeta sincronizada (iCloud Drive, Dropbox, OneDrive) para compartir la configuración entre dispositivos.",
+		"save_debug_package": "Guardar paquete de depuración",
+		"export_playbook": "Exportar playbook",
+		"import_playbook": "Importar playbook"
+	},
 	"items_count_one": "{{count}} elemento",
 	"items_count_other": "{{count}} elementos",
 	"agents_running_one": "{{count}} agente en ejecucion",
@@ -55,6 +64,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}me",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",

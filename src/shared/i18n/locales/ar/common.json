@@ -32,6 +32,15 @@
 	"refresh": "تحديث",
 	"settings": "الإعدادات",
 	"help": "المساعدة",
+	"dialog": {
+		"select_working_directory": "اختيار دليل العمل",
+		"save_file": "حفظ الملف",
+		"select_settings_folder": "اختيار مجلد الإعدادات",
+		"select_settings_folder_message": "اختر مجلدًا لإعدادات Maestro. استخدم مجلدًا متزامنًا (iCloud Drive أو Dropbox أو OneDrive) لمشاركة الإعدادات بين الأجهزة.",
+		"save_debug_package": "حفظ حزمة التصحيح",
+		"export_playbook": "تصدير دليل التشغيل",
+		"import_playbook": "استيراد دليل التشغيل"
+	},
 	"items_count_zero": "لا عناصر",
 	"items_count_one": "عنصر واحد",
 	"items_count_two": "عنصران",
@@ -63,6 +72,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}mo",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",

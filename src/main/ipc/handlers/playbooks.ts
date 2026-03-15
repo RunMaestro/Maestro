@@ -7,6 +7,7 @@ import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { mainT } from '../../i18n';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -257,7 +258,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Show save dialog
 				const result = await dialog.showSaveDialog(mainWindow, {
-					title: 'Export Playbook',
+					title: mainT('common:dialog.export_playbook'),
 					defaultPath: `${playbook.name.replace(/[^a-zA-Z0-9-_]/g, '_')}.maestro-playbook.zip`,
 					filters: [
 						{ name: 'Maestro Playbook', extensions: ['maestro-playbook.zip'] },
@@ -357,7 +358,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Show open dialog
 				const result = await dialog.showOpenDialog(mainWindow, {
-					title: 'Import Playbook',
+					title: mainT('common:dialog.import_playbook'),
 					filters: [
 						{ name: 'Maestro Playbook', extensions: ['maestro-playbook.zip', 'zip'] },
 						{ name: 'All Files', extensions: ['*'] },

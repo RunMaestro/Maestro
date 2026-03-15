@@ -32,6 +32,15 @@
 	"refresh": "Aktualisieren",
 	"settings": "Einstellungen",
 	"help": "Hilfe",
+	"dialog": {
+		"select_working_directory": "Arbeitsverzeichnis auswählen",
+		"save_file": "Datei speichern",
+		"select_settings_folder": "Einstellungsordner auswählen",
+		"select_settings_folder_message": "Wählen Sie einen Ordner für die Maestro-Einstellungen. Verwenden Sie einen synchronisierten Ordner (iCloud Drive, Dropbox, OneDrive), um Einstellungen geräteübergreifend zu teilen.",
+		"save_debug_package": "Debug-Paket speichern",
+		"export_playbook": "Playbook exportieren",
+		"import_playbook": "Playbook importieren"
+	},
 	"items_count_one": "{{count}} Element",
 	"items_count_other": "{{count}} Elemente",
 	"agents_running_one": "{{count}} Agent aktiv",
@@ -55,6 +64,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}Mo",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",

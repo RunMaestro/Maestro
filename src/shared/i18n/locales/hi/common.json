@@ -32,6 +32,15 @@
 	"refresh": "रीफ़्रेश करें",
 	"settings": "सेटिंग्स",
 	"help": "सहायता",
+	"dialog": {
+		"select_working_directory": "कार्य निर्देशिका चुनें",
+		"save_file": "फ़ाइल सहेजें",
+		"select_settings_folder": "सेटिंग्स फ़ोल्डर चुनें",
+		"select_settings_folder_message": "Maestro सेटिंग्स के लिए एक फ़ोल्डर चुनें। उपकरणों के बीच सेटिंग्स साझा करने के लिए एक सिंक्रनाइज़ फ़ोल्डर (iCloud Drive, Dropbox, OneDrive) का उपयोग करें।",
+		"save_debug_package": "डीबग पैकेज सहेजें",
+		"export_playbook": "प्लेबुक निर्यात करें",
+		"import_playbook": "प्लेबुक आयात करें"
+	},
 	"items_count_one": "{{count}} आइटम",
 	"items_count_other": "{{count}} आइटम",
 	"agents_running_one": "{{count}} एजेंट चल रहा है",
@@ -55,6 +64,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}mo",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",

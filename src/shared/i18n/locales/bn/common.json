@@ -32,6 +32,15 @@
 	"refresh": "রিফ্রেশ করুন",
 	"settings": "সেটিংস",
 	"help": "সাহায্য",
+	"dialog": {
+		"select_working_directory": "কাজের ডিরেক্টরি নির্বাচন করুন",
+		"save_file": "ফাইল সংরক্ষণ করুন",
+		"select_settings_folder": "সেটিংস ফোল্ডার নির্বাচন করুন",
+		"select_settings_folder_message": "Maestro সেটিংসের জন্য একটি ফোল্ডার বেছে নিন। ডিভাইসগুলির মধ্যে সেটিংস শেয়ার করতে একটি সিঙ্ক্রোনাইজড ফোল্ডার (iCloud Drive, Dropbox, OneDrive) ব্যবহার করুন।",
+		"save_debug_package": "ডিবাগ প্যাকেজ সংরক্ষণ করুন",
+		"export_playbook": "প্লেবুক রপ্তানি করুন",
+		"import_playbook": "প্লেবুক আমদানি করুন"
+	},
 	"items_count_one": "{{count}}টি আইটেম",
 	"items_count_other": "{{count}}টি আইটেম",
 	"agents_running_one": "{{count}}টি এজেন্ট চলছে",
@@ -55,6 +64,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}mo",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",

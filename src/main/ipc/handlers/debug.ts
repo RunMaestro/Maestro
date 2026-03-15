@@ -19,6 +19,7 @@ import {
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
+import { mainT } from '../../i18n';
 
 const LOG_CONTEXT = '[DebugPackage]';
 
@@ -77,7 +78,7 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 
 			// Show save dialog
 			const result = await dialog.showSaveDialog(mainWindow, {
-				title: 'Save Debug Package',
+				title: mainT('common:dialog.save_debug_package'),
 				defaultPath: defaultFilename,
 				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
 			});

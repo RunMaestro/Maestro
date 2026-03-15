@@ -28,6 +28,7 @@ import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import { mainT } from '../../i18n';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -71,7 +72,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 
 			const result = await dialog.showOpenDialog(mainWindow, {
 				properties: ['openDirectory', 'createDirectory'],
-				title: 'Select Working Directory',
+				title: mainT('common:dialog.select_working_directory'),
 			});
 
 			if (result.canceled || result.filePaths.length === 0) {
@@ -103,7 +104,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			const result = await dialog.showSaveDialog(mainWindow, {
 				defaultPath: options.defaultPath,
 				filters: options.filters,
-				title: options.title ?? 'Save File',
+				title: options.title ?? mainT('common:dialog.save_file'),
 			});
 
 			if (result.canceled || !result.filePath) {
@@ -502,9 +503,8 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 
 		const result = await dialog.showOpenDialog(mainWindow, {
 			properties: ['openDirectory', 'createDirectory'],
-			title: 'Select Settings Folder',
-			message:
-				'Choose a folder for Maestro settings. Use a synced folder (iCloud Drive, Dropbox, OneDrive) to share settings across devices.',
+			title: mainT('common:dialog.select_settings_folder'),
+			message: mainT('common:dialog.select_settings_folder_message'),
 		});
 
 		if (result.canceled || result.filePaths.length === 0) {

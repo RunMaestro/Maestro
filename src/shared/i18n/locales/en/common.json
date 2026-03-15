@@ -32,6 +32,15 @@
 	"refresh": "Refresh",
 	"settings": "Settings",
 	"help": "Help",
+	"dialog": {
+		"select_working_directory": "Select Working Directory",
+		"save_file": "Save File",
+		"select_settings_folder": "Select Settings Folder",
+		"select_settings_folder_message": "Choose a folder for Maestro settings. Use a synced folder (iCloud Drive, Dropbox, OneDrive) to share settings across devices.",
+		"save_debug_package": "Save Debug Package",
+		"export_playbook": "Export Playbook",
+		"import_playbook": "Import Playbook"
+	},
 	"items_count_one": "{{count}} item",
 	"items_count_other": "{{count}} items",
 	"agents_running_one": "{{count}} agent running",
@@ -55,6 +64,7 @@
 		"minutes_short": "{{count}}m",
 		"hours_short": "{{count}}h",
 		"days_short": "{{count}}d",
+		"months_short": "{{count}}mo",
 		"minutes_compact": "{{count}}M",
 		"hours_compact": "{{count}}H",
 		"days_compact": "{{count}}D",
@@ -277,6 +287,15 @@
 			"loop_badge": "Loop {{current}} of {{max}}",
 			"view_history": "View history"
 		}
+	},
+	"group_chat_right_panel": {
+		"tab_participants": "Participants",
+		"tab_history": "History",
+		"participants_tooltip": "View participants",
+		"history_tooltip": "View task history",
+		"collapse_tooltip": "Collapse Panel ({{shortcut}})",
+		"no_participants": "No participants yet.",
+		"no_participants_hint": "Ask the moderator to add agents."
 	},
 	"badges": {
 		"max_level": "Maximum level achieved!",
