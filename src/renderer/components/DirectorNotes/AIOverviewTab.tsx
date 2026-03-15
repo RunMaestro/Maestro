@@ -6,6 +6,7 @@ import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { getActiveLocale } from '../../utils/formatters';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -64,7 +65,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	// Format the generation timestamp
 	const formatGeneratedAt = (timestamp: number): string => {
 		const date = new Date(timestamp);
-		return date.toLocaleString(undefined, {
+		return date.toLocaleString(getActiveLocale(), {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric',

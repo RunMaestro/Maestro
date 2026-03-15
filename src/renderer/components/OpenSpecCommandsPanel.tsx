@@ -13,6 +13,7 @@ import {
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { getActiveLocale } from '../utils/formatters';
 
 interface OpenSpecCommandsPanelProps {
 	theme: Theme;
@@ -145,7 +146,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 
 	const formatDate = (isoDate: string) => {
 		try {
-			return new Date(isoDate).toLocaleDateString(undefined, {
+			return new Date(isoDate).toLocaleDateString(getActiveLocale(), {
 				year: 'numeric',
 				month: 'short',
 				day: 'numeric',

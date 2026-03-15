@@ -9,7 +9,7 @@ import { MessageSquare, Copy, Check, RotateCcw, Server } from 'lucide-react';
 import { useState, useCallback } from 'react';
 import type { Theme, GroupChatParticipant, SessionState } from '../types';
 import { getStatusColor } from '../utils/theme';
-import { formatCost } from '../utils/formatters';
+import { formatCost, getActiveLocale } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 
 interface ParticipantCardProps {
@@ -29,7 +29,10 @@ function formatTime(timestamp: number): string {
 	const diff = now - timestamp;
 	if (diff < 60000) return 'just now';
 	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	return new Date(timestamp).toLocaleTimeString(getActiveLocale(), {
+		hour: '2-digit',
+		minute: '2-digit',
+	});
 }
 
 export function ParticipantCard({

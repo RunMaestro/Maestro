@@ -11,11 +11,11 @@ import {
 	Pencil,
 } from 'lucide-react';
 import type { Theme } from '../types';
+import { getActiveLocale } from '../utils/formatters';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ConfirmModal } from './ConfirmModal';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 
 interface SystemLogEntry {
@@ -541,7 +541,7 @@ export function LogViewer({
 								backgroundColor: getLevelColor(log.level),
 								minWidth: '1px',
 							}}
-							title={`${new Date(log.timestamp).toLocaleTimeString()} - ${log.level.toUpperCase()}: ${log.message.substring(0, 50)}${log.message.length > 50 ? '...' : ''}`}
+							title={`${new Date(log.timestamp).toLocaleTimeString(getActiveLocale())} - ${log.level.toUpperCase()}: ${log.message.substring(0, 50)}${log.message.length > 50 ? '...' : ''}`}
 							onClick={() => {
 								// Calculate scroll position based on log index
 								if (containerRef.current) {
@@ -626,7 +626,7 @@ export function LogViewer({
 											className="text-xs opacity-50 font-mono flex-shrink-0"
 											style={{ color: theme.colors.textDim }}
 										>
-											{new Date(log.timestamp).toLocaleTimeString()}
+											{new Date(log.timestamp).toLocaleTimeString(getActiveLocale())}
 										</span>
 										{/* Context pill - show for non-toast/autorun entries */}
 										{log.level !== 'toast' && log.level !== 'autorun' && log.context && (

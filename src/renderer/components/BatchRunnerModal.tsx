@@ -16,7 +16,6 @@ import {
 	Loader2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -35,6 +34,7 @@ import {
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { getActiveLocale } from '../utils/formatters';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -72,7 +72,10 @@ function formatLastModified(timestamp: number, t: (key: any, opts?: any) => stri
 	const now = new Date();
 	const diffMs = now.getTime() - date.getTime();
 	const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-	const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	const timeStr = date.toLocaleTimeString(getActiveLocale(), {
+		hour: '2-digit',
+		minute: '2-digit',
+	});
 
 	if (diffDays === 0) {
 		return t('batch_runner.today_at', { time: timeStr });
@@ -81,7 +84,11 @@ function formatLastModified(timestamp: number, t: (key: any, opts?: any) => stri
 	} else if (diffDays < 7) {
 		return t('batch_runner.days_ago', { count: diffDays });
 	} else {
-		return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+		return date.toLocaleDateString(getActiveLocale(), {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric',
+		});
 	}
 }
 

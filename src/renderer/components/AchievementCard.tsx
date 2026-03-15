@@ -24,7 +24,7 @@ import {
 	type ConductorBadge,
 } from '../constants/conductorBadges';
 import { MaestroSilhouette } from './MaestroSilhouette';
-import { formatTokensCompact } from '../utils/formatters';
+import { formatTokensCompact, getActiveLocale } from '../utils/formatters';
 import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 
@@ -1260,7 +1260,7 @@ export function AchievementCard({
 												<span style={{ color: theme.colors.textMain }}>{badge.shortName}</span>
 											</div>
 											<span style={{ color: theme.colors.textDim }}>
-												{new Date(record.unlockedAt).toLocaleDateString(undefined, {
+												{new Date(record.unlockedAt).toLocaleDateString(getActiveLocale(), {
 													month: 'short',
 													day: 'numeric',
 													year: 'numeric',

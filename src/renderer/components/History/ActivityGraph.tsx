@@ -3,6 +3,8 @@ import { Check } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
 import { LOOKBACK_OPTIONS } from './historyConstants';
 import { useI18n } from '../../hooks/useI18n';
+import { getActiveLocale } from '../../utils/formatters';
+import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 
 // Activity bar graph component with configurable lookback window
 export interface ActivityGraphProps {
@@ -26,6 +28,12 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const graphRef = useRef<HTMLDivElement>(null);
+	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const contextMenuPos = useContextMenuPosition(
+		contextMenuRef,
+		contextMenu?.x ?? 0,
+		contextMenu?.y ?? 0
+	);
 
 	// Get the current lookback config
 	const lookbackConfig = useMemo(
@@ -114,7 +122,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		} else {
 			// For longer periods, show dates
 			const formatDate = (date: Date) => {
-				return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+				return date.toLocaleDateString(getActiveLocale(), { month: 'short', day: 'numeric' });
 			};
 			if (formatDate(bucketStart) === formatDate(bucketEnd)) {
 				return formatDate(bucketStart);
@@ -165,7 +173,10 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		if (diffMins < 1) return t('history.graph.now_label');
 		if (diffMins < 60) return t('history.graph.minutes_ago', { count: diffMins });
 		if (diffHours < 24) return t('history.graph.hours_ago', { count: diffHours });
-		return new Date(endTime).toLocaleDateString([], { month: 'short', day: 'numeric' });
+		return new Date(endTime).toLocaleDateString(getActiveLocale(), {
+			month: 'short',
+			day: 'numeric',
+		});
 	};
 
 	// Check if we're viewing historical data (not "now")
@@ -177,7 +188,10 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			// All time - show start and end dates
 			return [
 				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+					label: new Date(startTime).toLocaleDateString(getActiveLocale(), {
+						month: 'short',
+						day: 'numeric',
+					}),
 					index: 0,
 				},
 				{ label: t('history.graph.now_label'), index: bucketCount - 1 },
@@ -208,7 +222,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			];
 		} else {
 			// Longer periods - show start/end
-			const startLabel = new Date(startTime).toLocaleDateString([], {
+			const startLabel = new Date(startTime).toLocaleDateString(getActiveLocale(), {
 				month: 'short',
 				day: 'numeric',
 			});
@@ -246,10 +260,12 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{/* Context menu for lookback options */}
 			{contextMenu && (
 				<div
+					ref={contextMenuRef}
 					className="fixed z-50 py-1 rounded border shadow-lg"
 					style={{
-						left: contextMenu.x,
-						top: contextMenu.y,
+						left: contextMenuPos.left,
+						top: contextMenuPos.top,
+						opacity: contextMenuPos.ready ? 1 : 0,
 						backgroundColor: theme.colors.bgSidebar,
 						borderColor: theme.colors.border,
 						minWidth: '120px',

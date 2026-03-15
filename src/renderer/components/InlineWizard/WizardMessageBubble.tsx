@@ -20,6 +20,7 @@ import remarkGfm from 'remark-gfm';
 import type { Theme } from '../../types';
 import { getConfidenceColor } from '../Wizard/services/wizardPrompts';
 import { formatAgentName } from '../Wizard/shared/wizardHelpers';
+import { getActiveLocale } from '../../utils/formatters';
 
 /**
  * Message structure for wizard conversations
@@ -59,7 +60,7 @@ export interface WizardMessageBubbleProps {
  */
 function formatTimestamp(timestamp: number): string {
 	const date = new Date(timestamp);
-	return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	return date.toLocaleTimeString(getActiveLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 /**

@@ -21,7 +21,7 @@ import type { Theme, HistoryEntry } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { formatElapsedTime, getActiveLocale } from '../utils/formatters';
+import { formatCost, formatElapsedTime, getActiveLocale } from '../utils/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -161,7 +161,7 @@ export function HistoryDetailModal({
 	// Format timestamp
 	const formatTime = (timestamp: number) => {
 		const date = new Date(timestamp);
-		return date.toLocaleString([], {
+		return date.toLocaleString(getActiveLocale(), {
 			month: 'short',
 			day: 'numeric',
 			hour: '2-digit',
@@ -516,7 +516,7 @@ export function HistoryDetailModal({
 							{/* Cost */}
 							{entry.usageStats && entry.usageStats.totalCostUsd > 0 && (
 								<span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
-									${entry.usageStats.totalCostUsd.toFixed(2)}
+									{formatCost(entry.usageStats.totalCostUsd)}
 								</span>
 							)}
 						</div>

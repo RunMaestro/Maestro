@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
+import { getActiveLocale } from '../utils/formatters';
 
 // Lookback period options for the activity graph
 export type LookbackPeriod = {
@@ -141,7 +142,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 		} else {
 			// For longer periods, show dates
 			const formatDate = (date: Date) => {
-				return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+				return date.toLocaleDateString(getActiveLocale(), { month: 'short', day: 'numeric' });
 			};
 			if (formatDate(bucketStart) === formatDate(bucketEnd)) {
 				return formatDate(bucketStart);
@@ -188,7 +189,10 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 			// All time - show start and end dates
 			return [
 				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+					label: new Date(startTime).toLocaleDateString(getActiveLocale(), {
+						month: 'short',
+						day: 'numeric',
+					}),
 					index: 0,
 				},
 				{ label: 'Now', index: bucketCount - 1 },
@@ -210,7 +214,7 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 			];
 		} else {
 			// Longer periods - show start/end
-			const startLabel = new Date(startTime).toLocaleDateString([], {
+			const startLabel = new Date(startTime).toLocaleDateString(getActiveLocale(), {
 				month: 'short',
 				day: 'numeric',
 			});

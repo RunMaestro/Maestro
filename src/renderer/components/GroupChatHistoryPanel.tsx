@@ -15,6 +15,7 @@ import type {
 	GroupChatHistoryEntryType,
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
+import { formatCost, getActiveLocale } from '../utils/formatters';
 import { useUIStore } from '../stores/uiStore';
 
 // Lookback period options for the activity graph
@@ -154,7 +155,7 @@ function GroupChatActivityGraph({
 			return `${formatHour(bucketStart)} - ${formatHour(bucketEnd)}`;
 		} else {
 			const formatDate = (date: Date) => {
-				return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+				return date.toLocaleDateString(getActiveLocale(), { month: 'short', day: 'numeric' });
 			};
 			if (formatDate(bucketStart) === formatDate(bucketEnd)) {
 				return formatDate(bucketStart);
@@ -193,7 +194,10 @@ function GroupChatActivityGraph({
 		if (lookbackHours === null) {
 			return [
 				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+					label: new Date(startTime).toLocaleDateString(getActiveLocale(), {
+						month: 'short',
+						day: 'numeric',
+					}),
 					index: 0,
 				},
 				{ label: 'Now', index: bucketCount - 1 },
@@ -212,7 +216,10 @@ function GroupChatActivityGraph({
 		} else {
 			return [
 				{
-					label: new Date(startTime).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+					label: new Date(startTime).toLocaleDateString(getActiveLocale(), {
+						month: 'short',
+						day: 'numeric',
+					}),
 					index: 0,
 				},
 				{ label: 'Now', index: bucketCount - 1 },
@@ -575,12 +582,12 @@ export function GroupChatHistoryPanel({
 		const isToday = date.toDateString() === now.toDateString();
 
 		if (isToday) {
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			return date.toLocaleTimeString(getActiveLocale(), { hour: '2-digit', minute: '2-digit' });
 		} else {
 			return (
-				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+				date.toLocaleDateString(getActiveLocale(), { month: 'short', day: 'numeric' }) +
 				' ' +
-				date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+				date.toLocaleTimeString(getActiveLocale(), { hour: '2-digit', minute: '2-digit' })
 			);
 		}
 	};
@@ -728,7 +735,7 @@ export function GroupChatHistoryPanel({
 												border: `1px solid ${theme.colors.success}30`,
 											}}
 										>
-											${entry.cost.toFixed(2)}
+											{formatCost(entry.cost)}
 										</span>
 									</div>
 								)}

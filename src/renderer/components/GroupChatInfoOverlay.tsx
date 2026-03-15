@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { getActiveLocale } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import {
 	Copy,
@@ -224,7 +225,7 @@ export function GroupChatInfoOverlay({
 					<InfoRow
 						theme={theme}
 						label="Created"
-						value={new Date(groupChat.createdAt).toLocaleString()}
+						value={new Date(groupChat.createdAt).toLocaleString(getActiveLocale())}
 					/>
 
 					<InfoRow

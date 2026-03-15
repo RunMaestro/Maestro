@@ -5,6 +5,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { getActiveLocale } from '../utils/formatters';
 
 export interface GistInfo {
 	gistUrl: string;
@@ -97,7 +98,7 @@ export function GistPublishModal({
 
 	const formatPublishedDate = (timestamp: number) => {
 		const date = new Date(timestamp);
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString(getActiveLocale(), {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',

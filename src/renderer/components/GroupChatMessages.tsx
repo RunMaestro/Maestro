@@ -22,6 +22,7 @@ import { generateParticipantColor, buildParticipantColorMap } from '../utils/par
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { getActiveLocale } from '../utils/formatters';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -160,7 +161,10 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			const date = new Date(timestamp);
 			const today = new Date();
 			const isToday = date.toDateString() === today.toDateString();
-			const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			const time = date.toLocaleTimeString(getActiveLocale(), {
+				hour: '2-digit',
+				minute: '2-digit',
+			});
 			if (isToday) {
 				return time;
 			}

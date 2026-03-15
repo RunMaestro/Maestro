@@ -38,6 +38,7 @@ import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { TypingIndicator } from '../shared/TypingIndicator';
 import { formatAgentName, getToolDetail } from '../shared/wizardHelpers';
+import { getActiveLocale } from '../../../utils/formatters';
 
 interface ConversationScreenProps {
 	theme: Theme;
@@ -52,7 +53,7 @@ interface ConversationScreenProps {
  */
 function formatTimestamp(timestamp: number): string {
 	const date = new Date(timestamp);
-	return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	return date.toLocaleTimeString(getActiveLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 /**

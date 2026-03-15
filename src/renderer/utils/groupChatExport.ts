@@ -8,6 +8,7 @@
 
 import { marked } from 'marked';
 import type { GroupChat, GroupChatMessage, GroupChatHistoryEntry, Theme } from '../types';
+import { getActiveLocale } from './formatters';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -32,7 +33,7 @@ function escapeHtml(text: string): string {
  */
 function formatTimestamp(timestamp: string | number): string {
 	const date = new Date(timestamp);
-	return date.toLocaleString();
+	return date.toLocaleString(getActiveLocale());
 }
 
 /**

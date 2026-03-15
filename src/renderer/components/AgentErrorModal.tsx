@@ -18,6 +18,7 @@
 
 import React, { useRef, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { getActiveLocale } from '../utils/formatters';
 import {
 	AlertCircle,
 	RefreshCw,
@@ -170,7 +171,7 @@ export function AgentErrorModal({
 
 				{/* Timestamp */}
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					{new Date(error.timestamp).toLocaleTimeString()}
+					{new Date(error.timestamp).toLocaleTimeString(getActiveLocale())}
 				</div>
 
 				{/* Collapsible JSON Details */}

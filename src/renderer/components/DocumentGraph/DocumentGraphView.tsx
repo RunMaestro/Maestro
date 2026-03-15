@@ -62,6 +62,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import type { FileNode } from '../../types/fileTree';
 import { useI18n } from '../../hooks/useI18n';
 import { useDirection } from '../../hooks/useDirection';
+import { getActiveLocale } from '../../utils/formatters';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -134,7 +135,7 @@ const countMarkdownTasks = (content: string): { completed: number; total: number
  * Format date for display in footer
  */
 const formatDate = (date: Date): string => {
-	return date.toLocaleDateString(undefined, {
+	return date.toLocaleDateString(getActiveLocale(), {
 		year: 'numeric',
 		month: 'short',
 		day: 'numeric',

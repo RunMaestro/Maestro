@@ -55,6 +55,7 @@ import { isImageFile } from '../../shared/gitUtils';
 import { useTranslation } from 'react-i18next';
 import { CodeText } from './shared/CodeText';
 import { useDirection } from '../hooks/useDirection';
+import { getActiveLocale } from '../utils/formatters';
 
 // Global cache for loaded images to prevent re-fetching and flickering
 // Maps resolved path -> { dataUrl, dimensions }
@@ -282,7 +283,7 @@ const LARGE_FILE_PREVIEW_LIMIT = 100 * 1024; // 100KB for syntax highlighting
 // Format date/time for display
 const formatDateTime = (isoString: string): string => {
 	const date = new Date(isoString);
-	return date.toLocaleString(undefined, {
+	return date.toLocaleString(getActiveLocale(), {
 		year: 'numeric',
 		month: 'short',
 		day: 'numeric',

@@ -33,6 +33,7 @@ import { SessionActivityGraph, type ActivityEntry } from './SessionActivityGraph
 import { SessionListItem } from './SessionListItem';
 import { ToolCallCard, getToolName } from './ToolCallCard';
 import {
+	formatCost,
 	formatSize,
 	formatNumber,
 	formatTokens,
@@ -845,7 +846,7 @@ export function AgentSessionsBrowser({
 									<span>•</span>
 									<span
 										className="relative group cursor-default"
-										title={new Date(viewingSession.timestamp).toLocaleString()}
+										title={new Date(viewingSession.timestamp).toLocaleString(getActiveLocale())}
 									>
 										{formatRelativeTime(viewingSession.modifiedAt)}
 										<span
@@ -855,7 +856,7 @@ export function AgentSessionsBrowser({
 												color: theme.colors.textMain,
 											}}
 										>
-											{new Date(viewingSession.timestamp).toLocaleString()}
+											{new Date(viewingSession.timestamp).toLocaleString(getActiveLocale())}
 										</span>
 									</span>
 								</div>
@@ -946,7 +947,7 @@ export function AgentSessionsBrowser({
 									className="text-lg font-mono font-semibold"
 									style={{ color: theme.colors.success }}
 								>
-									${(viewingSession.costUsd ?? 0).toFixed(2)}
+									{formatCost(viewingSession.costUsd ?? 0)}
 								</span>
 							</div>
 
@@ -1231,11 +1232,7 @@ export function AgentSessionsBrowser({
 										className={`text-xs font-medium font-mono ${!stats.isComplete ? 'animate-pulse' : ''}`}
 										style={{ color: theme.colors.success }}
 									>
-										$
-										{stats.totalCost.toLocaleString(getActiveLocale(), {
-											minimumFractionDigits: 2,
-											maximumFractionDigits: 2,
-										})}
+										{formatCost(stats.totalCost)}
 									</span>
 								</div>
 							)}
@@ -1254,7 +1251,7 @@ export function AgentSessionsBrowser({
 								<div className="flex items-center gap-2">
 									<Clock className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 									<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-										Since {stats.oldestSession.toLocaleDateString()}
+										Since {stats.oldestSession.toLocaleDateString(getActiveLocale())}
 									</span>
 								</div>
 							)}

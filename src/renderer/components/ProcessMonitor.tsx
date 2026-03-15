@@ -16,6 +16,7 @@ import {
 	Play,
 } from 'lucide-react';
 import type { Session, Group, Theme, GroupChat } from '../types';
+import { getActiveLocale } from '../utils/formatters';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
@@ -1403,7 +1404,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								</span>
 							</div>
 							<span className="text-sm" style={{ color: theme.colors.textMain }}>
-								{new Date(detailView.startTime).toLocaleString()}
+								{new Date(detailView.startTime).toLocaleString(getActiveLocale())}
 							</span>
 						</div>
 					</div>

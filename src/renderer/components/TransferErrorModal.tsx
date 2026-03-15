@@ -387,7 +387,7 @@ export function TransferErrorModal({
 
 				{/* Timestamp */}
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					{new Date(error.timestamp).toLocaleTimeString()}
+					{new Date(error.timestamp).toLocaleTimeString(getActiveLocale())}
 				</div>
 			</div>
 

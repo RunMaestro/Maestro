@@ -25,13 +25,13 @@ import {
 	getCachedAnsiHtml,
 } from '../utils/textProcessing';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { getActiveLocale } from '../utils/formatters';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 
 // ============================================================================
@@ -384,7 +384,10 @@ const LogItemComponent = memo(
 						const logDate = new Date(log.timestamp);
 						const today = new Date();
 						const isToday = logDate.toDateString() === today.toDateString();
-						const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+						const time = logDate.toLocaleTimeString(getActiveLocale(), {
+							hour: '2-digit',
+							minute: '2-digit',
+						});
 						if (isToday) {
 							return time;
 						}
