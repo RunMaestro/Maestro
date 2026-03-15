@@ -61,6 +61,9 @@ export interface AgentCapabilities {
 	/** Agent supports --input-format stream-json for image input via stdin */
 	supportsStreamJsonInput: boolean;
 
+	/** Agent can receive additional user messages via stdin while processing a turn */
+	supportsMidTurnInput: boolean;
+
 	/** Agent emits streaming thinking/reasoning content that can be displayed */
 	supportsThinkingDisplay: boolean;
 
@@ -112,6 +115,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsResultMessages: false,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: false,
+	supportsMidTurnInput: false,
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
