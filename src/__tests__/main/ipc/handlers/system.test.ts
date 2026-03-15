@@ -45,6 +45,20 @@ vi.mock('electron', () => ({
 	},
 }));
 
+// Mock main process i18n — return English translations for dialog titles
+vi.mock('../../../../main/i18n', () => {
+	const dialogTranslations: Record<string, string> = {
+		'common:dialog.select_working_directory': 'Select Working Directory',
+		'common:dialog.save_file': 'Save File',
+		'common:dialog.select_settings_folder': 'Select Settings Folder',
+		'common:dialog.select_settings_folder_message':
+			'Choose a folder for Maestro settings. Use a synced folder (iCloud Drive, Dropbox, OneDrive) to share settings across devices.',
+	};
+	return {
+		mainT: vi.fn((key: string) => dialogTranslations[key] ?? key),
+	};
+});
+
 // Mock logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {

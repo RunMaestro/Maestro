@@ -42,6 +42,16 @@ vi.mock('../../../../main/debug-package', () => ({
 	previewDebugPackage: vi.fn(),
 }));
 
+// Mock main process i18n — return English translations for dialog titles
+vi.mock('../../../../main/i18n', () => ({
+	mainT: vi.fn((key: string) => {
+		const translations: Record<string, string> = {
+			'common:dialog.save_debug_package': 'Save Debug Package',
+		};
+		return translations[key] ?? key;
+	}),
+}));
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
