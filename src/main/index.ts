@@ -77,6 +77,7 @@ import {
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { initMainI18n } from './i18n';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -364,6 +365,10 @@ app.whenReady().then(async () => {
 		logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
 		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 	}
+
+	// Initialize main process i18n (uses stored language preference)
+	const storedLanguage = store.get('language', 'en') as string;
+	await initMainI18n(storedLanguage);
 
 	// Set up IPC handlers
 	logger.debug('Setting up IPC handlers', 'Startup');

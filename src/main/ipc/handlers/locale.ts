@@ -8,6 +8,7 @@
 import { ipcMain, App } from 'electron';
 import Store from 'electron-store';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../../../shared/i18n/config';
+import { changeMainLanguage } from '../../i18n';
 import { logger } from '../../utils/logger';
 
 export interface LocaleHandlerDependencies {
@@ -90,6 +91,7 @@ export function registerLocaleHandlers(deps: LocaleHandlerDependencies): void {
 			return { success: false, error: `Unsupported language: ${language}` };
 		}
 		settingsStore.set('language', language);
+		await changeMainLanguage(language as SupportedLanguage);
 		logger.info(`Language preference set to: ${language}`, 'Locale');
 		return { success: true };
 	});
