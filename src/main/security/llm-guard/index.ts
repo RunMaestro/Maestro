@@ -2467,6 +2467,12 @@ function collectMatches(
 
 	while ((match = matcher.exec(text)) !== null) {
 		const value = match[0];
+		// Guard against zero-length matches to prevent infinite loops
+		// If the pattern matches an empty string, exec() won't advance lastIndex
+		if (value.length === 0) {
+			matcher.lastIndex++;
+			continue;
+		}
 		findings.push({
 			type,
 			value,

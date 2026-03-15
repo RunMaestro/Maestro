@@ -294,14 +294,19 @@ export class StdoutHandler {
 		}
 
 		// DEBUG: Log thinking-chunk emission conditions
+		// Note: textPreview is suppressed when LLM Guard is enabled to avoid logging sensitive content
 		if (event.type === 'text') {
+			const llmGuardEnabled = managedProcess.llmGuardState?.config?.enabled;
 			logger.debug('[ProcessManager] Checking thinking-chunk conditions', 'ProcessManager', {
 				sessionId,
 				eventType: event.type,
 				isPartial: event.isPartial,
 				hasText: !!event.text,
 				textLength: event.text?.length,
-				textPreview: event.text?.substring(0, 100),
+				// Suppress raw text preview when LLM Guard is enabled to prevent sensitive content in logs
+				textPreview: llmGuardEnabled
+					? '[redacted - LLM Guard enabled]'
+					: event.text?.substring(0, 100),
 			});
 		}
 
@@ -518,7 +523,7 @@ export class StdoutHandler {
 			}
 
 			// Log to persistent security event store
-			logSecurityEvent({
+			void logSecurityEvent({
 				sessionId,
 				tabId: managedProcess.tabId,
 				eventType: guardResult.blocked ? 'blocked' : 'output_scan',
@@ -526,20 +531,27 @@ export class StdoutHandler {
 				action,
 				originalLength: resultText.length,
 				sanitizedLength: guardResult.sanitizedResponse.length,
-			}).then((event) => {
-				// Emit to ProcessManager listeners for real-time UI forwarding
-				const eventData: SecurityEventData = {
-					sessionId: event.sessionId,
-					tabId: event.tabId,
-					eventType: event.eventType,
-					findingTypes: event.findings.map((f) => f.type),
-					findingCount: event.findings.length,
-					action: event.action,
-					originalLength: event.originalLength,
-					sanitizedLength: event.sanitizedLength,
-				};
-				this.emitter.emit('security-event', eventData);
-			});
+			})
+				.then((event) => {
+					// Emit to ProcessManager listeners for real-time UI forwarding
+					const eventData: SecurityEventData = {
+						sessionId: event.sessionId,
+						tabId: event.tabId,
+						eventType: event.eventType,
+						findingTypes: event.findings.map((f) => f.type),
+						findingCount: event.findings.length,
+						action: event.action,
+						originalLength: event.originalLength,
+						sanitizedLength: event.sanitizedLength,
+					};
+					this.emitter.emit('security-event', eventData);
+				})
+				.catch((error) => {
+					logger.error('[LLMGuard] Failed to log security event', 'LLMGuard', {
+						sessionId,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 		}
 
 		if (guardResult.blocked) {

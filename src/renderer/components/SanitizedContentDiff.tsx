@@ -51,6 +51,38 @@ const sortFindingsByPosition = (findings: Finding[]): Finding[] => {
 	return [...findings].sort((a, b) => a.start - b.start);
 };
 
+/**
+ * Normalize overlapping findings by merging or removing overlaps.
+ * When two findings overlap, keeps the one with higher confidence.
+ * This prevents rendering issues where slicing from an already-consumed position
+ * would duplicate or reorder text in the diff view.
+ */
+const normalizeOverlappingFindings = (findings: Finding[]): Finding[] => {
+	if (findings.length <= 1) return findings;
+
+	// Sort by start position, then by length (longer first for same start)
+	const sorted = [...findings].sort((a, b) => {
+		if (a.start !== b.start) return a.start - b.start;
+		return b.end - b.start - (a.end - a.start);
+	});
+
+	const result: Finding[] = [];
+	let lastEnd = -1;
+
+	for (const finding of sorted) {
+		// Skip findings that overlap with the previous one
+		if (finding.start < lastEnd) {
+			// This finding overlaps with the previous one - skip it
+			// The previous one was kept because it started earlier or was longer
+			continue;
+		}
+		result.push(finding);
+		lastEnd = finding.end;
+	}
+
+	return result;
+};
+
 // Get color for finding type
 const getHighlightColor = (type: string): { bg: string; text: string } => {
 	// High severity: injection, jailbreak
@@ -88,7 +120,8 @@ interface TextSegment {
 
 // Build segments from original content and findings
 const buildOriginalSegments = (content: string, findings: Finding[]): TextSegment[] => {
-	const sortedFindings = sortFindingsByPosition(findings);
+	// Normalize overlapping findings before building segments to prevent rendering issues
+	const sortedFindings = normalizeOverlappingFindings(sortFindingsByPosition(findings));
 	const segments: TextSegment[] = [];
 	let currentPos = 0;
 
@@ -134,8 +167,9 @@ const buildSanitizedSegments = (content: string, findings: Finding[]): TextSegme
 	// For sanitized content, we need to find the replacement text positions
 	// Since replacements may be different lengths, we need to track offset adjustments
 
-	const sortedFindings = sortFindingsByPosition(findings).filter(
-		(f) => f.replacement !== undefined
+	// Normalize overlapping findings before building segments to prevent rendering issues
+	const sortedFindings = normalizeOverlappingFindings(
+		sortFindingsByPosition(findings).filter((f) => f.replacement !== undefined)
 	);
 
 	if (sortedFindings.length === 0) {
@@ -199,11 +233,12 @@ interface InlineSegment {
 // Build inline diff segments (showing removed and added inline)
 const buildInlineSegments = (
 	originalContent: string,
-	sanitizedContent: string,
+	_sanitizedContent: string,
 	findings: Finding[]
 ): InlineSegment[] => {
-	const sortedFindings = sortFindingsByPosition(findings).filter(
-		(f) => f.replacement !== undefined
+	// Normalize overlapping findings before building segments to prevent rendering issues
+	const sortedFindings = normalizeOverlappingFindings(
+		sortFindingsByPosition(findings).filter((f) => f.replacement !== undefined)
 	);
 
 	if (sortedFindings.length === 0) {
@@ -723,10 +758,10 @@ export const SanitizedContentDiff = memo(function SanitizedContentDiff({
 											key={idx}
 											className="px-0.5 rounded"
 											style={{
-												backgroundColor: 'rgba(239, 68, 68, 0.2)',
+												backgroundColor: colors.bg,
 												textDecoration: 'line-through',
-												textDecorationColor: theme.colors.error,
-												color: theme.colors.error,
+												textDecorationColor: colors.text,
+												color: colors.text,
 											}}
 											title={`${segment.findingType}: ${segment.text} → ${segment.replacement}`}
 										>
@@ -789,8 +824,9 @@ export const SanitizedContentDiff = memo(function SanitizedContentDiff({
 											key={idx}
 											className="px-0.5 rounded"
 											style={{
-												backgroundColor: 'rgba(34, 197, 94, 0.2)',
-												color: theme.colors.success,
+												// Use per-type color but with green tint for "added" visual distinction
+												backgroundColor: colors.bg,
+												color: colors.text,
 											}}
 											title={`Replaced with: ${segment.text}`}
 										>
@@ -850,15 +886,16 @@ export const SanitizedContentDiff = memo(function SanitizedContentDiff({
 					>
 						{inlineSegments.map((segment, idx) => {
 							if (segment.type === 'removed') {
+								const colors = getHighlightColor(segment.findingType || '');
 								return (
 									<span
 										key={idx}
 										className="px-0.5 rounded"
 										style={{
-											backgroundColor: 'rgba(239, 68, 68, 0.2)',
+											backgroundColor: colors.bg,
 											textDecoration: 'line-through',
-											textDecorationColor: theme.colors.error,
-											color: theme.colors.error,
+											textDecorationColor: colors.text,
+											color: colors.text,
 										}}
 										title={`Removed: ${segment.findingType}`}
 									>
@@ -867,13 +904,15 @@ export const SanitizedContentDiff = memo(function SanitizedContentDiff({
 								);
 							}
 							if (segment.type === 'added') {
+								const colors = getHighlightColor(segment.findingType || '');
 								return (
 									<span
 										key={idx}
 										className="px-0.5 rounded"
 										style={{
-											backgroundColor: 'rgba(34, 197, 94, 0.2)',
-											color: theme.colors.success,
+											// Use slightly more opaque background for added text to distinguish from removed
+											backgroundColor: colors.bg.replace('0.3', '0.4'),
+											color: colors.text,
 										}}
 										title={`Added: ${segment.findingType}`}
 									>

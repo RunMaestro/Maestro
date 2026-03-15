@@ -135,6 +135,7 @@ export const RightPanel = memo(
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 		const lastViewedSecurityEventId = useSettingsStore((s) => s.lastViewedSecurityEventId);
 		const setLastViewedSecurityEventId = useSettingsStore((s) => s.setLastViewedSecurityEventId);
+		const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
@@ -217,12 +218,19 @@ export const RightPanel = memo(
 
 		// Security events for badge display
 		const [securityEventIds, setSecurityEventIds] = useState<string[]>([]);
+		// Sequence counter for last-write-wins race protection
+		const securityEventLoadSeqRef = useRef(0);
 
 		// Load security event IDs - extracted as callback so it can be reused
+		// Uses sequence counter to ensure only the latest request updates state
 		const loadSecurityEventIds = useCallback(async () => {
+			const seq = ++securityEventLoadSeqRef.current;
 			try {
 				const result = await window.maestro.security.getEvents(100, 0);
-				setSecurityEventIds(result.events.map((e) => e.id));
+				// Only update state if this is still the latest request
+				if (seq === securityEventLoadSeqRef.current) {
+					setSecurityEventIds(result.events.map((e) => e.id));
+				}
 			} catch {
 				// Ignore errors - security events are optional
 			}
@@ -241,7 +249,12 @@ export const RightPanel = memo(
 		}, [loadSecurityEventIds]);
 
 		// Calculate unread security events count
+		// Gate on settingsLoaded to prevent false "all unread" state during hydration
 		const unreadSecurityCount = useMemo(() => {
+			// Don't show unread badge until settings are hydrated to avoid flash
+			if (!settingsLoaded) {
+				return 0;
+			}
 			if (!lastViewedSecurityEventId || securityEventIds.length === 0) {
 				// If never viewed, all events are "new" but cap at 99
 				return securityEventIds.length > 0 ? Math.min(securityEventIds.length, 99) : 0;
@@ -254,15 +267,27 @@ export const RightPanel = memo(
 			}
 			// Count events newer than the last viewed (events are sorted newest first)
 			return Math.min(lastViewedIndex, 99);
-		}, [securityEventIds, lastViewedSecurityEventId]);
+		}, [securityEventIds, lastViewedSecurityEventId, settingsLoaded]);
 
 		// Mark events as viewed when Security tab is opened
+		// Gate on settingsLoaded to avoid overwriting the stored marker during hydration
 		useEffect(() => {
-			if (activeRightTab === 'security' && rightPanelOpen && securityEventIds.length > 0) {
+			if (
+				settingsLoaded &&
+				activeRightTab === 'security' &&
+				rightPanelOpen &&
+				securityEventIds.length > 0
+			) {
 				// Mark the newest event as viewed
 				setLastViewedSecurityEventId(securityEventIds[0]);
 			}
-		}, [activeRightTab, rightPanelOpen, securityEventIds, setLastViewedSecurityEventId]);
+		}, [
+			activeRightTab,
+			rightPanelOpen,
+			securityEventIds,
+			setLastViewedSecurityEventId,
+			settingsLoaded,
+		]);
 
 		// Shared draft state for Auto Run (shared between panel and expanded modal)
 		// This ensures edits in one view are immediately visible in the other

@@ -31,6 +31,27 @@ export type SecurityEventType =
 export type SecurityEventAction = 'none' | 'sanitized' | 'blocked' | 'warned';
 
 /**
+ * A redacted finding for storage - contains metadata but not the actual sensitive value.
+ * This prevents the security log from becoming a secondary store of secrets.
+ */
+export interface RedactedFinding {
+	/** Type of finding (e.g., SECRET_GITHUB_TOKEN, PII_EMAIL) */
+	type: string;
+	/** Start position in original text */
+	start: number;
+	/** End position in original text */
+	end: number;
+	/** Confidence score (0-1) */
+	confidence: number;
+	/** Length of the original value (for audit purposes) */
+	valueLength: number;
+	/** Redacted preview showing first/last few chars (e.g., "ghp_A...XYZ") */
+	redactedPreview: string;
+	/** The replacement text used (if any) */
+	replacement?: string;
+}
+
+/**
  * A security event logged by LLM Guard
  */
 export interface SecurityEvent {
@@ -44,8 +65,8 @@ export interface SecurityEvent {
 	tabId?: string;
 	/** Type of security event */
 	eventType: SecurityEventType;
-	/** Findings from the scan */
-	findings: LlmGuardFinding[];
+	/** Redacted findings from the scan (sensitive values are not stored) */
+	findings: RedactedFinding[];
 	/** Action taken based on the findings */
 	action: SecurityEventAction;
 	/** Length of the original content (before sanitization) */
@@ -61,7 +82,26 @@ export interface SecurityEvent {
 }
 
 /**
+ * Input parameters for logging a security event.
+ * Accepts raw LlmGuardFinding[] which will be redacted before storage.
+ */
+export interface SecurityEventInput {
+	sessionId: string;
+	tabId?: string;
+	eventType: SecurityEventType;
+	/** Raw findings - will be redacted before storage */
+	findings: LlmGuardFinding[];
+	action: SecurityEventAction;
+	originalLength: number;
+	sanitizedLength: number;
+	groupChatId?: string;
+	sourceAgent?: string;
+	targetAgent?: string;
+}
+
+/**
  * Parameters for creating a new security event (id and timestamp auto-generated)
+ * @deprecated Use SecurityEventInput instead - this exists for internal use after redaction
  */
 export type SecurityEventParams = Omit<SecurityEvent, 'id' | 'timestamp'>;
 
@@ -77,6 +117,36 @@ export interface SecurityEventsPage {
 // Configuration
 const MAX_EVENTS = 1000;
 const SECURITY_EVENTS_FILE = 'security-events.jsonl';
+
+/**
+ * Create a redacted preview of a sensitive value.
+ * Shows first 4 and last 3 characters with ellipsis in between.
+ * For short values, shows asterisks.
+ */
+function createRedactedPreview(value: string): string {
+	if (value.length <= 8) {
+		// For short values, just show length indicator
+		return `[${value.length} chars]`;
+	}
+	// Show first 4 and last 3 characters
+	return `${value.substring(0, 4)}...${value.substring(value.length - 3)}`;
+}
+
+/**
+ * Redact a finding to remove sensitive values before storage.
+ * Preserves metadata for audit purposes but removes the actual secret/PII.
+ */
+export function redactFinding(finding: LlmGuardFinding): RedactedFinding {
+	return {
+		type: finding.type,
+		start: finding.start,
+		end: finding.end,
+		confidence: finding.confidence,
+		valueLength: finding.value.length,
+		redactedPreview: createRedactedPreview(finding.value),
+		replacement: finding.replacement,
+	};
+}
 
 // Circular buffer for in-memory storage
 let eventsBuffer: SecurityEvent[] = [];
@@ -103,17 +173,30 @@ function getSecurityEventsPath(): string {
 
 /**
  * Log a security event to the circular buffer and optionally persist to file.
+ * Sensitive values in findings are automatically redacted before storage.
  *
- * @param params - Event parameters (id and timestamp will be auto-generated)
+ * @param input - Event input with raw findings (will be redacted)
  * @param persistToFile - Whether to append the event to the JSONL file (default: true)
- * @returns The complete SecurityEvent with generated id and timestamp
+ * @returns The complete SecurityEvent with generated id, timestamp, and redacted findings
  */
 export async function logSecurityEvent(
-	params: SecurityEventParams,
+	input: SecurityEventInput,
 	persistToFile: boolean = true
 ): Promise<SecurityEvent> {
+	// Redact sensitive values from findings before storage
+	const redactedFindings = input.findings.map(redactFinding);
+
 	const event: SecurityEvent = {
-		...params,
+		sessionId: input.sessionId,
+		tabId: input.tabId,
+		eventType: input.eventType,
+		findings: redactedFindings,
+		action: input.action,
+		originalLength: input.originalLength,
+		sanitizedLength: input.sanitizedLength,
+		groupChatId: input.groupChatId,
+		sourceAgent: input.sourceAgent,
+		targetAgent: input.targetAgent,
 		id: uuidv4(),
 		timestamp: Date.now(),
 	};
@@ -498,7 +581,7 @@ export function exportToHtml(filters: ExportFilterOptions = {}): string {
 						<div class="finding">
 							<span class="finding-type">${escapeHtml(f.type)}</span>
 							<span class="finding-confidence">${(f.confidence * 100).toFixed(0)}%</span>
-							<div class="finding-value">${escapeHtml(f.value.substring(0, 100))}${f.value.length > 100 ? '...' : ''}</div>
+							<div class="finding-value">${escapeHtml(f.redactedPreview)} (${f.valueLength} chars)</div>
 							${f.replacement ? `<div class="finding-replacement">→ ${escapeHtml(f.replacement)}</div>` : ''}
 						</div>
 					`
