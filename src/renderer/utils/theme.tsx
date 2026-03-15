@@ -58,6 +58,12 @@ export const getStatusColor = (state: SessionState, theme: Theme): string => {
 	}
 };
 
+// Get short translated label for a session state.
+// Uses common:status.label.* i18n keys. Falls back to the raw state string.
+export const getStatusLabel = (state: SessionState, t: (key: any) => string): string => {
+	return t(`common:status.label.${state}`);
+};
+
 // Get file icon based on change type
 export const getFileIcon = (type: FileChangeType | undefined, theme: Theme): JSX.Element => {
 	switch (type) {

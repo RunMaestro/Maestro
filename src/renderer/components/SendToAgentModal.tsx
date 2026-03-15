@@ -69,16 +69,16 @@ export interface SendToAgentModalProps {
 }
 
 /**
- * Get status label for a session
+ * Get status label for a session using i18n
  */
-function getStatusLabel(status: SessionStatus): string {
+function getStatusLabelForSend(status: SessionStatus, t: (key: any) => string): string {
 	switch (status) {
 		case 'idle':
-			return 'Idle';
+			return t('send_to_agent.idle_status');
 		case 'busy':
-			return 'Busy';
+			return t('send_to_agent.busy_status');
 		case 'current':
-			return 'Source';
+			return t('send_to_agent.source_status');
 		default:
 			return '';
 	}
@@ -551,7 +551,7 @@ export function SendToAgentModal({
 											role="option"
 											aria-selected={isSelected}
 											aria-disabled={isDisabled}
-											aria-label={`${session.name}, ${getStatusLabel(session.status)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
+											aria-label={`${session.name}, ${getStatusLabelForSend(session.status, t)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
 											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 disabled:cursor-not-allowed flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
 											style={
 												{
@@ -615,7 +615,7 @@ export function SendToAgentModal({
 											>
 												{session.status === 'idle' && <Circle className="w-2 h-2 fill-current" />}
 												{session.status === 'busy' && <Loader2 className="w-3 h-3 animate-spin" />}
-												{getStatusLabel(session.status)}
+												{getStatusLabelForSend(session.status, t)}
 											</div>
 
 											{/* Quick Select Number */}

@@ -56,7 +56,15 @@
 		"unread_messages": "未读消息",
 		"auto_run_active": "Auto Run 运行中",
 		"ssh_remote": "通过 SSH 在远程主机上运行",
-		"error_prefix": "错误：{{message}}"
+		"error_prefix": "错误：{{message}}",
+		"label": {
+			"idle": "就绪",
+			"busy": "思考中",
+			"waiting_input": "等待中",
+			"connecting": "连接中",
+			"error": "错误",
+			"exited": "已停止"
+		}
 	},
 	"time": {
 		"milliseconds_short": "{{count}}ms",

@@ -64,7 +64,15 @@
 		"unread_messages": "رسائل غير مقروءة",
 		"auto_run_active": "تشغيل \u200FAuto Run\u200E نشط",
 		"ssh_remote": "يعمل على مضيف بعيد عبر \u200FSSH\u200E",
-		"error_prefix": "خطأ: {{message}}"
+		"error_prefix": "خطأ: {{message}}",
+		"label": {
+			"idle": "جاهز",
+			"busy": "يفكر",
+			"waiting_input": "بالانتظار",
+			"connecting": "جارٍ الاتصال",
+			"error": "خطأ",
+			"exited": "متوقف"
+		}
 	},
 	"time": {
 		"milliseconds_short": "{{count}}ms",

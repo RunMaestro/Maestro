@@ -13,6 +13,7 @@ import { render } from '@testing-library/react';
 import {
 	getContextColor,
 	getStatusColor,
+	getStatusLabel,
 	formatActiveTime,
 	getFileIcon,
 } from '../../../renderer/utils/theme';
@@ -214,6 +215,60 @@ describe('theme utilities', () => {
 			it('connecting state uses hardcoded orange regardless of theme', () => {
 				expect(getStatusColor('connecting', alternativeTheme)).toBe('#ff8800');
 			});
+		});
+	});
+
+	// ============================================================================
+	// getStatusLabel tests
+	// ============================================================================
+	describe('getStatusLabel', () => {
+		// Mock translation function that returns the key's last segment
+		const mockT = (key: string): string => {
+			const translations: Record<string, string> = {
+				'common:status.label.idle': 'Ready',
+				'common:status.label.busy': 'Thinking',
+				'common:status.label.waiting_input': 'Waiting',
+				'common:status.label.connecting': 'Connecting',
+				'common:status.label.error': 'Error',
+			};
+			return translations[key] ?? key;
+		};
+
+		it('returns translated label for idle state', () => {
+			expect(getStatusLabel('idle', mockT)).toBe('Ready');
+		});
+
+		it('returns translated label for busy state', () => {
+			expect(getStatusLabel('busy', mockT)).toBe('Thinking');
+		});
+
+		it('returns translated label for waiting_input state', () => {
+			expect(getStatusLabel('waiting_input', mockT)).toBe('Waiting');
+		});
+
+		it('returns translated label for connecting state', () => {
+			expect(getStatusLabel('connecting', mockT)).toBe('Connecting');
+		});
+
+		it('returns translated label for error state', () => {
+			expect(getStatusLabel('error', mockT)).toBe('Error');
+		});
+
+		it('constructs the correct i18n key from state', () => {
+			const states: SessionState[] = ['idle', 'busy', 'waiting_input', 'connecting', 'error'];
+			const calledKeys: string[] = [];
+			const capturingT = (key: string): string => {
+				calledKeys.push(key);
+				return key;
+			};
+			states.forEach((state) => getStatusLabel(state, capturingT));
+			expect(calledKeys).toEqual([
+				'common:status.label.idle',
+				'common:status.label.busy',
+				'common:status.label.waiting_input',
+				'common:status.label.connecting',
+				'common:status.label.error',
+			]);
 		});
 	});
 

@@ -56,7 +56,15 @@
 		"unread_messages": "অপঠিত বার্তা",
 		"auto_run_active": "Auto Run সক্রিয়",
 		"ssh_remote": "SSH-এর মাধ্যমে রিমোট হোস্টে চলছে",
-		"error_prefix": "ত্রুটি: {{message}}"
+		"error_prefix": "ত্রুটি: {{message}}",
+		"label": {
+			"idle": "প্রস্তুত",
+			"busy": "চিন্তা করছে",
+			"waiting_input": "অপেক্ষায়",
+			"connecting": "সংযোগ হচ্ছে",
+			"error": "ত্রুটি",
+			"exited": "বন্ধ"
+		}
 	},
 	"time": {
 		"milliseconds_short": "{{count}}ms",

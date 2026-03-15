@@ -1,7 +1,9 @@
 import { memo } from 'react';
 import { Folder, GitBranch, Bot, Clock, Server } from 'lucide-react';
 import type { Session, Theme } from '../../types';
-import { getContextColor, formatActiveTime } from '../../utils/theme';
+import { getContextColor, formatActiveTime, getStatusLabel } from '../../utils/theme';
+import { formatCost } from '../../utils/formatters';
+import { useI18n } from '../../hooks/useI18n';
 
 interface SessionTooltipContentProps {
 	session: Session;
@@ -22,6 +24,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 	contextWarningYellowThreshold = 60,
 	contextWarningRedThreshold = 80,
 }: SessionTooltipContentProps) {
+	const { t } = useI18n();
 	const clampedContextUsage = Math.max(0, Math.min(100, session.contextUsage));
 
 	return (
@@ -117,8 +120,8 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					</span>
 				)}
 			</div>
-			<div className="text-[10px] capitalize mb-2" style={{ color: theme.colors.textDim }}>
-				{session.state} • {session.toolType}
+			<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+				{getStatusLabel(session.state, t)} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
 
@@ -162,7 +165,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					<div className="flex items-center justify-between text-[10px] pt-1">
 						<span style={{ color: theme.colors.textDim }}>Agent Cost</span>
 						<span className="font-mono font-bold" style={{ color: theme.colors.success }}>
-							${session.usageStats.totalCostUsd.toFixed(2)}
+							{formatCost(session.usageStats.totalCostUsd)}
 						</span>
 					</div>
 				)}

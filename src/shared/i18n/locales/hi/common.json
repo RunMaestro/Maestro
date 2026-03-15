@@ -56,7 +56,15 @@
 		"unread_messages": "अपठित संदेश",
 		"auto_run_active": "Auto Run सक्रिय",
 		"ssh_remote": "SSH के ज़रिए रिमोट होस्ट पर चल रहा है",
-		"error_prefix": "त्रुटि: {{message}}"
+		"error_prefix": "त्रुटि: {{message}}",
+		"label": {
+			"idle": "तैयार",
+			"busy": "सोच रहा है",
+			"waiting_input": "प्रतीक्षा में",
+			"connecting": "कनेक्ट हो रहा है",
+			"error": "त्रुटि",
+			"exited": "रुका हुआ"
+		}
 	},
 	"time": {
 		"milliseconds_short": "{{count}}ms",

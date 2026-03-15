@@ -56,7 +56,15 @@
 		"unread_messages": "Mensajes sin leer",
 		"auto_run_active": "Auto Run activo",
 		"ssh_remote": "Ejecutandose en host remoto via SSH",
-		"error_prefix": "Error: {{message}}"
+		"error_prefix": "Error: {{message}}",
+		"label": {
+			"idle": "Listo",
+			"busy": "Procesando",
+			"waiting_input": "Esperando",
+			"connecting": "Conectando",
+			"error": "Error",
+			"exited": "Detenido"
+		}
 	},
 	"time": {
 		"milliseconds_short": "{{count}}ms",

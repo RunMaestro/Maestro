@@ -261,16 +261,11 @@ function SessionInfoPopover({
 }: SessionInfoPopoverProps) {
 	const colors = useThemeColors();
 	const { t: ta } = useI18n('accessibility');
+	const { t } = useI18n();
 	const popoverRef = useRef<HTMLDivElement>(null);
 
 	// Get status label based on session state
-	const getStatusLabel = (): string => {
-		const state = session.state as string;
-		if (state === 'idle') return 'Ready';
-		if (state === 'busy') return 'Thinking...';
-		if (state === 'connecting') return 'Connecting...';
-		return 'Error';
-	};
+	const statusLabel = t(`common:status.label.${session.state}` as any) as string;
 
 	// Get status color based on session state
 	const getStatusColor = (): string => {
@@ -441,7 +436,7 @@ function SessionInfoPopover({
 								color: getStatusColor(),
 							}}
 						>
-							{getStatusLabel()}
+							{statusLabel}
 						</div>
 					</div>
 
