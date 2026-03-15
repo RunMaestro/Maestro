@@ -277,7 +277,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Log prompt preview AFTER LLM Guard sanitization to avoid logging secrets
 				// On Windows, show prompt preview to help debug truncation issues
-				if (effectivePrompt && isWindows) {
+				// Skip preview entirely if LLM Guard detected findings (even in warn mode,
+				// where effectivePrompt may still contain sensitive content)
+				const hasSecurityFindings =
+					llmGuardState?.inputFindings && llmGuardState.inputFindings.length > 0;
+				if (effectivePrompt && isWindows && !hasSecurityFindings) {
 					logFn(`Prompt preview (post-sanitization)`, LOG_CONTEXT, {
 						sessionId: config.sessionId,
 						promptPreview: {
