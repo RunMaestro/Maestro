@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ProcessManager } from '../../process-manager';
-import { AgentDetector } from '../../agents';
+import { AgentDetector, hasCapability } from '../../agents';
 import { logger } from '../../utils/logger';
 import { isWindows } from '../../../shared/platformDetection';
 import { addBreadcrumb, captureException } from '../../utils/sentry';
@@ -643,6 +643,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sshRemoteHost: sshRemoteUsed?.host,
 					// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 					sshStdinScript,
+					// Keep stdin open for agents that support mid-turn input
+					keepStdinOpen: hasCapability(config.toolType, 'supportsMidTurnInput'),
 				});
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
@@ -703,6 +705,24 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			});
 			return processManager.write(sessionId, data);
 		})
+	);
+
+	// Write a mid-turn interjection to a running agent process
+	ipcMain.handle(
+		'process:writeInterjection',
+		withIpcErrorLogging(
+			handlerOpts('writeInterjection'),
+			async (sessionId: string, text: string, images?: string[]) => {
+				const processManager = requireProcessManager(getProcessManager);
+				logger.info(`Writing interjection to process: ${sessionId}`, LOG_CONTEXT, {
+					sessionId,
+					textLength: text.length,
+					imageCount: images?.length || 0,
+				});
+				const streamJsonMessage = buildStreamJsonMessage(text, images || []);
+				return processManager.write(sessionId, streamJsonMessage + '\n');
+			}
+		)
 	);
 
 	// Send SIGINT to a process

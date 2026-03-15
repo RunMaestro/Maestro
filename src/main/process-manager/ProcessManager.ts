@@ -102,8 +102,14 @@ export class ProcessManager extends EventEmitter {
 				process.ptyProcess.write(data);
 				return true;
 			} else if (process.childProcess?.stdin) {
-				process.childProcess.stdin.write(data);
-				return true;
+				if (process.childProcess.stdin.writable) {
+					process.childProcess.stdin.write(data);
+					return true;
+				}
+				logger.warn('[ProcessManager] stdin not writable for session', 'ProcessManager', {
+					sessionId,
+				});
+				return false;
 			}
 			return false;
 		} catch (error) {

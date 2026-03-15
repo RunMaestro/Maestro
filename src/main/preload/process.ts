@@ -181,6 +181,13 @@ export function createProcessApi() {
 			ipcRenderer.invoke('process:write', sessionId, data),
 
 		/**
+		 * Write a mid-turn interjection to a running agent process.
+		 * Formats the message as stream-json in the main process and writes to stdin.
+		 */
+		writeInterjection: (sessionId: string, text: string, images?: string[]): Promise<boolean> =>
+			ipcRenderer.invoke('process:writeInterjection', sessionId, text, images),
+
+		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
 		interrupt: (sessionId: string): Promise<boolean> =>

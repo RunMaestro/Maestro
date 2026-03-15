@@ -461,6 +461,10 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
+				// Clean up stdin if it was kept open for mid-turn input
+				if (childProcess.stdin && !childProcess.stdin.destroyed) {
+					childProcess.stdin.end();
+				}
 				this.exitHandler.handleExit(sessionId, code || 0);
 			});
 
@@ -477,7 +481,13 @@ export class ChildProcessSpawner {
 					scriptLength: config.sshStdinScript.length,
 				});
 				childProcess.stdin?.write(config.sshStdinScript);
-				childProcess.stdin?.end();
+				if (!config.keepStdinOpen) {
+					childProcess.stdin?.end();
+				} else {
+					logger.debug('[ProcessManager] Keeping stdin open for mid-turn input (SSH)', 'ProcessManager', {
+						sessionId,
+					});
+				}
 			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
 				// Note: When sending via stdin, PowerShell treats the input as literal text,
@@ -502,7 +512,13 @@ export class ChildProcessSpawner {
 					hasImages: !!(images && images.length > 0),
 				});
 				childProcess.stdin?.write(streamJsonMessage + '\n');
-				childProcess.stdin?.end();
+				if (!config.keepStdinOpen) {
+					childProcess.stdin?.end();
+				} else {
+					logger.debug('[ProcessManager] Keeping stdin open for mid-turn input', 'ProcessManager', {
+						sessionId,
+					});
+				}
 			} else if (isBatchMode) {
 				// Regular batch mode: close stdin immediately
 				logger.debug('[ProcessManager] Closing stdin for batch mode', 'ProcessManager', {
