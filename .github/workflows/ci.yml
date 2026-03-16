@@ -20,6 +20,7 @@ jobs:
       - run: npx prettier --check .
       - run: npx eslint src/
       - run: npm run lint # TypeScript type checking
+      - run: npm run i18n:size-check # Translation bundle size budget
 
   test:
     runs-on: ubuntu-latest

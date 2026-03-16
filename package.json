@@ -58,7 +58,8 @@
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
 		"i18n:audit": "npx tsx scripts/i18n-audit.ts",
-		"i18n:validate": "npx tsx scripts/i18n-validate.ts"
+		"i18n:validate": "npx tsx scripts/i18n-validate.ts",
+		"i18n:size-check": "npx tsx scripts/i18n-size-check.ts"
 	},
 	"build": {
 		"npmRebuild": false,
