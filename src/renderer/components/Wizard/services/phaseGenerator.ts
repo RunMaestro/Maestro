@@ -538,6 +538,17 @@ function extractResultFromStreamJson(output: string): string | null {
 }
 
 /**
+ * Derive SSH remote ID from config for remote file operations.
+ * Returns the remote ID if SSH is enabled, otherwise undefined.
+ *
+ * @param sshConfig - SSH remote configuration from generation config
+ * @returns Remote ID string if enabled, undefined otherwise
+ */
+function deriveSshRemoteId(sshConfig: GenerationConfig['sshRemoteConfig']): string | undefined {
+	return sshConfig?.enabled ? (sshConfig.remoteId ?? undefined) : undefined;
+}
+
+/**
  * PhaseGenerator class
  *
  * Manages the document generation process, including:
@@ -586,9 +597,7 @@ class PhaseGenerator {
 			// For SSH remote sessions, skip the availability check since we're executing remotely
 			// The agent detector checks for binaries locally, but we need to execute on the remote host
 			const isRemoteSession = config.sshRemoteConfig?.enabled && config.sshRemoteConfig?.remoteId;
-			const sshRemoteId = config.sshRemoteConfig?.enabled
-				? (config.sshRemoteConfig.remoteId ?? undefined)
-				: undefined;
+			const sshRemoteId = deriveSshRemoteId(config.sshRemoteConfig);
 
 			if (!agent) {
 				wizardDebugLogger.log('error', 'Agent configuration not found', {
@@ -980,9 +989,7 @@ class PhaseGenerator {
 			});
 
 			// Extract sshRemoteId for remote sessions
-			const sshRemoteId = config.sshRemoteConfig?.enabled
-				? (config.sshRemoteConfig.remoteId ?? undefined)
-				: undefined;
+			const sshRemoteId = deriveSshRemoteId(config.sshRemoteConfig);
 
 			// Start watching the folder for file changes
 			window.maestro.autorun

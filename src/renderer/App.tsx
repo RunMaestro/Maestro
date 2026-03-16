@@ -21,6 +21,7 @@ import {
 	useWizard,
 	WizardResumeModal,
 	type SerializableWizardState,
+	type WizardStep,
 } from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
@@ -358,7 +359,8 @@ function MaestroConsoleInner() {
 		try {
 			const saved = await window.maestro.settings.get('wizardResumeState');
 			// Validate saved state has a resumable step before casting
-			const resumableSteps = [
+			// These are the steps where we can resume the wizard (not agent-selection)
+			const resumableSteps: WizardStep[] = [
 				'directory-selection',
 				'conversation',
 				'preparing-plan',
@@ -369,7 +371,7 @@ function MaestroConsoleInner() {
 				typeof saved === 'object' &&
 				'currentStep' in saved &&
 				typeof saved.currentStep === 'string' &&
-				resumableSteps.includes(saved.currentStep)
+				resumableSteps.includes(saved.currentStep as WizardStep)
 			) {
 				useModalStore
 					.getState()
