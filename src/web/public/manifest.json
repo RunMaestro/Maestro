@@ -1,4 +1,5 @@
 {
+	"_i18n_note": "PWA manifest strings (name, short_name, description, shortcut labels) are intentionally kept in English. Browser support for manifest localization is inconsistent, and these strings only appear in Add-to-Home-Screen prompts and app switchers. If locale-specific manifests are needed later, create scripts/generate-manifests.ts to produce per-locale copies served via Accept-Language.",
 	"name": "Maestro Remote",
 	"short_name": "Maestro",
 	"description": "Remote control for your AI coding assistants",
