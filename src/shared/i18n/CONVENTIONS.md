@@ -269,6 +269,20 @@ src/shared/i18n/
 
 ---
 
+## Exclusions
+
+### System Prompts
+
+System prompts (`src/prompts/*.md`) remain in English. They are AI-facing, not user-facing. Do not extract their strings to i18n.
+
+**Rationale:**
+
+1. LLMs are trained primarily on English and perform best with English system prompts.
+2. Users can edit these prompts — translating them creates a maintenance burden.
+3. Template variables like `Maestro` are code-level identifiers, not user-facing text.
+
+---
+
 ## Guidelines
 
 1. **English is the source of truth.** Always add keys to `en/*.json` first. Other locales follow.

@@ -396,6 +396,9 @@
 		"no_remotes": "未配置 SSH 远程主机。",
 		"configure_hint": "请在设置 → SSH 主机中配置远程主机。"
 	},
+	"ai_commands": {
+		"system_prompts_note": "系统提示词始终使用英语，以确保最佳 AI 性能。"
+	},
 	"encore": {
 		"title": "Encore 功能",
 		"description": "扩展 Maestro 功能的可选特性。启用您需要的功能。禁用的功能将从快捷键、菜单和命令面板中完全隐藏。开发新功能的贡献者应考虑在此处进行门控，以保持核心体验的专注。",

@@ -396,6 +396,9 @@
 		"no_remotes": "Aucun hôte SSH distant configuré.",
 		"configure_hint": "Configurez les hôtes distants dans Paramètres \u2192 Hôtes SSH."
 	},
+	"ai_commands": {
+		"system_prompts_note": "Les prompts système sont toujours en anglais pour des performances IA optimales."
+	},
 	"encore": {
 		"title": "Encore Features",
 		"description": "Fonctionnalités optionnelles qui étendent les capacités de Maestro. Activez celles que vous souhaitez. Les fonctionnalités désactivées sont entièrement masquées des raccourcis, menus et de la palette de commandes. Les contributeurs développant de nouvelles fonctionnalités devraient envisager de les contrôler ici pour garder l'expérience principale ciblée.",

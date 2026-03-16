@@ -396,6 +396,9 @@
 		"no_remotes": "No SSH remotes configured.",
 		"configure_hint": "Configure remotes in Settings → SSH Remotes."
 	},
+	"ai_commands": {
+		"system_prompts_note": "System prompts are always in English for optimal AI performance."
+	},
 	"encore": {
 		"title": "Encore Features",
 		"description": "Optional features that extend Maestro's capabilities. Enable the ones you want. Disabled features are completely hidden from shortcuts, menus, and the command palette. Contributors building new features should consider gating them here to keep the core experience focused.",

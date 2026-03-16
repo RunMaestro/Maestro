@@ -396,6 +396,9 @@
 		"no_remotes": "Nenhum host SSH remoto configurado.",
 		"configure_hint": "Configure remotos em Configurações → Hosts SSH."
 	},
+	"ai_commands": {
+		"system_prompts_note": "Os prompts do sistema são sempre em inglês para desempenho ideal da IA."
+	},
 	"encore": {
 		"title": "Recursos Encore",
 		"description": "Recursos opcionais que estendem as capacidades do Maestro. Ative os que desejar. Recursos desativados ficam completamente ocultos de atalhos, menus e da paleta de comandos. Colaboradores desenvolvendo novos recursos devem considerar controlá-los aqui para manter a experiência principal focada.",

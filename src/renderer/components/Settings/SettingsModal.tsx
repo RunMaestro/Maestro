@@ -577,6 +577,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 
 							{/* OpenSpec Commands Section */}
 							<OpenSpecCommandsPanel theme={theme} />
+
+							{/* System prompts note */}
+							<p className="text-xs opacity-50 italic" style={{ color: theme.colors.textDim }}>
+								{t('ai_commands.system_prompts_note')}
+							</p>
 						</div>
 					)}
 

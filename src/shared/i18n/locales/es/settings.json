@@ -396,6 +396,9 @@
 		"no_remotes": "No hay hosts SSH remotos configurados.",
 		"configure_hint": "Configure los hosts remotos en Configuraci\u00f3n \u2192 Hosts SSH."
 	},
+	"ai_commands": {
+		"system_prompts_note": "Los prompts del sistema siempre están en inglés para un rendimiento óptimo de la IA."
+	},
 	"encore": {
 		"title": "Funciones Encore",
 		"description": "Funciones opcionales que extienden las capacidades de Maestro. Active las que desee. Las funciones desactivadas se ocultan completamente de los atajos, men\u00fas y la paleta de comandos. Los contribuyentes que desarrollan nuevas funciones deber\u00edan considerar controlarlas aqu\u00ed para mantener la experiencia principal enfocada.",

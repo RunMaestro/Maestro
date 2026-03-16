@@ -396,6 +396,9 @@
 		"no_remotes": "Keine SSH-Remotes konfiguriert.",
 		"configure_hint": "Konfigurieren Sie Remotes unter Einstellungen → SSH-Remotes."
 	},
+	"ai_commands": {
+		"system_prompts_note": "Systemprompts sind immer auf Englisch für optimale KI-Leistung."
+	},
 	"encore": {
 		"title": "Encore-Funktionen",
 		"description": "Optionale Funktionen, die die Fähigkeiten von Maestro erweitern. Aktivieren Sie die gewünschten Funktionen. Deaktivierte Funktionen werden vollständig aus Tastenkürzeln, Menüs und der Befehlspalette ausgeblendet. Mitwirkende, die neue Funktionen entwickeln, sollten erwägen, diese hier zu beschränken, um das Kernerlebnis fokussiert zu halten.",
