@@ -4,8 +4,8 @@
 		"search_placeholder": "Buscar atalhos...",
 		"no_agents_note": "Nota: A maioria das funcionalidades não está disponível até que você crie seu primeiro agente.",
 		"customizable_hint": "Muitos atalhos podem ser personalizados em Configurações → Atalhos.",
-		"mastered_count": "{{used}} / {{total}} dominados ({{percentage}}%)",
-		"next_level_hint": "{{remaining}}% a mais para alcançar {{level}}",
+		"mastered_count": "{{used}} / {{total}} dominados ({{percentage}})",
+		"next_level_hint": "{{remaining}} a mais para alcançar {{level}}",
 		"complete_mastery": "Keyboard Maestro - Domínio Completo!",
 		"no_results": "Nenhum atalho encontrado"
 	},

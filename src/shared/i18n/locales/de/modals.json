@@ -4,8 +4,8 @@
 		"search_placeholder": "Tastenkombinationen suchen...",
 		"no_agents_note": "Hinweis: Die meisten Funktionen sind erst verfügbar, wenn Sie Ihren ersten Agenten erstellt haben.",
 		"customizable_hint": "Viele Tastenkombinationen können unter Einstellungen → Tastenkombinationen angepasst werden.",
-		"mastered_count": "{{used}} / {{total}} beherrscht ({{percentage}}%)",
-		"next_level_hint": "{{remaining}}% mehr bis {{level}}",
+		"mastered_count": "{{used}} / {{total}} beherrscht ({{percentage}})",
+		"next_level_hint": "{{remaining}} mehr bis {{level}}",
 		"complete_mastery": "Keyboard Maestro – Vollständige Beherrschung!",
 		"no_results": "Keine Tastenkombinationen gefunden"
 	},

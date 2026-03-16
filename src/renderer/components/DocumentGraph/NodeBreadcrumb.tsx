@@ -15,6 +15,7 @@ import React, { useMemo } from 'react';
 import { ChevronRight, FileText, Globe, Home } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData, DocumentNodeData, ExternalLinkNodeData } from './graphDataBuilder';
+import { useI18n } from '../../hooks/useI18n';
 
 /**
  * Props for the NodeBreadcrumb component
@@ -130,6 +131,8 @@ export function NodeBreadcrumb({
 	rootPath,
 	onSegmentClick,
 }: NodeBreadcrumbProps) {
+	const { t: ta } = useI18n('accessibility');
+
 	// Parse node data into breadcrumb segments
 	const segments = useMemo(() => {
 		if (!selectedNodeData) return [];
@@ -165,7 +168,7 @@ export function NodeBreadcrumb({
 				minHeight: 36,
 			}}
 			role="navigation"
-			aria-label="Selected node path"
+			aria-label={ta('navigation.selected_node_path')}
 		>
 			{segments.map((segment, index) => (
 				<React.Fragment key={`${segment.path}-${index}`}>

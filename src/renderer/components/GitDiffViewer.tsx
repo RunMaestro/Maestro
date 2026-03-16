@@ -8,7 +8,6 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 import 'react-diff-view/style/index.css';
 
 interface GitDiffViewerProps {

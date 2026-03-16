@@ -9,6 +9,7 @@ import { formatShortcutKeys, getShortcutLabel } from '../utils/shortcutFormatter
 import { Modal } from './ui/Modal';
 import { CodeText } from './shared/CodeText';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+import { formatPercent } from '../utils/formatters';
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
@@ -126,7 +127,7 @@ export function ShortcutsHelpModal({
 						{t('shortcuts_help.mastered_count', {
 							used: usedShortcutsCount,
 							total: totalShortcuts,
-							percentage: masteryPercentage,
+							percentage: formatPercent(masteryPercentage),
 						})}
 					</span>
 				</div>
@@ -146,7 +147,7 @@ export function ShortcutsHelpModal({
 				{masteryPercentage < 100 && nextLevel && (
 					<p className="text-xs mt-1.5" style={{ color: theme.colors.textDim }}>
 						{t('shortcuts_help.next_level_hint', {
-							remaining: nextLevel.threshold - masteryPercentage,
+							remaining: formatPercent(nextLevel.threshold - masteryPercentage),
 							level: nextLevel.name,
 						})}
 					</p>

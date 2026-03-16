@@ -4,8 +4,8 @@
 		"search_placeholder": "搜索快捷键...",
 		"no_agents_note": "注意：在创建第一个 Agent 之前，大部分功能不可用。",
 		"customizable_hint": "许多快捷键可以在 设置 → 快捷键 中自定义。",
-		"mastered_count": "{{used}} / {{total}} 已掌握 ({{percentage}}%)",
-		"next_level_hint": "再掌握 {{remaining}}% 即可达到 {{level}}",
+		"mastered_count": "{{used}} / {{total}} 已掌握 ({{percentage}})",
+		"next_level_hint": "再掌握 {{remaining}} 即可达到 {{level}}",
 		"complete_mastery": "键盘大师——完全精通！",
 		"no_results": "未找到快捷键"
 	},

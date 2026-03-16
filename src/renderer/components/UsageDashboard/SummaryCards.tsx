@@ -33,6 +33,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
+import { formatPercent } from '../../utils/formatters';
 
 interface SummaryCardsProps {
 	/** Aggregated stats data from the API */
@@ -181,7 +182,9 @@ export const SummaryCards = memo(function SummaryCards({
 			// Calculate interactive percentage
 			const totalBySource = data.bySource.user + data.bySource.auto;
 			const ratio =
-				totalBySource > 0 ? `${Math.round((data.bySource.user / totalBySource) * 100)}%` : 'N/A';
+				totalBySource > 0
+					? formatPercent(Math.round((data.bySource.user / totalBySource) * 100))
+					: 'N/A';
 
 			// Find peak usage hour (hour with most queries)
 			const hourWithMostQueries = data.byHour.reduce(
@@ -194,7 +197,7 @@ export const SummaryCards = memo(function SummaryCards({
 			const totalByLocation = data.byLocation.local + data.byLocation.remote;
 			const localPercent =
 				totalByLocation > 0
-					? `${Math.round((data.byLocation.local / totalByLocation) * 100)}%`
+					? formatPercent(Math.round((data.byLocation.local / totalByLocation) * 100))
 					: 'N/A';
 
 			// Calculate queries per session using agent count for consistency

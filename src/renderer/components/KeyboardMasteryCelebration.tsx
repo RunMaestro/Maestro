@@ -16,7 +16,6 @@ import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { isMacOSPlatform } from '../utils/platformUtils';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 
 interface KeyboardMasteryCelebrationProps {
 	theme: Theme;

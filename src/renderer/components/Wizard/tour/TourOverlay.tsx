@@ -13,7 +13,6 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import type { Theme, Shortcut } from '../../../types';
 import { useLayerStack } from '../../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
-import { useI18n } from '../../../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 import { TourStep } from './TourStep';
 import { TourWelcome } from './TourWelcome';

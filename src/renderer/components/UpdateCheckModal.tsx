@@ -18,7 +18,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { formatSize, getActiveLocale } from '../utils/formatters';
+import { formatSize, formatPercent, getActiveLocale } from '../utils/formatters';
 
 interface Release {
 	tag_name: string;
@@ -451,7 +451,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									style={{ color: theme.colors.textDim }}
 								>
 									<span>{t('update_check.downloading')}</span>
-									<span>{Math.round(downloadStatus.progress.percent)}%</span>
+									<span>{formatPercent(Math.round(downloadStatus.progress.percent))}</span>
 								</div>
 								<div
 									className="h-2 rounded-full overflow-hidden"

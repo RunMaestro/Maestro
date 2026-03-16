@@ -14,6 +14,7 @@ describe('useContextMenuPosition', () => {
 	const originalInnerWidth = window.innerWidth;
 	const originalInnerHeight = window.innerHeight;
 	const originalGetBCR = Element.prototype.getBoundingClientRect;
+	const originalDir = document.documentElement.dir;
 
 	afterEach(() => {
 		Object.defineProperty(window, 'innerWidth', { value: originalInnerWidth, configurable: true });
@@ -22,6 +23,7 @@ describe('useContextMenuPosition', () => {
 			configurable: true,
 		});
 		Element.prototype.getBoundingClientRect = originalGetBCR;
+		document.documentElement.dir = originalDir;
 		vi.restoreAllMocks();
 	});
 
@@ -171,5 +173,92 @@ describe('useContextMenuPosition', () => {
 		expect(result.current.ready).toBe(false);
 		expect(result.current.left).toBe(100);
 		expect(result.current.top).toBe(200);
+	});
+
+	describe('RTL support', () => {
+		it('anchors menu from right edge in RTL mode', () => {
+			document.documentElement.dir = 'rtl';
+			setupViewport(1024, 768);
+			mockMenuSize(160, 120);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 500, 300);
+			});
+
+			// RTL: left = x - width = 500 - 160 = 340
+			expect(result.current.left).toBe(340);
+			expect(result.current.top).toBe(300);
+			expect(result.current.ready).toBe(true);
+
+			document.body.removeChild(el);
+		});
+
+		it('clamps to left edge in RTL when menu would overflow', () => {
+			document.documentElement.dir = 'rtl';
+			setupViewport(800, 600);
+			mockMenuSize(200, 120);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				// Click near left edge: x - width = 100 - 200 = -100, clamped to padding (8)
+				return useContextMenuPosition(ref, 100, 300);
+			});
+
+			expect(result.current.left).toBe(8);
+			expect(result.current.top).toBe(300);
+			expect(result.current.ready).toBe(true);
+
+			document.body.removeChild(el);
+		});
+
+		it('clamps to right edge in RTL when menu would overflow right', () => {
+			document.documentElement.dir = 'rtl';
+			setupViewport(800, 600);
+			mockMenuSize(160, 120);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				// Click at far right: x - width = 790 - 160 = 630, maxLeft = 800 - 160 - 8 = 632
+				return useContextMenuPosition(ref, 790, 300);
+			});
+
+			// 630 < 632, so left = 630
+			expect(result.current.left).toBe(630);
+			expect(result.current.top).toBe(300);
+			expect(result.current.ready).toBe(true);
+
+			document.body.removeChild(el);
+		});
+
+		it('does not affect LTR behavior when dir is not rtl', () => {
+			document.documentElement.dir = 'ltr';
+			setupViewport(1024, 768);
+			mockMenuSize(160, 120);
+
+			const el = document.createElement('div');
+			document.body.appendChild(el);
+
+			const { result } = renderHook(() => {
+				const ref = useRef<HTMLDivElement>(el);
+				return useContextMenuPosition(ref, 500, 300);
+			});
+
+			// LTR: left = x = 500
+			expect(result.current.left).toBe(500);
+			expect(result.current.top).toBe(300);
+			expect(result.current.ready).toBe(true);
+
+			document.body.removeChild(el);
+		});
 	});
 });

@@ -7,7 +7,7 @@
  * and provides options to view, clear, or retry them.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { OfflineQueueBanner } from '../../../web/mobile/OfflineQueueBanner';
@@ -187,8 +187,19 @@ describe('OfflineQueueBanner', () => {
 	// ============================================================
 
 	describe('formatRelativeTime (tested via component)', () => {
-		it('shows "now" for recent timestamps', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 1000 })]; // 1 second ago
+		// Freeze time to prevent Date.now() drift during full test suite runs
+		const frozenNow = 1710000000000; // fixed epoch ms
+
+		beforeEach(() => {
+			vi.useFakeTimers({ now: frozenNow });
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('shows "just now" for recent timestamps', () => {
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 1000 })]; // 1 second ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -197,8 +208,8 @@ describe('OfflineQueueBanner', () => {
 			expect(screen.getByText('now')).toBeInTheDocument();
 		});
 
-		it('shows "now" for timestamps less than 60 seconds ago', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 59000 })]; // 59 seconds ago
+		it('shows "just now" for timestamps less than 60 seconds ago', () => {
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 59000 })]; // 59 seconds ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -208,7 +219,7 @@ describe('OfflineQueueBanner', () => {
 		});
 
 		it('shows minutes ago for timestamps 1-59 minutes ago', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 120000 })]; // 2 minutes ago
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 120000 })]; // 2 minutes ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -217,8 +228,8 @@ describe('OfflineQueueBanner', () => {
 			expect(screen.getByText(/2 minutes ago/)).toBeInTheDocument();
 		});
 
-		it('shows "1 minute ago" at exactly 60 seconds', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 60000 })]; // 1 minute ago
+		it('shows "1m ago" at exactly 60 seconds', () => {
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 60000 })]; // 1 minute ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -228,7 +239,7 @@ describe('OfflineQueueBanner', () => {
 		});
 
 		it('shows hours ago for timestamps 1+ hours ago', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 3600000 })]; // 1 hour ago
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 3600000 })]; // 1 hour ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -237,8 +248,8 @@ describe('OfflineQueueBanner', () => {
 			expect(screen.getByText(/1 hour ago/)).toBeInTheDocument();
 		});
 
-		it('shows "2 hours ago" for 2 hour old timestamp', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 7200000 })]; // 2 hours ago
+		it('shows "2h ago" for 2 hour old timestamp', () => {
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 7200000 })]; // 2 hours ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
@@ -248,7 +259,7 @@ describe('OfflineQueueBanner', () => {
 		});
 
 		it('handles very old timestamps', () => {
-			const queue = [createQueuedCommand({ timestamp: Date.now() - 86400000 })]; // 24 hours ago
+			const queue = [createQueuedCommand({ timestamp: frozenNow - 86400000 })]; // 24 hours ago
 			render(<OfflineQueueBanner {...defaultProps} queue={queue} />);
 
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });

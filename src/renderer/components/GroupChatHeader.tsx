@@ -5,9 +5,10 @@
  * and provides actions for rename and info.
  */
 
-import { Info, Edit2, Columns, DollarSign } from 'lucide-react';
+import { Info, Edit2, Columns } from 'lucide-react';
 import type { Theme, Shortcut } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { formatCost } from '../utils/formatters';
 
 interface GroupChatHeaderProps {
 	theme: Theme;
@@ -95,8 +96,7 @@ export function GroupChatHeader({
 								: 'Total accumulated cost'
 						}
 					>
-						<DollarSign className="w-3 h-3" />
-						{totalCost.toFixed(2)}
+						{formatCost(totalCost)}
 						{costIncomplete && '*'}
 					</span>
 				)}

@@ -38,6 +38,7 @@ import React, { useRef, useEffect, ReactNode } from 'react';
 import { X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
+import { useI18n } from '../../hooks/useI18n';
 
 export interface ModalProps {
 	/** Theme object for styling */
@@ -99,6 +100,7 @@ export function Modal({
 	testId,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const { t: ta } = useI18n('accessibility');
 
 	// Register with layer stack for Escape handling and focus management
 	useModalLayer(priority, title, onClose, layerOptions);
@@ -164,7 +166,7 @@ export function Modal({
 									onClick={onClose}
 									className="p-1 rounded hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textDim }}
-									aria-label="Close modal"
+									aria-label={ta('modal.close')}
 								>
 									<X className="w-4 h-4" />
 								</button>

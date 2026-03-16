@@ -28,6 +28,7 @@ import { X } from 'lucide-react';
 import data from '@emoji-mart/data';
 import Picker from '@emoji-mart/react';
 import type { Theme } from '../../types';
+import { useI18n } from '../../hooks/useI18n';
 
 export interface EmojiPickerFieldProps {
 	/** Theme object for styling */
@@ -66,6 +67,7 @@ export function EmojiPickerField({
 }: EmojiPickerFieldProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const overlayRef = useRef<HTMLDivElement>(null);
+	const { t: ta } = useI18n('accessibility');
 
 	const handleClose = useCallback(() => {
 		setIsOpen(false);
@@ -139,7 +141,7 @@ export function EmojiPickerField({
 				}}
 				type="button"
 				disabled={disabled}
-				aria-label={`Select emoji, current: ${value}`}
+				aria-label={ta('form.select_emoji_current', { current: value })}
 				aria-haspopup="dialog"
 				aria-expanded={isOpen}
 				data-testid={testId ? `${testId}-button` : undefined}
@@ -157,7 +159,7 @@ export function EmojiPickerField({
 					tabIndex={0}
 					role="dialog"
 					aria-modal="true"
-					aria-label="Emoji picker"
+					aria-label={ta('form.emoji_picker')}
 					data-testid={testId ? `${testId}-overlay` : undefined}
 				>
 					<div
@@ -177,7 +179,7 @@ export function EmojiPickerField({
 								color: theme.colors.textMain,
 								border: `2px solid ${theme.colors.border}`,
 							}}
-							aria-label="Close emoji picker"
+							aria-label={ta('form.close_emoji_picker')}
 							data-testid={testId ? `${testId}-close` : undefined}
 						>
 							<X className="w-4 h-4" />

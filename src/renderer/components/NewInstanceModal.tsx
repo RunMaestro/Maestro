@@ -12,7 +12,6 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { isBetaAgent, getAgentDisplayName } from '../../shared/agentMetadata';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 
 // Maximum character length for nudge message
 const NUDGE_MESSAGE_MAX_LENGTH = 1000;

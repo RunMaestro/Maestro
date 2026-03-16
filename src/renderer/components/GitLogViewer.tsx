@@ -8,7 +8,6 @@ import { parseGitDiff } from '../utils/gitDiffParser';
 import { useListNavigation } from '../hooks';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { getActiveLocale } from '../utils/formatters';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 import 'react-diff-view/style/index.css';
 

@@ -645,8 +645,8 @@ describe('AgentSessionsModal', () => {
 		});
 
 		it('should display days ago', async () => {
-			// Use exact millisecond offset to avoid DST boundary issues with setDate()
-			const date = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+			// Use explicit ms offset to avoid DST boundary issues with calendar-day subtraction
+			const date = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000 - 60000);
 			const mockSessions = [createMockClaudeSession({ modifiedAt: date.toISOString() })];
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions: mockSessions,

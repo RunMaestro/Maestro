@@ -13,6 +13,7 @@ import {
 	formatElapsedTime,
 	formatElapsedTimeColon,
 	formatCost,
+	formatPercent,
 	estimateTokenCount,
 	truncatePath,
 	truncateCommand,
@@ -400,6 +401,44 @@ describe('shared/formatters', () => {
 			const deCost = formatCost(0.005, 'de');
 			expect(deCost).toContain('<');
 			expect(deCost).toContain('0,01');
+		});
+	});
+
+	// ==========================================================================
+	// formatPercent tests
+	// ==========================================================================
+	describe('formatPercent', () => {
+		it('should format 0%', () => {
+			expect(formatPercent(0)).toBe('0%');
+		});
+
+		it('should format 100%', () => {
+			expect(formatPercent(100)).toBe('100%');
+		});
+
+		it('should format intermediate values', () => {
+			expect(formatPercent(50)).toBe('50%');
+			expect(formatPercent(75)).toBe('75%');
+			expect(formatPercent(1)).toBe('1%');
+		});
+
+		it('should use locale-aware formatting with explicit locale', () => {
+			// French uses non-breaking space before %
+			const frResult = formatPercent(50, 'fr');
+			// French formatting includes the number and % symbol
+			expect(frResult).toContain('50');
+			expect(frResult).toContain('%');
+		});
+
+		it('should round to zero decimal places', () => {
+			// formatPercent takes integer 0-100 values; verify no decimals
+			expect(formatPercent(33)).toBe('33%');
+			expect(formatPercent(67)).toBe('67%');
+		});
+
+		it('should handle locale override parameter', () => {
+			const enResult = formatPercent(42, 'en');
+			expect(enResult).toBe('42%');
 		});
 	});
 

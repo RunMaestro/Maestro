@@ -30,7 +30,6 @@ import { getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
-import { useI18n } from '../hooks/useI18n';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =

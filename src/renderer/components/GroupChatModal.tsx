@@ -22,7 +22,6 @@ import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { useAgentConfiguration } from '../hooks/agent';
-import { useI18n } from '../hooks/useI18n';
 
 interface GroupChatModalCreateProps {
 	mode: 'create';

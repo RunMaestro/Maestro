@@ -4,8 +4,8 @@
 		"search_placeholder": "शॉर्टकट खोजें...",
 		"no_agents_note": "नोट: अधिकांश कार्यक्षमता तब तक उपलब्ध नहीं है जब तक आपने अपना पहला agent नहीं बनाया है।",
 		"customizable_hint": "कई शॉर्टकट Settings → Shortcuts से अनुकूलित किए जा सकते हैं।",
-		"mastered_count": "{{used}} / {{total}} में महारत ({{percentage}}%)",
-		"next_level_hint": "{{level}} तक पहुँचने के लिए {{remaining}}% और",
+		"mastered_count": "{{used}} / {{total}} में महारत ({{percentage}})",
+		"next_level_hint": "{{level}} तक पहुँचने के लिए {{remaining}} और",
 		"complete_mastery": "Keyboard Maestro - पूर्ण महारत!",
 		"no_results": "कोई शॉर्टकट नहीं मिला"
 	},

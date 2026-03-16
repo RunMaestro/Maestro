@@ -17,7 +17,6 @@ import { generateId } from '../utils/ids';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatMetaKey } from '../utils/shortcutFormatter';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 
 // Tree node type for folder structure

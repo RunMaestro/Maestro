@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { Bot, User, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
-import { formatElapsedTime, getActiveLocale } from '../../utils/formatters';
+import { formatCost, formatElapsedTime, getActiveLocale } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck } from './historyConstants';
 import { useI18n } from '../../hooks/useI18n';
@@ -236,7 +236,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								border: `1px solid ${theme.colors.success}30`,
 							}}
 						>
-							${entry.usageStats.totalCostUsd.toFixed(2)}
+							{formatCost(entry.usageStats.totalCostUsd)}
 						</span>
 					)}
 					{/* Achievement Action Button */}

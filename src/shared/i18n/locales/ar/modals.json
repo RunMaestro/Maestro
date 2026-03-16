@@ -4,8 +4,8 @@
 		"search_placeholder": "البحث في الاختصارات...",
 		"no_agents_note": "ملاحظة: معظم الوظائف غير متاحة حتى تُنشئ وكيلك الأول.",
 		"customizable_hint": "يمكن تخصيص كثير من الاختصارات من الإعدادات ← اختصارات لوحة المفاتيح.",
-		"mastered_count": "{{used}} / {{total}} تم إتقانها ({{percentage}}%)",
-		"next_level_hint": "{{remaining}}% إضافية للوصول إلى {{level}}",
+		"mastered_count": "{{used}} / {{total}} تم إتقانها ({{percentage}})",
+		"next_level_hint": "{{remaining}} إضافية للوصول إلى {{level}}",
 		"complete_mastery": "إتقان كامل للوحة المفاتيح!",
 		"no_results": "لم يُعثر على أي اختصارات"
 	},

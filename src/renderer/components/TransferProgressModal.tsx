@@ -26,7 +26,6 @@ import type { GroomingProgress } from '../types/contextMerge';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getAgentDisplayName } from '../services/contextGroomer';
-import { useI18n } from '../hooks/useI18n';
 import { CodeText } from './shared/CodeText';
 
 /**

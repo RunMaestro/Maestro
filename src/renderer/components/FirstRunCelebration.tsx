@@ -25,7 +25,6 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 
 // 15 minutes in milliseconds - threshold for "Standing Ovation" variation
 const STANDING_OVATION_THRESHOLD_MS = 15 * 60 * 1000;

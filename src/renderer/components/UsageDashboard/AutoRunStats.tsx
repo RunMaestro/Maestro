@@ -18,7 +18,7 @@ import { useTranslation } from 'react-i18next';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
 import { captureException } from '../../utils/sentry';
-import { getActiveLocale } from '../../utils/formatters';
+import { getActiveLocale, formatPercent } from '../../utils/formatters';
 
 /**
  * Auto Run session data shape from the API
@@ -496,7 +496,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 									<div>{hoveredBar.count} tasks completed</div>
 									<div>
 										{hoveredBar.successCount} successful (
-										{Math.round((hoveredBar.successCount / hoveredBar.count) * 100)}%)
+										{formatPercent(Math.round((hoveredBar.successCount / hoveredBar.count) * 100))})
 									</div>
 								</div>
 							</div>

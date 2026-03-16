@@ -4,8 +4,8 @@
 		"search_placeholder": "Rechercher des raccourcis...",
 		"no_agents_note": "Remarque : la plupart des fonctionnalités ne sont pas disponibles tant que vous n'avez pas créé votre premier agent.",
 		"customizable_hint": "De nombreux raccourcis peuvent être personnalisés depuis Paramètres → Raccourcis.",
-		"mastered_count": "{{used}} / {{total}} maîtrisés ({{percentage}} %)",
-		"next_level_hint": "Encore {{remaining}} % pour atteindre {{level}}",
+		"mastered_count": "{{used}} / {{total}} maîtrisés ({{percentage}})",
+		"next_level_hint": "Encore {{remaining}} pour atteindre {{level}}",
 		"complete_mastery": "Keyboard Maestro — Maîtrise complète !",
 		"no_results": "Aucun raccourci trouvé"
 	},

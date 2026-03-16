@@ -16,6 +16,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useDebouncedCallback } from '../utils/useThrottle';
+import { formatPercent } from '../../../shared/formatters';
 
 // Stats time range type matching the backend API
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -203,7 +204,9 @@ export function useComputedStats(data: StatsAggregation | null): ComputedStats {
 		// Interactive vs Auto ratio
 		const totalSources = data.bySource.user + data.bySource.auto;
 		const interactiveVsAutoRatio =
-			totalSources > 0 ? `${Math.round((data.bySource.user / totalSources) * 100)}%` : 'N/A';
+			totalSources > 0
+				? formatPercent(Math.round((data.bySource.user / totalSources) * 100))
+				: 'N/A';
 
 		// Check if there's meaningful data
 		const hasData = data.totalQueries > 0 || data.bySource.user > 0 || data.bySource.auto > 0;

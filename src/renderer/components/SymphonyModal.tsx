@@ -60,7 +60,7 @@ import { useContributorStats, type Achievement } from '../hooks/symphony/useCont
 import { AgentCreationDialog, type AgentCreationConfig } from './AgentCreationDialog';
 import { generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { getActiveLocale } from '../utils/formatters';
+import { formatCost, getActiveLocale } from '../utils/formatters';
 
 // ============================================================================
 // Types
@@ -1147,7 +1147,7 @@ function ActiveContributionCard({
 							count: Math.round(contribution.tokenUsage.outputTokens / 1000),
 						})}
 					</span>
-					<span>${contribution.tokenUsage.estimatedCost.toFixed(2)}</span>
+					<span>{formatCost(contribution.tokenUsage.estimatedCost)}</span>
 				</div>
 			)}
 
@@ -1281,7 +1281,7 @@ function CompletedContributionCard({
 				<div>
 					<span style={{ color: theme.colors.textDim }}>{t('symphony.history.cost_label')}</span>
 					<p style={{ color: theme.colors.accent }}>
-						${contribution.tokenUsage.totalCost.toFixed(2)}
+						{formatCost(contribution.tokenUsage.totalCost)}
 					</p>
 				</div>
 			</div>

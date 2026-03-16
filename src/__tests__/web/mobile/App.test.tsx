@@ -46,6 +46,9 @@ vi.mock('../../../web/main', () => ({
 		desktopTheme: null,
 		setDesktopTheme: mockSetDesktopTheme,
 	}),
+	useDesktopLanguage: () => ({
+		desktopLanguage: null,
+	}),
 }));
 
 // Mock useWebSocket hook

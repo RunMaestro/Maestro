@@ -41,7 +41,7 @@ import { calculateContextDisplay } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
-import { getActiveLocale } from '../utils/formatters';
+import { formatCost, getActiveLocale } from '../utils/formatters';
 import { useTranslation } from 'react-i18next';
 import { useSettingsStore } from '../stores/settingsStore';
 import type {
@@ -1227,7 +1227,7 @@ export const MainPanel = React.memo(
 										(activeTab?.agentSessionId || activeTab?.usageStats) &&
 										hasCapability('supportsCostTracking') && (
 											<span className="header-cost-widget text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
-												${(activeTab?.usageStats?.totalCostUsd ?? 0).toFixed(2)}
+												{formatCost(activeTab?.usageStats?.totalCostUsd ?? 0)}
 											</span>
 										)}
 

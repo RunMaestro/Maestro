@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
 import { captureException } from '../../utils/sentry';
+import { formatPercent } from '../../utils/formatters';
 
 /**
  * Auto Run task data shape from the API
@@ -230,7 +231,8 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 							<div>{hoveredData.count} tasks</div>
 							{hoveredData.count > 0 && (
 								<div>
-									{Math.round((hoveredData.successCount / hoveredData.count) * 100)}% success
+									{formatPercent(Math.round((hoveredData.successCount / hoveredData.count) * 100))}{' '}
+									success
 								</div>
 							)}
 						</div>

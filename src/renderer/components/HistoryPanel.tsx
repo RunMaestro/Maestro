@@ -536,10 +536,14 @@ export const HistoryPanel = React.memo(
 									{t('history.no_entries_in_range', {
 										period:
 											graphLookbackHours <= 24
-												? `${graphLookbackHours}h`
+												? t('common:time.hours_short', { count: graphLookbackHours })
 												: graphLookbackHours <= 168
-													? `${Math.round(graphLookbackHours / 24)}d`
-													: `${Math.round(graphLookbackHours / 720)}mo`,
+													? t('common:time.days_short', {
+															count: Math.round(graphLookbackHours / 24),
+														})
+													: t('common:time.months_short', {
+															count: Math.round(graphLookbackHours / 720),
+														}),
 									})}
 									<br />
 									<button

@@ -11,6 +11,9 @@ interface ContextMenuPosition {
  * Measures a context menu after render and adjusts its position
  * so it stays fully visible within the viewport.
  *
+ * RTL-aware: in RTL layouts, the menu anchors from its right edge
+ * at the click point (opens toward the start/left side).
+ *
  * Uses useLayoutEffect to measure before paint, so the user
  * never sees the menu at the wrong position.
  *
@@ -39,8 +42,13 @@ export function useContextMenuPosition(
 		const maxLeft = window.innerWidth - width - padding;
 		const maxTop = window.innerHeight - height - padding;
 
+		const isRtl = document.documentElement.dir === 'rtl';
+		// LTR: menu grows right from click point (left = x)
+		// RTL: menu grows left from click point (left = x - width)
+		const anchorLeft = isRtl ? x - width : x;
+
 		setPosition({
-			left: Math.max(padding, Math.min(x, maxLeft)),
+			left: Math.max(padding, Math.min(anchorLeft, maxLeft)),
 			top: Math.max(padding, Math.min(y, maxTop)),
 			ready: true,
 		});

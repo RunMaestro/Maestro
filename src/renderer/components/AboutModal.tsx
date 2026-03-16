@@ -12,7 +12,6 @@ import {
 	BookOpen,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
 import type { GlobalAgentStats } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';

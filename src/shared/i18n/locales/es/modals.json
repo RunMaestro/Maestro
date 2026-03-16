@@ -4,8 +4,8 @@
 		"search_placeholder": "Buscar atajos...",
 		"no_agents_note": "Nota: La mayoría de las funciones no están disponibles hasta que haya creado su primer agente.",
 		"customizable_hint": "Muchos atajos se pueden personalizar desde Configuración → Atajos.",
-		"mastered_count": "{{used}} / {{total}} dominados ({{percentage}}%)",
-		"next_level_hint": "{{remaining}}% más para alcanzar {{level}}",
+		"mastered_count": "{{used}} / {{total}} dominados ({{percentage}})",
+		"next_level_hint": "{{remaining}} más para alcanzar {{level}}",
 		"complete_mastery": "Keyboard Maestro - ¡Dominio completo!",
 		"no_results": "No se encontraron atajos"
 	},

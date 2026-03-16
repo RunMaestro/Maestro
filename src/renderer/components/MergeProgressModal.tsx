@@ -22,7 +22,6 @@ import type { Theme } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { useI18n } from '../hooks/useI18n';
 
 /**
  * Progress stage definition for display

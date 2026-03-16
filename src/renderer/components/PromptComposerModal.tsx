@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, PenLine, Send, ImageIcon, History, Eye, Keyboard, Brain, Pin } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 import type { Theme, ThinkingMode } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';

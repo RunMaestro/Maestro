@@ -21,7 +21,6 @@ import { KeyboardMasteryCelebration } from './KeyboardMasteryCelebration';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 
 interface PlaygroundPanelProps {

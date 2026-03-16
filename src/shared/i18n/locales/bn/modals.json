@@ -4,8 +4,8 @@
 		"search_placeholder": "শর্টকাট খুঁজুন...",
 		"no_agents_note": "দ্রষ্টব্য: আপনার প্রথম agent তৈরি না করা পর্যন্ত বেশিরভাগ কার্যকারিতা অনুপলব্ধ।",
 		"customizable_hint": "অনেক শর্টকাট Settings → Shortcuts থেকে কাস্টমাইজ করা যায়।",
-		"mastered_count": "{{used}} / {{total}} আয়ত্ত ({{percentage}}%)",
-		"next_level_hint": "{{level}}-এ পৌঁছাতে আরও {{remaining}}%",
+		"mastered_count": "{{used}} / {{total}} আয়ত্ত ({{percentage}})",
+		"next_level_hint": "{{level}}-এ পৌঁছাতে আরও {{remaining}}",
 		"complete_mastery": "Keyboard Maestro - সম্পূর্ণ দক্ষতা!",
 		"no_results": "কোনো শর্টকাট পাওয়া যায়নি"
 	},

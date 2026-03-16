@@ -288,6 +288,23 @@ export function formatCost(cost: number, locale?: string): string {
 }
 
 /**
+ * Format a number as a locale-aware percentage string.
+ * Uses Intl.NumberFormat with `style: 'percent'` for correct symbol placement
+ * (e.g., "50%" in English, "50 %" in French, "50%" in Chinese).
+ *
+ * @param value - The percentage as an integer 0–100 (will be divided by 100 internally)
+ * @param locale - Optional BCP 47 locale override (auto-detected from i18n if omitted)
+ * @returns Formatted percentage string (e.g., "50%", "50 %")
+ */
+export function formatPercent(value: number, locale?: string): string {
+	const activeLocale = getActiveLocale(locale);
+	return new Intl.NumberFormat(activeLocale, {
+		style: 'percent',
+		maximumFractionDigits: 0,
+	}).format(value / 100);
+}
+
+/**
  * Estimate token count from text using rough approximation.
  * Uses ~4 characters per token for English text, which is a common heuristic.
  *

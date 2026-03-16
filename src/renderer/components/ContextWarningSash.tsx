@@ -1,7 +1,6 @@
 import { memo, useMemo, useState, useCallback } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../types';
-import { useI18n } from '../hooks/useI18n';
 import { useTranslation } from 'react-i18next';
 
 export interface ContextWarningSashProps {
