@@ -1159,6 +1159,10 @@ class PhaseGenerator {
 	 *
 	 * This is a fallback for when the agent writes files directly
 	 * instead of outputting them with markers.
+	 *
+	 * @param directoryPath - Path to the directory containing Auto Run Docs
+	 * @param sshRemoteId - Optional SSH remote ID for reading from remote sessions
+	 * @returns Array of parsed documents from disk
 	 */
 	private async readDocumentsFromDisk(
 		directoryPath: string,

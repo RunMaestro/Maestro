@@ -1238,6 +1238,10 @@ async function createPlaybookForDocuments(
  *
  * Note: Documents read from disk are treated as new (isUpdate: false)
  * since they were written directly by the agent.
+ *
+ * @param autoRunFolderPath - Path to the Auto Run folder
+ * @param sshRemoteId - Optional SSH remote ID for reading from remote sessions
+ * @returns Array of parsed documents from disk
  */
 async function readDocumentsFromDisk(
 	autoRunFolderPath: string,
