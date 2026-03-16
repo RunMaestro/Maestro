@@ -24,8 +24,14 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	resolveSessionId: vi.fn(),
 }));
 
+// Mock storage (for resolveAgentId)
+vi.mock('../../../cli/services/storage', () => ({
+	resolveAgentId: vi.fn(),
+}));
+
 import { autoRun } from '../../../cli/commands/auto-run';
 import { withMaestroClient, resolveSessionId } from '../../../cli/services/maestro-client';
+import { resolveAgentId } from '../../../cli/services/storage';
 import { existsSync } from 'fs';
 
 describe('auto-run command', () => {
@@ -245,6 +251,49 @@ describe('auto-run command', () => {
 			expect.stringContaining('Maestro desktop app is not running')
 		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should use resolveAgentId when --agent is provided', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('full-agent-uuid-123');
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockResolvedValue({
+					type: 'configure_auto_run_result',
+					success: true,
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], { agent: 'full-ag' });
+
+		expect(resolveAgentId).toHaveBeenCalledWith('full-ag');
+		expect(resolveSessionId).not.toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			expect.stringContaining('Auto-run configured with 1 document')
+		);
+	});
+
+	it('should prefer --agent over --session when both provided', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-uuid-456');
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], { agent: 'agent-uuid', session: 'session-789' });
+
+		expect(resolveAgentId).toHaveBeenCalledWith('agent-uuid');
+		expect(resolveSessionId).not.toHaveBeenCalled();
 	});
 
 	it('should error when server returns failure', async () => {

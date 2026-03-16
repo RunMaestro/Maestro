@@ -3,8 +3,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
+import { resolveAgentId } from '../services/storage';
 
 interface AutoRunOptions {
+	agent?: string;
 	session?: string;
 	prompt?: string;
 	loop?: boolean;
@@ -38,7 +40,12 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
-	const sessionId = resolveSessionId(options);
+	let sessionId: string;
+	if (options.agent) {
+		sessionId = resolveAgentId(options.agent);
+	} else {
+		sessionId = resolveSessionId(options);
+	}
 
 	const documents = resolvedPaths.map((d) => ({
 		filename: d,
