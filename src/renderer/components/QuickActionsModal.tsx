@@ -13,7 +13,6 @@ import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTranslation } from 'react-i18next';
-import { useI18n } from '../hooks/useI18n';
 
 interface QuickAction {
 	id: string;
@@ -211,8 +210,22 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setAutoScrollAiMode,
 	} = props;
 
-	const { t } = useTranslation(['menus', 'common']);
+	const { t: _t, i18n } = useTranslation(['menus', 'common']);
 	const { t: tA } = useTranslation('accessibility');
+
+	// Dual-index search: wrap t() to build a map of translated → English labels.
+	// When the UI is non-English, users can search commands in either language.
+	const englishLabelMap = new Map<string, string>();
+	const t = (key: string, opts?: Record<string, unknown>): string => {
+		const translated = _t(key, opts as any) as string;
+		if (i18n.language !== 'en') {
+			const english = _t(key, { ...opts, lng: 'en' } as any) as string;
+			if (translated !== english) {
+				englishLabelMap.set(translated, english);
+			}
+		}
+		return translated;
+	};
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
 	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
@@ -1392,7 +1405,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			if (isDebugCommand && !showDebugCommands) {
 				return false;
 			}
-			return a.label.toLowerCase().includes(searchLower);
+			// Match against translated label
+			if (a.label.toLowerCase().includes(searchLower)) return true;
+			// Dual-index: also match against English fallback for non-English locales
+			const englishLabel = englishLabelMap.get(a.label);
+			return englishLabel ? englishLabel.toLowerCase().includes(searchLower) : false;
 		})
 		.sort((a, b) => a.label.localeCompare(b.label));
 
