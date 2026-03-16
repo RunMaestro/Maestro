@@ -122,10 +122,27 @@ export default function AgentInbox({
 		[viewMode]
 	);
 
+	const clampItemIndex = useCallback(
+		(index: number) => {
+			if (items.length === 0) return 0;
+			return Math.max(0, Math.min(index, items.length - 1));
+		},
+		[items.length]
+	);
+
 	const handleExitFocus = useCallback(() => {
+		const currentItem = items[focusIndex];
+		if (currentItem) {
+			const nextSelectedIndex = liveItems.findIndex(
+				(item) => item.sessionId === currentItem.sessionId && item.tabId === currentItem.tabId
+			);
+			setSelectedIndex(nextSelectedIndex >= 0 ? nextSelectedIndex : clampItemIndex(focusIndex));
+		} else {
+			setSelectedIndex((prev) => clampItemIndex(prev));
+		}
 		setViewMode('list');
 		frozenOrderRef.current = [];
-	}, []);
+	}, [clampItemIndex, focusIndex, items, liveItems]);
 
 	// Re-snapshot after filter change empties the ref (needs liveItems from new filter)
 	useEffect(() => {
@@ -144,12 +161,20 @@ export default function AgentInbox({
 		}
 	}, [items.length, focusIndex, viewMode]);
 
+	useEffect(() => {
+		if (viewMode === 'list') {
+			setSelectedIndex((prev) => clampItemIndex(prev));
+		}
+	}, [clampItemIndex, viewMode]);
+
 	const handleEnterFocus = useCallback(
 		(item: InboxItem) => {
 			const idx = liveItems.findIndex(
 				(i) => i.sessionId === item.sessionId && i.tabId === item.tabId
 			);
-			setFocusIndex(idx >= 0 ? idx : 0);
+			const nextIndex = idx >= 0 ? idx : 0;
+			setFocusIndex(nextIndex);
+			setSelectedIndex(nextIndex);
 			// Freeze current order as simple identity pairs
 			frozenOrderRef.current = liveItems.map((i) => ({
 				sessionId: i.sessionId,
@@ -161,9 +186,14 @@ export default function AgentInbox({
 	);
 
 	// ---- Navigate item wrapper ----
-	const handleNavigateItem = useCallback((idx: number) => {
-		setFocusIndex(idx);
-	}, []);
+	const handleNavigateItem = useCallback(
+		(idx: number) => {
+			const nextIndex = clampItemIndex(idx);
+			setFocusIndex(nextIndex);
+			setSelectedIndex(nextIndex);
+		},
+		[clampItemIndex]
+	);
 
 	// ---- Layer stack: viewMode-aware Escape ----
 	const handleLayerEscape = useCallback(() => {

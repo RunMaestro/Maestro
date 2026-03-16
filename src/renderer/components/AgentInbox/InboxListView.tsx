@@ -590,7 +590,12 @@ export default function InboxListView({
 		}
 		return 0;
 	}, [rows]);
-	const [selectedRowIndex, setSelectedRowIndex] = useState(firstItemRow);
+	const [selectedRowIndex, setSelectedRowIndex] = useState(() => {
+		const selectedItemRow = rows.findIndex(
+			(row) => row.type === 'item' && row.index === selectedIndex
+		);
+		return selectedItemRow >= 0 ? selectedItemRow : firstItemRow;
+	});
 	const selectedRowIdentityRef = useRef<RowIdentity | null>(null);
 
 	// Keep the identity ref in sync with selectedRowIndex

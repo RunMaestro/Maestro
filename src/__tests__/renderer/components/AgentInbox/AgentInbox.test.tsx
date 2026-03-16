@@ -500,6 +500,33 @@ describe('AgentInbox', () => {
 			const listbox = screen.queryByRole('listbox');
 			expect(listbox).toBeInTheDocument();
 		});
+
+		it('returning from focus mode keeps the last navigated item selected', () => {
+			const firstTab = makeTab({ id: 't1', hasUnread: true });
+			const secondTab = makeTab({ id: 't2', hasUnread: true });
+			const firstSession = makeSession({ id: 's1', name: 'Agent One', aiTabs: [firstTab] });
+			const secondSession = makeSession({ id: 's2', name: 'Agent Two', aiTabs: [secondTab] });
+
+			const props = createDefaultProps({ sessions: [firstSession, secondSession] });
+			render(<AgentInbox {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			fireEvent.keyDown(dialog, { key: 'f' });
+			expect(screen.queryByLabelText('Reply to agent')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+			act(() => {
+				registeredLayerEscape?.();
+			});
+
+			const options = screen.getAllByRole('option');
+			const selectedOption = options.find(
+				(option) => option.getAttribute('aria-selected') === 'true'
+			);
+			expect(selectedOption).toBeDefined();
+			expect(within(selectedOption!).getByText('Agent Two')).toBeInTheDocument();
+		});
 	});
 
 	// ====================================================================
