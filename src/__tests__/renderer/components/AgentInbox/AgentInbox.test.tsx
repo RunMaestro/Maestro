@@ -394,8 +394,7 @@ describe('AgentInbox', () => {
 			const props = createDefaultProps({ onClose });
 			render(<AgentInbox {...props} />);
 
-			// The overlay is the outermost div with modal-overlay class
-			const overlay = screen.getByRole('dialog').parentElement!;
+			const overlay = screen.getByTestId('inbox-overlay');
 			fireEvent.click(overlay);
 
 			expect(onClose).toHaveBeenCalledTimes(1);

@@ -264,6 +264,7 @@ export default function AgentInbox({
 
 	return (
 		<div
+			data-testid="inbox-overlay"
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
 			onClick={handleClose}
 		>
@@ -286,8 +287,6 @@ export default function AgentInbox({
 				onClick={(e) => e.stopPropagation()}
 				onKeyDownCapture={handleCaptureKeyDown}
 				onKeyDown={handleShellKeyDown}
-				onFocus={() => {}}
-				onBlur={() => {}}
 			>
 				<div className="flex-1 flex flex-col overflow-hidden" style={{ minHeight: 0 }}>
 					{viewMode === 'list' ? (
