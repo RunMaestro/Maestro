@@ -289,7 +289,7 @@ interface ModalStoreActions {
 	/**
 	 * Close a modal and clear its data.
 	 */
-	closeModal: (id: ModalId) => void;
+	closeModal: (id: ModalId, preserveData?: boolean) => void;
 
 	/**
 	 * Toggle a modal's open state.
@@ -339,13 +339,13 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 		});
 	},
 
-	closeModal: (id) => {
+	closeModal: (id, preserveData = false) => {
 		set((state) => {
 			const current = state.modals.get(id);
 			// Skip if already closed (or never opened)
 			if (!current?.open) return state;
 			const newModals = new Map(state.modals);
-			newModals.set(id, { open: false, data: undefined });
+			newModals.set(id, { open: false, data: preserveData ? current.data : undefined });
 			return { modals: newModals };
 		});
 	},
@@ -773,7 +773,7 @@ export function getModalActions() {
 
 		// Agent Inbox Modal (Unified Inbox)
 		setAgentInboxOpen: (open: boolean) =>
-			open ? openModal('agentInbox') : closeModal('agentInbox'),
+			open ? openModal('agentInbox') : closeModal('agentInbox', true),
 		updateAgentInboxData: (data: Record<string, unknown>) => updateModalData('agentInbox', data),
 
 		// Lightbox refs replacement - use updateModalData instead

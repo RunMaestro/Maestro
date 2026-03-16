@@ -1141,7 +1141,6 @@ export default function InboxListView({
 										<button
 											type="button"
 											key={`header-${row.groupKey}`}
-											className="outline-none"
 											style={{
 												position: 'absolute',
 												top: 0,

@@ -10,8 +10,9 @@ import type { AITab } from '../types';
  * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
  */
 export function getTabDisplayName(tab: Pick<AITab, 'name' | 'agentSessionId'>): string {
-	if (tab.name) {
-		return tab.name;
+	const trimmedName = tab.name?.trim();
+	if (trimmedName) {
+		return trimmedName;
 	}
 	if (tab.agentSessionId) {
 		const id = tab.agentSessionId;

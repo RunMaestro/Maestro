@@ -761,7 +761,7 @@ const Tab = memo(function Tab({
 								<div className="px-3 py-2 border-b" style={{ borderColor: theme.colors.border }}>
 									{isEditingDescription ? (
 										<textarea
-											ref={(el) => el?.focus()}
+											autoFocus
 											value={descriptionDraft}
 											onChange={(e) => setDescriptionDraft(e.target.value)}
 											onKeyDown={handleDescriptionKeyDown}

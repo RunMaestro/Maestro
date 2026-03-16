@@ -49,7 +49,9 @@ export default function AgentInbox({
 	// ---- Focus restoration ----
 	// Capture trigger element synchronously during initial render (before child effects)
 	const triggerRef = useRef<HTMLElement | null>(
-		document.activeElement instanceof HTMLElement ? document.activeElement : null
+		typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+			? document.activeElement
+			: null
 	);
 
 	const handleClose = useCallback(() => {

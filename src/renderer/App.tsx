@@ -4266,6 +4266,7 @@ function MaestroConsoleInner() {
 							sessions={sessions}
 							groups={groups}
 							theme={theme}
+							enterToSendAI={enterToSendAI}
 							onClose={() => setAgentInboxOpen(false)}
 							onNavigateToSession={handleAgentInboxNavigateToSession}
 							onQuickReply={handleAgentInboxQuickReply}

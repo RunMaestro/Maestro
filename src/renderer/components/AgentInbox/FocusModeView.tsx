@@ -602,6 +602,13 @@ export default function FocusModeView({
 	const [sidebarWidth, setSidebarWidth] = useState(220);
 	const isResizingRef = useRef(false);
 	const resizeCleanupRef = useRef<(() => void) | null>(null);
+	const clampSidebarWidth = useCallback((width: number) => Math.max(160, Math.min(400, width)), []);
+	const adjustSidebarWidth = useCallback(
+		(delta: number) => {
+			setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth + delta));
+		},
+		[clampSidebarWidth]
+	);
 
 	// Unmount safety: clean up resize listeners if component unmounts mid-drag
 	useEffect(() => {
@@ -620,7 +627,7 @@ export default function FocusModeView({
 
 			const onMouseMove = (ev: MouseEvent) => {
 				if (!isResizingRef.current) return;
-				const newWidth = Math.max(160, Math.min(400, startWidth + (ev.clientX - startX)));
+				const newWidth = clampSidebarWidth(startWidth + (ev.clientX - startX));
 				setSidebarWidth(newWidth);
 			};
 
@@ -643,7 +650,7 @@ export default function FocusModeView({
 			document.body.style.cursor = 'col-resize';
 			document.body.style.userSelect = 'none';
 		},
-		[sidebarWidth]
+		[sidebarWidth, clampSidebarWidth]
 	);
 	const contextColor = hasValidContext
 		? resolveContextUsageColor(item.contextUsage!, theme)
@@ -757,17 +764,19 @@ export default function FocusModeView({
 		if (!text) return;
 		if (onQuickReply) {
 			onQuickReply(item.sessionId, item.tabId, text);
+			_onMarkAsRead?.(item.sessionId, item.tabId);
 		}
 		setReplyText('');
-	}, [replyText, item, onQuickReply]);
+	}, [replyText, item, onQuickReply, _onMarkAsRead]);
 
 	const handleOpenAndReply = useCallback(() => {
 		const text = replyText.trim();
 		if (!text) return;
 		if (onOpenAndReply) {
 			onOpenAndReply(item.sessionId, item.tabId, text);
+			_onMarkAsRead?.(item.sessionId, item.tabId);
 		}
-	}, [replyText, item, onOpenAndReply]);
+	}, [replyText, item, onOpenAndReply, _onMarkAsRead]);
 
 	// ---- Smooth transition on item change ----
 	const [isTransitioning, setIsTransitioning] = useState(false);
@@ -986,7 +995,23 @@ export default function FocusModeView({
 
 				{/* Resize handle */}
 				<div
+					tabIndex={0}
+					role="separator"
+					aria-orientation="vertical"
+					aria-label="Resize inbox sidebar"
+					aria-valuemin={160}
+					aria-valuemax={400}
+					aria-valuenow={sidebarWidth}
 					onMouseDown={handleResizeStart}
+					onKeyDown={(e) => {
+						if (e.key === 'ArrowLeft') {
+							e.preventDefault();
+							adjustSidebarWidth(-16);
+						} else if (e.key === 'ArrowRight') {
+							e.preventDefault();
+							adjustSidebarWidth(16);
+						}
+					}}
 					style={{
 						width: 4,
 						cursor: 'col-resize',
@@ -1001,6 +1026,17 @@ export default function FocusModeView({
 						if (!isResizingRef.current) {
 							e.currentTarget.style.backgroundColor = 'transparent';
 						}
+					}}
+					onFocus={(e) => {
+						e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`;
+						e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
+						e.currentTarget.style.outlineOffset = '-2px';
+					}}
+					onBlur={(e) => {
+						if (!isResizingRef.current) {
+							e.currentTarget.style.backgroundColor = 'transparent';
+						}
+						e.currentTarget.style.outline = 'none';
 					}}
 				/>
 

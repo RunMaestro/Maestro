@@ -3686,6 +3686,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									</div>
 									<button
 										role="switch"
+										aria-label="Toggle Unified Inbox"
 										aria-checked={encoreFeatures.unifiedInbox}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -3743,6 +3744,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									</div>
 									<button
 										role="switch"
+										aria-label="Toggle Tab Descriptions"
 										aria-checked={encoreFeatures.tabDescription}
 										onClick={(e) => {
 											e.stopPropagation();

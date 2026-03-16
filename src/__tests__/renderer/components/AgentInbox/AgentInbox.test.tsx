@@ -108,8 +108,11 @@ const makeTab = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 });
 
-const makeSession = (overrides: Partial<Session> = {}): Session =>
-	({
+const makeSession = (overrides: Partial<Session> = {}): Session => {
+	const aiTabs = (overrides.aiTabs ?? [makeTab()]) as Session['aiTabs'];
+	const activeTabId = overrides.activeTabId ?? aiTabs[0]?.id ?? 'default-tab';
+
+	return {
 		id: `s-${Math.random().toString(36).slice(2, 8)}`,
 		name: 'Agent Alpha',
 		toolType: 'claude-code',
@@ -121,8 +124,6 @@ const makeSession = (overrides: Partial<Session> = {}): Session =>
 		aiPid: 0,
 		terminalPid: 0,
 		inputMode: 'ai',
-		aiTabs: [makeTab()],
-		activeTabId: 'default-tab',
 		closedTabHistory: [],
 		aiLogs: [],
 		shellLogs: [],
@@ -136,7 +137,10 @@ const makeSession = (overrides: Partial<Session> = {}): Session =>
 		fileExplorerScrollPos: 0,
 		isLive: false,
 		...overrides,
-	}) as unknown as Session;
+		aiTabs,
+		activeTabId,
+	} as unknown as Session;
+};
 
 const makeGroup = (overrides: Partial<Group> = {}): Group => ({
 	id: `g-${Math.random().toString(36).slice(2, 8)}`,
