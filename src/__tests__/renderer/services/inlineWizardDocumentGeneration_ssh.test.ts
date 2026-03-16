@@ -14,8 +14,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Captured callbacks from onData/onExit registration
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
-let capturedFileChangedCallback: ((data: { filename: string; eventType: string }) => void) | null =
-	null;
+let capturedFileChangedCallback:
+	| ((data: { filename: string; eventType: string; folderPath: string }) => void)
+	| null = null;
 
 // Mock window.maestro
 const mockMaestro = {
@@ -281,9 +282,14 @@ CONTENT:
 
 			// Simulate file change event
 			if (capturedFileChangedCallback) {
+				// Capture the actual subfolder path from watchFolder call
+				const watchFolderCall = mockMaestro.autorun.watchFolder.mock.calls[0];
+				const actualSubfolderPath = (watchFolderCall?.[0] as string) || '';
+
 				capturedFileChangedCallback({
 					filename: 'Phase-01-Test',
 					eventType: 'rename',
+					folderPath: actualSubfolderPath,
 				});
 			}
 

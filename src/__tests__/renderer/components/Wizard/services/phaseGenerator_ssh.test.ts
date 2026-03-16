@@ -10,8 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Captured callbacks from process events
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
-let capturedFileChangedCallback: ((data: { filename: string; eventType: string }) => void) | null =
-	null;
+let capturedFileChangedCallback:
+	| ((data: { filename: string; eventType: string; folderPath: string }) => void)
+	| null = null;
 
 // Mock window.maestro
 const mockMaestro = {
@@ -50,6 +51,25 @@ vi.stubGlobal('window', { maestro: mockMaestro });
 
 // Import after mocking
 import { phaseGenerator } from '../../../../../renderer/components/Wizard/services/phaseGenerator';
+
+/**
+ * Configure spawn mock to capture the session ID and fire exit callback
+ * with the correct session ID so the internal guards pass.
+ */
+function setupSpawnMock(exitDelay = 10) {
+	mockMaestro.process.spawn.mockImplementation(async (config: { sessionId: string }) => {
+		const sid = config.sessionId;
+
+		// Fire exit callback with the real session ID (after a delay to match async flow)
+		setTimeout(() => {
+			if (capturedExitCallback) {
+				capturedExitCallback(sid, 0);
+			}
+		}, exitDelay);
+
+		return { sessionId: sid };
+	});
+}
 
 describe('phaseGenerator - SSH Remote Support', () => {
 	beforeEach(() => {
@@ -138,6 +158,14 @@ CONTENT:
 					taskCount: 1,
 				},
 			]);
+
+			// Verify writeDoc was called with undefined sshRemoteId
+			expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+				expect.stringContaining('/local/path'),
+				'Phase-01-Setup.md',
+				'# Test content',
+				undefined // sshRemoteId should be undefined
+			);
 		});
 	});
 
@@ -151,16 +179,8 @@ CONTENT:
 			};
 			mockMaestro.agents.get.mockResolvedValue(mockAgent);
 
-			// Setup process callbacks
-			mockMaestro.process.spawn.mockImplementation(async () => {
-				setTimeout(() => {
-					if (capturedExitCallback) {
-						capturedExitCallback('test-session', 0);
-					}
-				}, 10);
-
-				return { sessionId: 'test-session' };
-			});
+			// Setup spawn mock with proper session ID handling
+			setupSpawnMock();
 
 			await phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
@@ -189,16 +209,8 @@ CONTENT:
 			};
 			mockMaestro.agents.get.mockResolvedValue(mockAgent);
 
-			// Setup process callbacks
-			mockMaestro.process.spawn.mockImplementation(async () => {
-				setTimeout(() => {
-					if (capturedExitCallback) {
-						capturedExitCallback('test-session', 0);
-					}
-				}, 10);
-
-				return { sessionId: 'test-session' };
-			});
+			// Setup spawn mock with proper session ID handling
+			setupSpawnMock();
 
 			await phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
@@ -228,16 +240,8 @@ CONTENT:
 			// Setup fs.readFile to return content
 			mockMaestro.fs.readFile.mockResolvedValue('# Test content from file');
 
-			// Setup process callbacks
-			mockMaestro.process.spawn.mockImplementation(async () => {
-				setTimeout(() => {
-					if (capturedExitCallback) {
-						capturedExitCallback('test-session', 0);
-					}
-				}, 100);
-
-				return { sessionId: 'test-session' };
-			});
+			// Setup spawn mock with proper session ID handling (longer delay to allow watcher setup)
+			setupSpawnMock(100);
 
 			await phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
@@ -250,11 +254,16 @@ CONTENT:
 				},
 			});
 
-			// Simulate file change event
+			// Capture the actual folder path from watchFolder call
+			const watchFolderCall = mockMaestro.autorun.watchFolder.mock.calls[0];
+			const actualFolderPath = (watchFolderCall?.[0] as string) || '';
+
+			// Simulate file change event with the correct folderPath
 			if (capturedFileChangedCallback) {
 				capturedFileChangedCallback({
 					filename: 'Phase-01-Setup',
 					eventType: 'rename',
+					folderPath: actualFolderPath,
 				});
 			}
 
@@ -291,16 +300,8 @@ CONTENT:
 				content: '# Test content',
 			});
 
-			// Setup process callbacks (empty output to trigger disk fallback)
-			mockMaestro.process.spawn.mockImplementation(async () => {
-				setTimeout(() => {
-					if (capturedExitCallback) {
-						capturedExitCallback('test-session', 0);
-					}
-				}, 10);
-
-				return { sessionId: 'test-session' };
-			});
+			// Setup spawn mock (empty output to trigger disk fallback)
+			setupSpawnMock();
 
 			await phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
@@ -344,16 +345,8 @@ CONTENT:
 				content: '# Test content',
 			});
 
-			// Setup process callbacks (empty output to trigger disk fallback)
-			mockMaestro.process.spawn.mockImplementation(async () => {
-				setTimeout(() => {
-					if (capturedExitCallback) {
-						capturedExitCallback('test-session', 0);
-					}
-				}, 10);
-
-				return { sessionId: 'test-session' };
-			});
+			// Setup spawn mock (empty output to trigger disk fallback)
+			setupSpawnMock();
 
 			await phaseGenerator.generateDocuments({
 				agentType: 'claude-code',
