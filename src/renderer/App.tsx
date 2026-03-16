@@ -1862,15 +1862,24 @@ function MaestroConsoleInner() {
 
 					const documents = (config.documents || []).map(
 						(doc: { filename: string; resetOnCompletion?: boolean }) => {
-							// Extract just the basename without .md extension.
-							// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/temp.md")
-							// but the batch processor expects just the stem (e.g., "temp").
-							let name = doc.filename;
-							const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-							if (lastSlash >= 0) {
-								name = name.substring(lastSlash + 1);
+							// Compute path relative to the session's autoRunFolderPath.
+							// CLI sends full absolute paths (e.g., "/path/to/Auto Run Docs/subdir/temp.md")
+							// but the batch processor expects the path relative to folderPath without .md
+							// (e.g., "subdir/temp").
+							let name = doc.filename.replace(/\.md$/i, '');
+							// Normalize separators to forward slash for comparison
+							const normalized = name.replace(/\\/g, '/');
+							const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
+							if (normalizedFolder && normalized.startsWith(normalizedFolder + '/')) {
+								name = normalized.substring(normalizedFolder.length + 1);
+							} else if (normalizedFolder && normalized.startsWith(normalizedFolder)) {
+								name = normalized.substring(normalizedFolder.length);
+								if (name.startsWith('/')) name = name.substring(1);
+							} else {
+								// Fallback for paths not under folderPath: use basename only
+								const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+								if (lastSlash >= 0) name = name.substring(lastSlash + 1);
 							}
-							name = name.replace(/\.md$/, '');
 							return {
 								id: generateId(),
 								filename: name,
