@@ -1872,9 +1872,6 @@ function MaestroConsoleInner() {
 							const normalizedFolder = (folderPath || '').replace(/\\/g, '/');
 							if (normalizedFolder && normalized.startsWith(normalizedFolder + '/')) {
 								name = normalized.substring(normalizedFolder.length + 1);
-							} else if (normalizedFolder && normalized.startsWith(normalizedFolder)) {
-								name = normalized.substring(normalizedFolder.length);
-								if (name.startsWith('/')) name = name.substring(1);
 							} else {
 								// Fallback for paths not under folderPath: use basename only
 								const lastSlash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));

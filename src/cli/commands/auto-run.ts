@@ -41,13 +41,18 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 	}
 
 	if (options.session) {
-		console.error('Warning: --session is deprecated for auto-run, use --agent instead');
+		console.warn('Warning: --session is deprecated for auto-run, use --agent instead');
 	}
 
 	let sessionId: string;
 	const agentId = options.agent || options.session;
 	if (agentId) {
-		sessionId = resolveAgentId(agentId);
+		try {
+			sessionId = resolveAgentId(agentId);
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
 	} else {
 		sessionId = resolveSessionId({});
 	}
