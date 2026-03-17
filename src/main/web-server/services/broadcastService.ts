@@ -15,6 +15,7 @@
  * - theme: Theme updates
  * - custom_commands: Custom AI commands updates
  * - autorun_state: Auto Run batch processing state
+ * - autorun_docs_changed: Auto Run document list changes
  * - user_input: User input from desktop (for web client sync)
  * - session_output: Session output data
  */
@@ -28,6 +29,7 @@ import type {
 	AITabData,
 	SessionBroadcastData,
 	AutoRunState,
+	AutoRunDocument,
 	CliActivity,
 } from '../types';
 
@@ -221,6 +223,19 @@ export class BroadcastService {
 			type: 'autorun_state',
 			sessionId,
 			state,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast Auto Run documents changed to all connected web clients
+	 * Called when Auto Run documents are added, removed, or modified
+	 */
+	broadcastAutoRunDocsChanged(sessionId: string, documents: AutoRunDocument[]): void {
+		this.broadcastToAll({
+			type: 'autorun_docs_changed',
+			sessionId,
+			documents,
 			timestamp: Date.now(),
 		});
 	}

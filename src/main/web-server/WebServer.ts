@@ -44,6 +44,7 @@ import type {
 	AITabData,
 	CustomAICommand,
 	AutoRunState,
+	AutoRunDocument,
 	CliActivity,
 	SessionBroadcastData,
 	WebClient,
@@ -560,6 +561,10 @@ export class WebServer {
 
 	broadcastAutoRunState(sessionId: string, state: AutoRunState | null): void {
 		this.liveSessionManager.setAutoRunState(sessionId, state);
+	}
+
+	broadcastAutoRunDocsChanged(sessionId: string, documents: AutoRunDocument[]): void {
+		this.broadcastService.broadcastAutoRunDocsChanged(sessionId, documents);
 	}
 
 	broadcastUserInput(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): void {
