@@ -70,6 +70,11 @@ vi.mock('../../../../main/services/gitSettingsStore', () => ({
 	},
 }));
 
+// Mock getShellPath
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	getShellPath: vi.fn().mockResolvedValue('/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'),
+}));
+
 // Mock remote-git
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
@@ -2687,7 +2692,8 @@ export function Component() {
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'git',
 				['push', '-u', 'origin', 'HEAD'],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'gh',
@@ -2701,7 +2707,8 @@ export function Component() {
 					'--body',
 					'This PR adds a new feature',
 				],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(result).toEqual({
 				success: true,
@@ -2831,7 +2838,8 @@ export function Component() {
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'/opt/homebrew/bin/gh',
 				['pr', 'create', '--base', 'main', '--title', 'Title', '--body', 'Body'],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(result).toEqual({
 				success: true,
