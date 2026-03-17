@@ -39,6 +39,7 @@ import { AutoRunIndicator } from './AutoRunIndicator';
 import { AutoRunPanel } from './AutoRunPanel';
 import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
 import { AutoRunSetupSheet } from './AutoRunSetupSheet';
+import { NotificationSettingsSheet } from './NotificationSettingsSheet';
 import { useAutoRun, type LaunchConfig } from '../hooks/useAutoRun';
 import { TabBar } from './TabBar';
 import { TabSearchModal } from './TabSearchModal';
@@ -65,9 +66,11 @@ interface MobileHeaderProps {
 	activeSession?: Session | null;
 	autoRunState?: AutoRunState | null;
 	onAutoRunTap?: () => void;
+	onNotificationTap?: () => void;
+	notificationCount?: number;
 }
 
-function MobileHeader({ activeSession, autoRunState, onAutoRunTap }: MobileHeaderProps) {
+function MobileHeader({ activeSession, autoRunState, onAutoRunTap, onNotificationTap, notificationCount = 0 }: MobileHeaderProps) {
 	const colors = useThemeColors();
 	const { isSession, goToDashboard } = useMaestroMode();
 
@@ -265,64 +268,126 @@ function MobileHeader({ activeSession, autoRunState, onAutoRunTap }: MobileHeade
 				</div>
 			)}
 
-			{/* Auto Run button (right side) */}
+			{/* Right side buttons */}
 			{activeSession && (
-				<button
-					onClick={onAutoRunTap}
-					style={{
-						width: '36px',
-						height: '36px',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						borderRadius: '8px',
-						backgroundColor: autoRunState?.isRunning ? `${colors.accent}20` : 'transparent',
-						border: autoRunState?.isRunning ? `1px solid ${colors.accent}` : `1px solid ${colors.border}`,
-						color: autoRunState?.isRunning ? colors.accent : colors.textDim,
-						cursor: 'pointer',
-						touchAction: 'manipulation',
-						WebkitTapHighlightColor: 'transparent',
-						flexShrink: 0,
-						position: 'relative',
-					}}
-					aria-label="Auto Run"
-					title="Auto Run"
-				>
-					{/* Play icon */}
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill={autoRunState?.isRunning ? 'currentColor' : 'none'}
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				<div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+					{/* Auto Run button */}
+					<button
+						onClick={onAutoRunTap}
+						style={{
+							width: '36px',
+							height: '36px',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							borderRadius: '8px',
+							backgroundColor: autoRunState?.isRunning ? `${colors.accent}20` : 'transparent',
+							border: autoRunState?.isRunning ? `1px solid ${colors.accent}` : `1px solid ${colors.border}`,
+							color: autoRunState?.isRunning ? colors.accent : colors.textDim,
+							cursor: 'pointer',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+							flexShrink: 0,
+							position: 'relative',
+						}}
+						aria-label="Auto Run"
+						title="Auto Run"
 					>
-						<polygon points="5,3 19,12 5,21" />
-					</svg>
-					{/* Progress badge when running */}
-					{autoRunState?.isRunning && autoRunState.totalTasks > 0 && (
-						<span
-							style={{
-								position: 'absolute',
-								top: '-4px',
-								right: '-4px',
-								fontSize: '9px',
-								fontWeight: 700,
-								color: 'white',
-								backgroundColor: colors.accent,
-								borderRadius: '8px',
-								padding: '1px 4px',
-								minWidth: '16px',
-								textAlign: 'center',
-								lineHeight: '14px',
-							}}
+						{/* Play icon */}
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill={autoRunState?.isRunning ? 'currentColor' : 'none'}
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
 						>
-							{Math.round((autoRunState.completedTasks / autoRunState.totalTasks) * 100)}%
-						</span>
-					)}
-				</button>
+							<polygon points="5,3 19,12 5,21" />
+						</svg>
+						{/* Progress badge when running */}
+						{autoRunState?.isRunning && autoRunState.totalTasks > 0 && (
+							<span
+								style={{
+									position: 'absolute',
+									top: '-4px',
+									right: '-4px',
+									fontSize: '9px',
+									fontWeight: 700,
+									color: 'white',
+									backgroundColor: colors.accent,
+									borderRadius: '8px',
+									padding: '1px 4px',
+									minWidth: '16px',
+									textAlign: 'center',
+									lineHeight: '14px',
+								}}
+							>
+								{Math.round((autoRunState.completedTasks / autoRunState.totalTasks) * 100)}%
+							</span>
+						)}
+					</button>
+
+					{/* Notification settings bell button */}
+					<button
+						onClick={onNotificationTap}
+						style={{
+							width: '36px',
+							height: '36px',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							borderRadius: '8px',
+							backgroundColor: 'transparent',
+							border: `1px solid ${colors.border}`,
+							color: colors.textDim,
+							cursor: 'pointer',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+							flexShrink: 0,
+							position: 'relative',
+						}}
+						aria-label="Notification settings"
+						title="Notification settings"
+					>
+						{/* Bell icon */}
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+							<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+						</svg>
+						{/* Unread notification count badge */}
+						{notificationCount > 0 && (
+							<span
+								style={{
+									position: 'absolute',
+									top: '-4px',
+									right: '-4px',
+									fontSize: '9px',
+									fontWeight: 700,
+									color: 'white',
+									backgroundColor: colors.error,
+									borderRadius: '8px',
+									padding: '1px 4px',
+									minWidth: '16px',
+									textAlign: 'center',
+									lineHeight: '14px',
+								}}
+							>
+								{notificationCount > 99 ? '99+' : notificationCount}
+							</span>
+						)}
+					</button>
+				</div>
 			)}
 
 			{/* Pulse animation for thinking state */}
@@ -374,6 +439,10 @@ export default function MobileApp() {
 	const [autoRunViewingDoc, setAutoRunViewingDoc] = useState<string | null>(null);
 	const [showAutoRunSetup, setShowAutoRunSetup] = useState(false);
 
+	// Notification settings sheet state
+	const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+	const [notificationCount, setNotificationCount] = useState(0);
+
 	// History panel state (persisted)
 	const [historyFilter, setHistoryFilter] = useState<'all' | 'AUTO' | 'USER'>(
 		savedState.historyFilter
@@ -382,7 +451,7 @@ export default function MobileApp() {
 	const [historySearchOpen, setHistorySearchOpen] = useState(savedState.historySearchOpen);
 
 	// Notification permission hook - requests permission on first visit
-	const { permission: notificationPermission, showNotification, handleNotificationEvent } = useNotifications({
+	const { permission: notificationPermission, showNotification, handleNotificationEvent, preferences: notificationPreferences, setPreferences: setNotificationPreferences } = useNotifications({
 		autoRequest: true,
 		requestDelay: 3000, // Wait 3 seconds before prompting
 		onGranted: () => {
@@ -571,6 +640,7 @@ export default function MobileApp() {
 					message: event.message,
 					severity: event.severity,
 				});
+				setNotificationCount((prev) => prev + 1);
 			},
 		},
 	});
@@ -625,6 +695,17 @@ export default function MobileApp() {
 
 	const handleAutoRunCloseSetup = useCallback(() => {
 		setShowAutoRunSetup(false);
+	}, []);
+
+	// Notification settings handlers
+	const handleOpenNotificationSettings = useCallback(() => {
+		setShowNotificationSettings(true);
+		setNotificationCount(0); // Clear badge when opening
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseNotificationSettings = useCallback(() => {
+		setShowNotificationSettings(false);
 	}, []);
 
 	const handleAutoRunLaunch = useCallback((config: LaunchConfig) => {
@@ -1141,6 +1222,8 @@ export default function MobileApp() {
 				activeSession={activeSession}
 				autoRunState={currentAutoRunState}
 				onAutoRunTap={handleOpenAutoRunPanel}
+				onNotificationTap={handleOpenNotificationSettings}
+				notificationCount={notificationCount}
 			/>
 
 			{/* Session pill bar - Row 1: Groups/Sessions with search button */}
@@ -1262,6 +1345,16 @@ export default function MobileApp() {
 					documents={autoRunDocuments}
 					onLaunch={handleAutoRunLaunch}
 					onClose={handleAutoRunCloseSetup}
+				/>
+			)}
+
+			{/* Notification settings bottom sheet */}
+			{showNotificationSettings && (
+				<NotificationSettingsSheet
+					preferences={notificationPreferences}
+					onPreferencesChange={setNotificationPreferences}
+					permission={notificationPermission}
+					onClose={handleCloseNotificationSettings}
 				/>
 			)}
 
