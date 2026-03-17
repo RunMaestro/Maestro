@@ -479,7 +479,8 @@ export async function* runPlaybook(
 						session.toolType,
 						session.cwd,
 						BATCH_SYNOPSIS_PROMPT,
-						result.agentSessionId
+						result.agentSessionId,
+						{ customModel: session.customModel }
 					);
 
 					if (synopsisResult.success && synopsisResult.response) {
