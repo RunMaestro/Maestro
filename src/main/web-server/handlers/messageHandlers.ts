@@ -20,11 +20,17 @@
  * - refresh_file_tree: Refresh the file tree for a session
  * - refresh_auto_run_docs: Refresh auto-run documents for a session
  * - configure_auto_run: Configure and optionally launch an auto-run session
+ * - get_auto_run_docs: List auto-run documents for a session
+ * - get_auto_run_state: Get current auto-run state for a session
+ * - get_auto_run_document: Read content of a specific auto-run document
+ * - save_auto_run_document: Write content to a specific auto-run document
+ * - stop_auto_run: Stop an active auto-run for a session
  */
 
 import path from 'path';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import type { AutoRunDocument, AutoRunState } from '../types';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -118,6 +124,10 @@ export interface MessageHandlerCallbacks {
 	}>;
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
+	getAutoRunDocs: (sessionId: string) => Promise<AutoRunDocument[]>;
+	getAutoRunDocContent: (sessionId: string, filename: string) => Promise<string>;
+	saveAutoRunDoc: (sessionId: string, filename: string, content: string) => Promise<boolean>;
+	stopAutoRun: (sessionId: string) => Promise<boolean>;
 }
 
 /**
@@ -230,6 +240,26 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				this.handleConfigureAutoRun(client, message);
+				break;
+
+			case 'get_auto_run_docs':
+				this.handleGetAutoRunDocs(client, message);
+				break;
+
+			case 'get_auto_run_state':
+				this.handleGetAutoRunState(client, message);
+				break;
+
+			case 'get_auto_run_document':
+				this.handleGetAutoRunDocument(client, message);
+				break;
+
+			case 'save_auto_run_document':
+				this.handleSaveAutoRunDocument(client, message);
+				break;
+
+			case 'stop_auto_run':
+				this.handleStopAutoRun(client, message);
 				break;
 
 			default:
@@ -938,6 +968,202 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to open file tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Validate that a filename does not contain path traversal sequences.
+	 * Returns true if the filename is safe, false otherwise.
+	 */
+	private isValidFilename(filename: string): boolean {
+		return (
+			typeof filename === 'string' &&
+			filename.length > 0 &&
+			!filename.includes('..') &&
+			!filename.includes('/') &&
+			!filename.includes('\\')
+		);
+	}
+
+	/**
+	 * Handle get_auto_run_docs message - list Auto Run documents for a session
+	 */
+	private handleGetAutoRunDocs(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received get_auto_run_docs message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.getAutoRunDocs) {
+			this.sendError(client, 'Auto-run docs listing not configured');
+			return;
+		}
+
+		this.callbacks
+			.getAutoRunDocs(sessionId)
+			.then((documents) => {
+				this.send(client, {
+					type: 'auto_run_docs',
+					sessionId,
+					documents,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get auto-run docs: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_auto_run_state message - get current Auto Run state for a session
+	 */
+	private handleGetAutoRunState(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received get_auto_run_state message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.getSessionDetail) {
+			this.sendError(client, 'Session detail not configured');
+			return;
+		}
+
+		const detail = this.callbacks.getSessionDetail(sessionId);
+		const state: AutoRunState | null = (detail as Record<string, unknown>)?.autoRunState as AutoRunState | null ?? null;
+
+		this.send(client, {
+			type: 'auto_run_state',
+			sessionId,
+			state,
+			requestId: message.requestId,
+		});
+	}
+
+	/**
+	 * Handle get_auto_run_document message - read content of a specific Auto Run document
+	 */
+	private handleGetAutoRunDocument(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const filename = message.filename as string;
+		logger.info(
+			`[Web] Received get_auto_run_document message: session=${sessionId}, filename=${filename}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !filename) {
+			this.sendError(client, 'Missing sessionId or filename');
+			return;
+		}
+
+		if (!this.isValidFilename(filename)) {
+			this.sendError(client, 'Invalid filename: must not contain path separators or traversal sequences');
+			return;
+		}
+
+		if (!this.callbacks.getAutoRunDocContent) {
+			this.sendError(client, 'Auto-run document reading not configured');
+			return;
+		}
+
+		this.callbacks
+			.getAutoRunDocContent(sessionId, filename)
+			.then((content) => {
+				this.send(client, {
+					type: 'auto_run_document_content',
+					sessionId,
+					filename,
+					content,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to read auto-run document: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle save_auto_run_document message - write content to a specific Auto Run document
+	 */
+	private handleSaveAutoRunDocument(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const filename = message.filename as string;
+		const content = message.content as string;
+		logger.info(
+			`[Web] Received save_auto_run_document message: session=${sessionId}, filename=${filename}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !filename) {
+			this.sendError(client, 'Missing sessionId or filename');
+			return;
+		}
+
+		if (typeof content !== 'string') {
+			this.sendError(client, 'Missing or invalid content');
+			return;
+		}
+
+		if (!this.isValidFilename(filename)) {
+			this.sendError(client, 'Invalid filename: must not contain path separators or traversal sequences');
+			return;
+		}
+
+		if (!this.callbacks.saveAutoRunDoc) {
+			this.sendError(client, 'Auto-run document saving not configured');
+			return;
+		}
+
+		this.callbacks
+			.saveAutoRunDoc(sessionId, filename, content)
+			.then((success) => {
+				this.send(client, {
+					type: 'save_auto_run_document_result',
+					success,
+					sessionId,
+					filename,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to save auto-run document: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle stop_auto_run message - stop an active Auto Run for a session
+	 */
+	private handleStopAutoRun(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received stop_auto_run message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.stopAutoRun) {
+			this.sendError(client, 'Auto-run stopping not configured');
+			return;
+		}
+
+		this.callbacks
+			.stopAutoRun(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'stop_auto_run_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to stop auto-run: ${error.message}`);
 			});
 	}
 
