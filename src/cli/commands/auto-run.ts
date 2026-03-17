@@ -40,11 +40,16 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
+	if (options.session) {
+		console.error('Warning: --session is deprecated for auto-run, use --agent instead');
+	}
+
 	let sessionId: string;
-	if (options.agent) {
-		sessionId = resolveAgentId(options.agent);
+	const agentId = options.agent || options.session;
+	if (agentId) {
+		sessionId = resolveAgentId(agentId);
 	} else {
-		sessionId = resolveSessionId(options);
+		sessionId = resolveSessionId({});
 	}
 
 	const documents = resolvedPaths.map((d) => ({
