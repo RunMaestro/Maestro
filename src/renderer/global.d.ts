@@ -355,6 +355,24 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
 		) => void;
+		onRemoteGetAutoRunDocs: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteGetAutoRunDocsResponse: (responseChannel: string, documents: any[]) => void;
+		onRemoteGetAutoRunDocContent: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteGetAutoRunDocContentResponse: (responseChannel: string, content: string) => void;
+		onRemoteSaveAutoRunDoc: (
+			callback: (
+				sessionId: string,
+				filename: string,
+				content: string,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteStopAutoRun: (callback: (sessionId: string) => void) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

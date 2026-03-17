@@ -1254,6 +1254,7 @@ function MaestroConsoleInner() {
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
 		startBatchRun,
+		stopBatchRun,
 		getBatchState,
 		handleStopBatchRun,
 		handleKillBatchRun,
@@ -1924,6 +1925,108 @@ function MaestroConsoleInner() {
 		window.addEventListener('maestro:configureAutoRun', handler);
 		return () => window.removeEventListener('maestro:configureAutoRun', handler);
 	}, [sessionsRef, startBatchRun]);
+
+	// Handle remote get auto-run docs from web interface
+	useEffect(() => {
+		const handler = async (e: Event) => {
+			const { sessionId, responseChannel } = (e as CustomEvent).detail;
+			try {
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session?.autoRunFolderPath) {
+					window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, []);
+					return;
+				}
+				const sshRemoteId =
+					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+				const listResult = await window.maestro.autorun.listDocs(
+					session.autoRunFolderPath,
+					sshRemoteId
+				);
+				const files = listResult.success ? listResult.files || [] : [];
+				window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, files);
+			} catch (error) {
+				console.error('[Remote] Failed to get auto-run docs:', error);
+				window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, []);
+			}
+		};
+		window.addEventListener('maestro:getAutoRunDocs', handler);
+		return () => window.removeEventListener('maestro:getAutoRunDocs', handler);
+	}, [sessionsRef]);
+
+	// Handle remote get auto-run doc content from web interface
+	useEffect(() => {
+		const handler = async (e: Event) => {
+			const { sessionId, filename, responseChannel } = (e as CustomEvent).detail;
+			try {
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session?.autoRunFolderPath) {
+					window.maestro.process.sendRemoteGetAutoRunDocContentResponse(
+						responseChannel,
+						''
+					);
+					return;
+				}
+				const sshRemoteId =
+					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+				const contentResult = await window.maestro.autorun.readDoc(
+					session.autoRunFolderPath,
+					filename,
+					sshRemoteId
+				);
+				const content = contentResult.success ? contentResult.content || '' : '';
+				window.maestro.process.sendRemoteGetAutoRunDocContentResponse(
+					responseChannel,
+					content
+				);
+			} catch (error) {
+				console.error('[Remote] Failed to get auto-run doc content:', error);
+				window.maestro.process.sendRemoteGetAutoRunDocContentResponse(responseChannel, '');
+			}
+		};
+		window.addEventListener('maestro:getAutoRunDocContent', handler);
+		return () => window.removeEventListener('maestro:getAutoRunDocContent', handler);
+	}, [sessionsRef]);
+
+	// Handle remote save auto-run doc from web interface
+	useEffect(() => {
+		const handler = async (e: Event) => {
+			const { sessionId, filename, content, responseChannel } = (e as CustomEvent).detail;
+			try {
+				const session = sessionsRef.current.find((s) => s.id === sessionId);
+				if (!session?.autoRunFolderPath) {
+					window.maestro.process.sendRemoteSaveAutoRunDocResponse(responseChannel, false);
+					return;
+				}
+				const sshRemoteId =
+					session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+				const writeResult = await window.maestro.autorun.writeDoc(
+					session.autoRunFolderPath,
+					filename,
+					content,
+					sshRemoteId
+				);
+				window.maestro.process.sendRemoteSaveAutoRunDocResponse(
+					responseChannel,
+					writeResult.success ?? false
+				);
+			} catch (error) {
+				console.error('[Remote] Failed to save auto-run doc:', error);
+				window.maestro.process.sendRemoteSaveAutoRunDocResponse(responseChannel, false);
+			}
+		};
+		window.addEventListener('maestro:saveAutoRunDoc', handler);
+		return () => window.removeEventListener('maestro:saveAutoRunDoc', handler);
+	}, [sessionsRef]);
+
+	// Handle remote stop auto-run from web interface (fire-and-forget, no confirmation dialog)
+	useEffect(() => {
+		const handler = (e: Event) => {
+			const { sessionId } = (e as CustomEvent).detail;
+			stopBatchRun(sessionId);
+		};
+		window.addEventListener('maestro:stopAutoRun', handler);
+		return () => window.removeEventListener('maestro:stopAutoRun', handler);
+	}, [stopBatchRun]);
 
 	// --- GROUP MANAGEMENT ---
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)

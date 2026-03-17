@@ -496,6 +496,68 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote get auto-run docs from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocs(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:getAutoRunDocs', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote get auto-run doc content from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteGetAutoRunDocContent(
+			(sessionId: string, filename: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:getAutoRunDocContent', {
+						detail: { sessionId, filename, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote save auto-run doc from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteSaveAutoRunDoc(
+			(sessionId: string, filename: string, content: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:saveAutoRunDoc', {
+						detail: { sessionId, filename, content, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote stop auto-run from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteStopAutoRun((sessionId: string) => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:stopAutoRun', {
+					detail: { sessionId },
+				})
+			);
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Broadcast tab changes to web clients when tabs, activeTabId, or tab properties change
 	// PERFORMANCE FIX: This effect was previously missing its dependency array, causing it to
 	// run on EVERY render (including every keystroke). Now it only runs when isLiveMode changes,

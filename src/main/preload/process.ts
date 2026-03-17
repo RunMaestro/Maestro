@@ -502,6 +502,111 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote get auto-run docs from web interface (request-response)
+		 */
+		onRemoteGetAutoRunDocs: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, []);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, []);
+				}
+			};
+			ipcRenderer.on('remote:getAutoRunDocs', handler);
+			return () => ipcRenderer.removeListener('remote:getAutoRunDocs', handler);
+		},
+
+		/**
+		 * Send response for remote get auto-run docs
+		 */
+		sendRemoteGetAutoRunDocsResponse: (responseChannel: string, documents: any[]): void => {
+			ipcRenderer.send(responseChannel, documents);
+		},
+
+		/**
+		 * Subscribe to remote get auto-run doc content from web interface (request-response)
+		 */
+		onRemoteGetAutoRunDocContent: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filename: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, filename, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, '');
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, '');
+				}
+			};
+			ipcRenderer.on('remote:getAutoRunDocContent', handler);
+			return () => ipcRenderer.removeListener('remote:getAutoRunDocContent', handler);
+		},
+
+		/**
+		 * Send response for remote get auto-run doc content
+		 */
+		sendRemoteGetAutoRunDocContentResponse: (responseChannel: string, content: string): void => {
+			ipcRenderer.send(responseChannel, content);
+		},
+
+		/**
+		 * Subscribe to remote save auto-run doc from web interface (request-response)
+		 */
+		onRemoteSaveAutoRunDoc: (
+			callback: (
+				sessionId: string,
+				filename: string,
+				content: string,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filename: string,
+				content: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, filename, content, responseChannel)).catch(
+						() => {
+							ipcRenderer.send(responseChannel, false);
+						}
+					);
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:saveAutoRunDoc', handler);
+			return () => ipcRenderer.removeListener('remote:saveAutoRunDoc', handler);
+		},
+
+		/**
+		 * Send response for remote save auto-run doc
+		 */
+		sendRemoteSaveAutoRunDocResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote stop auto-run from web interface (fire-and-forget)
+		 */
+		onRemoteStopAutoRun: (callback: (sessionId: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+			ipcRenderer.on('remote:stopAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:stopAutoRun', handler);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {

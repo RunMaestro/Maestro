@@ -61,6 +61,8 @@ export interface UseBatchHandlersDeps {
 export interface UseBatchHandlersReturn {
 	/** Start a batch run for a session */
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
+	/** Stop a batch run directly (no confirmation dialog, used by web remote) */
+	stopBatchRun: (sessionId: string) => void;
 	/** Get batch state for a specific session */
 	getBatchState: (sessionId: string) => BatchRunState;
 	/** Stop batch run with confirmation dialog */
@@ -703,6 +705,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	return {
 		startBatchRun,
+		stopBatchRun,
 		getBatchState,
 		handleStopBatchRun,
 		handleKillBatchRun,
