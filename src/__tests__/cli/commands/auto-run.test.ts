@@ -313,9 +313,7 @@ describe('auto-run command', () => {
 
 		await autoRun(['/path/to/doc.md'], { session: 'session-123' });
 
-		expect(consoleWarnSpy).toHaveBeenCalledWith(
-			expect.stringContaining('--session is deprecated')
-		);
+		expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('--session is deprecated'));
 		expect(resolveAgentId).toHaveBeenCalledWith('session-123');
 	});
 
