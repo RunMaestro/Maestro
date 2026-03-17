@@ -37,12 +37,14 @@ import { existsSync } from 'fs';
 describe('auto-run command', () => {
 	let consoleSpy: MockInstance;
 	let consoleErrorSpy: MockInstance;
+	let consoleWarnSpy: MockInstance;
 	let processExitSpy: MockInstance;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 	});
 
@@ -311,7 +313,7 @@ describe('auto-run command', () => {
 
 		await autoRun(['/path/to/doc.md'], { session: 'session-123' });
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(
+		expect(consoleWarnSpy).toHaveBeenCalledWith(
 			expect.stringContaining('--session is deprecated')
 		);
 		expect(resolveAgentId).toHaveBeenCalledWith('session-123');

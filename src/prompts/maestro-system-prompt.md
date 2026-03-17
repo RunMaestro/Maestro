@@ -113,6 +113,7 @@ maestro-cli auto-run doc1.md doc2.md [--agent <id>] [--prompt "Custom instructio
 **Important:** When launching an auto-run via CLI, always pass `--agent {{AGENT_ID}}` to ensure the correct agent executes the run. Without `--agent`, the CLI picks an arbitrary agent. You can find your Agent ID in the Session Information section above.
 
 Example using your own agent:
+
 ```bash
 maestro-cli auto-run phase-01.md phase-02.md --agent {{AGENT_ID}} --launch
 ```
