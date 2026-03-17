@@ -142,5 +142,9 @@ export type { UseAutoRunAchievementsDeps } from './useAutoRunAchievements';
 export { useAutoRunDocumentLoader } from './useAutoRunDocumentLoader';
 export type { UseAutoRunDocumentLoaderReturn } from './useAutoRunDocumentLoader';
 
+// Auto Run auto-follow (document tracking during batch runs)
+export { useAutoRunAutoFollow } from './useAutoRunAutoFollow';
+export type { UseAutoRunAutoFollowDeps, UseAutoRunAutoFollowReturn } from './useAutoRunAutoFollow';
+
 // Re-export ExistingDocument type from existingDocsDetector for convenience
 export type { ExistingDocument } from '../../utils/existingDocsDetector';

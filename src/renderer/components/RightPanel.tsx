@@ -26,6 +26,7 @@ import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
+import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -237,6 +238,18 @@ export const RightPanel = memo(
 			}
 		}, [autoRunContent, autoRunContentVersion, session?.id, session?.autoRunSelectedFile]);
 
+		// Auto-follow: automatically select the active document during batch runs
+		const { autoFollowEnabled, setAutoFollowEnabled } = useAutoRunAutoFollow({
+			currentSessionBatchState,
+			onAutoRunSelectDocument,
+			selectedFile: session?.autoRunSelectedFile ?? null,
+			setActiveRightTab,
+			rightPanelOpen,
+			setRightPanelOpen,
+			onAutoRunModeChange,
+			currentMode: session?.autoRunMode,
+		});
+
 		// Expanded modal state for Auto Run
 		const [autoRunExpanded, setAutoRunExpanded] = useState(false);
 		const handleExpandAutoRun = useCallback(() => setAutoRunExpanded(true), []);
@@ -377,6 +390,7 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onShowFlash,
+			autoFollowEnabled,
 		};
 
 		return (
@@ -775,6 +789,20 @@ export const RightPanel = memo(
 									</button>
 								)}
 							</div>
+						</div>
+						<div className="mt-2 flex items-center gap-2">
+							<label className="flex items-center gap-1.5 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={autoFollowEnabled}
+									onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+									className="w-3 h-3 rounded cursor-pointer accent-current"
+									style={{ accentColor: theme.colors.accent }}
+								/>
+								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									Follow active task
+								</span>
+							</label>
 						</div>
 					</div>
 				)}

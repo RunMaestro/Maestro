@@ -113,6 +113,9 @@ interface AutoRunProps {
 	batchRunState?: BatchRunState;
 	onOpenBatchRunner?: () => void;
 	onStopBatchRun?: (sessionId?: string) => void;
+
+	// Auto-follow: when enabled during a batch run, suppresses focus-stealing and scrolls to active task
+	autoFollowEnabled?: boolean;
 	// Error handling callbacks (Phase 5.10)
 	onSkipCurrentDocument?: () => void;
 	onAbortBatchOnError?: () => void;
@@ -482,6 +485,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		batchRunState,
 		onOpenBatchRunner,
 		onStopBatchRun,
+		autoFollowEnabled,
 		// Error handling callbacks (Phase 5.10)
 		onSkipCurrentDocument: _onSkipCurrentDocument,
 		onAbortBatchOnError,
@@ -507,6 +511,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	const isRunningRef = useRef(isAutoRunActive);
+	useEffect(() => {
+		isRunningRef.current = isAutoRunActive;
+	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
 	// Error state (Phase 5.10)
 	const isErrorPaused = batchRunState?.errorPaused || false;
@@ -939,12 +947,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Auto-focus the active element after mode change
 	useEffect(() => {
+		// Skip focus when auto-follow is driving changes during a batch run
+		if (autoFollowEnabled && isRunningRef.current) return;
+
 		if (mode === 'edit' && textareaRef.current) {
 			textareaRef.current.focus();
 		} else if (mode === 'preview' && previewRef.current) {
 			previewRef.current.focus();
 		}
-	}, [mode]);
+	}, [mode, autoFollowEnabled]);
 
 	// Handle document selection change - focus the appropriate element
 	// Note: Content syncing and editing state reset is handled by the main sync effect above
@@ -957,6 +968,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		prevFocusSelectedFileRef.current = selectedFile;
 
 		if (isNewDocument) {
+			// Skip focus when auto-follow is driving changes during a batch run
+			if (autoFollowEnabled && isRunningRef.current) return;
+
 			// Focus on document change
 			requestAnimationFrame(() => {
 				if (mode === 'edit' && textareaRef.current) {
@@ -966,7 +980,39 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				}
 			});
 		}
-	}, [selectedFile, mode]);
+	}, [selectedFile, mode, autoFollowEnabled]);
+
+	// Auto-follow: scroll to the first unchecked task when batch is running
+	useEffect(() => {
+		if (!autoFollowEnabled || !batchRunState?.isRunning || mode !== 'preview') return;
+
+		const timeout = setTimeout(() => {
+			// Wait for React to commit new content before querying the DOM
+			requestAnimationFrame(() => {
+				if (!previewRef.current) return;
+
+				const checkboxes = previewRef.current.querySelectorAll('input[type="checkbox"]');
+				if (checkboxes.length === 0) return;
+				for (const checkbox of checkboxes) {
+					if (!(checkbox as HTMLInputElement).checked) {
+						const li = (checkbox as HTMLElement).closest('li');
+						if (li) {
+							li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						}
+						break;
+					}
+				}
+			});
+		}, 150);
+
+		return () => clearTimeout(timeout);
+	}, [
+		batchRunState?.currentDocumentIndex,
+		batchRunState?.currentTaskIndex,
+		batchRunState?.isRunning,
+		autoFollowEnabled,
+		mode,
+	]);
 
 	// Debounced preview scroll handler to avoid triggering re-renders on every scroll event
 	// We only save scroll position to ref immediately (for local use), but delay parent notification
@@ -2231,7 +2277,9 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		// UI control props
 		prevProps.hideTopControls === nextProps.hideTopControls &&
 		// External change detection
-		prevProps.contentVersion === nextProps.contentVersion
+		prevProps.contentVersion === nextProps.contentVersion &&
+		// Auto-follow state
+		prevProps.autoFollowEnabled === nextProps.autoFollowEnabled
 		// Note: initialCursorPosition, initialEditScrollPos, initialPreviewScrollPos
 		// are intentionally NOT compared - they're only used on mount
 		// Note: documentTree is derived from documentList, comparing documentList is sufficient
