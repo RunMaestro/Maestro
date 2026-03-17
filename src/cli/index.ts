@@ -141,7 +141,8 @@ program
 program
 	.command('auto-run <docs...>')
 	.description('Configure and optionally launch an auto-run with documents')
-	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.option('-s, --session <id>', '[deprecated: use --agent] Target agent by ID')
+	.option('-a, --agent <id>', 'Target agent by ID (use "maestro-cli list agents" to find IDs)')
 	.option('-p, --prompt <text>', 'Custom prompt for the auto-run')
 	.option('--loop', 'Enable looping')
 	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')

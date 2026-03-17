@@ -17,6 +17,7 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 ## Session Information
 
 - **Agent Name:** {{AGENT_NAME}}
+- **Agent ID:** {{AGENT_ID}}
 - **Agent Type:** {{TOOL_TYPE}}
 - **Working Directory:** {{AGENT_PATH}}
 - **Current Directory:** {{CWD}}
@@ -106,8 +107,18 @@ maestro-cli refresh-auto-run [--session <id>]
 To set up and optionally launch an auto-run with documents you've created:
 
 ```bash
-maestro-cli auto-run doc1.md doc2.md [--prompt "Custom instructions"] [--launch] [--save-as "My Playbook"]
+maestro-cli auto-run doc1.md doc2.md [--agent <id>] [--prompt "Custom instructions"] [--launch] [--save-as "My Playbook"]
 ```
+
+**Important:** When launching an auto-run via CLI, always pass `--agent {{AGENT_ID}}` to ensure the correct agent executes the run. Without `--agent`, the CLI selects the first available agent, which may not be the one you intended. You can find your Agent ID in the Session Information section above.
+
+Example using your own agent:
+
+```bash
+maestro-cli auto-run phase-01.md phase-02.md --agent {{AGENT_ID}} --launch
+```
+
+To discover other agents' IDs: `maestro-cli list agents`
 
 ### Check Maestro Status
 

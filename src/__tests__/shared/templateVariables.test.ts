@@ -65,6 +65,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 
 	it('should include key agent variables', () => {
 		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
+		expect(variables).toContain('{{AGENT_ID}}');
 		expect(variables).toContain('{{AGENT_NAME}}');
 		expect(variables).toContain('{{AGENT_PATH}}');
 		expect(variables).toContain('{{AGENT_GROUP}}');
@@ -169,6 +170,14 @@ describe('substituteTemplateVariables', () => {
 	});
 
 	describe('Agent Variables', () => {
+		it('should replace {{AGENT_ID}} with session.id', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'agent-uuid-abc-123' }),
+			});
+			const result = substituteTemplateVariables('ID: {{AGENT_ID}}', context);
+			expect(result).toBe('ID: agent-uuid-abc-123');
+		});
+
 		it('should replace {{AGENT_NAME}} with session.name', () => {
 			const context = createTestContext({
 				session: createTestSession({ name: 'Agent Alpha' }),

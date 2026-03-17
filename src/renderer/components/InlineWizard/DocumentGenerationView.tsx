@@ -65,8 +65,7 @@ export interface DocumentGenerationViewProps {
 /**
  * Document selector dropdown for switching between generated documents
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function DocumentSelector({
+export function DocumentSelector({
 	documents,
 	selectedIndex,
 	onSelect,
@@ -314,8 +313,7 @@ function MarkdownImage({
 /**
  * Document editor component with edit/preview modes
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function DocumentEditor({
+export function DocumentEditor({
 	content,
 	onContentChange,
 	mode,

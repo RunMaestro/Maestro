@@ -3,8 +3,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
+import { resolveAgentId } from '../services/storage';
 
 interface AutoRunOptions {
+	agent?: string;
 	session?: string;
 	prompt?: string;
 	loop?: boolean;
@@ -38,7 +40,22 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		resolvedPaths.push(absolutePath);
 	}
 
-	const sessionId = resolveSessionId(options);
+	if (options.session) {
+		console.warn('Warning: --session is deprecated for auto-run, use --agent instead');
+	}
+
+	let sessionId: string;
+	const agentId = options.agent || options.session;
+	if (agentId) {
+		try {
+			sessionId = resolveAgentId(agentId);
+		} catch (error) {
+			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+			process.exit(1);
+		}
+	} else {
+		sessionId = resolveSessionId({});
+	}
 
 	const documents = resolvedPaths.map((d) => ({
 		filename: d,
