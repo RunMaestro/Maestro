@@ -440,7 +440,9 @@ export async function* runPlaybook(
 				}
 
 				// Spawn agent with combined prompt + document
-				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt);
+				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+					customModel: session.customModel,
+				});
 
 				const elapsedMs = Date.now() - taskStartTime;
 

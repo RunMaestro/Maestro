@@ -1176,7 +1176,8 @@ Some text with [x] in it that's not a checkbox
 			expect(args).toContain('plan');
 			// Should still have base args
 			expect(args).toContain('--print');
-			expect(args).toContain('--dangerously-skip-permissions');
+			// Should NOT have permission bypass in read-only mode
+			expect(args).not.toContain('--dangerously-skip-permissions');
 
 			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
 			mockChild.emit('close', 0);
@@ -1193,6 +1194,8 @@ Some text with [x] in it that's not a checkbox
 			const [, args] = mockSpawn.mock.calls[0];
 			expect(args).not.toContain('--permission-mode');
 			expect(args).not.toContain('plan');
+			// Should have permission bypass in normal mode
+			expect(args).toContain('--dangerously-skip-permissions');
 
 			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
 			mockChild.emit('close', 0);
