@@ -4,6 +4,8 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white)](https://runmaestro.ai/discord)
 [![User Docs](https://img.shields.io/badge/Docs-Usage%20%26%20Documentation-blue?logo=readthedocs&logoColor=white)](https://docs.runmaestro.ai/)
 
+<a href="https://trendshift.io/repositories/21112" target="_blank"><img src="https://trendshift.io/api/badge/repositories/21112" alt="RunMaestro%2FMaestro | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+
 > Maestro hones fractured attention into focused intent.
 
 Maestro is a cross-platform desktop app for orchestrating your fleet of AI agents and projects. It's a high-velocity solution for hackers who are juggling multiple projects in parallel. Designed for power users who live on the keyboard and rarely touch the mouse.

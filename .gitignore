@@ -6,6 +6,7 @@ Work\ Trees/
 community-data/
 .mcp.json
 specs/
+.maestro/
 
 # Tests
 coverage/

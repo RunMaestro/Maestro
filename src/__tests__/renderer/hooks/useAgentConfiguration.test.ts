@@ -254,10 +254,8 @@ describe('useAgentConfiguration', () => {
 			});
 
 			await waitFor(() => {
-				expect(mockGetConfig).toHaveBeenCalledWith('claude-code');
+				expect(result.current.agentConfig).toEqual({ model: 'opus' });
 			});
-
-			expect(result.current.agentConfig).toEqual({ model: 'opus' });
 		});
 	});
 

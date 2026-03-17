@@ -25,6 +25,8 @@ const initSentry = async () => {
 			(await window.maestro?.settings?.get('crashReportingEnabled')) ?? true;
 		if (crashReportingEnabled && !isDevelopment) {
 			Sentry.init({
+				// Set release version for filtering errors by app version
+				release: __APP_VERSION__,
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
 				// Filter out sensitive data
@@ -36,6 +38,8 @@ const initSentry = async () => {
 					return event;
 				},
 			});
+			// Tag release channel (rc vs stable) based on version string
+			Sentry.setTag('channel', __APP_VERSION__.includes('-RC') ? 'rc' : 'stable');
 		}
 	} catch {
 		// Settings not available yet, Sentry will be initialized by main process

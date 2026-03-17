@@ -24,7 +24,7 @@ vi.mock('os', async () => {
 	// eslint-disable-next-line @typescript-eslint/no-require-imports
 	const realOs = await import('node:os');
 	const homedirMock = vi.fn(() => '/tmp/maestro-session-storage-home');
-	const overrides = { homedir: homedirMock };
+	const overrides = { homedir: homedirMock, tmpdir: realOs.tmpdir };
 	return {
 		...realOs,
 		...overrides,
@@ -453,6 +453,7 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -745,6 +746,7 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 				host: 'remote.example.com',
 				port: 2222,
 				username: 'admin',
+				privateKeyPath: '',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -760,6 +762,7 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 				host: 'host',
 				port: 22,
 				username: 'user',
+				privateKeyPath: '',
 				useSshConfig: false,
 				enabled: true,
 			};
@@ -789,6 +792,7 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1061,6 +1065,7 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 				host: 'remote.example.com',
 				port: 2222,
 				username: 'admin',
+				privateKeyPath: '',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -1076,6 +1081,7 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 				host: 'host',
 				port: 22,
 				username: 'user',
+				privateKeyPath: '',
 				useSshConfig: false,
 				enabled: true,
 			};
@@ -1093,6 +1099,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
+		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1428,6 +1435,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 				host: 'remote.example.com',
 				port: 2222,
 				username: 'admin',
+				privateKeyPath: '',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -1443,6 +1451,7 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 				host: 'host',
 				port: 22,
 				username: 'user',
+				privateKeyPath: '',
 				useSshConfig: false,
 				enabled: true,
 			};
@@ -1525,6 +1534,7 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: 'dev-server.internal.example.com',
 		port: 22,
 		username: 'developer',
+		privateKeyPath: '',
 		useSshConfig: true,
 		enabled: true,
 	};
@@ -1536,6 +1546,7 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: '192.168.1.100',
 		port: 2222,
 		username: 'admin',
+		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1793,6 +1804,7 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'full.example.com',
 				port: 22,
 				username: 'fulluser',
+				privateKeyPath: '',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -1820,6 +1832,7 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'min.example.com',
 				port: 22,
 				username: 'user',
+				privateKeyPath: '',
 				useSshConfig: false,
 				enabled: true,
 			};

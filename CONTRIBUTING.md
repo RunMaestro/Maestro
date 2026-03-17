@@ -31,6 +31,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Debugging Guide](#debugging-guide)
 - [Commit Messages](#commit-messages)
 - [Pull Request Process](#pull-request-process) (includes [automated code review](#automated-code-review))
+- [Branching & Release Strategy](#branching--release-strategy)
 - [Building for Release](#building-for-release)
 - [Documentation](#documentation)
 
@@ -901,6 +902,46 @@ All PRs must pass these checks before review:
 5. CodeRabbit will automatically review your PR
 6. Address any CodeRabbit and maintainer feedback
 
+## Branching & Release Strategy
+
+Maestro uses a two-branch release model with **odd/even version numbering**:
+
+| Branch | Version Pattern | Audience                                                | Example |
+| ------ | --------------- | ------------------------------------------------------- | ------- |
+| `main` | `0.ODD.x`       | All users (stable)                                      | 0.15.x  |
+| `rc`   | `0.EVEN.x`      | Users who opt into "beta and release candidate updates" | 0.16.x  |
+
+### How It Works
+
+- **`main`** is the stable branch. Releases from `main` go to all users via the standard update channel.
+- **`rc`** (release candidate) is the pre-release branch. Releases from `rc` go only to users who have opted into beta/RC updates in their settings.
+- New features and larger changes land on `rc` first, where they get soak time with early adopters.
+- Targeted fixes and battle-tested features can be **cherry-picked** from `rc` to `main` as patch releases.
+
+### Version Lifecycle
+
+When `rc` is mature and ready to become the next stable release:
+
+1. `rc` merges into `main`.
+2. `main` bumps to the next **odd** minor version (e.g., 0.15.x → 0.17.x).
+3. `rc` bumps to the next **even** minor version (e.g., 0.16.x → 0.18.x).
+
+```
+Example timeline:
+  main: 0.15.0 → 0.15.1 → 0.15.2 ──────────────────→ 0.17.0 (rc merged in)
+  rc:   0.16.0 → 0.16.1 → 0.16.2 → 0.16.3 (merge) → 0.18.0 (new rc cycle)
+```
+
+### PR Target Branch
+
+- **Bug fixes and small improvements**: Target `main` (cherry-pick to `rc` if relevant).
+- **New features and larger changes**: Target `rc`.
+- If unsure, target `rc` — it's easier to cherry-pick a stable change to `main` than to untangle a premature merge.
+
+### Release Tags
+
+Tags follow the pattern `v0.MINOR.PATCH`. Tags with `-RC` suffix (e.g., `v0.16.0-RC`) are automatically marked as pre-releases on GitHub. The update checker in Maestro uses tag naming to route updates to the correct channel.
+
 ## Building for Release
 
 ### 0. Refresh AI Command Prompts (Optional)
@@ -934,11 +975,11 @@ Place icons in `build/` directory:
 
 ### 2. Update Version
 
-Update in `package.json`:
+Update in `package.json`. Use **odd** minor versions for `main` (stable) and **even** minor versions for `rc` (pre-release). See [Branching & Release Strategy](#branching--release-strategy).
 
 ```json
 {
-	"version": "0.1.0"
+	"version": "0.15.0"
 }
 ```
 
@@ -958,11 +999,16 @@ Output in `release/` directory.
 Create a release tag to trigger automated builds:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# Stable release (from main)
+git tag v0.15.0
+git push origin v0.15.0
+
+# Release candidate (from rc) — use -RC suffix
+git tag v0.16.0-RC
+git push origin v0.16.0-RC
 ```
 
-GitHub Actions will build for all platforms and create a release.
+GitHub Actions will build for all platforms and create a release. Tags containing `-RC`, `-beta`, or `-alpha` are automatically marked as pre-releases on GitHub.
 
 ## Documentation
 
