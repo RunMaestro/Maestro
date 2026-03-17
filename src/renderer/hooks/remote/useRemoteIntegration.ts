@@ -576,6 +576,90 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote session/group management from web interface
+	// These dispatch CustomEvents for App.tsx to handle via existing session/group management hooks
+	useEffect(() => {
+		const unsubscribeCreateSession = window.maestro.process.onRemoteCreateSession(
+			(name: string, toolType: string, cwd: string, groupId: string | undefined, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteCreateSession', {
+						detail: { name, toolType, cwd, groupId, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeDeleteSession = window.maestro.process.onRemoteDeleteSession(
+			(sessionId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteDeleteSession', {
+						detail: { sessionId },
+					})
+				);
+			}
+		);
+
+		const unsubscribeRenameSession = window.maestro.process.onRemoteRenameSession(
+			(sessionId: string, newName: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteRenameSession', {
+						detail: { sessionId, newName, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeCreateGroup = window.maestro.process.onRemoteCreateGroup(
+			(name: string, emoji: string | undefined, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteCreateGroup', {
+						detail: { name, emoji, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeRenameGroup = window.maestro.process.onRemoteRenameGroup(
+			(groupId: string, name: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteRenameGroup', {
+						detail: { groupId, name, responseChannel },
+					})
+				);
+			}
+		);
+
+		const unsubscribeDeleteGroup = window.maestro.process.onRemoteDeleteGroup(
+			(groupId: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteDeleteGroup', {
+						detail: { groupId },
+					})
+				);
+			}
+		);
+
+		const unsubscribeMoveSessionToGroup = window.maestro.process.onRemoteMoveSessionToGroup(
+			(sessionId: string, groupId: string | null, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:remoteMoveSessionToGroup', {
+						detail: { sessionId, groupId, responseChannel },
+					})
+				);
+			}
+		);
+
+		return () => {
+			unsubscribeCreateSession();
+			unsubscribeDeleteSession();
+			unsubscribeRenameSession();
+			unsubscribeCreateGroup();
+			unsubscribeRenameGroup();
+			unsubscribeDeleteGroup();
+			unsubscribeMoveSessionToGroup();
+		};
+	}, []);
+
 	// Broadcast tab changes to web clients when tabs, activeTabId, or tab properties change
 	// PERFORMANCE FIX: This effect was previously missing its dependency array, causing it to
 	// run on EVERY render (including every keystroke). Now it only runs when isLiveMode changes,

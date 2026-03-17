@@ -377,6 +377,28 @@ interface MaestroAPI {
 			callback: (key: string, value: unknown, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSetSettingResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteCreateSession: (
+			callback: (name: string, toolType: string, cwd: string, groupId: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCreateSessionResponse: (responseChannel: string, result: { sessionId: string } | null) => void;
+		onRemoteDeleteSession: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRenameSession: (
+			callback: (sessionId: string, newName: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRenameSessionResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteCreateGroup: (
+			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCreateGroupResponse: (responseChannel: string, result: { id: string } | null) => void;
+		onRemoteRenameGroup: (
+			callback: (groupId: string, name: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteRenameGroupResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteDeleteGroup: (callback: (groupId: string) => void) => () => void;
+		onRemoteMoveSessionToGroup: (
+			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMoveSessionToGroupResponse: (responseChannel: string, success: boolean) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

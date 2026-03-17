@@ -154,6 +154,32 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSetSettingResponse: vi.fn(),
+		onRemoteCreateSession: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCreateSessionResponse: vi.fn(),
+		onRemoteDeleteSession: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteRenameSession: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteRenameSessionResponse: vi.fn(),
+		onRemoteCreateGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCreateGroupResponse: vi.fn(),
+		onRemoteRenameGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteRenameGroupResponse: vi.fn(),
+		onRemoteDeleteGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		onRemoteMoveSessionToGroup: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteMoveSessionToGroupResponse: vi.fn(),
 	};
 
 	const mockLive = {

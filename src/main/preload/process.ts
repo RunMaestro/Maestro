@@ -627,6 +627,124 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote create session from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteCreateSession: (
+			callback: (name: string, toolType: string, cwd: string, groupId: string | undefined, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, name: string, toolType: string, cwd: string, groupId: string | undefined, responseChannel: string) =>
+				callback(name, toolType, cwd, groupId, responseChannel);
+			ipcRenderer.on('remote:createSession', handler);
+			return () => ipcRenderer.removeListener('remote:createSession', handler);
+		},
+
+		/**
+		 * Send response for remote create session
+		 */
+		sendRemoteCreateSessionResponse: (responseChannel: string, result: { sessionId: string } | null): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote delete session from web interface (fire-and-forget)
+		 */
+		onRemoteDeleteSession: (callback: (sessionId: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+			ipcRenderer.on('remote:deleteSession', handler);
+			return () => ipcRenderer.removeListener('remote:deleteSession', handler);
+		},
+
+		/**
+		 * Subscribe to remote rename session from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteRenameSession: (
+			callback: (sessionId: string, newName: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, newName: string, responseChannel: string) =>
+				callback(sessionId, newName, responseChannel);
+			ipcRenderer.on('remote:renameSession', handler);
+			return () => ipcRenderer.removeListener('remote:renameSession', handler);
+		},
+
+		/**
+		 * Send response for remote rename session
+		 */
+		sendRemoteRenameSessionResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote create group from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteCreateGroup: (
+			callback: (name: string, emoji: string | undefined, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, name: string, emoji: string | undefined, responseChannel: string) =>
+				callback(name, emoji, responseChannel);
+			ipcRenderer.on('remote:createGroup', handler);
+			return () => ipcRenderer.removeListener('remote:createGroup', handler);
+		},
+
+		/**
+		 * Send response for remote create group
+		 */
+		sendRemoteCreateGroupResponse: (responseChannel: string, result: { id: string } | null): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote rename group from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteRenameGroup: (
+			callback: (groupId: string, name: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, groupId: string, name: string, responseChannel: string) =>
+				callback(groupId, name, responseChannel);
+			ipcRenderer.on('remote:renameGroup', handler);
+			return () => ipcRenderer.removeListener('remote:renameGroup', handler);
+		},
+
+		/**
+		 * Send response for remote rename group
+		 */
+		sendRemoteRenameGroupResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote delete group from web interface (fire-and-forget)
+		 */
+		onRemoteDeleteGroup: (callback: (groupId: string) => void): (() => void) => {
+			const handler = (_: unknown, groupId: string) => callback(groupId);
+			ipcRenderer.on('remote:deleteGroup', handler);
+			return () => ipcRenderer.removeListener('remote:deleteGroup', handler);
+		},
+
+		/**
+		 * Subscribe to remote move session to group from web interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteMoveSessionToGroup: (
+			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, groupId: string | null, responseChannel: string) =>
+				callback(sessionId, groupId, responseChannel);
+			ipcRenderer.on('remote:moveSessionToGroup', handler);
+			return () => ipcRenderer.removeListener('remote:moveSessionToGroup', handler);
+		},
+
+		/**
+		 * Send response for remote move session to group
+		 */
+		sendRemoteMoveSessionToGroupResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {
