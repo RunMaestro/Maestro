@@ -282,11 +282,9 @@ describe('auto-run command', () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-uuid-456');
 		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
 			const mockClient = {
-				sendCommand: vi.fn().mockImplementation((msg) => {
-					return Promise.resolve({
-						type: 'configure_auto_run_result',
-						success: true,
-					});
+				sendCommand: vi.fn().mockResolvedValue({
+					type: 'configure_auto_run_result',
+					success: true,
 				}),
 			};
 			return action(mockClient as never);
@@ -296,6 +294,8 @@ describe('auto-run command', () => {
 
 		expect(resolveAgentId).toHaveBeenCalledWith('agent-uuid');
 		expect(resolveSessionId).not.toHaveBeenCalled();
+		// --session is still present, so deprecation warning should fire
+		expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('--session is deprecated'));
 	});
 
 	it('should show deprecation warning when --session is used', async () => {

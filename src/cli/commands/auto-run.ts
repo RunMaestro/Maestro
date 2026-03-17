@@ -51,7 +51,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 			sessionId = resolveAgentId(agentId);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			return process.exit(1);
 		}
 	} else {
 		sessionId = resolveSessionId({});
