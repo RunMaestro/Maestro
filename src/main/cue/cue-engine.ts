@@ -124,6 +124,7 @@ interface FanInSourceCompletion {
 	sessionName: string;
 	output: string;
 	truncated: boolean;
+	chainDepth: number;
 }
 
 /** A queued event waiting for a concurrency slot */
@@ -687,6 +688,7 @@ export class CueEngine {
 			sessionName: completedSessionName,
 			output: rawOutput.slice(-SOURCE_OUTPUT_MAX_CHARS),
 			truncated: rawOutput.length > SOURCE_OUTPUT_MAX_CHARS,
+			chainDepth: completionData?.chainDepth ?? 0,
 		});
 
 		// Start timeout timer on first source completion
@@ -728,12 +730,14 @@ export class CueEngine {
 				outputTruncated: completions.some((c) => c.truncated),
 			},
 		};
+		const maxChainDepth = Math.max(...completions.map((c) => c.chainDepth));
 		this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`);
 		this.dispatchSubscription(
 			ownerSessionId,
 			sub,
 			event,
-			completions.map((c) => c.sessionName).join(', ')
+			completions.map((c) => c.sessionName).join(', '),
+			maxChainDepth
 		);
 	}
 
@@ -783,11 +787,18 @@ export class CueEngine {
 					partial: true,
 				},
 			};
+			const maxChainDepth = Math.max(...completions.map((c) => c.chainDepth));
 			this.deps.onLog(
 				'cue',
 				`[CUE] Fan-in "${sub.name}" timed out (continue mode) — firing with ${completedNames.length}/${sources.length} sources`
 			);
-			this.dispatchSubscription(ownerSessionId, sub, event, completedNames.join(', '));
+			this.dispatchSubscription(
+				ownerSessionId,
+				sub,
+				event,
+				completedNames.join(', '),
+				maxChainDepth
+			);
 		} else {
 			// 'break' mode — log failure and clear
 			this.fanInTrackers.delete(key);
