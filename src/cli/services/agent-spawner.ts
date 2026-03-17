@@ -17,12 +17,7 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 
 // Claude Code arguments for batch mode (stream-json format)
-const CLAUDE_ARGS = [
-	'--print',
-	'--verbose',
-	'--output-format',
-	'stream-json',
-];
+const CLAUDE_ARGS = ['--print', '--verbose', '--output-format', 'stream-json'];
 
 // Permission bypass arg for Claude — skipped in read-only mode
 const CLAUDE_YOLO_ARGS = ['--dangerously-skip-permissions'];
