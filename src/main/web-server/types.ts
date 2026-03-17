@@ -329,3 +329,166 @@ export type GetHistoryCallback = (
  * Callback to get all connected web clients.
  */
 export type GetWebClientsCallback = () => Map<string, WebClient>;
+
+// =============================================================================
+// Web UX Parity Types
+// =============================================================================
+
+/**
+ * Union type for setting values exposed to web.
+ */
+export type SettingValue = string | number | boolean | null;
+
+/**
+ * Curated subset of settings exposed to the web interface.
+ */
+export interface WebSettings {
+	theme: string;
+	fontSize: number;
+	enterToSendAI: boolean;
+	enterToSendTerminal: boolean;
+	defaultSaveToHistory: boolean;
+	defaultShowThinking: string;
+	autoScroll: boolean;
+	notificationsEnabled: boolean;
+	audioFeedbackEnabled: boolean;
+	colorBlindMode: string;
+	conductorProfile: string;
+}
+
+/**
+ * Group info for web.
+ */
+export interface GroupData {
+	id: string;
+	name: string;
+	emoji: string | null;
+	sessionIds: string[];
+}
+
+/**
+ * Auto Run document metadata.
+ */
+export interface AutoRunDocument {
+	filename: string;
+	path: string;
+	taskCount: number;
+	completedCount: number;
+}
+
+/**
+ * File tree entry.
+ */
+export interface FileTreeNode {
+	name: string;
+	path: string;
+	isDirectory: boolean;
+	children?: FileTreeNode[];
+	size?: number;
+}
+
+/**
+ * File content response.
+ */
+export interface FileContentResult {
+	content: string;
+	language: string;
+	size: number;
+	truncated: boolean;
+}
+
+/**
+ * Git status entry.
+ */
+export interface GitStatusFile {
+	path: string;
+	status: string;
+	staged: boolean;
+}
+
+/**
+ * Git status response.
+ */
+export interface GitStatusResult {
+	branch: string;
+	files: GitStatusFile[];
+	ahead: number;
+	behind: number;
+}
+
+/**
+ * Git diff response.
+ */
+export interface GitDiffResult {
+	diff: string;
+	files: string[];
+}
+
+/**
+ * Notification preferences configuration.
+ */
+export interface NotificationPreferences {
+	agentComplete: boolean;
+	agentError: boolean;
+	autoRunComplete: boolean;
+	autoRunTaskComplete: boolean;
+	contextWarning: boolean;
+	soundEnabled: boolean;
+}
+
+/**
+ * Notification broadcast payload.
+ */
+export interface NotificationEvent {
+	eventType:
+		| 'agent_complete'
+		| 'agent_error'
+		| 'autorun_complete'
+		| 'autorun_task_complete'
+		| 'context_warning';
+	sessionId: string;
+	sessionName: string;
+	message: string;
+	severity: 'info' | 'warning' | 'error';
+}
+
+// =============================================================================
+// Web UX Parity Callback Types
+// =============================================================================
+
+export type GetSettingsCallback = () => WebSettings;
+export type SetSettingCallback = (key: string, value: SettingValue) => Promise<boolean>;
+export type GetGroupsCallback = () => GroupData[];
+export type CreateGroupCallback = (name: string, emoji?: string) => Promise<{ id: string } | null>;
+export type RenameGroupCallback = (groupId: string, name: string) => Promise<boolean>;
+export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
+export type MoveSessionToGroupCallback = (
+	sessionId: string,
+	groupId: string | null
+) => Promise<boolean>;
+export type CreateSessionCallback = (
+	name: string,
+	toolType: string,
+	cwd: string,
+	groupId?: string
+) => Promise<{ sessionId: string } | null>;
+export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
+export type RenameSessionCallback = (sessionId: string, newName: string) => Promise<boolean>;
+export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
+export type GetAutoRunDocContentCallback = (
+	sessionId: string,
+	filename: string
+) => Promise<string>;
+export type SaveAutoRunDocCallback = (
+	sessionId: string,
+	filename: string,
+	content: string
+) => Promise<boolean>;
+export type StopAutoRunCallback = (sessionId: string) => Promise<boolean>;
+export type GetFileTreeCallback = (sessionId: string, subPath?: string) => Promise<FileTreeNode[]>;
+export type GetFileContentCallback = (
+	sessionId: string,
+	filePath: string
+) => Promise<FileContentResult>;
+export type GetGitStatusCallback = (sessionId: string) => Promise<GitStatusResult>;
+export type GetGitDiffCallback = (sessionId: string, filePath?: string) => Promise<GitDiffResult>;

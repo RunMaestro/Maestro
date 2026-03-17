@@ -419,6 +419,8 @@ export interface UseWebSocketReturn {
 	ping: () => void;
 	/** Send a raw message to the server */
 	send: (message: object) => boolean;
+	/** Send a request and wait for a correlated response */
+	sendRequest: <T = any>(type: string, payload?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
 }
 
 /**
@@ -501,6 +503,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 	const seenMsgIdsRef = useRef<Set<string>>(new Set());
 	// Ref for handleMessage to avoid stale closure issues
 	const handleMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
+	// Pending request-response map for sendRequest correlation
+	const pendingRequestsRef = useRef<
+		Map<
+			string,
+			{ resolve: (data: any) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }
+		>
+	>(new Map());
 
 	// Keep handlers ref up to date SYNCHRONOUSLY to avoid race conditions
 	// This must happen before any WebSocket messages are processed
@@ -540,6 +549,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 		(event: MessageEvent) => {
 			try {
 				const message = JSON.parse(event.data) as TypedServerMessage;
+
+				// Check for request-response correlation before dispatching
+				const requestId = (message as any).requestId as string | undefined;
+				if (requestId && pendingRequestsRef.current.has(requestId)) {
+					const pending = pendingRequestsRef.current.get(requestId)!;
+					clearTimeout(pending.timer);
+					pendingRequestsRef.current.delete(requestId);
+					pending.resolve(message);
+					return;
+				}
 
 				// Debug: Log all incoming messages (not just session_output)
 				console.log(
@@ -798,6 +817,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 				webLogger.error('WebSocket connection error', 'WebSocket', event);
 				setError('WebSocket connection error');
 				handlersRef.current?.onError?.('WebSocket connection error');
+				// Reject all pending requests
+				for (const [, pending] of pendingRequestsRef.current) {
+					clearTimeout(pending.timer);
+					pending.reject(new Error('Connection lost'));
+				}
+				pendingRequestsRef.current.clear();
 			};
 
 			ws.onclose = (event) => {
@@ -807,6 +832,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 				wsRef.current = null;
 				setState('disconnected');
 				handlersRef.current?.onConnectionChange?.('disconnected');
+				// Reject all pending requests
+				for (const [, pending] of pendingRequestsRef.current) {
+					clearTimeout(pending.timer);
+					pending.reject(new Error('Connection lost'));
+				}
+				pendingRequestsRef.current.clear();
 
 				// Attempt to reconnect if not a clean close
 				if (event.code !== 1000 && shouldReconnectRef.current) {
@@ -887,6 +918,36 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 		return false;
 	}, []);
 
+	/**
+	 * Send a request and wait for a correlated response.
+	 * The server must echo back the requestId in its response.
+	 */
+	const sendRequest = useCallback(
+		<T = any>(type: string, payload?: Record<string, unknown>, timeoutMs: number = 10000): Promise<T> => {
+			return new Promise<T>((resolve, reject) => {
+				const requestId =
+					typeof crypto !== 'undefined' && crypto.randomUUID
+						? crypto.randomUUID()
+						: Date.now().toString(36) + Math.random().toString(36);
+
+				const timer = setTimeout(() => {
+					pendingRequestsRef.current.delete(requestId);
+					reject(new Error('Request timed out'));
+				}, timeoutMs);
+
+				pendingRequestsRef.current.set(requestId, { resolve, reject, timer });
+
+				const sent = send({ type, ...payload, requestId });
+				if (!sent) {
+					clearTimeout(timer);
+					pendingRequestsRef.current.delete(requestId);
+					reject(new Error('WebSocket not connected'));
+				}
+			});
+		},
+		[send]
+	);
+
 	// Cleanup on unmount - track mount ID to handle StrictMode double-mount
 	useEffect(() => {
 		const thisMountId = ++mountIdRef.current;
@@ -928,6 +989,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 		authenticate,
 		ping,
 		send,
+		sendRequest,
 	};
 }
 
