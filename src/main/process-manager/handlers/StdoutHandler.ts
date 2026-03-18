@@ -145,10 +145,22 @@ export class StdoutHandler {
 		managedProcess: ManagedProcess,
 		output: string
 	): void {
+		logger.debug('[ProcessManager] handleStreamJsonData chunk', 'ProcessManager', {
+			sessionId,
+			toolType: managedProcess.toolType,
+			chunkLength: output.length,
+			existingBufferLength: managedProcess.jsonBuffer?.length || 0,
+		});
 		managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + output;
 
 		const lines = managedProcess.jsonBuffer.split('\n');
 		managedProcess.jsonBuffer = lines.pop() || '';
+		logger.debug('[ProcessManager] handleStreamJsonData split', 'ProcessManager', {
+			sessionId,
+			toolType: managedProcess.toolType,
+			completedLines: lines.length,
+			remainingBufferLength: managedProcess.jsonBuffer.length,
+		});
 
 		for (const line of lines) {
 			if (!line.trim()) continue;
@@ -161,6 +173,11 @@ export class StdoutHandler {
 
 	private processLine(sessionId: string, managedProcess: ManagedProcess, line: string): void {
 		const { outputParser, toolType } = managedProcess;
+		logger.debug('[ProcessManager] processLine received', 'ProcessManager', {
+			sessionId,
+			toolType,
+			lineLength: line.length,
+		});
 
 		// ── Single JSON parse for the entire line ──
 		// Previously JSON.parse was called up to 3× per line (detectErrorFromLine,
@@ -171,6 +188,15 @@ export class StdoutHandler {
 		} catch {
 			// Not valid JSON — handled in the else branch below
 		}
+		logger.debug('[ProcessManager] processLine parse result', 'ProcessManager', {
+			sessionId,
+			toolType,
+			parsed: parsed !== null,
+			parsedType:
+				parsed && typeof parsed === 'object' && 'type' in (parsed as Record<string, unknown>)
+					? String((parsed as Record<string, unknown>).type)
+					: null,
+		});
 
 		// ── Error detection from parser ──
 		if (outputParser && !managedProcess.errorEmitted) {
@@ -231,6 +257,11 @@ export class StdoutHandler {
 				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
 		} else {
+			logger.warn('[ProcessManager] Non-JSON line in stream-json mode', 'ProcessManager', {
+				sessionId,
+				toolType,
+				linePreview: line.substring(0, 400),
+			});
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 	}
@@ -245,6 +276,7 @@ export class StdoutHandler {
 
 		logger.debug('[ProcessManager] Parsed event from output parser', 'ProcessManager', {
 			sessionId,
+			toolType: managedProcess.toolType,
 			eventType: event?.type,
 			hasText: !!event?.text,
 			textPreview: event?.text?.substring(0, 100),
@@ -397,8 +429,55 @@ export class StdoutHandler {
 			outputParser.isResultMessage(event) &&
 			!managedProcess.resultEmitted
 		) {
+			// If interjections are queued, this result ends the PRE-interjection turn.
+			// Acknowledge the next interjection and reset for a new turn instead of
+			// closing stdin and marking the process as done.
+			if (
+				managedProcess.pendingInterjectionIds &&
+				managedProcess.pendingInterjectionIds.length > 0
+			) {
+				const [ackId, ...remainingIds] = managedProcess.pendingInterjectionIds;
+				managedProcess.pendingInterjectionIds = remainingIds;
+				if (!ackId) return;
+				logger.info(
+					'[ProcessManager] Result received with pending interjection — acknowledging and resetting for next turn',
+					'ProcessManager',
+					{
+						sessionId,
+						interjectionId: ackId,
+						remainingPending: remainingIds.length,
+					}
+				);
+
+				// Emit the result text for the completed turn
+				const resultText = event.text || managedProcess.streamedText || '';
+				if (resultText) {
+					this.bufferManager.emitDataBuffered(sessionId, resultText);
+				}
+
+				// Notify renderer that the CLI has taken in this interjection
+				this.emitter.emit('interjection-ack', sessionId, ackId);
+
+				// Reset per-turn state so the interjection response is tracked as a fresh turn
+				managedProcess.streamedText = '';
+				// resultEmitted stays false — the interjection response will produce its own result
+
+				// Don't close stdin here; it was already written and may still be open
+				// for further interjections. It will be closed by the final result.
+				return;
+			}
+
+			logger.info('[ProcessManager] Final result event detected', 'ProcessManager', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				eventType: event.type,
+				hasEventText: !!event.text,
+				streamedTextLength: managedProcess.streamedText?.length || 0,
+				keepStdinOpen: !!managedProcess.keepStdinOpen,
+			});
 			managedProcess.resultEmitted = true;
 			const resultText = event.text || managedProcess.streamedText || '';
+			this.closeKeptOpenStdinAfterResult(sessionId, managedProcess);
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
 			if (sessionId.includes('-synopsis-')) {
@@ -447,6 +526,7 @@ export class StdoutHandler {
 
 		if (msgRecord.type === 'result' && msgRecord.result && !managedProcess.resultEmitted) {
 			managedProcess.resultEmitted = true;
+			this.closeKeptOpenStdinAfterResult(sessionId, managedProcess);
 			logger.debug('[ProcessManager] Emitting result data', 'ProcessManager', {
 				sessionId,
 				resultLength: (msgRecord.result as string).length,
@@ -511,5 +591,35 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || FALLBACK_CONTEXT_WINDOW,
 			reasoningTokens: usage.reasoningTokens,
 		};
+	}
+
+	private closeKeptOpenStdinAfterResult(sessionId: string, managedProcess: ManagedProcess): void {
+		if (!managedProcess.keepStdinOpen || !managedProcess.childProcess?.stdin) {
+			logger.debug('[ProcessManager] Skipping closeKeptOpenStdinAfterResult', 'ProcessManager', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				keepStdinOpen: !!managedProcess.keepStdinOpen,
+				hasChildStdin: !!managedProcess.childProcess?.stdin,
+			});
+			return;
+		}
+
+		const stdin = managedProcess.childProcess.stdin;
+		if (!stdin.writable || stdin.destroyed) {
+			logger.warn('[ProcessManager] Cannot close kept-open stdin after result', 'ProcessManager', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				writable: stdin.writable,
+				destroyed: stdin.destroyed,
+			});
+			return;
+		}
+
+		logger.info('[ProcessManager] Closing kept-open stdin after final result', 'ProcessManager', {
+			sessionId,
+			toolType: managedProcess.toolType,
+		});
+		stdin.end();
+		managedProcess.keepStdinOpen = false;
 	}
 }

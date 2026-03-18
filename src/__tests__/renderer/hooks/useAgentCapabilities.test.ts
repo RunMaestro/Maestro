@@ -27,6 +27,7 @@ const baseCapabilities = {
 	supportsResultMessages: true,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: true,
+	supportsMidTurnInput: false,
 	supportsThinkingDisplay: false, // Added in Show Thinking feature
 	supportsContextMerge: false,
 	supportsContextExport: false,

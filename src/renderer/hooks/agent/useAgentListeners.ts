@@ -383,13 +383,19 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				if (isFromAi) {
 					const currentSession = getSessions().find((s) => s.id === actualSessionId);
 					if (currentSession) {
+						// Find the first queue item that is NOT a pending interjection.
+						// Pending interjections were already written to stdin and are
+						// waiting for interjection-ack — they must not be spawned again.
+						const nextSpawnableItem = currentSession.executionQueue.find(
+							(q) => !q.pendingInterjection
+						);
 						if (
-							currentSession.executionQueue.length > 0 &&
+							nextSpawnableItem &&
 							!(currentSession.state === 'error' && currentSession.agentError)
 						) {
 							queuedItemToProcess = {
 								sessionId: actualSessionId,
-								item: currentSession.executionQueue[0],
+								item: nextSpawnableItem,
 							};
 						}
 
@@ -541,17 +547,50 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								};
 							}
 
-							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
+							// Separate pending interjections (already sent to stdin) from
+							// spawnable items. Orphaned interjections (process exited before
+							// ack) are moved to logs as failed delivery.
+							const orphanedInterjections = s.executionQueue.filter((q) => q.pendingInterjection);
+							const spawnableQueue = s.executionQueue.filter((q) => !q.pendingInterjection);
+
+							// Move orphaned interjections to logs as failed
+							let tabsAfterOrphans = s.aiTabs;
+							if (orphanedInterjections.length > 0) {
+								tabsAfterOrphans = tabsAfterOrphans.map((tab) => {
+									const orphansForTab = orphanedInterjections.filter((q) => q.tabId === tab.id);
+									if (orphansForTab.length === 0) return tab;
+									return {
+										...tab,
+										logs: [
+											...tab.logs,
+											...orphansForTab.map((q) => ({
+												id: q.id,
+												timestamp: q.timestamp,
+												source: 'user' as const,
+												text: q.displayText || q.text || '',
+												images: q.images,
+												interjection: true,
+												delivered: false,
+												deliveryFailed: true,
+											})),
+										],
+									};
+								});
+							}
+
+							if (spawnableQueue.length > 0) {
+								const [nextItem, ...remainingQueue] = spawnableQueue;
 
 								const targetTab =
-									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
+									tabsAfterOrphans.find((tab) => tab.id === nextItem.tabId) ||
+									getActiveTab({ ...s, aiTabs: tabsAfterOrphans });
 
 								if (!targetTab) {
 									return {
 										...s,
 										state: 'busy' as SessionState,
 										busySource: 'ai',
+										aiTabs: tabsAfterOrphans,
 										executionQueue: remainingQueue,
 										thinkingStartTime: Date.now(),
 										currentCycleTokens: 0,
@@ -559,7 +598,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									};
 								}
 
-								let updatedAiTabs = s.aiTabs.map((tab) => {
+								let updatedAiTabs = tabsAfterOrphans.map((tab) => {
 									if (tab.id === targetTab.id) {
 										return {
 											...tab,
@@ -576,12 +615,12 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									return tab;
 								});
 
-								if (nextItem.type === 'message' && nextItem.text) {
+								if (nextItem.type === 'message' && nextItem.text && !nextItem.interjectionLogId) {
 									const logEntry: LogEntry = {
 										id: generateId(),
 										timestamp: Date.now(),
 										source: 'user',
-										text: nextItem.text,
+										text: nextItem.displayText || nextItem.text,
 										images: nextItem.images,
 									};
 									updatedAiTabs = updatedAiTabs.map((tab) =>
@@ -607,8 +646,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							}
 
 							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) => {
+								tabsAfterOrphans?.length > 0
+									? tabsAfterOrphans.map((tab) => {
 											if (tabIdFromSession) {
 												return tab.id === tabIdFromSession
 													? {
@@ -627,7 +666,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 													: tab;
 											}
 										})
-									: s.aiTabs;
+									: tabsAfterOrphans;
 
 							const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
 							const newState =
@@ -659,6 +698,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 								pendingAICommandForSynopsis: undefined,
 								aiTabs: updatedAiTabs,
+								// Clear orphaned pending interjections from queue
+								executionQueue: spawnableQueue,
 							};
 						}
 
@@ -1553,6 +1594,74 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		);
 
 		// ================================================================
+		// onInterjectionAck — CLI consumed a mid-turn interjection
+		// ================================================================
+		const unsubscribeInterjectionAck = window.maestro.process.onInterjectionAck?.(
+			(sessionId: string, interjectionId: string) => {
+				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+				if (!aiTabMatch) return;
+
+				const actualSessionId = aiTabMatch[1];
+				const tabId = aiTabMatch[2];
+
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== actualSessionId) return s;
+
+						// Find the queued interjection to move to chat history
+						const queuedItem = s.executionQueue.find((q) => q.id === interjectionId);
+
+						if (queuedItem) {
+							// Move from queue to tab.logs as a delivered user message.
+							// This is the primary path for native stdin interjections
+							// (Claude Code, Factory Droid).
+							return {
+								...s,
+								executionQueue: s.executionQueue.filter((q) => q.id !== interjectionId),
+								aiTabs: s.aiTabs.map((tab) => {
+									if (tab.id !== tabId) return tab;
+									return {
+										...tab,
+										logs: [
+											...tab.logs,
+											{
+												id: interjectionId,
+												timestamp: queuedItem.timestamp,
+												source: 'user' as const,
+												text: queuedItem.displayText || queuedItem.text || '',
+												images: queuedItem.images,
+												interjection: true,
+												delivered: true,
+												deliveryFailed: false,
+											},
+										],
+									};
+								}),
+							};
+						}
+
+						// Fallback: entry already in logs (interrupt-and-resume path),
+						// just mark it as delivered
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) => {
+								if (tab.id !== tabId) return tab;
+								return {
+									...tab,
+									logs: tab.logs.map((log) =>
+										log.id === interjectionId
+											? { ...log, delivered: true, deliveryFailed: false }
+											: log
+									),
+								};
+							}),
+						};
+					})
+				);
+			}
+		);
+
+		// ================================================================
 		// Cleanup — unsubscribe all listeners on unmount
 		// ================================================================
 		return () => {
@@ -1567,6 +1676,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeThinkingChunk?.();
 			unsubscribeSshRemote?.();
 			unsubscribeToolExecution?.();
+			unsubscribeInterjectionAck?.();
 			// Cancel any pending thinking chunk RAF and clear buffer
 			if (thinkingChunkRafIdRef.current !== null) {
 				cancelAnimationFrame(thinkingChunkRafIdRef.current);

@@ -33,6 +33,11 @@ export function setupForwardingListeners(
 		safeSend('process:tool-execution', sessionId, toolEvent);
 	});
 
+	// Handle interjection acknowledgment (CLI has consumed a mid-turn message)
+	processManager.on('interjection-ack', (sessionId: string, interjectionId: string) => {
+		safeSend('process:interjection-ack', sessionId, interjectionId);
+	});
+
 	// Handle stderr separately from runCommand (for clean command execution)
 	processManager.on('stderr', (sessionId: string, data: string) => {
 		safeSend('process:stderr', sessionId, data);

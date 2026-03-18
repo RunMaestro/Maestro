@@ -88,6 +88,11 @@ export class ChildProcessSpawner {
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
 		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
+		const shouldUseStreamJsonInput =
+			!!prompt &&
+			capabilities.supportsStreamJsonInput &&
+			!sendPromptViaStdinRaw &&
+			(hasImages || sendPromptViaStdin || argsHaveInputStreamJson);
 
 		// Build final args based on batch mode and images
 		// Track whether the prompt was added to CLI args (used later to decide stdin behavior)
@@ -97,16 +102,15 @@ export class ChildProcessSpawner {
 		let effectivePrompt = prompt;
 		let promptAddedToArgs = false;
 
-		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
-			// For agents that support stream-json input (like Claude Code)
-			// Always add --input-format stream-json when sending images via stdin.
-			// This flag is required for Claude Code to parse the JSON+base64 message
-			// correctly; without it, the raw JSON is treated as plain text prompt.
-			const needsInputFormat = !args.includes('--input-format')
-				? ['--input-format', 'stream-json']
-				: [];
+		if (shouldUseStreamJsonInput) {
+			// For agents that support stream-json stdin input (like Claude Code),
+			// always add --input-format stream-json whenever the prompt is being
+			// delivered via stdin. Without this flag, the agent treats the JSON
+			// payload as plain text and typically waits for EOF before processing,
+			// which breaks mid-turn input because stdin remains open.
+			const needsInputFormat = !argsHaveInputStreamJson ? ['--input-format', 'stream-json'] : [];
 			finalArgs = [...args, ...needsInputFormat];
-			// Prompt will be sent via stdin as stream-json with embedded images (not in CLI args)
+			// Prompt will be sent via stdin as stream-json (with embedded images when present)
 		} else if (hasImages && prompt && imageArgs) {
 			// For agents that use file-based image args (like Codex, OpenCode)
 			finalArgs = [...args];
@@ -385,6 +389,7 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				keepStdinOpen: config.keepStdinOpen,
 			};
 
 			this.processes.set(sessionId, managedProcess);
@@ -429,6 +434,11 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
 					const output = data.toString();
+					logger.debug('[ProcessManager] stdout chunk received', 'ProcessManager', {
+						sessionId,
+						toolType,
+						length: output.length,
+					});
 					this.stdoutHandler.handleData(sessionId, output);
 				});
 			} else {
@@ -451,6 +461,11 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stderr.on('data', (data: Buffer | string) => {
 					const stderrData = data.toString();
+					logger.debug('[ProcessManager] stderr chunk received', 'ProcessManager', {
+						sessionId,
+						toolType,
+						length: stderrData.length,
+					});
 					this.stderrHandler.handleData(sessionId, stderrData);
 				});
 			}
@@ -461,6 +476,13 @@ export class ChildProcessSpawner {
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
 			childProcess.on('close', (code) => {
+				logger.info('[ProcessManager] child process close', 'ProcessManager', {
+					sessionId,
+					toolType,
+					code,
+					stdinDestroyed: childProcess.stdin?.destroyed ?? null,
+					stdinWritable: childProcess.stdin?.writable ?? null,
+				});
 				// Clean up stdin if it was kept open for mid-turn input
 				if (childProcess.stdin && !childProcess.stdin.destroyed) {
 					childProcess.stdin.end();
@@ -470,6 +492,11 @@ export class ChildProcessSpawner {
 
 			// Handle errors
 			childProcess.on('error', (error) => {
+				logger.error('[ProcessManager] child process error event', 'ProcessManager', {
+					sessionId,
+					toolType,
+					error: String(error),
+				});
 				this.exitHandler.handleError(sessionId, error);
 			});
 
@@ -484,9 +511,13 @@ export class ChildProcessSpawner {
 				if (!config.keepStdinOpen) {
 					childProcess.stdin?.end();
 				} else {
-					logger.debug('[ProcessManager] Keeping stdin open for mid-turn input (SSH)', 'ProcessManager', {
-						sessionId,
-					});
+					logger.debug(
+						'[ProcessManager] Keeping stdin open for mid-turn input (SSH)',
+						'ProcessManager',
+						{
+							sessionId,
+						}
+					);
 				}
 			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
@@ -507,9 +538,11 @@ export class ChildProcessSpawner {
 				const streamJsonMessage = buildStreamJsonMessage(effectivePrompt, images || []);
 				logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
 					sessionId,
+					toolType,
 					messageLength: streamJsonMessage.length,
 					imageCount: (images || []).length,
 					hasImages: !!(images && images.length > 0),
+					keepStdinOpen: !!config.keepStdinOpen,
 				});
 				childProcess.stdin?.write(streamJsonMessage + '\n');
 				if (!config.keepStdinOpen) {

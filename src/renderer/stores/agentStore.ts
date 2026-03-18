@@ -35,6 +35,7 @@ import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { filterYoloArgs } from '../utils/agentArgs';
+import { getStdinFlags } from '../utils/spawnHelpers';
 
 // ============================================================================
 // Store Types
@@ -297,6 +298,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const hasText = item.text && item.text.trim();
 			const isImageOnlyMessage = item.type === 'message' && hasImages && !hasText;
 
+			// Compute stdin transport flags for Windows (applies to both messages and commands)
+			const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+				isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+				supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+			});
+
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
 				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
@@ -363,6 +370,30 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sendPromptViaStdin,
 					sendPromptViaStdinRaw,
 				});
+
+				// Mark the associated interjection log entry as delivered
+				// (interrupt-and-resume path: entry shows "queued" until agent spawns)
+				if (item.interjectionLogId) {
+					useSessionStore.getState().setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((tab) => {
+									if (tab.id !== item.tabId) return tab;
+									return {
+										...tab,
+										logs: tab.logs.map((log) =>
+											log.id === item.interjectionLogId
+												? { ...log, delivered: true, deliveryFailed: false }
+												: log
+										),
+									};
+								}),
+							};
+						})
+					);
+				}
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
@@ -497,6 +528,30 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			}
 		} catch (error: any) {
 			console.error('[processQueuedItem] Failed to process queued item:', error);
+
+			// Mark associated interjection as failed if spawn errored
+			if (item.interjectionLogId) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) => {
+								if (tab.id !== item.tabId) return tab;
+								return {
+									...tab,
+									logs: tab.logs.map((log) =>
+										log.id === item.interjectionLogId
+											? { ...log, delivered: false, deliveryFailed: true }
+											: log
+									),
+								};
+							}),
+						};
+					})
+				);
+			}
+
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),

@@ -133,7 +133,8 @@ export const QueuedItemsList = memo(
 
 				{/* Queued items */}
 				{filteredQueue.map((item, index) => {
-					const displayText = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
+					const displayText =
+						item.type === 'command' ? (item.command ?? '') : (item.displayText ?? item.text ?? '');
 					const isLongMessage = displayText.length > 200;
 					const isQueuedExpanded = expandedQueuedMessages.has(item.id);
 					const isDragging = dragIndex === index;

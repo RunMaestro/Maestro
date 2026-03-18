@@ -290,7 +290,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		const autoRunActive = isAutoModeActive && session.inputMode === 'ai';
 		// Show yellow border when: read-only mode is on OR Auto Run is active (both indicate special input handling)
 		// Show subtle busy border when agent is busy in AI mode (interjection hint)
-		const busyInAI = session.state === 'busy' && session.inputMode === 'ai' && !readOnly && !autoRunActive;
+		const busyInAI =
+			session.state === 'busy' && session.inputMode === 'ai' && !readOnly && !autoRunActive;
 		return {
 			isReadOnlyMode: readOnly,
 			showQueueingBorder: readOnly || autoRunActive,

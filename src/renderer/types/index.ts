@@ -190,6 +190,8 @@ export interface LogEntry {
 	};
 	// For user messages - tracks if message was successfully delivered to the agent
 	delivered?: boolean;
+	// For mid-turn interjections - tracks write failures before CLI acknowledgment
+	deliveryFailed?: boolean;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages — tracks if message was sent as a mid-turn interjection
@@ -226,6 +228,14 @@ export interface QueuedItem {
 	tabName?: string; // Tab name at time of queuing (for display)
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
+	// Delivery tracking for interrupt-and-resume interjections
+	interjectionLogId?: string; // Log entry ID to mark as delivered when this item spawns
+	// Display override for queue UI (e.g., show user's raw message instead of continuation prompt)
+	displayText?: string;
+	// True for native stdin interjections already written to the process.
+	// These are NOT waiting to be spawned — they're waiting for interjection-ack.
+	// The onExit handler must skip these (they're not normal queue items).
+	pendingInterjection?: boolean;
 }
 
 export interface WorkLogItem {

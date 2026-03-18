@@ -281,6 +281,9 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 				text: logEntry.text,
 				...(logEntry.images && { images: logEntry.images }),
 				...(logEntry.delivered !== undefined && { delivered: logEntry.delivered }),
+				...(logEntry.deliveryFailed !== undefined && {
+					deliveryFailed: logEntry.deliveryFailed,
+				}),
 				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
 			};
 

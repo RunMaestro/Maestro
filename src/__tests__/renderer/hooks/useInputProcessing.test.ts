@@ -17,6 +17,7 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', async () => {
 });
 
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
+import { hasCapabilityCached } from '../../../renderer/hooks/agent/useAgentCapabilities';
 import type {
 	Session,
 	AITab,
@@ -92,6 +93,20 @@ const defaultBatchState: BatchRunState = {
 	worktreeActive: false,
 };
 
+const reduceSessionUpdates = (
+	session: Session,
+	updates: Array<[Session[] | ((prev: Session[]) => Session[])]>
+): Session[] =>
+	updates.reduce(
+		(current, [update]) => {
+			if (typeof update === 'function') {
+				return update(current);
+			}
+			return update;
+		},
+		[session] as Session[]
+	);
+
 describe('useInputProcessing', () => {
 	const mockSetSessions = vi.fn();
 	const mockSetInputValue = vi.fn();
@@ -111,6 +126,12 @@ describe('useInputProcessing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBatchState.mockReturnValue(defaultBatchState);
+		vi.mocked(hasCapabilityCached).mockImplementation((agentId: string, capability: string) => {
+			if (capability === 'supportsBatchMode') {
+				return ['claude-code', 'codex', 'opencode', 'factory-droid'].includes(agentId);
+			}
+			return false;
+		});
 
 		// Mock window.maestro.process.spawn
 		window.maestro = {
@@ -119,7 +140,10 @@ describe('useInputProcessing', () => {
 				...window.maestro?.process,
 				spawn: vi.fn().mockResolvedValue(undefined),
 				write: vi.fn().mockResolvedValue(undefined),
+				writeInterjection: vi.fn().mockResolvedValue(true),
+				interrupt: vi.fn().mockResolvedValue(true),
 				runCommand: vi.fn().mockResolvedValue(undefined),
+				hasResultEmitted: vi.fn().mockResolvedValue(false),
 			},
 			agents: {
 				...window.maestro?.agents,
@@ -812,6 +836,258 @@ describe('useInputProcessing', () => {
 			// Should match the override value, not the inputValue
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			vi.useRealTimers();
+		});
+	});
+
+	describe('mid-turn interjections', () => {
+		const mockCapabilities = (supportsMidTurnInput: boolean) => {
+			vi.mocked(hasCapabilityCached).mockImplementation((agentId: string, capability: string) => {
+				if (capability === 'supportsBatchMode') {
+					return ['claude-code', 'codex', 'opencode', 'factory-droid'].includes(agentId);
+				}
+				if (capability === 'supportsMidTurnInput') {
+					return supportsMidTurnInput;
+				}
+				return false;
+			});
+		};
+
+		it('moves interjection from queue to logs on successful write', async () => {
+			mockCapabilities(true);
+
+			const busyTab = createMockTab({ state: 'busy' });
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [busyTab],
+				activeTabId: busyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'please also include tests',
+			});
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.process.writeInterjection).toHaveBeenCalledWith(
+				'session-1-ai-tab-1',
+				'please also include tests',
+				expect.any(String),
+				undefined
+			);
+
+			const updatedSessions = reduceSessionUpdates(
+				busySession,
+				mockSetSessions.mock.calls as Array<[Session[] | ((prev: Session[]) => Session[])]>
+			);
+			// Queue should be empty (moved to logs on successful write)
+			expect(updatedSessions[0].executionQueue.length).toBe(0);
+			// Should now be in logs as delivered
+			const deliveredLog = updatedSessions[0].aiTabs[0].logs[0];
+			expect(deliveredLog.interjection).toBe(true);
+			expect(deliveredLog.delivered).toBe(true);
+			expect(deliveredLog.deliveryFailed).toBe(false);
+			expect(deliveredLog.text).toBe('please also include tests');
+		});
+
+		it('moves interjection from queue to logs as failed when writeInterjection returns false', async () => {
+			mockCapabilities(true);
+
+			const busyTab = createMockTab({ state: 'busy' });
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [busyTab],
+				activeTabId: busyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'please also include tests',
+			});
+			(window.maestro.process.writeInterjection as ReturnType<typeof vi.fn>).mockResolvedValue(
+				false
+			);
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			const updatedSessions = reduceSessionUpdates(
+				busySession,
+				mockSetSessions.mock.calls as Array<[Session[] | ((prev: Session[]) => Session[])]>
+			);
+			// Should be removed from queue
+			expect(updatedSessions[0].executionQueue.length).toBe(0);
+			// Should now be in logs as failed
+			const updatedLog = updatedSessions[0].aiTabs[0].logs[0];
+			expect(updatedLog.interjection).toBe(true);
+			expect(updatedLog.delivered).toBe(false);
+			expect(updatedLog.deliveryFailed).toBe(true);
+		});
+
+		it('moves interjection from queue to logs as failed when writeInterjection rejects', async () => {
+			mockCapabilities(true);
+
+			const busyTab = createMockTab({ state: 'busy' });
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [busyTab],
+				activeTabId: busyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'retry with the new constraints',
+			});
+			(window.maestro.process.writeInterjection as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('stdin closed')
+			);
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			const updatedSessions = reduceSessionUpdates(
+				busySession,
+				mockSetSessions.mock.calls as Array<[Session[] | ((prev: Session[]) => Session[])]>
+			);
+			// Should be removed from queue
+			expect(updatedSessions[0].executionQueue.length).toBe(0);
+			// Should now be in logs as failed
+			const updatedLog = updatedSessions[0].aiTabs[0].logs[0];
+			expect(updatedLog.delivered).toBe(false);
+			expect(updatedLog.deliveryFailed).toBe(true);
+		});
+	});
+
+	describe('native resume fallback (interrupt + resume)', () => {
+		const mockCapabilitiesForResume = (supportsResume: boolean) => {
+			vi.mocked(hasCapabilityCached).mockImplementation((agentId: string, capability: string) => {
+				if (capability === 'supportsBatchMode') {
+					return ['claude-code', 'codex', 'opencode', 'factory-droid'].includes(agentId);
+				}
+				if (capability === 'supportsMidTurnInput') {
+					return false; // No native stdin mid-turn
+				}
+				if (capability === 'supportsResume') {
+					return supportsResume;
+				}
+				return false;
+			});
+		};
+
+		it('queues user message directly (no continuation prompt) when agent supports resume', async () => {
+			mockCapabilitiesForResume(true);
+
+			const busyTab = createMockTab({
+				state: 'busy',
+				agentSessionId: 'thread-abc-123', // Has a session ID from prior turn
+			});
+			const busySession = createMockSession({
+				state: 'busy',
+				toolType: 'codex',
+				aiTabs: [busyTab],
+				activeTabId: busyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'also fix the tests',
+			});
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should interrupt the running process
+			expect(window.maestro.process.interrupt).toHaveBeenCalledWith('session-1-ai-tab-1');
+
+			// Should queue a resume prompt (not a continuation prompt with partial_output)
+			const updatedSessions = reduceSessionUpdates(
+				busySession,
+				mockSetSessions.mock.calls as Array<[Session[] | ((prev: Session[]) => Session[])]>
+			);
+			const queuedItem = updatedSessions[0].executionQueue[0];
+			expect(queuedItem).toBeDefined();
+			// Resume prompt wraps user message with resume context
+			expect(queuedItem.text).toContain('also fix the tests');
+			expect(queuedItem.text).toContain('session resume');
+			// Should NOT contain partial_output tags (that's the old fallback)
+			expect(queuedItem.text).not.toContain('<partial_output>');
+			// displayText should show raw user message in queue UI
+			expect(queuedItem.displayText).toBe('also fix the tests');
+			// Should carry the interjection log ID for delivery tracking
+			expect(queuedItem.interjectionLogId).toBeDefined();
+
+			// The interjection log entry should start as queued (delivered: false)
+			const interjectionLog = updatedSessions[0].aiTabs[0].logs.find(
+				(log: any) => log.interjection === true
+			);
+			expect(interjectionLog).toBeDefined();
+			expect(interjectionLog?.delivered).toBe(false);
+			expect(interjectionLog?.deliveryFailed).toBe(false);
+			// The queued item should reference this log entry
+			expect(queuedItem.interjectionLogId).toBe(interjectionLog?.id);
+		});
+
+		it('falls back to continuation prompt when agent has no session ID', async () => {
+			mockCapabilitiesForResume(true);
+
+			const busyTab = createMockTab({
+				state: 'busy',
+				agentSessionId: null, // No session ID yet (first turn)
+			});
+			const busySession = createMockSession({
+				state: 'busy',
+				toolType: 'codex',
+				aiTabs: [busyTab],
+				activeTabId: busyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'also fix the tests',
+			});
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should still interrupt
+			expect(window.maestro.process.interrupt).toHaveBeenCalled();
+
+			// Without a session ID, should fall back to continuation prompt
+			const updatedSessions = reduceSessionUpdates(
+				busySession,
+				mockSetSessions.mock.calls as Array<[Session[] | ((prev: Session[]) => Session[])]>
+			);
+			const queuedItem = updatedSessions[0].executionQueue[0];
+			expect(queuedItem).toBeDefined();
+			// Continuation prompt wraps user message (buildContinuationPrompt behavior)
+			expect(queuedItem.text).toContain('also fix the tests');
+			// displayText should show raw user message, not the continuation prompt
+			expect(queuedItem.displayText).toBe('also fix the tests');
 		});
 	});
 

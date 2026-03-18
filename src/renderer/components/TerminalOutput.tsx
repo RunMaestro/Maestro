@@ -403,6 +403,20 @@ const LogItemComponent = memo(
 
 		const isUserMessage = log.source === 'user';
 		const isInterjection = isUserMessage && log.interjection === true;
+		const interjectionStatus = isInterjection
+			? log.deliveryFailed
+				? 'failed'
+				: log.delivered
+					? 'interjection'
+					: 'queued'
+			: null;
+		const interjectionStatusColor = isInterjection
+			? log.deliveryFailed
+				? theme.colors.error
+				: log.delivered
+					? theme.colors.warning
+					: theme.colors.textDim
+			: undefined;
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
@@ -505,9 +519,12 @@ const LogItemComponent = memo(
 					{isInterjection && (
 						<span
 							className="text-[10px] font-medium uppercase tracking-wider mb-1 block"
-							style={{ color: theme.colors.warning, opacity: 0.8 }}
+							style={{
+								color: interjectionStatusColor,
+								opacity: 0.8,
+							}}
 						>
-							interjection
+							{interjectionStatus}
 						</span>
 					)}
 					{log.source === 'stderr' && (
@@ -984,6 +1001,7 @@ const LogItemComponent = memo(
 			prevProps.log.id === nextProps.log.id &&
 			prevProps.log.text === nextProps.log.text &&
 			prevProps.log.delivered === nextProps.log.delivered &&
+			prevProps.log.deliveryFailed === nextProps.log.deliveryFailed &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&

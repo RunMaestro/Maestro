@@ -78,6 +78,9 @@ export interface ManagedProcess {
 	projectPath?: string;
 	sshRemoteId?: string;
 	sshRemoteHost?: string;
+	keepStdinOpen?: boolean;
+	/** Queue of interjection IDs awaiting CLI acknowledgment (result event) */
+	pendingInterjectionIds?: string[];
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 }
@@ -121,6 +124,7 @@ export interface ProcessManagerEvents {
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
+	'interjection-ack': (sessionId: string, interjectionId: string) => void;
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;

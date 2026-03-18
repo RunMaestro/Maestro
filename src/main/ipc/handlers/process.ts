@@ -712,15 +712,45 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:writeInterjection',
 		withIpcErrorLogging(
 			handlerOpts('writeInterjection'),
-			async (sessionId: string, text: string, images?: string[]) => {
+			async (sessionId: string, text: string, interjectionId?: string, images?: string[]) => {
 				const processManager = requireProcessManager(getProcessManager);
+
+				// Validate non-empty text to avoid sending empty stream-json messages
+				if (!text || !text.trim()) {
+					logger.warn(`Ignoring empty interjection for process: ${sessionId}`, LOG_CONTEXT, {
+						sessionId,
+						interjectionId,
+					});
+					return false;
+				}
+
 				logger.info(`Writing interjection to process: ${sessionId}`, LOG_CONTEXT, {
 					sessionId,
 					textLength: text.length,
+					interjectionId,
 					imageCount: images?.length || 0,
 				});
 				const streamJsonMessage = buildStreamJsonMessage(text, images || []);
-				return processManager.write(sessionId, streamJsonMessage + '\n');
+				logger.debug('Built interjection stream-json message', LOG_CONTEXT, {
+					sessionId,
+					messageLength: streamJsonMessage.length,
+				});
+				const success = processManager.write(sessionId, streamJsonMessage + '\n');
+
+				// Track the pending interjection so StdoutHandler can acknowledge
+				// it when the CLI emits a result for the current turn
+				if (success && interjectionId) {
+					const managedProcess = processManager.get(sessionId);
+					if (managedProcess) {
+						// Immutable append — internal process state queue
+						managedProcess.pendingInterjectionIds = [
+							...(managedProcess.pendingInterjectionIds || []),
+							interjectionId,
+						];
+					}
+				}
+
+				return success;
 			}
 		)
 	);

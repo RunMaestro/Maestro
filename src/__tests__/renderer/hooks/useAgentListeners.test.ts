@@ -93,6 +93,7 @@ let onCommandExitHandler: ListenerCallback | undefined;
 let onUsageHandler: ListenerCallback | undefined;
 let onAgentErrorHandler: ListenerCallback | undefined;
 let onThinkingChunkHandler: ListenerCallback | undefined;
+let onInterjectionAckHandler: ListenerCallback | undefined;
 let onSshRemoteHandler: ListenerCallback | undefined;
 let onToolExecutionHandler: ListenerCallback | undefined;
 
@@ -105,6 +106,7 @@ const mockUnsubscribeCommandExit = vi.fn();
 const mockUnsubscribeUsage = vi.fn();
 const mockUnsubscribeAgentError = vi.fn();
 const mockUnsubscribeThinkingChunk = vi.fn();
+const mockUnsubscribeInterjectionAck = vi.fn();
 const mockUnsubscribeSshRemote = vi.fn();
 const mockUnsubscribeToolExecution = vi.fn();
 
@@ -144,6 +146,10 @@ const mockProcess = {
 	onThinkingChunk: vi.fn((handler: ListenerCallback) => {
 		onThinkingChunkHandler = handler;
 		return mockUnsubscribeThinkingChunk;
+	}),
+	onInterjectionAck: vi.fn((handler: ListenerCallback) => {
+		onInterjectionAckHandler = handler;
+		return mockUnsubscribeInterjectionAck;
 	}),
 	onSshRemote: vi.fn((handler: ListenerCallback) => {
 		onSshRemoteHandler = handler;
@@ -207,6 +213,7 @@ beforeEach(() => {
 	onUsageHandler = undefined;
 	onAgentErrorHandler = undefined;
 	onThinkingChunkHandler = undefined;
+	onInterjectionAckHandler = undefined;
 	onSshRemoteHandler = undefined;
 	onToolExecutionHandler = undefined;
 
@@ -275,7 +282,7 @@ describe('getErrorTitleForType', () => {
 
 describe('useAgentListeners', () => {
 	describe('listener registration', () => {
-		it('registers all 11 IPC listeners on mount', () => {
+		it('registers all 12 IPC listeners on mount', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
@@ -288,11 +295,12 @@ describe('useAgentListeners', () => {
 			expect(mockProcess.onUsage).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onAgentError).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onInterjectionAck).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onSshRemote).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(1);
 		});
 
-		it('unsubscribes all 11 listeners on unmount', () => {
+		it('unsubscribes all 12 listeners on unmount', () => {
 			const deps = createMockDeps();
 			const { unmount } = renderHook(() => useAgentListeners(deps));
 
@@ -307,6 +315,7 @@ describe('useAgentListeners', () => {
 			expect(mockUnsubscribeUsage).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeAgentError).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeThinkingChunk).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeInterjectionAck).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeSshRemote).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(1);
 		});
@@ -321,6 +330,83 @@ describe('useAgentListeners', () => {
 			// Still only 1 call each (effect has [] deps)
 			expect(mockProcess.onData).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onExit).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('onInterjectionAck', () => {
+		it('moves queued interjection from executionQueue to tab logs as delivered', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockTab({ id: 'tab-1', logs: [] })],
+				activeTabId: 'tab-1',
+				executionQueue: [
+					{
+						id: 'interjection-1',
+						timestamp: 1700000000000,
+						tabId: 'tab-1',
+						type: 'message' as const,
+						text: 'follow up question',
+						images: undefined,
+					},
+				],
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onInterjectionAckHandler?.('sess-1-ai-tab-1', 'interjection-1');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			// Should be removed from queue
+			expect(updated?.executionQueue.length).toBe(0);
+			// Should now be in tab logs as delivered
+			const deliveredLog = updated?.aiTabs[0].logs[0];
+			expect(deliveredLog?.id).toBe('interjection-1');
+			expect(deliveredLog?.text).toBe('follow up question');
+			expect(deliveredLog?.interjection).toBe(true);
+			expect(deliveredLog?.delivered).toBe(true);
+			expect(deliveredLog?.deliveryFailed).toBe(false);
+		});
+
+		it('falls back to marking existing log entry as delivered (interrupt-resume path)', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [
+					createMockTab({
+						id: 'tab-1',
+						logs: [
+							{
+								id: 'interjection-1',
+								timestamp: Date.now(),
+								source: 'user',
+								text: 'follow up',
+								interjection: true,
+								delivered: false,
+								deliveryFailed: true,
+							},
+						],
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onInterjectionAckHandler?.('sess-1-ai-tab-1', 'interjection-1');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedLog = updated?.aiTabs[0].logs[0];
+			expect(updatedLog?.delivered).toBe(true);
+			expect(updatedLog?.deliveryFailed).toBe(false);
 		});
 	});
 
