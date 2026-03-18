@@ -130,10 +130,17 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 	const home = os.homedir();
 	const opencodeHome = path.join(home, '.opencode');
 
-	// Project-local directories take priority (read first), then global locations
+	// Project-local directories take priority (read first), then global locations.
+	// Global command directory is platform-specific to avoid ENOENT noise on Windows.
 	await addCommandsFromDir(path.join(cwd, '.opencode', 'commands'));
 	await addCommandsFromDir(path.join(opencodeHome, 'commands'));
-	await addCommandsFromDir(path.join(globalConfigBase, 'opencode', 'commands'));
+
+	if (isWindows()) {
+		const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+		await addCommandsFromDir(path.join(localAppData, 'opencode', 'commands'));
+	} else {
+		await addCommandsFromDir(path.join(globalConfigBase, 'opencode', 'commands'));
+	}
 
 	// Build platform-aware config file paths in precedence order.
 	// Honor OPENCODE_CONFIG env var first (explicit user override), then probe
