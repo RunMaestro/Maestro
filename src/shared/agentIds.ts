@@ -17,6 +17,7 @@ export const AGENT_IDS = [
 	'terminal',
 	'claude-code',
 	'codex',
+	'cursor',
 	'gemini-cli',
 	'qwen3-coder',
 	'opencode',
