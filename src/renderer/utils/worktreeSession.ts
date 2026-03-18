@@ -74,7 +74,8 @@ function resolveWorktreeAutoRunPath(
 	if (!isAbsolute) return parentAutoRunPath;
 
 	if (isPathUnderRoot(parentAutoRunPath, parentCwd)) {
-		const normalizedParentCwd = normSep(parentCwd);
+		// Strip trailing slash for consistent slicing
+		const normalizedParentCwd = normSep(parentCwd).replace(/\/$/, '');
 		const normalized = normSep(parentAutoRunPath);
 		const relativePart = normalized.slice(normalizedParentCwd.length);
 		const result = normSep(worktreeCwd) + relativePart;
