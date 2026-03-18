@@ -246,7 +246,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: false, // No dedicated image flag; images referenced via file path in prompt
 		supportsImageInputOnResume: false, // No image flag available
 		supportsSlashCommands: true, // /plan, /ask, /sandbox, /max-mode
-		supportsSessionStorage: true, // Sessions stored locally, agent ls lists them
+		supportsSessionStorage: false, // Sessions stored locally but exact disk format unknown
 		supportsCostTracking: false, // Not exposed in CLI output
 		supportsUsageStats: false, // Not exposed in CLI output
 		supportsBatchMode: true, // -p flag for headless/scripting mode
