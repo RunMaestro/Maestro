@@ -191,3 +191,15 @@ export {
 } from './useAgentManagement';
 
 export type { UseAgentManagementReturn } from './useAgentManagement';
+
+export {
+	useGitStatus,
+	default as useGitStatusDefault,
+} from './useGitStatus';
+
+export type {
+	GitStatusFile,
+	GitStatusResult,
+	GitDiffResult,
+	UseGitStatusReturn,
+} from './useGitStatus';
