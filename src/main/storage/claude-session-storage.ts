@@ -36,6 +36,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[ClaudeSessionStorage]';
+const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Origin data structure stored in electron-store
@@ -209,8 +210,6 @@ async function parseSessionFile(
 	stats: { size: number; mtimeMs: number }
 ): Promise<AgentSessionInfo | null> {
 	try {
-		// Skip files larger than 100MB to avoid RangeError: Invalid string length
-		const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024;
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
 			logger.warn(`Skipping oversized session file: ${filePath}`, LOG_CONTEXT, {
 				size: stats.size,
@@ -238,6 +237,13 @@ async function parseSessionFileRemote(
 	sshConfig: SshRemoteConfig
 ): Promise<AgentSessionInfo | null> {
 	try {
+		if (stats.size > MAX_SESSION_FILE_SIZE) {
+			logger.warn(`Skipping oversized remote session file: ${filePath}`, LOG_CONTEXT, {
+				size: stats.size,
+			});
+			return null;
+		}
+
 		const result = await readFileRemote(filePath, sshConfig);
 		if (!result.success || !result.data) {
 			logger.error(
