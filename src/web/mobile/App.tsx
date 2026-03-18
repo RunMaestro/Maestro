@@ -58,6 +58,7 @@ import { TabSearchModal } from './TabSearchModal';
 import type { Session, LastResponsePreview } from '../hooks/useSessions';
 // View state utilities are now accessed through useMobileViewState hook
 // Keeping import for TypeScript types only if needed
+import { QuickActionsMenu, type CommandPaletteAction } from './QuickActionsMenu';
 import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
 import { useMobileViewState } from '../hooks/useMobileViewState';
 import { useMobileAutoReconnect } from '../hooks/useMobileAutoReconnect';
@@ -716,6 +717,9 @@ export default function MobileApp() {
 	const [showGroupChatSetup, setShowGroupChatSetup] = useState(false);
 	const [showGroupChatList, setShowGroupChatList] = useState(false);
 	const [activeGroupChatId, setActiveGroupChatId] = useState<string | null>(null);
+
+	// Command palette state
+	const [showCommandPalette, setShowCommandPalette] = useState(false);
 
 	// Git diff viewer state
 	const [gitDiffFile, setGitDiffFile] = useState<string | null>(null);
@@ -1487,6 +1491,200 @@ export default function MobileApp() {
 		setGitDiffFile(null);
 	}, []);
 
+	// Command palette: open handler
+	const handleOpenCommandPalette = useCallback(() => {
+		setShowCommandPalette(true);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseCommandPalette = useCallback(() => {
+		setShowCommandPalette(false);
+	}, []);
+
+	// Command palette: build actions list
+	const commandPaletteActions = useMemo((): CommandPaletteAction[] => {
+		const acts: CommandPaletteAction[] = [];
+
+		// --- Navigation ---
+		acts.push({
+			id: 'nav-all-sessions',
+			label: 'Switch to Session...',
+			category: 'Navigation',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>,
+			action: () => setShowAllSessions(true),
+		});
+		acts.push({
+			id: 'nav-files',
+			label: 'Open Files Panel',
+			category: 'Navigation',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>,
+			action: () => handleOpenRightDrawer('files'),
+		});
+		acts.push({
+			id: 'nav-history',
+			label: 'Open History Panel',
+			category: 'Navigation',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+			action: () => handleOpenRightDrawer('history'),
+		});
+		acts.push({
+			id: 'nav-autorun-tab',
+			label: 'Open Auto Run Panel',
+			category: 'Navigation',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+			action: () => handleOpenRightDrawer('autorun'),
+		});
+		acts.push({
+			id: 'nav-git',
+			label: 'Open Git Panel',
+			category: 'Navigation',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>,
+			action: () => handleOpenRightDrawer('git'),
+		});
+
+		// --- Agent ---
+		acts.push({
+			id: 'agent-new',
+			label: 'New Agent',
+			category: 'Agent',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+			action: () => setShowAgentCreation(true),
+		});
+		acts.push({
+			id: 'agent-rename',
+			label: 'Rename Current Agent',
+			category: 'Agent',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+			available: () => !!activeSessionId,
+			action: () => {
+				if (activeSessionId) {
+					const newName = window.prompt('Rename agent:', activeSession?.name || '');
+					if (newName && newName.trim()) {
+						agentManagement.renameAgent(activeSessionId, newName.trim());
+					}
+				}
+			},
+		});
+		acts.push({
+			id: 'agent-delete',
+			label: 'Delete Current Agent',
+			category: 'Agent',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+			available: () => !!activeSessionId,
+			action: () => {
+				if (activeSessionId && window.confirm('Delete this agent?')) {
+					agentManagement.deleteAgent(activeSessionId);
+				}
+			},
+		});
+
+		// --- Auto Run ---
+		acts.push({
+			id: 'autorun-launch',
+			label: 'Launch Auto Run',
+			category: 'Auto Run',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+			available: () => !!activeSessionId && !currentAutoRunState?.isRunning,
+			action: () => setShowAutoRunSetup(true),
+		});
+		acts.push({
+			id: 'autorun-stop',
+			label: 'Stop Auto Run',
+			category: 'Auto Run',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12"/></svg>,
+			available: () => !!currentAutoRunState?.isRunning,
+			action: () => handleOpenAutoRunPanel(),
+		});
+		acts.push({
+			id: 'autorun-documents',
+			label: 'View Auto Run Documents',
+			category: 'Auto Run',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+			action: () => handleOpenAutoRunPanel(),
+		});
+
+		// --- Group Chat ---
+		acts.push({
+			id: 'groupchat-new',
+			label: 'Start New Group Chat',
+			category: 'Group Chat',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+			action: () => setShowGroupChatSetup(true),
+		});
+		acts.push({
+			id: 'groupchat-active',
+			label: 'View Active Chats',
+			category: 'Group Chat',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+			available: () => activeGroupChats.length > 0,
+			action: () => setShowGroupChatList(true),
+		});
+
+		// --- Settings ---
+		acts.push({
+			id: 'settings-open',
+			label: 'Open Settings',
+			category: 'Settings',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+			action: () => setShowSettingsPanel(true),
+		});
+		acts.push({
+			id: 'settings-toggle-theme',
+			label: 'Toggle Dark/Light Theme',
+			category: 'Settings',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>,
+			action: () => {
+				const currentTheme = settingsHook.settings?.theme;
+				const isDark = !currentTheme || currentTheme === 'dracula' || currentTheme === 'monokai' || currentTheme === 'solarized-dark' || currentTheme === 'tokyo-night';
+				const newTheme = isDark ? 'github-light' : 'dracula';
+				settingsHook.setTheme(newTheme);
+			},
+		});
+
+		// --- View ---
+		acts.push({
+			id: 'view-notifications',
+			label: 'Notification Settings',
+			category: 'View',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+			action: () => setShowNotificationSettings(true),
+		});
+		acts.push({
+			id: 'view-all-sessions',
+			label: 'Toggle All Sessions View',
+			category: 'View',
+			icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
+			action: () => setShowAllSessions((prev) => !prev),
+		});
+		acts.push({
+			id: 'view-mode-switch',
+			label: activeSession?.inputMode === 'terminal' ? 'Switch to AI Mode' : 'Switch to Terminal Mode',
+			category: 'View',
+			icon: activeSession?.inputMode === 'terminal' ? (
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v2M12 19v2M5.64 5.64l1.42 1.42M16.95 16.95l1.41 1.41M3 12h2M19 12h2M5.64 18.36l1.42-1.42M16.95 7.05l1.41-1.41"/><circle cx="12" cy="12" r="4"/></svg>
+			) : (
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+			),
+			available: () => !!activeSessionId,
+			action: () => {
+				const newMode = activeSession?.inputMode === 'terminal' ? 'ai' : 'terminal';
+				handleModeToggle(newMode as InputMode);
+			},
+		});
+
+		return acts;
+	}, [
+		activeSessionId,
+		activeSession,
+		currentAutoRunState,
+		activeGroupChats.length,
+		settingsHook,
+		agentManagement,
+		handleOpenRightDrawer,
+		handleOpenAutoRunPanel,
+		handleModeToggle,
+	]);
+
 	// Determine content based on connection state
 	const renderContent = () => {
 		// Show offline state when device has no network connectivity
@@ -1950,10 +2148,17 @@ export default function MobileApp() {
 				onModeToggle={handleModeToggle}
 				isSessionBusy={activeSession?.state === 'busy'}
 				onInterrupt={handleInterrupt}
-				hasActiveSession={!!activeSessionId}
 				cwd={activeSession?.cwd}
 				slashCommands={allSlashCommands}
 				showRecentCommands={false}
+				onOpenCommandPalette={handleOpenCommandPalette}
+			/>
+
+			{/* Command palette */}
+			<QuickActionsMenu
+				isOpen={showCommandPalette}
+				onClose={handleCloseCommandPalette}
+				actions={commandPaletteActions}
 			/>
 
 			{/* Full-screen response viewer modal */}
