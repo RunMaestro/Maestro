@@ -189,6 +189,47 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'cursor',
+		name: 'Cursor',
+		binaryName: 'agent',
+		command: 'agent',
+		// Cursor CLI uses -p for headless/batch mode (like Claude Code's --print)
+		// --force enables direct file changes without confirmation (YOLO mode, required by Maestro)
+		// --output-format stream-json for structured parsing (same flag name as Claude Code)
+		args: ['-p', '--output-format', 'stream-json', '--force'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--mode', 'ask'], // Read-only exploration mode (no file changes)
+		readOnlyCliEnforced: true, // CLI enforces read-only via --mode ask
+		yoloModeArgs: ['--force'], // Full access mode (--force or --yolo)
+		modelArgs: (modelId: string) => ['--model', modelId],
+		// No workingDirArgs - Cursor uses CWD (no --cwd flag)
+		// No imageArgs - images referenced via file path in prompt text
+		noPromptSeparator: true, // Prompt is passed as positional argument
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description: 'Model override (e.g., gpt-5.2). Leave empty to use the default.',
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Varies by model. Set this for context usage display.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'gemini-cli',
 		name: 'Gemini CLI',
 		binaryName: 'gemini',

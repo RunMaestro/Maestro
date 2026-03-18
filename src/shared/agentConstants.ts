@@ -16,6 +16,7 @@ import type { AgentId } from './agentIds';
 export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'claude-code': 200000, // Claude 3.5 Sonnet/Claude 4 default context
 	codex: 200000, // OpenAI o3/o4-mini context window
+	cursor: 200000, // Cursor (varies by model, not publicly documented, 200k is reasonable default)
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
 	terminal: 0, // Terminal has no context window
