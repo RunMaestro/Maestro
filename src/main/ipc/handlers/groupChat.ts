@@ -602,6 +602,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			): Promise<GroupChatParticipant> => {
 				id = validateGroupChatId(id);
 				validateParticipantName(name);
+				if (!agentId || typeof agentId !== 'string') {
+					throw new Error('agentId is required and must be a non-empty string');
+				}
 				const processManager = getProcessManager();
 				if (!processManager) {
 					throw new Error('Process manager not initialized');
