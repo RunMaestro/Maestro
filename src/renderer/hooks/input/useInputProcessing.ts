@@ -438,19 +438,23 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Capture staged images before clearing
 					const imagesToSend = stagedImages.length > 0 ? [...stagedImages] : undefined;
 
+					// For image-only interjections (images but no text), use the default prompt
+					const interjectionText =
+						!effectiveInputValue.trim() && imagesToSend
+							? DEFAULT_IMAGE_ONLY_PROMPT
+							: effectiveInputValue;
+
 					// Add interjection to executionQueue only. It shows in the queue UI
-					// while pending. On CLI acknowledgment (interjection-ack), it moves
-					// to tab.logs as a delivered message. On failure, it moves to
-					// tab.logs as failed. The message only enters chat history once
-					// we've confirmed the CLI actually received it.
+					// while pending. On successful write, it moves to tab.logs as
+					// delivered. On failure, it moves to tab.logs as failed.
 					const interjectionEntryId = generateId();
 					const queuedInterjection: QueuedItem = {
 						id: interjectionEntryId,
 						timestamp: Date.now(),
 						tabId: activeTab.id,
 						type: 'message',
-						text: effectiveInputValue,
-						displayText: effectiveInputValue,
+						text: interjectionText,
+						displayText: interjectionText,
 						images: [...stagedImages],
 						tabName: activeTab.name || 'New',
 						interjectionLogId: interjectionEntryId,
@@ -488,7 +492,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 													id: interjectionEntryId,
 													timestamp: Date.now(),
 													source: 'user' as const,
-													text: effectiveInputValue,
+													text: interjectionText,
 													images: [...stagedImages],
 													interjection: true,
 													delivered: false,
@@ -511,7 +515,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					window.maestro.process
 						.writeInterjection(
 							processSessionId,
-							effectiveInputValue,
+							interjectionText,
 							interjectionEntryId,
 							imagesToSend
 						)
@@ -534,7 +538,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 															id: interjectionEntryId,
 															timestamp: Date.now(),
 															source: 'user' as const,
-															text: effectiveInputValue,
+															text: interjectionText,
 															images: [...stagedImages],
 															interjection: true,
 															delivered: true,

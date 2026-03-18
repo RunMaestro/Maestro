@@ -276,6 +276,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+		// Use resolved tab ID for delivery tracking (item.tabId may be missing if fallback was used)
+		const deliveryTabId = item.tabId || targetTab.id;
 
 		try {
 			// Get agent configuration for this session's tool type
@@ -382,7 +384,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							return {
 								...s,
 								aiTabs: s.aiTabs.map((tab) => {
-									if (tab.id !== item.tabId) return tab;
+									if (tab.id !== deliveryTabId) return tab;
 									return {
 										...tab,
 										logs: tab.logs.map((log) =>
@@ -556,7 +558,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						return {
 							...s,
 							aiTabs: s.aiTabs.map((tab) => {
-								if (tab.id !== item.tabId) return tab;
+								if (tab.id !== deliveryTabId) return tab;
 								return {
 									...tab,
 									logs: tab.logs.map((log) =>

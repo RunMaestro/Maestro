@@ -289,15 +289,15 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		// Check if Auto Run is active - used for yellow border indication (queuing will happen for write messages)
 		const autoRunActive = isAutoModeActive && session.inputMode === 'ai';
 		// Show yellow border when: read-only mode is on OR Auto Run is active (both indicate special input handling)
-		// Show subtle busy border when agent is busy in AI mode (interjection hint)
+		// Show subtle busy border when the active tab is busy in AI mode (interjection hint)
 		const busyInAI =
-			session.state === 'busy' && session.inputMode === 'ai' && !readOnly && !autoRunActive;
+			activeTab?.state === 'busy' && session.inputMode === 'ai' && !readOnly && !autoRunActive;
 		return {
 			isReadOnlyMode: readOnly,
 			showQueueingBorder: readOnly || autoRunActive,
 			showBusyBorder: busyInAI,
 		};
-	}, [tabReadOnlyMode, isAutoModeActive, session.inputMode, session.state]);
+	}, [tabReadOnlyMode, isAutoModeActive, session.inputMode, activeTab?.state]);
 
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';
@@ -877,7 +877,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								placeholder={
 									isTerminalMode
 										? 'Run shell command...'
-										: session.state === 'busy'
+										: activeTab?.state === 'busy'
 											? hasCapability('supportsMidTurnInput')
 												? 'Send a message to the active agent...'
 												: 'Interrupt agent with a follow-up...'

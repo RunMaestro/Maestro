@@ -949,8 +949,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:hasResultEmitted',
 		withIpcErrorLogging(handlerOpts('hasResultEmitted'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
-			const process = processManager.get(sessionId);
-			return process?.resultEmitted === true;
+			const managedProcess = processManager.get(sessionId);
+			// Missing process means it already exited and was cleaned up - treat as finished
+			return !managedProcess || managedProcess.resultEmitted === true;
 		})
 	);
 

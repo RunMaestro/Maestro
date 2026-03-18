@@ -24,7 +24,7 @@ Codex supports `codex exec resume <SESSION_ID> "follow-up prompt"`. Instead of r
 
 ### Current Flow (Fallback)
 
-```
+```text
 User interjects while Codex is working
     → SIGINT sent to process
     → Process exits
@@ -39,7 +39,7 @@ User interjects while Codex is working
 
 ### Proposed Flow (Native Resume)
 
-```
+```text
 User interjects while Codex is working
     → Grab thread_id (already stored as sessionId on the tab/process)
     → SIGINT sent to process

@@ -1000,6 +1000,7 @@ const LogItemComponent = memo(
 		return (
 			prevProps.log.id === nextProps.log.id &&
 			prevProps.log.text === nextProps.log.text &&
+			prevProps.log.interjection === nextProps.log.interjection &&
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.deliveryFailed === nextProps.log.deliveryFailed &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
