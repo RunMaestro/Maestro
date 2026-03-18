@@ -33,6 +33,45 @@ export interface BuildWorktreeSessionParams {
 	worktreeParentPath?: string;
 }
 
+/**
+ * Resolves the Auto Run folder path for a worktree session.
+ *
+ * - Relative paths are kept as-is (they resolve from each session's own cwd).
+ * - Absolute paths under the parent's cwd are rebased onto the worktree's cwd.
+ * - Absolute paths outside the parent's cwd are kept as-is (intentionally external).
+ */
+function resolveWorktreeAutoRunPath(
+	parentAutoRunPath: string | undefined,
+	parentCwd: string,
+	worktreeCwd: string
+): string | undefined {
+	if (!parentAutoRunPath) return undefined;
+
+	// Normalize to forward slashes for comparison
+	const norm = (p: string) => p.replace(/\\/g, '/');
+	const normalized = norm(parentAutoRunPath);
+
+	// Check if the path is absolute (Unix / or Windows drive letter)
+	const isAbsolute = /^\/|^[A-Za-z]:[/\\]/.test(parentAutoRunPath);
+	if (!isAbsolute) return parentAutoRunPath;
+
+	// Check if the absolute path is under the parent's cwd
+	const normalizedParentCwd = norm(parentCwd);
+	const prefix = normalizedParentCwd.endsWith('/')
+		? normalizedParentCwd
+		: normalizedParentCwd + '/';
+
+	if (normalized === normalizedParentCwd || normalized.startsWith(prefix)) {
+		const relativePart = normalized.slice(normalizedParentCwd.length);
+		const result = norm(worktreeCwd) + relativePart;
+		// Preserve original separator style
+		return parentAutoRunPath.includes('\\') ? result.replace(/\//g, '\\') : result;
+	}
+
+	// External absolute path - keep as-is
+	return parentAutoRunPath;
+}
+
 export function buildWorktreeSession(params: BuildWorktreeSessionParams): Session {
 	const newId = generateId();
 	const initialTabId = generateId();
@@ -120,6 +159,12 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		nudgeMessage: isLegacy ? undefined : params.parentSession.nudgeMessage,
-		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,
+		autoRunFolderPath: isLegacy
+			? undefined
+			: resolveWorktreeAutoRunPath(
+					params.parentSession.autoRunFolderPath,
+					params.parentSession.cwd,
+					params.path
+				),
 	} as Session;
 }

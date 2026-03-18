@@ -139,6 +139,83 @@ describe('buildWorktreeSession', () => {
 		expect(session.sessionSshRemoteConfig).toEqual(sshConfig);
 	});
 
+	describe('autoRunFolderPath resolution', () => {
+		it('should rebase absolute path under parent cwd onto worktree cwd', () => {
+			const parent = createMockParentSession({
+				cwd: '/projects/main',
+				autoRunFolderPath: '/projects/main/Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('/worktrees/feature-x/Auto Run Docs');
+		});
+
+		it('should keep relative path as-is', () => {
+			const parent = createMockParentSession({
+				autoRunFolderPath: 'Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('Auto Run Docs');
+		});
+
+		it('should keep external absolute path as-is', () => {
+			const parent = createMockParentSession({
+				cwd: '/projects/main',
+				autoRunFolderPath: '/shared/autorun-docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('/shared/autorun-docs');
+		});
+
+		it('should handle Windows backslash paths', () => {
+			const parent = createMockParentSession({
+				cwd: 'C:\\Users\\Admin\\Software\\Maestro',
+				autoRunFolderPath: 'C:\\Users\\Admin\\Software\\Maestro\\Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: 'C:\\Users\\Admin\\Software\\Maestro-worktree',
+				name: 'worktree',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe(
+				'C:\\Users\\Admin\\Software\\Maestro-worktree\\Auto Run Docs'
+			);
+		});
+
+		it('should return undefined when parent has no autoRunFolderPath', () => {
+			const parent = createMockParentSession({
+				autoRunFolderPath: undefined,
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBeUndefined();
+		});
+	});
+
 	it('should create initial AI tab with correct settings', () => {
 		const parent = createMockParentSession();
 		const session = buildWorktreeSession({
