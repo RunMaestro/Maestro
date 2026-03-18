@@ -53,6 +53,7 @@ export {
 import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
 import { CodexOutputParser } from './codex-output-parser';
+import { CursorOutputParser } from './cursor-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import {
 	registerOutputParser,
@@ -65,6 +66,7 @@ import { logger } from '../utils/logger';
 export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
 export { CodexOutputParser } from './codex-output-parser';
+export { CursorOutputParser } from './cursor-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
@@ -81,6 +83,7 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new ClaudeOutputParser());
 	registerOutputParser(new OpenCodeOutputParser());
 	registerOutputParser(new CodexOutputParser());
+	registerOutputParser(new CursorOutputParser());
 	registerOutputParser(new FactoryDroidOutputParser());
 
 	// Log registered parsers for debugging

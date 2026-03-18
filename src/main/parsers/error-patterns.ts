@@ -674,6 +674,163 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Cursor Error Patterns
+// ============================================================================
+
+const CURSOR_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /invalid.*api.*key/i,
+			message: 'Invalid API key. Please check your Cursor credentials.',
+			recoverable: true,
+		},
+		{
+			pattern: /CURSOR_API_KEY/i,
+			message: 'Cursor API key not set. Please set CURSOR_API_KEY environment variable.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication.*failed/i,
+			message: 'Authentication failed. Please verify your Cursor API key.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized/i,
+			message: 'Unauthorized access. Please check your Cursor API key.',
+			recoverable: true,
+		},
+		{
+			pattern: /api.*key.*expired/i,
+			message: 'Your API key has expired. Please renew your Cursor credentials.',
+			recoverable: true,
+		},
+		{
+			pattern: /not authenticated/i,
+			message: 'Not authenticated. Please log in to Cursor.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*length/i,
+			message: 'Context length exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum.*tokens/i,
+			message: 'Maximum token limit reached. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /context window/i,
+			message: 'Context window exceeded. Please start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /token.*limit/i,
+			message: 'Token limit reached. Consider starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate.*limit/i,
+			message: 'Rate limit exceeded. Please wait before trying again.',
+			recoverable: true,
+		},
+		{
+			pattern: /too many requests/i,
+			message: 'Too many requests. Please wait before sending more messages.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+		{
+			pattern: /\b429\b/,
+			message: 'Rate limited. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /usage.?limit|hit your.*limit/i,
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection\s*(failed|refused|error|reset|closed)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /request\s+timed?\s*out|timed?\s*out\s+waiting/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /network\s+(error|failure|unavailable)/i,
+			message: 'Network error occurred. Please check your connection.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /permission denied/i,
+			message: 'Permission denied. The agent cannot access the requested resource.',
+			recoverable: false,
+		},
+		{
+			pattern: /access denied/i,
+			message: 'Access denied to the requested resource.',
+			recoverable: false,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not found/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /conversation.*not found/i,
+			message: 'Conversation not found. Starting fresh.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // SSH Error Patterns
 // ============================================================================
 
@@ -805,11 +962,18 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: false,
 		},
 		{
+			// Agent command not found for cursor (binary is called "agent")
+			pattern:
+				/bash:.*\bagent\b.*command not found|sh:.*\bagent\b.*command not found|zsh:.*command not found:.*\bagent\b/i,
+			message: 'Cursor agent command not found. Ensure Cursor CLI is installed.',
+			recoverable: false,
+		},
+		{
 			// Agent binary missing (executable file not found at path)
 			// More specific pattern: requires path-like structure before the binary name
 			// Matches: "/usr/local/bin/claude: No such file or directory"
 			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|codex):\s*No such file or directory/i,
+			pattern: /\/[^\s:]*\/(claude|opencode|codex|agent):\s*No such file or directory/i,
 			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},
@@ -863,6 +1027,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
+	['cursor', CURSOR_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 ]);
 
