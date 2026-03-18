@@ -878,7 +878,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									isTerminalMode
 										? 'Run shell command...'
 										: session.state === 'busy'
-											? 'Send guidance to active agent...'
+											? hasCapability('supportsMidTurnInput')
+												? 'Send a message to the active agent...'
+												: 'Interrupt agent with a follow-up...'
 											: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 								}
 								value={inputValue}

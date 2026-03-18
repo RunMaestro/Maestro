@@ -236,6 +236,11 @@ export interface QueuedItem {
 	// These are NOT waiting to be spawned — they're waiting for interjection-ack.
 	// The onExit handler must skip these (they're not normal queue items).
 	pendingInterjection?: boolean;
+	// Fallback prompt if resume spawn fails (contains partial output context).
+	// Used by processQueuedItem to retry without session resume.
+	fallbackText?: string;
+	// When true, processQueuedItem skips session resume (used on fallback retry).
+	skipResume?: boolean;
 }
 
 export interface WorkLogItem {

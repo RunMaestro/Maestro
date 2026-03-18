@@ -282,8 +282,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const agent = await window.maestro.agents.get(session.toolType);
 			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
 
-			// Get the TARGET TAB's agentSessionId for session continuity
-			const tabAgentSessionId = targetTab.agentSessionId;
+			// Get the TARGET TAB's agentSessionId for session continuity.
+			// skipResume: when a resume attempt failed and we're retrying with
+			// a continuation prompt, don't pass the session ID (avoids re-triggering resume args).
+			const tabAgentSessionId = item.skipResume ? undefined : targetTab.agentSessionId;
 			const isReadOnly = item.readOnlyMode || targetTab.readOnlyMode;
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
@@ -527,6 +529,23 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				}
 			}
 		} catch (error: any) {
+			// If this was a resume attempt and we have a fallback prompt, retry without
+			// session resume (falls back to continuation prompt with partial output)
+			if (item.fallbackText) {
+				console.warn(
+					'[processQueuedItem] Resume spawn failed, retrying with continuation fallback:',
+					error.message
+				);
+				const fallbackItem: QueuedItem = {
+					...item,
+					text: item.fallbackText,
+					fallbackText: undefined, // Don't retry again
+					skipResume: true, // Don't re-trigger resume args
+				};
+				await get().processQueuedItem(sessionId, fallbackItem, deps);
+				return;
+			}
+
 			console.error('[processQueuedItem] Failed to process queued item:', error);
 
 			// Mark associated interjection as failed if spawn errored

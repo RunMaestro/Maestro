@@ -23,9 +23,17 @@ import { buildContinuationPrompt, buildResumePrompt } from '../../utils/continua
 export const DEFAULT_IMAGE_ONLY_PROMPT = imageOnlyDefaultPrompt;
 
 /**
+ * Max characters of partial output to include in a continuation prompt.
+ * Prevents enormous prompts when an agent has streamed a lot of output.
+ * 50k chars is roughly 12-15k tokens, leaving plenty of room in context.
+ */
+const MAX_CONTINUATION_OUTPUT_CHARS = 50_000;
+
+/**
  * Extract the AI/stdout output from the current turn only.
  * Finds the last non-interjection user message and captures everything after it.
  * Used by the interrupt-and-continue fallback to build a continuation prompt.
+ * Capped at MAX_CONTINUATION_OUTPUT_CHARS to prevent oversized prompts.
  */
 function captureCurrentTurnOutput(logs: LogEntry[]): string {
 	let lastUserMsgIndex = -1;
@@ -35,11 +43,17 @@ function captureCurrentTurnOutput(logs: LogEntry[]): string {
 			break;
 		}
 	}
-	return logs
+	const output = logs
 		.slice(lastUserMsgIndex + 1)
 		.filter((log) => log.source === 'ai' || log.source === 'stdout')
 		.map((log) => log.text)
 		.join('');
+
+	if (output.length > MAX_CONTINUATION_OUTPUT_CHARS) {
+		// Keep the tail (most recent output is most relevant for continuation)
+		return output.slice(-MAX_CONTINUATION_OUTPUT_CHARS);
+	}
+	return output;
 }
 
 /**
@@ -567,12 +581,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// - Native resume: agent loads full history from session files,
 					//   but needs instruction to continue the interrupted task
 					// - Fallback: no session files, must include partial output inline
+					// Always capture partial output so we have a fallback if resume fails
+					const partialOutput = captureCurrentTurnOutput(activeTab.logs);
+					const continuationFallback = buildContinuationPrompt(partialOutput, effectiveInputValue);
 					const promptForQueue = useNativeResume
 						? buildResumePrompt(effectiveInputValue)
-						: buildContinuationPrompt(
-								captureCurrentTurnOutput(activeTab.logs),
-								effectiveInputValue
-							);
+						: continuationFallback;
 
 					// Add the user's interjection log entry
 					// delivered: false so UI shows "queued" until the agent actually spawns
@@ -626,6 +640,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						tabName: activeTab.name || 'New',
 						readOnlyMode: activeTab.readOnlyMode === true,
 						interjectionLogId: interjectionEntryId,
+						// If resume spawn fails, retry with continuation prompt (includes partial output)
+						fallbackText: useNativeResume ? continuationFallback : undefined,
 					};
 
 					setSessions((prev) =>
