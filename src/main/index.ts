@@ -550,6 +550,7 @@ app.whenReady().then(async () => {
 			webServer = server;
 		},
 		createWebServer,
+		settingsStore: store,
 	});
 
 	app.on('activate', () => {

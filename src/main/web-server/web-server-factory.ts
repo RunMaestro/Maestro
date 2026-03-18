@@ -5,7 +5,6 @@
 
 import { randomUUID } from 'crypto';
 import { BrowserWindow, ipcMain } from 'electron';
-import { randomUUID } from 'crypto';
 import { WebServer } from './WebServer';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
