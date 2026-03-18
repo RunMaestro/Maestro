@@ -218,7 +218,11 @@ export function useAutoRunHandlers(
 		startBatchRun,
 	} = deps;
 
-	// Handler for auto run folder selection from setup modal
+	// Handler for auto run folder selection from setup modal.
+	// Worktree sessions store their own independent Auto Run folder paths -
+	// the selected path is stored directly on activeSession (whichever session
+	// is active), with no parent-session resolution. This is correct because
+	// the user picks the folder relative to the worktree's own working directory.
 	const handleAutoRunFolderSelected = useCallback(
 		async (folderPath: string) => {
 			if (!activeSession) return;
