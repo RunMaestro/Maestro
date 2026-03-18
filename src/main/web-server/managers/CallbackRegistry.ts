@@ -49,6 +49,12 @@ import type {
 	GetGitDiffCallback,
 	GitStatusResult,
 	GitDiffResult,
+	GetGroupChatsCallback,
+	StartGroupChatCallback,
+	GetGroupChatStateCallback,
+	StopGroupChatCallback,
+	SendGroupChatMessageCallback,
+	GroupChatState,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -94,6 +100,11 @@ export interface WebServerCallbacks {
 	renameSession: RenameSessionCallback | null;
 	getGitStatus: GetGitStatusCallback | null;
 	getGitDiff: GetGitDiffCallback | null;
+	getGroupChats: GetGroupChatsCallback | null;
+	startGroupChat: StartGroupChatCallback | null;
+	getGroupChatState: GetGroupChatStateCallback | null;
+	stopGroupChat: StopGroupChatCallback | null;
+	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 }
 
 export class CallbackRegistry {
@@ -135,6 +146,11 @@ export class CallbackRegistry {
 		renameSession: null,
 		getGitStatus: null,
 		getGitDiff: null,
+		getGroupChats: null,
+		startGroupChat: null,
+		getGroupChatState: null,
+		stopGroupChat: null,
+		sendGroupChatMessage: null,
 	};
 
 	// ============ Getter Methods ============
@@ -344,6 +360,31 @@ export class CallbackRegistry {
 		return this.callbacks.getGitDiff(sessionId, filePath);
 	}
 
+	async getGroupChats(): Promise<GroupChatState[]> {
+		if (!this.callbacks.getGroupChats) return [];
+		return this.callbacks.getGroupChats();
+	}
+
+	async startGroupChat(topic: string, participantIds: string[]): Promise<{ chatId: string } | null> {
+		if (!this.callbacks.startGroupChat) return null;
+		return this.callbacks.startGroupChat(topic, participantIds);
+	}
+
+	async getGroupChatState(chatId: string): Promise<GroupChatState | null> {
+		if (!this.callbacks.getGroupChatState) return null;
+		return this.callbacks.getGroupChatState(chatId);
+	}
+
+	async stopGroupChat(chatId: string): Promise<boolean> {
+		if (!this.callbacks.stopGroupChat) return false;
+		return this.callbacks.stopGroupChat(chatId);
+	}
+
+	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
+		if (!this.callbacks.sendGroupChatMessage) return false;
+		return this.callbacks.sendGroupChatMessage(chatId, message);
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -498,6 +539,26 @@ export class CallbackRegistry {
 
 	setGetGitDiffCallback(callback: GetGitDiffCallback): void {
 		this.callbacks.getGitDiff = callback;
+	}
+
+	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {
+		this.callbacks.getGroupChats = callback;
+	}
+
+	setStartGroupChatCallback(callback: StartGroupChatCallback): void {
+		this.callbacks.startGroupChat = callback;
+	}
+
+	setGetGroupChatStateCallback(callback: GetGroupChatStateCallback): void {
+		this.callbacks.getGroupChatState = callback;
+	}
+
+	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
+		this.callbacks.stopGroupChat = callback;
+	}
+
+	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
+		this.callbacks.sendGroupChatMessage = callback;
 	}
 
 	// ============ Check Methods ============

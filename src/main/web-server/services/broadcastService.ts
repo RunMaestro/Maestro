@@ -34,6 +34,8 @@ import type {
 	NotificationEvent,
 	WebSettings,
 	GroupData,
+	GroupChatMessage,
+	GroupChatState,
 } from '../types';
 
 // Re-export types for backwards compatibility
@@ -369,6 +371,30 @@ export class BroadcastService {
 		this.broadcastToAll({
 			type: 'session_offline',
 			sessionId,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a group chat message to all connected web clients
+	 */
+	broadcastGroupChatMessage(chatId: string, message: GroupChatMessage): void {
+		this.broadcastToAll({
+			type: 'group_chat_message',
+			chatId,
+			message,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a group chat state change to all connected web clients
+	 */
+	broadcastGroupChatStateChange(chatId: string, state: Partial<GroupChatState>): void {
+		this.broadcastToAll({
+			type: 'group_chat_state_change',
+			chatId,
+			...state,
 			timestamp: Date.now(),
 		});
 	}

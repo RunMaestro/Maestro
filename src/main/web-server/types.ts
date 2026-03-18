@@ -492,3 +492,41 @@ export type GetFileContentCallback = (
 ) => Promise<FileContentResult>;
 export type GetGitStatusCallback = (sessionId: string) => Promise<GitStatusResult>;
 export type GetGitDiffCallback = (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
+
+// =============================================================================
+// Group Chat Types
+// =============================================================================
+
+/**
+ * Group chat message for web interface.
+ */
+export interface GroupChatMessage {
+	id: string;
+	participantId: string;
+	participantName: string;
+	content: string;
+	timestamp: number;
+	role: 'user' | 'assistant';
+}
+
+/**
+ * Group chat state for web interface.
+ */
+export interface GroupChatState {
+	id: string;
+	topic: string;
+	participants: Array<{ sessionId: string; name: string; toolType: string }>;
+	messages: GroupChatMessage[];
+	isActive: boolean;
+	currentTurn?: string;
+}
+
+// =============================================================================
+// Group Chat Callback Types
+// =============================================================================
+
+export type StartGroupChatCallback = (topic: string, participantIds: string[]) => Promise<{ chatId: string } | null>;
+export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
+export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
+export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
+export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;

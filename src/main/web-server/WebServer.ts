@@ -89,6 +89,13 @@ import type {
 	GetGitStatusCallback,
 	GetGitDiffCallback,
 	GroupData,
+	GetGroupChatsCallback,
+	StartGroupChatCallback,
+	GetGroupChatStateCallback,
+	StopGroupChatCallback,
+	SendGroupChatMessageCallback,
+	GroupChatMessage,
+	GroupChatState,
 } from './types';
 
 // Logger context for all web server logs
@@ -409,6 +416,26 @@ export class WebServer {
 		this.callbackRegistry.setGetGitDiffCallback(callback);
 	}
 
+	setGetGroupChatsCallback(callback: GetGroupChatsCallback): void {
+		this.callbackRegistry.setGetGroupChatsCallback(callback);
+	}
+
+	setStartGroupChatCallback(callback: StartGroupChatCallback): void {
+		this.callbackRegistry.setStartGroupChatCallback(callback);
+	}
+
+	setGetGroupChatStateCallback(callback: GetGroupChatStateCallback): void {
+		this.callbackRegistry.setGetGroupChatStateCallback(callback);
+	}
+
+	setStopGroupChatCallback(callback: StopGroupChatCallback): void {
+		this.callbackRegistry.setStopGroupChatCallback(callback);
+	}
+
+	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
+		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -601,6 +628,15 @@ export class WebServer {
 				this.callbackRegistry.getGitStatus(sessionId),
 			getGitDiff: async (sessionId: string, filePath?: string) =>
 				this.callbackRegistry.getGitDiff(sessionId, filePath),
+			getGroupChats: async () => this.callbackRegistry.getGroupChats(),
+			startGroupChat: async (topic: string, participantIds: string[]) =>
+				this.callbackRegistry.startGroupChat(topic, participantIds),
+			getGroupChatState: async (chatId: string) =>
+				this.callbackRegistry.getGroupChatState(chatId),
+			stopGroupChat: async (chatId: string) =>
+				this.callbackRegistry.stopGroupChat(chatId),
+			sendGroupChatMessage: async (chatId: string, message: string) =>
+				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 		});
 	}
 
@@ -674,6 +710,14 @@ export class WebServer {
 
 	broadcastUserInput(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): void {
 		this.broadcastService.broadcastUserInput(sessionId, command, inputMode);
+	}
+
+	broadcastGroupChatMessage(chatId: string, message: GroupChatMessage): void {
+		this.broadcastService.broadcastGroupChatMessage(chatId, message);
+	}
+
+	broadcastGroupChatStateChange(chatId: string, state: Partial<GroupChatState>): void {
+		this.broadcastService.broadcastGroupChatStateChange(chatId, state);
 	}
 
 	// ============ Server Lifecycle ============
