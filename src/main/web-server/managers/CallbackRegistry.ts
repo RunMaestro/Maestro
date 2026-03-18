@@ -63,6 +63,10 @@ import type {
 	GetCueActivityCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
+	GetUsageDashboardCallback,
+	GetAchievementsCallback,
+	UsageDashboardData,
+	AchievementData,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -119,6 +123,8 @@ export interface WebServerCallbacks {
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
+	getUsageDashboard: GetUsageDashboardCallback | null;
+	getAchievements: GetAchievementsCallback | null;
 }
 
 export class CallbackRegistry {
@@ -171,6 +177,8 @@ export class CallbackRegistry {
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
+		getUsageDashboard: null,
+		getAchievements: null,
 	};
 
 	// ============ Getter Methods ============
@@ -435,6 +443,18 @@ export class CallbackRegistry {
 		return this.callbacks.getCueActivity(sessionId, limit);
 	}
 
+	async getUsageDashboard(timeRange: 'day' | 'week' | 'month' | 'all'): Promise<UsageDashboardData> {
+		if (!this.callbacks.getUsageDashboard) {
+			return { totalTokensIn: 0, totalTokensOut: 0, totalCost: 0, sessionBreakdown: [], dailyUsage: [] };
+		}
+		return this.callbacks.getUsageDashboard(timeRange);
+	}
+
+	async getAchievements(): Promise<AchievementData[]> {
+		if (!this.callbacks.getAchievements) return [];
+		return this.callbacks.getAchievements();
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -633,6 +653,14 @@ export class CallbackRegistry {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbacks.getCueActivity = callback;
+	}
+
+	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
+		this.callbacks.getUsageDashboard = callback;
+	}
+
+	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
+		this.callbacks.getAchievements = callback;
 	}
 
 	// ============ Check Methods ============

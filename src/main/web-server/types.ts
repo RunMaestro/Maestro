@@ -577,3 +577,45 @@ export interface CueActivityEntry {
 export type GetCueSubscriptionsCallback = (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 export type ToggleCueSubscriptionCallback = (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 export type GetCueActivityCallback = (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
+
+// =============================================================================
+// Usage Dashboard Types
+// =============================================================================
+
+/** Usage dashboard aggregate data for web interface */
+export interface UsageDashboardData {
+	totalTokensIn: number;
+	totalTokensOut: number;
+	totalCost: number;
+	sessionBreakdown: Array<{
+		sessionId: string;
+		sessionName: string;
+		tokensIn: number;
+		tokensOut: number;
+		cost: number;
+	}>;
+	dailyUsage: Array<{
+		date: string;
+		tokensIn: number;
+		tokensOut: number;
+		cost: number;
+	}>;
+}
+
+/** Achievement data for web interface */
+export interface AchievementData {
+	id: string;
+	name: string;
+	description: string;
+	unlocked: boolean;
+	unlockedAt?: number;
+	progress?: number;
+	maxProgress?: number;
+}
+
+// =============================================================================
+// Usage Dashboard Callback Types
+// =============================================================================
+
+export type GetUsageDashboardCallback = (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
+export type GetAchievementsCallback = () => Promise<AchievementData[]>;

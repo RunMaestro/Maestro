@@ -32,7 +32,7 @@
 import path from 'path';
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
-import type { AutoRunDocument, AutoRunState, WebSettings, SettingValue, GroupData, GitStatusResult, GitDiffResult, GroupChatState, CueSubscriptionInfo, CueActivityEntry } from '../types';
+import type { AutoRunDocument, AutoRunState, WebSettings, SettingValue, GroupData, GitStatusResult, GitDiffResult, GroupChatState, CueSubscriptionInfo, CueActivityEntry, UsageDashboardData, AchievementData } from '../types';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -153,6 +153,8 @@ export interface MessageHandlerCallbacks {
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
+	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
+	getAchievements: () => Promise<AchievementData[]>;
 }
 
 /**
@@ -377,6 +379,14 @@ export class WebSocketMessageHandler {
 
 			case 'get_cue_activity':
 				this.handleGetCueActivity(client, message);
+				break;
+
+			case 'get_usage_dashboard':
+				this.handleGetUsageDashboard(client, message);
+				break;
+
+			case 'get_achievements':
+				this.handleGetAchievements(client, message);
 				break;
 
 			default:
@@ -2060,6 +2070,62 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to get Cue activity: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_usage_dashboard message - fetch usage analytics data
+	 */
+	private handleGetUsageDashboard(client: WebClient, message: WebClientMessage): void {
+		const timeRange = (message.timeRange as string) || 'week';
+		const validRanges = new Set(['day', 'week', 'month', 'all']);
+
+		if (!validRanges.has(timeRange)) {
+			this.sendError(client, 'Invalid timeRange. Must be one of: day, week, month, all');
+			return;
+		}
+
+		if (!this.callbacks.getUsageDashboard) {
+			this.sendError(client, 'Usage dashboard not available');
+			return;
+		}
+
+		this.callbacks
+			.getUsageDashboard(timeRange as 'day' | 'week' | 'month' | 'all')
+			.then((data) => {
+				this.send(client, {
+					type: 'usage_dashboard',
+					data,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get usage dashboard: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_achievements message - fetch achievement data
+	 */
+	private handleGetAchievements(client: WebClient, message: WebClientMessage): void {
+		if (!this.callbacks.getAchievements) {
+			this.sendError(client, 'Achievements not available');
+			return;
+		}
+
+		this.callbacks
+			.getAchievements()
+			.then((achievements) => {
+				this.send(client, {
+					type: 'achievements',
+					achievements,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get achievements: ${error.message}`);
 			});
 	}
 

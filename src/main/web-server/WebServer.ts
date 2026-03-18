@@ -104,6 +104,8 @@ import type {
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
+	GetUsageDashboardCallback,
+	GetAchievementsCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -468,6 +470,14 @@ export class WebServer {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
 	}
 
+	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
+		this.callbackRegistry.setGetUsageDashboardCallback(callback);
+	}
+
+	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
+		this.callbackRegistry.setGetAchievementsCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -669,6 +679,22 @@ export class WebServer {
 				this.callbackRegistry.stopGroupChat(chatId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
+			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
+				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
+			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
+				this.callbackRegistry.transferContext(sourceSessionId, targetSessionId),
+			summarizeContext: async (sessionId: string) =>
+				this.callbackRegistry.summarizeContext(sessionId),
+			getCueSubscriptions: async (sessionId?: string) =>
+				this.callbackRegistry.getCueSubscriptions(sessionId),
+			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
+				this.callbackRegistry.toggleCueSubscription(subscriptionId, enabled),
+			getCueActivity: async (sessionId?: string, limit?: number) =>
+				this.callbackRegistry.getCueActivity(sessionId, limit),
+			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
+				this.callbackRegistry.getUsageDashboard(timeRange),
+			getAchievements: async () =>
+				this.callbackRegistry.getAchievements(),
 		});
 	}
 
