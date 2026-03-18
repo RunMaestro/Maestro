@@ -17,6 +17,7 @@ import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -497,6 +498,11 @@ export class ChildProcessSpawner {
 					toolType,
 					error: String(error),
 				});
+				captureException(error, {
+					operation: 'child-process-error',
+					sessionId,
+					toolType,
+				});
 				this.exitHandler.handleError(sessionId, error);
 			});
 
@@ -564,6 +570,12 @@ export class ChildProcessSpawner {
 		} catch (error) {
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
+			});
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				operation: 'child-process-spawn',
+				sessionId,
+				toolType,
+				command,
 			});
 			return { pid: -1, success: false };
 		}
