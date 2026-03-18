@@ -36,6 +36,8 @@ import type {
 	GroupData,
 	GroupChatMessage,
 	GroupChatState,
+	CueActivityEntry,
+	CueSubscriptionInfo,
 } from '../types';
 
 // Re-export types for backwards compatibility
@@ -421,6 +423,28 @@ export class BroadcastService {
 			sessionId,
 			operation,
 			success,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast a Cue activity event to all connected web clients
+	 */
+	broadcastCueActivity(entry: CueActivityEntry): void {
+		this.broadcastToAll({
+			type: 'cue_activity_event',
+			entry,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Broadcast Cue subscriptions changed to all connected web clients
+	 */
+	broadcastCueSubscriptionsChanged(subscriptions: CueSubscriptionInfo[]): void {
+		this.broadcastToAll({
+			type: 'cue_subscriptions_changed',
+			subscriptions,
 			timestamp: Date.now(),
 		});
 	}

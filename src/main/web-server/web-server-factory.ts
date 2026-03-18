@@ -1415,6 +1415,122 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// ============ Cue Automation Callbacks ============
+
+		// Get Cue subscriptions — uses IPC request-response pattern
+		server.setGetCueSubscriptionsCallback(async (sessionId?: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for getCueSubscriptions', 'WebServer');
+				return [];
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:getCueSubscriptions:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result ?? []);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for getCueSubscriptions', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve([]);
+					return;
+				}
+				mainWindow.webContents.send('remote:getCueSubscriptions', sessionId, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn('getCueSubscriptions callback timed out', 'WebServer');
+					resolve([]);
+				}, 30000);
+			});
+		});
+
+		// Toggle Cue subscription — uses IPC request-response pattern
+		server.setToggleCueSubscriptionCallback(async (subscriptionId: string, enabled: boolean) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for toggleCueSubscription', 'WebServer');
+				return false;
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:toggleCueSubscription:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result ?? false);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for toggleCueSubscription', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(false);
+					return;
+				}
+				mainWindow.webContents.send('remote:toggleCueSubscription', subscriptionId, enabled, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`toggleCueSubscription callback timed out for ${subscriptionId}`, 'WebServer');
+					resolve(false);
+				}, 10000);
+			});
+		});
+
+		// Get Cue activity log — uses IPC request-response pattern
+		server.setGetCueActivityCallback(async (sessionId?: string, limit?: number) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for getCueActivity', 'WebServer');
+				return [];
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:getCueActivity:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result ?? []);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for getCueActivity', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve([]);
+					return;
+				}
+				mainWindow.webContents.send('remote:getCueActivity', sessionId, limit ?? 50, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn('getCueActivity callback timed out', 'WebServer');
+					resolve([]);
+				}, 30000);
+			});
+		});
+
 		return server;
 	};
 }

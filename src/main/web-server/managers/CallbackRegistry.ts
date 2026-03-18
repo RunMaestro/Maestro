@@ -58,6 +58,11 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	GetCueSubscriptionsCallback,
+	ToggleCueSubscriptionCallback,
+	GetCueActivityCallback,
+	CueSubscriptionInfo,
+	CueActivityEntry,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -111,6 +116,9 @@ export interface WebServerCallbacks {
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
+	getCueSubscriptions: GetCueSubscriptionsCallback | null;
+	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
+	getCueActivity: GetCueActivityCallback | null;
 }
 
 export class CallbackRegistry {
@@ -160,6 +168,9 @@ export class CallbackRegistry {
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
+		getCueSubscriptions: null,
+		toggleCueSubscription: null,
+		getCueActivity: null,
 	};
 
 	// ============ Getter Methods ============
@@ -409,6 +420,21 @@ export class CallbackRegistry {
 		return this.callbacks.summarizeContext(sessionId);
 	}
 
+	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
+		if (!this.callbacks.getCueSubscriptions) return [];
+		return this.callbacks.getCueSubscriptions(sessionId);
+	}
+
+	async toggleCueSubscription(subscriptionId: string, enabled: boolean): Promise<boolean> {
+		if (!this.callbacks.toggleCueSubscription) return false;
+		return this.callbacks.toggleCueSubscription(subscriptionId, enabled);
+	}
+
+	async getCueActivity(sessionId?: string, limit?: number): Promise<CueActivityEntry[]> {
+		if (!this.callbacks.getCueActivity) return [];
+		return this.callbacks.getCueActivity(sessionId, limit);
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -595,6 +621,18 @@ export class CallbackRegistry {
 
 	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
 		this.callbacks.summarizeContext = callback;
+	}
+
+	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
+		this.callbacks.getCueSubscriptions = callback;
+	}
+
+	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
+		this.callbacks.toggleCueSubscription = callback;
+	}
+
+	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
+		this.callbacks.getCueActivity = callback;
 	}
 
 	// ============ Check Methods ============

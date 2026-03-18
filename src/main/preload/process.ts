@@ -959,6 +959,63 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote get Cue subscriptions from web interface
+		 */
+		onRemoteGetCueSubscriptions: (
+			callback: (sessionId: string | undefined, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string | undefined, responseChannel: string) =>
+				callback(sessionId, responseChannel);
+			ipcRenderer.on('remote:getCueSubscriptions', handler);
+			return () => ipcRenderer.removeListener('remote:getCueSubscriptions', handler);
+		},
+
+		/**
+		 * Send response for remote get Cue subscriptions
+		 */
+		sendRemoteGetCueSubscriptionsResponse: (responseChannel: string, result: unknown): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to remote toggle Cue subscription from web interface
+		 */
+		onRemoteToggleCueSubscription: (
+			callback: (subscriptionId: string, enabled: boolean, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, subscriptionId: string, enabled: boolean, responseChannel: string) =>
+				callback(subscriptionId, enabled, responseChannel);
+			ipcRenderer.on('remote:toggleCueSubscription', handler);
+			return () => ipcRenderer.removeListener('remote:toggleCueSubscription', handler);
+		},
+
+		/**
+		 * Send response for remote toggle Cue subscription
+		 */
+		sendRemoteToggleCueSubscriptionResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote get Cue activity from web interface
+		 */
+		onRemoteGetCueActivity: (
+			callback: (sessionId: string | undefined, limit: number, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string | undefined, limit: number, responseChannel: string) =>
+				callback(sessionId, limit, responseChannel);
+			ipcRenderer.on('remote:getCueActivity', handler);
+			return () => ipcRenderer.removeListener('remote:getCueActivity', handler);
+		},
+
+		/**
+		 * Send response for remote get Cue activity
+		 */
+		sendRemoteGetCueActivityResponse: (responseChannel: string, result: unknown): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {

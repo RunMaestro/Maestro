@@ -99,6 +99,11 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	GetCueSubscriptionsCallback,
+	ToggleCueSubscriptionCallback,
+	GetCueActivityCallback,
+	CueActivityEntry,
+	CueSubscriptionInfo,
 } from './types';
 
 // Logger context for all web server logs
@@ -451,6 +456,18 @@ export class WebServer {
 		this.callbackRegistry.setSummarizeContextCallback(callback);
 	}
 
+	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {
+		this.callbackRegistry.setGetCueSubscriptionsCallback(callback);
+	}
+
+	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
+		this.callbackRegistry.setToggleCueSubscriptionCallback(callback);
+	}
+
+	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
+		this.callbackRegistry.setGetCueActivityCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -741,6 +758,14 @@ export class WebServer {
 
 	broadcastContextOperationComplete(sessionId: string, operation: string, success: boolean): void {
 		this.broadcastService.broadcastContextOperationComplete(sessionId, operation, success);
+	}
+
+	broadcastCueActivity(entry: CueActivityEntry): void {
+		this.broadcastService.broadcastCueActivity(entry);
+	}
+
+	broadcastCueSubscriptionsChanged(subscriptions: CueSubscriptionInfo[]): void {
+		this.broadcastService.broadcastCueSubscriptionsChanged(subscriptions);
 	}
 
 	// ============ Server Lifecycle ============

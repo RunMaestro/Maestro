@@ -538,3 +538,42 @@ export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 export type MergeContextCallback = (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 export type TransferContextCallback = (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
+
+// =============================================================================
+// Cue Automation Types
+// =============================================================================
+
+/** Web-specific Cue subscription metadata (simplified from engine types) */
+export interface CueSubscriptionInfo {
+	id: string;
+	name: string;
+	eventType: string;
+	pattern?: string;
+	schedule?: string;
+	sessionId: string;
+	sessionName: string;
+	enabled: boolean;
+	lastTriggered?: number;
+	triggerCount: number;
+}
+
+/** Web-specific Cue activity log entry (simplified from engine types) */
+export interface CueActivityEntry {
+	id: string;
+	subscriptionId: string;
+	subscriptionName: string;
+	eventType: string;
+	sessionId: string;
+	timestamp: number;
+	status: 'triggered' | 'running' | 'completed' | 'failed';
+	result?: string;
+	duration?: number;
+}
+
+// =============================================================================
+// Cue Automation Callback Types
+// =============================================================================
+
+export type GetCueSubscriptionsCallback = (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
+export type ToggleCueSubscriptionCallback = (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+export type GetCueActivityCallback = (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;

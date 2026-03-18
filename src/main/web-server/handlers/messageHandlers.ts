@@ -364,6 +364,18 @@ export class WebSocketMessageHandler {
 				this.handleSummarizeContext(client, message);
 				break;
 
+			case 'get_cue_subscriptions':
+				this.handleGetCueSubscriptions(client, message);
+				break;
+
+			case 'toggle_cue_subscription':
+				this.handleToggleCueSubscription(client, message);
+				break;
+
+			case 'get_cue_activity':
+				this.handleGetCueActivity(client, message);
+				break;
+
 			default:
 				this.handleUnknown(client, message);
 		}
@@ -1953,6 +1965,83 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to summarize context: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_cue_subscriptions message - fetch Cue subscriptions
+	 */
+	private handleGetCueSubscriptions(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string | undefined;
+
+		this.callbacks
+			.getCueSubscriptions(sessionId)
+			.then((subscriptions) => {
+				this.send(client, {
+					type: 'cue_subscriptions',
+					subscriptions,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get Cue subscriptions: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle toggle_cue_subscription message - enable/disable a subscription
+	 */
+	private handleToggleCueSubscription(client: WebClient, message: WebClientMessage): void {
+		const subscriptionId = message.subscriptionId as string;
+		const enabled = message.enabled as boolean;
+
+		if (!subscriptionId) {
+			this.sendError(client, 'Missing subscriptionId');
+			return;
+		}
+
+		if (typeof enabled !== 'boolean') {
+			this.sendError(client, 'Missing or invalid enabled flag');
+			return;
+		}
+
+		this.callbacks
+			.toggleCueSubscription(subscriptionId, enabled)
+			.then((success) => {
+				this.send(client, {
+					type: 'toggle_cue_subscription_result',
+					success,
+					subscriptionId,
+					enabled,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to toggle Cue subscription: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle get_cue_activity message - fetch Cue activity log
+	 */
+	private handleGetCueActivity(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string | undefined;
+		const limit = (message.limit as number) ?? 50;
+
+		this.callbacks
+			.getCueActivity(sessionId, limit)
+			.then((entries) => {
+				this.send(client, {
+					type: 'cue_activity',
+					entries,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to get Cue activity: ${error.message}`);
 			});
 	}
 
