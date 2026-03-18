@@ -13,6 +13,7 @@ import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -247,16 +248,45 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// Spawn the process
 						// When using SSH with stdin, pass the flag so ChildProcessSpawner
 						// sends the prompt via stdin instead of command line args
-						void processManager.spawn({
-							sessionId,
-							toolType: config.agentType,
-							cwd,
-							command,
-							args: finalArgs,
-							prompt: fullPrompt,
-							customEnvVars,
-							sendPromptViaStdin: shouldSendPromptViaStdin,
-						});
+						Promise.resolve()
+							.then(() =>
+								processManager.spawn({
+									sessionId,
+									toolType: config.agentType,
+									cwd,
+									command,
+									args: finalArgs,
+									prompt: fullPrompt,
+									customEnvVars,
+									sendPromptViaStdin: shouldSendPromptViaStdin,
+								})
+							)
+							.catch((error) => {
+								clearTimeout(timeoutId);
+								processManager.off('data', onData);
+								processManager.off('exit', onExit);
+
+								if (resolved) return;
+								resolved = true;
+
+								logger.error('Tab naming process failed to spawn', LOG_CONTEXT, {
+									sessionId,
+									error: String(error),
+								});
+								void captureException(error, {
+									operation: 'tabNaming:spawn',
+									sessionId,
+									agentType: config.agentType,
+								});
+
+								try {
+									processManager.kill(sessionId);
+								} catch {
+									// Ignore cleanup errors
+								}
+
+								resolve(null);
+							});
 					});
 				} catch (error) {
 					logger.error('Tab naming request failed', LOG_CONTEXT, {

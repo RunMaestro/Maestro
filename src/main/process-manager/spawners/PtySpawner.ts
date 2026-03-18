@@ -21,7 +21,7 @@ export class PtySpawner {
 	/**
 	 * Spawn a PTY process for a session
 	 */
-	async spawn(config: ProcessConfig): Promise<SpawnResult> {
+	spawn(config: ProcessConfig): SpawnResult {
 		const {
 			sessionId,
 			toolType,

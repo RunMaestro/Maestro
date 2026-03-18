@@ -1282,9 +1282,9 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(bySourceCall).toBeDefined();
 		});
 
-		it('should pre-group queryEvents by time bucket for byAgent to align compound index usage', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
+			it('should aggregate byAgent directly from query_events without time-bucket pre-grouping', async () => {
+				mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+				mockStatement.all.mockReturnValue([]);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1293,14 +1293,15 @@ describe('Aggregation queries return correct calculations', () => {
 			db.getAggregatedStats('year');
 
 			const prepareCalls = mockDb.prepare.mock.calls;
-			const byAgentCall = prepareCalls.find(
-				(call) =>
-					(call[0] as string).includes('GROUP BY start_time, agent_type') &&
-					(call[0] as string).includes('FROM query_events')
-			);
+				const byAgentCall = prepareCalls.find(
+					(call) =>
+						(call[0] as string).includes('GROUP BY agent_type') &&
+						(call[0] as string).includes('FROM query_events') &&
+						!(call[0] as string).includes('GROUP BY start_time, agent_type')
+				);
 
-			expect(byAgentCall).toBeDefined();
-		});
+				expect(byAgentCall).toBeDefined();
+			});
 
 		it('should use date() function for daily grouping', async () => {
 			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });

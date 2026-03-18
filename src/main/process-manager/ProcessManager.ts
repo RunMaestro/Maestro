@@ -50,7 +50,7 @@ export class ProcessManager extends EventEmitter {
 		const usePty = this.shouldUsePty(config);
 
 		if (usePty) {
-			return this.ptySpawner.spawn(config);
+			return Promise.resolve(this.ptySpawner.spawn(config));
 		}
 
 		return this.childProcessSpawner.spawn(config);

@@ -41,18 +41,11 @@ function queryByAgent(
 	const rows = db
 		.prepare(
 			`
-      SELECT agent_type, SUM(query_count) as count, SUM(query_duration) as duration
-      FROM (
-        SELECT start_time,
-               agent_type,
-               COUNT(*) as query_count,
-               SUM(duration) as query_duration
-        FROM query_events
-        WHERE start_time >= ?
-        GROUP BY start_time, agent_type
-      ) AS by_time
-      GROUP BY agent_type
-    `
+	      SELECT agent_type, COUNT(*) as count, SUM(duration) as duration
+	      FROM query_events
+	      WHERE start_time >= ?
+	      GROUP BY agent_type
+	    `
 		)
 		.all(startTime) as Array<{ agent_type: string; count: number; duration: number }>;
 
@@ -69,17 +62,11 @@ function queryBySource(db: Database.Database, startTime: number): { user: number
 	const rows = db
 		.prepare(
 			`
-      SELECT source, SUM(query_count) as count
-      FROM (
-        SELECT start_time,
-               source,
-               COUNT(*) as query_count
-        FROM query_events
-        WHERE start_time >= ?
-        GROUP BY start_time, source
-      ) AS by_time
-      GROUP BY source
-    `
+	      SELECT source, COUNT(*) as count
+	      FROM query_events
+	      WHERE start_time >= ?
+	      GROUP BY source
+	    `
 		)
 		.all(startTime) as Array<{ source: 'user' | 'auto'; count: number }>;
 

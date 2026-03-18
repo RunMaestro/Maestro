@@ -10,6 +10,7 @@ import { ipcMain } from 'electron';
 import { registerTabNamingHandlers } from '../../../../main/ipc/handlers/tabNaming';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
+import { logger } from '../../../../main/utils/logger';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -356,8 +357,8 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBeNull();
 		});
 
-		it('returns null on timeout', async () => {
-			vi.useFakeTimers();
+			it('returns null on timeout', async () => {
+				vi.useFakeTimers();
 
 			mockProcessManager.on.mockImplementation(() => {});
 
@@ -378,11 +379,33 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBeNull();
 			expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
 
-			vi.useRealTimers();
-		});
+				vi.useRealTimers();
+			});
 
-		it('cleans up listeners on completion', async () => {
-			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			it('returns null and reports the error when spawn rejects', async () => {
+				mockProcessManager.on.mockImplementation(() => {});
+				mockProcessManager.spawn.mockRejectedValue(new Error('spawn failed'));
+
+				const result = await invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Help me with something',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+				});
+
+				expect(result).toBeNull();
+				expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
+				expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+					'Tab naming process failed to spawn',
+					expect.any(String),
+					expect.objectContaining({
+						sessionId: 'tab-naming-mock-uuid-1234',
+						error: expect.stringContaining('spawn failed'),
+					})
+				);
+			});
+
+			it('cleans up listeners on completion', async () => {
+				let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
 			mockProcessManager.on.mockImplementation(

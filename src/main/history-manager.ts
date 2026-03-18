@@ -41,6 +41,7 @@ export class HistoryManager {
 	private migrationMarkerPath: string;
 	private configDir: string;
 	private watcher: fs.FSWatcher | null = null;
+	private sessionWriteQueues = new Map<string, Promise<void>>();
 
 	constructor() {
 		this.configDir = app.getPath('userData');
@@ -196,76 +197,80 @@ export class HistoryManager {
 	 * Add an entry to a session's history
 	 */
 	async addEntry(sessionId: string, projectPath: string, entry: HistoryEntry): Promise<void> {
-		const filePath = this.getSessionFilePath(sessionId);
-		let data: HistoryFileData;
+		return this.withSessionWriteLock(sessionId, async () => {
+			const filePath = this.getSessionFilePath(sessionId);
+			let data: HistoryFileData;
 
-		try {
-			await fs.promises.access(filePath);
 			try {
-				const raw = await fs.promises.readFile(filePath, 'utf-8');
-				data = JSON.parse(raw);
+				await fs.promises.access(filePath);
+				try {
+					const raw = await fs.promises.readFile(filePath, 'utf-8');
+					data = JSON.parse(raw);
+				} catch {
+					data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
+				}
 			} catch {
 				data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 			}
-		} catch {
-			data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
-		}
 
-		// Add to beginning (most recent first)
-		data.entries.unshift(entry);
+			// Add to beginning (most recent first)
+			data.entries.unshift(entry);
 
-		// Trim to max entries
-		if (data.entries.length > MAX_ENTRIES_PER_SESSION) {
-			data.entries = data.entries.slice(0, MAX_ENTRIES_PER_SESSION);
-		}
+			// Trim to max entries
+			if (data.entries.length > MAX_ENTRIES_PER_SESSION) {
+				data.entries = data.entries.slice(0, MAX_ENTRIES_PER_SESSION);
+			}
 
-		// Update projectPath if it changed
-		data.projectPath = projectPath;
+			// Update projectPath if it changed
+			data.projectPath = projectPath;
 
-		try {
-			await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-			logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
-		} catch (error) {
-			logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
-			captureException(error, { operation: 'history:write', sessionId });
-		}
+			try {
+				await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+				logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
+			} catch (error) {
+				logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+				captureException(error, { operation: 'history:write', sessionId });
+			}
+		});
 	}
 
 	/**
 	 * Delete a specific entry from a session's history
 	 */
 	async deleteEntry(sessionId: string, entryId: string): Promise<boolean> {
-		const filePath = this.getSessionFilePath(sessionId);
-		try {
-			await fs.promises.access(filePath);
-		} catch {
-			return false;
-		}
-
-		try {
-			const raw = await fs.promises.readFile(filePath, 'utf-8');
-			const data: HistoryFileData = JSON.parse(raw);
-			const originalLength = data.entries.length;
-			data.entries = data.entries.filter((e) => e.id !== entryId);
-
-			if (data.entries.length === originalLength) {
-				return false; // Entry not found
+		return this.withSessionWriteLock(sessionId, async () => {
+			const filePath = this.getSessionFilePath(sessionId);
+			try {
+				await fs.promises.access(filePath);
+			} catch {
+				return false;
 			}
 
 			try {
-				await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-				return true;
-			} catch (writeError) {
-				logger.error(
-					`Failed to write history after delete for session ${sessionId}: ${writeError}`,
-					LOG_CONTEXT
-				);
-				captureException(writeError, { operation: 'history:deleteWrite', sessionId, entryId });
+				const raw = await fs.promises.readFile(filePath, 'utf-8');
+				const data: HistoryFileData = JSON.parse(raw);
+				const originalLength = data.entries.length;
+				data.entries = data.entries.filter((e) => e.id !== entryId);
+
+				if (data.entries.length === originalLength) {
+					return false; // Entry not found
+				}
+
+				try {
+					await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+					return true;
+				} catch (writeError) {
+					logger.error(
+						`Failed to write history after delete for session ${sessionId}: ${writeError}`,
+						LOG_CONTEXT
+					);
+					captureException(writeError, { operation: 'history:deleteWrite', sessionId, entryId });
+					return false;
+				}
+			} catch {
 				return false;
 			}
-		} catch {
-			return false;
-		}
+		});
 	}
 
 	/**
@@ -276,36 +281,56 @@ export class HistoryManager {
 		entryId: string,
 		updates: Partial<HistoryEntry>
 	): Promise<boolean> {
-		const filePath = this.getSessionFilePath(sessionId);
-		try {
-			await fs.promises.access(filePath);
-		} catch {
-			return false;
-		}
-
-		try {
-			const raw = await fs.promises.readFile(filePath, 'utf-8');
-			const data: HistoryFileData = JSON.parse(raw);
-			const index = data.entries.findIndex((e) => e.id === entryId);
-
-			if (index === -1) {
-				return false;
-			}
-
-			data.entries[index] = { ...data.entries[index], ...updates };
+		return this.withSessionWriteLock(sessionId, async () => {
+			const filePath = this.getSessionFilePath(sessionId);
 			try {
-				await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
-				return true;
-			} catch (writeError) {
-				logger.error(
-					`Failed to write history after update for session ${sessionId}: ${writeError}`,
-					LOG_CONTEXT
-				);
-				captureException(writeError, { operation: 'history:updateWrite', sessionId, entryId });
+				await fs.promises.access(filePath);
+			} catch {
 				return false;
 			}
-		} catch {
-			return false;
+
+			try {
+				const raw = await fs.promises.readFile(filePath, 'utf-8');
+				const data: HistoryFileData = JSON.parse(raw);
+				const index = data.entries.findIndex((e) => e.id === entryId);
+
+				if (index === -1) {
+					return false;
+				}
+
+				data.entries[index] = { ...data.entries[index], ...updates };
+				try {
+					await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+					return true;
+				} catch (writeError) {
+					logger.error(
+						`Failed to write history after update for session ${sessionId}: ${writeError}`,
+						LOG_CONTEXT
+					);
+					captureException(writeError, { operation: 'history:updateWrite', sessionId, entryId });
+					return false;
+				}
+			} catch {
+				return false;
+			}
+		});
+	}
+
+	private async withSessionWriteLock<T>(
+		sessionId: string,
+		operation: () => Promise<T>
+	): Promise<T> {
+		const previous = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
+		const run = previous.then(operation, operation);
+		const tail = run.then(() => undefined, () => undefined);
+		this.sessionWriteQueues.set(sessionId, tail);
+
+		try {
+			return await run;
+		} finally {
+			if (this.sessionWriteQueues.get(sessionId) === tail) {
+				this.sessionWriteQueues.delete(sessionId);
+			}
 		}
 	}
 
