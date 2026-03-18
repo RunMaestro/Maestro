@@ -322,7 +322,10 @@ export class HistoryManager {
 	): Promise<T> {
 		const previous = this.sessionWriteQueues.get(sessionId) ?? Promise.resolve();
 		const run = previous.then(operation, operation);
-		const tail = run.then(() => undefined, () => undefined);
+		const tail = run.then(
+			() => undefined,
+			() => undefined
+		);
 		this.sessionWriteQueues.set(sessionId, tail);
 
 		try {
