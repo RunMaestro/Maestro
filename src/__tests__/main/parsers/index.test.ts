@@ -9,6 +9,7 @@ import {
 	ClaudeOutputParser,
 	OpenCodeOutputParser,
 	CodexOutputParser,
+	CursorOutputParser,
 } from '../../../main/parsers';
 
 describe('parsers/index', () => {
@@ -49,21 +50,29 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('factory-droid')).toBe(true);
 		});
 
-		it('should register exactly 4 parsers', () => {
+		it('should register Cursor parser', () => {
+			expect(hasOutputParser('cursor')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('cursor')).toBe(true);
+		});
+
+		it('should register exactly 5 parsers', () => {
 			initializeOutputParsers();
 
 			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(4); // Claude, OpenCode, Codex, Factory Droid
+			expect(parsers.length).toBe(5); // Claude, OpenCode, Codex, Cursor, Factory Droid
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 
-			// Second initialization should still have exactly 4
+			// Second initialization should still have exactly 5
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 	});
 
@@ -73,7 +82,7 @@ describe('parsers/index', () => {
 
 			ensureParsersInitialized();
 
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers().length).toBe(5);
 		});
 
 		it('should be idempotent after first call', () => {
@@ -136,6 +145,11 @@ describe('parsers/index', () => {
 			const parser = new CodexOutputParser();
 			expect(parser.agentId).toBe('codex');
 		});
+
+		it('should export CursorOutputParser class', () => {
+			const parser = new CursorOutputParser();
+			expect(parser.agentId).toBe('cursor');
+		});
 	});
 
 	describe('integration', () => {
@@ -176,6 +190,18 @@ describe('parsers/index', () => {
 
 			expect(event?.type).toBe('init');
 			expect(event?.sessionId).toBe('cdx-456');
+		});
+
+		it('should correctly parse Cursor output after initialization', () => {
+			initializeOutputParsers();
+
+			const parser = getOutputParser('cursor');
+			const event = parser?.parseJsonLine(
+				JSON.stringify({ type: 'system', subtype: 'init', model: 'gpt-5.2' })
+			);
+
+			expect(event?.type).toBe('init');
+			expect(event?.text).toBe('Model: gpt-5.2');
 		});
 	});
 });

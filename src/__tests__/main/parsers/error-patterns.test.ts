@@ -21,6 +21,7 @@ import {
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
 const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
 const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
+const CURSOR_ERROR_PATTERNS = getErrorPatterns('cursor');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -563,6 +564,130 @@ describe('error-patterns', () => {
 		});
 	});
 
+	describe('CURSOR_ERROR_PATTERNS', () => {
+		it('should define auth_expired patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.auth_expired).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.auth_expired?.length).toBeGreaterThan(0);
+		});
+
+		it('should define token_exhaustion patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.token_exhaustion).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.token_exhaustion?.length).toBeGreaterThan(0);
+		});
+
+		it('should define rate_limited patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.rate_limited).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.rate_limited?.length).toBeGreaterThan(0);
+		});
+
+		it('should define network_error patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.network_error).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.network_error?.length).toBeGreaterThan(0);
+		});
+
+		it('should define permission_denied patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.permission_denied).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.permission_denied?.length).toBeGreaterThan(0);
+		});
+
+		it('should define agent_crashed patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.agent_crashed).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.agent_crashed?.length).toBeGreaterThan(0);
+		});
+
+		it('should define session_not_found patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.session_not_found).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.session_not_found?.length).toBeGreaterThan(0);
+		});
+
+		describe('auth_expired patterns', () => {
+			it('should match "invalid api key"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'invalid api key');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+
+			it('should match "CURSOR_API_KEY"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'CURSOR_API_KEY is not set');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+
+			it('should match "not authenticated"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'not authenticated');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+
+			it('should match "unauthorized"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'unauthorized');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+		});
+
+		describe('rate_limited patterns', () => {
+			it('should match "rate limit"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'rate limit exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+
+			it('should match "429"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'Error 429: Rate limited');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+
+			it('should match "usage limit"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'usage limit reached');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+		});
+
+		describe('token_exhaustion patterns', () => {
+			it('should match "context length"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'context length exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+
+			it('should match "prompt too long"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'prompt is too long');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+
+			it('should match "context window"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'context window exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+		});
+
+		describe('session_not_found patterns', () => {
+			it('should match "conversation not found"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'conversation not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+
+			it('should match "session not found"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+		});
+	});
+
+	describe('getErrorPatterns - cursor', () => {
+		it('should return cursor patterns', () => {
+			const patterns = getErrorPatterns('cursor');
+			expect(patterns).toBe(CURSOR_ERROR_PATTERNS);
+		});
+	});
+
 	describe('SSH_ERROR_PATTERNS', () => {
 		it('should define permission_denied patterns', () => {
 			expect(SSH_ERROR_PATTERNS.permission_denied).toBeDefined();
@@ -827,6 +952,7 @@ describe('error-patterns', () => {
 			registerErrorPatterns('claude-code', CLAUDE_ERROR_PATTERNS);
 			registerErrorPatterns('opencode', OPENCODE_ERROR_PATTERNS);
 			registerErrorPatterns('codex', CODEX_ERROR_PATTERNS);
+			registerErrorPatterns('cursor', CURSOR_ERROR_PATTERNS);
 		});
 
 		it('should register custom patterns', () => {
