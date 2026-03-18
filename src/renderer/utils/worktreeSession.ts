@@ -33,6 +33,27 @@ export interface BuildWorktreeSessionParams {
 	worktreeParentPath?: string;
 }
 
+/** Normalize path separators to forward slashes for comparison. */
+const normSep = (p: string) => p.replace(/\\/g, '/');
+
+/**
+ * Check whether `filePath` is located under (or equal to) `root` (platform-aware).
+ * Windows paths use case-insensitive comparison; Unix paths are case-sensitive.
+ */
+export function isPathUnderRoot(filePath: string, root: string): boolean {
+	const normalizedFile = normSep(filePath);
+	const normalizedRoot = normSep(root);
+	const prefix = normalizedRoot.endsWith('/') ? normalizedRoot : normalizedRoot + '/';
+	const isWin = /^[A-Za-z]:/.test(filePath);
+	if (isWin) {
+		return (
+			normalizedFile.toLowerCase() === normalizedRoot.toLowerCase() ||
+			normalizedFile.toLowerCase().startsWith(prefix.toLowerCase())
+		);
+	}
+	return normalizedFile === normalizedRoot || normalizedFile.startsWith(prefix);
+}
+
 /**
  * Resolves the Auto Run folder path for a worktree session.
  *
@@ -47,28 +68,15 @@ function resolveWorktreeAutoRunPath(
 ): string | undefined {
 	if (!parentAutoRunPath) return undefined;
 
-	// Normalize to forward slashes for comparison
-	const norm = (p: string) => p.replace(/\\/g, '/');
-	const normalized = norm(parentAutoRunPath);
-
 	// Check if the path is absolute (Unix / or Windows drive letter)
 	const isAbsolute = /^\/|^[A-Za-z]:[/\\]/.test(parentAutoRunPath);
 	if (!isAbsolute) return parentAutoRunPath;
 
-	// Check if the absolute path is under the parent's cwd
-	// Use case-insensitive comparison for Windows (drive letters, directory names)
-	const normalizedParentCwd = norm(parentCwd);
-	const prefix = normalizedParentCwd.endsWith('/')
-		? normalizedParentCwd
-		: normalizedParentCwd + '/';
-
-	const normalizedLower = normalized.toLowerCase();
-	const parentCwdLower = normalizedParentCwd.toLowerCase();
-	const prefixLower = prefix.toLowerCase();
-
-	if (normalizedLower === parentCwdLower || normalizedLower.startsWith(prefixLower)) {
+	if (isPathUnderRoot(parentAutoRunPath, parentCwd)) {
+		const normalizedParentCwd = normSep(parentCwd);
+		const normalized = normSep(parentAutoRunPath);
 		const relativePart = normalized.slice(normalizedParentCwd.length);
-		const result = norm(worktreeCwd) + relativePart;
+		const result = normSep(worktreeCwd) + relativePart;
 		// Preserve original separator style
 		return parentAutoRunPath.includes('\\') ? result.replace(/\//g, '\\') : result;
 	}
