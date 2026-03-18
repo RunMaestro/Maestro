@@ -77,7 +77,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				securityToken = randomUUID();
 				try {
 					settingsStore.set('webAuthToken', securityToken);
-				} catch (e) {
+				} catch {
 					// Persist failure is non-fatal — server starts with an ephemeral token
 					logger.warn(
 						'Failed to persist new webAuthToken, URL will not survive restart',
