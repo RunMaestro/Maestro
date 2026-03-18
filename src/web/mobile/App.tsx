@@ -12,6 +12,7 @@ import {
 	type CustomCommand,
 	type AutoRunState,
 	type AITabData,
+	type GroupData,
 } from '../hooks/useWebSocket';
 // Command history is no longer used in the mobile UI
 import { useNotifications } from '../hooks/useNotifications';
@@ -28,7 +29,9 @@ import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
 import { SessionPillBar } from './SessionPillBar';
 import { AllSessionsView } from './AllSessionsView';
-import { MobileHistoryPanel } from './MobileHistoryPanel';
+import { RightDrawer, type RightDrawerTab } from './RightDrawer';
+import { useGitStatus } from '../hooks/useGitStatus';
+import { GitDiffViewer } from './GitDiffViewer';
 import { CommandInputBar, type InputMode } from './CommandInputBar';
 import { DEFAULT_SLASH_COMMANDS, type SlashCommand } from './SlashCommandAutocomplete';
 // CommandHistoryDrawer and RecentCommandChips removed for simpler mobile UI
@@ -41,8 +44,10 @@ import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
 import { AutoRunSetupSheet } from './AutoRunSetupSheet';
 import { NotificationSettingsSheet } from './NotificationSettingsSheet';
 import { SettingsPanel } from './SettingsPanel';
+import { AgentCreationSheet } from './AgentCreationSheet';
 import { useAutoRun, type LaunchConfig } from '../hooks/useAutoRun';
 import { useSettings, type WebSettings } from '../hooks/useSettings';
+import { useAgentManagement } from '../hooks/useAgentManagement';
 import { TabBar } from './TabBar';
 import { TabSearchModal } from './TabSearchModal';
 import type { Session, LastResponsePreview } from '../hooks/useSessions';
@@ -463,7 +468,8 @@ export default function MobileApp() {
 
 	// UI state (not part of session management)
 	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
-	const [showHistoryPanel, setShowHistoryPanel] = useState(savedState.showHistoryPanel);
+	const [showRightDrawer, setShowRightDrawer] = useState(false);
+	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [commandInput, setCommandInput] = useState('');
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
@@ -488,12 +494,18 @@ export default function MobileApp() {
 	// Settings panel state
 	const [showSettingsPanel, setShowSettingsPanel] = useState(false);
 
-	// History panel state (persisted)
-	const [historyFilter, setHistoryFilter] = useState<'all' | 'AUTO' | 'USER'>(
+	// Agent creation sheet state
+	const [showAgentCreation, setShowAgentCreation] = useState(false);
+
+	// Git diff viewer state
+	const [gitDiffFile, setGitDiffFile] = useState<string | null>(null);
+
+	// History panel state (persisted — used by right drawer's history tab)
+	const [historyFilter] = useState<'all' | 'AUTO' | 'USER'>(
 		savedState.historyFilter
 	);
-	const [historySearchQuery, setHistorySearchQuery] = useState(savedState.historySearchQuery);
-	const [historySearchOpen, setHistorySearchOpen] = useState(savedState.historySearchOpen);
+	const [historySearchQuery] = useState(savedState.historySearchQuery);
+	const [historySearchOpen] = useState(savedState.historySearchOpen);
 
 	// Notification permission hook - requests permission on first visit
 	const { permission: notificationPermission, showNotification, handleNotificationEvent, preferences: notificationPreferences, setPreferences: setNotificationPreferences } = useNotifications({
@@ -526,10 +538,13 @@ export default function MobileApp() {
 	// Ref for settings changed handler (bridges useWebSocket → useSettings ordering)
 	const settingsChangedRef = useRef<((settings: WebSettings) => void) | null>(null);
 
+	// Ref for groups changed handler (bridges useWebSocket → useAgentManagement ordering)
+	const groupsChangedRef = useRef<((groups: GroupData[]) => void) | null>(null);
+
 	// Save view state when overlays change (using hook's persistence function)
 	useEffect(() => {
-		persistViewState({ showAllSessions, showHistoryPanel, showTabSearch });
-	}, [showAllSessions, showHistoryPanel, showTabSearch, persistViewState]);
+		persistViewState({ showAllSessions, showHistoryPanel: showRightDrawer, showTabSearch });
+	}, [showAllSessions, showRightDrawer, showTabSearch, persistViewState]);
 
 	// Save history panel state when it changes (using hook's persistence function)
 	useEffect(() => {
@@ -693,6 +708,9 @@ export default function MobileApp() {
 			onSettingsChanged: (settings) => {
 				settingsChangedRef.current?.(settings as WebSettings);
 			},
+			onGroupsChanged: (groups) => {
+				groupsChangedRef.current?.(groups);
+			},
 		},
 	});
 
@@ -850,10 +868,21 @@ export default function MobileApp() {
 	// Settings hook — uses WebSocket for fetching/updating settings
 	const settingsHook = useSettings(sendRequest, isActuallyConnected);
 
+	// Agent management hook — uses WebSocket for agent/group CRUD
+	const agentManagement = useAgentManagement(sendRequest, isActuallyConnected);
+
+	// Git status hook — uses WebSocket for git status/diff
+	const gitStatus = useGitStatus(sendRequest, isActuallyConnected, activeSessionId || undefined);
+
 	// Keep settings changed ref in sync
 	useEffect(() => {
 		settingsChangedRef.current = settingsHook.handleSettingsChanged;
 	}, [settingsHook.handleSettingsChanged]);
+
+	// Keep groups changed ref in sync
+	useEffect(() => {
+		groupsChangedRef.current = agentManagement.handleGroupsChanged;
+	}, [agentManagement.handleGroupsChanged]);
 
 	// Offline queue hook - stores commands typed while offline and sends when reconnected
 	const {
@@ -917,16 +946,37 @@ export default function MobileApp() {
 		setShowAllSessions(false);
 	}, []);
 
-	// Handle opening History panel (separate from command history drawer)
-	const handleOpenHistoryPanel = useCallback(() => {
-		setShowHistoryPanel(true);
+	// Handle opening agent creation sheet
+	const handleOpenAgentCreation = useCallback(() => {
+		setShowAgentCreation(true);
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 	}, []);
 
-	// Handle closing History panel
-	const handleCloseHistoryPanel = useCallback(() => {
-		setShowHistoryPanel(false);
+	// Handle agent created — select the new agent
+	const handleAgentCreated = useCallback(
+		(sessionId: string) => {
+			handleSelectSession(sessionId);
+			setShowAllSessions(false);
+		},
+		[handleSelectSession],
+	);
+
+	// Handle opening the right drawer on a specific tab
+	const handleOpenRightDrawer = useCallback((tab: RightDrawerTab = 'files') => {
+		setRightDrawerTab(tab);
+		setShowRightDrawer(true);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
 	}, []);
+
+	// Handle closing the right drawer
+	const handleCloseRightDrawer = useCallback(() => {
+		setShowRightDrawer(false);
+	}, []);
+
+	// Handle opening History panel — redirects to right drawer History tab
+	const handleOpenHistoryPanel = useCallback(() => {
+		handleOpenRightDrawer('history');
+	}, [handleOpenRightDrawer]);
 
 	// Handle opening Tab Search modal
 	const handleOpenTabSearch = useCallback(() => {
@@ -1101,6 +1151,45 @@ export default function MobileApp() {
 		handleModeToggle,
 		handleSelectTab,
 	});
+
+	// Swipe-from-right-edge gesture to open right drawer
+	const rightEdgeSwipeRef = useRef<{ startX: number; startY: number } | null>(null);
+	const handleMainTouchStart = useCallback((e: React.TouchEvent) => {
+		const touch = e.touches[0];
+		const viewportWidth = window.innerWidth;
+		// Only track touches starting within 20px of the right edge
+		if (touch.clientX >= viewportWidth - 20) {
+			rightEdgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY };
+		}
+	}, []);
+	const handleMainTouchMove = useCallback(
+		(e: React.TouchEvent) => {
+			if (!rightEdgeSwipeRef.current) return;
+			const touch = e.touches[0];
+			const deltaX = rightEdgeSwipeRef.current.startX - touch.clientX;
+			const deltaY = Math.abs(touch.clientY - rightEdgeSwipeRef.current.startY);
+			// Swipe left from right edge — open drawer if moved > 60px and more horizontal than vertical
+			if (deltaX > 60 && deltaX > deltaY) {
+				rightEdgeSwipeRef.current = null;
+				handleOpenRightDrawer('files');
+			}
+		},
+		[handleOpenRightDrawer],
+	);
+	const handleMainTouchEnd = useCallback(() => {
+		rightEdgeSwipeRef.current = null;
+	}, []);
+
+	// Handle viewing a git diff from the right drawer
+	const handleViewGitDiff = useCallback((filePath: string) => {
+		if (!activeSessionId) return;
+		gitStatus.loadDiff(activeSessionId, filePath);
+		setGitDiffFile(filePath);
+	}, [activeSessionId, gitStatus]);
+
+	const handleBackFromGitDiff = useCallback(() => {
+		setGitDiffFile(null);
+	}, []);
 
 	// Determine content based on connection state
 	const renderContent = () => {
@@ -1286,7 +1375,12 @@ export default function MobileApp() {
 		sessions.length > 0;
 
 	return (
-		<div style={containerStyle}>
+		<div
+			style={containerStyle}
+			onTouchStart={handleMainTouchStart}
+			onTouchMove={handleMainTouchMove}
+			onTouchEnd={handleMainTouchEnd}
+		>
 			{/* Header with session info */}
 			<MobileHeader
 				activeSession={activeSession}
@@ -1305,7 +1399,9 @@ export default function MobileApp() {
 					onSelectSession={handleSelectSession}
 					onOpenAllSessions={handleOpenAllSessions}
 					onOpenHistory={handleOpenHistoryPanel}
+					onOpenRightDrawer={() => handleOpenRightDrawer('files')}
 					onToggleBookmark={handleToggleBookmark}
+					onOpenCreateAgent={handleOpenAgentCreation}
 				/>
 			)}
 
@@ -1356,23 +1452,37 @@ export default function MobileApp() {
 					activeSessionId={activeSessionId}
 					onSelectSession={handleSelectSession}
 					onClose={handleCloseAllSessions}
+					onRenameAgent={agentManagement.renameAgent}
+					onDeleteAgent={agentManagement.deleteAgent}
+					onMoveToGroup={agentManagement.moveToGroup}
+					groups={agentManagement.groups}
+					onOpenCreateAgent={handleOpenAgentCreation}
 				/>
 			)}
 
-			{/* History panel - full-screen modal with history entries */}
-			{showHistoryPanel && (
-				<MobileHistoryPanel
-					onClose={handleCloseHistoryPanel}
+			{/* Right drawer - unified slide-out panel with Files, History, Auto Run, Git tabs */}
+			{showRightDrawer && activeSessionId && (
+				<RightDrawer
+					sessionId={activeSessionId}
+					activeTab={rightDrawerTab}
+					autoRunState={currentAutoRunState}
+					gitStatus={gitStatus}
+					onClose={handleCloseRightDrawer}
 					projectPath={activeSession?.cwd}
-					sessionId={activeSessionId || undefined}
-					initialFilter={historyFilter}
-					initialSearchQuery={historySearchQuery}
-					initialSearchOpen={historySearchOpen}
-					onFilterChange={setHistoryFilter}
-					onSearchChange={(query, isOpen) => {
-						setHistorySearchQuery(query);
-						setHistorySearchOpen(isOpen);
-					}}
+					onAutoRunOpenDocument={handleAutoRunOpenDocument}
+					onAutoRunOpenSetup={handleAutoRunOpenSetup}
+					sendRequest={sendRequest}
+					send={send}
+					onViewDiff={handleViewGitDiff}
+				/>
+			)}
+
+			{/* Git diff viewer - full-screen overlay when viewing a file diff */}
+			{gitDiffFile && gitStatus.diff && (
+				<GitDiffViewer
+					diff={gitStatus.diff.diff}
+					filePath={gitDiffFile}
+					onBack={handleBackFromGitDiff}
 				/>
 			)}
 
@@ -1434,6 +1544,17 @@ export default function MobileApp() {
 				<SettingsPanel
 					onClose={handleCloseSettingsPanel}
 					settingsHook={settingsHook}
+				/>
+			)}
+
+			{/* Agent creation sheet */}
+			{showAgentCreation && (
+				<AgentCreationSheet
+					groups={agentManagement.groups}
+					defaultCwd={activeSession?.cwd || ''}
+					createAgent={agentManagement.createAgent}
+					onCreated={handleAgentCreated}
+					onClose={() => setShowAgentCreation(false)}
 				/>
 			)}
 

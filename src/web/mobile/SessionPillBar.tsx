@@ -737,6 +737,10 @@ export interface SessionPillBarProps {
 	onOpenAllSessions?: () => void;
 	/** Callback to open the History panel */
 	onOpenHistory?: () => void;
+	/** Callback to open the right drawer panel */
+	onOpenRightDrawer?: () => void;
+	/** Callback to open the Agent Creation Sheet */
+	onOpenCreateAgent?: () => void;
 	/** Optional className for additional styling */
 	className?: string;
 	/** Optional inline styles */
@@ -774,6 +778,8 @@ export function SessionPillBar({
 	onToggleBookmark,
 	onOpenAllSessions,
 	onOpenHistory,
+	onOpenRightDrawer,
+	onOpenCreateAgent,
 	className = '',
 	style,
 }: SessionPillBarProps) {
@@ -1069,6 +1075,49 @@ export function SessionPillBar({
 								</svg>
 							</button>
 						)}
+						{/* Right drawer panel button */}
+						{onOpenRightDrawer && (
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onOpenRightDrawer();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									width: '36px',
+									height: '36px',
+									borderRadius: '18px',
+									border: `1px solid ${colors.border}`,
+									backgroundColor: colors.bgMain,
+									color: colors.textMain,
+									cursor: 'pointer',
+									flexShrink: 0,
+									padding: 0,
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+								}}
+								aria-label="Open panel drawer"
+								title="Panel"
+							>
+								{/* Panel/sidebar icon (three horizontal lines with right panel) */}
+								<svg
+									width="18"
+									height="18"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+									<line x1="15" y1="3" x2="15" y2="21" />
+								</svg>
+							</button>
+						)}
 					</div>
 				)}
 
@@ -1141,6 +1190,43 @@ export function SessionPillBar({
 							</React.Fragment>
 						);
 					})}
+
+					{/* "+" pill for creating a new agent */}
+					{onOpenCreateAgent && (
+						<div style={{ scrollSnapAlign: 'start' }} role="presentation">
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									onOpenCreateAgent();
+								}}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									padding: '8px 14px',
+									borderRadius: '20px',
+									border: `1px dashed ${colors.border}`,
+									backgroundColor: 'transparent',
+									color: colors.accent,
+									fontSize: '16px',
+									fontWeight: 500,
+									whiteSpace: 'nowrap',
+									cursor: 'pointer',
+									flexShrink: 0,
+									minWidth: 'fit-content',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+									userSelect: 'none',
+									WebkitUserSelect: 'none',
+									transition: 'all 0.15s ease',
+								}}
+								aria-label="Create new agent"
+							>
+								+
+							</button>
+						</div>
+					)}
 				</div>
 
 				{/* Inline style for hiding scrollbar */}
