@@ -521,8 +521,17 @@ export class StdoutHandler {
 				sessionId,
 				textLength: event.text.length,
 			});
-			this.emitter.emit('thinking-chunk', sessionId, event.text);
-			managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+			// For Copilot, skip thinking-chunk emission — the parser's delta events
+			// accumulate in streamedText which is emitted once as the result at exit.
+			// Emitting thinking-chunks AND result would duplicate the content.
+			if (managedProcess.toolType !== 'copilot') {
+				this.emitter.emit('thinking-chunk', sessionId, event.text);
+			}
+			// Reasoning content is internal thinking — don't include it in the
+			// final response text. Only message content should be in streamedText.
+			if (!event.isReasoning) {
+				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+			}
 		}
 
 		// Handle tool execution events (OpenCode, Codex)
@@ -605,12 +614,10 @@ export class StdoutHandler {
 			!managedProcess.resultEmitted
 		) {
 			managedProcess.resultEmitted = true;
-			// For Copilot, streamedText holds transient commentary that was already
-			// emitted as partial text — falling back to it would duplicate content.
-			// Only Codex-style agents use streamedText as the final answer accumulator.
-			const resultText =
-				event.text ||
-				(managedProcess.toolType !== 'copilot' ? managedProcess.streamedText || '' : '');
+			// For most agents, prefer the result event's text. Fall back to
+			// accumulated streamedText (covers Copilot where the result event
+			// is empty and Factory Droid which never sends an explicit result).
+			const resultText = event.text || managedProcess.streamedText || '';
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
 			if (sessionId.includes('-synopsis-')) {

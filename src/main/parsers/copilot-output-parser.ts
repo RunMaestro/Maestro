@@ -107,6 +107,10 @@ export class CopilotOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'copilot';
 
 	private toolNames = new Map<string, string>();
+	/** Tracks whether message deltas were received in the current turn. */
+	private turnHadMessageDeltas = false;
+	/** Tracks whether reasoning deltas were received in the current turn. */
+	private turnHadReasoningDeltas = false;
 
 	/** Parse a single JSON line from Copilot's JSONL output stream. */
 	parseJsonLine(line: string): ParsedEvent | null {
@@ -142,6 +146,12 @@ export class CopilotOutputParser implements AgentOutputParser {
 			case 'assistant.reasoning':
 				return this.parseAssistantReasoning(msg);
 			case 'assistant.turn_start':
+				this.turnHadMessageDeltas = false;
+				this.turnHadReasoningDeltas = false;
+				return {
+					type: 'system',
+					raw: msg,
+				};
 			case 'assistant.turn_end':
 			case 'session.tools_updated':
 			case 'user.message':
@@ -163,7 +173,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 				return this.parseToolExecutionComplete(msg);
 			case 'result':
 				return {
-					type: 'system',
+					type: 'result',
 					sessionId: msg.sessionId,
 					raw: msg,
 				};
@@ -182,7 +192,10 @@ export class CopilotOutputParser implements AgentOutputParser {
 		}
 	}
 
-	/** Parse assistant.message events, detecting final_answer phase as result events. */
+	/** Parse assistant.message events, detecting final_answer phase as result events.
+	 *  Non-final messages repeat content already streamed via assistant.message_delta
+	 *  events — when deltas were received, the summary is skipped to avoid
+	 *  double-accumulation. When no deltas preceded it, the content is used. */
 	private parseAssistantMessage(msg: CopilotRawMessage): ParsedEvent {
 		const content = msg.data?.content || '';
 		const phase = msg.data?.phase;
@@ -213,10 +226,36 @@ export class CopilotOutputParser implements AgentOutputParser {
 			};
 		}
 
+		// Non-final message with tool requests — forward tool blocks only
+		if (toolUseBlocks.length > 0) {
+			return {
+				type: 'text',
+				text: '',
+				toolUseBlocks,
+				raw: msg,
+			};
+		}
+
+		// If deltas already streamed this content, skip the summary to avoid duplication
+		if (this.turnHadMessageDeltas) {
+			return {
+				type: 'system',
+				raw: msg,
+			};
+		}
+
+		// No deltas preceded this message — use its content directly
+		if (content) {
+			return {
+				type: 'text',
+				text: content,
+				isPartial: true,
+				raw: msg,
+			};
+		}
+
 		return {
-			type: 'text',
-			text: content,
-			isPartial: true,
+			type: 'system',
 			raw: msg,
 		};
 	}
@@ -228,6 +267,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		this.turnHadMessageDeltas = true;
 		return {
 			type: 'text',
 			text: deltaContent,
@@ -236,23 +276,45 @@ export class CopilotOutputParser implements AgentOutputParser {
 		};
 	}
 
-	/** Parse assistant.reasoning events as partial reasoning text for thinking-chunk UI. */
+	/** Parse assistant.reasoning and assistant.reasoning_delta events.
+	 *  Deltas are forwarded as partial text with isReasoning=true so
+	 *  StdoutHandler can display them in thinking UI without accumulating
+	 *  them into the final response. The summary (assistant.reasoning)
+	 *  repeats content already streamed via deltas — when deltas were received,
+	 *  the summary is skipped to avoid double-accumulation. */
 	private parseAssistantReasoning(msg: CopilotRawMessage): ParsedEvent | null {
-		const reasoningText =
-			extractTextValue(msg.data?.deltaContent) ||
-			extractTextValue(msg.data?.content) ||
-			extractTextValue(msg.data?.message);
+		const deltaContent = extractTextValue(msg.data?.deltaContent);
 
-		if (!reasoningText) {
+		if (deltaContent) {
+			this.turnHadReasoningDeltas = true;
+			return {
+				type: 'text',
+				text: deltaContent,
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
+		// Summary event (assistant.reasoning with content only, no deltaContent).
+		// Skip if deltas already delivered this content.
+		if (this.turnHadReasoningDeltas) {
 			return null;
 		}
 
-		return {
-			type: 'text',
-			text: reasoningText,
-			isPartial: true,
-			raw: msg,
-		};
+		// No deltas preceded — use the content directly
+		const content = extractTextValue(msg.data?.content);
+		if (content) {
+			return {
+				type: 'text',
+				text: content,
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
+		return null;
 	}
 
 	/** Parse tool.execution_start and register the tool name for later correlation. */
@@ -341,6 +403,11 @@ export class CopilotOutputParser implements AgentOutputParser {
 		// Treat any final_answer event as a result, including empty ones (tool-only responses)
 		const raw = event.raw as CopilotRawMessage | undefined;
 		if (raw?.data?.phase === 'final_answer') return true;
+
+		// The session-end "result" event from Copilot has no text but signals completion.
+		// Recognizing it sets resultEmitted, preventing the ExitHandler from re-emitting
+		// content that was already streamed via thinking-chunk events.
+		if (raw?.type === 'result') return true;
 
 		return !!event.text || !!event.toolUseBlocks?.length;
 	}

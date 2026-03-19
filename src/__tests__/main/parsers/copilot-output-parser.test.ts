@@ -76,7 +76,7 @@ describe('CopilotOutputParser', () => {
 		expect(commentaryEvent).toEqual(
 			expect.objectContaining({
 				type: 'text',
-				isPartial: true,
+				text: '',
 			})
 		);
 
@@ -122,8 +122,31 @@ describe('CopilotOutputParser', () => {
 		);
 	});
 
-	it('parses assistant reasoning events as partial text events', () => {
+	it('skips assistant reasoning summary when deltas already streamed the content', () => {
 		const parser = new CopilotOutputParser();
+
+		// Simulate a turn with reasoning deltas first
+		parser.parseJsonObject({ type: 'assistant.turn_start' });
+		parser.parseJsonObject({
+			type: 'assistant.reasoning_delta',
+			data: { deltaContent: 'Thinking through the repository structure...' },
+		});
+
+		// The summary should be skipped since deltas already delivered the content
+		const event = parser.parseJsonObject({
+			type: 'assistant.reasoning',
+			data: {
+				content: 'Thinking through the repository structure...',
+			},
+		});
+
+		expect(event).toBeNull();
+	});
+
+	it('uses assistant reasoning content when no deltas preceded it', () => {
+		const parser = new CopilotOutputParser();
+
+		parser.parseJsonObject({ type: 'assistant.turn_start' });
 
 		const event = parser.parseJsonObject({
 			type: 'assistant.reasoning',
@@ -255,7 +278,7 @@ describe('CopilotOutputParser', () => {
 			exitCode: 0,
 		});
 
-		expect(event?.type).toBe('system');
+		expect(event?.type).toBe('result');
 		expect(event && parser.extractSessionId(event)).toBe('8654632e-5527-4b25-8994-66b1be2c6cc8');
 	});
 

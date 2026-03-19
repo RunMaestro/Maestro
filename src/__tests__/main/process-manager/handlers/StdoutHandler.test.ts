@@ -479,9 +479,9 @@ describe('StdoutHandler', () => {
 			);
 		});
 
-		it('should emit Copilot reasoning events as thinking chunks', () => {
+		it('should not emit Copilot reasoning summaries as thinking chunks or final text', () => {
 			const parser = new CopilotOutputParser();
-			const { handler, emitter, sessionId } = createTestContext({
+			const { handler, emitter, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
 				toolType: 'copilot',
 				outputParser: parser,
@@ -499,15 +499,13 @@ describe('StdoutHandler', () => {
 				})
 			);
 
-			expect(thinkingSpy).toHaveBeenCalledWith(
-				sessionId,
-				'Analyzing the codebase before making edits...'
-			);
+			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe('');
 		});
 
-		it('should emit Copilot reasoning delta events as thinking chunks', () => {
+		it('should not emit Copilot reasoning deltas as thinking chunks or final text', () => {
 			const parser = new CopilotOutputParser();
-			const { handler, emitter, sessionId } = createTestContext({
+			const { handler, emitter, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
 				toolType: 'copilot',
 				outputParser: parser,
@@ -525,7 +523,8 @@ describe('StdoutHandler', () => {
 				})
 			);
 
-			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Live reasoning chunk...');
+			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe('');
 		});
 
 		it('should keep failed Copilot tool executions as tool events instead of agent errors', () => {

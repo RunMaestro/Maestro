@@ -116,6 +116,14 @@ export interface ParsedEvent {
 	isPartial?: boolean;
 
 	/**
+	 * Is this reasoning/thinking content?
+	 * If true, this is internal agent reasoning that should not be included
+	 * in the final response text (streamedText). Used by agents like Copilot
+	 * where reasoning and answer deltas share the same event type.
+	 */
+	isReasoning?: boolean;
+
+	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)
 	 * When a message contains both text and tool_use, text goes in 'text' field
 	 * and tool_use blocks are here. Process-manager emits tool-execution for each.
