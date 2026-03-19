@@ -49,7 +49,7 @@ export function usePipelineLayout({
 }: UsePipelineLayoutParams): UsePipelineLayoutReturn {
 	const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const hasRestoredLayoutRef = useRef(false);
-	const restoreInFlightRef = useRef(false);
+	const latestRestoreIdRef = useRef(0);
 
 	// Keep a ref to current pipeline state for layout persistence (avoids unstable callback)
 	const pipelineStateRef = useRef(pipelineState);
@@ -84,19 +84,18 @@ export function usePipelineLayout({
 	// Load pipelines once on mount from saved layout merged with live graph data.
 	// The pipeline editor is the primary editor — we don't re-sync from disk
 	// while the user is working. Save writes back to disk.
+	//
+	// Uses a request-id guard so that if props change during an in-flight load,
+	// only the latest request applies its result.
 	useEffect(() => {
 		if (hasRestoredLayoutRef.current) return;
-		if (restoreInFlightRef.current) return;
 		if (!graphSessions || graphSessions.length === 0) return;
 
-		const loadLayout = async () => {
-			restoreInFlightRef.current = true;
+		const reqId = ++latestRestoreIdRef.current;
 
+		const loadLayout = async () => {
 			const livePipelines = graphSessionsToPipelines(graphSessions, sessions);
-			if (livePipelines.length === 0) {
-				restoreInFlightRef.current = false;
-				return;
-			}
+			if (livePipelines.length === 0) return;
 
 			let savedLayout: PipelineLayoutState | null = null;
 			try {
@@ -110,11 +109,8 @@ export function usePipelineLayout({
 				}
 			}
 
-			// Guard: if another load completed while we awaited, bail out
-			if (hasRestoredLayoutRef.current) {
-				restoreInFlightRef.current = false;
-				return;
-			}
+			// Guard: if a newer load started or a previous one already completed, bail out
+			if (reqId !== latestRestoreIdRef.current || hasRestoredLayoutRef.current) return;
 
 			if (savedLayout && savedLayout.pipelines) {
 				const merged = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
@@ -126,8 +122,7 @@ export function usePipelineLayout({
 				if (savedLayout.viewport) {
 					const viewportToRestore = savedLayout.viewport;
 					setTimeout(() => {
-						// Only apply if we're still the valid restore
-						if (hasRestoredLayoutRef.current) {
+						if (reqId === latestRestoreIdRef.current) {
 							reactFlowInstance.setViewport(viewportToRestore);
 						}
 					}, 100);
@@ -138,7 +133,6 @@ export function usePipelineLayout({
 			}
 
 			hasRestoredLayoutRef.current = true;
-			restoreInFlightRef.current = false;
 			setIsDirty(false);
 		};
 
