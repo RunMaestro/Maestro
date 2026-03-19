@@ -1320,11 +1320,11 @@ describe('agentStore', () => {
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
-			// System prompt should be prepended for new sessions
+			// System prompt should be passed separately for new sessions
 			const spawnCall = mockSpawn.mock.calls[0][0];
-			expect(spawnCall.prompt).toContain('Mock system prompt');
-			expect(spawnCall.prompt).toContain('Hello');
-			expect(spawnCall.prompt).toContain('# User Request');
+			expect(spawnCall.appendSystemPrompt).toContain('Mock system prompt');
+			expect(spawnCall.prompt).toBe('Hello');
+			expect(spawnCall.prompt).not.toContain('# User Request');
 		});
 
 		it('does NOT prepend system prompt for existing sessions', async () => {
@@ -1354,7 +1354,7 @@ describe('agentStore', () => {
 
 			const spawnCall = mockSpawn.mock.calls[0][0];
 			expect(spawnCall.prompt).toBe('Follow up question');
-			expect(spawnCall.prompt).not.toContain('Mock system prompt');
+			expect(spawnCall.appendSystemPrompt).toBeUndefined();
 		});
 
 		it('filters YOLO flags when read-only mode is active', async () => {

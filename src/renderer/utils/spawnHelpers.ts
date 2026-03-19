@@ -7,10 +7,18 @@ import { isWindowsPlatform } from './platformUtils';
  * characters cause escaping issues.  Sending the prompt via stdin
  * side-steps both problems.
  *
- * SSH sessions must NOT use these flags — they have a dedicated
+ * SSH sessions must NOT use these flags - they have a dedicated
  * stdin-script path handled by ChildProcessSpawner.
+ *
+ * Stream-json stdin is only used when images are present AND the agent
+ * supports it. Text-only messages use raw stdin for efficiency (avoids
+ * wrapping in API format JSON).
  */
-export function getStdinFlags(opts: { isSshSession: boolean; supportsStreamJsonInput: boolean }): {
+export function getStdinFlags(opts: {
+	isSshSession: boolean;
+	supportsStreamJsonInput: boolean;
+	hasImages?: boolean;
+}): {
 	sendPromptViaStdin: boolean;
 	sendPromptViaStdinRaw: boolean;
 } {
@@ -18,7 +26,9 @@ export function getStdinFlags(opts: { isSshSession: boolean; supportsStreamJsonI
 	const useStdin = isWindows && !opts.isSshSession;
 
 	return {
-		sendPromptViaStdin: useStdin && opts.supportsStreamJsonInput,
-		sendPromptViaStdinRaw: useStdin && !opts.supportsStreamJsonInput,
+		// Only use stream-json stdin when there are images AND agent supports it
+		sendPromptViaStdin: useStdin && opts.supportsStreamJsonInput && !!opts.hasImages,
+		// Use raw stdin for text-only messages (or for agents that don't support stream-json)
+		sendPromptViaStdinRaw: useStdin && (!opts.supportsStreamJsonInput || !opts.hasImages),
 	};
 }

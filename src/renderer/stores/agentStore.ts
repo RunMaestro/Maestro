@@ -296,10 +296,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
-				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
+				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
-				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
+				// For NEW sessions (no agentSessionId), prepare Maestro system prompt separately
 				const isNewSession = !tabAgentSessionId;
+				let appendSystemPrompt: string | undefined;
 				if (isNewSession && maestroSystemPrompt) {
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
@@ -311,15 +312,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						}
 					}
 
-					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 						session,
 						gitBranch,
 						groupId: session.groupId,
 						activeTabId: targetTab.id,
 						conductorProfile: deps.conductorProfile,
 					});
-
-					effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 				}
 
 				console.log('[processQueuedItem] Spawning agent with queued message:', {
@@ -329,6 +328,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					promptLength: effectivePrompt?.length,
 					hasAgentSessionId: !!tabAgentSessionId,
 					agentSessionId: tabAgentSessionId,
+					hasAppendSystemPrompt: !!appendSystemPrompt,
 					isReadOnly,
 					argsLength: spawnArgs.length,
 					args: spawnArgs,
@@ -342,6 +342,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 					prompt: effectivePrompt,
 					images: hasImages ? item.images : undefined,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,
@@ -402,18 +403,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						conductorProfile: deps.conductorProfile,
 					});
 
-					// For NEW sessions, prepend Maestro system prompt
+					// For NEW sessions, prepare Maestro system prompt separately
 					const isNewSessionForCommand = !tabAgentSessionId;
-					let promptForAgent = substitutedPrompt;
+					let appendSystemPromptForCommand: string | undefined;
 					if (isNewSessionForCommand && maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+						appendSystemPromptForCommand = substituteTemplateVariables(maestroSystemPrompt, {
 							session,
 							gitBranch,
 							groupId: session.groupId,
 							activeTabId: targetTab.id,
 							conductorProfile: deps.conductorProfile,
 						});
-						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;
 					}
 
 					// Add user log showing the command with its interpolated prompt
@@ -443,7 +443,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: promptForAgent,
+						prompt: substitutedPrompt,
+						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
 						sessionCustomPath: session.customPath,

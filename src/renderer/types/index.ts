@@ -768,6 +768,7 @@ export interface AgentCapabilities {
 	supportsGroupChatModeration?: boolean;
 	usesJsonLineOutput?: boolean;
 	usesCombinedContextWindow?: boolean;
+	supportsAppendSystemPrompt?: boolean;
 }
 
 export interface AgentConfig {
@@ -813,6 +814,8 @@ export interface ProcessConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	// System prompt delivery (separate from user message for token efficiency)
+	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line

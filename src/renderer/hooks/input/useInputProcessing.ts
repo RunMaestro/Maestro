@@ -939,9 +939,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							});
 						}
 
-						// For NEW sessions (no agentSessionId), prepend Maestro system prompt
+						// For NEW sessions (no agentSessionId), prepare Maestro system prompt separately
 						// This introduces Maestro and sets directory restrictions for the agent
 						const isNewSession = !tabAgentSessionId;
+						let appendSystemPrompt: string | undefined;
 						if (isNewSession && maestroSystemPrompt) {
 							// Get git branch for template substitution
 							let gitBranch: string | undefined;
@@ -978,7 +979,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								parentSessionId: freshSession.parentSessionId,
 								historyFilePath,
 							});
-							const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 								session: freshSession,
 								gitBranch,
 								groupId: freshSession.groupId,
@@ -986,15 +987,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								historyFilePath,
 								conductorProfile,
 							});
-
-							// Prepend system prompt to user's message
-							effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 						}
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 							isSshSession:
 								!!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
 							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+							hasImages: hasImages ?? false,
 						});
 
 						// Spawn agent with generic config - the main process will use agent-specific
@@ -1007,6 +1006,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							args: spawnArgs,
 							prompt: effectivePrompt,
 							images: hasImages ? capturedImages : undefined,
+							appendSystemPrompt,
 							// Generic spawn options - main process builds agent-specific args
 							agentSessionId: tabAgentSessionId ?? undefined,
 							readOnlyMode: isReadOnly,
@@ -1019,8 +1019,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
-							// For stream-json agents (Claude Code, Codex): use JSON format via stdin
-							// For other agents (OpenCode, etc.): use raw text via stdin
+							// For stream-json agents with images: use JSON format via stdin
+							// For text-only or non-stream-json agents: use raw text via stdin
 							sendPromptViaStdin,
 							sendPromptViaStdinRaw,
 						});

@@ -111,6 +111,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// System prompt delivery (separate from user message for token efficiency)
+				appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
@@ -206,6 +208,29 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						LOG_CONTEXT,
 						{ keys: Object.keys(effectiveCustomEnvVars) }
 					);
+				}
+
+				// ========================================================================
+				// System prompt delivery: use --append-system-prompt for supported agents,
+				// otherwise embed in the user prompt as fallback
+				// ========================================================================
+				let effectivePrompt = config.prompt;
+				if (config.appendSystemPrompt) {
+					if (agent?.capabilities?.supportsAppendSystemPrompt) {
+						// Agent supports --append-system-prompt: pass as CLI arg
+						finalArgs = [...finalArgs, '--append-system-prompt', config.appendSystemPrompt];
+						logger.debug('Using --append-system-prompt for system prompt delivery', LOG_CONTEXT, {
+							agentId: agent?.id,
+							systemPromptLength: config.appendSystemPrompt.length,
+						});
+					} else if (effectivePrompt) {
+						// Fallback: embed system prompt in user message
+						effectivePrompt = `${config.appendSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
+						logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
+							agentId: agent?.id,
+							systemPromptLength: config.appendSystemPrompt.length,
+						});
+					}
 				}
 
 				// If no shell is specified and this is a terminal session, use the default shell from settings
@@ -411,11 +436,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						//   (e.g., -i /tmp/image.png for Codex, -f /tmp/image.png for OpenCode).
 						const hasImages = config.images && config.images.length > 0;
 						let sshArgs = finalArgs;
-						let stdinInput: string | undefined = config.prompt;
+						let stdinInput: string | undefined = effectivePrompt;
 
-						if (hasImages && config.prompt && agent?.capabilities?.supportsStreamJsonInput) {
+						if (hasImages && effectivePrompt && agent?.capabilities?.supportsStreamJsonInput) {
 							// Stream-json agent (Claude Code): embed images in the stdin message
-							stdinInput = buildStreamJsonMessage(config.prompt, config.images!) + '\n';
+							stdinInput = buildStreamJsonMessage(effectivePrompt, config.images!) + '\n';
 							if (!sshArgs.includes('--input-format')) {
 								sshArgs = [...sshArgs, '--input-format', 'stream-json'];
 							}
@@ -506,8 +531,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					// When using SSH, disable PTY (SSH provides its own terminal handling)
 					requiresPty: sshRemoteUsed ? false : agent?.requiresPty,
 					// For SSH, prompt is included in the stdin script, not passed separately
-					// For local execution, pass prompt as normal
-					prompt: sshRemoteUsed ? undefined : config.prompt,
+					// For local execution, pass prompt (with system prompt embedded for non-append-system-prompt agents)
+					prompt: sshRemoteUsed ? undefined : effectivePrompt,
 					shell: shellToUse,
 					runInShell: useShell,
 					shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
