@@ -1,13 +1,16 @@
 /**
- * Tests for XTerminal.tsx — mapThemeToXterm pure function.
+ * Tests for XTerminal.tsx — mapThemeToXterm and evaluateCustomKeyEvent pure functions.
  *
  * mapThemeToXterm converts a Maestro Theme into an xterm.js ITheme,
  * falling back to mode-appropriate ANSI palettes when the theme lacks
  * individual ANSI color fields.
+ *
+ * evaluateCustomKeyEvent determines whether xterm should handle a key,
+ * pass it through to Maestro's shortcut handler, or send ESC directly.
  */
 
 import { describe, it, expect } from 'vitest';
-import { mapThemeToXterm } from '../../../renderer/components/XTerminal';
+import { mapThemeToXterm, evaluateCustomKeyEvent } from '../../../renderer/components/XTerminal';
 import type { Theme } from '../../../shared/theme-types';
 
 function makeTheme(overrides: Partial<Theme['colors']> = {}, mode: Theme['mode'] = 'dark'): Theme {
@@ -115,5 +118,69 @@ describe('mapThemeToXterm', () => {
 			expect(result).toHaveProperty(field);
 			expect(typeof (result as Record<string, unknown>)[field]).toBe('string');
 		}
+	});
+});
+
+// ============================================================================
+// evaluateCustomKeyEvent tests
+// ============================================================================
+
+function makeKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
+	return {
+		key: '',
+		code: '',
+		type: 'keydown',
+		ctrlKey: false,
+		shiftKey: false,
+		metaKey: false,
+		altKey: false,
+		...overrides,
+	} as KeyboardEvent;
+}
+
+describe('evaluateCustomKeyEvent', () => {
+	it('returns "escape" for Escape keydown (vi/vim fix)', () => {
+		const e = makeKeyEvent({ key: 'Escape', type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toBe('escape');
+	});
+
+	it('returns "handle" for Escape keyup (let xterm manage focus)', () => {
+		const e = makeKeyEvent({ key: 'Escape', type: 'keyup' });
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "passthrough" for Meta (Cmd) combos', () => {
+		const e = makeKeyEvent({ key: 'k', metaKey: true });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "passthrough" for Ctrl+Shift combos', () => {
+		const e = makeKeyEvent({ key: 'A', ctrlKey: true, shiftKey: true });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "passthrough" for Ctrl+Shift+` (new terminal tab)', () => {
+		const e = makeKeyEvent({ ctrlKey: true, shiftKey: true, code: 'Backquote' });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "passthrough" for Alt combos', () => {
+		const e = makeKeyEvent({ key: 'q', altKey: true });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('returns "handle" for regular character keys', () => {
+		const e = makeKeyEvent({ key: 'a' });
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "handle" for Enter', () => {
+		const e = makeKeyEvent({ key: 'Enter' });
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
+	});
+
+	it('returns "handle" for Ctrl+C (terminal interrupt)', () => {
+		const e = makeKeyEvent({ key: 'c', ctrlKey: true });
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
 	});
 });

@@ -10,6 +10,44 @@ import type { Theme } from '../../shared/theme-types';
 import type { ITheme } from '@xterm/xterm';
 
 // ============================================================================
+// Custom key event handler logic
+// ============================================================================
+
+/**
+ * Determine how xterm should handle a keyboard event.
+ *
+ * Returns:
+ * - 'passthrough': xterm should NOT handle this key (return false to xterm) —
+ *   the event bubbles to Maestro's window-level shortcut handler instead.
+ * - 'escape': the Escape key was pressed on keydown — caller must send \x1b
+ *   to the PTY directly, then return false to xterm to avoid double-send.
+ * - 'handle': xterm should handle this key normally (return true to xterm).
+ */
+export type XtermKeyAction = 'passthrough' | 'escape' | 'handle';
+
+export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
+	// Let Ctrl+Shift+` through for new-terminal-tab shortcut
+	if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') return 'passthrough';
+	// Let all Meta (Cmd) key combos through so app shortcuts work
+	if (e.metaKey) return 'passthrough';
+	// Let Ctrl+Shift combos through (cross-platform app shortcuts)
+	if (e.ctrlKey && e.shiftKey) return 'passthrough';
+	// Let Alt key combos through so Maestro shortcuts like Alt+Q (Cue),
+	// Alt+J (jump to terminal), Alt+Shift+U (toggle tab unread) work.
+	// macOptionIsMeta is not enabled, so Alt doesn't send escape sequences
+	// by default — these events would just produce dead/special characters
+	// that aren't useful in the terminal context.
+	if (e.altKey) return 'passthrough';
+	// Explicitly send ESC byte (\x1b) to the PTY for vi/vim/nano compatibility.
+	// xterm.js v6 may not reliably generate the escape byte through its internal
+	// key processing pipeline (CompositionHelper interactions, dead key state).
+	// We write directly to the PTY on keydown and return false so xterm doesn't
+	// also attempt to process it (preventing double-send).
+	if (e.key === 'Escape' && e.type === 'keydown') return 'escape';
+	return 'handle';
+}
+
+// ============================================================================
 // Theme mapping
 // ============================================================================
 
@@ -298,19 +336,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		// register conflicting accelerators. E.g., { role: 'close' } would steal Cmd+W
 		// at the NSMenu level before it reaches the renderer.
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-			// Let Ctrl+Shift+` through for new-terminal-tab shortcut
-			if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') return false;
-			// Let all Meta (Cmd) key combos through so app shortcuts work
-			if (e.metaKey) return false;
-			// Let Ctrl+Shift combos through (cross-platform app shortcuts)
-			if (e.ctrlKey && e.shiftKey) return false;
-			// Let Alt key combos through so Maestro shortcuts like Alt+Q (Cue),
-			// Alt+J (jump to terminal), Alt+Shift+U (toggle tab unread) work.
-			// macOptionIsMeta is not enabled, so Alt doesn't send escape sequences
-			// by default — these events would just produce dead/special characters
-			// that aren't useful in the terminal context.
-			if (e.altKey) return false;
-			return true;
+			const action = evaluateCustomKeyEvent(e);
+			if (action === 'escape') {
+				window.maestro.process.write(sessionId, '\x1b');
+				return false;
+			}
+			return action === 'handle';
 		});
 
 		term.open(containerRef.current);
