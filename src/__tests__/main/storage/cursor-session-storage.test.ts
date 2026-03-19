@@ -6,11 +6,15 @@
  * These tests verify the no-op behavior is correct.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CursorSessionStorage } from '../../../main/storage/cursor-session-storage';
 
 describe('CursorSessionStorage', () => {
-	const storage = new CursorSessionStorage();
+	let storage: CursorSessionStorage;
+
+	beforeEach(() => {
+		storage = new CursorSessionStorage();
+	});
 
 	it('should have agentId set to cursor', () => {
 		expect(storage.agentId).toBe('cursor');

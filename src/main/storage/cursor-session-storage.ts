@@ -8,9 +8,9 @@
  *
  * See AGENT_SUPPORT.md for details on what is known.
  *
- * When Cursor's session storage format becomes documented or discoverable,
- * this class should be updated with real implementations similar to
- * ClaudeSessionStorage or CodexSessionStorage.
+ * TODO(#480): Implement real session storage when Cursor's on-disk format
+ * becomes documented or discoverable. Model after ClaudeSessionStorage or
+ * CodexSessionStorage.
  */
 
 import { logger } from '../utils/logger';

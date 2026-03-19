@@ -191,13 +191,20 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 	{
 		id: 'cursor',
 		name: 'Cursor',
+		// Cursor CLI ships as `agent` (not `cursor`). Verified against Cursor CLI v1.x.
+		// Collision risk: `agent` is generic; PATH lookup may resolve to unrelated binaries.
+		// Maestro's binary resolution logic uses customPath when set, falling back to PATH lookup.
 		binaryName: 'agent',
 		command: 'agent',
 		// Cursor CLI uses -p for headless/batch mode (like Claude Code's --print)
-		// --force enables direct file changes without confirmation (YOLO mode, required by Maestro)
 		// --output-format stream-json for structured parsing (same flag name as Claude Code)
-		args: ['-p', '--output-format', 'stream-json', '--force'],
+		// Note: --force (YOLO mode) is in yoloModeArgs, not base args, so it's excluded
+		// when readOnlyMode adds --mode ask. Unlike Claude Code which always needs
+		// --dangerously-skip-permissions, Cursor's --force conflicts with --mode ask.
+		args: ['-p', '--output-format', 'stream-json'],
 		requiresPty: false, // Batch-only agent (requiresPromptToStart: true in capabilities)
+		// Note: supportsSessionId is false in capabilities (IDs not in stream-json output),
+		// but resumeArgs is defined for manual resume via user-provided session IDs from `agent ls`.
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
 		readOnlyArgs: ['--mode', 'ask'], // Read-only exploration mode (no file changes)
 		readOnlyCliEnforced: true, // CLI enforces read-only via --mode ask

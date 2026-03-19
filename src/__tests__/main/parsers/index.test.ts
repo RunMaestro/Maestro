@@ -119,6 +119,12 @@ describe('parsers/index', () => {
 			expect(parser).toBeInstanceOf(CodexOutputParser);
 		});
 
+		it('should return CursorOutputParser for cursor', () => {
+			const parser = getOutputParser('cursor');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(CursorOutputParser);
+		});
+
 		it('should return null for terminal', () => {
 			const parser = getOutputParser('terminal');
 			expect(parser).toBeNull();

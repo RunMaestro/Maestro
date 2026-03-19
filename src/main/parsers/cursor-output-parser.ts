@@ -290,7 +290,7 @@ export class CursorOutputParser implements AgentOutputParser {
 		try {
 			const error = this.detectErrorFromParsed(JSON.parse(line));
 			if (error) {
-				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
+				return { ...error, raw: { ...error.raw, errorLine: line } };
 			}
 			return error;
 		} catch {

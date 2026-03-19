@@ -5,7 +5,7 @@
  * for detecting agent errors from output text.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
 	getErrorPatterns,
 	matchErrorPattern,
@@ -672,6 +672,57 @@ describe('error-patterns', () => {
 				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'session not found');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('session_not_found');
+			});
+		});
+
+		describe('network_error patterns', () => {
+			it('should match "connection failed"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'connection failed');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match "ECONNREFUSED"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'Error: ECONNREFUSED');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+			});
+
+			it('should match "request timed out"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'request timed out');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+			});
+		});
+
+		describe('permission_denied patterns', () => {
+			it('should match "permission denied"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'permission denied');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('permission_denied');
+				expect(result?.recoverable).toBe(false);
+			});
+
+			it('should match "access denied"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'access denied');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('permission_denied');
+			});
+		});
+
+		describe('agent_crashed patterns', () => {
+			it('should match "fatal error"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'fatal error occurred');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match "unexpected error"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'unexpected error in agent');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
 			});
 		});
 	});

@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CursorOutputParser } from '../../../main/parsers/cursor-output-parser';
 
 describe('CursorOutputParser', () => {
-	const parser = new CursorOutputParser();
+	let parser: CursorOutputParser;
+
+	beforeEach(() => {
+		parser = new CursorOutputParser();
+	});
 
 	describe('agentId', () => {
 		it('should be cursor', () => {
@@ -72,6 +76,7 @@ describe('CursorOutputParser', () => {
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('text');
 				expect(event?.text).toBe('Direct string content');
+				expect(event?.isPartial).toBe(true);
 			});
 
 			it('should concatenate multiple text blocks', () => {
@@ -216,6 +221,7 @@ describe('CursorOutputParser', () => {
 
 				const event = parser.parseJsonLine(line);
 				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBeUndefined();
 				expect(event?.toolState).toEqual({
 					status: 'unknown',
 				});
@@ -379,18 +385,10 @@ describe('CursorOutputParser', () => {
 			expect(parser.extractUsage(event!)).toBeNull();
 		});
 
-		it('should return usage if present in event', () => {
-			const event = {
-				type: 'usage' as const,
-				usage: {
-					inputTokens: 100,
-					outputTokens: 50,
-				},
-			};
-			expect(parser.extractUsage(event)).toEqual({
-				inputTokens: 100,
-				outputTokens: 50,
-			});
+		it('should pass through usage if present on event', () => {
+			const usage = { inputTokens: 100, outputTokens: 50 };
+			const event = { type: 'usage' as const, usage };
+			expect(parser.extractUsage(event)).toEqual(usage);
 		});
 	});
 
@@ -450,6 +448,19 @@ describe('CursorOutputParser', () => {
 			expect(error?.agentId).toBe('cursor');
 		});
 
+		it('should include errorLine in raw for JSON errors', () => {
+			const line = JSON.stringify({ type: 'error', error: 'invalid api key' });
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.raw).toHaveProperty('errorLine', line);
+		});
+
+		it('should include errorLine in raw for raw text errors', () => {
+			const error = parser.detectErrorFromLine('connection failed to server');
+			expect(error).not.toBeNull();
+			expect(error?.raw).toHaveProperty('errorLine', 'connection failed to server');
+		});
+
 		it('should return null for non-error lines', () => {
 			expect(parser.detectErrorFromLine('normal output')).toBeNull();
 		});
@@ -494,6 +505,16 @@ describe('CursorOutputParser', () => {
 			expect(error?.type).toBe('unknown');
 			expect(error?.parsedJson).toBeDefined();
 		});
+
+		it('should handle error type with no error field', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'error',
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('Agent error');
+			expect(error?.agentId).toBe('cursor');
+		});
 	});
 
 	describe('detectErrorFromExit', () => {
@@ -512,6 +533,7 @@ describe('CursorOutputParser', () => {
 			const error = parser.detectErrorFromExit(1, '', 'rate limit exceeded');
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('rate_limited');
+			expect(error?.agentId).toBe('cursor');
 		});
 
 		it('should return agent_crashed for unknown non-zero exit', () => {
@@ -519,6 +541,7 @@ describe('CursorOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('agent_crashed');
 			expect(error?.message).toContain('137');
+			expect(error?.agentId).toBe('cursor');
 		});
 
 		it('should include raw exit info', () => {
