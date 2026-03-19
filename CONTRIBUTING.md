@@ -980,7 +980,7 @@ Update in `package.json`:
 
 ```json
 {
-	"version": "0.1.0"
+	"version": "X.Y.Z"
 }
 ```
 
@@ -1000,8 +1000,8 @@ Output in `release/` directory.
 Create a release tag to trigger automated builds:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 GitHub Actions will build for all platforms and create a release.

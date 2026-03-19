@@ -53,9 +53,9 @@ const COPILOT_BUILTIN_COMMANDS = [
  * commands are interactive-only and cannot be discovered by spawning the CLI
  * in batch mode.  We return a static list of well-documented built-in commands.
  */
-function discoverCopilotSlashCommands(): string[] {
+function discoverCopilotSlashCommands(): { name: string; description: string }[] {
 	logger.info(`Discovered ${COPILOT_BUILTIN_COMMANDS.length} Copilot slash commands`, LOG_CONTEXT);
-	return [...COPILOT_BUILTIN_COMMANDS];
+	return COPILOT_BUILTIN_COMMANDS.map((cmd) => ({ name: cmd, description: '' }));
 }
 
 /**

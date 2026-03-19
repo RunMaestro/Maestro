@@ -128,7 +128,7 @@ function formatToolProgressText(toolName: string, toolState?: ToolProgressState)
 	const withDetail = (prefix: string, fallbackSuffix = '...') =>
 		detail ? `${prefix} ${detail}` : `${prefix}${fallbackSuffix}`;
 
-	if (status === 'failed') {
+	if (status === 'failed' || status === 'error') {
 		if (toolNameLower === 'bash' || toolNameLower === 'shell') {
 			return detail ? `Command failed: ${detail}` : 'Command failed';
 		}

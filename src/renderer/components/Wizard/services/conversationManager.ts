@@ -738,6 +738,21 @@ class ConversationManager {
 				return args;
 			}
 
+			case 'copilot': {
+				// Copilot: base args + JSON output format + read-only enforcement
+				const args = [...(agent.args || [])];
+
+				if (agent.jsonOutputArgs) {
+					args.push(...agent.jsonOutputArgs);
+				}
+
+				if (agent.readOnlyArgs) {
+					args.push(...agent.readOnlyArgs);
+				}
+
+				return args;
+			}
+
 			default: {
 				// For unknown agents, use base args
 				return [...(agent.args || [])];

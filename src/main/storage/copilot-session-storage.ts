@@ -153,6 +153,8 @@ function parseWorkspaceMetadata(content: string, sessionId: string): CopilotWork
 function normalizePath(value?: string): string | null {
 	if (!value) return null;
 	let normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+	// Preserve POSIX root "/" — stripping its trailing slash would produce ""
+	if (!normalized && value === '/') normalized = '/';
 	// Case-fold Windows-style paths (e.g., C:/Users) for case-insensitive comparison
 	if (/^[A-Za-z]:/.test(normalized)) {
 		normalized = normalized.toLowerCase();
@@ -443,11 +445,11 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 			const workspaceContent = sshConfig
 				? await this.readRemoteFile(workspacePath, sshConfig)
 				: await fs.readFile(workspacePath, 'utf8');
-			if (!workspaceContent) return true; // No metadata → can't filter, fail-open
+			if (!workspaceContent) return false; // No metadata → can't verify ownership, fail-closed
 			const metadata = parseWorkspaceMetadata(workspaceContent, sessionId);
 			return matchesProject(metadata, projectPath);
 		} catch {
-			return true; // Missing/unreadable metadata → fail-open
+			return false; // Missing/unreadable metadata → fail-closed
 		}
 	}
 
@@ -619,7 +621,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		sshConfig: SshRemoteConfig
 	): Promise<string | null> {
 		const result = await readFileRemote(filePath, sshConfig);
-		if (result.success && result.data) return result.data;
+		if (result.success && result.data != null) return result.data;
 		if (!this.isExpectedRemoteError(result.error)) {
 			logger.warn(`Unexpected SSH failure reading ${filePath}: ${result.error}`, LOG_CONTEXT);
 			captureException(new Error(result.error || 'readFileRemote failed'), {
@@ -636,7 +638,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		sshConfig: SshRemoteConfig
 	): Promise<number> {
 		const result = await directorySizeRemote(sessionDir, sshConfig);
-		if (result.success && result.data) return result.data;
+		if (result.success && result.data != null) return result.data;
 		if (!this.isExpectedRemoteError(result.error)) {
 			logger.warn(`Unexpected SSH failure sizing ${sessionDir}: ${result.error}`, LOG_CONTEXT);
 			captureException(new Error(result.error || 'directorySizeRemote failed'), {

@@ -620,7 +620,7 @@ export interface Session {
 	// Active time tracking - cumulative milliseconds of active use
 	activeTimeMs: number;
 	// Agent slash commands available for this session (fetched per session based on cwd)
-	agentCommands?: { command: string; description: string }[];
+	agentCommands?: { command: string; description: string; prompt?: string }[];
 	// Bookmark flag - bookmarked sessions appear in a dedicated section at the top
 	bookmarked?: boolean;
 	// Pending AI command that will trigger a synopsis on completion (e.g., '/commit')

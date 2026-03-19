@@ -596,7 +596,8 @@ const LogItemComponent = memo(
 									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
 										✓
 									</span>
-								) : log.metadata?.toolState?.status === 'failed' ? (
+								) : log.metadata?.toolState?.status === 'failed' ||
+								  log.metadata?.toolState?.status === 'error' ? (
 									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
 										!
 									</span>
@@ -1009,6 +1010,8 @@ const LogItemComponent = memo(
 			prevProps.log.text === nextProps.log.text &&
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
+			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
+			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

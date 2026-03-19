@@ -344,11 +344,14 @@ export class ChildProcessSpawner {
 			// because the SSH command wraps the actual agent command. Without this, the output
 			// parser won't process JSON output from remote agents, causing raw JSON to display.
 			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
-			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			// Use the pre-prompt args for detection to avoid false positives from prompt content
+			// (e.g., a prompt like "Explain --json" should not flip isStreamJsonMode)
+			const cliArgs = promptAddedToArgs ? args : finalArgs;
+			const argsContain = (pattern: string) => cliArgs.some((arg) => arg.includes(pattern));
 			const argsHaveFlagValue = (flag: string, value: string) =>
-				finalArgs.some(
+				cliArgs.some(
 					(arg, index) =>
-						arg === `${flag}=${value}` || (arg === flag && finalArgs[index + 1] === value)
+						arg === `${flag}=${value}` || (arg === flag && cliArgs[index + 1] === value)
 				);
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
