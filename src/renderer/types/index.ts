@@ -764,6 +764,10 @@ export interface AgentCapabilities {
 	supportsThinkingDisplay?: boolean;
 	supportsContextMerge?: boolean;
 	supportsContextExport?: boolean;
+	supportsWizard?: boolean;
+	supportsGroupChatModeration?: boolean;
+	usesJsonLineOutput?: boolean;
+	usesCombinedContextWindow?: boolean;
 }
 
 export interface AgentConfig {
