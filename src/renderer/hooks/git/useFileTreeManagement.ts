@@ -160,6 +160,17 @@ export function useFileTreeManagement(
 		}
 	}, []);
 
+	// Safety timeout: dismiss splash screen even if file tree load is still pending.
+	// Prevents SSH-configured sessions with unreachable hosts from blocking app startup
+	// indefinitely (SSH connect timeout + retries can take 30-60s).
+	// The file tree load continues in the background — the user just isn't blocked.
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			signalInitialFileTreeReady();
+		}, 5000);
+		return () => clearTimeout(timer);
+	}, [signalInitialFileTreeReady]);
+
 	// Per-session sequence counters to discard stale file tree loads.
 	// Keyed by sessionId so loads for different sessions don't cancel each other.
 	// When a newer load starts for the same session, any in-flight load with an

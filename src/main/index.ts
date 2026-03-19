@@ -307,6 +307,14 @@ function createWindow() {
 	mainWindow.on('closed', () => {
 		mainWindow = null;
 	});
+
+	// Kill all managed processes before the renderer reloads after a crash.
+	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
+	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
+	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	mainWindow.webContents.on('render-process-gone', () => {
+		processManager?.killAll();
+	});
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -584,6 +592,11 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
 	if (!isMacOS()) {
 		app.quit();
+	} else {
+		// On macOS the app stays alive after all windows close (dock click reopens).
+		// Kill all managed PTY/child processes now so they don't leak — session
+		// restoration will re-spawn fresh PTYs when the window is reopened.
+		processManager?.killAll();
 	}
 });
 

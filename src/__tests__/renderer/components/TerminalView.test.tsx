@@ -328,12 +328,77 @@ describe('TerminalView — auto-close on shell exit', () => {
 			vi.advanceTimersByTime(1);
 		});
 
-		// Tab should be closed and error toast shown
+		// Tab should be closed
 		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
+
+		// Toast is debounced (200ms) — advance past the dedup window
+		act(() => {
+			vi.advanceTimersByTime(250);
+		});
+
 		expect(mockNotifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
 				type: 'error',
 				title: 'Failed to start terminal',
+			})
+		);
+		vi.useRealTimers();
+	});
+
+	it('batches multiple spawn failures into a single toast', async () => {
+		vi.useFakeTimers();
+		// Two tabs that both exit immediately (startup failure)
+		const tab1 = makeTab({ id: 'tab-1', pid: 1234, state: 'busy', createdAt: Date.now() });
+		const tab2 = makeTab({ id: 'tab-2', pid: 5678, state: 'busy', createdAt: Date.now() });
+		const session = makeSession([tab1, tab2], 'tab-1');
+
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={session} isVisible={true} />
+		);
+
+		// Both tabs exit immediately
+		const exitedTab1 = makeTab({
+			id: 'tab-1',
+			pid: 1234,
+			state: 'exited',
+			exitCode: 1,
+			createdAt: Date.now(),
+		});
+		const exitedTab2 = makeTab({
+			id: 'tab-2',
+			pid: 5678,
+			state: 'exited',
+			exitCode: 1,
+			createdAt: Date.now(),
+		});
+		const exitedSession = makeSession([exitedTab1, exitedTab2], 'tab-1');
+
+		act(() => {
+			rerender(<TerminalView {...defaultProps} session={exitedSession} isVisible={true} />);
+		});
+
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		// Both tabs should be closed
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-1');
+		expect(mockCloseTerminalTab).toHaveBeenCalledWith('tab-2');
+
+		// Before dedup timer fires, no toast yet
+		expect(mockNotifyToast).not.toHaveBeenCalled();
+
+		// Advance past 200ms dedup window
+		act(() => {
+			vi.advanceTimersByTime(250);
+		});
+
+		// Should show a single batched toast
+		expect(mockNotifyToast).toHaveBeenCalledTimes(1);
+		expect(mockNotifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'error',
+				title: 'Failed to start 2 terminals',
 			})
 		);
 		vi.useRealTimers();
