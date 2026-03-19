@@ -84,8 +84,17 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher, getAccountAuthRecovery, getAccountRegistry, safeSend: depsSafeSend } =
-		deps;
+	const {
+		getProcessManager,
+		getAgentDetector,
+		agentConfigsStore,
+		settingsStore,
+		getMainWindow,
+		getAccountSwitcher,
+		getAccountAuthRecovery,
+		getAccountRegistry,
+		safeSend: depsSafeSend,
+	} = deps;
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -332,11 +341,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// ========================================================================
 				const registry = getAccountRegistry?.();
 				if (registry) {
-					const envToInject: Record<string, string> = customEnvVarsToPass ? { ...customEnvVarsToPass } : {};
+					const envToInject: Record<string, string> = customEnvVarsToPass
+						? { ...customEnvVarsToPass }
+						: {};
 					// Use base session ID for assignment (strip -ai-{tabId} etc.) so
 					// assignments are keyed consistently regardless of spawn vs restore.
-					const baseSessionIdForAccount = config.sessionId
-						.replace(REGEX_SESSION_SUFFIX, '');
+					const baseSessionIdForAccount = config.sessionId.replace(REGEX_SESSION_SUFFIX, '');
 					const assignedAccountId = injectAccountEnv(
 						baseSessionIdForAccount,
 						config.toolType,
@@ -344,7 +354,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						registry,
 						config.accountId, // May be passed from renderer
 						depsSafeSend,
-						() => { const db = getStatsDB(); return db.isReady() ? db : null; },
+						() => {
+							const db = getStatsDB();
+							return db.isReady() ? db : null;
+						}
 					);
 					if (assignedAccountId) {
 						customEnvVarsToPass = envToInject;

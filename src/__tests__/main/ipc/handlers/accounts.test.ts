@@ -70,23 +70,24 @@ describe('accounts IPC handlers', () => {
 		};
 
 		registerAccountHandlers({
-			getAccountRegistry: () => ({
-				getAll: vi.fn().mockReturnValue([]),
-				get: vi.fn(),
-				add: vi.fn(),
-				update: vi.fn(),
-				remove: vi.fn(),
-				setStatus: vi.fn(),
-				getDefaultAccount: vi.fn(),
-				selectNextAccount: vi.fn(),
-				getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
-				updateSwitchConfig: vi.fn(),
-				assignToSession: vi.fn(),
-				getAssignment: vi.fn(),
-				getAllAssignments: vi.fn().mockReturnValue([]),
-				removeAssignment: vi.fn(),
-				reconcileAssignments: vi.fn().mockReturnValue(0),
-			} as any),
+			getAccountRegistry: () =>
+				({
+					getAll: vi.fn().mockReturnValue([]),
+					get: vi.fn(),
+					add: vi.fn(),
+					update: vi.fn(),
+					remove: vi.fn(),
+					setStatus: vi.fn(),
+					getDefaultAccount: vi.fn(),
+					selectNextAccount: vi.fn(),
+					getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
+					updateSwitchConfig: vi.fn(),
+					assignToSession: vi.fn(),
+					getAssignment: vi.fn(),
+					getAllAssignments: vi.fn().mockReturnValue([]),
+					removeAssignment: vi.fn(),
+					reconcileAssignments: vi.fn().mockReturnValue(0),
+				}) as any,
 			getRecoveryPoller: () => mockRecoveryPoller as any,
 		});
 	});
@@ -116,23 +117,24 @@ describe('accounts IPC handlers', () => {
 			// Re-register without poller
 			handlers.clear();
 			registerAccountHandlers({
-				getAccountRegistry: () => ({
-					getAll: vi.fn().mockReturnValue([]),
-					get: vi.fn(),
-					add: vi.fn(),
-					update: vi.fn(),
-					remove: vi.fn(),
-					setStatus: vi.fn(),
-					getDefaultAccount: vi.fn(),
-					selectNextAccount: vi.fn(),
-					getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
-					updateSwitchConfig: vi.fn(),
-					assignToSession: vi.fn(),
-					getAssignment: vi.fn(),
-					getAllAssignments: vi.fn().mockReturnValue([]),
-					removeAssignment: vi.fn(),
-					reconcileAssignments: vi.fn().mockReturnValue(0),
-				} as any),
+				getAccountRegistry: () =>
+					({
+						getAll: vi.fn().mockReturnValue([]),
+						get: vi.fn(),
+						add: vi.fn(),
+						update: vi.fn(),
+						remove: vi.fn(),
+						setStatus: vi.fn(),
+						getDefaultAccount: vi.fn(),
+						selectNextAccount: vi.fn(),
+						getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
+						updateSwitchConfig: vi.fn(),
+						assignToSession: vi.fn(),
+						getAssignment: vi.fn(),
+						getAllAssignments: vi.fn().mockReturnValue([]),
+						removeAssignment: vi.fn(),
+						reconcileAssignments: vi.fn().mockReturnValue(0),
+					}) as any,
 				// No getRecoveryPoller provided
 			});
 
@@ -146,23 +148,24 @@ describe('accounts IPC handlers', () => {
 			// Re-register with poller returning null
 			handlers.clear();
 			registerAccountHandlers({
-				getAccountRegistry: () => ({
-					getAll: vi.fn().mockReturnValue([]),
-					get: vi.fn(),
-					add: vi.fn(),
-					update: vi.fn(),
-					remove: vi.fn(),
-					setStatus: vi.fn(),
-					getDefaultAccount: vi.fn(),
-					selectNextAccount: vi.fn(),
-					getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
-					updateSwitchConfig: vi.fn(),
-					assignToSession: vi.fn(),
-					getAssignment: vi.fn(),
-					getAllAssignments: vi.fn().mockReturnValue([]),
-					removeAssignment: vi.fn(),
-					reconcileAssignments: vi.fn().mockReturnValue(0),
-				} as any),
+				getAccountRegistry: () =>
+					({
+						getAll: vi.fn().mockReturnValue([]),
+						get: vi.fn(),
+						add: vi.fn(),
+						update: vi.fn(),
+						remove: vi.fn(),
+						setStatus: vi.fn(),
+						getDefaultAccount: vi.fn(),
+						selectNextAccount: vi.fn(),
+						getSwitchConfig: vi.fn().mockReturnValue({ enabled: false }),
+						updateSwitchConfig: vi.fn(),
+						assignToSession: vi.fn(),
+						getAssignment: vi.fn(),
+						getAllAssignments: vi.fn().mockReturnValue([]),
+						removeAssignment: vi.fn(),
+						reconcileAssignments: vi.fn().mockReturnValue(0),
+					}) as any,
 				getRecoveryPoller: () => null,
 			});
 

@@ -27,8 +27,12 @@ function getAccountStorePaths(): string[] {
 	const paths: string[] = [];
 
 	if (platform === 'darwin') {
-		paths.push(path.join(home, 'Library', 'Application Support', 'Maestro', 'maestro-accounts.json'));
-		paths.push(path.join(home, 'Library', 'Application Support', 'maestro', 'maestro-accounts.json'));
+		paths.push(
+			path.join(home, 'Library', 'Application Support', 'Maestro', 'maestro-accounts.json')
+		);
+		paths.push(
+			path.join(home, 'Library', 'Application Support', 'maestro', 'maestro-accounts.json')
+		);
 	} else if (platform === 'win32') {
 		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
 		paths.push(path.join(appData, 'Maestro', 'maestro-accounts.json'));
@@ -112,10 +116,7 @@ async function discoverAccountsFromFilesystem(): Promise<CLIAccountInfo[]> {
 		// Check for auth info
 		let email = '';
 		try {
-			const authContent = await fs.promises.readFile(
-				path.join(configDir, '.claude.json'),
-				'utf-8'
-			);
+			const authContent = await fs.promises.readFile(path.join(configDir, '.claude.json'), 'utf-8');
 			const json = JSON.parse(authContent);
 			email = json.email || json.accountEmail || json.primaryEmail || '';
 		} catch {

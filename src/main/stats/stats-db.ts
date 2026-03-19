@@ -807,16 +807,40 @@ export class StatsDB {
 	// Account Usage (delegated)
 	// ============================================================================
 
-	upsertAccountUsageWindow(accountId: string, windowStart: number, windowEnd: number, tokens: AccountUsageTokens): void {
+	upsertAccountUsageWindow(
+		accountId: string,
+		windowStart: number,
+		windowEnd: number,
+		tokens: AccountUsageTokens
+	): void {
 		return upsertAccountUsageWindow(this.database, accountId, windowStart, windowEnd, tokens);
 	}
 
-	getAccountUsageInWindow(accountId: string, windowStart: number, windowEnd: number): AccountUsageSummary {
+	getAccountUsageInWindow(
+		accountId: string,
+		windowStart: number,
+		windowEnd: number
+	): AccountUsageSummary {
 		return getAccountUsageInWindow(this.database, accountId, windowStart, windowEnd);
 	}
 
-	insertThrottleEvent(accountId: string, sessionId: string | null, reason: string, tokensAtThrottle: number, windowStart?: number, windowEnd?: number): string {
-		return insertThrottleEvent(this.database, accountId, sessionId, reason, tokensAtThrottle, windowStart, windowEnd);
+	insertThrottleEvent(
+		accountId: string,
+		sessionId: string | null,
+		reason: string,
+		tokensAtThrottle: number,
+		windowStart?: number,
+		windowEnd?: number
+	): string {
+		return insertThrottleEvent(
+			this.database,
+			accountId,
+			sessionId,
+			reason,
+			tokensAtThrottle,
+			windowStart,
+			windowEnd
+		);
 	}
 
 	getThrottleEvents(accountId?: string, since?: number): ThrottleEvent[] {
@@ -827,7 +851,11 @@ export class StatsDB {
 		return getAccountDailyUsage(this.database, accountId, sinceMs, untilMs);
 	}
 
-	getAccountMonthlyUsage(accountId: string, sinceMs: number, untilMs: number): AccountMonthlyUsage[] {
+	getAccountMonthlyUsage(
+		accountId: string,
+		sinceMs: number,
+		untilMs: number
+	): AccountMonthlyUsage[] {
 		return getAccountMonthlyUsage(this.database, accountId, sinceMs, untilMs);
 	}
 

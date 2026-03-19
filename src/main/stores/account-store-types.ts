@@ -1,4 +1,8 @@
-import type { AccountProfile, AccountAssignment, AccountSwitchConfig } from '../../shared/account-types';
+import type {
+	AccountProfile,
+	AccountAssignment,
+	AccountSwitchConfig,
+} from '../../shared/account-types';
 
 export interface AccountStoreData {
 	/** All registered account profiles, keyed by account ID */

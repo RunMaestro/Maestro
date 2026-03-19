@@ -113,19 +113,16 @@ function QueryVolumeTrendChart({
 	const innerW = chartWidth - pad.left - pad.right;
 	const innerH = chartHeight - pad.top - pad.bottom;
 
-	const maxVal = useMemo(
-		() => Math.max(...dailyTrend.map((d) => d.queryCount), 1),
-		[dailyTrend],
-	);
+	const maxVal = useMemo(() => Math.max(...dailyTrend.map((d) => d.queryCount), 1), [dailyTrend]);
 
 	const xScale = useCallback(
 		(i: number) => pad.left + (i / Math.max(dailyTrend.length - 1, 1)) * innerW,
-		[dailyTrend.length, innerW, pad.left],
+		[dailyTrend.length, innerW, pad.left]
 	);
 
 	const yScale = useCallback(
 		(v: number) => chartHeight - pad.bottom - (v / (maxVal * 1.1)) * innerH,
-		[maxVal, innerH, chartHeight, pad.bottom],
+		[maxVal, innerH, chartHeight, pad.bottom]
 	);
 
 	const linePath = useMemo(() => {
@@ -159,7 +156,7 @@ function QueryVolumeTrendChart({
 	// X-axis labels — show max 7
 	const xLabelInterval = useMemo(
 		() => Math.max(1, Math.ceil(dailyTrend.length / 7)),
-		[dailyTrend.length],
+		[dailyTrend.length]
 	);
 
 	if (dailyTrend.length === 0) {
@@ -323,12 +320,12 @@ function ResponseTimeTrendChart({
 
 	const xScale = useCallback(
 		(i: number) => pad.left + (i / Math.max(dailyTrend.length - 1, 1)) * innerW,
-		[dailyTrend.length, innerW, pad.left],
+		[dailyTrend.length, innerW, pad.left]
 	);
 
 	const yScale = useCallback(
 		(v: number) => chartHeight - pad.bottom - (v / maxVal) * innerH,
-		[maxVal, innerH, chartHeight, pad.bottom],
+		[maxVal, innerH, chartHeight, pad.bottom]
 	);
 
 	const linePath = useMemo(() => {
@@ -346,7 +343,7 @@ function ResponseTimeTrendChart({
 
 	const xLabelInterval = useMemo(
 		() => Math.max(1, Math.ceil(dailyTrend.length / 7)),
-		[dailyTrend.length],
+		[dailyTrend.length]
 	);
 
 	if (dailyTrend.length === 0) {
@@ -495,7 +492,9 @@ function ResponseTimeTrendChart({
 			{/* Legend */}
 			<div className="flex items-center gap-3 mt-1" style={{ fontSize: 10 }}>
 				<div className="flex items-center gap-1">
-					<div style={{ width: 12, height: 2, backgroundColor: theme.colors.accent, borderRadius: 1 }} />
+					<div
+						style={{ width: 12, height: 2, backgroundColor: theme.colors.accent, borderRadius: 1 }}
+					/>
 					<span style={{ color: theme.colors.textDim }}>Avg Duration</span>
 				</div>
 				{p95ResponseTimeMs > 0 && (
@@ -507,7 +506,9 @@ function ResponseTimeTrendChart({
 								borderTop: `1px dashed ${theme.colors.warning}`,
 							}}
 						/>
-						<span style={{ color: theme.colors.textDim }}>P95 ({formatDurationMs(p95ResponseTimeMs)})</span>
+						<span style={{ color: theme.colors.textDim }}>
+							P95 ({formatDurationMs(p95ResponseTimeMs)})
+						</span>
 					</div>
 				)}
 			</div>
@@ -530,7 +531,7 @@ function ActivityHoursChart({
 
 	const maxCount = useMemo(
 		() => Math.max(...hourlyPattern.map((h) => h.queryCount), 1),
-		[hourlyPattern],
+		[hourlyPattern]
 	);
 
 	const peakHour = useMemo(() => {
@@ -600,9 +601,7 @@ function ActivityHoursChart({
 									}}
 								>
 									<div style={{ fontWeight: 500 }}>{formatHour(h.hour)}</div>
-									<div style={{ color: theme.colors.textDim }}>
-										{h.queryCount} queries
-									</div>
+									<div style={{ color: theme.colors.textDim }}>{h.queryCount} queries</div>
 									{h.avgDurationMs > 0 && (
 										<div style={{ color: theme.colors.textDim }}>
 											Avg: {formatDurationMs(h.avgDurationMs)}
@@ -634,9 +633,7 @@ function ActivityHoursChart({
 			{/* Peak indicator */}
 			<div className="mt-1 flex items-center gap-1" style={{ fontSize: 10 }}>
 				<span style={{ color: theme.colors.textDim }}>Peak:</span>
-				<span style={{ color: theme.colors.accent, fontWeight: 500 }}>
-					{formatHour(peakHour)}
-				</span>
+				<span style={{ color: theme.colors.accent, fontWeight: 500 }}>{formatHour(peakHour)}</span>
 			</div>
 		</div>
 	);
@@ -720,7 +717,7 @@ function TokenBreakdownChart({
 							}}
 							title={`${seg.label}: ${formatTokenCount(seg.tokens)} (${seg.percent.toFixed(1)}%)`}
 						/>
-					) : null,
+					) : null
 				)}
 			</div>
 
@@ -746,16 +743,10 @@ function TokenBreakdownChart({
 							}}
 						/>
 						<div style={{ fontSize: 10, minWidth: 0 }}>
-							<span style={{ color: theme.colors.textMain }}>
-								{seg.label}:
-							</span>{' '}
-							<span style={{ color: theme.colors.textDim }}>
-								{formatTokenCount(seg.tokens)}
-							</span>
+							<span style={{ color: theme.colors.textMain }}>{seg.label}:</span>{' '}
+							<span style={{ color: theme.colors.textDim }}>{formatTokenCount(seg.tokens)}</span>
 							{seg.cost > 0 && (
-								<span style={{ color: theme.colors.textDim }}>
-									{' '}(${seg.cost.toFixed(2)})
-								</span>
+								<span style={{ color: theme.colors.textDim }}> (${seg.cost.toFixed(2)})</span>
 							)}
 						</div>
 					</div>
@@ -971,10 +962,7 @@ export function ProviderDetailCharts({ theme, detail }: ProviderDetailChartsProp
 		>
 			{/* Chart 1: Query Volume Trend */}
 			<ChartPanel theme={theme} title="Query Volume Trend">
-				<QueryVolumeTrendChart
-					theme={theme}
-					dailyTrend={detail.dailyTrend}
-				/>
+				<QueryVolumeTrendChart theme={theme} dailyTrend={detail.dailyTrend} />
 			</ChartPanel>
 
 			{/* Chart 2: Response Time Trend */}
@@ -988,18 +976,12 @@ export function ProviderDetailCharts({ theme, detail }: ProviderDetailChartsProp
 
 			{/* Chart 3: Activity Heatmap */}
 			<ChartPanel theme={theme} title="Activity by Hour">
-				<ActivityHoursChart
-					theme={theme}
-					hourlyPattern={detail.hourlyPattern}
-				/>
+				<ActivityHoursChart theme={theme} hourlyPattern={detail.hourlyPattern} />
 			</ChartPanel>
 
 			{/* Chart 4: Token Breakdown */}
 			<ChartPanel theme={theme} title="Token Breakdown">
-				<TokenBreakdownChart
-					theme={theme}
-					tokenBreakdown={detail.tokenBreakdown}
-				/>
+				<TokenBreakdownChart theme={theme} tokenBreakdown={detail.tokenBreakdown} />
 			</ChartPanel>
 
 			{/* Chart 5: Source & Location Split */}

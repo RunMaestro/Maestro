@@ -37,21 +37,31 @@ interface ProviderDetailViewProps {
 
 function getStatusLabel(status: HealthStatus): string {
 	switch (status) {
-		case 'healthy': return 'Healthy';
-		case 'degraded': return 'Degraded';
-		case 'failing': return 'Failing';
-		case 'not_installed': return 'Not Installed';
-		case 'idle': return 'Idle';
+		case 'healthy':
+			return 'Healthy';
+		case 'degraded':
+			return 'Degraded';
+		case 'failing':
+			return 'Failing';
+		case 'not_installed':
+			return 'Not Installed';
+		case 'idle':
+			return 'Idle';
 	}
 }
 
 function getStatusColor(status: HealthStatus, theme: Theme): string {
 	switch (status) {
-		case 'healthy': return theme.colors.success;
-		case 'degraded': return theme.colors.warning;
-		case 'failing': return theme.colors.error;
-		case 'not_installed': return theme.colors.textDim;
-		case 'idle': return theme.colors.accent;
+		case 'healthy':
+			return theme.colors.success;
+		case 'degraded':
+			return theme.colors.warning;
+		case 'failing':
+			return theme.colors.error;
+		case 'not_installed':
+			return theme.colors.textDim;
+		case 'idle':
+			return theme.colors.accent;
 	}
 }
 
@@ -168,19 +178,19 @@ export function ProviderDetailView({
 					<ArrowLeft className="w-3.5 h-3.5" />
 					Back to Providers
 				</button>
-				<div style={{ color: theme.colors.textDim, fontSize: 12, textAlign: 'center', padding: 20 }}>
+				<div
+					style={{ color: theme.colors.textDim, fontSize: 12, textAlign: 'center', padding: 20 }}
+				>
 					Failed to load provider details
 				</div>
 			</div>
 		);
 	}
 
-	const reliabilityDisplay = detail.usage.queryCount > 0
-		? `${detail.reliability.successRate.toFixed(1)}%`
-		: 'N/A';
-	const errorRateDisplay = detail.usage.queryCount > 0
-		? `${detail.reliability.errorRate.toFixed(1)}%`
-		: 'N/A';
+	const reliabilityDisplay =
+		detail.usage.queryCount > 0 ? `${detail.reliability.successRate.toFixed(1)}%` : 'N/A';
+	const errorRateDisplay =
+		detail.usage.queryCount > 0 ? `${detail.reliability.errorRate.toFixed(1)}%` : 'N/A';
 
 	return (
 		<div>
@@ -266,11 +276,7 @@ export function ProviderDetailView({
 					label="Tokens Out"
 					value={formatTokenCount(detail.usage.totalOutputTokens)}
 				/>
-				<MetricCard
-					theme={theme}
-					label="Cost"
-					value={`$${detail.usage.totalCostUsd.toFixed(2)}`}
-				/>
+				<MetricCard theme={theme} label="Cost" value={`$${detail.usage.totalCostUsd.toFixed(2)}`} />
 				<MetricCard
 					theme={theme}
 					label="Reliability"
@@ -331,11 +337,7 @@ export function ProviderDetailView({
 					label="Location"
 					value={`${detail.queriesByLocation.local} local / ${detail.queriesByLocation.remote} remote`}
 				/>
-				<MetricCard
-					theme={theme}
-					label="Migrations"
-					value={`${detail.migrations.length}`}
-				/>
+				<MetricCard theme={theme} label="Migrations" value={`${detail.migrations.length}`} />
 			</div>
 
 			{/* Error type breakdown (compact inline, only when errors exist) */}
@@ -359,10 +361,7 @@ export function ProviderDetailView({
 			/>
 
 			{/* Migration History */}
-			<MigrationTimeline
-				theme={theme}
-				migrations={detail.migrations}
-			/>
+			<MigrationTimeline theme={theme} migrations={detail.migrations} />
 		</div>
 	);
 }
@@ -396,10 +395,7 @@ function ErrorBreakdownBar({
 	if (entries.length === 0) return null;
 
 	return (
-		<div
-			className="flex flex-wrap items-center gap-1.5"
-			style={{ marginBottom: 12, fontSize: 10 }}
-		>
+		<div className="flex flex-wrap items-center gap-1.5" style={{ marginBottom: 12, fontSize: 10 }}>
 			<span style={{ color: theme.colors.textDim }}>Errors:</span>
 			{entries.map(([type, count]) => (
 				<span
@@ -439,9 +435,7 @@ function MetricCard({
 				border: `1px solid ${theme.colors.border}`,
 			}}
 		>
-			<div style={{ color: theme.colors.textDim, fontSize: 10, marginBottom: 2 }}>
-				{label}
-			</div>
+			<div style={{ color: theme.colors.textDim, fontSize: 10, marginBottom: 2 }}>{label}</div>
 			<div
 				style={{
 					color: valueColor ?? theme.colors.textMain,
@@ -459,13 +453,7 @@ function MetricCard({
 // ComparisonBar — benchmarks vs other providers
 // ============================================================================
 
-function ComparisonBar({
-	theme,
-	detail,
-}: {
-	theme: Theme;
-	detail: ProviderDetail;
-}) {
+function ComparisonBar({ theme, detail }: { theme: Theme; detail: ProviderDetail }) {
 	const { comparison } = detail;
 	if (comparison.totalQueriesAllProviders === 0) return null;
 
@@ -519,8 +507,8 @@ function ComparisonBar({
 						{formatDurationMs(detail.reliability.avgResponseTimeMs)}
 					</span>
 					<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
-						(fastest: {fastest.provider} {formatDurationMs(fastest.avgMs)},
-						slowest: {slowest.provider} {formatDurationMs(slowest.avgMs)})
+						(fastest: {fastest.provider} {formatDurationMs(fastest.avgMs)}, slowest:{' '}
+						{slowest.provider} {formatDurationMs(slowest.avgMs)})
 					</span>
 				</div>
 			)}
@@ -531,18 +519,19 @@ function ComparisonBar({
 					<span style={{ color: theme.colors.textDim, minWidth: 80 }}>Reliability</span>
 					<span
 						style={{
-							color: detail.reliability.successRate >= 95
-								? theme.colors.success
-								: detail.reliability.successRate >= 85
-									? theme.colors.warning
-									: theme.colors.error,
+							color:
+								detail.reliability.successRate >= 95
+									? theme.colors.success
+									: detail.reliability.successRate >= 85
+										? theme.colors.warning
+										: theme.colors.error,
 						}}
 					>
 						{detail.usage.queryCount > 0 ? `${detail.reliability.successRate.toFixed(1)}%` : 'N/A'}
 					</span>
 					<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
-						(highest: {highestReliability.provider} {highestReliability.rate.toFixed(1)}%,
-						lowest: {lowestReliability.provider} {lowestReliability.rate.toFixed(1)}%)
+						(highest: {highestReliability.provider} {highestReliability.rate.toFixed(1)}%, lowest:{' '}
+						{lowestReliability.provider} {lowestReliability.rate.toFixed(1)}%)
 					</span>
 				</div>
 			)}
@@ -646,9 +635,7 @@ function ActiveSessionsList({
 						e.currentTarget.style.backgroundColor = 'transparent';
 					}}
 				>
-					<span style={{ color: theme.colors.textMain, fontSize: 12, flex: 1 }}>
-						{s.name}
-					</span>
+					<span style={{ color: theme.colors.textMain, fontSize: 12, flex: 1 }}>{s.name}</span>
 					<span
 						style={{
 							color: theme.colors.textDim,
@@ -664,11 +651,12 @@ function ActiveSessionsList({
 					<span
 						style={{
 							fontSize: 10,
-							color: s.state === 'busy'
-								? theme.colors.warning
-								: s.state === 'error'
-									? theme.colors.error
-									: theme.colors.success,
+							color:
+								s.state === 'busy'
+									? theme.colors.warning
+									: s.state === 'error'
+										? theme.colors.error
+										: theme.colors.success,
 						}}
 					>
 						● {s.state}
@@ -730,9 +718,7 @@ function MigrationTimeline({
 					<span style={{ color: theme.colors.textDim, fontSize: 10, minWidth: 70 }}>
 						{formatMigrationTime(m.timestamp)}
 					</span>
-					<span style={{ color: theme.colors.textMain, fontSize: 11 }}>
-						{m.sessionName}:
-					</span>
+					<span style={{ color: theme.colors.textMain, fontSize: 11 }}>{m.sessionName}:</span>
 					<span style={{ color: theme.colors.accent, fontSize: 11 }}>
 						<ArrowRightLeft
 							className="w-3 h-3 inline-block mx-0.5"
@@ -740,15 +726,12 @@ function MigrationTimeline({
 								color: theme.colors.textDim,
 								verticalAlign: 'middle',
 							}}
-						/>
-						{' '}
+						/>{' '}
 						{m.direction === 'from' ? 'Switched TO' : 'Switched FROM'}{' '}
 						{getAgentDisplayName(m.otherProvider)}
 					</span>
 					{m.generation > 1 && (
-						<span style={{ color: theme.colors.textDim, fontSize: 9 }}>
-							(gen {m.generation})
-						</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 9 }}>(gen {m.generation})</span>
 					)}
 				</div>
 			))}

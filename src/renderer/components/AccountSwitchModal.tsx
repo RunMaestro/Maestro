@@ -92,7 +92,9 @@ export function AccountSwitchModal({
 			title={getReasonHeader(reason)}
 			priority={MODAL_PRIORITIES.ACCOUNT_SWITCH}
 			onClose={onClose}
-			headerIcon={<AlertTriangle className="w-4 h-4" style={{ color: getStatusColor(reason, theme) }} />}
+			headerIcon={
+				<AlertTriangle className="w-4 h-4" style={{ color: getStatusColor(reason, theme) }} />
+			}
 			width={440}
 			closeOnBackdropClick
 			footer={

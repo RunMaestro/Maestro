@@ -79,7 +79,7 @@ describe('AccountRecoveryPoller', () => {
 			createMockAccount({
 				id: 'acct-1',
 				status: 'throttled',
-				lastThrottledAt: now - (windowMs / 2), // Only halfway through window
+				lastThrottledAt: now - windowMs / 2, // Only halfway through window
 				tokenWindowMs: windowMs,
 			}),
 		]);
@@ -129,21 +129,27 @@ describe('AccountRecoveryPoller', () => {
 		poller.poll();
 
 		// Should send status-changed per recovered account
-		expect(mockSafeSend).toHaveBeenCalledWith('account:status-changed', expect.objectContaining({
-			accountId: 'acct-1',
-			accountName: 'Recovered Account',
-			oldStatus: 'throttled',
-			newStatus: 'active',
-			recoveredBy: 'poller',
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:status-changed',
+			expect.objectContaining({
+				accountId: 'acct-1',
+				accountName: 'Recovered Account',
+				oldStatus: 'throttled',
+				newStatus: 'active',
+				recoveredBy: 'poller',
+			})
+		);
 
 		// Should send recovery-available summary event
-		expect(mockSafeSend).toHaveBeenCalledWith('account:recovery-available', expect.objectContaining({
-			recoveredAccountIds: ['acct-1'],
-			recoveredCount: 1,
-			stillThrottledCount: 0,
-			totalAccounts: 1,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:recovery-available',
+			expect.objectContaining({
+				recoveredAccountIds: ['acct-1'],
+				recoveredCount: 1,
+				stillThrottledCount: 0,
+				totalAccounts: 1,
+			})
+		);
 	});
 
 	it('should recover multiple accounts and report correct counts', () => {
@@ -170,7 +176,7 @@ describe('AccountRecoveryPoller', () => {
 				id: 'acct-3',
 				name: 'Account 3 (still throttled)',
 				status: 'throttled',
-				lastThrottledAt: now - (windowMs / 2), // Still within window
+				lastThrottledAt: now - windowMs / 2, // Still within window
 				tokenWindowMs: windowMs,
 			}),
 		]);
@@ -180,12 +186,15 @@ describe('AccountRecoveryPoller', () => {
 		expect(recovered).toEqual(['acct-1', 'acct-2']);
 		expect(mockRegistry.setStatus).toHaveBeenCalledTimes(2);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:recovery-available', expect.objectContaining({
-			recoveredAccountIds: ['acct-1', 'acct-2'],
-			recoveredCount: 2,
-			stillThrottledCount: 1,
-			totalAccounts: 3,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:recovery-available',
+			expect.objectContaining({
+				recoveredAccountIds: ['acct-1', 'acct-2'],
+				recoveredCount: 2,
+				stillThrottledCount: 1,
+				totalAccounts: 3,
+			})
+		);
 	});
 
 	it('should skip throttled accounts with lastThrottledAt of 0', () => {

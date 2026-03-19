@@ -97,29 +97,33 @@ export function upsertAccountUsageWindow(
 		| undefined;
 
 	if (existing) {
-		stmtCache.get(db, UPDATE_WINDOW_SQL).run(
-			tokens.inputTokens,
-			tokens.outputTokens,
-			tokens.cacheReadTokens,
-			tokens.cacheCreationTokens,
-			tokens.costUsd,
-			existing.id
-		);
+		stmtCache
+			.get(db, UPDATE_WINDOW_SQL)
+			.run(
+				tokens.inputTokens,
+				tokens.outputTokens,
+				tokens.cacheReadTokens,
+				tokens.cacheCreationTokens,
+				tokens.costUsd,
+				existing.id
+			);
 		logger.debug(`Updated usage window ${existing.id} for account ${accountId}`, LOG_CONTEXT);
 	} else {
 		const id = generateId();
-		stmtCache.get(db, INSERT_WINDOW_SQL).run(
-			id,
-			accountId,
-			windowStart,
-			windowEnd,
-			tokens.inputTokens,
-			tokens.outputTokens,
-			tokens.cacheReadTokens,
-			tokens.cacheCreationTokens,
-			tokens.costUsd,
-			Date.now()
-		);
+		stmtCache
+			.get(db, INSERT_WINDOW_SQL)
+			.run(
+				id,
+				accountId,
+				windowStart,
+				windowEnd,
+				tokens.inputTokens,
+				tokens.outputTokens,
+				tokens.cacheReadTokens,
+				tokens.cacheCreationTokens,
+				tokens.costUsd,
+				Date.now()
+			);
 		logger.debug(`Inserted usage window ${id} for account ${accountId}`, LOG_CONTEXT);
 	}
 }
@@ -133,7 +137,9 @@ export function getAccountUsageInWindow(
 	windowStart: number,
 	windowEnd: number
 ): AccountUsageSummary {
-	const result = stmtCache.get(db, GET_USAGE_SQL).get(accountId, windowStart, windowEnd) as AccountUsageSummary;
+	const result = stmtCache
+		.get(db, GET_USAGE_SQL)
+		.get(accountId, windowStart, windowEnd) as AccountUsageSummary;
 	return result;
 }
 
@@ -154,16 +160,18 @@ export function insertThrottleEvent(
 	windowEnd?: number
 ): string {
 	const id = generateId();
-	stmtCache.get(db, INSERT_THROTTLE_SQL).run(
-		id,
-		accountId,
-		sessionId,
-		Date.now(),
-		reason,
-		tokensAtThrottle,
-		windowStart ?? null,
-		windowEnd ?? null
-	);
+	stmtCache
+		.get(db, INSERT_THROTTLE_SQL)
+		.run(
+			id,
+			accountId,
+			sessionId,
+			Date.now(),
+			reason,
+			tokensAtThrottle,
+			windowStart ?? null,
+			windowEnd ?? null
+		);
 	logger.debug(`Inserted throttle event ${id} for account ${accountId}`, LOG_CONTEXT);
 	return id;
 }
@@ -291,7 +299,9 @@ export function getAccountMonthlyUsage(
 	sinceMs: number,
 	untilMs: number
 ): AccountMonthlyUsage[] {
-	return stmtCache.get(db, MONTHLY_USAGE_SQL).all(accountId, sinceMs, untilMs) as AccountMonthlyUsage[];
+	return stmtCache
+		.get(db, MONTHLY_USAGE_SQL)
+		.all(accountId, sinceMs, untilMs) as AccountMonthlyUsage[];
 }
 
 /**
@@ -323,10 +333,14 @@ export function getAccountWindowHistory(
 		LIMIT ?
 	`;
 	const rows = db.prepare(sql).all(accountId, windowCount) as Array<{
-		windowStart: number; windowEnd: number;
-		inputTokens: number; outputTokens: number;
-		cacheReadTokens: number; cacheCreationTokens: number;
-		costUsd: number; queryCount: number;
+		windowStart: number;
+		windowEnd: number;
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
+		costUsd: number;
+		queryCount: number;
 	}>;
 	return rows.reverse(); // Return chronological order
 }

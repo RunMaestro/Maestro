@@ -109,11 +109,11 @@ export function UnarchiveConflictModal({
 				</div>
 				<div className="space-y-2">
 					<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-						Another active <strong>{providerName}</strong> agent already exists: &ldquo;{conflictName}&rdquo;.
+						Another active <strong>{providerName}</strong> agent already exists: &ldquo;
+						{conflictName}&rdquo;.
 					</p>
 					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
-						To unarchive this agent, you must first archive or delete the
-						conflicting agent.
+						To unarchive this agent, you must first archive or delete the conflicting agent.
 					</p>
 				</div>
 			</div>

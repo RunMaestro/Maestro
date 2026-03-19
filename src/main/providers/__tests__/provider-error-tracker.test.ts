@@ -30,7 +30,7 @@ describe('ProviderErrorTracker', () => {
 		it('should not record errors when disabled', () => {
 			const disabledTracker = new ProviderErrorTracker(
 				{ ...defaultConfig, enabled: false },
-				onFailoverSuggest,
+				onFailoverSuggest
 			);
 
 			disabledTracker.recordError('session-1', 'claude-code', {
@@ -172,7 +172,7 @@ describe('ProviderErrorTracker', () => {
 		it('should not emit suggestion when no fallback providers are available', () => {
 			const noFallbackTracker = new ProviderErrorTracker(
 				{ ...defaultConfig, fallbackProviders: ['opencode'] },
-				onFailoverSuggest,
+				onFailoverSuggest
 			);
 
 			// All errors for opencode, but only opencode in fallback list
@@ -190,7 +190,7 @@ describe('ProviderErrorTracker', () => {
 		it('should pick first available fallback provider that differs from current', () => {
 			const tracker2 = new ProviderErrorTracker(
 				{ ...defaultConfig, fallbackProviders: ['codex', 'opencode', 'claude-code'] },
-				onFailoverSuggest,
+				onFailoverSuggest
 			);
 
 			for (let i = 0; i < 3; i++) {
@@ -351,7 +351,7 @@ describe('ProviderErrorTracker', () => {
 			// Use a short window for testing
 			const shortWindowTracker = new ProviderErrorTracker(
 				{ ...defaultConfig, errorWindowMs: 100 }, // 100ms window
-				onFailoverSuggest,
+				onFailoverSuggest
 			);
 
 			// Record 2 errors
@@ -390,11 +390,7 @@ describe('ProviderErrorTracker', () => {
 	describe('session name resolution', () => {
 		it('should use the provided session name resolver', () => {
 			const nameResolver = vi.fn().mockReturnValue('My Session');
-			const tracker2 = new ProviderErrorTracker(
-				defaultConfig,
-				onFailoverSuggest,
-				nameResolver,
-			);
+			const tracker2 = new ProviderErrorTracker(defaultConfig, onFailoverSuggest, nameResolver);
 
 			for (let i = 0; i < 3; i++) {
 				tracker2.recordError('session-1', 'opencode', {

@@ -4,8 +4,15 @@ import * as path from 'path';
 // Hoist mock functions so they can be used in vi.mock factories
 const {
 	TEST_HOME,
-	mockStat, mockAccess, mockReadFile, mockReaddir,
-	mockMkdir, mockLstat, mockSymlink, mockUnlink, mockRm,
+	mockStat,
+	mockAccess,
+	mockReadFile,
+	mockReaddir,
+	mockMkdir,
+	mockLstat,
+	mockSymlink,
+	mockUnlink,
+	mockRm,
 	mockExecFile,
 } = vi.hoisted(() => ({
 	TEST_HOME: '/home/testuser',
@@ -159,7 +166,9 @@ describe('account-setup', () => {
 
 			const result = await validateBaseClaudeDir();
 			expect(result.valid).toBe(false);
-			expect(result.errors).toContain('No .credentials.json or .claude.json found — Claude Code may not be authenticated.');
+			expect(result.errors).toContain(
+				'No .credentials.json or .claude.json found — Claude Code may not be authenticated.'
+			);
 		});
 	});
 
@@ -189,9 +198,11 @@ describe('account-setup', () => {
 		});
 
 		it('should extract nested email from oauthAccount', async () => {
-			mockReadFile.mockResolvedValue(JSON.stringify({
-				oauthAccount: { email: 'nested@example.com' },
-			}));
+			mockReadFile.mockResolvedValue(
+				JSON.stringify({
+					oauthAccount: { email: 'nested@example.com' },
+				})
+			);
 			const email = await readAccountEmail('/fake/.claude-test');
 			expect(email).toBe('nested@example.com');
 		});
@@ -350,22 +361,20 @@ describe('account-setup', () => {
 
 	describe('validateRemoteAccountDir', () => {
 		it('should validate existing remote directory', async () => {
-			mockExecFile.mockImplementation(
-				(_cmd: string, args: string[], _opts: any, callback: any) => {
-					const command = args[args.length - 1];
-					if (command.includes('DIR_EXISTS')) {
-						callback(null, 'DIR_EXISTS\n', '');
-					} else if (command.includes('AUTH_EXISTS')) {
-						callback(null, 'AUTH_EXISTS\n', '');
-					} else if (command.includes('SYMLINKS_OK')) {
-						callback(null, 'SYMLINKS_OK\n', '');
-					}
-				},
-			);
+			mockExecFile.mockImplementation((_cmd: string, args: string[], _opts: any, callback: any) => {
+				const command = args[args.length - 1];
+				if (command.includes('DIR_EXISTS')) {
+					callback(null, 'DIR_EXISTS\n', '');
+				} else if (command.includes('AUTH_EXISTS')) {
+					callback(null, 'AUTH_EXISTS\n', '');
+				} else if (command.includes('SYMLINKS_OK')) {
+					callback(null, 'SYMLINKS_OK\n', '');
+				}
+			});
 
 			const result = await validateRemoteAccountDir(
 				{ host: 'example.com', user: 'dev' },
-				'~/.claude-work',
+				'~/.claude-work'
 			);
 
 			expect(result.exists).toBe(true);
@@ -377,13 +386,10 @@ describe('account-setup', () => {
 			mockExecFile.mockImplementation(
 				(_cmd: string, _args: string[], _opts: any, callback: any) => {
 					callback(null, 'DIR_MISSING\n', '');
-				},
+				}
 			);
 
-			const result = await validateRemoteAccountDir(
-				{ host: 'example.com' },
-				'~/.claude-work',
-			);
+			const result = await validateRemoteAccountDir({ host: 'example.com' }, '~/.claude-work');
 
 			expect(result.exists).toBe(false);
 			expect(result.hasAuth).toBe(false);
@@ -394,12 +400,12 @@ describe('account-setup', () => {
 			mockExecFile.mockImplementation(
 				(_cmd: string, _args: string[], _opts: any, callback: any) => {
 					callback(new Error('Connection refused'), '', '');
-				},
+				}
 			);
 
 			const result = await validateRemoteAccountDir(
 				{ host: 'example.com', user: 'dev', port: 2222 },
-				'~/.claude-work',
+				'~/.claude-work'
 			);
 
 			expect(result.exists).toBe(false);
@@ -407,18 +413,13 @@ describe('account-setup', () => {
 		});
 
 		it('should include port in SSH args', async () => {
-			mockExecFile.mockImplementation(
-				(_cmd: string, args: string[], _opts: any, callback: any) => {
-					expect(args).toContain('-p');
-					expect(args).toContain('2222');
-					callback(null, 'DIR_MISSING\n', '');
-				},
-			);
+			mockExecFile.mockImplementation((_cmd: string, args: string[], _opts: any, callback: any) => {
+				expect(args).toContain('-p');
+				expect(args).toContain('2222');
+				callback(null, 'DIR_MISSING\n', '');
+			});
 
-			await validateRemoteAccountDir(
-				{ host: 'example.com', port: 2222 },
-				'~/.claude-work',
-			);
+			await validateRemoteAccountDir({ host: 'example.com', port: 2222 }, '~/.claude-work');
 		});
 	});
 });

@@ -31,12 +31,38 @@ function formatDateLabel(label: string, view: ViewMode): string {
 	if (view === 'monthly') {
 		// YYYY-MM -> "Jan 26", "Feb 26", etc.
 		const [year, month] = label.split('-');
-		const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+		const months = [
+			'Jan',
+			'Feb',
+			'Mar',
+			'Apr',
+			'May',
+			'Jun',
+			'Jul',
+			'Aug',
+			'Sep',
+			'Oct',
+			'Nov',
+			'Dec',
+		];
 		return `${months[parseInt(month, 10) - 1]} ${year.slice(2)}`;
 	}
 	// YYYY-MM-DD -> "Feb 15", etc.
 	const [, month, day] = label.split('-');
-	const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+	const months = [
+		'Jan',
+		'Feb',
+		'Mar',
+		'Apr',
+		'May',
+		'Jun',
+		'Jul',
+		'Aug',
+		'Sep',
+		'Oct',
+		'Nov',
+		'Dec',
+	];
 	return `${months[parseInt(month, 10) - 1]} ${parseInt(day, 10)}`;
 }
 
@@ -61,29 +87,40 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 				}
 
 				// Fetch throttle events for displayed time range
-				const sinceMs = view === 'monthly'
-					? Date.now() - 6 * 30 * 24 * 60 * 60 * 1000
-					: Date.now() - (view === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000;
+				const sinceMs =
+					view === 'monthly'
+						? Date.now() - 6 * 30 * 24 * 60 * 60 * 1000
+						: Date.now() - (view === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000;
 				const events = await window.maestro.accounts.getThrottleEvents(accountId, sinceMs);
 				setThrottleCount(events.length);
-			} catch (err) { console.warn('[AccountUsageHistory] Failed to load usage history:', err); }
+			} catch (err) {
+				console.warn('[AccountUsageHistory] Failed to load usage history:', err);
+			}
 			setLoading(false);
 		}
 		load();
 	}, [accountId, view]);
 
-	const data: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; totalTokens: number; costUsd: number; queryCount: number }> & Array<AccountDailyUsage | AccountMonthlyUsage> =
-		view === 'monthly' ? monthlyData : dailyData;
+	const data: Array<{
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
+		totalTokens: number;
+		costUsd: number;
+		queryCount: number;
+	}> &
+		Array<AccountDailyUsage | AccountMonthlyUsage> = view === 'monthly' ? monthlyData : dailyData;
 	const totalTokens = data.reduce((sum, d) => sum + d.totalTokens, 0);
 	const avgTokens = data.length > 0 ? totalTokens / data.length : 0;
-	const peakTokens = data.length > 0 ? Math.max(...data.map(d => d.totalTokens)) : 0;
+	const peakTokens = data.length > 0 ? Math.max(...data.map((d) => d.totalTokens)) : 0;
 	const maxTokens = peakTokens || 1;
 
 	return (
 		<div className="mt-3 border rounded-lg p-3" style={{ borderColor: theme.colors.border }}>
 			{/* View tabs */}
 			<div className="flex gap-2 mb-3">
-				{(['7d', '30d', 'monthly'] as const).map(v => (
+				{(['7d', '30d', 'monthly'] as const).map((v) => (
 					<button
 						key={v}
 						onClick={() => setView(v)}
@@ -101,28 +138,49 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 			{/* Bar legend */}
 			<div className="flex gap-3 mb-2 text-[10px]" style={{ color: theme.colors.textDim }}>
 				<span className="flex items-center gap-1">
-					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.accent }} /> In
+					<span
+						className="inline-block w-2 h-2 rounded-sm"
+						style={{ backgroundColor: theme.colors.accent }}
+					/>{' '}
+					In
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.success }} /> Out
+					<span
+						className="inline-block w-2 h-2 rounded-sm"
+						style={{ backgroundColor: theme.colors.success }}
+					/>{' '}
+					Out
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.warning }} /> Cache R
+					<span
+						className="inline-block w-2 h-2 rounded-sm"
+						style={{ backgroundColor: theme.colors.warning }}
+					/>{' '}
+					Cache R
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.textDim + '80' }} /> Cache W
+					<span
+						className="inline-block w-2 h-2 rounded-sm"
+						style={{ backgroundColor: theme.colors.textDim + '80' }}
+					/>{' '}
+					Cache W
 				</span>
 			</div>
 
 			{/* Data rows */}
 			{loading ? (
-				<div className="text-xs py-4 text-center" style={{ color: theme.colors.textDim }}>Loading...</div>
+				<div className="text-xs py-4 text-center" style={{ color: theme.colors.textDim }}>
+					Loading...
+				</div>
 			) : data.length === 0 ? (
-				<div className="text-xs py-4 text-center" style={{ color: theme.colors.textDim }}>No usage data yet</div>
+				<div className="text-xs py-4 text-center" style={{ color: theme.colors.textDim }}>
+					No usage data yet
+				</div>
 			) : (
 				<div className="space-y-1">
 					{data.map((row, i) => {
-						const label = 'date' in row ? (row as AccountDailyUsage).date : (row as AccountMonthlyUsage).month;
+						const label =
+							'date' in row ? (row as AccountDailyUsage).date : (row as AccountMonthlyUsage).month;
 						const barWidth = maxTokens > 0 ? (row.totalTokens / maxTokens) * 100 : 0;
 						const total = row.totalTokens || 1;
 						const inPct = (row.inputTokens / total) * barWidth;
@@ -140,18 +198,39 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 									style={{ backgroundColor: theme.colors.bgActivity }}
 									title={tooltip}
 								>
-									<div className="h-full" style={{ width: `${inPct}%`, backgroundColor: theme.colors.accent }} />
-									<div className="h-full" style={{ width: `${outPct}%`, backgroundColor: theme.colors.success }} />
-									<div className="h-full" style={{ width: `${cacheRPct}%`, backgroundColor: theme.colors.warning }} />
-									<div className="h-full" style={{ width: `${cacheWPct}%`, backgroundColor: theme.colors.textDim + '80' }} />
+									<div
+										className="h-full"
+										style={{ width: `${inPct}%`, backgroundColor: theme.colors.accent }}
+									/>
+									<div
+										className="h-full"
+										style={{ width: `${outPct}%`, backgroundColor: theme.colors.success }}
+									/>
+									<div
+										className="h-full"
+										style={{ width: `${cacheRPct}%`, backgroundColor: theme.colors.warning }}
+									/>
+									<div
+										className="h-full"
+										style={{ width: `${cacheWPct}%`, backgroundColor: theme.colors.textDim + '80' }}
+									/>
 								</div>
-								<span className="w-12 text-right tabular-nums" style={{ color: theme.colors.textMain }}>
+								<span
+									className="w-12 text-right tabular-nums"
+									style={{ color: theme.colors.textMain }}
+								>
 									{formatTokenCount(row.totalTokens)}
 								</span>
-								<span className="w-14 text-right tabular-nums" style={{ color: theme.colors.textDim }}>
+								<span
+									className="w-14 text-right tabular-nums"
+									style={{ color: theme.colors.textDim }}
+								>
 									${row.costUsd.toFixed(2)}
 								</span>
-								<span className="w-12 text-right tabular-nums" style={{ color: theme.colors.textDim }}>
+								<span
+									className="w-12 text-right tabular-nums"
+									style={{ color: theme.colors.textDim }}
+								>
 									{row.queryCount} qry
 								</span>
 							</div>
@@ -162,12 +241,30 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 
 			{/* Summary footer */}
 			{data.length > 0 && (
-				<div className="flex gap-4 mt-3 pt-2 border-t text-xs" style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}>
-					<span>Avg: <span style={{ color: theme.colors.textMain }}>{formatTokenCount(Math.round(avgTokens))}/{view === 'monthly' ? 'mo' : 'day'}</span></span>
-					<span>Peak: <span style={{ color: theme.colors.textMain }}>{formatTokenCount(peakTokens)}</span></span>
-					<span>Throttles: <span style={{
-						color: throttleCount > 0 ? theme.colors.error : theme.colors.textMain
-					}}>{throttleCount}</span></span>
+				<div
+					className="flex gap-4 mt-3 pt-2 border-t text-xs"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				>
+					<span>
+						Avg:{' '}
+						<span style={{ color: theme.colors.textMain }}>
+							{formatTokenCount(Math.round(avgTokens))}/{view === 'monthly' ? 'mo' : 'day'}
+						</span>
+					</span>
+					<span>
+						Peak:{' '}
+						<span style={{ color: theme.colors.textMain }}>{formatTokenCount(peakTokens)}</span>
+					</span>
+					<span>
+						Throttles:{' '}
+						<span
+							style={{
+								color: throttleCount > 0 ? theme.colors.error : theme.colors.textMain,
+							}}
+						>
+							{throttleCount}
+						</span>
+					</span>
 				</div>
 			)}
 		</div>

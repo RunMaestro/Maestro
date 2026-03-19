@@ -42,7 +42,7 @@ export class AccountAuthRecovery {
 		private processManager: ProcessManager,
 		private accountRegistry: AccountRegistry,
 		private agentDetector: AgentDetector,
-		private safeSend: SafeSendFn,
+		private safeSend: SafeSendFn
 	) {}
 
 	/**
@@ -84,7 +84,9 @@ export class AccountAuthRecovery {
 			}
 
 			logger.info(`Starting auth recovery for account ${account.name}`, LOG_CONTEXT, {
-				sessionId, accountId, configDir: account.configDir,
+				sessionId,
+				accountId,
+				configDir: account.configDir,
 			});
 
 			// 1. Mark account as expired
@@ -104,7 +106,7 @@ export class AccountAuthRecovery {
 			});
 
 			// Wait for process cleanup
-			await new Promise(resolve => setTimeout(resolve, KILL_DELAY_MS));
+			await new Promise((resolve) => setTimeout(resolve, KILL_DELAY_MS));
 
 			// 4. Attempt `claude login`
 			const loginSuccess = await this.runClaudeLogin(account.configDir);
@@ -124,7 +126,9 @@ export class AccountAuthRecovery {
 
 			// 6. All recovery failed
 			logger.error('All auth recovery methods failed', LOG_CONTEXT, {
-				sessionId, accountId, syncError: syncResult.error,
+				sessionId,
+				accountId,
+				syncError: syncResult.error,
 			});
 
 			this.safeSend('account:auth-recovery-failed', {
@@ -135,10 +139,11 @@ export class AccountAuthRecovery {
 			});
 
 			return false;
-
 		} catch (error) {
 			logger.error('Auth recovery threw unexpectedly', LOG_CONTEXT, {
-				error: String(error), sessionId, accountId,
+				error: String(error),
+				sessionId,
+				accountId,
 			});
 
 			this.safeSend('account:auth-recovery-failed', {
@@ -160,7 +165,7 @@ export class AccountAuthRecovery {
 		sessionId: string,
 		accountId: string,
 		configDir: string,
-		accountName: string,
+		accountName: string
 	): boolean {
 		// Mark account as active again
 		this.accountRegistry.setStatus(accountId, 'active');
@@ -185,7 +190,8 @@ export class AccountAuthRecovery {
 		});
 
 		logger.info(`Auth recovery completed for account ${accountName}`, LOG_CONTEXT, {
-			sessionId, accountId,
+			sessionId,
+			accountId,
 		});
 
 		return true;

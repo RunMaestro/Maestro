@@ -56,7 +56,7 @@ export class ProviderErrorTracker {
 	constructor(
 		config: ProviderSwitchConfig,
 		onFailoverSuggest: (data: FailoverSuggestion) => void,
-		sessionNameResolver?: (sessionId: string) => string,
+		sessionNameResolver?: (sessionId: string) => string
 	) {
 		this.config = config;
 		this.onFailoverSuggest = onFailoverSuggest;
@@ -69,11 +69,15 @@ export class ProviderErrorTracker {
 	}
 
 	/** Record an error for a session */
-	recordError(sessionId: string, toolType: ToolType, error: {
-		type: AgentErrorType;
-		message: string;
-		recoverable: boolean;
-	}): void {
+	recordError(
+		sessionId: string,
+		toolType: ToolType,
+		error: {
+			type: AgentErrorType;
+			message: string;
+			recoverable: boolean;
+		}
+	): void {
 		if (!this.config.enabled) return;
 
 		// Only count recoverable, failover-worthy errors
@@ -105,7 +109,7 @@ export class ProviderErrorTracker {
 
 		// Prune errors older than the window
 		const windowStart = now - this.config.errorWindowMs;
-		state.errors = state.errors.filter(e => e.timestamp >= windowStart);
+		state.errors = state.errors.filter((e) => e.timestamp >= windowStart);
 
 		// Check threshold
 		const errorCount = state.errors.length;
@@ -113,7 +117,7 @@ export class ProviderErrorTracker {
 			state.failoverSuggested = true;
 
 			// Determine target provider from fallback list
-			const suggestedProvider = this.config.fallbackProviders.find(p => p !== toolType);
+			const suggestedProvider = this.config.fallbackProviders.find((p) => p !== toolType);
 			if (!suggestedProvider) {
 				logger.warn('No fallback provider available for failover', LOG_CONTEXT, {
 					sessionId,
@@ -130,7 +134,7 @@ export class ProviderErrorTracker {
 				suggestedProvider,
 				errorCount,
 				windowMs: this.config.errorWindowMs,
-				recentErrors: state.errors.map(e => ({
+				recentErrors: state.errors.map((e) => ({
 					type: e.errorType,
 					message: e.message,
 					timestamp: e.timestamp,
@@ -178,7 +182,7 @@ export class ProviderErrorTracker {
 			if (state.toolType !== toolType) continue;
 
 			// Prune stale errors
-			const active = state.errors.filter(e => e.timestamp >= windowStart);
+			const active = state.errors.filter((e) => e.timestamp >= windowStart);
 			if (active.length > 0) {
 				sessionsWithErrors++;
 				totalErrorsInWindow += active.length;

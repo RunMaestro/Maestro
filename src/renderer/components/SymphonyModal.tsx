@@ -1035,7 +1035,7 @@ function ActiveContributionCard({
 										fontSize: '9px',
 										padding: '1px 4px',
 										borderRadius: '3px',
-										backgroundColor: theme.colors.accentDim || (theme.colors.accent + '20'),
+										backgroundColor: theme.colors.accentDim || theme.colors.accent + '20',
 										color: theme.colors.accent,
 									}}
 								>

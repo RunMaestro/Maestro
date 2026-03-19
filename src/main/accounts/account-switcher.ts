@@ -26,7 +26,7 @@ export class AccountSwitcher {
 	constructor(
 		private processManager: ProcessManager,
 		private accountRegistry: AccountRegistry,
-		private safeSend: SafeSendFn,
+		private safeSend: SafeSendFn
 	) {}
 
 	/**
@@ -65,7 +65,10 @@ export class AccountSwitcher {
 			const fromAccount = this.accountRegistry.get(fromAccountId);
 			const lastPrompt = this.lastPrompts.get(sessionId);
 
-			logger.info(`Switching session ${sessionId} from ${fromAccount?.name ?? fromAccountId} to ${toAccount.name}`, LOG_CONTEXT);
+			logger.info(
+				`Switching session ${sessionId} from ${fromAccount?.name ?? fromAccountId} to ${toAccount.name}`,
+				LOG_CONTEXT
+			);
 
 			// Notify renderer that switch is starting
 			this.safeSend('account:switch-started', {
@@ -82,7 +85,7 @@ export class AccountSwitcher {
 			}
 
 			// Wait for process cleanup
-			await new Promise(resolve => setTimeout(resolve, SWITCH_DELAY_MS));
+			await new Promise((resolve) => setTimeout(resolve, SWITCH_DELAY_MS));
 
 			// 2. Update the account assignment
 			this.accountRegistry.assignToSession(sessionId, toAccountId);
@@ -117,14 +120,18 @@ export class AccountSwitcher {
 			});
 
 			logger.info(`Account switch completed for session ${sessionId}`, LOG_CONTEXT, {
-				from: fromAccount?.name, to: toAccount.name, reason,
+				from: fromAccount?.name,
+				to: toAccount.name,
+				reason,
 			});
 
 			return switchEvent;
-
 		} catch (error) {
 			logger.error('Account switch failed', LOG_CONTEXT, {
-				error: String(error), sessionId, fromAccountId, toAccountId,
+				error: String(error),
+				sessionId,
+				fromAccountId,
+				toAccountId,
 			});
 
 			this.safeSend('account:switch-failed', {

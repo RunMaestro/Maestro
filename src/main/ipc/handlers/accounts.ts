@@ -15,7 +15,11 @@ import type { AccountRegistry } from '../../accounts/account-registry';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
 import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountRecoveryPoller } from '../../accounts/account-recovery-poller';
-import type { AccountSwitchConfig, AccountSwitchEvent, MultiplexableAgent } from '../../../shared/account-types';
+import type {
+	AccountSwitchConfig,
+	AccountSwitchEvent,
+	MultiplexableAgent,
+} from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import {
@@ -47,7 +51,8 @@ export interface AccountHandlerDependencies {
  * Register all account multiplexing IPC handlers.
  */
 export function registerAccountHandlers(deps: AccountHandlerDependencies): void {
-	const { getAccountRegistry, getAccountSwitcher, getAccountAuthRecovery, getRecoveryPoller } = deps;
+	const { getAccountRegistry, getAccountSwitcher, getAccountAuthRecovery, getRecoveryPoller } =
+		deps;
 
 	/** Get the account registry or throw if not initialized */
 	function requireRegistry(): AccountRegistry {
@@ -78,28 +83,40 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
-	ipcMain.handle('accounts:add', async (_event, params: {
-		name: string; email: string; configDir: string; agentType?: MultiplexableAgent;
-	}) => {
-		try {
-			const profile = requireRegistry().add(params);
-			return { success: true, account: profile };
-		} catch (error) {
-			logger.error('add account error', LOG_CONTEXT, { error: String(error) });
-			return { success: false, error: String(error) };
+	ipcMain.handle(
+		'accounts:add',
+		async (
+			_event,
+			params: {
+				name: string;
+				email: string;
+				configDir: string;
+				agentType?: MultiplexableAgent;
+			}
+		) => {
+			try {
+				const profile = requireRegistry().add(params);
+				return { success: true, account: profile };
+			} catch (error) {
+				logger.error('add account error', LOG_CONTEXT, { error: String(error) });
+				return { success: false, error: String(error) };
+			}
 		}
-	});
+	);
 
-	ipcMain.handle('accounts:update', async (_event, accountId: string, updates: Record<string, unknown>) => {
-		try {
-			const updated = requireRegistry().update(accountId, updates);
-			if (!updated) return { success: false, error: 'Account not found' };
-			return { success: true, account: updated };
-		} catch (error) {
-			logger.error('update account error', LOG_CONTEXT, { error: String(error) });
-			return { success: false, error: String(error) };
+	ipcMain.handle(
+		'accounts:update',
+		async (_event, accountId: string, updates: Record<string, unknown>) => {
+			try {
+				const updated = requireRegistry().update(accountId, updates);
+				if (!updated) return { success: false, error: 'Account not found' };
+				return { success: true, account: updated };
+			} catch (error) {
+				logger.error('update account error', LOG_CONTEXT, { error: String(error) });
+				return { success: false, error: String(error) };
+			}
 		}
-	});
+	);
 
 	ipcMain.handle('accounts:remove', async (_event, accountId: string) => {
 		try {
@@ -153,15 +170,18 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 
 	// --- Usage Queries ---
 
-	ipcMain.handle('accounts:get-usage', async (_event, accountId: string, windowStart: number, windowEnd: number) => {
-		try {
-			const db = getStatsDB();
-			return db.getAccountUsageInWindow(accountId, windowStart, windowEnd);
-		} catch (error) {
-			logger.error('get usage error', LOG_CONTEXT, { error: String(error) });
-			return null;
+	ipcMain.handle(
+		'accounts:get-usage',
+		async (_event, accountId: string, windowStart: number, windowEnd: number) => {
+			try {
+				const db = getStatsDB();
+				return db.getAccountUsageInWindow(accountId, windowStart, windowEnd);
+			} catch (error) {
+				logger.error('get usage error', LOG_CONTEXT, { error: String(error) });
+				return null;
+			}
 		}
-	});
+	);
 
 	ipcMain.handle('accounts:get-all-usage', async () => {
 		try {
@@ -182,14 +202,19 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 				const windowEnd = windowStart + windowMs;
 
 				const usage = db.getAccountUsageInWindow(account.id, windowStart, windowEnd);
-				const totalTokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+				const totalTokens =
+					usage.inputTokens +
+					usage.outputTokens +
+					usage.cacheReadTokens +
+					usage.cacheCreationTokens;
 
 				results[account.id] = {
 					...usage,
 					totalTokens,
-					usagePercent: account.tokenLimitPerWindow > 0
-						? Math.min(100, (totalTokens / account.tokenLimitPerWindow) * 100)
-						: null,
+					usagePercent:
+						account.tokenLimitPerWindow > 0
+							? Math.min(100, (totalTokens / account.tokenLimitPerWindow) * 100)
+							: null,
 					windowStart,
 					windowEnd,
 					account,
@@ -202,52 +227,64 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
-	ipcMain.handle('accounts:get-throttle-events', async (_event, accountId?: string, since?: number) => {
-		try {
-			const db = getStatsDB();
-			return db.getThrottleEvents(accountId, since);
-		} catch (error) {
-			logger.error('get throttle events error', LOG_CONTEXT, { error: String(error) });
-			return [];
+	ipcMain.handle(
+		'accounts:get-throttle-events',
+		async (_event, accountId?: string, since?: number) => {
+			try {
+				const db = getStatsDB();
+				return db.getThrottleEvents(accountId, since);
+			} catch (error) {
+				logger.error('get throttle events error', LOG_CONTEXT, { error: String(error) });
+				return [];
+			}
 		}
-	});
+	);
 
-	ipcMain.handle('accounts:get-daily-usage', async (_event, accountId: string, days: number = 30) => {
-		try {
-			const db = getStatsDB();
-			if (!db?.isReady()) return [];
-			const now = Date.now();
-			const sinceMs = now - days * 24 * 60 * 60 * 1000;
-			return db.getAccountDailyUsage(accountId, sinceMs, now);
-		} catch (error) {
-			logger.error('get daily usage error', LOG_CONTEXT, { error: String(error) });
-			return [];
+	ipcMain.handle(
+		'accounts:get-daily-usage',
+		async (_event, accountId: string, days: number = 30) => {
+			try {
+				const db = getStatsDB();
+				if (!db?.isReady()) return [];
+				const now = Date.now();
+				const sinceMs = now - days * 24 * 60 * 60 * 1000;
+				return db.getAccountDailyUsage(accountId, sinceMs, now);
+			} catch (error) {
+				logger.error('get daily usage error', LOG_CONTEXT, { error: String(error) });
+				return [];
+			}
 		}
-	});
+	);
 
-	ipcMain.handle('accounts:get-monthly-usage', async (_event, accountId: string, months: number = 6) => {
-		try {
-			const db = getStatsDB();
-			if (!db?.isReady()) return [];
-			const now = Date.now();
-			const sinceMs = now - months * 30 * 24 * 60 * 60 * 1000;
-			return db.getAccountMonthlyUsage(accountId, sinceMs, now);
-		} catch (error) {
-			logger.error('get monthly usage error', LOG_CONTEXT, { error: String(error) });
-			return [];
+	ipcMain.handle(
+		'accounts:get-monthly-usage',
+		async (_event, accountId: string, months: number = 6) => {
+			try {
+				const db = getStatsDB();
+				if (!db?.isReady()) return [];
+				const now = Date.now();
+				const sinceMs = now - months * 30 * 24 * 60 * 60 * 1000;
+				return db.getAccountMonthlyUsage(accountId, sinceMs, now);
+			} catch (error) {
+				logger.error('get monthly usage error', LOG_CONTEXT, { error: String(error) });
+				return [];
+			}
 		}
-	});
+	);
 
-	ipcMain.handle('accounts:get-window-history', async (_event, accountId: string, windowCount: number = 40) => {
-		try {
-			const db = getStatsDB();
-			if (!db?.isReady()) return [];
-			return db.getAccountWindowHistory(accountId, windowCount);
-		} catch (error) {
-			logger.error('get window history error', LOG_CONTEXT, { error: String(error) });
-			return [];
+	ipcMain.handle(
+		'accounts:get-window-history',
+		async (_event, accountId: string, windowCount: number = 40) => {
+			try {
+				const db = getStatsDB();
+				if (!db?.isReady()) return [];
+				return db.getAccountWindowHistory(accountId, windowCount);
+			} catch (error) {
+				logger.error('get window history error', LOG_CONTEXT, { error: String(error) });
+				return [];
+			}
 		}
-	});
+	);
 
 	// --- Switch Configuration ---
 
@@ -260,15 +297,18 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
-	ipcMain.handle('accounts:update-switch-config', async (_event, updates: Partial<AccountSwitchConfig>) => {
-		try {
-			const updated = requireRegistry().updateSwitchConfig(updates);
-			return { success: true, config: updated };
-		} catch (error) {
-			logger.error('update switch config error', LOG_CONTEXT, { error: String(error) });
-			return { success: false, error: String(error) };
+	ipcMain.handle(
+		'accounts:update-switch-config',
+		async (_event, updates: Partial<AccountSwitchConfig>) => {
+			try {
+				const updated = requireRegistry().updateSwitchConfig(updates);
+				return { success: true, config: updated };
+			} catch (error) {
+				logger.error('update switch config error', LOG_CONTEXT, { error: String(error) });
+				return { success: false, error: String(error) };
+			}
 		}
-	});
+	);
 
 	// --- Account Selection ---
 
@@ -365,17 +405,23 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
-	ipcMain.handle('accounts:validate-remote-dir', async (_event, params: {
-		sshConfig: { host: string; user?: string; port?: number };
-		configDir: string;
-	}) => {
-		try {
-			return await validateRemoteAccountDir(params.sshConfig, params.configDir);
-		} catch (error) {
-			logger.error('validate remote dir error', LOG_CONTEXT, { error: String(error) });
-			return { exists: false, hasAuth: false, symlinksValid: false, error: String(error) };
+	ipcMain.handle(
+		'accounts:validate-remote-dir',
+		async (
+			_event,
+			params: {
+				sshConfig: { host: string; user?: string; port?: number };
+				configDir: string;
+			}
+		) => {
+			try {
+				return await validateRemoteAccountDir(params.sshConfig, params.configDir);
+			} catch (error) {
+				logger.error('validate remote dir error', LOG_CONTEXT, { error: String(error) });
+				return { exists: false, hasAuth: false, symlinksValid: false, error: String(error) };
+			}
 		}
-	});
+	);
 
 	ipcMain.handle('accounts:sync-credentials', async (_event, configDir: string) => {
 		try {
@@ -473,25 +519,31 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 
 	// --- Account Switching ---
 
-	ipcMain.handle('accounts:execute-switch', async (_event, params: {
-		sessionId: string;
-		fromAccountId: string;
-		toAccountId: string;
-		reason: AccountSwitchEvent['reason'];
-		automatic: boolean;
-	}) => {
-		try {
-			const switcher = getAccountSwitcher?.();
-			if (!switcher) {
-				return { success: false, error: 'Account switcher not initialized' };
+	ipcMain.handle(
+		'accounts:execute-switch',
+		async (
+			_event,
+			params: {
+				sessionId: string;
+				fromAccountId: string;
+				toAccountId: string;
+				reason: AccountSwitchEvent['reason'];
+				automatic: boolean;
 			}
-			const result = await switcher.executeSwitch(params);
-			return { success: !!result, event: result };
-		} catch (error) {
-			logger.error('execute switch error', LOG_CONTEXT, { error: String(error) });
-			return { success: false, error: String(error) };
+		) => {
+			try {
+				const switcher = getAccountSwitcher?.();
+				if (!switcher) {
+					return { success: false, error: 'Account switcher not initialized' };
+				}
+				const result = await switcher.executeSwitch(params);
+				return { success: !!result, event: result };
+			} catch (error) {
+				logger.error('execute switch error', LOG_CONTEXT, { error: String(error) });
+				return { success: false, error: String(error) };
+			}
 		}
-	});
+	);
 
 	// --- Auth Recovery ---
 

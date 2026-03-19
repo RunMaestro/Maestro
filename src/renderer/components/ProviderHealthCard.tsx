@@ -125,9 +125,10 @@ export function ProviderHealthCard({
 	const windowMs = 5 * 60 * 1000; // Default 5m window display
 	const statusColor = getStatusColor(status, theme);
 	const bgTint = getStatusBgTint(status, theme);
-	const barColor = status === 'not_installed'
-		? theme.colors.textDim + '30'
-		: getHealthBarColor(healthPercent, theme);
+	const barColor =
+		status === 'not_installed'
+			? theme.colors.textDim + '30'
+			: getHealthBarColor(healthPercent, theme);
 
 	const isUnavailable = status === 'not_installed';
 	const dash = '\u2014';
@@ -227,20 +228,12 @@ export function ProviderHealthCard({
 				<StatRow
 					theme={theme}
 					label="Errors"
-					value={
-						isUnavailable
-							? dash
-							: `${errorCount} (${formatWindowDuration(windowMs)})`
-					}
+					value={isUnavailable ? dash : `${errorCount} (${formatWindowDuration(windowMs)})`}
 				/>
 				<StatRow
 					theme={theme}
 					label="Last error"
-					value={
-						isUnavailable
-							? dash
-							: formatRelativeTime(errorStats?.lastErrorAt ?? null)
-					}
+					value={isUnavailable ? dash : formatRelativeTime(errorStats?.lastErrorAt ?? null)}
 				/>
 			</div>
 
@@ -304,23 +297,11 @@ export function ProviderHealthCard({
 // Sub-components
 // ============================================================================
 
-function StatRow({
-	theme,
-	label,
-	value,
-}: {
-	theme: Theme;
-	label: string;
-	value: string;
-}) {
+function StatRow({ theme, label, value }: { theme: Theme; label: string; value: string }) {
 	return (
 		<div className="flex items-center gap-1">
-			<span style={{ color: theme.colors.textDim, fontSize: 11 }}>
-				{label}:
-			</span>
-			<span style={{ color: theme.colors.textMain, fontSize: 11 }}>
-				{value}
-			</span>
+			<span style={{ color: theme.colors.textDim, fontSize: 11 }}>{label}:</span>
+			<span style={{ color: theme.colors.textMain, fontSize: 11 }}>{value}</span>
 		</div>
 	);
 }

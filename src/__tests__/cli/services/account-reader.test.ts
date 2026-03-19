@@ -104,9 +104,7 @@ describe('account-reader', () => {
 		});
 
 		it('returns empty array when store has no accounts', async () => {
-			vi.mocked(fs.readFileSync).mockReturnValue(
-				JSON.stringify({ accounts: {}, assignments: {} })
-			);
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ accounts: {}, assignments: {} }));
 
 			const accounts = await readAccountsFromStore();
 			expect(accounts).toHaveLength(0);

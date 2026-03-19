@@ -21,7 +21,7 @@ vi.mock('../../../renderer/hooks/useAccountUsage', () => ({
 		loading: false,
 		refresh: vi.fn(),
 	}),
-	formatTimeRemaining: vi.fn((ms: number) => ms > 0 ? '1h 30m' : '—'),
+	formatTimeRemaining: vi.fn((ms: number) => (ms > 0 ? '1h 30m' : '—')),
 	formatTokenCount: vi.fn((tokens: number) => {
 		if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
 		if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
@@ -178,7 +178,7 @@ describe('AccountSelector', () => {
 					totalTokens: 9500,
 					limitTokens: 19000,
 					usagePercent: 50,
-					costUsd: 1.50,
+					costUsd: 1.5,
 					queryCount: 10,
 					windowStart: Date.now() - 1000000,
 					windowEnd: Date.now() + 1000000,
@@ -200,7 +200,7 @@ describe('AccountSelector', () => {
 					totalTokens: 74800,
 					limitTokens: 88000,
 					usagePercent: 85,
-					costUsd: 12.00,
+					costUsd: 12.0,
 					queryCount: 50,
 					windowStart: Date.now() - 1000000,
 					windowEnd: Date.now() + 1000000,
@@ -222,7 +222,7 @@ describe('AccountSelector', () => {
 					totalTokens: 211200,
 					limitTokens: 220000,
 					usagePercent: 96,
-					costUsd: 30.00,
+					costUsd: 30.0,
 					queryCount: 100,
 					windowStart: Date.now() - 1000000,
 					windowEnd: Date.now() + 1000000,
@@ -409,9 +409,8 @@ describe('AccountSelector', () => {
 
 		// Open dropdown
 		const triggers = screen.getAllByRole('button');
-		const selectorTrigger = triggers.find(
-			(btn) => btn.textContent?.includes('work')
-		) ?? triggers[0];
+		const selectorTrigger =
+			triggers.find((btn) => btn.textContent?.includes('work')) ?? triggers[0];
 		await act(async () => {
 			fireEvent.click(selectorTrigger);
 		});

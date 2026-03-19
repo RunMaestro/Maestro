@@ -47,11 +47,18 @@ export function setupProcessListeners(
 
 	// Agent error listener (with optional account throttle/auth recovery handling + provider failover)
 	const providerErrorTracker = deps.getProviderErrorTracker?.() ?? undefined;
-	setupErrorListener(processManager, deps, deps.getAccountRegistry ? {
-		getAccountRegistry: deps.getAccountRegistry,
-		getThrottleHandler: deps.getThrottleHandler ?? (() => null),
-		getAuthRecovery: deps.getAuthRecovery ?? (() => null),
-	} : undefined, providerErrorTracker);
+	setupErrorListener(
+		processManager,
+		deps,
+		deps.getAccountRegistry
+			? {
+					getAccountRegistry: deps.getAccountRegistry,
+					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+					getAuthRecovery: deps.getAuthRecovery ?? (() => null),
+				}
+			: undefined,
+		providerErrorTracker
+	);
 
 	// Reset provider error tracking on successful query completion
 	if (providerErrorTracker) {

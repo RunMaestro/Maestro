@@ -85,7 +85,7 @@ export function calculatePrediction(
 	windowHistory: Array<{ totalTokens: number; windowStart: number; windowEnd: number }>,
 	currentWindowTokens: number,
 	limitTokens: number,
-	windowMs: number,
+	windowMs: number
 ): UsagePrediction {
 	const windowCount = windowHistory.length;
 	const confidence = windowCount < 5 ? 'low' : windowCount < 15 ? 'medium' : 'high';
@@ -102,7 +102,7 @@ export function calculatePrediction(
 	}
 
 	// Extract token totals per window
-	const totals = windowHistory.map(w => w.totalTokens);
+	const totals = windowHistory.map((w) => w.totalTokens);
 
 	// Calculate average
 	const avgTokensPerWindow = totals.reduce((a, b) => a + b, 0) / totals.length;
@@ -171,7 +171,7 @@ export function calculatePrediction(
  */
 export function calculateRateMetrics(
 	windowHistory: Array<{ totalTokens: number; windowStart: number; windowEnd: number }>,
-	burnRatePerHour: number,
+	burnRatePerHour: number
 ): RateMetrics {
 	if (windowHistory.length === 0) {
 		return { ...EMPTY_RATE_METRICS, tokensPerHour: burnRatePerHour };
@@ -196,14 +196,18 @@ export function calculateRateMetrics(
 	// Weekly delta: compare last 34 vs previous 34
 	const prevWeekSlice = windowHistory.slice(Math.max(0, n - 68), Math.max(0, n - 34));
 	const prevWeekTotal = prevWeekSlice.reduce((s, w) => s + w.totalTokens, 0);
-	const weeklyDelta = prevWeekTotal > 0 ? ((tokensPerWeek - prevWeekTotal) / prevWeekTotal) * 100 : 0;
+	const weeklyDelta =
+		prevWeekTotal > 0 ? ((tokensPerWeek - prevWeekTotal) / prevWeekTotal) * 100 : 0;
 
 	// Trend: linear regression on last 20 windows
 	const trendSlice = windowHistory.slice(Math.max(0, n - 20));
 	let trend: 'up' | 'stable' | 'down' = 'stable';
 	if (trendSlice.length >= 2) {
 		const tLen = trendSlice.length;
-		let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+		let sumX = 0,
+			sumY = 0,
+			sumXY = 0,
+			sumX2 = 0;
 		for (let i = 0; i < tLen; i++) {
 			sumX += i;
 			sumY += trendSlice[i].totalTokens;
@@ -252,65 +256,70 @@ export function useAccountUsage(): {
 	const [loading, setLoading] = useState(true);
 	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const currentIntervalMs = useRef(DEFAULT_INTERVAL_MS);
-	const windowHistoriesRef = useRef<Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>>>({});
+	const windowHistoriesRef = useRef<
+		Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>>
+	>({});
 
-	const calculateDerivedMetrics = useCallback((raw: {
-		accountId: string;
-		totalTokens: number;
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadTokens: number;
-		cacheCreationTokens: number;
-		limitTokens: number;
-		usagePercent: number | null;
-		costUsd: number;
-		queryCount: number;
-		windowStart: number;
-		windowEnd: number;
-		status: string;
-	}): AccountUsageMetrics => {
-		const now = Date.now();
-		const timeRemainingMs = Math.max(0, raw.windowEnd - now);
-		const elapsedMs = Math.max(1, now - raw.windowStart); // avoid divide by zero
-		const elapsedHours = elapsedMs / (1000 * 60 * 60);
+	const calculateDerivedMetrics = useCallback(
+		(raw: {
+			accountId: string;
+			totalTokens: number;
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadTokens: number;
+			cacheCreationTokens: number;
+			limitTokens: number;
+			usagePercent: number | null;
+			costUsd: number;
+			queryCount: number;
+			windowStart: number;
+			windowEnd: number;
+			status: string;
+		}): AccountUsageMetrics => {
+			const now = Date.now();
+			const timeRemainingMs = Math.max(0, raw.windowEnd - now);
+			const elapsedMs = Math.max(1, now - raw.windowStart); // avoid divide by zero
+			const elapsedHours = elapsedMs / (1000 * 60 * 60);
 
-		// Burn rate: tokens consumed per hour in this window
-		const burnRatePerHour = raw.totalTokens / elapsedHours;
+			// Burn rate: tokens consumed per hour in this window
+			const burnRatePerHour = raw.totalTokens / elapsedHours;
 
-		// Estimated time to hit limit (null if no limit configured)
-		let estimatedTimeToLimitMs: number | null = null;
-		if (raw.limitTokens > 0 && burnRatePerHour > 0) {
-			const remainingTokens = Math.max(0, raw.limitTokens - raw.totalTokens);
-			const hoursToLimit = remainingTokens / burnRatePerHour;
-			estimatedTimeToLimitMs = hoursToLimit * 60 * 60 * 1000;
-		}
+			// Estimated time to hit limit (null if no limit configured)
+			let estimatedTimeToLimitMs: number | null = null;
+			if (raw.limitTokens > 0 && burnRatePerHour > 0) {
+				const remainingTokens = Math.max(0, raw.limitTokens - raw.totalTokens);
+				const hoursToLimit = remainingTokens / burnRatePerHour;
+				estimatedTimeToLimitMs = hoursToLimit * 60 * 60 * 1000;
+			}
 
-		// P90 prediction from window history
-		const prediction = calculatePrediction(
-			windowHistoriesRef.current[raw.accountId] || [],
-			raw.totalTokens,
-			raw.limitTokens,
-			raw.windowEnd - raw.windowStart,
-		);
+			// P90 prediction from window history
+			const prediction = calculatePrediction(
+				windowHistoriesRef.current[raw.accountId] || [],
+				raw.totalTokens,
+				raw.limitTokens,
+				raw.windowEnd - raw.windowStart
+			);
 
-		// Rate metrics from window history
-		const rateMetrics = calculateRateMetrics(
-			windowHistoriesRef.current[raw.accountId] || [],
-			burnRatePerHour,
-		);
+			// Rate metrics from window history
+			const rateMetrics = calculateRateMetrics(
+				windowHistoriesRef.current[raw.accountId] || [],
+				burnRatePerHour
+			);
 
-		return {
-			...raw,
-			timeRemainingMs,
-			burnRatePerHour,
-			estimatedTimeToLimitMs,
-			prediction,
-			rateMetrics,
-		};
-	}, []);
+			return {
+				...raw,
+				timeRemainingMs,
+				burnRatePerHour,
+				estimatedTimeToLimitMs,
+				prediction,
+				rateMetrics,
+			};
+		},
+		[]
+	);
 
 	const recalculate = useCallback(() => {
-		setMetrics(prev => {
+		setMetrics((prev) => {
 			const updated: Record<string, AccountUsageMetrics> = {};
 			for (const [id, m] of Object.entries(prev)) {
 				updated[id] = calculateDerivedMetrics(m);
@@ -318,7 +327,7 @@ export function useAccountUsage(): {
 
 			// Adaptive interval: switch to 5s when any account is near reset
 			const hasUrgentCountdown = Object.values(updated).some(
-				m => m.timeRemainingMs > 0 && m.timeRemainingMs < URGENT_THRESHOLD_MS
+				(m) => m.timeRemainingMs > 0 && m.timeRemainingMs < URGENT_THRESHOLD_MS
 			);
 			const targetInterval = hasUrgentCountdown ? URGENT_INTERVAL_MS : DEFAULT_INTERVAL_MS;
 			if (targetInterval !== currentIntervalMs.current && intervalRef.current) {
@@ -367,23 +376,40 @@ export function useAccountUsage(): {
 		async function loadHistories() {
 			try {
 				const accounts = await window.maestro.accounts.list();
-				const histories: Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>> = {};
+				const histories: Record<
+					string,
+					Array<{ totalTokens: number; windowStart: number; windowEnd: number }>
+				> = {};
 				for (const account of (accounts || []) as Array<{ id: string }>) {
 					try {
-						const history = await window.maestro.accounts.getWindowHistory(account.id, 68) as Array<{
-							inputTokens: number; outputTokens: number;
-							cacheReadTokens: number; cacheCreationTokens: number;
-							windowStart: number; windowEnd: number;
+						const history = (await window.maestro.accounts.getWindowHistory(
+							account.id,
+							68
+						)) as Array<{
+							inputTokens: number;
+							outputTokens: number;
+							cacheReadTokens: number;
+							cacheCreationTokens: number;
+							windowStart: number;
+							windowEnd: number;
 						}>;
-						histories[account.id] = history.map(w => ({
-							totalTokens: w.inputTokens + w.outputTokens + w.cacheReadTokens + w.cacheCreationTokens,
+						histories[account.id] = history.map((w) => ({
+							totalTokens:
+								w.inputTokens + w.outputTokens + w.cacheReadTokens + w.cacheCreationTokens,
 							windowStart: w.windowStart,
 							windowEnd: w.windowEnd,
 						}));
-					} catch (err) { console.warn(`[useAccountUsage] Failed to load history for account ${account.id}:`, err); }
+					} catch (err) {
+						console.warn(
+							`[useAccountUsage] Failed to load history for account ${account.id}:`,
+							err
+						);
+					}
 				}
 				windowHistoriesRef.current = histories;
-			} catch (err) { console.warn('[useAccountUsage] Failed to load window histories:', err); }
+			} catch (err) {
+				console.warn('[useAccountUsage] Failed to load window histories:', err);
+			}
 		}
 		loadHistories();
 	}, []);
@@ -396,7 +422,7 @@ export function useAccountUsage(): {
 			const accountId = data.accountId;
 			if (!accountId) return;
 
-			setMetrics(prev => ({
+			setMetrics((prev) => ({
 				...prev,
 				[accountId]: calculateDerivedMetrics({
 					accountId,

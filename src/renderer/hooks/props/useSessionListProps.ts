@@ -8,7 +8,15 @@
  */
 
 import { useMemo } from 'react';
-import type { Session, Theme, GroupChat, GroupChatState, FocusArea, SettingsTab, Group } from '../../types';
+import type {
+	Session,
+	Theme,
+	GroupChat,
+	GroupChatState,
+	FocusArea,
+	SettingsTab,
+	Group,
+} from '../../types';
 
 /**
  * Dependencies for computing SessionList props.

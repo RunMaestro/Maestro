@@ -65,7 +65,9 @@ beforeEach(() => {
 	vi.mocked(window.maestro.settings.get).mockResolvedValue(null);
 	vi.mocked(window.maestro.providers.onFailoverSuggest).mockImplementation((handler: any) => {
 		failoverCallback = handler;
-		return () => { failoverCallback = null; };
+		return () => {
+			failoverCallback = null;
+		};
 	});
 });
 

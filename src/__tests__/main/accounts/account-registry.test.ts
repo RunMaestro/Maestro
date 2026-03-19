@@ -148,7 +148,7 @@ describe('AccountRegistry', () => {
 		it('should clear default from other accounts when setting new default', () => {
 			const first = registry.add(makeParams({ email: 'a@example.com' }));
 			registry.add(makeParams({ email: 'b@example.com' }));
-			const second = registry.getAll().find(a => a.email === 'b@example.com')!;
+			const second = registry.getAll().find((a) => a.email === 'b@example.com')!;
 
 			registry.update(second.id, { isDefault: true });
 
@@ -383,8 +383,10 @@ describe('AccountRegistry', () => {
 				const statsDB: AccountUsageStatsProvider = {
 					isReady: () => false,
 					getAccountUsageInWindow: () => ({
-						inputTokens: 0, outputTokens: 0,
-						cacheReadTokens: 0, cacheCreationTokens: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						cacheReadTokens: 0,
+						cacheCreationTokens: 0,
 					}),
 				};
 

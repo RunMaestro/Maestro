@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useAccountUsage, formatTimeRemaining, formatTokenCount, calculatePrediction } from '../../../renderer/hooks/useAccountUsage';
+import {
+	useAccountUsage,
+	formatTimeRemaining,
+	formatTokenCount,
+	calculatePrediction,
+} from '../../../renderer/hooks/useAccountUsage';
 
 describe('useAccountUsage', () => {
 	beforeEach(() => {
@@ -270,9 +275,7 @@ describe('calculatePrediction', () => {
 	});
 
 	it('returns null predictions when no limit is configured', () => {
-		const history = [
-			{ totalTokens: 10_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
-		];
+		const history = [{ totalTokens: 10_000, windowStart: 0, windowEnd: FIVE_HOURS_MS }];
 		const result = calculatePrediction(history, 5_000, 0, FIVE_HOURS_MS);
 		expect(result.linearTimeToLimitMs).toBeNull();
 		expect(result.weightedTimeToLimitMs).toBeNull();

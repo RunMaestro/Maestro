@@ -1944,12 +1944,18 @@ export function createMergedSession(
 		// Identity carry-over (provider switching)
 		...(options.nudgeMessage != null && { nudgeMessage: options.nudgeMessage }),
 		...(options.bookmarked != null && { bookmarked: options.bookmarked }),
-		...(options.sessionSshRemoteConfig != null && { sessionSshRemoteConfig: options.sessionSshRemoteConfig }),
+		...(options.sessionSshRemoteConfig != null && {
+			sessionSshRemoteConfig: options.sessionSshRemoteConfig,
+		}),
 
 		// Provenance (provider switching)
-		...(options.migratedFromSessionId != null && { migratedFromSessionId: options.migratedFromSessionId }),
+		...(options.migratedFromSessionId != null && {
+			migratedFromSessionId: options.migratedFromSessionId,
+		}),
 		...(options.migratedAt != null && { migratedAt: options.migratedAt }),
-		...(options.migrationGeneration != null && { migrationGeneration: options.migrationGeneration }),
+		...(options.migrationGeneration != null && {
+			migrationGeneration: options.migrationGeneration,
+		}),
 	};
 
 	return { session, tabId };

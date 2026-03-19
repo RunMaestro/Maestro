@@ -33,7 +33,13 @@ interface VirtuososModalProps {
 	onSelectSession?: (sessionId: string) => void;
 }
 
-export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSession }: VirtuososModalProps) {
+export function VirtuososModal({
+	isOpen,
+	onClose,
+	theme,
+	sessions,
+	onSelectSession,
+}: VirtuososModalProps) {
 	const [activeTab, setActiveTab] = useState<VirtuosoTab>('config');
 	const { hasDegradedProvider, hasFailingProvider } = useProviderHealth(sessions);
 
@@ -50,8 +56,7 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSessi
 					const prev = currentIndex > 0 ? currentIndex - 1 : VIRTUOSO_TABS.length - 1;
 					setActiveTab(VIRTUOSO_TABS[prev].value);
 				} else {
-					const next =
-						currentIndex < VIRTUOSO_TABS.length - 1 ? currentIndex + 1 : 0;
+					const next = currentIndex < VIRTUOSO_TABS.length - 1 ? currentIndex + 1 : 0;
 					setActiveTab(VIRTUOSO_TABS[next].value);
 				}
 			}
@@ -97,13 +102,8 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSessi
 							className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
 							style={{
 								backgroundColor:
-									activeTab === tab.value
-										? `${theme.colors.accent}20`
-										: 'transparent',
-								color:
-									activeTab === tab.value
-										? theme.colors.accent
-										: theme.colors.textDim,
+									activeTab === tab.value ? `${theme.colors.accent}20` : 'transparent',
+								color: activeTab === tab.value ? theme.colors.accent : theme.colors.textDim,
 							}}
 							onMouseEnter={(e) => {
 								if (activeTab !== tab.value) {
@@ -127,9 +127,7 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSessi
 								<span
 									className="ml-1 w-2 h-2 rounded-full inline-block"
 									style={{
-										backgroundColor: hasFailingProvider
-											? theme.colors.error
-											: theme.colors.warning,
+										backgroundColor: hasFailingProvider ? theme.colors.error : theme.colors.warning,
 									}}
 								/>
 							)}
@@ -140,7 +138,9 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSessi
 
 			{/* Tab content */}
 			{activeTab === 'config' && <AccountsPanel theme={theme} />}
-			{activeTab === 'providers' && <ProviderPanel theme={theme} sessions={sessions} onSelectSession={onSelectSession} />}
+			{activeTab === 'providers' && (
+				<ProviderPanel theme={theme} sessions={sessions} onSelectSession={onSelectSession} />
+			)}
 			{activeTab === 'usage' && <VirtuosoUsageView theme={theme} sessions={sessions} />}
 		</Modal>
 	);

@@ -138,13 +138,16 @@ describe('AccountSwitcher wiring', () => {
 			const handler = handlers.get('accounts:execute-switch')!;
 			expect(handler).toBeDefined();
 
-			const result = await handler({}, {
-				sessionId: 'session-1',
-				fromAccountId: 'acct-1',
-				toAccountId: 'acct-2',
-				reason: 'manual',
-				automatic: false,
-			});
+			const result = await handler(
+				{},
+				{
+					sessionId: 'session-1',
+					fromAccountId: 'acct-1',
+					toAccountId: 'acct-2',
+					reason: 'manual',
+					automatic: false,
+				}
+			);
 
 			expect(result.success).toBe(true);
 			expect(result.event).toBeDefined();
@@ -164,13 +167,16 @@ describe('AccountSwitcher wiring', () => {
 			});
 
 			const handler = handlers.get('accounts:execute-switch')!;
-			const result = await handler({}, {
-				sessionId: 'session-1',
-				fromAccountId: 'acct-1',
-				toAccountId: 'acct-2',
-				reason: 'manual',
-				automatic: false,
-			});
+			const result = await handler(
+				{},
+				{
+					sessionId: 'session-1',
+					fromAccountId: 'acct-1',
+					toAccountId: 'acct-2',
+					reason: 'manual',
+					automatic: false,
+				}
+			);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Account switcher not initialized');
@@ -183,13 +189,16 @@ describe('AccountSwitcher wiring', () => {
 			});
 
 			const handler = handlers.get('accounts:execute-switch')!;
-			const result = await handler({}, {
-				sessionId: 'session-1',
-				fromAccountId: 'acct-1',
-				toAccountId: 'acct-2',
-				reason: 'manual',
-				automatic: false,
-			});
+			const result = await handler(
+				{},
+				{
+					sessionId: 'session-1',
+					fromAccountId: 'acct-1',
+					toAccountId: 'acct-2',
+					reason: 'manual',
+					automatic: false,
+				}
+			);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Account switcher not initialized');
@@ -239,10 +248,22 @@ describe('AccountSwitcher wiring', () => {
 			registerProcessHandlers({
 				getProcessManager: () => mockProcessManager as any,
 				getAgentDetector: () => null,
-				agentConfigsStore: { get: vi.fn().mockReturnValue({}), set: vi.fn(), onDidChange: vi.fn() } as any,
-				settingsStore: { get: vi.fn().mockReturnValue({}), set: vi.fn(), onDidChange: vi.fn() } as any,
+				agentConfigsStore: {
+					get: vi.fn().mockReturnValue({}),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
+				settingsStore: {
+					get: vi.fn().mockReturnValue({}),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
 				getMainWindow: () => null,
-				sessionsStore: { get: vi.fn().mockReturnValue({ sessions: [] }), set: vi.fn(), onDidChange: vi.fn() } as any,
+				sessionsStore: {
+					get: vi.fn().mockReturnValue({ sessions: [] }),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
 				getAccountSwitcher: () => mockSwitcher as any,
 				safeSend: vi.fn(),
 			});
@@ -269,10 +290,22 @@ describe('AccountSwitcher wiring', () => {
 			registerProcessHandlers({
 				getProcessManager: () => mockProcessManager as any,
 				getAgentDetector: () => null,
-				agentConfigsStore: { get: vi.fn().mockReturnValue({}), set: vi.fn(), onDidChange: vi.fn() } as any,
-				settingsStore: { get: vi.fn().mockReturnValue({}), set: vi.fn(), onDidChange: vi.fn() } as any,
+				agentConfigsStore: {
+					get: vi.fn().mockReturnValue({}),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
+				settingsStore: {
+					get: vi.fn().mockReturnValue({}),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
 				getMainWindow: () => null,
-				sessionsStore: { get: vi.fn().mockReturnValue({ sessions: [] }), set: vi.fn(), onDidChange: vi.fn() } as any,
+				sessionsStore: {
+					get: vi.fn().mockReturnValue({ sessions: [] }),
+					set: vi.fn(),
+					onDidChange: vi.fn(),
+				} as any,
 				// No getAccountSwitcher provided
 				safeSend: vi.fn(),
 			});

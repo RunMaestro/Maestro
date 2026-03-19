@@ -14,13 +14,23 @@ import {
 	History,
 } from 'lucide-react';
 import type { Theme } from '../types';
-import type { AccountProfile, AccountSwitchConfig, MultiplexableAgent } from '../../shared/account-types';
+import type {
+	AccountProfile,
+	AccountSwitchConfig,
+	MultiplexableAgent,
+} from '../../shared/account-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 import { AccountUsageHistory } from './AccountUsageHistory';
 import { notifyToast } from '../stores/notificationStore';
 /** Provider types that can have accounts in Virtuosos */
-const ACCOUNT_PROVIDERS: MultiplexableAgent[] = ['claude-code', 'codex', 'gemini-cli', 'opencode', 'factory-droid'];
+const ACCOUNT_PROVIDERS: MultiplexableAgent[] = [
+	'claude-code',
+	'codex',
+	'gemini-cli',
+	'opencode',
+	'factory-droid',
+];
 
 /** Display names for all multiplexable agents (extends beyond ToolType) */
 const PROVIDER_DISPLAY_NAMES: Record<MultiplexableAgent, string> = {
@@ -33,9 +43,9 @@ const PROVIDER_DISPLAY_NAMES: Record<MultiplexableAgent, string> = {
 
 const PLAN_PRESETS = [
 	{ label: 'Custom', tokens: 0, cost: null },
-	{ label: 'Claude Pro', tokens: 19_000, cost: 18.00 },
-	{ label: 'Claude Max 5', tokens: 88_000, cost: 35.00 },
-	{ label: 'Claude Max 20', tokens: 220_000, cost: 140.00 },
+	{ label: 'Claude Pro', tokens: 19_000, cost: 18.0 },
+	{ label: 'Claude Max 5', tokens: 88_000, cost: 35.0 },
+	{ label: 'Claude Max 20', tokens: 220_000, cost: 140.0 },
 ] as const;
 
 function renderConfidenceDots(confidence: 'low' | 'medium' | 'high'): string {
@@ -116,9 +126,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 			try {
 				const sessions = await window.maestro.sessions.getAll();
 				const conflicts = sessions
-					.filter(
-						(s: any) => s.customEnvVars?.CLAUDE_CONFIG_DIR && !s.accountId
-					)
+					.filter((s: any) => s.customEnvVars?.CLAUDE_CONFIG_DIR && !s.accountId)
 					.map((s: any) => ({
 						sessionId: s.id,
 						sessionName: s.name || s.id,
@@ -278,9 +286,17 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 		try {
 			const result = await window.maestro.accounts.repairSymlinks(configDir);
 			if (result.errors.length === 0) {
-				addToast({ type: 'success', title: 'Symlinks Repaired', message: `Repaired: ${result.repaired.join(', ') || 'none needed'}` });
+				addToast({
+					type: 'success',
+					title: 'Symlinks Repaired',
+					message: `Repaired: ${result.repaired.join(', ') || 'none needed'}`,
+				});
 			} else {
-				addToast({ type: 'error', title: 'Repair Failed', message: `Repair errors: ${result.errors.join(', ')}` });
+				addToast({
+					type: 'error',
+					title: 'Repair Failed',
+					message: `Repair errors: ${result.errors.join(', ')}`,
+				});
 			}
 			await refreshAccounts();
 		} catch (err) {
@@ -293,7 +309,11 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 			const result = await window.maestro.accounts.syncCredentials(configDir);
 			if (result.success) {
 				setErrorMessage(null);
-				addToast({ type: 'success', title: 'Credentials Synced', message: 'Credentials synced from base ~/.claude directory' });
+				addToast({
+					type: 'success',
+					title: 'Credentials Synced',
+					message: 'Credentials synced from base ~/.claude directory',
+				});
 			} else {
 				setErrorMessage(`Sync failed: ${result.error}`);
 			}
@@ -303,10 +323,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	};
 
 	const statusBadge = (status: AccountProfile['status']) => {
-		const styles: Record<
-			string,
-			{ bg: string; fg: string }
-		> = {
+		const styles: Record<string, { bg: string; fg: string }> = {
 			active: { bg: theme.colors.success + '20', fg: theme.colors.success },
 			throttled: { bg: theme.colors.warning + '20', fg: theme.colors.warning },
 			expired: { bg: theme.colors.error + '20', fg: theme.colors.error },
@@ -364,9 +381,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 						Manual CLAUDE_CONFIG_DIR Detected
 					</div>
 					<div style={{ color: theme.colors.textDim, fontSize: '12px' }}>
-						{conflictingSessions.length} session(s) have CLAUDE_CONFIG_DIR set manually in
-						custom env vars. These sessions will not be managed by the account system.
-						Consider migrating them to managed accounts.
+						{conflictingSessions.length} session(s) have CLAUDE_CONFIG_DIR set manually in custom
+						env vars. These sessions will not be managed by the account system. Consider migrating
+						them to managed accounts.
 					</div>
 					{conflictingSessions.map((s) => (
 						<div
@@ -419,8 +436,8 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							border: `1px solid ${theme.colors.border}`,
 						}}
 					>
-						No virtuosos registered. Use &quot;Discover Existing&quot; or &quot;Create
-						New&quot; below.
+						No virtuosos registered. Use &quot;Discover Existing&quot; or &quot;Create New&quot;
+						below.
 					</div>
 				) : (
 					<div className="space-y-4">
@@ -433,7 +450,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 								grouped.get(key)!.push(account);
 							}
 							// Sort providers: providers with accounts first, in ACCOUNT_PROVIDERS order
-							const orderedProviders = ACCOUNT_PROVIDERS.filter(p => grouped.has(p));
+							const orderedProviders = ACCOUNT_PROVIDERS.filter((p) => grouped.has(p));
 							return orderedProviders.map((providerType) => {
 								const providerAccounts = grouped.get(providerType) || [];
 								return (
@@ -458,436 +475,475 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 										</div>
 										<div className="space-y-2">
 											{providerAccounts.map((account) => (
-							<div
-								key={account.id}
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									border: `1px solid ${theme.colors.border}`,
-									borderRadius: '6px',
-									padding: '12px',
-								}}
-							>
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-3">
-										<div>
-											<div
-												className="flex items-center gap-2"
-												style={{ color: theme.colors.textMain }}
-											>
-												<span className="font-bold text-sm">
-													{account.email || account.name}
-												</span>
-												{account.isDefault && (
-													<Star
-														className="w-3 h-3"
-														style={{ color: theme.colors.accent }}
-														fill={theme.colors.accent}
-													/>
-												)}
-												{statusBadge(account.status)}
-											</div>
-											{account.status === 'expired' && (
 												<div
-													className="text-xs mt-1 flex items-center gap-1"
-													style={{ color: theme.colors.error }}
+													key={account.id}
+													style={{
+														backgroundColor: theme.colors.bgMain,
+														border: `1px solid ${theme.colors.border}`,
+														borderRadius: '6px',
+														padding: '12px',
+													}}
 												>
-													<AlertTriangle className="w-3 h-3" />
-													OAuth token expired — run:{' '}
-													<code
-														className="font-mono select-all px-1 py-0.5 rounded"
-														style={{
-															backgroundColor: theme.colors.bgSidebar,
-															fontSize: '10px',
-														}}
-													>
-														CLAUDE_CONFIG_DIR=&quot;{account.configDir}&quot; claude login
-													</code>
-												</div>
-											)}
-											<div
-												className="text-xs mt-1"
-												style={{ color: theme.colors.textDim }}
-											>
-												{account.configDir}
-												{account.tokenLimitPerWindow > 0 && (
-													<span>
-														{' '}
-														&middot; Limit:{' '}
-														{account.tokenLimitPerWindow.toLocaleString()}{' '}
-														tokens
-													</span>
-												)}
-											</div>
-										</div>
-									</div>
-								{/* Inline usage metrics */}
-								{(() => {
-									const usage = usageMetrics[account.id];
-									if (!usage) return null;
-									return (
-										<div className="mt-2 space-y-1.5">
-											{/* Usage bar */}
-											{usage.usagePercent !== null && (
-												<div className="flex items-center gap-2">
-													<div
-														className="flex-1 h-1.5 rounded-full overflow-hidden"
-														style={{ backgroundColor: theme.colors.bgActivity }}
-													>
+													<div className="flex items-center justify-between">
+														<div className="flex items-center gap-3">
+															<div>
+																<div
+																	className="flex items-center gap-2"
+																	style={{ color: theme.colors.textMain }}
+																>
+																	<span className="font-bold text-sm">
+																		{account.email || account.name}
+																	</span>
+																	{account.isDefault && (
+																		<Star
+																			className="w-3 h-3"
+																			style={{ color: theme.colors.accent }}
+																			fill={theme.colors.accent}
+																		/>
+																	)}
+																	{statusBadge(account.status)}
+																</div>
+																{account.status === 'expired' && (
+																	<div
+																		className="text-xs mt-1 flex items-center gap-1"
+																		style={{ color: theme.colors.error }}
+																	>
+																		<AlertTriangle className="w-3 h-3" />
+																		OAuth token expired — run:{' '}
+																		<code
+																			className="font-mono select-all px-1 py-0.5 rounded"
+																			style={{
+																				backgroundColor: theme.colors.bgSidebar,
+																				fontSize: '10px',
+																			}}
+																		>
+																			CLAUDE_CONFIG_DIR=&quot;{account.configDir}&quot; claude login
+																		</code>
+																	</div>
+																)}
+																<div
+																	className="text-xs mt-1"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	{account.configDir}
+																	{account.tokenLimitPerWindow > 0 && (
+																		<span>
+																			{' '}
+																			&middot; Limit: {account.tokenLimitPerWindow.toLocaleString()}{' '}
+																			tokens
+																		</span>
+																	)}
+																</div>
+															</div>
+														</div>
+														{/* Inline usage metrics */}
+														{(() => {
+															const usage = usageMetrics[account.id];
+															if (!usage) return null;
+															return (
+																<div className="mt-2 space-y-1.5">
+																	{/* Usage bar */}
+																	{usage.usagePercent !== null && (
+																		<div className="flex items-center gap-2">
+																			<div
+																				className="flex-1 h-1.5 rounded-full overflow-hidden"
+																				style={{ backgroundColor: theme.colors.bgActivity }}
+																			>
+																				<div
+																					className="h-full rounded-full transition-all duration-500"
+																					style={{
+																						width: `${Math.min(100, usage.usagePercent)}%`,
+																						backgroundColor:
+																							usage.usagePercent >= 95
+																								? theme.colors.error
+																								: usage.usagePercent >= 80
+																									? theme.colors.warning
+																									: theme.colors.accent,
+																					}}
+																				/>
+																			</div>
+																			<span
+																				className="text-xs tabular-nums"
+																				style={{ color: theme.colors.textDim }}
+																			>
+																				{Math.round(usage.usagePercent)}%
+																			</span>
+																		</div>
+																	)}
+
+																	{/* Metrics grid */}
+																	<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+																		<div style={{ color: theme.colors.textDim }}>
+																			Tokens:{' '}
+																			<span style={{ color: theme.colors.textMain }}>
+																				{formatTokenCount(usage.totalTokens)}
+																				{usage.limitTokens > 0 &&
+																					` / ${formatTokenCount(usage.limitTokens)}`}
+																			</span>
+																		</div>
+																		<div style={{ color: theme.colors.textDim }}>
+																			Cost:{' '}
+																			<span style={{ color: theme.colors.textMain }}>
+																				${usage.costUsd.toFixed(2)}
+																			</span>
+																		</div>
+																		<div style={{ color: theme.colors.textDim }}>
+																			Queries:{' '}
+																			<span style={{ color: theme.colors.textMain }}>
+																				{usage.queryCount}
+																			</span>
+																		</div>
+																		<div style={{ color: theme.colors.textDim }}>
+																			Resets in:{' '}
+																			<span style={{ color: theme.colors.textMain }}>
+																				{formatTimeRemaining(usage.timeRemainingMs)}
+																			</span>
+																		</div>
+																		{usage.burnRatePerHour > 0 && (
+																			<div style={{ color: theme.colors.textDim }}>
+																				Burn rate:{' '}
+																				<span style={{ color: theme.colors.textMain }}>
+																					~{formatTokenCount(Math.round(usage.burnRatePerHour))}/hr
+																				</span>
+																			</div>
+																		)}
+																		{usage.estimatedTimeToLimitMs !== null && (
+																			<div style={{ color: theme.colors.textDim }}>
+																				To limit:{' '}
+																				<span
+																					style={{
+																						color:
+																							usage.estimatedTimeToLimitMs < 30 * 60 * 1000
+																								? theme.colors.error
+																								: usage.estimatedTimeToLimitMs < 60 * 60 * 1000
+																									? theme.colors.warning
+																									: theme.colors.textMain,
+																					}}
+																				>
+																					~{formatTimeRemaining(usage.estimatedTimeToLimitMs)}
+																				</span>
+																			</div>
+																		)}
+																	</div>
+
+																	{/* Prediction section */}
+																	{usage.prediction && usage.limitTokens > 0 && (
+																		<div
+																			className="mt-2 p-2 rounded text-xs"
+																			style={{ backgroundColor: theme.colors.bgActivity }}
+																		>
+																			<div
+																				className="font-medium mb-1"
+																				style={{ color: theme.colors.textMain }}
+																			>
+																				Prediction
+																			</div>
+																			<div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+																				<div style={{ color: theme.colors.textDim }}>
+																					Current rate:{' '}
+																					<span
+																						style={{
+																							color:
+																								usage.prediction.linearTimeToLimitMs !== null &&
+																								usage.prediction.linearTimeToLimitMs <
+																									60 * 60 * 1000
+																									? theme.colors.error
+																									: usage.prediction.linearTimeToLimitMs !== null &&
+																										  usage.prediction.linearTimeToLimitMs <
+																												2 * 60 * 60 * 1000
+																										? theme.colors.warning
+																										: theme.colors.textMain,
+																						}}
+																					>
+																						{usage.prediction.linearTimeToLimitMs !== null
+																							? `~${formatTimeRemaining(usage.prediction.linearTimeToLimitMs)} to limit`
+																							: '\u2014'}
+																					</span>
+																				</div>
+																				<div style={{ color: theme.colors.textDim }}>
+																					Conservative (P90):{' '}
+																					<span
+																						style={{
+																							color:
+																								usage.prediction.windowsRemainingP90 !== null &&
+																								usage.prediction.windowsRemainingP90 < 2
+																									? theme.colors.error
+																									: usage.prediction.windowsRemainingP90 !== null &&
+																										  usage.prediction.windowsRemainingP90 < 5
+																										? theme.colors.warning
+																										: theme.colors.textMain,
+																						}}
+																					>
+																						{usage.prediction.windowsRemainingP90 !== null
+																							? `~${usage.prediction.windowsRemainingP90.toFixed(1)} windows`
+																							: '\u2014'}
+																					</span>
+																				</div>
+																				<div style={{ color: theme.colors.textDim }}>
+																					Confidence:{' '}
+																					<span style={{ color: theme.colors.accent }}>
+																						{renderConfidenceDots(usage.prediction.confidence)}
+																					</span>
+																					<span className="ml-1">
+																						{usage.prediction.confidence === 'high'
+																							? 'High'
+																							: usage.prediction.confidence === 'medium'
+																								? 'Medium'
+																								: 'Low'}
+																					</span>
+																				</div>
+																				<div style={{ color: theme.colors.textDim }}>
+																					Avg/window:{' '}
+																					<span style={{ color: theme.colors.textMain }}>
+																						{formatTokenCount(
+																							Math.round(usage.prediction.avgTokensPerWindow)
+																						)}
+																					</span>
+																				</div>
+																			</div>
+																		</div>
+																	)}
+
+																	{/* Usage History toggle */}
+																	<button
+																		onClick={() =>
+																			setHistoryExpandedId(
+																				historyExpandedId === account.id ? null : account.id
+																			)
+																		}
+																		className="mt-2 flex items-center gap-1.5 text-xs hover:underline"
+																		style={{ color: theme.colors.textDim }}
+																	>
+																		<History className="w-3 h-3" />
+																		{historyExpandedId === account.id ? 'Hide' : 'Usage'} History
+																		{historyExpandedId === account.id ? (
+																			<ChevronDown className="w-3 h-3" />
+																		) : (
+																			<ChevronRight className="w-3 h-3" />
+																		)}
+																	</button>
+																	{historyExpandedId === account.id && (
+																		<AccountUsageHistory accountId={account.id} theme={theme} />
+																	)}
+																</div>
+															);
+														})()}
+														<div className="flex items-center gap-1">
+															<button
+																onClick={() =>
+																	setEditingAccountId(
+																		editingAccountId === account.id ? null : account.id
+																	)
+																}
+																className="p-1.5 rounded hover:bg-white/10 transition-colors"
+																title="Configure"
+																style={{ color: theme.colors.textDim }}
+															>
+																{editingAccountId === account.id ? (
+																	<ChevronDown className="w-3 h-3" />
+																) : (
+																	<ChevronRight className="w-3 h-3" />
+																)}
+															</button>
+															{account.status === 'expired' && (
+																<button
+																	onClick={() =>
+																		handleUpdateAccount(account.id, {
+																			status: 'active',
+																		})
+																	}
+																	className="px-2 py-1 rounded text-xs font-bold transition-colors hover:bg-white/10"
+																	title="Mark as active after re-login"
+																	style={{
+																		color: theme.colors.success,
+																		border: `1px solid ${theme.colors.success}`,
+																	}}
+																>
+																	Reactivate
+																</button>
+															)}
+															{!account.isDefault && (
+																<button
+																	onClick={() => handleSetDefault(account.id)}
+																	className="p-1.5 rounded hover:bg-white/10 transition-colors"
+																	title="Set as default"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	<Star className="w-3 h-3" />
+																</button>
+															)}
+															<button
+																onClick={() => handleRemoveAccount(account.id)}
+																className="p-1.5 rounded hover:bg-white/10 transition-colors"
+																title="Remove account"
+																style={{ color: theme.colors.textDim }}
+															>
+																<Trash2 className="w-3 h-3" />
+															</button>
+														</div>
+													</div>
+
+													{/* Expanded per-account configuration */}
+													{editingAccountId === account.id && (
 														<div
-															className="h-full rounded-full transition-all duration-500"
-															style={{
-																width: `${Math.min(100, usage.usagePercent)}%`,
-																backgroundColor: usage.usagePercent >= 95
-																	? theme.colors.error
-																	: usage.usagePercent >= 80
-																		? theme.colors.warning
-																		: theme.colors.accent,
-															}}
-														/>
-													</div>
-													<span className="text-xs tabular-nums" style={{ color: theme.colors.textDim }}>
-														{Math.round(usage.usagePercent)}%
-													</span>
-												</div>
-											)}
+															className="mt-3 pt-3 space-y-3"
+															style={{ borderTop: `1px solid ${theme.colors.border}` }}
+														>
+															{/* Plan preset + token limit */}
+															<div>
+																<label
+																	className="block text-xs mb-1"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	Plan preset / Token limit per window
+																</label>
+																<div className="flex items-center gap-2">
+																	<select
+																		value={
+																			PLAN_PRESETS.find(
+																				(p) => p.tokens === account.tokenLimitPerWindow
+																			)?.label ?? 'Custom'
+																		}
+																		onChange={(e) => {
+																			const preset = PLAN_PRESETS.find(
+																				(p) => p.label === e.target.value
+																			);
+																			if (preset && preset.tokens > 0) {
+																				handleUpdateAccount(account.id, {
+																					tokenLimitPerWindow: preset.tokens,
+																				});
+																			}
+																		}}
+																		className="flex-1 p-2 rounded border bg-transparent outline-none text-xs"
+																		style={{
+																			borderColor: theme.colors.border,
+																			color: theme.colors.textMain,
+																			backgroundColor: theme.colors.bgMain,
+																		}}
+																	>
+																		{PLAN_PRESETS.map((p) => (
+																			<option key={p.label} value={p.label}>
+																				{p.label}
+																				{p.tokens > 0 ? ` (${formatTokenCount(p.tokens)})` : ''}
+																			</option>
+																		))}
+																	</select>
+																	<input
+																		type="number"
+																		value={account.tokenLimitPerWindow || ''}
+																		onChange={(e) =>
+																			handleUpdateAccount(account.id, {
+																				tokenLimitPerWindow: parseInt(e.target.value) || 0,
+																			})
+																		}
+																		placeholder="Custom limit"
+																		className="w-28 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+																		style={{
+																			borderColor: theme.colors.border,
+																			color: theme.colors.textMain,
+																		}}
+																		min={0}
+																	/>
+																</div>
+															</div>
 
-											{/* Metrics grid */}
-											<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
-												<div style={{ color: theme.colors.textDim }}>
-													Tokens: <span style={{ color: theme.colors.textMain }}>
-														{formatTokenCount(usage.totalTokens)}
-														{usage.limitTokens > 0 && ` / ${formatTokenCount(usage.limitTokens)}`}
-													</span>
-												</div>
-												<div style={{ color: theme.colors.textDim }}>
-													Cost: <span style={{ color: theme.colors.textMain }}>
-														${usage.costUsd.toFixed(2)}
-													</span>
-												</div>
-												<div style={{ color: theme.colors.textDim }}>
-													Queries: <span style={{ color: theme.colors.textMain }}>
-														{usage.queryCount}
-													</span>
-												</div>
-												<div style={{ color: theme.colors.textDim }}>
-													Resets in: <span style={{ color: theme.colors.textMain }}>
-														{formatTimeRemaining(usage.timeRemainingMs)}
-													</span>
-												</div>
-												{usage.burnRatePerHour > 0 && (
-													<div style={{ color: theme.colors.textDim }}>
-														Burn rate: <span style={{ color: theme.colors.textMain }}>
-															~{formatTokenCount(Math.round(usage.burnRatePerHour))}/hr
-														</span>
-													</div>
-												)}
-												{usage.estimatedTimeToLimitMs !== null && (
-													<div style={{ color: theme.colors.textDim }}>
-														To limit: <span style={{
-															color: usage.estimatedTimeToLimitMs < 30 * 60 * 1000
-																? theme.colors.error
-																: usage.estimatedTimeToLimitMs < 60 * 60 * 1000
-																	? theme.colors.warning
-																	: theme.colors.textMain,
-														}}>
-															~{formatTimeRemaining(usage.estimatedTimeToLimitMs)}
-														</span>
-													</div>
-												)}
-											</div>
+															<div className="flex items-center gap-4">
+																<div className="flex-1">
+																	<label
+																		className="block text-xs mb-1"
+																		style={{ color: theme.colors.textDim }}
+																	>
+																		Window duration
+																	</label>
+																	<select
+																		value={account.tokenWindowMs}
+																		onChange={(e) =>
+																			handleUpdateAccount(account.id, {
+																				tokenWindowMs: parseInt(e.target.value),
+																			})
+																		}
+																		className="w-full p-2 rounded border bg-transparent outline-none text-xs"
+																		style={{
+																			borderColor: theme.colors.border,
+																			color: theme.colors.textMain,
+																			backgroundColor: theme.colors.bgMain,
+																		}}
+																	>
+																		{WINDOW_DURATION_OPTIONS.map((opt) => (
+																			<option key={opt.value} value={opt.value}>
+																				{opt.label}
+																			</option>
+																		))}
+																	</select>
+																</div>
+															</div>
 
-											{/* Prediction section */}
-											{usage.prediction && usage.limitTokens > 0 && (
-												<div className="mt-2 p-2 rounded text-xs" style={{ backgroundColor: theme.colors.bgActivity }}>
-													<div className="font-medium mb-1" style={{ color: theme.colors.textMain }}>Prediction</div>
-													<div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-														<div style={{ color: theme.colors.textDim }}>
-															Current rate:{' '}
-															<span style={{
-																color: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 60 * 60 * 1000
-																	? theme.colors.error
-																	: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 2 * 60 * 60 * 1000
-																		? theme.colors.warning
-																		: theme.colors.textMain,
-															}}>
-																{usage.prediction.linearTimeToLimitMs !== null
-																	? `~${formatTimeRemaining(usage.prediction.linearTimeToLimitMs)} to limit`
-																	: '\u2014'}
-															</span>
+															<div className="flex items-center justify-between">
+																<label className="text-xs" style={{ color: theme.colors.textDim }}>
+																	Auto-switch enabled
+																</label>
+																<button
+																	onClick={() =>
+																		handleUpdateAccount(account.id, {
+																			autoSwitchEnabled: !account.autoSwitchEnabled,
+																		})
+																	}
+																	className="w-8 h-4 rounded-full transition-colors relative"
+																	style={{
+																		backgroundColor: account.autoSwitchEnabled
+																			? theme.colors.accent
+																			: theme.colors.bgActivity,
+																	}}
+																>
+																	<div
+																		className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
+																		style={{
+																			transform: account.autoSwitchEnabled
+																				? 'translateX(16px)'
+																				: 'translateX(2px)',
+																		}}
+																	/>
+																</button>
+															</div>
+
+															<div className="flex gap-2 flex-wrap">
+																<button
+																	onClick={() => handleSyncCredentials(account.configDir)}
+																	className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+																	style={{
+																		color: theme.colors.accent,
+																		border: `1px solid ${theme.colors.accent}`,
+																	}}
+																>
+																	<RefreshCw className="w-3 h-3" />
+																	Sync Auth
+																</button>
+																<button
+																	onClick={() => handleValidateSymlinks(account.configDir)}
+																	className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+																	style={{
+																		color: theme.colors.textDim,
+																		border: `1px solid ${theme.colors.border}`,
+																	}}
+																>
+																	<Check className="w-3 h-3" />
+																	Validate Symlinks
+																</button>
+																<button
+																	onClick={() => handleRepairSymlinks(account.configDir)}
+																	className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+																	style={{
+																		color: theme.colors.textDim,
+																		border: `1px solid ${theme.colors.border}`,
+																	}}
+																>
+																	<Wrench className="w-3 h-3" />
+																	Repair Symlinks
+																</button>
+															</div>
 														</div>
-														<div style={{ color: theme.colors.textDim }}>
-															Conservative (P90):{' '}
-															<span style={{
-																color: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 2
-																	? theme.colors.error
-																	: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 5
-																		? theme.colors.warning
-																		: theme.colors.textMain,
-															}}>
-																{usage.prediction.windowsRemainingP90 !== null
-																	? `~${usage.prediction.windowsRemainingP90.toFixed(1)} windows`
-																	: '\u2014'}
-															</span>
-														</div>
-														<div style={{ color: theme.colors.textDim }}>
-															Confidence:{' '}
-															<span style={{ color: theme.colors.accent }}>
-																{renderConfidenceDots(usage.prediction.confidence)}
-															</span>
-															<span className="ml-1">
-																{usage.prediction.confidence === 'high' ? 'High' : usage.prediction.confidence === 'medium' ? 'Medium' : 'Low'}
-															</span>
-														</div>
-														<div style={{ color: theme.colors.textDim }}>
-															Avg/window:{' '}
-															<span style={{ color: theme.colors.textMain }}>
-																{formatTokenCount(Math.round(usage.prediction.avgTokensPerWindow))}
-															</span>
-														</div>
-													</div>
+													)}
 												</div>
-											)}
-
-											{/* Usage History toggle */}
-											<button
-												onClick={() => setHistoryExpandedId(
-													historyExpandedId === account.id ? null : account.id
-												)}
-												className="mt-2 flex items-center gap-1.5 text-xs hover:underline"
-												style={{ color: theme.colors.textDim }}
-											>
-												<History className="w-3 h-3" />
-												{historyExpandedId === account.id ? 'Hide' : 'Usage'} History
-												{historyExpandedId === account.id
-													? <ChevronDown className="w-3 h-3" />
-													: <ChevronRight className="w-3 h-3" />
-												}
-											</button>
-											{historyExpandedId === account.id && (
-												<AccountUsageHistory accountId={account.id} theme={theme} />
-											)}
-										</div>
-									);
-								})()}
-									<div className="flex items-center gap-1">
-										<button
-											onClick={() =>
-												setEditingAccountId(
-													editingAccountId === account.id
-														? null
-														: account.id
-												)
-											}
-											className="p-1.5 rounded hover:bg-white/10 transition-colors"
-											title="Configure"
-											style={{ color: theme.colors.textDim }}
-										>
-											{editingAccountId === account.id ? (
-												<ChevronDown className="w-3 h-3" />
-											) : (
-												<ChevronRight className="w-3 h-3" />
-											)}
-										</button>
-										{account.status === 'expired' && (
-											<button
-												onClick={() =>
-													handleUpdateAccount(account.id, {
-														status: 'active',
-													})
-												}
-												className="px-2 py-1 rounded text-xs font-bold transition-colors hover:bg-white/10"
-												title="Mark as active after re-login"
-												style={{
-													color: theme.colors.success,
-													border: `1px solid ${theme.colors.success}`,
-												}}
-											>
-												Reactivate
-											</button>
-										)}
-										{!account.isDefault && (
-											<button
-												onClick={() => handleSetDefault(account.id)}
-												className="p-1.5 rounded hover:bg-white/10 transition-colors"
-												title="Set as default"
-												style={{ color: theme.colors.textDim }}
-											>
-												<Star className="w-3 h-3" />
-											</button>
-										)}
-										<button
-											onClick={() => handleRemoveAccount(account.id)}
-											className="p-1.5 rounded hover:bg-white/10 transition-colors"
-											title="Remove account"
-											style={{ color: theme.colors.textDim }}
-										>
-											<Trash2 className="w-3 h-3" />
-										</button>
-									</div>
-								</div>
-
-								{/* Expanded per-account configuration */}
-								{editingAccountId === account.id && (
-									<div
-										className="mt-3 pt-3 space-y-3"
-										style={{ borderTop: `1px solid ${theme.colors.border}` }}
-									>
-										{/* Plan preset + token limit */}
-										<div>
-											<label
-												className="block text-xs mb-1"
-												style={{ color: theme.colors.textDim }}
-											>
-												Plan preset / Token limit per window
-											</label>
-											<div className="flex items-center gap-2">
-												<select
-													value={PLAN_PRESETS.find(p => p.tokens === account.tokenLimitPerWindow)?.label ?? 'Custom'}
-													onChange={(e) => {
-														const preset = PLAN_PRESETS.find(p => p.label === e.target.value);
-														if (preset && preset.tokens > 0) {
-															handleUpdateAccount(account.id, { tokenLimitPerWindow: preset.tokens });
-														}
-													}}
-													className="flex-1 p-2 rounded border bg-transparent outline-none text-xs"
-													style={{
-														borderColor: theme.colors.border,
-														color: theme.colors.textMain,
-														backgroundColor: theme.colors.bgMain,
-													}}
-												>
-													{PLAN_PRESETS.map(p => (
-														<option key={p.label} value={p.label}>
-															{p.label}{p.tokens > 0 ? ` (${formatTokenCount(p.tokens)})` : ''}
-														</option>
-													))}
-												</select>
-												<input
-													type="number"
-													value={account.tokenLimitPerWindow || ''}
-													onChange={(e) =>
-														handleUpdateAccount(account.id, {
-															tokenLimitPerWindow:
-																parseInt(e.target.value) || 0,
-														})
-													}
-													placeholder="Custom limit"
-													className="w-28 p-2 rounded border bg-transparent outline-none text-xs font-mono"
-													style={{
-														borderColor: theme.colors.border,
-														color: theme.colors.textMain,
-													}}
-													min={0}
-												/>
-											</div>
-										</div>
-
-										<div className="flex items-center gap-4">
-											<div className="flex-1">
-												<label
-													className="block text-xs mb-1"
-													style={{ color: theme.colors.textDim }}
-												>
-													Window duration
-												</label>
-												<select
-													value={account.tokenWindowMs}
-													onChange={(e) =>
-														handleUpdateAccount(account.id, {
-															tokenWindowMs: parseInt(e.target.value),
-														})
-													}
-													className="w-full p-2 rounded border bg-transparent outline-none text-xs"
-													style={{
-														borderColor: theme.colors.border,
-														color: theme.colors.textMain,
-														backgroundColor: theme.colors.bgMain,
-													}}
-												>
-													{WINDOW_DURATION_OPTIONS.map((opt) => (
-														<option key={opt.value} value={opt.value}>
-															{opt.label}
-														</option>
-													))}
-												</select>
-											</div>
-										</div>
-
-										<div className="flex items-center justify-between">
-											<label
-												className="text-xs"
-												style={{ color: theme.colors.textDim }}
-											>
-												Auto-switch enabled
-											</label>
-											<button
-												onClick={() =>
-													handleUpdateAccount(account.id, {
-														autoSwitchEnabled: !account.autoSwitchEnabled,
-													})
-												}
-												className="w-8 h-4 rounded-full transition-colors relative"
-												style={{
-													backgroundColor: account.autoSwitchEnabled
-														? theme.colors.accent
-														: theme.colors.bgActivity,
-												}}
-											>
-												<div
-													className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
-													style={{
-														transform: account.autoSwitchEnabled
-															? 'translateX(16px)'
-															: 'translateX(2px)',
-													}}
-												/>
-											</button>
-										</div>
-
-										<div className="flex gap-2 flex-wrap">
-											<button
-												onClick={() =>
-													handleSyncCredentials(account.configDir)
-												}
-												className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-												style={{
-													color: theme.colors.accent,
-													border: `1px solid ${theme.colors.accent}`,
-												}}
-											>
-												<RefreshCw className="w-3 h-3" />
-												Sync Auth
-											</button>
-											<button
-												onClick={() =>
-													handleValidateSymlinks(account.configDir)
-												}
-												className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-												style={{
-													color: theme.colors.textDim,
-													border: `1px solid ${theme.colors.border}`,
-												}}
-											>
-												<Check className="w-3 h-3" />
-												Validate Symlinks
-											</button>
-											<button
-												onClick={() =>
-													handleRepairSymlinks(account.configDir)
-												}
-												className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-												style={{
-													color: theme.colors.textDim,
-													border: `1px solid ${theme.colors.border}`,
-												}}
-											>
-												<Wrench className="w-3 h-3" />
-												Repair Symlinks
-											</button>
-										</div>
-									</div>
-								)}
-							</div>
 											))}
 										</div>
 									</div>
@@ -966,15 +1022,10 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 													{PROVIDER_DISPLAY_NAMES[d.agentType as MultiplexableAgent] || d.agentType}
 												</span>
 											</div>
-											<div
-												className="text-xs"
-												style={{ color: theme.colors.textDim }}
-											>
+											<div className="text-xs" style={{ color: theme.colors.textDim }}>
 												{d.configDir}
 												{d.hasAuth && (
-													<span
-														style={{ color: theme.colors.success }}
-													>
+													<span style={{ color: theme.colors.success }}>
 														{' '}
 														&middot; Authenticated
 													</span>
@@ -1013,10 +1064,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							style={{ color: theme.colors.error }}
 						/>
 						<div className="flex-1">
-							<div
-								className="text-xs"
-								style={{ color: theme.colors.error }}
-							>
+							<div className="text-xs" style={{ color: theme.colors.error }}>
 								{errorMessage}
 							</div>
 							<button
@@ -1038,10 +1086,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 						border: `1px solid ${theme.colors.border}`,
 					}}
 				>
-					<label
-						className="block text-xs mb-2"
-						style={{ color: theme.colors.textDim }}
-					>
+					<label className="block text-xs mb-2" style={{ color: theme.colors.textDim }}>
 						Create New Virtuoso
 					</label>
 
@@ -1058,7 +1103,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 										backgroundColor: theme.colors.bgMain,
 									}}
 								>
-									{ACCOUNT_PROVIDERS.map(p => (
+									{ACCOUNT_PROVIDERS.map((p) => (
 										<option key={p} value={p}>
 											{PROVIDER_DISPLAY_NAMES[p] || p}
 										</option>
@@ -1095,12 +1140,8 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 
 					{createStep === 'login-ready' && (
 						<div className="space-y-2">
-							<div
-								className="text-xs"
-								style={{ color: theme.colors.textDim }}
-							>
-								Directory created at{' '}
-								<span className="font-mono">{createdConfigDir}</span>. Run the
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Directory created at <span className="font-mono">{createdConfigDir}</span>. Run the
 								following command in a terminal to log in:
 							</div>
 							<div
@@ -1142,14 +1183,10 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 
 					{createStep === 'created' && (
 						<div className="space-y-2">
-							<div
-								className="text-xs"
-								style={{ color: theme.colors.textDim }}
-							>
-								Directory created at{' '}
-								<span className="font-mono">{createdConfigDir}</span>. Could
-								not determine login command. Please authenticate manually and
-								click &quot;Login Complete&quot;.
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Directory created at <span className="font-mono">{createdConfigDir}</span>. Could
+								not determine login command. Please authenticate manually and click &quot;Login
+								Complete&quot;.
 							</div>
 							<div className="flex gap-2">
 								<button
@@ -1202,9 +1239,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							Enable auto-switching
 						</label>
 						<button
-							onClick={() =>
-								handleUpdateSwitchConfig({ enabled: !switchConfig.enabled })
-							}
+							onClick={() => handleUpdateSwitchConfig({ enabled: !switchConfig.enabled })}
 							className="w-8 h-4 rounded-full transition-colors relative"
 							style={{
 								backgroundColor: switchConfig.enabled
@@ -1215,9 +1250,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							<div
 								className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
 								style={{
-									transform: switchConfig.enabled
-										? 'translateX(16px)'
-										: 'translateX(2px)',
+									transform: switchConfig.enabled ? 'translateX(16px)' : 'translateX(2px)',
 								}}
 							/>
 						</button>
@@ -1258,10 +1291,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							<label className="text-xs" style={{ color: theme.colors.textMain }}>
 								Warning threshold
 							</label>
-							<span
-								className="text-xs font-mono"
-								style={{ color: theme.colors.textDim }}
-							>
+							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 								{switchConfig.warningThresholdPercent}%
 							</span>
 						</div>
@@ -1286,10 +1316,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							<label className="text-xs" style={{ color: theme.colors.textMain }}>
 								Auto-switch threshold
 							</label>
-							<span
-								className="text-xs font-mono"
-								style={{ color: theme.colors.textDim }}
-							>
+							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 								{switchConfig.autoSwitchThresholdPercent}%
 							</span>
 						</div>
@@ -1310,19 +1337,14 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 
 					{/* Selection strategy */}
 					<div>
-						<label
-							className="block text-xs mb-1"
-							style={{ color: theme.colors.textMain }}
-						>
+						<label className="block text-xs mb-1" style={{ color: theme.colors.textMain }}>
 							Selection strategy
 						</label>
 						<select
 							value={switchConfig.selectionStrategy}
 							onChange={(e) =>
 								handleUpdateSwitchConfig({
-									selectionStrategy: e.target.value as
-										| 'least-used'
-										| 'round-robin',
+									selectionStrategy: e.target.value as 'least-used' | 'round-robin',
 								})
 							}
 							className="w-full p-2 rounded border bg-transparent outline-none text-xs"

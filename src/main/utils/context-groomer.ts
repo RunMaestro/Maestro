@@ -345,7 +345,7 @@ export async function groomContext(
 				agentType,
 				envToInject,
 				optAccountRegistry,
-				optAccountId,
+				optAccountId
 			);
 			if (assignedId) {
 				effectiveEnvVars = envToInject;

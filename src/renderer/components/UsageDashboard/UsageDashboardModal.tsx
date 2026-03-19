@@ -1193,11 +1193,7 @@ export function UsageDashboardModal({
 							)}
 
 							{viewMode === 'accounts' && (
-								<AccountUsageDashboard
-									theme={theme}
-									sessions={sessions}
-									onClose={onClose}
-								/>
+								<AccountUsageDashboard theme={theme} sessions={sessions} onClose={onClose} />
 							)}
 						</div>
 					)}

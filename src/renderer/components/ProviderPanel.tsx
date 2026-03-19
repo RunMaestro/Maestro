@@ -8,14 +8,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-	ChevronDown,
-	ChevronUp,
-	Plus,
-	X,
-	ArrowRightLeft,
-	RefreshCw,
-} from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, X, ArrowRightLeft, RefreshCw } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type { ToolType } from '../../shared/types';
 import type { StatsTimeRange } from '../../shared/stats-types';
@@ -124,7 +117,10 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 			try {
 				const saved = await window.maestro.settings.get('providerSwitchConfig');
 				if (saved && typeof saved === 'object') {
-					setConfig({ ...DEFAULT_PROVIDER_SWITCH_CONFIG, ...(saved as Partial<ProviderSwitchConfig>) });
+					setConfig({
+						...DEFAULT_PROVIDER_SWITCH_CONFIG,
+						...(saved as Partial<ProviderSwitchConfig>),
+					});
 				}
 			} catch {
 				// Use defaults
@@ -133,15 +129,18 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 		loadConfig();
 	}, []);
 
-	const saveConfig = useCallback(async (updates: Partial<ProviderSwitchConfig>) => {
-		const updated = { ...config, ...updates };
-		setConfig(updated);
-		try {
-			await window.maestro.settings.set('providerSwitchConfig', updated);
-		} catch (err) {
-			console.error('Failed to save provider switch config:', err);
-		}
-	}, [config]);
+	const saveConfig = useCallback(
+		async (updates: Partial<ProviderSwitchConfig>) => {
+			const updated = { ...config, ...updates };
+			setConfig(updated);
+			try {
+				await window.maestro.settings.set('providerSwitchConfig', updated);
+			} catch (err) {
+				console.error('Failed to save provider switch config:', err);
+			}
+		},
+		[config]
+	);
 
 	// ── Build migration history ─────────────────────────────────────────
 	const migrations: MigrationEntry[] = React.useMemo(() => {
@@ -175,7 +174,12 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 	// ── Fallback provider management ────────────────────────────────────
 	const availableForFallback = healthProviders
 		.filter((p) => !config.fallbackProviders.includes(p.toolType))
-		.map((p) => ({ id: p.toolType, name: p.displayName, icon: getAgentIcon(p.toolType), available: p.available }));
+		.map((p) => ({
+			id: p.toolType,
+			name: p.displayName,
+			icon: getAgentIcon(p.toolType),
+			available: p.available,
+		}));
 
 	const handleAddFallback = (toolType: ToolType) => {
 		saveConfig({ fallbackProviders: [...config.fallbackProviders, toolType] });
@@ -220,7 +224,8 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 		fontSize: 11,
 	};
 
-	const timeRangeLabel = TIME_RANGE_OPTIONS.find((o) => o.value === timeRange)?.label?.toLowerCase() ?? 'today';
+	const timeRangeLabel =
+		TIME_RANGE_OPTIONS.find((o) => o.value === timeRange)?.label?.toLowerCase() ?? 'today';
 
 	// ── Render ───────────────────────────────────────────────────────────
 
@@ -263,14 +268,20 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 						<span style={{ color: theme.colors.textDim, fontSize: 11 }}>
 							Total {timeRangeLabel}:
 						</span>
-						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500, marginLeft: 8 }}>
+						<span
+							style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500, marginLeft: 8 }}
+						>
 							{totals.queryCount.toLocaleString()} queries
 						</span>
-						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>&middot;</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>
+							&middot;
+						</span>
 						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500 }}>
 							{formatTokenCount(totals.totalTokens)} tokens
 						</span>
-						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>&middot;</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>
+							&middot;
+						</span>
 						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500 }}>
 							${totals.totalCostUsd.toFixed(2)} cost
 						</span>
@@ -350,9 +361,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 								onSelect={() => setSelectedProvider(provider.toolType)}
 							/>
 						))}
-						{healthProviders.length === 0 && (
-							<div style={dimStyle}>No providers detected</div>
-						)}
+						{healthProviders.length === 0 && <div style={dimStyle}>No providers detected</div>}
 					</div>
 				)}
 
@@ -383,9 +392,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 						</select>
 					</div>
 					<div className="flex items-center gap-3">
-						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
-							Auto-refresh: 10s
-						</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>Auto-refresh: 10s</span>
 						<button
 							onClick={refreshHealth}
 							className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
@@ -412,25 +419,20 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 					<div>
 						<div style={labelStyle}>Enable automatic failover</div>
 						<div style={dimStyle}>
-							When a provider hits repeated errors, suggest switching to an
-							alternative provider.
+							When a provider hits repeated errors, suggest switching to an alternative provider.
 						</div>
 					</div>
 					<button
 						onClick={() => saveConfig({ enabled: !config.enabled })}
 						className="w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ml-3"
 						style={{
-							backgroundColor: config.enabled
-								? theme.colors.accent
-								: theme.colors.bgActivity,
+							backgroundColor: config.enabled ? theme.colors.accent : theme.colors.bgActivity,
 						}}
 					>
 						<div
 							className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
 							style={{
-								transform: config.enabled
-									? 'translateX(16px)'
-									: 'translateX(2px)',
+								transform: config.enabled ? 'translateX(16px)' : 'translateX(2px)',
 							}}
 						/>
 					</button>
@@ -441,14 +443,11 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 					<div>
 						<div style={labelStyle}>Prompt before switching</div>
 						<div style={dimStyle}>
-							Ask for confirmation before auto-switching. Uncheck for fully
-							automatic failover.
+							Ask for confirmation before auto-switching. Uncheck for fully automatic failover.
 						</div>
 					</div>
 					<button
-						onClick={() =>
-							saveConfig({ promptBeforeSwitch: !config.promptBeforeSwitch })
-						}
+						onClick={() => saveConfig({ promptBeforeSwitch: !config.promptBeforeSwitch })}
 						className="w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ml-3"
 						style={{
 							backgroundColor: config.promptBeforeSwitch
@@ -459,9 +458,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 						<div
 							className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
 							style={{
-								transform: config.promptBeforeSwitch
-									? 'translateX(16px)'
-									: 'translateX(2px)',
+								transform: config.promptBeforeSwitch ? 'translateX(16px)' : 'translateX(2px)',
 							}}
 						/>
 					</button>
@@ -473,9 +470,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 						<span style={labelStyle}>Error threshold:</span>
 						<select
 							value={config.errorThreshold}
-							onChange={(e) =>
-								saveConfig({ errorThreshold: parseInt(e.target.value) })
-							}
+							onChange={(e) => saveConfig({ errorThreshold: parseInt(e.target.value) })}
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								color: theme.colors.textMain,
@@ -497,9 +492,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 						<span style={labelStyle}>Error window:</span>
 						<select
 							value={config.errorWindowMs}
-							onChange={(e) =>
-								saveConfig({ errorWindowMs: parseInt(e.target.value) })
-							}
+							onChange={(e) => saveConfig({ errorWindowMs: parseInt(e.target.value) })}
 							style={{
 								backgroundColor: theme.colors.bgMain,
 								color: theme.colors.textMain,
@@ -540,9 +533,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 							}}
 						>
 							<span style={dimStyle}>{index + 1}.</span>
-							<span style={{ fontSize: 14 }}>
-								{getAgentIcon(toolType)}
-							</span>
+							<span style={{ fontSize: 14 }}>{getAgentIcon(toolType)}</span>
 							<span
 								style={{
 									color: theme.colors.textMain,
@@ -557,10 +548,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 								disabled={index === 0}
 								className="p-0.5 rounded transition-colors"
 								style={{
-									color:
-										index === 0
-											? theme.colors.textDim + '40'
-											: theme.colors.textDim,
+									color: index === 0 ? theme.colors.textDim + '40' : theme.colors.textDim,
 								}}
 								title="Move up"
 							>
@@ -568,9 +556,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 							</button>
 							<button
 								onClick={() => handleMoveFallback(index, 'down')}
-								disabled={
-									index === config.fallbackProviders.length - 1
-								}
+								disabled={index === config.fallbackProviders.length - 1}
 								className="p-0.5 rounded transition-colors"
 								style={{
 									color:
@@ -652,10 +638,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 			<div style={sectionStyle}>
 				<div style={sectionTitleStyle}>Migration History</div>
 				{migrations.length === 0 ? (
-					<div
-						className="text-center py-4"
-						style={dimStyle}
-					>
+					<div className="text-center py-4" style={dimStyle}>
 						No provider switches yet
 					</div>
 				) : (
@@ -687,21 +670,17 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 									{entry.sessionName}:{' '}
 									<span style={{ color: theme.colors.accent }}>
 										{getAgentDisplayName(entry.sourceProvider)}
-									</span>
-									{' '}
+									</span>{' '}
 									<ArrowRightLeft
 										className="w-3 h-3 inline-block mx-1"
 										style={{ color: theme.colors.textDim }}
-									/>
-									{' '}
+									/>{' '}
 									<span style={{ color: theme.colors.accent }}>
 										{getAgentDisplayName(entry.targetProvider)}
 									</span>
 								</div>
 								{entry.generation > 1 && (
-									<div style={dimStyle}>
-										{ordinalSuffix(entry.generation)} switch
-									</div>
+									<div style={dimStyle}>{ordinalSuffix(entry.generation)} switch</div>
 								)}
 							</div>
 						))}
@@ -711,8 +690,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 								className="text-xs mt-2 hover:underline"
 								style={{ color: theme.colors.accent }}
 							>
-								Show more ({migrations.length - MIGRATION_HISTORY_LIMIT}{' '}
-								remaining)
+								Show more ({migrations.length - MIGRATION_HISTORY_LIMIT} remaining)
 							</button>
 						)}
 						{showMoreHistory && hasMoreMigrations && (

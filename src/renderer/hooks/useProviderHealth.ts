@@ -79,7 +79,7 @@ function computeHealthPercent(
 	available: boolean,
 	activeSessionCount: number,
 	errorCount: number,
-	threshold: number,
+	threshold: number
 ): number {
 	if (!available) return 0;
 	if (activeSessionCount === 0) return 100;
@@ -91,7 +91,7 @@ function computeStatus(
 	available: boolean,
 	activeSessionCount: number,
 	errorCount: number,
-	threshold: number,
+	threshold: number
 ): HealthStatus {
 	if (!available) return 'not_installed';
 	if (activeSessionCount === 0) return 'idle';
@@ -108,7 +108,15 @@ const DEFAULT_REFRESH_INTERVAL = 10_000;
 
 /** Aggregate raw query events into per-provider usage stats */
 function aggregateUsageByProvider(
-	events: Array<{ agentType: string; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; costUsd?: number; duration?: number }>,
+	events: Array<{
+		agentType: string;
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadTokens?: number;
+		cacheCreationTokens?: number;
+		costUsd?: number;
+		duration?: number;
+	}>
 ): Record<string, ProviderUsageStats> {
 	const byProvider: Record<string, ProviderUsageStats> = {};
 
@@ -128,9 +136,8 @@ function aggregateUsageByProvider(
 
 	// Compute averages
 	for (const stats of Object.values(byProvider)) {
-		stats.avgDurationMs = stats.queryCount > 0
-			? Math.round(stats.totalDurationMs / stats.queryCount)
-			: 0;
+		stats.avgDurationMs =
+			stats.queryCount > 0 ? Math.round(stats.totalDurationMs / stats.queryCount) : 0;
 	}
 
 	return byProvider;
@@ -138,15 +145,19 @@ function aggregateUsageByProvider(
 
 export function useProviderHealth(
 	sessions: Session[] | undefined,
-	refreshIntervalMs: number = DEFAULT_REFRESH_INTERVAL,
+	refreshIntervalMs: number = DEFAULT_REFRESH_INTERVAL
 ): UseProviderHealthResult {
 	const [providers, setProviders] = useState<ProviderHealth[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>('day');
-	const [totals, setTotals] = useState<UsageTotals>({ queryCount: 0, totalTokens: 0, totalCostUsd: 0 });
+	const [totals, setTotals] = useState<UsageTotals>({
+		queryCount: 0,
+		totalTokens: 0,
+		totalCostUsd: 0,
+	});
 	const [failoverThreshold, setFailoverThreshold] = useState(
-		DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold,
+		DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold
 	);
 	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const timeRangeRef = useRef(timeRange);
@@ -158,20 +169,25 @@ export function useProviderHealth(
 			const [agents, errorStatsRecord, savedConfig, queryEvents] = await Promise.all([
 				window.maestro.agents.detect() as Promise<AgentConfig[]>,
 				window.maestro.providers.getAllErrorStats() as Promise<Record<string, ProviderErrorStats>>,
-				window.maestro.settings.get('providerSwitchConfig') as Promise<Partial<ProviderSwitchConfig> | null>,
-				window.maestro.stats.getStats(timeRangeRef.current) as Promise<Array<{
-					agentType: string;
-					inputTokens?: number;
-					outputTokens?: number;
-					cacheReadTokens?: number;
-					cacheCreationTokens?: number;
-					costUsd?: number;
-					duration?: number;
-				}>>,
+				window.maestro.settings.get(
+					'providerSwitchConfig'
+				) as Promise<Partial<ProviderSwitchConfig> | null>,
+				window.maestro.stats.getStats(timeRangeRef.current) as Promise<
+					Array<{
+						agentType: string;
+						inputTokens?: number;
+						outputTokens?: number;
+						cacheReadTokens?: number;
+						cacheCreationTokens?: number;
+						costUsd?: number;
+						duration?: number;
+					}>
+				>,
 			]);
 
-			const threshold = (savedConfig as Partial<ProviderSwitchConfig>)?.errorThreshold
-				?? DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold;
+			const threshold =
+				(savedConfig as Partial<ProviderSwitchConfig>)?.errorThreshold ??
+				DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold;
 			setFailoverThreshold(threshold);
 
 			const usageByProvider = aggregateUsageByProvider(queryEvents);
@@ -194,7 +210,7 @@ export function useProviderHealth(
 				.map((agent) => {
 					const toolType = agent.id as ToolType;
 					const activeCount = sessionList.filter(
-						(s) => s.toolType === toolType && !s.archivedByMigration,
+						(s) => s.toolType === toolType && !s.archivedByMigration
 					).length;
 					const errorStats = errorStatsRecord[toolType] ?? null;
 					const errorCount = errorStats?.totalErrorsInWindow ?? 0;
@@ -203,14 +219,9 @@ export function useProviderHealth(
 						agent.available,
 						activeCount,
 						errorCount,
-						threshold,
+						threshold
 					);
-					const status = computeStatus(
-						agent.available,
-						activeCount,
-						errorCount,
-						threshold,
-					);
+					const status = computeStatus(agent.available, activeCount, errorCount, threshold);
 
 					return {
 						toolType,
@@ -246,7 +257,7 @@ export function useProviderHealth(
 	// Re-fetch when time range changes
 	useEffect(() => {
 		refresh();
-	}, [timeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [timeRange]);  
 
 	// Subscribe to failover suggestions for immediate refresh (Task 4)
 	useEffect(() => {
@@ -262,7 +273,7 @@ export function useProviderHealth(
 	}, [refresh]);
 
 	const hasDegradedProvider = providers.some(
-		(p) => p.status === 'degraded' || p.status === 'failing',
+		(p) => p.status === 'degraded' || p.status === 'failing'
 	);
 	const hasFailingProvider = providers.some((p) => p.status === 'failing');
 

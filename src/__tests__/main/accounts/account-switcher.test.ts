@@ -58,7 +58,7 @@ describe('AccountSwitcher', () => {
 		switcher = new AccountSwitcher(
 			mockProcessManager as unknown as ProcessManager,
 			mockRegistry as unknown as AccountRegistry,
-			mockSafeSend,
+			mockSafeSend
 		);
 	});
 
@@ -74,7 +74,11 @@ describe('AccountSwitcher', () => {
 
 	it('should execute a successful switch', async () => {
 		const fromAccount = createMockAccount({ id: 'acct-1', name: 'Account One' });
-		const toAccount = createMockAccount({ id: 'acct-2', name: 'Account Two', configDir: '/home/test/.claude-two' });
+		const toAccount = createMockAccount({
+			id: 'acct-2',
+			name: 'Account Two',
+			configDir: '/home/test/.claude-two',
+		});
 
 		mockRegistry.get.mockImplementation((id: string) => {
 			if (id === 'acct-1') return fromAccount;
@@ -112,31 +116,40 @@ describe('AccountSwitcher', () => {
 		expect(mockRegistry.assignToSession).toHaveBeenCalledWith('session-1', 'acct-2');
 
 		// Verify switch-started notification
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-started', expect.objectContaining({
-			sessionId: 'session-1',
-			fromAccountId: 'acct-1',
-			toAccountId: 'acct-2',
-			toAccountName: 'Account Two',
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-started',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				fromAccountId: 'acct-1',
+				toAccountId: 'acct-2',
+				toAccountName: 'Account Two',
+			})
+		);
 
 		// Verify switch-respawn notification with lastPrompt
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-respawn', expect.objectContaining({
-			sessionId: 'session-1',
-			toAccountId: 'acct-2',
-			toAccountName: 'Account Two',
-			configDir: '/home/test/.claude-two',
-			lastPrompt: 'Fix the bug',
-			reason: 'throttled',
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-respawn',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				toAccountId: 'acct-2',
+				toAccountName: 'Account Two',
+				configDir: '/home/test/.claude-two',
+				lastPrompt: 'Fix the bug',
+				reason: 'throttled',
+			})
+		);
 
 		// Verify switch-completed notification
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-completed', expect.objectContaining({
-			sessionId: 'session-1',
-			fromAccountId: 'acct-1',
-			toAccountId: 'acct-2',
-			fromAccountName: 'Account One',
-			toAccountName: 'Account Two',
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-completed',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				fromAccountId: 'acct-1',
+				toAccountId: 'acct-2',
+				fromAccountName: 'Account One',
+				toAccountName: 'Account Two',
+			})
+		);
 	});
 
 	it('should return null when target account is not found', async () => {
@@ -155,7 +168,11 @@ describe('AccountSwitcher', () => {
 	});
 
 	it('should continue even if process kill fails', async () => {
-		const toAccount = createMockAccount({ id: 'acct-2', name: 'Account Two', configDir: '/home/test/.claude-two' });
+		const toAccount = createMockAccount({
+			id: 'acct-2',
+			name: 'Account Two',
+			configDir: '/home/test/.claude-two',
+		});
 		mockRegistry.get.mockImplementation((id: string) => {
 			if (id === 'acct-2') return toAccount;
 			return null;
@@ -179,7 +196,11 @@ describe('AccountSwitcher', () => {
 	});
 
 	it('should send null lastPrompt when no prompt was recorded', async () => {
-		const toAccount = createMockAccount({ id: 'acct-2', name: 'Account Two', configDir: '/home/test/.claude-two' });
+		const toAccount = createMockAccount({
+			id: 'acct-2',
+			name: 'Account Two',
+			configDir: '/home/test/.claude-two',
+		});
 		mockRegistry.get.mockImplementation((id: string) => {
 			if (id === 'acct-2') return toAccount;
 			return null;
@@ -196,9 +217,12 @@ describe('AccountSwitcher', () => {
 		await vi.advanceTimersByTimeAsync(1100);
 		await switchPromise;
 
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-respawn', expect.objectContaining({
-			lastPrompt: null,
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-respawn',
+			expect.objectContaining({
+				lastPrompt: null,
+			})
+		);
 	});
 
 	it('should send switch-failed notification on error', async () => {
@@ -219,12 +243,15 @@ describe('AccountSwitcher', () => {
 		});
 
 		expect(result).toBeNull();
-		expect(mockSafeSend).toHaveBeenCalledWith('account:switch-failed', expect.objectContaining({
-			sessionId: 'session-1',
-			fromAccountId: 'acct-1',
-			toAccountId: 'acct-2',
-			error: expect.stringContaining('Kill failed'),
-		}));
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'account:switch-failed',
+			expect.objectContaining({
+				sessionId: 'session-1',
+				fromAccountId: 'acct-1',
+				toAccountId: 'acct-2',
+				error: expect.stringContaining('Kill failed'),
+			})
+		);
 	});
 
 	it('should clean up session tracking data', () => {

@@ -8,11 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AccountProfile } from '../../../shared/account-types';
 
 // Hoist mock functions for use in vi.mock factories
-const {
-	mockSpawn,
-	mockAccess,
-	mockSyncCredentialsFromBase,
-} = vi.hoisted(() => ({
+const { mockSpawn, mockAccess, mockSyncCredentialsFromBase } = vi.hoisted(() => ({
 	mockSpawn: vi.fn(),
 	mockAccess: vi.fn(),
 	mockSyncCredentialsFromBase: vi.fn(),
@@ -131,7 +127,7 @@ describe('AccountAuthRecovery', () => {
 			mockProcessManager as unknown as ProcessManager,
 			mockAccountRegistry as unknown as AccountRegistry,
 			mockAgentDetector as unknown as AgentDetector,
-			mockSafeSend as SafeSendFn,
+			mockSafeSend as SafeSendFn
 		);
 	});
 
@@ -177,7 +173,7 @@ describe('AccountAuthRecovery', () => {
 					env: expect.objectContaining({
 						CLAUDE_CONFIG_DIR: '/home/test/.claude-work',
 					}),
-				}),
+				})
 			);
 		});
 
@@ -369,15 +365,21 @@ describe('AccountAuthRecovery', () => {
 			mockChild.emit('close', 0);
 			await promise;
 
-			expect(mockSafeSend).toHaveBeenCalledWith('account:switch-respawn', expect.objectContaining({
-				lastPrompt: null,
-			}));
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'account:switch-respawn',
+				expect.objectContaining({
+					lastPrompt: null,
+				})
+			);
 		});
 
 		it('should emit auth-recovery-failed when both login and sync fail', async () => {
 			const mockChild = createMockChildProcess();
 			mockSpawn.mockReturnValue(mockChild);
-			mockSyncCredentialsFromBase.mockResolvedValue({ success: false, error: 'No credentials found' });
+			mockSyncCredentialsFromBase.mockResolvedValue({
+				success: false,
+				error: 'No credentials found',
+			});
 
 			const promise = recovery.recoverAuth('session-1', 'acct-1');
 			await vi.advanceTimersByTimeAsync(1000);
@@ -388,11 +390,14 @@ describe('AccountAuthRecovery', () => {
 			const result = await promise;
 
 			expect(result).toBe(false);
-			expect(mockSafeSend).toHaveBeenCalledWith('account:auth-recovery-failed', expect.objectContaining({
-				sessionId: 'session-1',
-				accountId: 'acct-1',
-				accountName: 'Test Account',
-			}));
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'account:auth-recovery-failed',
+				expect.objectContaining({
+					sessionId: 'session-1',
+					accountId: 'acct-1',
+					accountName: 'Test Account',
+				})
+			);
 		});
 
 		it('should allow recovery for same session after previous recovery completes', async () => {
@@ -448,11 +453,7 @@ describe('AccountAuthRecovery', () => {
 			mockChild.emit('close', 0);
 			await promise;
 
-			expect(mockSpawn).toHaveBeenCalledWith(
-				'claude',
-				['login'],
-				expect.any(Object),
-			);
+			expect(mockSpawn).toHaveBeenCalledWith('claude', ['login'], expect.any(Object));
 		});
 	});
 

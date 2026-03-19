@@ -29,7 +29,7 @@ export function setupErrorListener(
 		getThrottleHandler: () => AccountThrottleHandler | null;
 		getAuthRecovery: () => AccountAuthRecovery | null;
 	},
-	providerErrorTracker?: ProviderErrorTracker,
+	providerErrorTracker?: ProviderErrorTracker
 ): void {
 	const { safeSend, logger } = deps;
 
@@ -46,15 +46,11 @@ export function setupErrorListener(
 
 		// Feed into provider error tracker for failover detection
 		if (providerErrorTracker && agentError.agentId) {
-			providerErrorTracker.recordError(
-				sessionId,
-				agentError.agentId as ToolType,
-				{
-					type: agentError.type,
-					message: agentError.message,
-					recoverable: agentError.recoverable,
-				},
-			);
+			providerErrorTracker.recordError(sessionId, agentError.agentId as ToolType, {
+				type: agentError.type,
+				message: agentError.message,
+				recoverable: agentError.recoverable,
+			});
 		}
 
 		if (!accountDeps) return;
@@ -80,7 +76,8 @@ export function setupErrorListener(
 			if (authRecovery) {
 				authRecovery.recoverAuth(sessionId, assignment.accountId).catch((err) => {
 					logger.error('Auth recovery failed', 'AgentError', {
-						error: String(err), sessionId,
+						error: String(err),
+						sessionId,
 					});
 				});
 			}

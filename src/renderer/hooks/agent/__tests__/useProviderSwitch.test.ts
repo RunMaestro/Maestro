@@ -258,19 +258,21 @@ describe('merge-back session construction', () => {
 			archivedByMigration: true,
 			migrationGeneration: 1,
 			migratedToSessionId: 'source-id',
-			aiTabs: [{
-				id: 'tab-1',
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [{ id: 'log-1', timestamp: 1000, source: 'user' as const, text: 'hello' }],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: 1000,
-				state: 'idle' as const,
-				saveToHistory: true,
-				showThinking: 'off' as const,
-			}],
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [{ id: 'log-1', timestamp: 1000, source: 'user' as const, text: 'hello' }],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 1000,
+					state: 'idle' as const,
+					saveToHistory: true,
+					showThinking: 'off' as const,
+				},
+			],
 		});
 
 		const sourceSession = makeSession({
@@ -309,24 +311,31 @@ describe('merge-back session construction', () => {
 	});
 
 	it('context logs are appended with separator to existing tab logs', () => {
-		const existingLog = { id: 'existing-1', timestamp: 1000, source: 'user' as const, text: 'original context' };
+		const existingLog = {
+			id: 'existing-1',
+			timestamp: 1000,
+			source: 'user' as const,
+			text: 'original context',
+		};
 		const archived = makeSession({
 			id: 'original-id',
 			toolType: 'claude-code',
 			archivedByMigration: true,
-			aiTabs: [{
-				id: 'tab-1',
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [existingLog],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: 1000,
-				state: 'idle' as const,
-				saveToHistory: true,
-				showThinking: 'off' as const,
-			}],
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [existingLog],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 1000,
+					state: 'idle' as const,
+					saveToHistory: true,
+					showThinking: 'off' as const,
+				},
+			],
 		});
 
 		const newContextLogs = [

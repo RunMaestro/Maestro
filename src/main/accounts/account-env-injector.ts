@@ -46,17 +46,19 @@ export function injectAccountEnv(
 	accountRegistry: AccountRegistry,
 	accountId?: string | null,
 	safeSend?: SafeSendFn,
-	getStatsDB?: () => AccountUsageStatsProvider | null,
+	getStatsDB?: () => AccountUsageStatsProvider | null
 ): string | null {
 	if (agentType !== 'claude-code') return null;
 
 	// If CLAUDE_CONFIG_DIR is already explicitly set in customEnvVars, respect it
 	if (env.CLAUDE_CONFIG_DIR) {
-		logger.info('CLAUDE_CONFIG_DIR already set, skipping account injection', LOG_CONTEXT, { sessionId });
+		logger.info('CLAUDE_CONFIG_DIR already set, skipping account injection', LOG_CONTEXT, {
+			sessionId,
+		});
 		return null;
 	}
 
-	const accounts = accountRegistry.getAll().filter(a => a.status === 'active');
+	const accounts = accountRegistry.getAll().filter((a) => a.status === 'active');
 	if (accounts.length === 0) return null;
 
 	// Use provided accountId, check for existing assignment, or auto-assign
@@ -88,16 +90,19 @@ export function injectAccountEnv(
 	const credPath = path.join(account.configDir, '.credentials.json');
 	if (!fs.existsSync(credPath)) {
 		logger.info('No .credentials.json in account dir, attempting sync from base', LOG_CONTEXT, {
-			sessionId, configDir: account.configDir,
+			sessionId,
+			configDir: account.configDir,
 		});
 		// Fire-and-forget — don't block spawn on this
-		syncCredentialsFromBase(account.configDir).then((result) => {
-			if (result.success) {
-				logger.info('Auto-synced credentials from base dir', LOG_CONTEXT);
-			} else {
-				logger.warn(`Credential sync failed: ${result.error}`, LOG_CONTEXT);
-			}
-		}).catch(() => {});
+		syncCredentialsFromBase(account.configDir)
+			.then((result) => {
+				if (result.success) {
+					logger.info('Auto-synced credentials from base dir', LOG_CONTEXT);
+				} else {
+					logger.warn(`Credential sync failed: ${result.error}`, LOG_CONTEXT);
+				}
+			})
+			.catch(() => {});
 	}
 
 	// Inject the env var

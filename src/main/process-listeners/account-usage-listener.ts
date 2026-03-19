@@ -84,12 +84,14 @@ export function setupAccountUsageListener(
 
 			// Read back aggregated window usage and broadcast to renderer
 			const windowUsage = statsDb.getAccountUsageInWindow(account.id, start, end);
-			const totalTokens = windowUsage.inputTokens + windowUsage.outputTokens
-				+ windowUsage.cacheReadTokens + windowUsage.cacheCreationTokens;
+			const totalTokens =
+				windowUsage.inputTokens +
+				windowUsage.outputTokens +
+				windowUsage.cacheReadTokens +
+				windowUsage.cacheCreationTokens;
 			const limitTokens = account.tokenLimitPerWindow || 0;
-			const usagePercent = limitTokens > 0
-				? Math.min(100, (totalTokens / limitTokens) * 100)
-				: null;
+			const usagePercent =
+				limitTokens > 0 ? Math.min(100, (totalTokens / limitTokens) * 100) : null;
 
 			// Broadcast usage update to renderer for real-time dashboard
 			safeSend('account:usage-update', {
@@ -110,7 +112,10 @@ export function setupAccountUsageListener(
 			// Check warning/auto-switch thresholds (only if limit is configured)
 			if (limitTokens > 0 && usagePercent !== null) {
 				const switchConfig = accountRegistry.getSwitchConfig();
-				if (usagePercent >= switchConfig.warningThresholdPercent && usagePercent < switchConfig.autoSwitchThresholdPercent) {
+				if (
+					usagePercent >= switchConfig.warningThresholdPercent &&
+					usagePercent < switchConfig.autoSwitchThresholdPercent
+				) {
 					safeSend('account:limit-warning', {
 						accountId: account.id,
 						accountName: account.name,
@@ -146,9 +151,11 @@ export function setupAccountUsageListener(
 
 			// Update the account's lastUsedAt
 			accountRegistry.touchLastUsed(account.id);
-
 		} catch (error) {
-			logger.error('Failed to track account usage', LOG_CONTEXT, { error: String(error), sessionId });
+			logger.error('Failed to track account usage', LOG_CONTEXT, {
+				error: String(error),
+				sessionId,
+			});
 		}
 	});
 }

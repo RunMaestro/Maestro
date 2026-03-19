@@ -15,7 +15,11 @@ import { getWindowBounds } from './account-utils';
 
 /** Minimal interface for usage stats queries — avoids hard dependency on StatsDB */
 export interface AccountUsageStatsProvider {
-	getAccountUsageInWindow(id: string, start: number, end: number): {
+	getAccountUsageInWindow(
+		id: string,
+		start: number,
+		end: number
+	): {
 		inputTokens: number;
 		outputTokens: number;
 		cacheReadTokens: number;
@@ -45,12 +49,12 @@ export class AccountRegistry {
 
 	/** Find account by email */
 	findByEmail(email: string): AccountProfile | null {
-		return this.getAll().find(a => a.email === email) ?? null;
+		return this.getAll().find((a) => a.email === email) ?? null;
 	}
 
 	/** Find account by config directory path */
 	findByConfigDir(configDir: string): AccountProfile | null {
-		return this.getAll().find(a => a.configDir === configDir) ?? null;
+		return this.getAll().find((a) => a.configDir === configDir) ?? null;
 	}
 
 	/** Register a new account. Returns the created profile. */
@@ -126,7 +130,10 @@ export class AccountRegistry {
 
 		// Remove from rotation order
 		const order = this.store.get('rotationOrder', []);
-		this.store.set('rotationOrder', order.filter(aid => aid !== id));
+		this.store.set(
+			'rotationOrder',
+			order.filter((aid) => aid !== id)
+		);
 
 		// Remove any assignments pointing to this account
 		const assignments = this.store.get('assignments', {});
@@ -196,9 +203,11 @@ export class AccountRegistry {
 	/** Get the default account (first one marked isDefault, or first active) */
 	getDefaultAccount(): AccountProfile | null {
 		const all = this.getAll();
-		return all.find(a => a.isDefault && a.status === 'active')
-			?? all.find(a => a.status === 'active')
-			?? null;
+		return (
+			all.find((a) => a.isDefault && a.status === 'active') ??
+			all.find((a) => a.status === 'active') ??
+			null
+		);
 	}
 
 	/**
@@ -206,21 +215,24 @@ export class AccountRegistry {
 	 * When statsDB is provided, uses actual token consumption for routing.
 	 * Falls back to lastUsedAt-based selection when statsDB is unavailable.
 	 */
-	selectNextAccount(excludeIds: AccountId[] = [], statsDB?: AccountUsageStatsProvider): AccountProfile | null {
+	selectNextAccount(
+		excludeIds: AccountId[] = [],
+		statsDB?: AccountUsageStatsProvider
+	): AccountProfile | null {
 		const config = this.getSwitchConfig();
 		const available = this.getAll().filter(
-			a => a.status === 'active' && a.autoSwitchEnabled && !excludeIds.includes(a.id)
+			(a) => a.status === 'active' && a.autoSwitchEnabled && !excludeIds.includes(a.id)
 		);
 		if (available.length === 0) return null;
 
 		if (config.selectionStrategy === 'round-robin') {
-			const order = this.store.get('rotationOrder', []).filter(
-				id => available.some(a => a.id === id)
-			);
+			const order = this.store
+				.get('rotationOrder', [])
+				.filter((id) => available.some((a) => a.id === id));
 			if (order.length === 0) return available[0];
 			const idx = (this.store.get('rotationIndex', 0) + 1) % order.length;
 			this.store.set('rotationIndex', idx);
-			return available.find(a => a.id === order[idx]) ?? available[0];
+			return available.find((a) => a.id === order[idx]) ?? available[0];
 		}
 
 		// least-used: prefer capacity-aware selection when statsDB is available
@@ -240,17 +252,17 @@ export class AccountRegistry {
 	 */
 	private selectByRemainingCapacity(
 		accounts: AccountProfile[],
-		statsDB: AccountUsageStatsProvider,
+		statsDB: AccountUsageStatsProvider
 	): AccountProfile {
 		const now = Date.now();
 
-		const scored = accounts.map(account => {
+		const scored = accounts.map((account) => {
 			const windowMs = account.tokenWindowMs || DEFAULT_TOKEN_WINDOW_MS;
 			const { start: windowStart, end: windowEnd } = getWindowBounds(now, windowMs);
 
 			const usage = statsDB.getAccountUsageInWindow(account.id, windowStart, windowEnd);
-			const totalTokens = usage.inputTokens + usage.outputTokens
-				+ usage.cacheReadTokens + usage.cacheCreationTokens;
+			const totalTokens =
+				usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
 
 			let remainingCapacity: number;
 
@@ -261,21 +273,18 @@ export class AccountRegistry {
 			}
 
 			// Deprioritize accounts that were recently throttled (within last 2 windows)
-			const recentThrottlePenalty = account.lastThrottledAt > 0
-				&& (now - account.lastThrottledAt) < windowMs * 2
-				? 0.5
-				: 1.0;
+			const recentThrottlePenalty =
+				account.lastThrottledAt > 0 && now - account.lastThrottledAt < windowMs * 2 ? 0.5 : 1.0;
 
 			return {
 				account,
-				remainingCapacity: remainingCapacity === Infinity
-					? Infinity
-					: remainingCapacity * recentThrottlePenalty,
+				remainingCapacity:
+					remainingCapacity === Infinity ? Infinity : remainingCapacity * recentThrottlePenalty,
 			};
 		});
 
 		// Sort: most remaining capacity first
-		const hasLimits = scored.some(s => s.remainingCapacity !== Infinity);
+		const hasLimits = scored.some((s) => s.remainingCapacity !== Infinity);
 
 		if (hasLimits) {
 			scored.sort((a, b) => {

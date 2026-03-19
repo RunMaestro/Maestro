@@ -92,10 +92,10 @@ export interface ProviderDetail {
 	comparison: {
 		totalQueriesAllProviders: number;
 		totalCostAllProviders: number;
-		queryShare: number;   // 0-100, this provider's % of total queries
-		costShare: number;    // 0-100, this provider's % of total cost
-		avgResponseRanking: Array<{ provider: string; avgMs: number }>;   // sorted fastest first
-		reliabilityRanking: Array<{ provider: string; rate: number }>;    // sorted highest first
+		queryShare: number; // 0-100, this provider's % of total queries
+		costShare: number; // 0-100, this provider's % of total cost
+		avgResponseRanking: Array<{ provider: string; avgMs: number }>; // sorted fastest first
+		reliabilityRanking: Array<{ provider: string; rate: number }>; // sorted highest first
 	};
 }
 
@@ -149,7 +149,12 @@ function estimateTokenCosts(tokens: {
 	const rawTotal = rawInput + rawOutput + rawCacheRead + rawCacheCreation;
 
 	if (rawTotal === 0 || tokens.totalCost === 0) {
-		return { inputCost: rawInput, outputCost: rawOutput, cacheReadCost: rawCacheRead, cacheCreationCost: rawCacheCreation };
+		return {
+			inputCost: rawInput,
+			outputCost: rawOutput,
+			cacheReadCost: rawCacheRead,
+			cacheCreationCost: rawCacheCreation,
+		};
 	}
 
 	// Scale to match actual total cost
@@ -169,7 +174,7 @@ function estimateTokenCosts(tokens: {
 export function useProviderDetail(
 	toolType: ToolType,
 	sessions: Session[],
-	timeRange: StatsTimeRange,
+	timeRange: StatsTimeRange
 ): UseProviderDetailResult {
 	const [detail, setDetail] = useState<ProviderDetail | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
@@ -180,19 +185,25 @@ export function useProviderDetail(
 	const refresh = useCallback(async () => {
 		try {
 			// Fetch all data in parallel — includes failover config for threshold + all error stats for comparison
-			const [agents, errorStats, allErrorStats, savedConfig, queryEvents, aggregation] = await Promise.all([
-				window.maestro.agents.detect() as Promise<Array<{ id: string; available: boolean }>>,
-				window.maestro.providers.getErrorStats(toolType) as Promise<ProviderErrorStats | null>,
-				window.maestro.providers.getAllErrorStats() as Promise<Record<string, ProviderErrorStats>>,
-				window.maestro.settings.get('providerSwitchConfig') as Promise<Partial<ProviderSwitchConfig> | null>,
-				window.maestro.stats.getStats(timeRangeRef.current, { agentType: toolType }),
-				window.maestro.stats.getAggregation(timeRangeRef.current) as Promise<StatsAggregation>,
-			]);
+			const [agents, errorStats, allErrorStats, savedConfig, queryEvents, aggregation] =
+				await Promise.all([
+					window.maestro.agents.detect() as Promise<Array<{ id: string; available: boolean }>>,
+					window.maestro.providers.getErrorStats(toolType) as Promise<ProviderErrorStats | null>,
+					window.maestro.providers.getAllErrorStats() as Promise<
+						Record<string, ProviderErrorStats>
+					>,
+					window.maestro.settings.get(
+						'providerSwitchConfig'
+					) as Promise<Partial<ProviderSwitchConfig> | null>,
+					window.maestro.stats.getStats(timeRangeRef.current, { agentType: toolType }),
+					window.maestro.stats.getAggregation(timeRangeRef.current) as Promise<StatsAggregation>,
+				]);
 
 			if (!mountedRef.current) return;
 
-			const threshold = (savedConfig as Partial<ProviderSwitchConfig>)?.errorThreshold
-				?? DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold;
+			const threshold =
+				(savedConfig as Partial<ProviderSwitchConfig>)?.errorThreshold ??
+				DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold;
 
 			const agent = agents.find((a) => a.id === toolType);
 			const available = agent?.available ?? false;
@@ -219,9 +230,8 @@ export function useProviderDetail(
 				if (e.isRemote) remoteQueries++;
 				else localQueries++;
 			}
-			usage.avgDurationMs = usage.queryCount > 0
-				? Math.round(usage.totalDurationMs / usage.queryCount)
-				: 0;
+			usage.avgDurationMs =
+				usage.queryCount > 0 ? Math.round(usage.totalDurationMs / usage.queryCount) : 0;
 
 			// Token cost breakdown
 			const costs = estimateTokenCosts({
@@ -235,17 +245,13 @@ export function useProviderDetail(
 			// Error stats
 			const errorCount = errorStats?.totalErrorsInWindow ?? 0;
 			const totalQueries = usage.queryCount;
-			const successRate = totalQueries > 0
-				? ((totalQueries - errorCount) / totalQueries) * 100
-				: 0;
-			const errorRate = totalQueries > 0
-				? (errorCount / totalQueries) * 100
-				: 0;
+			const successRate = totalQueries > 0 ? ((totalQueries - errorCount) / totalQueries) * 100 : 0;
+			const errorRate = totalQueries > 0 ? (errorCount / totalQueries) * 100 : 0;
 
 			// Determine status using config-driven threshold
 			let status: HealthStatus;
 			const activeCount = sessions.filter(
-				(s) => s.toolType === toolType && !s.archivedByMigration,
+				(s) => s.toolType === toolType && !s.archivedByMigration
 			).length;
 			if (!available) {
 				status = 'not_installed';
@@ -324,9 +330,7 @@ export function useProviderDetail(
 			migrations.sort((a, b) => b.timestamp - a.timestamp);
 
 			// P95 response time — only meaningful with >= 20 data points
-			const p95 = durations.length >= 20
-				? computeP95(durations)
-				: usage.avgDurationMs;
+			const p95 = durations.length >= 20 ? computeP95(durations) : usage.avgDurationMs;
 
 			// Cross-provider comparison from byAgent aggregation
 			const byAgent = aggregation.byAgent ?? {};
@@ -363,19 +367,13 @@ export function useProviderDetail(
 			const reliabilityRanking: Array<{ provider: string; rate: number }> = [];
 			for (const [agentId, data] of Object.entries(byAgent)) {
 				const providerErrors = allErrorStats[agentId]?.totalErrorsInWindow ?? 0;
-				const rate = data.count > 0
-					? ((data.count - providerErrors) / data.count) * 100
-					: 100;
+				const rate = data.count > 0 ? ((data.count - providerErrors) / data.count) * 100 : 100;
 				reliabilityRanking.push({ provider: getAgentDisplayName(agentId as ToolType), rate });
 			}
 			reliabilityRanking.sort((a, b) => b.rate - a.rate); // highest first
 
-			const queryShare = totalQueriesAll > 0
-				? (usage.queryCount / totalQueriesAll) * 100
-				: 0;
-			const costShare = totalCostAll > 0
-				? (usage.totalCostUsd / totalCostAll) * 100
-				: 0;
+			const queryShare = totalQueriesAll > 0 ? (usage.queryCount / totalQueriesAll) * 100 : 0;
+			const costShare = totalCostAll > 0 ? (usage.totalCostUsd / totalCostAll) * 100 : 0;
 
 			const comparison: ProviderDetail['comparison'] = {
 				totalQueriesAllProviders: totalQueriesAll,
@@ -441,7 +439,7 @@ export function useProviderDetail(
 	// Re-fetch when time range changes
 	useEffect(() => {
 		refresh();
-	}, [timeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [timeRange]);  
 
 	return { detail, isLoading, refresh };
 }

@@ -33,9 +33,7 @@ vi.mock('../../../renderer/components/ProviderPanel', () => ({
 }));
 
 vi.mock('../../../renderer/components/VirtuosoUsageView', () => ({
-	VirtuosoUsageView: () => (
-		<div data-testid="virtuoso-usage-view">VirtuosoUsageView</div>
-	),
+	VirtuosoUsageView: () => <div data-testid="virtuoso-usage-view">VirtuosoUsageView</div>,
 }));
 
 // Import after mocks
@@ -75,9 +73,7 @@ describe('VirtuososModal', () => {
 	});
 
 	it('renders nothing when isOpen is false', () => {
-		const { container } = render(
-			<VirtuososModal isOpen={false} onClose={onClose} theme={theme} />
-		);
+		const { container } = render(<VirtuososModal isOpen={false} onClose={onClose} theme={theme} />);
 		expect(container.firstChild).toBeNull();
 	});
 

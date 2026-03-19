@@ -48,7 +48,9 @@ export async function validateBaseClaudeDir(): Promise<{
 		try {
 			await fs.access(path.join(baseDir, '.claude.json'));
 		} catch {
-			errors.push('No .credentials.json or .claude.json found — Claude Code may not be authenticated.');
+			errors.push(
+				'No .credentials.json or .claude.json found — Claude Code may not be authenticated.'
+			);
 		}
 	}
 
@@ -102,16 +104,24 @@ const PROVIDER_DISCOVERY: ProviderDiscoveryConfig[] = [
  * Discover existing provider account directories by scanning the home directory
  * for known config directory patterns across all supported providers.
  */
-export async function discoverExistingAccounts(): Promise<Array<{
-	configDir: string;
-	name: string;
-	email: string | null;
-	hasAuth: boolean;
-	agentType: string;
-}>> {
+export async function discoverExistingAccounts(): Promise<
+	Array<{
+		configDir: string;
+		name: string;
+		email: string | null;
+		hasAuth: boolean;
+		agentType: string;
+	}>
+> {
 	const homeDir = os.homedir();
 	const entries = await fs.readdir(homeDir, { withFileTypes: true });
-	const accounts: Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean; agentType: string }> = [];
+	const accounts: Array<{
+		configDir: string;
+		name: string;
+		email: string | null;
+		hasAuth: boolean;
+		agentType: string;
+	}> = [];
 
 	for (const provider of PROVIDER_DISCOVERY) {
 		// Scan for prefix-based directories (e.g., ~/.claude-work, ~/.claude-personal)
@@ -161,7 +171,7 @@ export async function discoverExistingAccounts(): Promise<Array<{
 /** Check auth files for a provider directory and extract identity */
 async function checkProviderAuth(
 	configDir: string,
-	provider: ProviderDiscoveryConfig,
+	provider: ProviderDiscoveryConfig
 ): Promise<{ hasAuth: boolean; email: string | null }> {
 	for (const authFile of provider.authFiles) {
 		try {
@@ -209,13 +219,15 @@ function extractEmailFromClaudeJson(content: string): string | null {
 		const json = JSON.parse(content);
 		// Try common field names where email might be stored
 		// Claude Code stores it at oauthAccount.emailAddress
-		return json.email
-			|| json.accountEmail
-			|| json.primaryEmail
-			|| json.oauthAccount?.emailAddress
-			|| json.oauthAccount?.email
-			|| json.account?.email
-			|| null;
+		return (
+			json.email ||
+			json.accountEmail ||
+			json.primaryEmail ||
+			json.oauthAccount?.emailAddress ||
+			json.oauthAccount?.email ||
+			json.account?.email ||
+			null
+		);
 	} catch {
 		return null;
 	}
@@ -353,7 +365,11 @@ export async function repairAccountSymlinks(configDir: string): Promise<{
 		const target = path.join(configDir, resource);
 		try {
 			// Remove broken symlink if exists
-			try { await fs.unlink(target); } catch { /* didn't exist */ }
+			try {
+				await fs.unlink(target);
+			} catch {
+				/* didn't exist */
+			}
 			await fs.symlink(source, target);
 			repaired.push(resource);
 		} catch (err) {
@@ -430,7 +446,10 @@ export async function removeAccountDirectory(configDir: string): Promise<{
 		// Safety check: only remove directories matching ~/.claude-* pattern
 		const basename = path.basename(configDir);
 		if (!basename.startsWith('.claude-')) {
-			return { success: false, error: 'Safety check failed: directory name must start with .claude-' };
+			return {
+				success: false,
+				error: 'Safety check failed: directory name must start with .claude-',
+			};
 		}
 
 		await fs.rm(configDir, { recursive: true, force: true });
@@ -451,7 +470,7 @@ export async function removeAccountDirectory(configDir: string): Promise<{
  */
 export async function validateRemoteAccountDir(
 	sshConfig: { host: string; user?: string; port?: number },
-	configDir: string,
+	configDir: string
 ): Promise<{
 	exists: boolean;
 	hasAuth: boolean;
@@ -466,7 +485,9 @@ export async function validateRemoteAccountDir(
 	try {
 		// Check directory exists
 		const checkCmd = `test -d "${configDir}" && echo "DIR_EXISTS" || echo "DIR_MISSING"`;
-		const { stdout: dirCheck } = await execFileAsync('ssh', [...sshArgs, checkCmd], { timeout: 10000 });
+		const { stdout: dirCheck } = await execFileAsync('ssh', [...sshArgs, checkCmd], {
+			timeout: 10000,
+		});
 
 		if (dirCheck.trim() === 'DIR_MISSING') {
 			return { exists: false, hasAuth: false, symlinksValid: false };
@@ -474,12 +495,16 @@ export async function validateRemoteAccountDir(
 
 		// Check .claude.json exists (auth)
 		const authCmd = `test -f "${configDir}/.claude.json" && echo "AUTH_EXISTS" || echo "AUTH_MISSING"`;
-		const { stdout: authCheck } = await execFileAsync('ssh', [...sshArgs, authCmd], { timeout: 10000 });
+		const { stdout: authCheck } = await execFileAsync('ssh', [...sshArgs, authCmd], {
+			timeout: 10000,
+		});
 		const hasAuth = authCheck.trim() === 'AUTH_EXISTS';
 
 		// Check symlinks (projects/ is the critical one for --resume)
 		const symlinkCmd = `test -L "${configDir}/projects" && test -d "${configDir}/projects" && echo "SYMLINKS_OK" || echo "SYMLINKS_BROKEN"`;
-		const { stdout: symlinkCheck } = await execFileAsync('ssh', [...sshArgs, symlinkCmd], { timeout: 10000 });
+		const { stdout: symlinkCheck } = await execFileAsync('ssh', [...sshArgs, symlinkCmd], {
+			timeout: 10000,
+		});
 		const symlinksValid = symlinkCheck.trim() === 'SYMLINKS_OK';
 
 		return { exists: true, hasAuth, symlinksValid };
@@ -487,4 +512,3 @@ export async function validateRemoteAccountDir(
 		return { exists: false, hasAuth: false, symlinksValid: false, error: String(error) };
 	}
 }
-
