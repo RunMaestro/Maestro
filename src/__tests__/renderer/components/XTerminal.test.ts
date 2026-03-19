@@ -94,9 +94,22 @@ describe('mapThemeToXterm', () => {
 		const theme = makeTheme();
 		const result = mapThemeToXterm(theme);
 		const fields = [
-			'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
-			'brightBlack', 'brightRed', 'brightGreen', 'brightYellow',
-			'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
+			'black',
+			'red',
+			'green',
+			'yellow',
+			'blue',
+			'magenta',
+			'cyan',
+			'white',
+			'brightBlack',
+			'brightRed',
+			'brightGreen',
+			'brightYellow',
+			'brightBlue',
+			'brightMagenta',
+			'brightCyan',
+			'brightWhite',
 		];
 		for (const field of fields) {
 			expect(result).toHaveProperty(field);

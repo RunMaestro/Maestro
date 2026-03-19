@@ -289,6 +289,7 @@ The big changes in the v0.12.x line are the following three:
 Minor bugfixes on top of v0.7.3:
 
 # Onboarding, Wizard, and Tours
+
 - Implemented comprehensive onboarding wizard with integrated tour system 🚀
 - Added project-understanding confidence display to wizard UI 🎨
 - Enhanced keyboard navigation across all wizard screens ⌨️
@@ -296,6 +297,7 @@ Minor bugfixes on top of v0.7.3:
 - Added First Run Celebration modal with confetti animation 🎉
 
 # UI / UX Enhancements
+
 - Added expand-to-fullscreen button for Auto Run interface 🖥️
 - Created dedicated modal component and improved modal priority constants for expanded Auto Run view 📐
 - Enhanced user experience with fullscreen editing capabilities ✨
@@ -305,15 +307,18 @@ Minor bugfixes on top of v0.7.3:
 - Enhanced toast context with agent name for OS notifications 📢
 
 # Auto Run Workflow Improvements
+
 - Created phase document generation for Auto Run workflow 📄
 - Added real-time log streaming to the LogViewer component 📊
 
 # Application Behavior / Core Fixes
+
 - Added validation to prevent nested worktrees inside the main repository 🚫
 - Fixed process manager to properly emit exit events on errors 🔧
 - Fixed process exit handling to ensure proper cleanup 🧹
 
 # Update System
+
 - Implemented automatic update checking on application startup 🚀
 - Added settings toggle for enabling/disabling startup update checks ⚙️
 
@@ -504,6 +509,7 @@ Plus the prerelease ALPHA...
 All releases are available on the [GitHub Releases page](https://github.com/RunMaestro/Maestro/releases).
 
 Maestro is available for:
+
 - **macOS** - Apple Silicon (arm64) and Intel (x64)
 - **Windows** - x64
 - **Linux** - x64 and arm64, AppImage, deb, and rpm packages

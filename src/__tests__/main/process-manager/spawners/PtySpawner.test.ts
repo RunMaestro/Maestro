@@ -230,7 +230,12 @@ describe('PtySpawner', () => {
 
 			// SSH terminal
 			spawner.spawn(
-				createBaseConfig({ sessionId: 'ssh-session', shell: undefined, command: 'ssh', args: ['host'] })
+				createBaseConfig({
+					sessionId: 'ssh-session',
+					shell: undefined,
+					command: 'ssh',
+					args: ['host'],
+				})
 			);
 			expect(processes.get('ssh-session')?.isTerminal).toBe(true);
 		});

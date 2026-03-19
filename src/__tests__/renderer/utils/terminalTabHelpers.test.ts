@@ -280,7 +280,19 @@ describe('closeTerminalTab', () => {
 	});
 
 	it('falls back to a file tab to the left in unifiedTabOrder', () => {
-		const fileTab = { id: 'file-1', path: '/foo.ts', name: 'foo', extension: '.ts', content: '', scrollTop: 0, searchQuery: '', editMode: false, editContent: undefined, createdAt: 1000, lastModified: 1000 };
+		const fileTab = {
+			id: 'file-1',
+			path: '/foo.ts',
+			name: 'foo',
+			extension: '.ts',
+			content: '',
+			scrollTop: 0,
+			searchQuery: '',
+			editMode: false,
+			editContent: undefined,
+			createdAt: 1000,
+			lastModified: 1000,
+		};
 		const termTab = createMockTerminalTab({ id: 'term-1' });
 		const session = createMockSession({
 			filePreviewTabs: [fileTab],
@@ -321,7 +333,19 @@ describe('closeTerminalTab', () => {
 
 	it('falls back to the right neighbor when closing the leftmost tab', () => {
 		const termTab = createMockTerminalTab({ id: 'term-1' });
-		const fileTab = { id: 'file-1', path: '/foo.ts', name: 'foo', extension: '.ts', content: '', scrollTop: 0, searchQuery: '', editMode: false, editContent: undefined, createdAt: 1000, lastModified: 1000 };
+		const fileTab = {
+			id: 'file-1',
+			path: '/foo.ts',
+			name: 'foo',
+			extension: '.ts',
+			content: '',
+			scrollTop: 0,
+			searchQuery: '',
+			editMode: false,
+			editContent: undefined,
+			createdAt: 1000,
+			lastModified: 1000,
+		};
 		const session = createMockSession({
 			filePreviewTabs: [fileTab],
 			terminalTabs: [termTab],
