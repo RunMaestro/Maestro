@@ -25,6 +25,7 @@
 // ============================================================================
 
 export * from './types';
+export type { AccountStoreData } from './account-store-types';
 
 // ============================================================================
 // Store Initialization
@@ -46,6 +47,7 @@ export {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	getAccountStore,
 	getSyncPath,
 	getProductionDataPath,
 	getSshRemoteById,

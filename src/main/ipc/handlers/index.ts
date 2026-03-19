@@ -53,8 +53,11 @@ import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
+import { registerProviderHandlers, ProviderHandlerDependencies } from './providers';
 import { registerWakatimeHandlers } from './wakatime';
+import { registerAccountHandlers, AccountHandlerDependencies } from './accounts';
 import { AgentDetector } from '../../agents';
+import type { AccountRegistry } from '../../accounts/account-registry';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
@@ -102,6 +105,10 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerWakatimeHandlers };
+export { registerAccountHandlers };
+export type { AccountHandlerDependencies };
+export { registerProviderHandlers };
+export type { ProviderHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -160,6 +167,7 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -236,6 +244,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		getAccountRegistry: deps.getAccountRegistry || (() => null),
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({

@@ -6,7 +6,7 @@
  * Usage & Stats configuration (stats collection, time ranges, WakaTime integration).
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
 	Clapperboard,
 	ChevronDown,
@@ -17,15 +17,21 @@ import {
 	Lock,
 	Plus,
 	X,
+	Timer,
+	Key,
+	Trash2,
+	Users,
 	Zap,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
+import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
+import type { AccountProfile } from '../../../../shared/account-types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
+import { getModalActions } from '../../../stores/modalStore';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
-import { SYMPHONY_REGISTRY_URL } from '../../../../shared/symphony-constants';
 
 export interface EncoreTabProps {
 	theme: Theme;
@@ -40,6 +46,18 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		setDirectorNotesSettings,
 		symphonyRegistryUrls,
 		setSymphonyRegistryUrls,
+		// Stats
+		statsCollectionEnabled,
+		setStatsCollectionEnabled,
+		defaultStatsTimeRange,
+		setDefaultStatsTimeRange,
+		// WakaTime
+		wakatimeEnabled,
+		setWakatimeEnabled,
+		wakatimeApiKey,
+		setWakatimeApiKey,
+		wakatimeDetailedTracking,
+		setWakatimeDetailedTracking,
 	} = useSettings();
 
 	// Symphony registry URL management
@@ -107,6 +125,150 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			customEnvVars: directorNotesSettings.customEnvVars || {},
 		},
 	});
+
+	// Stats data management state
+	const [statsDbSize, setStatsDbSize] = useState<number | null>(null);
+	const [statsEarliestDate, setStatsEarliestDate] = useState<string | null>(null);
+	const [statsClearing, setStatsClearing] = useState(false);
+	const [statsClearResult, setStatsClearResult] = useState<{
+		success: boolean;
+		deletedQueryEvents: number;
+		deletedAutoRunSessions: number;
+		deletedAutoRunTasks: number;
+		error?: string;
+	} | null>(null);
+
+	// WakaTime CLI check and API key validation state
+	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{
+		available: boolean;
+		version?: string;
+	} | null>(null);
+	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
+	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+	const handleWakatimeApiKeyChange = useCallback(
+		(value: string) => {
+			setWakatimeApiKey(value);
+			setWakatimeKeyValid(null);
+		},
+		[setWakatimeApiKey]
+	);
+
+	// Virtuosos state
+	const [virtuososAccounts, setVirtuososAccounts] = useState<AccountProfile[]>([]);
+	const [virtuososBaseDirValid, setVirtuososBaseDirValid] = useState<boolean | null>(null);
+
+	useEffect(() => {
+		if (!isOpen || !encoreFeatures.virtuosos) return;
+		let cancelled = false;
+
+		window.maestro.accounts
+			.list()
+			.then((accounts) => {
+				if (!cancelled) setVirtuososAccounts(accounts as AccountProfile[]);
+			})
+			.catch(() => {
+				if (!cancelled) setVirtuososAccounts([]);
+			});
+
+		window.maestro.accounts
+			.validateBaseDir()
+			.then((result) => {
+				if (!cancelled) setVirtuososBaseDirValid(result.valid);
+			})
+			.catch(() => {
+				if (!cancelled) setVirtuososBaseDirValid(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, encoreFeatures.virtuosos]);
+
+	const virtuososStatusCounts = useMemo(() => {
+		const active = virtuososAccounts.filter((a) => a.status === 'active').length;
+		const throttled = virtuososAccounts.filter((a) => a.status === 'throttled').length;
+		return { active, throttled, total: virtuososAccounts.length };
+	}, [virtuososAccounts]);
+
+	// Check WakaTime CLI availability when section renders or toggle is enabled
+	useEffect(() => {
+		if (!isOpen || !wakatimeEnabled) return;
+		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+		window.maestro.wakatime
+			.checkCli()
+			.then((status) => {
+				if (cancelled) return;
+				setWakatimeCliStatus(status);
+				if (!status.available) {
+					retryTimer = setTimeout(() => {
+						if (!cancelled) {
+							window.maestro.wakatime
+								.checkCli()
+								.then((retryStatus) => {
+									if (!cancelled) setWakatimeCliStatus(retryStatus);
+								})
+								.catch(() => {
+									if (!cancelled) setWakatimeCliStatus({ available: false });
+								});
+						}
+					}, 3000);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setWakatimeCliStatus({ available: false });
+				retryTimer = setTimeout(() => {
+					if (!cancelled) {
+						window.maestro.wakatime
+							.checkCli()
+							.then((retryStatus) => {
+								if (!cancelled) setWakatimeCliStatus(retryStatus);
+							})
+							.catch(() => {
+								if (!cancelled) setWakatimeCliStatus({ available: false });
+							});
+					}
+				}, 3000);
+			});
+
+		return () => {
+			cancelled = true;
+			if (retryTimer) clearTimeout(retryTimer);
+		};
+	}, [isOpen, wakatimeEnabled]);
+
+	// Load stats database size and earliest timestamp when tab opens
+	useEffect(() => {
+		if (!isOpen) return;
+
+		window.maestro.stats
+			.getDatabaseSize()
+			.then((size) => {
+				setStatsDbSize(size);
+			})
+			.catch((err) => {
+				console.error('Failed to load stats database size:', err);
+			});
+
+		window.maestro.stats
+			.getEarliestTimestamp()
+			.then((timestamp) => {
+				if (timestamp) {
+					const date = new Date(timestamp);
+					const formatted = date.toISOString().split('T')[0];
+					setStatsEarliestDate(formatted);
+				} else {
+					setStatsEarliestDate(null);
+				}
+			})
+			.catch((err) => {
+				console.error('Failed to load earliest stats timestamp:', err);
+			});
+
+		setStatsClearResult(null);
+	}, [isOpen]);
 
 	const dnAvailableTiles = AGENT_TILES.filter((tile) => {
 		if (!tile.supported) return false;
@@ -207,15 +369,308 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						className="px-4 pb-4 space-y-3 border-t"
 						style={{ borderColor: theme.colors.border }}
 					>
+						{/* Enable/Disable Stats Collection */}
 						<div className="flex items-center justify-between pt-3">
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								Enable stats collection
+							<div>
+								<p className="text-sm" style={{ color: theme.colors.textMain }}>
+									Enable stats collection
+								</p>
+								<p className="text-xs opacity-50 mt-0.5">
+									Track queries and Auto Run sessions for the dashboard.
+								</p>
+							</div>
+							<button
+								onClick={() => setStatsCollectionEnabled(!statsCollectionEnabled)}
+								className="relative w-10 h-5 rounded-full transition-colors"
+								style={{
+									backgroundColor: statsCollectionEnabled
+										? theme.colors.accent
+										: theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={statsCollectionEnabled}
+								aria-label="Enable stats collection"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										statsCollectionEnabled ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+
+						{/* Default Time Range */}
+						<div>
+							<div className="block text-xs opacity-60 mb-2">Default dashboard time range</div>
+							<select
+								value={defaultStatsTimeRange}
+								onChange={(e) =>
+									setDefaultStatsTimeRange(
+										e.target.value as 'day' | 'week' | 'month' | 'year' | 'all'
+									)
+								}
+								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								<option value="day">Last 24 hours</option>
+								<option value="week">Last 7 days</option>
+								<option value="month">Last 30 days</option>
+								<option value="year">Last 365 days</option>
+								<option value="all">All time</option>
+							</select>
+							<p className="text-xs opacity-50 mt-1">
+								Time range shown when opening the Usage Dashboard.
 							</p>
 						</div>
-						<p className="text-xs" style={{ color: theme.colors.textDim }}>
-							Track queries and Auto Run sessions for the dashboard. Configure collection and time
-							range settings in the General tab.
-						</p>
+
+						{/* Divider */}
+						<div className="border-t" style={{ borderColor: theme.colors.border }} />
+
+						{/* Database Size Display */}
+						<div className="flex items-center justify-between">
+							<span className="text-sm" style={{ color: theme.colors.textDim }}>
+								Database size
+							</span>
+							<span className="text-sm font-mono" style={{ color: theme.colors.textMain }}>
+								{statsDbSize !== null
+									? (statsDbSize / 1024 / 1024).toFixed(2) + ' MB'
+									: 'Loading...'}
+								{statsEarliestDate && (
+									<span style={{ color: theme.colors.textDim }}> (since {statsEarliestDate})</span>
+								)}
+							</span>
+						</div>
+
+						{/* Clear Old Data Dropdown */}
+						<div>
+							<div className="block text-xs opacity-60 mb-2">Clear stats older than...</div>
+							<div className="flex items-center gap-2">
+								<select
+									id="clear-stats-period"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									defaultValue=""
+									disabled={statsClearing}
+								>
+									<option value="" disabled>
+										Select a time period
+									</option>
+									<option value="7">7 days</option>
+									<option value="30">30 days</option>
+									<option value="90">90 days</option>
+									<option value="180">6 months</option>
+									<option value="365">1 year</option>
+								</select>
+								<button
+									onClick={async () => {
+										const select = document.getElementById(
+											'clear-stats-period'
+										) as HTMLSelectElement;
+										const days = parseInt(select.value, 10);
+										if (!days || isNaN(days)) {
+											return;
+										}
+										setStatsClearing(true);
+										setStatsClearResult(null);
+										try {
+											const result = await window.maestro.stats.clearOldData(days);
+											setStatsClearResult(result);
+											if (result.success) {
+												const newSize = await window.maestro.stats.getDatabaseSize();
+												setStatsDbSize(newSize);
+											}
+										} catch (err) {
+											console.error('Failed to clear old stats:', err);
+											setStatsClearResult({
+												success: false,
+												deletedQueryEvents: 0,
+												deletedAutoRunSessions: 0,
+												deletedAutoRunTasks: 0,
+												error: err instanceof Error ? err.message : 'Unknown error',
+											});
+										} finally {
+											setStatsClearing(false);
+										}
+									}}
+									disabled={statsClearing}
+									className="px-3 py-2 rounded text-xs font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
+									style={{
+										backgroundColor: theme.colors.error + '20',
+										color: theme.colors.error,
+										border: `1px solid ${theme.colors.error}40`,
+									}}
+								>
+									<Trash2 className="w-3 h-3" />
+									{statsClearing ? 'Clearing...' : 'Clear'}
+								</button>
+							</div>
+							<p className="text-xs opacity-50 mt-2">
+								Remove old query events, Auto Run sessions, and tasks from the stats database.
+							</p>
+						</div>
+
+						{/* Clear Result Feedback */}
+						{statsClearResult && (
+							<div
+								className="p-2 rounded text-xs flex items-start gap-2"
+								style={{
+									backgroundColor: statsClearResult.success
+										? theme.colors.success + '20'
+										: theme.colors.error + '20',
+									color: statsClearResult.success ? theme.colors.success : theme.colors.error,
+								}}
+							>
+								{statsClearResult.success ? (
+									<>
+										<Check className="w-3 h-3 flex-shrink-0 mt-0.5" />
+										<span>
+											Cleared{' '}
+											{statsClearResult.deletedQueryEvents +
+												statsClearResult.deletedAutoRunSessions +
+												statsClearResult.deletedAutoRunTasks}{' '}
+											records ({statsClearResult.deletedQueryEvents} queries,{' '}
+											{statsClearResult.deletedAutoRunSessions} sessions,{' '}
+											{statsClearResult.deletedAutoRunTasks} tasks)
+										</span>
+									</>
+								) : (
+									<>
+										<X className="w-3 h-3 flex-shrink-0 mt-0.5" />
+										<span>{statsClearResult.error || 'Failed to clear stats data'}</span>
+									</>
+								)}
+							</div>
+						)}
+
+						{/* Divider */}
+						<div className="border-t" style={{ borderColor: theme.colors.border }} />
+
+						{/* WakaTime Integration */}
+						<div className="flex items-center justify-between">
+							<div>
+								<p
+									className="text-sm flex items-center gap-2"
+									style={{ color: theme.colors.textMain }}
+								>
+									<Timer className="w-3.5 h-3.5 opacity-60" />
+									Enable WakaTime tracking
+								</p>
+								<p className="text-xs opacity-50 mt-0.5">
+									Track coding activity in Maestro sessions via WakaTime.
+								</p>
+							</div>
+							<button
+								onClick={() => setWakatimeEnabled(!wakatimeEnabled)}
+								className="relative w-10 h-5 rounded-full transition-colors"
+								style={{
+									backgroundColor: wakatimeEnabled ? theme.colors.accent : theme.colors.bgActivity,
+								}}
+								role="switch"
+								aria-checked={wakatimeEnabled}
+								aria-label="Enable WakaTime tracking"
+							>
+								<span
+									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+										wakatimeEnabled ? 'translate-x-5' : 'translate-x-0.5'
+									}`}
+								/>
+							</button>
+						</div>
+
+						{/* CLI not found warning */}
+						{wakatimeEnabled && wakatimeCliStatus && !wakatimeCliStatus.available && (
+							<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
+								WakaTime CLI is being installed automatically...
+							</p>
+						)}
+
+						{/* Detailed file tracking toggle (only shown when enabled) */}
+						{wakatimeEnabled && (
+							<div className="flex items-center justify-between">
+								<div>
+									<p className="text-sm" style={{ color: theme.colors.textMain }}>
+										Detailed file tracking
+									</p>
+									<p className="text-xs opacity-50 mt-0.5">
+										Track per-file write activity. Sends file paths (not content) to WakaTime.
+									</p>
+								</div>
+								<button
+									onClick={() => setWakatimeDetailedTracking(!wakatimeDetailedTracking)}
+									className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+									tabIndex={0}
+									style={{
+										backgroundColor: wakatimeDetailedTracking
+											? theme.colors.accent
+											: theme.colors.bgActivity,
+									}}
+									role="switch"
+									aria-checked={wakatimeDetailedTracking}
+									aria-label="Detailed file tracking"
+								>
+									<span
+										className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+											wakatimeDetailedTracking ? 'translate-x-5' : 'translate-x-0.5'
+										}`}
+									/>
+								</button>
+							</div>
+						)}
+
+						{/* API Key Input (only shown when enabled) */}
+						{wakatimeEnabled && (
+							<div>
+								<div className="block text-xs opacity-60 mb-1">API Key</div>
+								<div
+									className="flex items-center border rounded px-3 py-2"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										borderColor: theme.colors.border,
+									}}
+								>
+									<Key className="w-4 h-4 mr-2 opacity-50" />
+									<input
+										type="password"
+										value={wakatimeApiKey}
+										onChange={(e) => handleWakatimeApiKeyChange(e.target.value)}
+										onBlur={() => {
+											if (wakatimeApiKey) {
+												setWakatimeKeyValidating(true);
+												setWakatimeKeyValid(null);
+												window.maestro.wakatime
+													.validateApiKey(wakatimeApiKey)
+													.then((result) => setWakatimeKeyValid(result.valid))
+													.catch(() => setWakatimeKeyValid(false))
+													.finally(() => setWakatimeKeyValidating(false));
+											}
+										}}
+										className="bg-transparent flex-1 text-sm outline-none"
+										style={{ color: theme.colors.textMain }}
+										placeholder="waka_..."
+									/>
+									{wakatimeKeyValidating && <span className="ml-2 text-xs opacity-50">...</span>}
+									{!wakatimeKeyValidating && wakatimeKeyValid === true && (
+										<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
+									)}
+									{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
+										<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
+									)}
+									{wakatimeApiKey && (
+										<button
+											onClick={() => handleWakatimeApiKeyChange('')}
+											className="ml-2 opacity-50 hover:opacity-100"
+											title="Clear API key"
+										>
+											<X className="w-3 h-3" />
+										</button>
+									)}
+								</div>
+								<p className="text-[10px] mt-1.5 opacity-50">
+									Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
+									~/.maestro/settings.json.
+								</p>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
@@ -268,6 +723,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					</div>
 				</button>
 
+				{/* Registry URL Management (shown when enabled) */}
 				{encoreFeatures.symphony && (
 					<div
 						className="px-4 pb-4 space-y-3 border-t"
@@ -309,7 +765,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							</div>
 
 							{/* Custom URLs list */}
-							{symphonyRegistryUrls.map((url) => (
+							{symphonyRegistryUrls.map((url: string) => (
 								<div
 									key={url}
 									className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-mono mb-1"
@@ -324,11 +780,12 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									<button
 										type="button"
 										onClick={() =>
-											setSymphonyRegistryUrls(symphonyRegistryUrls.filter((u) => u !== url))
+											setSymphonyRegistryUrls(symphonyRegistryUrls.filter((u: string) => u !== url))
 										}
 										className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
 										style={{ color: theme.colors.error }}
 										title="Remove registry URL"
+										aria-label={`Remove registry URL ${url}`}
 									>
 										<X className="w-3 h-3" />
 									</button>
@@ -385,70 +842,6 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						</div>
 					</div>
 				)}
-			</div>
-
-			{/* Maestro Cue Feature Section */}
-			<div
-				className="rounded-lg border"
-				style={{
-					borderColor: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.border,
-					backgroundColor: encoreFeatures.maestroCue ? `${theme.colors.accent}08` : 'transparent',
-				}}
-			>
-				<button
-					className="w-full flex items-center justify-between p-4 text-left"
-					onClick={() =>
-						setEncoreFeatures({
-							...encoreFeatures,
-							maestroCue: !encoreFeatures.maestroCue,
-						})
-					}
-				>
-					<div className="flex items-center gap-3">
-						<Zap
-							className="w-5 h-5"
-							style={{
-								color: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.textDim,
-							}}
-						/>
-						<div>
-							<div
-								className="text-sm font-bold flex items-center gap-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Maestro Cue
-								<span
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
-								>
-									Beta
-								</span>
-							</div>
-							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-								Event-driven automation — trigger agent prompts on timers, file changes, and agent
-								completions
-							</div>
-						</div>
-					</div>
-					<div
-						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
-						style={{
-							backgroundColor: encoreFeatures.maestroCue
-								? theme.colors.accent
-								: theme.colors.border,
-						}}
-					>
-						<div
-							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-							style={{
-								transform: encoreFeatures.maestroCue ? 'translateX(22px)' : 'translateX(2px)',
-							}}
-						/>
-					</div>
-				</button>
 			</div>
 
 			{/* Director's Notes Feature Section */}
@@ -678,8 +1071,11 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 											ac.setAgentConfig(newConfig);
 											ac.agentConfigRef.current = newConfig;
 										}}
-										onConfigBlur={async () => {
+										onConfigBlur={async (key, value) => {
 											if (directorNotesSettings.provider) {
+												const updatedConfig = { ...ac.agentConfigRef.current, [key]: value };
+												ac.agentConfigRef.current = updatedConfig;
+												ac.setAgentConfig(updatedConfig);
 												await ac.saveAgentConfig(directorNotesSettings.provider);
 											}
 										}}
@@ -735,6 +1131,224 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								How far back to look when generating notes (can be adjusted per-report)
 							</p>
 						</div>
+					</div>
+				)}
+			</div>
+
+			{/* Maestro Cue Feature Section */}
+			<div
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.maestroCue ? `${theme.colors.accent}08` : 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							maestroCue: !encoreFeatures.maestroCue,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<Zap
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Maestro Cue
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Event-driven automation triggered by file changes, time intervals, agent
+								completions, and GitHub events
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.maestroCue
+								? theme.colors.accent
+								: theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.maestroCue ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+			</div>
+
+			{/* Virtuosos Feature Section */}
+			<div
+				className="rounded-lg border"
+				style={{
+					borderColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.virtuosos ? `${theme.colors.accent}08` : 'transparent',
+				}}
+			>
+				<button
+					className="w-full flex items-center justify-between p-4 text-left"
+					onClick={() =>
+						setEncoreFeatures({
+							...encoreFeatures,
+							virtuosos: !encoreFeatures.virtuosos,
+						})
+					}
+				>
+					<div className="flex items-center gap-3">
+						<Users
+							className="w-5 h-5"
+							style={{
+								color: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.textDim,
+							}}
+						/>
+						<div>
+							<div
+								className="text-sm font-bold flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								Virtuosos
+								<span
+									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+									style={{
+										backgroundColor: theme.colors.warning + '30',
+										color: theme.colors.warning,
+									}}
+								>
+									Beta
+								</span>
+							</div>
+							<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+								Multi-account multiplexing with capacity-aware routing and automated provider
+								failover
+							</div>
+						</div>
+					</div>
+					<div
+						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.virtuosos ? '' : 'opacity-50'}`}
+						style={{
+							backgroundColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border,
+						}}
+					>
+						<div
+							className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+							style={{
+								transform: encoreFeatures.virtuosos ? 'translateX(22px)' : 'translateX(2px)',
+							}}
+						/>
+					</div>
+				</button>
+
+				{encoreFeatures.virtuosos && (
+					<div
+						className="px-4 pb-4 space-y-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						{/* Base Directory Status */}
+						<div className="flex items-center justify-between pt-3">
+							<div className="flex items-center gap-2">
+								<span className="text-sm" style={{ color: theme.colors.textMain }}>
+									Base directory (~/.claude)
+								</span>
+							</div>
+							<span
+								className="text-xs font-medium px-2 py-0.5 rounded"
+								style={{
+									backgroundColor:
+										virtuososBaseDirValid === null
+											? theme.colors.bgActivity
+											: virtuososBaseDirValid
+												? theme.colors.success + '20'
+												: theme.colors.error + '20',
+									color:
+										virtuososBaseDirValid === null
+											? theme.colors.textDim
+											: virtuososBaseDirValid
+												? theme.colors.success
+												: theme.colors.error,
+								}}
+							>
+								{virtuososBaseDirValid === null
+									? 'Checking...'
+									: virtuososBaseDirValid
+										? 'Valid'
+										: 'Not found'}
+							</span>
+						</div>
+
+						{/* Account Summary */}
+						<div className="flex items-center justify-between">
+							<span className="text-sm" style={{ color: theme.colors.textMain }}>
+								Registered accounts
+							</span>
+							<div className="flex items-center gap-2">
+								{virtuososStatusCounts.total > 0 ? (
+									<>
+										<span
+											className="text-xs font-mono px-2 py-0.5 rounded"
+											style={{
+												backgroundColor: theme.colors.success + '20',
+												color: theme.colors.success,
+											}}
+										>
+											{virtuososStatusCounts.active} active
+										</span>
+										{virtuososStatusCounts.throttled > 0 && (
+											<span
+												className="text-xs font-mono px-2 py-0.5 rounded"
+												style={{
+													backgroundColor: theme.colors.warning + '20',
+													color: theme.colors.warning,
+												}}
+											>
+												{virtuososStatusCounts.throttled} throttled
+											</span>
+										)}
+									</>
+								) : (
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>
+										None configured
+									</span>
+								)}
+							</div>
+						</div>
+
+						{/* Open Dashboard Button */}
+						<button
+							onClick={() => getModalActions().setVirtuososOpen(true)}
+							className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors hover:brightness-110"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.bgMain,
+							}}
+						>
+							<Users className="w-4 h-4" />
+							Open Virtuosos Dashboard
+						</button>
+						<p className="text-xs" style={{ color: theme.colors.textDim }}>
+							Manage accounts, configure provider failover, and monitor usage from the dashboard.
+						</p>
 					</div>
 				)}
 			</div>

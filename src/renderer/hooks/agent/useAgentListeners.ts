@@ -746,6 +746,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							projectPath: toastData.projectPath,
 							tabId: toastData.tabId,
 							isRemote: toastData.isRemote,
+							inputTokens: toastData.usageStats?.inputTokens,
+							outputTokens: toastData.usageStats?.outputTokens,
+							cacheReadTokens: toastData.usageStats?.cacheReadInputTokens,
+							cacheCreationTokens: toastData.usageStats?.cacheCreationInputTokens,
+							costUsd: toastData.usageStats?.totalCostUsd,
 						})
 						.catch((err) => {
 							console.warn('[onProcessExit] Failed to record query stats:', err);

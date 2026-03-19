@@ -228,6 +228,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// Switch to terminal mode for re-auth (clear activeFileTabId to prevent orphaned file preview)
 		useSessionStore.getState().setActiveSessionId(sessionId);
 		updateSession(sessionId, (s) => ({ ...s, inputMode: 'terminal', activeFileTabId: null }));
+
+		// Also trigger automatic auth recovery via main process if available
+		window.maestro.accounts?.triggerAuthRecovery(sessionId).catch((err) => {
+			console.error('[authenticateAfterError] Auth recovery failed:', err);
+		});
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {

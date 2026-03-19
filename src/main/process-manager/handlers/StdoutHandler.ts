@@ -266,13 +266,6 @@ export class StdoutHandler {
 		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
-			// DEBUG: Log usage extracted from parser
-			console.log('[StdoutHandler] Usage from parser (line 255 path)', {
-				sessionId,
-				toolType: managedProcess.toolType,
-				parsedUsage: usage,
-			});
-
 			const usageStats = this.buildUsageStats(managedProcess, usage);
 			// Claude Code's modelUsage reports the ACTUAL context used for each API call:
 			// - inputTokens: new input for this turn
@@ -287,12 +280,6 @@ export class StdoutHandler {
 				managedProcess.toolType === 'codex' || managedProcess.toolType === 'claude-code'
 					? normalizeUsageToDelta(managedProcess, usageStats)
 					: usageStats;
-
-			// DEBUG: Log normalized stats being emitted
-			console.log('[StdoutHandler] Emitting usage (line 255 path)', {
-				sessionId,
-				normalizedUsageStats,
-			});
 
 			this.emitter.emit('usage', sessionId, normalizedUsageStats);
 		}
@@ -464,25 +451,11 @@ export class StdoutHandler {
 		}
 
 		if (msgRecord.modelUsage || msgRecord.usage || msgRecord.total_cost_usd !== undefined) {
-			// DEBUG: Log raw usage data from Claude Code before aggregation
-			console.log('[StdoutHandler] Raw usage data from Claude Code', {
-				sessionId,
-				modelUsage: msgRecord.modelUsage,
-				usage: msgRecord.usage,
-				totalCostUsd: msgRecord.total_cost_usd,
-			});
-
 			const usageStats = aggregateModelUsage(
 				msgRecord.modelUsage as Record<string, ModelStats> | undefined,
 				(msgRecord.usage as Record<string, unknown>) || {},
 				(msgRecord.total_cost_usd as number) || 0
 			);
-
-			// DEBUG: Log aggregated result
-			console.log('[StdoutHandler] Aggregated usage stats', {
-				sessionId,
-				usageStats,
-			});
 
 			this.emitter.emit('usage', sessionId, usageStats);
 		}

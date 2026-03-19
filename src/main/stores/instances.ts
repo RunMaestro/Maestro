@@ -24,6 +24,8 @@ import type {
 	AgentSessionOriginsData,
 } from './types';
 
+import type { AccountStoreData } from './account-store-types';
+
 import {
 	SETTINGS_DEFAULTS,
 	SESSIONS_DEFAULTS,
@@ -33,6 +35,8 @@ import {
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
 } from './defaults';
+
+import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 
 import { getCustomSyncPath } from './utils';
 
@@ -48,6 +52,15 @@ let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _windowStateStore: Store<WindowState> | null = null;
 let _claudeSessionOriginsStore: Store<ClaudeSessionOriginsData> | null = null;
 let _agentSessionOriginsStore: Store<AgentSessionOriginsData> | null = null;
+let _accountStore: Store<AccountStoreData> | null = null;
+
+const ACCOUNT_STORE_DEFAULTS: AccountStoreData = {
+	accounts: {},
+	assignments: {},
+	switchConfig: ACCOUNT_SWITCH_DEFAULTS,
+	rotationOrder: [],
+	rotationIndex: 0,
+};
 
 // Cached paths after initialization
 let _syncPath: string | null = null;
@@ -137,6 +150,13 @@ export function initializeStores(options: StoreInitOptions): {
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
 	});
 
+	// Account multiplexing - manages multiple Claude Code accounts
+	_accountStore = new Store<AccountStoreData>({
+		name: 'maestro-accounts',
+		cwd: _syncPath,
+		defaults: ACCOUNT_STORE_DEFAULTS,
+	});
+
 	return {
 		syncPath: _syncPath,
 		bootstrapStore: _bootstrapStore,
@@ -163,6 +183,7 @@ export function getStoreInstances() {
 		windowStateStore: _windowStateStore,
 		claudeSessionOriginsStore: _claudeSessionOriginsStore,
 		agentSessionOriginsStore: _agentSessionOriginsStore,
+		accountStore: _accountStore,
 	};
 }
 

@@ -45,6 +45,8 @@ import { groupChatParticipantRequestPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -95,6 +97,9 @@ let getAgentConfigCallback: GetAgentConfigCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
+
+// Module-level account registry for account multiplexing
+let accountRegistryRef: AccountRegistry | null = null;
 
 /**
  * Tracks pending participant responses for each group chat.
@@ -181,6 +186,14 @@ export function setGetAgentConfigCallback(callback: GetAgentConfigCallback): voi
  */
 export function setSshStore(store: SshRemoteSettingsStore): void {
 	sshStore = store;
+}
+
+/**
+ * Sets the account registry for account multiplexing.
+ * Called from index.ts during initialization.
+ */
+export function setAccountRegistry(registry: AccountRegistry): void {
+	accountRegistryRef = registry;
 }
 
 /**
@@ -335,7 +348,10 @@ export async function routeUserMessage(
 							sshRemoteConfig: matchingSession.sshRemoteConfig,
 						},
 						// Pass SSH store for remote execution support
-						sshStore ?? undefined
+						sshStore ?? undefined,
+						// Pass account registry and group-level account ID for multiplexing
+						accountRegistryRef ?? undefined,
+						chat.accountId
 					);
 					existingParticipantNames.add(participantName);
 
@@ -538,6 +554,21 @@ ${message}${imageContext}`;
 				let spawnShell: string | undefined;
 				let spawnRunInShell = false;
 				let spawnSshStdinScript: string | undefined;
+
+				// Inject CLAUDE_CONFIG_DIR for account multiplexing (moderator)
+				if (accountRegistryRef) {
+					const envToInject: Record<string, string> = spawnEnvVars ? { ...spawnEnvVars } : {};
+					const assignedId = injectAccountEnv(
+						sessionId,
+						chat.moderatorAgentId,
+						envToInject,
+						accountRegistryRef,
+						chat.accountId
+					);
+					if (assignedId) {
+						spawnEnvVars = envToInject;
+					}
+				}
 
 				// Apply SSH wrapping if configured
 				if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
@@ -756,7 +787,10 @@ export async function routeModeratorResponse(
 							sshRemoteConfig: matchingSession.sshRemoteConfig,
 						},
 						// Pass SSH store for remote execution support
-						sshStore ?? undefined
+						sshStore ?? undefined,
+						// Pass account registry and group-level account ID for multiplexing
+						accountRegistryRef ?? undefined,
+						chat.accountId
 					);
 					existingParticipantNames.add(participantName);
 
@@ -927,6 +961,23 @@ export async function routeModeratorResponse(
 				let finalSpawnShell: string | undefined;
 				let finalSpawnRunInShell = false;
 				let finalSshStdinScript: string | undefined;
+
+				// Inject CLAUDE_CONFIG_DIR for account multiplexing (participant batch spawn)
+				if (accountRegistryRef) {
+					const envToInject: Record<string, string> = finalSpawnEnvVars
+						? { ...finalSpawnEnvVars }
+						: {};
+					const assignedId = injectAccountEnv(
+						sessionId,
+						participant.agentId,
+						envToInject,
+						accountRegistryRef,
+						updatedChat.accountId
+					);
+					if (assignedId) {
+						finalSpawnEnvVars = envToInject;
+					}
+				}
 
 				// Apply SSH wrapping if configured for this session
 				if (sshStore && matchingSession?.sshRemoteConfig) {
@@ -1349,6 +1400,21 @@ Review the agent responses above. Either:
 			console.log(`[GroupChat:Debug] Windows shell config for synthesis: ${winConfig.shell}`);
 		}
 
+		// Inject CLAUDE_CONFIG_DIR for account multiplexing (synthesis moderator)
+		if (accountRegistryRef) {
+			const envToInject: Record<string, string> = spawnEnvVars ? { ...spawnEnvVars } : {};
+			const assignedId = injectAccountEnv(
+				sessionId,
+				chat.moderatorAgentId,
+				envToInject,
+				accountRegistryRef,
+				chat.accountId
+			);
+			if (assignedId) {
+				spawnEnvVars = envToInject;
+			}
+		}
+
 		const spawnResult = processManager.spawn({
 			sessionId,
 			toolType: chat.moderatorAgentId,
@@ -1508,6 +1574,21 @@ export async function respawnParticipantWithRecovery(
 	let finalSpawnShell: string | undefined;
 	let finalSpawnRunInShell = false;
 	let finalSshStdinScript: string | undefined;
+
+	// Inject CLAUDE_CONFIG_DIR for account multiplexing (recovery spawn)
+	if (accountRegistryRef) {
+		const envToInject: Record<string, string> = finalSpawnEnvVars ? { ...finalSpawnEnvVars } : {};
+		const assignedId = injectAccountEnv(
+			sessionId,
+			participant.agentId,
+			envToInject,
+			accountRegistryRef,
+			chat.accountId
+		);
+		if (assignedId) {
+			finalSpawnEnvVars = envToInject;
+		}
+	}
 
 	console.log(`[GroupChat:Debug] Recovery spawn command: ${finalSpawnCommand}`);
 	console.log(`[GroupChat:Debug] Recovery spawn args count: ${finalSpawnArgs.length}`);

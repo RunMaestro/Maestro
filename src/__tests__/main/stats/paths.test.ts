@@ -714,7 +714,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 			});
 
 			// Verify that the statement was called with normalized path
-			// insertQueryEvent now has 9 parameters: id, sessionId, agentType, source, startTime, duration, projectPath, tabId, isRemote
+			// insertQueryEvent now has 15 parameters: id, sessionId, agentType, source, startTime, duration, projectPath, tabId, isRemote, accountId, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String), // id
 				'session-1',
@@ -724,7 +724,13 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				'C:/Users/TestUser/Projects/MyApp', // normalized path
 				'tab-1',
-				null // isRemote (undefined → null)
+				null, // isRemote (undefined → null)
+				null, // accountId
+				0, // inputTokens
+				0, // outputTokens
+				0, // cacheReadTokens
+				0, // cacheCreationTokens
+				0 // costUsd
 			);
 		});
 
@@ -743,7 +749,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				tabId: 'tab-1',
 			});
 
-			// insertQueryEvent now has 9 parameters including isRemote
+			// insertQueryEvent now has 15 parameters including isRemote and account usage fields
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -753,7 +759,13 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				'/Users/testuser/Projects/MyApp', // unchanged
 				'tab-1',
-				null // isRemote (undefined → null)
+				null, // isRemote (undefined → null)
+				null, // accountId
+				0, // inputTokens
+				0, // outputTokens
+				0, // cacheReadTokens
+				0, // cacheCreationTokens
+				0 // costUsd
 			);
 		});
 
@@ -771,7 +783,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				// projectPath is undefined
 			});
 
-			// insertQueryEvent now has 9 parameters including isRemote
+			// insertQueryEvent now has 15 parameters including isRemote and account usage fields
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -781,7 +793,13 @@ describe('File path normalization in database (forward slashes consistently)', (
 				5000,
 				null, // undefined becomes null
 				null, // tabId undefined → null
-				null // isRemote undefined → null
+				null, // isRemote undefined → null
+				null, // accountId
+				0, // inputTokens
+				0, // outputTokens
+				0, // cacheReadTokens
+				0, // cacheCreationTokens
+				0 // costUsd
 			);
 		});
 	});

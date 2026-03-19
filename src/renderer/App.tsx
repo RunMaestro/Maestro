@@ -8,6 +8,7 @@ import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
 // DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
+import * as Sentry from '@sentry/electron/renderer';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 import { AppOverlays } from './components/AppOverlays';
@@ -27,6 +28,10 @@ import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
+import { UnarchiveConflictModal } from './components/UnarchiveConflictModal';
+import { AccountSwitchModal } from './components/AccountSwitchModal';
+import { VirtuososModal } from './components/VirtuososModal';
+import { SwitchProviderModal } from './components/SwitchProviderModal';
 
 // Lazy-loaded components for performance (rarely-used heavy modals)
 // These are loaded on-demand when the user first opens them
@@ -149,6 +154,7 @@ import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './ho
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
+import { useProviderSwitch } from './hooks/agent/useProviderSwitch';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -165,11 +171,19 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { ToastContainer } from './components/Toast';
 
 // Import services
-// gitService — now used in useModalHandlers (Tier 3C)
+// gitService — now used in useModalHandlers (Tier 3C) and useSessionRestoration
+import { getAgentDisplayName } from './services/contextGroomer';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	ThinkingItem,
+	ToolType,
+} from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
@@ -349,6 +363,9 @@ function MaestroConsoleInner() {
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
 		closeCueYamlEditor,
+		// Virtuosos Modal
+		virtuososOpen,
+		setVirtuososOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -672,6 +689,27 @@ function MaestroConsoleInner() {
 	// Note: Delete Agent Modal State is now managed by modalStore (Zustand)
 	// See useModalActions() destructuring above for deleteAgentModalOpen / deleteAgentSession
 
+	// Account Switch Prompt Modal State
+	const [switchPromptData, setSwitchPromptData] = useState<{
+		sessionId: string;
+		fromAccountId: string;
+		fromAccountName: string;
+		toAccountId: string;
+		toAccountName: string;
+		reason: string;
+		tokensAtThrottle?: number;
+		usagePercent?: number;
+	} | null>(null);
+
+	// Provider Switch state
+	const [switchProviderSession, setSwitchProviderSession] = useState<Session | null>(null);
+
+	// Unarchive conflict state
+	const [unarchiveConflictState, setUnarchiveConflictState] = useState<{
+		archivedSession: Session;
+		conflictingSession: Session;
+	} | null>(null);
+
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
 
 	// Note: Renaming state (editingGroupId/editingSessionId) and drag state (draggingSessionId)
@@ -725,14 +763,7 @@ function MaestroConsoleInner() {
 	// update check, leaderboard sync, SpecKit/OpenSpec loading, SSH configs, stats DB check,
 	// notification settings sync, playground debug) — provided by useAppInitialization hook
 
-	// Expose debug helpers to window for console access
-	// No dependency array - always keep functions fresh
-	(window as any).__maestroDebug = {
-		openDebugWizard: () => setDebugWizardModalOpen(true),
-		openCommandK: () => setQuickActionOpen(true),
-		openWizard: () => openWizardModal(),
-		openSettings: () => setSettingsModalOpen(true),
-	};
+	// Session restoration (load, restore, git info, group chats) — provided by useSessionRestoration hook
 
 	// Note: Standing ovation and keyboard mastery startup checks are now in useModalHandlers
 
@@ -795,6 +826,338 @@ function MaestroConsoleInner() {
 			delete (window as any).__maestroDebug;
 		};
 	}, []);
+
+	// Subscribe to account limit warning/reached events for toast notifications
+	useEffect(() => {
+		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
+			notifyToast({
+				type: 'warning',
+				title: 'Account Limit Warning',
+				message: `Account ${data.accountName} is at ${Math.round(data.usagePercent)}% of its token limit`,
+				duration: 10_000,
+			});
+		});
+
+		const unsubReached = window.maestro.accounts.onLimitReached((data) => {
+			notifyToast({
+				type: 'error',
+				title: 'Account Limit Reached',
+				message: `Account ${data.accountName} has reached its token limit (${Math.round(data.usagePercent)}%)`,
+				duration: 0, // Do NOT auto-dismiss
+			});
+		});
+
+		return () => {
+			unsubWarning();
+			unsubReached();
+		};
+	}, [encoreFeatures.virtuosos]);
+
+	// Subscribe to account recovery events for auto-resume of paused Auto Runs
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
+			notifyToast({
+				type: 'success',
+				title: 'Virtuoso Recovered',
+				message:
+					data.recoveredCount === 1
+						? 'Virtuoso is available again'
+						: `${data.recoveredCount} virtuosos are available again`,
+				duration: 8_000,
+			});
+
+			// Auto-resume any Auto Runs that are paused due to rate limiting
+			const currentSessions = sessionsRef.current;
+			for (const session of currentSessions) {
+				const batchState = getBatchStateRef.current?.(session.id);
+				if (!batchState?.isRunning || batchState.processingState !== 'PAUSED_ERROR') continue;
+				if (!batchState.error) continue;
+
+				// Check if the pause was due to rate limiting
+				const isRateLimitPause =
+					batchState.error.type === 'rate_limited' ||
+					(batchState.error.message?.includes('rate') ?? false) ||
+					(batchState.error.message?.includes('throttle') ?? false) ||
+					(batchState.error.message?.includes('All virtuosos') ?? false);
+
+				if (isRateLimitPause) {
+					const recoveredForThis = data.recoveredAccountIds.includes(session.accountId || '');
+					if (recoveredForThis || data.recoveredAccountIds.length > 0) {
+						resumeAfterErrorRef.current?.(session.id);
+
+						notifyToast({
+							type: 'info',
+							title: 'Auto Run Resuming',
+							message: 'Resuming after virtuoso recovery',
+							duration: 5_000,
+						});
+					}
+				}
+			}
+		});
+
+		return () => unsubRecovery();
+	}, [encoreFeatures.virtuosos]);
+
+	// Subscribe to all-accounts-exhausted throttle events for Auto Run pause
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+		const unsubThrottled = window.maestro.accounts.onThrottled((data) => {
+			if (!data.noAlternatives) return; // Only handle the exhausted case
+
+			const sessionId = data.sessionId as string;
+			if (!sessionId) return;
+
+			// Check if this session has an active Auto Run
+			const batchState = getBatchStateRef.current?.(sessionId);
+			if (!batchState?.isRunning || batchState.errorPaused) return;
+
+			// Pause the batch with a specific rate_limited error so recovery can auto-resolve it
+			pauseBatchOnErrorRef.current?.(
+				sessionId,
+				{
+					type: 'rate_limited',
+					message: 'All virtuosos have been rate-limited. Waiting for automatic recovery...',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				},
+				batchState.currentDocumentIndex,
+				'Waiting for virtuoso recovery'
+			);
+		});
+
+		return () => unsubThrottled();
+	}, [encoreFeatures.virtuosos]);
+
+	// Subscribe to account assignment events (update session state when main process assigns an account)
+	useEffect(() => {
+		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (!data.sessionId.startsWith(s.id)) return s;
+					return { ...s, accountId: data.accountId, accountName: data.accountName };
+				})
+			);
+		});
+		return () => unsubAssigned();
+	}, []);
+
+	// Subscribe to account switch events (respawn agent with new account after switch)
+	useEffect(() => {
+		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
+			const {
+				sessionId: switchSessionId,
+				toAccountId,
+				toAccountName,
+				configDir,
+				lastPrompt,
+				reason,
+			} = data;
+
+			// Find the session that needs respawning (match by base session ID)
+			const session = sessionsRef.current.find((s) => switchSessionId.startsWith(s.id));
+			if (!session) {
+				Sentry.captureException(new Error('[AccountSwitch] Session not found for respawn'), {
+					extra: { operation: 'account:switchRespawn', switchSessionId },
+				});
+				return;
+			}
+
+			// Update session with new account info and CLAUDE_CONFIG_DIR
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== session.id) return s;
+					return {
+						...s,
+						accountId: toAccountId,
+						accountName: toAccountName,
+						customEnvVars: {
+							...s.customEnvVars,
+							CLAUDE_CONFIG_DIR: configDir,
+						},
+					};
+				})
+			);
+
+			try {
+				// Get agent config for respawn
+				const agent = await window.maestro.agents.get(session.toolType);
+				if (!agent) {
+					Sentry.captureException(new Error('[AccountSwitch] Agent not found for respawn'), {
+						extra: {
+							operation: 'account:switchRespawn',
+							toolType: session.toolType,
+							sessionId: session.id,
+						},
+					});
+					return;
+				}
+
+				// Get the active tab's agent session ID for --resume
+				const tab = getActiveTab(session);
+				const tabAgentSessionId = tab?.agentSessionId;
+				const commandToUse = agent.path ?? agent.command;
+				const agentArgs = agent.args ?? [];
+
+				// Determine the target session ID (with tab suffix)
+				const targetSessionId = `${session.id}-ai-${tab?.id || 'default'}`;
+
+				// Spawn with --resume and updated env vars
+				await window.maestro.process.spawn({
+					sessionId: targetSessionId,
+					toolType: session.toolType,
+					cwd: session.cwd,
+					command: commandToUse,
+					args: agentArgs,
+					agentSessionId: tabAgentSessionId ?? undefined,
+					sessionCustomPath: session.customPath,
+					sessionCustomArgs: session.customArgs,
+					sessionCustomEnvVars: {
+						...session.customEnvVars,
+						CLAUDE_CONFIG_DIR: configDir,
+					},
+					sessionCustomModel: session.customModel,
+					sessionCustomContextWindow: session.customContextWindow,
+					accountId: toAccountId,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				});
+
+				// Re-send the last prompt after a delay to allow the agent to initialize
+				if (lastPrompt) {
+					setTimeout(() => {
+						window.maestro.process.write(targetSessionId, lastPrompt);
+					}, 2000);
+				}
+
+				notifyToast({
+					type: 'info',
+					title: 'Account Switched',
+					message: `Switched to account ${toAccountName} (${reason})`,
+					duration: 5_000,
+				});
+			} catch (error) {
+				Sentry.captureException(error, {
+					extra: { operation: 'account:switchRespawn', sessionId: session.id, toAccountId },
+				});
+				notifyToast({
+					type: 'error',
+					title: 'Account Switch Failed',
+					message: `Failed to respawn agent after account switch: ${String(error)}`,
+					duration: 0,
+				});
+			}
+		});
+
+		const unsubSwitchFailed = window.maestro.accounts.onSwitchFailed((data) => {
+			notifyToast({
+				type: 'error',
+				title: 'Account Switch Failed',
+				message: `Failed to switch account: ${data.error || 'Unknown error'}`,
+				duration: 0,
+			});
+		});
+
+		const unsubSwitchExecute = window.maestro.accounts.onSwitchExecute(async (data) => {
+			// Auto-switch mode: execute the switch immediately
+			const { sessionId: switchSessionId, fromAccountId, toAccountId, reason } = data as any;
+			try {
+				await window.maestro.accounts.executeSwitch({
+					sessionId: switchSessionId,
+					fromAccountId,
+					toAccountId,
+					reason: reason ?? 'throttled',
+					automatic: true,
+				});
+			} catch (error) {
+				Sentry.captureException(error, {
+					extra: {
+						operation: 'account:autoSwitchExecution',
+						switchSessionId,
+						fromAccountId,
+						toAccountId,
+					},
+				});
+			}
+		});
+
+		return () => {
+			unsubRespawn();
+			unsubSwitchFailed();
+			unsubSwitchExecute();
+		};
+	}, []);
+
+	// Subscribe to account switch prompt events (user confirmation needed)
+	useEffect(() => {
+		const unsubSwitchPrompt = window.maestro.accounts.onSwitchPrompt((data: any) => {
+			setSwitchPromptData({
+				sessionId: data.sessionId,
+				fromAccountId: data.fromAccountId,
+				fromAccountName: data.fromAccountName ?? data.fromAccountId,
+				toAccountId: data.toAccountId,
+				toAccountName: data.toAccountName ?? data.toAccountId,
+				reason: data.reason ?? 'throttled',
+				tokensAtThrottle: data.tokensAtThrottle,
+				usagePercent: data.usagePercent,
+			});
+		});
+
+		const unsubSwitchCompleted = window.maestro.accounts.onSwitchCompleted((data: any) => {
+			notifyToast({
+				type: 'success',
+				title: 'Account Switched',
+				message: `Switched from ${data.fromAccountName ?? data.fromAccountId} to ${data.toAccountName ?? data.toAccountId}`,
+				duration: 5_000,
+			});
+		});
+
+		return () => {
+			unsubSwitchPrompt();
+			unsubSwitchCompleted();
+		};
+	}, []);
+
+	// Subscribe to provider failover suggestion events (Virtuosos provider switching)
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+
+		const cleanup = window.maestro.providers.onFailoverSuggest(async (suggestion) => {
+			// Find the session
+			const session = sessionsRef.current.find((s) => s.id === suggestion.sessionId);
+			if (!session) return;
+
+			// Load provider switch config from settings
+			let providerConfig: { promptBeforeSwitch?: boolean } = { promptBeforeSwitch: true };
+			try {
+				const saved = await window.maestro.settings.get('providerSwitchConfig');
+				if (saved && typeof saved === 'object') {
+					providerConfig = saved as typeof providerConfig;
+				}
+			} catch {
+				// Use default
+			}
+
+			// Show toast notification
+			notifyToast({
+				type: 'warning',
+				title: 'Provider Issues Detected',
+				message: `${getAgentDisplayName(suggestion.currentProvider as ToolType)} had ${suggestion.errorCount} errors. ${
+					providerConfig.promptBeforeSwitch !== false
+						? 'Suggesting switch...'
+						: `Auto-switching to ${getAgentDisplayName(suggestion.suggestedProvider as ToolType)}`
+				}`,
+				duration: 8_000,
+			});
+
+			// Always open SwitchProviderModal for manual confirmation
+			// (auto-switch path will be invoked once handleConfirmProviderSwitch is available)
+			setSwitchProviderSession(session);
+		});
+
+		return cleanup;
+	}, [encoreFeatures.virtuosos]);
 
 	// Keyboard navigation state
 	// Note: selectedSidebarIndex/setSelectedSidebarIndex are destructured from useUIStore() above
@@ -1136,6 +1499,15 @@ function MaestroConsoleInner() {
 		handleSummarizeAndContinue,
 	} = useSummarizeAndContinue(activeSession ?? null);
 
+	const {
+		switchProvider,
+		transferState: _providerSwitchState,
+		progress: _providerSwitchProgress,
+		error: _providerSwitchError,
+		cancelSwitch: _cancelProviderSwitch,
+		reset: resetProviderSwitch,
+	} = useProviderSwitch();
+
 	// Combine custom AI commands with spec-kit and openspec commands for input processing (slash command execution)
 	// This ensures speckit and openspec commands are processed the same way as custom commands
 	const allCustomCommands = useMemo((): CustomAICommand[] => {
@@ -1310,6 +1682,10 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		handleClearAgentError,
 	});
+
+	// Bridge ref for resumeAfterError (used by account recovery effect)
+	const resumeAfterErrorRef = useRef<((sessionId: string) => void) | null>(handleResumeAfterError);
+	resumeAfterErrorRef.current = handleResumeAfterError;
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners
@@ -1683,6 +2059,185 @@ function MaestroConsoleInner() {
 		pushNavigation,
 	});
 
+	// Provider Switch handlers (Virtuosos)
+	const handleSwitchProvider = useCallback((sessionId: string) => {
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (session && session.toolType !== 'terminal') {
+			setSwitchProviderSession(session);
+		}
+	}, []);
+
+	const handleConfirmProviderSwitch = useCallback(
+		async (request: {
+			targetProvider: ToolType;
+			groomContext: boolean;
+			archiveSource: boolean;
+			mergeBackInto?: Session;
+		}) => {
+			if (!switchProviderSession) return;
+
+			const activeTab = getActiveTab(switchProviderSession);
+			if (!activeTab) return;
+
+			const result = await switchProvider({
+				sourceSession: switchProviderSession,
+				sourceTabId: activeTab.id,
+				targetProvider: request.targetProvider,
+				groomContext: request.groomContext,
+				mergeBackInto: request.mergeBackInto,
+			});
+
+			if (result.success && result.newSession) {
+				if (result.mergedBack && request.mergeBackInto) {
+					// Merge-back: replace the archived session with the reactivated one
+					setSessions((prev) =>
+						prev.map((s) => (s.id === request.mergeBackInto!.id ? result.newSession! : s))
+					);
+				} else {
+					// Always-new: add the new session to state
+					setSessions((prev) => [...prev, result.newSession!]);
+				}
+
+				// Mark source as archived if requested
+				if (request.archiveSource) {
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === switchProviderSession.id
+								? {
+										...s,
+										archivedByMigration: true,
+										migratedToSessionId: result.newSessionId,
+									}
+								: s
+						)
+					);
+				}
+
+				// Clear provider error tracking for source session
+				window.maestro.providers.clearSessionErrors(switchProviderSession.id).catch((err) => {
+					Sentry.captureException(err, {
+						extra: {
+							operation: 'provider:clearSessionErrors',
+							sessionId: switchProviderSession.id,
+						},
+					});
+				});
+
+				// Navigate to the new/reactivated session
+				setActiveSessionId(result.newSessionId!);
+
+				// Show success toast
+				const action = result.mergedBack ? 'Merged back to' : 'Switched to';
+				notifyToast({
+					type: 'success',
+					title: 'Provider Switched',
+					message: `${action} ${getAgentDisplayName(request.targetProvider)}`,
+					duration: 5_000,
+				});
+			}
+
+			// Close the modal
+			setSwitchProviderSession(null);
+		},
+		[switchProviderSession, switchProvider, setActiveSessionId]
+	);
+
+	// Unarchive handlers
+	const handleUnarchive = useCallback((sessionId: string) => {
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session || !session.archivedByMigration) return;
+
+		// Check for conflict: another non-archived session with the same name AND toolType
+		const conflicting = sessionsRef.current.find(
+			(s) =>
+				s.id !== sessionId &&
+				s.toolType === session.toolType &&
+				s.name === session.name &&
+				!s.archivedByMigration
+		);
+
+		if (conflicting) {
+			setUnarchiveConflictState({
+				archivedSession: session,
+				conflictingSession: conflicting,
+			});
+		} else {
+			// No conflict — directly unarchive
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+						: s
+				)
+			);
+			notifyToast({
+				type: 'success',
+				title: 'Agent Unarchived',
+				message: `${session.name || 'Agent'} has been restored`,
+				duration: 3_000,
+			});
+		}
+	}, []);
+
+	const handleUnarchiveWithArchiveConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id === archivedSession.id) {
+					return { ...s, archivedByMigration: false, migratedToSessionId: undefined };
+				}
+				if (s.id === conflictingSession.id) {
+					return { ...s, archivedByMigration: true };
+				}
+				return s;
+			})
+		);
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} archived`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState]);
+
+	const handleUnarchiveWithDeleteConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions((prev) =>
+			prev
+				.filter((s) => s.id !== conflictingSession.id)
+				.map((s) =>
+					s.id === archivedSession.id
+						? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+						: s
+				)
+		);
+
+		// Kill process for deleted session if running
+		window.maestro.process.kill(conflictingSession.id).catch((err) => {
+			Sentry.captureException(err, {
+				extra: {
+					operation: 'account:killConflictingOnUnarchive',
+					sessionId: conflictingSession.id,
+				},
+			});
+		});
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} removed`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState]);
 	// NOTE: Theme CSS variables and scrollbar fade animations are now handled by useThemeStyles hook
 	// NOTE: Main keyboard handler is now provided by useMainKeyboardHandler hook
 	// NOTE: Sync selectedSidebarIndex with activeSessionId is now handled by useKeyboardNavigation hook
@@ -2625,6 +3180,8 @@ function MaestroConsoleInner() {
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
 		handleConfigureCue,
+		handleSwitchProvider: encoreFeatures.virtuosos ? handleSwitchProvider : undefined,
+		handleUnarchive: encoreFeatures.virtuosos ? handleUnarchive : undefined,
 		openWizardModal,
 		handleStartTour,
 
@@ -2975,6 +3532,7 @@ function MaestroConsoleInner() {
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
 					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
+					onOpenVirtuosos={encoreFeatures.virtuosos ? () => setVirtuososOpen(true) : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
@@ -3332,6 +3890,72 @@ function MaestroConsoleInner() {
 						onConfirm={() => performDeleteSession(deleteAgentSession, false)}
 						onConfirmAndErase={() => performDeleteSession(deleteAgentSession, true)}
 						onClose={handleCloseDeleteAgentModal}
+					/>
+				)}
+
+				{/* Unarchive Conflict Modal */}
+				{unarchiveConflictState && (
+					<UnarchiveConflictModal
+						theme={theme}
+						archivedSession={unarchiveConflictState.archivedSession}
+						conflictingSession={unarchiveConflictState.conflictingSession}
+						onArchiveConflicting={handleUnarchiveWithArchiveConflict}
+						onDeleteConflicting={handleUnarchiveWithDeleteConflict}
+						onClose={() => setUnarchiveConflictState(null)}
+					/>
+				)}
+
+				{/* Account Switch Confirmation Modal */}
+				{encoreFeatures.virtuosos && switchPromptData && (
+					<AccountSwitchModal
+						theme={theme}
+						isOpen={true}
+						onClose={() => setSwitchPromptData(null)}
+						switchData={switchPromptData}
+						onConfirmSwitch={async () => {
+							await window.maestro.accounts.executeSwitch({
+								sessionId: switchPromptData.sessionId,
+								fromAccountId: switchPromptData.fromAccountId,
+								toAccountId: switchPromptData.toAccountId,
+								reason: switchPromptData.reason,
+								automatic: false,
+							});
+							setSwitchPromptData(null);
+						}}
+						onViewDashboard={() => {
+							setSwitchPromptData(null);
+							setVirtuososOpen(true);
+						}}
+					/>
+				)}
+
+				{/* Virtuosos Modal */}
+				{encoreFeatures.virtuosos && (
+					<VirtuososModal
+						isOpen={virtuososOpen}
+						onClose={() => setVirtuososOpen(false)}
+						theme={theme}
+						sessions={sessions}
+						onSelectSession={(sessionId) => {
+							setVirtuososOpen(false);
+							setActiveSessionId(sessionId);
+						}}
+					/>
+				)}
+
+				{/* Provider Switch Modal */}
+				{encoreFeatures.virtuosos && switchProviderSession && (
+					<SwitchProviderModal
+						theme={theme}
+						isOpen={true}
+						onClose={() => {
+							setSwitchProviderSession(null);
+							resetProviderSwitch();
+						}}
+						sourceSession={switchProviderSession}
+						sourceTabId={getActiveTab(switchProviderSession)?.id || ''}
+						sessions={sessions}
+						onConfirmSwitch={handleConfirmProviderSwitch}
 					/>
 				)}
 

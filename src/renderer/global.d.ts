@@ -36,6 +36,8 @@ interface ProcessConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	sessionCustomModel?: string;
 	sessionCustomContextWindow?: number;
+	// Account multiplexing
+	accountId?: string;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -232,6 +234,8 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Account multiplexing
+				accountId?: string;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
@@ -2180,6 +2184,11 @@ interface MaestroAPI {
 			projectPath?: string;
 			tabId?: string;
 			isRemote?: boolean;
+			inputTokens?: number;
+			outputTokens?: number;
+			cacheReadTokens?: number;
+			cacheCreationTokens?: number;
+			costUsd?: number;
 		}) => Promise<string>;
 		// Start an Auto Run session (returns session ID)
 		startAutoRun: (session: {
@@ -2222,6 +2231,12 @@ interface MaestroAPI {
 				duration: number;
 				projectPath?: string;
 				tabId?: string;
+				isRemote?: boolean;
+				inputTokens?: number;
+				outputTokens?: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+				costUsd?: number;
 			}>
 		>;
 		// Get Auto Run sessions within a time range
@@ -2696,6 +2711,219 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// Account Multiplexing API
+	accounts: {
+		list: () => Promise<unknown[]>;
+		get: (id: string) => Promise<unknown>;
+		add: (params: {
+			name: string;
+			email: string;
+			configDir: string;
+			agentType?: string;
+		}) => Promise<unknown>;
+		update: (id: string, updates: Record<string, unknown>) => Promise<unknown>;
+		remove: (id: string) => Promise<unknown>;
+		setDefault: (id: string) => Promise<unknown>;
+		assign: (sessionId: string, accountId: string) => Promise<unknown>;
+		getAssignment: (sessionId: string) => Promise<unknown>;
+		getAllAssignments: () => Promise<unknown[]>;
+		getUsage: (accountId: string, windowStart: number, windowEnd: number) => Promise<unknown>;
+		getAllUsage: () => Promise<unknown>;
+		getThrottleEvents: (accountId?: string, since?: number) => Promise<unknown[]>;
+		getDailyUsage: (accountId: string, days?: number) => Promise<unknown[]>;
+		getMonthlyUsage: (accountId: string, months?: number) => Promise<unknown[]>;
+		getWindowHistory: (accountId: string, windowCount?: number) => Promise<unknown[]>;
+		getSwitchConfig: () => Promise<unknown>;
+		updateSwitchConfig: (updates: Record<string, unknown>) => Promise<unknown>;
+		getDefault: () => Promise<unknown>;
+		selectNext: (excludeIds?: string[]) => Promise<unknown>;
+		validateBaseDir: () => Promise<{ valid: boolean; baseDir: string; errors: string[] }>;
+		discoverExisting: () => Promise<
+			Array<{
+				configDir: string;
+				name: string;
+				email: string | null;
+				hasAuth: boolean;
+				agentType: string;
+			}>
+		>;
+		createDirectory: (
+			name: string
+		) => Promise<{ success: boolean; configDir: string; error?: string }>;
+		validateSymlinks: (
+			configDir: string
+		) => Promise<{ valid: boolean; broken: string[]; missing: string[] }>;
+		repairSymlinks: (configDir: string) => Promise<{ repaired: string[]; errors: string[] }>;
+		readEmail: (configDir: string) => Promise<string | null>;
+		getLoginCommand: (configDir: string) => Promise<string | null>;
+		removeDirectory: (configDir: string) => Promise<{ success: boolean; error?: string }>;
+		validateRemoteDir: (params: {
+			sshConfig: { host: string; user?: string; port?: number };
+			configDir: string;
+		}) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
+		syncCredentials: (configDir: string) => Promise<{ success: boolean; error?: string }>;
+		onUsageUpdate: (
+			handler: (data: {
+				accountId: string;
+				usagePercent: number | null;
+				totalTokens: number;
+				inputTokens: number;
+				outputTokens: number;
+				cacheReadTokens: number;
+				cacheCreationTokens: number;
+				limitTokens: number;
+				windowStart: number;
+				windowEnd: number;
+				queryCount: number;
+				costUsd: number;
+			}) => void
+		) => () => void;
+		onLimitWarning: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				usagePercent: number;
+				sessionId: string;
+			}) => void
+		) => () => void;
+		onLimitReached: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				usagePercent: number;
+				sessionId: string;
+			}) => void
+		) => () => void;
+		onThrottled: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				sessionId: string;
+				reason: string;
+				message: string;
+				tokensAtThrottle: number;
+				autoSwitchAvailable: boolean;
+				noAlternatives?: boolean;
+			}) => void
+		) => () => void;
+		onSwitchPrompt: (
+			handler: (data: {
+				sessionId: string;
+				fromAccountId: string;
+				fromAccountName: string;
+				toAccountId: string;
+				toAccountName: string;
+				reason: string;
+				tokensAtThrottle: number;
+			}) => void
+		) => () => void;
+		onSwitchExecute: (
+			handler: (data: {
+				sessionId: string;
+				fromAccountId: string;
+				fromAccountName: string;
+				toAccountId: string;
+				toAccountName: string;
+				reason: string;
+				automatic: boolean;
+			}) => void
+		) => () => void;
+		onStatusChanged: (
+			handler: (data: {
+				accountId: string;
+				accountName: string;
+				oldStatus: string;
+				newStatus: string;
+				recoveredBy?: string;
+			}) => void
+		) => () => void;
+		onAssigned: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		reconcileSessions: (activeSessionIds: string[]) => Promise<{
+			success: boolean;
+			removed: number;
+			corrections: Array<{
+				sessionId: string;
+				accountId: string | null;
+				accountName: string | null;
+				configDir: string | null;
+				status: 'valid' | 'removed' | 'inactive';
+			}>;
+			error?: string;
+		}>;
+		cleanupSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+		executeSwitch: (params: {
+			sessionId: string;
+			fromAccountId: string;
+			toAccountId: string;
+			reason: string;
+			automatic: boolean;
+		}) => Promise<{ success: boolean; event?: unknown; error?: string }>;
+		onSwitchStarted: (
+			handler: (data: {
+				sessionId: string;
+				fromAccountId: string;
+				toAccountId: string;
+				toAccountName: string;
+			}) => void
+		) => () => void;
+		onSwitchRespawn: (
+			handler: (data: {
+				sessionId: string;
+				toAccountId: string;
+				toAccountName: string;
+				configDir: string;
+				lastPrompt: string | null;
+				reason: string;
+			}) => void
+		) => () => void;
+		onSwitchCompleted: (
+			handler: (data: {
+				sessionId: string;
+				fromAccountId: string;
+				toAccountId: string;
+				reason: string;
+				automatic: boolean;
+				timestamp: number;
+				fromAccountName: string;
+				toAccountName: string;
+			}) => void
+		) => () => void;
+		onSwitchFailed: (
+			handler: (data: {
+				sessionId: string;
+				fromAccountId: string;
+				toAccountId: string;
+				error: string;
+			}) => void
+		) => () => void;
+		triggerAuthRecovery: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+		onAuthRecoveryStarted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		onAuthRecoveryCompleted: (
+			handler: (data: { sessionId: string; accountId: string; accountName: string }) => void
+		) => () => void;
+		onAuthRecoveryFailed: (
+			handler: (data: {
+				sessionId: string;
+				accountId: string;
+				accountName?: string;
+				error: string;
+			}) => void
+		) => () => void;
+		onRecoveryAvailable: (
+			handler: (data: {
+				recoveredAccountIds: string[];
+				recoveredCount: number;
+				stillThrottledCount: number;
+				totalAccounts: number;
+			}) => void
+		) => () => void;
+		checkRecovery: () => Promise<{ recovered: string[] }>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
@@ -2907,6 +3135,45 @@ interface MaestroAPI {
 				durationMs: number;
 				startedAt: string;
 				endedAt: string;
+			}) => void
+		) => () => void;
+	};
+
+	// Provider Error Tracking API (error stats, failover suggestions)
+	providers: {
+		getErrorStats: (toolType: string) => Promise<{
+			toolType: string;
+			activeErrorCount: number;
+			totalErrorsInWindow: number;
+			lastErrorAt: number | null;
+			sessionsWithErrors: number;
+		} | null>;
+		getAllErrorStats: () => Promise<
+			Record<
+				string,
+				{
+					toolType: string;
+					activeErrorCount: number;
+					totalErrorsInWindow: number;
+					lastErrorAt: number | null;
+					sessionsWithErrors: number;
+				}
+			>
+		>;
+		clearSessionErrors: (sessionId: string) => Promise<void>;
+		onFailoverSuggest: (
+			handler: (data: {
+				sessionId: string;
+				sessionName: string;
+				currentProvider: string;
+				suggestedProvider: string;
+				errorCount: number;
+				windowMs: number;
+				recentErrors: Array<{
+					type: string;
+					message: string;
+					timestamp: number;
+				}>;
 			}) => void
 		) => () => void;
 	};

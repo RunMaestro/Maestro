@@ -17,6 +17,7 @@ import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
 import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
+import { setupAccountUsageListener } from './account-usage-listener';
 
 // Re-export types for consumers
 export type { ProcessListenerDependencies, ParticipantInfo } from './types';
@@ -44,12 +45,41 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener
-	setupErrorListener(processManager, deps);
+	// Agent error listener (with optional account throttle/auth recovery handling + provider failover)
+	const providerErrorTracker = deps.getProviderErrorTracker?.() ?? undefined;
+	setupErrorListener(
+		processManager,
+		deps,
+		deps.getAccountRegistry
+			? {
+					getAccountRegistry: deps.getAccountRegistry,
+					getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+					getAuthRecovery: deps.getAuthRecovery ?? (() => null),
+				}
+			: undefined,
+		providerErrorTracker
+	);
+
+	// Reset provider error tracking on successful query completion
+	if (providerErrorTracker) {
+		processManager.on('query-complete', (sessionId: string) => {
+			providerErrorTracker.clearSession(sessionId);
+		});
+	}
 
 	// Stats/query-complete listener
 	setupStatsListener(processManager, deps);
 
 	// Exit listener (with group chat routing, recovery, and synthesis)
 	setupExitListener(processManager, deps);
+
+	// Account usage listener (per-account token aggregation for limit tracking)
+	if (deps.getAccountRegistry) {
+		setupAccountUsageListener(processManager, {
+			getAccountRegistry: deps.getAccountRegistry,
+			getStatsDB: deps.getStatsDB,
+			safeSend: deps.safeSend,
+			logger: deps.logger,
+		});
+	}
 }

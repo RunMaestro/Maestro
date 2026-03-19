@@ -25,6 +25,10 @@ import {
 	CREATE_SESSION_LIFECYCLE_SQL,
 	CREATE_SESSION_LIFECYCLE_INDEXES_SQL,
 	CREATE_COMPOUND_INDEXES_SQL,
+	CREATE_ACCOUNT_USAGE_WINDOWS_SQL,
+	CREATE_ACCOUNT_USAGE_WINDOWS_INDEXES_SQL,
+	CREATE_ACCOUNT_THROTTLE_EVENTS_SQL,
+	CREATE_ACCOUNT_THROTTLE_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -59,6 +63,11 @@ export function getMigrations(): Migration[] {
 			version: 4,
 			description: 'Add compound indexes on query_events for dashboard query performance',
 			up: (db) => migrateV4(db),
+		},
+		{
+			version: 5,
+			description: 'Add account usage tracking columns and tables',
+			up: (db) => migrateV5(db),
 		},
 	];
 }
@@ -246,4 +255,31 @@ function migrateV4(db: Database.Database): void {
 	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
 
 	logger.debug('Added compound indexes on query_events', LOG_CONTEXT);
+}
+
+/**
+ * Migration v5: Add account usage tracking columns and tables
+ *
+ * - Adds account_id and token/cost columns to query_events
+ * - Creates account_usage_windows table for windowed aggregation
+ * - Creates account_throttle_events table for throttle history
+ */
+function migrateV5(db: Database.Database): void {
+	// Add account_id and token/cost columns to query_events
+	db.prepare('ALTER TABLE query_events ADD COLUMN account_id TEXT DEFAULT NULL').run();
+	db.prepare('ALTER TABLE query_events ADD COLUMN input_tokens INTEGER DEFAULT 0').run();
+	db.prepare('ALTER TABLE query_events ADD COLUMN output_tokens INTEGER DEFAULT 0').run();
+	db.prepare('ALTER TABLE query_events ADD COLUMN cache_read_tokens INTEGER DEFAULT 0').run();
+	db.prepare('ALTER TABLE query_events ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0').run();
+	db.prepare('ALTER TABLE query_events ADD COLUMN cost_usd REAL DEFAULT 0').run();
+
+	// Create account_usage_windows table
+	db.prepare(CREATE_ACCOUNT_USAGE_WINDOWS_SQL).run();
+	runStatements(db, CREATE_ACCOUNT_USAGE_WINDOWS_INDEXES_SQL);
+
+	// Create account_throttle_events table
+	db.prepare(CREATE_ACCOUNT_THROTTLE_EVENTS_SQL).run();
+	runStatements(db, CREATE_ACCOUNT_THROTTLE_EVENTS_INDEXES_SQL);
+
+	logger.debug('Added account usage tracking columns and tables', LOG_CONTEXT);
 }

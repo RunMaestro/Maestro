@@ -19,7 +19,7 @@
  */
 
 import { useMemo, useCallback } from 'react';
-import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi, Terminal } from 'lucide-react';
+import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi } from 'lucide-react';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 
@@ -56,24 +56,21 @@ export interface UseAgentErrorRecoveryResult {
  */
 function getRecoveryActionsForError(
 	error: AgentError,
-	agentId: ToolType,
+	_agentId: ToolType,
 	options: UseAgentErrorRecoveryOptions
 ): RecoveryAction[] {
 	const actions: RecoveryAction[] = [];
 
 	switch (error.type) {
 		case 'auth_expired':
-			// Authentication error - offer to re-authenticate or start new session
+			// Authentication error - trigger automatic re-login
 			if (options.onAuthenticate) {
-				const isClaude = agentId === 'claude-code';
 				actions.push({
 					id: 'authenticate',
-					label: isClaude ? 'Use Terminal' : 'Re-authenticate',
-					description: isClaude
-						? 'Run "claude login" in terminal'
-						: 'Log in again to restore access',
+					label: 'Re-authenticate',
+					description: 'Opens browser to re-authorize access',
 					primary: true,
-					icon: isClaude ? <Terminal className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />,
+					icon: <KeyRound className="w-4 h-4" />,
 					onClick: options.onAuthenticate,
 				});
 			}

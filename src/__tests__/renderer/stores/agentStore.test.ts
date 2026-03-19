@@ -92,6 +92,7 @@ const mockInterrupt = vi.fn().mockResolvedValue(true);
 const mockDetect = vi.fn().mockResolvedValue([]);
 const mockGetAgent = vi.fn().mockResolvedValue(null);
 const mockClearError = vi.fn().mockResolvedValue(undefined);
+const mockTriggerAuthRecovery = vi.fn().mockResolvedValue({ success: true });
 
 (window as any).maestro = {
 	process: {
@@ -105,6 +106,9 @@ const mockClearError = vi.fn().mockResolvedValue(undefined);
 	},
 	agentError: {
 		clearError: mockClearError,
+	},
+	accounts: {
+		triggerAuthRecovery: mockTriggerAuthRecovery,
 	},
 };
 
@@ -743,7 +747,7 @@ describe('agentStore', () => {
 	});
 
 	describe('authenticateAfterError', () => {
-		it('clears error, sets active session, and switches to terminal mode', () => {
+		it('clears error and triggers auth recovery via IPC', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -757,22 +761,22 @@ describe('agentStore', () => {
 
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
-			expect(updated.inputMode).toBe('terminal');
 			expect(updated.agentError).toBeUndefined();
-			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
+			expect(mockTriggerAuthRecovery).toHaveBeenCalledWith('session-1');
 		});
 
 		it('does nothing if session not found', () => {
 			useAgentStore.getState().authenticateAfterError('nonexistent');
 			// No crash, no IPC calls
 			expect(mockClearError).not.toHaveBeenCalled();
+			expect(mockTriggerAuthRecovery).not.toHaveBeenCalled();
 		});
 
-		it('is idempotent when session is already in terminal mode', () => {
+		it('is idempotent on repeated calls', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
-				inputMode: 'terminal',
+				inputMode: 'ai',
 			});
 
 			useSessionStore.getState().setSessions([session]);
@@ -781,10 +785,10 @@ describe('agentStore', () => {
 
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.state).toBe('idle');
-			expect(updated.inputMode).toBe('terminal');
+			expect(mockTriggerAuthRecovery).toHaveBeenCalledWith('session-1');
 		});
 
-		it('switches active session even if it was already active', () => {
+		it('triggers recovery regardless of current input mode', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				state: 'error',
@@ -796,8 +800,7 @@ describe('agentStore', () => {
 
 			useAgentStore.getState().authenticateAfterError('session-1');
 
-			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
-			expect(useSessionStore.getState().sessions[0].inputMode).toBe('terminal');
+			expect(mockTriggerAuthRecovery).toHaveBeenCalledWith('session-1');
 		});
 
 		it('calls IPC clearError via delegation', () => {
@@ -1105,10 +1108,9 @@ describe('agentStore', () => {
 
 			useAgentStore.getState().authenticateAfterError('session-2');
 
-			// Active session switched to session-2
-			expect(useSessionStore.getState().activeSessionId).toBe('session-2');
-			// session-2 is now in terminal mode
-			expect(useSessionStore.getState().sessions[1].inputMode).toBe('terminal');
+			// session-2 error cleared, auth recovery triggered
+			expect(useSessionStore.getState().sessions[1].state).toBe('idle');
+			expect(mockTriggerAuthRecovery).toHaveBeenCalledWith('session-2');
 		});
 
 		it('double clear is idempotent', () => {
@@ -1152,7 +1154,7 @@ describe('agentStore', () => {
 			expect(updated[0].state).toBe('idle');
 			expect(updated[0].agentError).toBeUndefined();
 			expect(updated[1].state).toBe('idle');
-			expect(updated[1].inputMode).toBe('terminal');
+			expect(mockTriggerAuthRecovery).toHaveBeenCalledWith('session-2');
 		});
 
 		it('recovery after restart then new session', async () => {

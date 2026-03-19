@@ -1,5 +1,14 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Zap } from 'lucide-react';
+import {
+	Activity,
+	GitBranch,
+	Bot,
+	Bookmark,
+	AlertCircle,
+	Server,
+	Zap,
+	RefreshCw,
+} from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -37,6 +46,7 @@ export interface SessionItemProps {
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
+	accountUsagePercent?: number | null; // Usage % for assigned account (passed from parent to avoid N hook instances)
 
 	// Handlers
 	onSelect: () => void;
@@ -79,6 +89,7 @@ export const SessionItem = memo(function SessionItem({
 	jumpNumber,
 	cueSubscriptionCount,
 	cueActiveRun,
+	accountUsagePercent,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -123,6 +134,7 @@ export const SessionItem = memo(function SessionItem({
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				opacity: session.archivedByMigration ? 0.4 : undefined,
 			}}
 		>
 			{/* Left side: Session name and metadata */}
@@ -188,6 +200,22 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						{/* Account assignment badge */}
+						{(session.accountName || session.accountId) && (
+							<span
+								className="text-[9px] px-1 py-0.5 rounded font-bold"
+								style={{
+									backgroundColor: `${theme.colors.accent}25`,
+									color: theme.colors.accentText || theme.colors.accent,
+								}}
+								title={`Virtuoso: ${session.accountName || session.accountId}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
+							>
+								{(session.accountName || session.accountId || '')
+									.split('@')[0]
+									?.slice(0, 10)
+									?.toUpperCase() || 'ACC'}
+							</span>
+						)}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}
 						{variant === 'bookmark' && group && (
 							<span
@@ -197,6 +225,26 @@ export const SessionItem = memo(function SessionItem({
 								{group.name}
 							</span>
 						)}
+					</div>
+				)}
+
+				{/* Migration archive indicator */}
+				{session.archivedByMigration && (
+					<div
+						className="text-[9px] truncate italic mt-0.5"
+						style={{ color: theme.colors.textDim }}
+					>
+						Provider switched — archived
+					</div>
+				)}
+				{/* Merge-back refresh indicator (session was reactivated with new context) */}
+				{!session.archivedByMigration && session.lastMergeBackAt && (
+					<div
+						className="flex items-center gap-1 text-[9px] mt-0.5"
+						style={{ color: theme.colors.accent }}
+					>
+						<RefreshCw className="w-2.5 h-2.5" />
+						<span>Context refreshed</span>
 					</div>
 				)}
 			</div>
@@ -328,30 +376,37 @@ export const SessionItem = memo(function SessionItem({
 				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
 				<div className="relative ml-auto">
 					<div
-						className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
+						className={`w-2 h-2 rounded-full ${session.archivedByMigration ? '' : session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
 						style={
-							session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+							session.archivedByMigration
 								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-								: {
-										backgroundColor: isInBatch
-											? theme.colors.warning
-											: getStatusColor(session.state, theme),
-									}
+								: session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+									? {
+											border: `1.5px solid ${theme.colors.textDim}`,
+											backgroundColor: 'transparent',
+										}
+									: {
+											backgroundColor: isInBatch
+												? theme.colors.warning
+												: getStatusColor(session.state, theme),
+										}
 						}
 						title={
-							session.toolType === 'claude-code' && !session.agentSessionId
-								? 'No active Claude session'
-								: session.state === 'idle'
-									? 'Ready and waiting'
-									: session.state === 'busy'
-										? session.cliActivity
-											? `CLI: Running playbook "${session.cliActivity.playbookName}"`
-											: 'Agent is thinking'
-										: session.state === 'connecting'
-											? 'Attempting to establish connection'
-											: session.state === 'error'
-												? 'No connection with agent'
-												: 'Waiting for input'
+							session.archivedByMigration
+								? 'Archived — provider switched'
+								: session.toolType === 'claude-code' && !session.agentSessionId
+									? 'No active Claude session'
+									: session.state === 'idle'
+										? 'Ready and waiting'
+										: session.state === 'busy'
+											? session.cliActivity
+												? `CLI: Running playbook "${session.cliActivity.playbookName}"`
+												: 'Agent is thinking'
+											: session.state === 'connecting'
+												? 'Attempting to establish connection'
+												: session.state === 'error'
+													? 'No connection with agent'
+													: 'Waiting for input'
 						}
 					/>
 					{/* Unread Notification Badge */}

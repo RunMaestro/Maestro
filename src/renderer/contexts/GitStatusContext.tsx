@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useMemo, ReactNode } from 'react';
 import {
 	useGitStatusPolling,
 	type GitStatusData,
@@ -72,13 +72,31 @@ export interface GitStatusContextValue {
 // CONTEXTS
 // ============================================================================
 
-// Create focused contexts with null defaults
-const GitBranchContext = createContext<GitBranchContextValue | null>(null);
-const GitFileStatusContext = createContext<GitFileStatusContextValue | null>(null);
-const GitDetailContext = createContext<GitDetailContextValue | null>(null);
-
-// Legacy combined context for backwards compatibility
-const GitStatusContext = createContext<GitStatusContextValue | null>(null);
+// Cache contexts on globalThis to survive Vite HMR module reloads.
+const _gitGlobal = globalThis as {
+	__MAESTRO_GIT_BRANCH_CTX__?: React.Context<GitBranchContextValue | null>;
+	__MAESTRO_GIT_FILE_STATUS_CTX__?: React.Context<GitFileStatusContextValue | null>;
+	__MAESTRO_GIT_DETAIL_CTX__?: React.Context<GitDetailContextValue | null>;
+	__MAESTRO_GIT_STATUS_CTX__?: React.Context<GitStatusContextValue | null>;
+};
+if (!_gitGlobal.__MAESTRO_GIT_BRANCH_CTX__) {
+	_gitGlobal.__MAESTRO_GIT_BRANCH_CTX__ = createContext<GitBranchContextValue | null>(null);
+}
+if (!_gitGlobal.__MAESTRO_GIT_FILE_STATUS_CTX__) {
+	_gitGlobal.__MAESTRO_GIT_FILE_STATUS_CTX__ = createContext<GitFileStatusContextValue | null>(
+		null
+	);
+}
+if (!_gitGlobal.__MAESTRO_GIT_DETAIL_CTX__) {
+	_gitGlobal.__MAESTRO_GIT_DETAIL_CTX__ = createContext<GitDetailContextValue | null>(null);
+}
+if (!_gitGlobal.__MAESTRO_GIT_STATUS_CTX__) {
+	_gitGlobal.__MAESTRO_GIT_STATUS_CTX__ = createContext<GitStatusContextValue | null>(null);
+}
+const GitBranchContext = _gitGlobal.__MAESTRO_GIT_BRANCH_CTX__;
+const GitFileStatusContext = _gitGlobal.__MAESTRO_GIT_FILE_STATUS_CTX__;
+const GitDetailContext = _gitGlobal.__MAESTRO_GIT_DETAIL_CTX__;
+const GitStatusContext = _gitGlobal.__MAESTRO_GIT_STATUS_CTX__;
 
 // ============================================================================
 // PROVIDER

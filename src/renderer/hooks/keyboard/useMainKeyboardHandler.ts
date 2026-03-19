@@ -618,7 +618,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.setSessions((prev: Session[]) =>
 							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? newSession : s))
 						);
-						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
 						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 						trackShortcut('newTab');

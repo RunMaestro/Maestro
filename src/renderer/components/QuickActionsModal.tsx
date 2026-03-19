@@ -124,6 +124,8 @@ interface QuickActionsModalProps {
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
 	onConfigureCue?: (session: Session) => void;
+	// Virtuosos
+	onOpenVirtuosos?: () => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -214,6 +216,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
 		onConfigureCue,
+		onOpenVirtuosos,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 	} = props;
@@ -1092,6 +1095,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'Open YAML editor for event-driven automation',
 						action: () => {
 							onConfigureCue(activeSession);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Virtuosos - multi-account multiplexing dashboard
+		...(onOpenVirtuosos
+			? [
+					{
+						id: 'virtuosos',
+						label: 'Virtuosos',
+						shortcut: shortcuts.virtuosos,
+						subtext: 'Multi-account multiplexing and provider failover',
+						action: () => {
+							onOpenVirtuosos();
 							setQuickActionOpen(false);
 						},
 					},

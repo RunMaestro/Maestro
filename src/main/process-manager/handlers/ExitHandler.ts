@@ -214,6 +214,10 @@ export class ExitHandler {
 				duration,
 				projectPath: managedProcess.projectPath,
 				tabId: managedProcess.tabId,
+				inputTokens: managedProcess.lastUsageTotals?.inputTokens,
+				outputTokens: managedProcess.lastUsageTotals?.outputTokens,
+				cacheReadTokens: managedProcess.lastUsageTotals?.cacheReadInputTokens,
+				cacheCreationTokens: managedProcess.lastUsageTotals?.cacheCreationInputTokens,
 			});
 			logger.debug('[ProcessManager] Query complete event emitted', 'ProcessManager', {
 				sessionId,

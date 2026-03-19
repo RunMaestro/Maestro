@@ -1797,6 +1797,24 @@ export interface CreateMergedSessionOptions {
 	saveToHistory?: boolean;
 	/** Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent) */
 	showThinking?: ThinkingMode;
+
+	// --- Identity carry-over (provider switching) ---
+	/** Nudge message from source session */
+	nudgeMessage?: string;
+	/** Whether the session is bookmarked */
+	bookmarked?: boolean;
+	/** SSH remote configuration from source session */
+	sessionSshRemoteConfig?: Session['sessionSshRemoteConfig'];
+	/** Auto Run folder path override (defaults to standard path if not provided) */
+	autoRunFolderPath?: string;
+
+	// --- Provenance (provider switching) ---
+	/** ID of the session this was migrated from */
+	migratedFromSessionId?: string;
+	/** Timestamp of the migration */
+	migratedAt?: number;
+	/** Migration generation counter (0 = original, increments) */
+	migrationGeneration?: number;
 }
 
 /**
@@ -1920,8 +1938,24 @@ export function createMergedSession(
 			{ type: 'terminal' as const, id: initialMergeTerminalTab.id },
 		],
 		unifiedClosedTabHistory: [],
-		// Default Auto Run folder path (user can change later)
-		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
+		// Default Auto Run folder path (user can change later, provider switch can override)
+		autoRunFolderPath: options.autoRunFolderPath ?? getAutoRunFolderPath(projectRoot),
+
+		// Identity carry-over (provider switching)
+		...(options.nudgeMessage != null && { nudgeMessage: options.nudgeMessage }),
+		...(options.bookmarked != null && { bookmarked: options.bookmarked }),
+		...(options.sessionSshRemoteConfig != null && {
+			sessionSshRemoteConfig: options.sessionSshRemoteConfig,
+		}),
+
+		// Provenance (provider switching)
+		...(options.migratedFromSessionId != null && {
+			migratedFromSessionId: options.migratedFromSessionId,
+		}),
+		...(options.migratedAt != null && { migratedAt: options.migratedAt }),
+		...(options.migrationGeneration != null && {
+			migrationGeneration: options.migrationGeneration,
+		}),
 	};
 
 	return { session, tabId };

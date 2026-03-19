@@ -281,7 +281,8 @@ export class ContextGroomingService {
 			const groomedText = await window.maestro.context.groomContext(
 				targetProjectRoot,
 				request.targetAgent,
-				prompt
+				prompt,
+				request.accountId ? { accountId: request.accountId } : undefined
 			);
 
 			onProgress({

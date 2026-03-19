@@ -16,6 +16,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
 import type { AgentDetector } from '../agents';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -129,6 +131,10 @@ export interface GroomContextOptions {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Agent-level config values (from agent config store) for override resolution */
 	agentConfigValues?: Record<string, any>;
+	/** Account registry for multiplexing (optional) */
+	accountRegistry?: AccountRegistry;
+	/** Account ID to inherit from parent session (optional) */
+	accountId?: string;
 }
 
 /**
@@ -171,6 +177,8 @@ export async function groomContext(
 		sessionCustomArgs,
 		sessionCustomEnvVars,
 		agentConfigValues,
+		accountRegistry: optAccountRegistry,
+		accountId: optAccountId,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -211,7 +219,6 @@ export async function groomContext(
 		sessionCustomEnvVars,
 	});
 	const resolvedArgs = configResolution.args;
-	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
 	const resolvedCommand = sessionCustomPath || agent.command;
 
 	// Create a promise that collects the response
@@ -329,6 +336,22 @@ export async function groomContext(
 		processManager.on('exit', onExit);
 		processManager.on('agent-error', onError);
 
+		// Inject CLAUDE_CONFIG_DIR for account multiplexing (grooming inherits parent account)
+		let effectiveEnvVars = sessionCustomEnvVars;
+		if (optAccountRegistry) {
+			const envToInject: Record<string, string> = effectiveEnvVars ? { ...effectiveEnvVars } : {};
+			const assignedId = injectAccountEnv(
+				groomerSessionId,
+				agentType,
+				envToInject,
+				optAccountRegistry,
+				optAccountId
+			);
+			if (assignedId) {
+				effectiveEnvVars = envToInject;
+			}
+		}
+
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
@@ -341,8 +364,7 @@ export async function groomContext(
 			noPromptSeparator: agent.noPromptSeparator,
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
-			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
-			customEnvVars: resolvedEnvVars,
+			customEnvVars: effectiveEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

@@ -70,6 +70,8 @@ interface RunPlaybookOptions {
 	debug?: boolean;
 	verbose?: boolean;
 	wait?: boolean;
+	account?: string;
+	accountRotation?: boolean;
 }
 
 /**

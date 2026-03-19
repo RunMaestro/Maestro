@@ -6,6 +6,7 @@
 
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
+import { REGEX_SESSION_SUFFIX } from '../constants';
 
 /**
  * Sets up the exit listener for process termination.
@@ -436,7 +437,7 @@ export function setupExitListener(
 		const webServer = getWebServer();
 		if (webServer) {
 			// Extract base session ID from formats: {id}-ai-{tabId}, {id}-terminal, {id}-batch-{timestamp}, {id}-synopsis-{timestamp}
-			const baseSessionId = sessionId.replace(/-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/, '');
+			const baseSessionId = sessionId.replace(REGEX_SESSION_SUFFIX, '');
 			webServer.broadcastToSessionClients(baseSessionId, {
 				type: 'session_exit',
 				sessionId: baseSessionId,

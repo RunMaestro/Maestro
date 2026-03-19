@@ -29,6 +29,12 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Account switch confirmation modal - triggered by throttle/limit events */
+	ACCOUNT_SWITCH: 1005,
+
+	/** Provider switch modal - Virtuosos vertical swapping between agent types */
+	PROVIDER_SWITCH: 1003,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
@@ -217,6 +223,9 @@ export const MODAL_PRIORITIES = {
 
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
+
+	/** Virtuosos (account management) modal */
+	VIRTUOSOS: 455,
 
 	/** Settings modal */
 	SETTINGS: 450,

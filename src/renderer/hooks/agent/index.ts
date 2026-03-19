@@ -84,6 +84,14 @@ export type {
 	UseSendToAgentWithSessionsResult,
 } from './useSendToAgent';
 
+// Provider switching (Virtuosos vertical swapping)
+export { useProviderSwitch } from './useProviderSwitch';
+export type {
+	ProviderSwitchRequest,
+	ProviderSwitchResult,
+	UseProviderSwitchResult,
+} from './useProviderSwitch';
+
 // Summarize and continue (context compaction)
 export { useSummarizeAndContinue } from './useSummarizeAndContinue';
 export type {

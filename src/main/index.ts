@@ -57,12 +57,22 @@ import {
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCueHandlers,
+	registerProviderHandlers,
 	registerWakatimeHandlers,
+	registerAccountHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
 import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import { AccountRegistry } from './accounts/account-registry';
+import { AccountThrottleHandler } from './accounts/account-throttle-handler';
+import { AccountAuthRecovery } from './accounts/account-auth-recovery';
+import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
+import { AccountSwitcher } from './accounts/account-switcher';
+import { ProviderErrorTracker } from './providers/provider-error-tracker';
+import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../shared/account-types';
+import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -71,6 +81,7 @@ import {
 	setGetCustomEnvVarsCallback,
 	setGetAgentConfigCallback,
 	setSshStore,
+	setAccountRegistry as setGroupChatAccountRegistry,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
 	spawnModeratorSynthesis,
@@ -185,6 +196,13 @@ if (store.get('wakatimeEnabled', false)) {
 	wakatimeManager.ensureCliInstalled();
 }
 
+// Update provider error tracker when failover config changes
+store.onDidChange('providerSwitchConfig' as any, (newValue: any) => {
+	if (providerErrorTracker && newValue && typeof newValue === 'object') {
+		providerErrorTracker.updateConfig({ ...DEFAULT_PROVIDER_SWITCH_CONFIG, ...newValue });
+	}
+});
+
 // Auto-install WakaTime CLI when user enables the feature
 store.onDidChange('wakatimeEnabled', (newValue) => {
 	if (newValue === true) {
@@ -263,6 +281,12 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
+let accountRegistry: AccountRegistry | null = null;
+let accountThrottleHandler: AccountThrottleHandler | null = null;
+let accountAuthRecovery: AccountAuthRecovery | null = null;
+let accountRecoveryPoller: AccountRecoveryPoller | null = null;
+let accountSwitcher: AccountSwitcher | null = null;
+let providerErrorTracker: ProviderErrorTracker | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -509,6 +533,84 @@ app.whenReady().then(async () => {
 		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 	}
 
+	// Initialize account registry, throttle handler, and auth recovery for account multiplexing
+	try {
+		accountRegistry = new AccountRegistry(getAccountStore());
+		accountThrottleHandler = new AccountThrottleHandler(
+			accountRegistry,
+			getStatsDB,
+			safeSend,
+			logger
+		);
+		logger.info('Account registry initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Failed to initialize account registry: ${error}`, 'Startup');
+		logger.warn('Continuing without account multiplexing', 'Startup');
+	}
+
+	// Initialize auth recovery for automatic re-login on expired tokens
+	if (accountRegistry && processManager && agentDetector) {
+		try {
+			accountAuthRecovery = new AccountAuthRecovery(
+				processManager,
+				accountRegistry,
+				agentDetector,
+				safeSend
+			);
+			logger.info('Account auth recovery initialized', 'Startup');
+		} catch (error) {
+			logger.error(`Failed to initialize auth recovery: ${error}`, 'Startup');
+		}
+	}
+
+	// Initialize recovery poller for timer-based throttle recovery
+	if (accountRegistry) {
+		try {
+			accountRecoveryPoller = new AccountRecoveryPoller({
+				accountRegistry,
+				safeSend,
+			});
+			accountRecoveryPoller.start();
+			logger.info('Account recovery poller started', 'Startup');
+		} catch (error) {
+			logger.error(`Failed to initialize recovery poller: ${error}`, 'Startup');
+		}
+	}
+
+	// Initialize account switcher for manual account switching from renderer
+	if (accountRegistry && processManager) {
+		try {
+			accountSwitcher = new AccountSwitcher(processManager, accountRegistry, safeSend);
+			logger.info('Account switcher initialized', 'Startup');
+		} catch (error) {
+			logger.error(`Failed to initialize account switcher: ${error}`, 'Startup');
+		}
+	}
+
+	// Initialize provider error tracker for Virtuosos failover detection
+	try {
+		const savedConfig = store.get('providerSwitchConfig') as any;
+		const config = savedConfig
+			? { ...DEFAULT_PROVIDER_SWITCH_CONFIG, ...savedConfig }
+			: DEFAULT_PROVIDER_SWITCH_CONFIG;
+		providerErrorTracker = new ProviderErrorTracker(
+			config,
+			(suggestion) => {
+				// Send failover suggestion to renderer
+				safeSend('provider:failover-suggest', suggestion);
+			},
+			(sessionId) => {
+				// Resolve session name from sessions store
+				const sessions = sessionsStore.get('sessions', []) as any[];
+				const session = sessions.find((s: any) => s.id === sessionId);
+				return session?.name || sessionId;
+			}
+		);
+		logger.info('Provider error tracker initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Failed to initialize provider error tracker: ${error}`, 'Startup');
+	}
+
 	// Set up IPC handlers
 	logger.debug('Setting up IPC handlers', 'Startup');
 	setupIpcHandlers();
@@ -620,6 +722,11 @@ const quitHandler = createQuitHandler({
 });
 quitHandler.setup();
 
+// Stop recovery poller on quit (must run before the quit handler's cleanup)
+app.on('before-quit', () => {
+	accountRecoveryPoller?.stop();
+});
+
 // startCliActivityWatcher is now handled by cliWatcher (Phase 4 refactoring)
 
 function setupIpcHandlers() {
@@ -686,6 +793,10 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		sessionsStore,
+		getAccountRegistry: () => accountRegistry,
+		getAccountAuthRecovery: () => accountAuthRecovery,
+		getAccountSwitcher: () => accountSwitcher,
+		safeSend,
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
@@ -755,6 +866,7 @@ function setupIpcHandlers() {
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
+		getAccountRegistry: () => accountRegistry,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
@@ -767,6 +879,19 @@ function setupIpcHandlers() {
 	registerStatsHandlers({
 		getMainWindow: () => mainWindow,
 		settingsStore: store,
+	});
+
+	// Register Account Multiplexing handlers (CRUD, assignments, usage queries)
+	registerAccountHandlers({
+		getAccountRegistry: () => accountRegistry,
+		getAccountAuthRecovery: () => accountAuthRecovery,
+		getRecoveryPoller: () => accountRecoveryPoller,
+		getAccountSwitcher: () => accountSwitcher,
+	});
+
+	// Register Provider Error Tracking handlers (stats queries, error clearing)
+	registerProviderHandlers({
+		getProviderErrorTracker: () => providerErrorTracker,
 	});
 
 	// Register Document Graph handlers for file watching
@@ -811,6 +936,11 @@ function setupIpcHandlers() {
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
+
+	// Set up account registry for group chat account multiplexing
+	if (accountRegistry) {
+		setGroupChatAccountRegistry(accountRegistry);
+	}
 
 	// Set up callback for group chat to get custom shell path (for Windows PowerShell preference)
 	// This is used by both group-chat-router.ts and group-chat-agent.ts via the shared config module
@@ -904,6 +1034,10 @@ function setupProcessListeners() {
 				calculateContextTokens,
 			},
 			getStatsDB,
+			getAccountRegistry: () => accountRegistry,
+			getThrottleHandler: () => accountThrottleHandler,
+			getAuthRecovery: () => accountAuthRecovery,
+			getProviderErrorTracker: () => providerErrorTracker,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

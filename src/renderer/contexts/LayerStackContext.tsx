@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useEffect, ReactNode } from 'react';
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks';
 
-// Create context with null as default (will throw if used outside provider)
-const LayerStackContext = createContext<LayerStackAPI | null>(null);
+// Cache context on globalThis to survive Vite HMR module reloads.
+// Without this, HMR creates a new context object while the provider keeps the old one,
+// causing "must be used within Provider" errors.
+const _global = globalThis as { __MAESTRO_LAYER_STACK_CTX__?: React.Context<LayerStackAPI | null> };
+if (!_global.__MAESTRO_LAYER_STACK_CTX__) {
+	_global.__MAESTRO_LAYER_STACK_CTX__ = createContext<LayerStackAPI | null>(null);
+}
+const LayerStackContext = _global.__MAESTRO_LAYER_STACK_CTX__;
 
 interface LayerStackProviderProps {
 	children: ReactNode;

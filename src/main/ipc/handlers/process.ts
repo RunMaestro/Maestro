@@ -3,8 +3,14 @@ import Store from 'electron-store';
 import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
+import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
+import type { AccountRegistry } from '../../accounts/account-registry';
+import { injectAccountEnv } from '../../accounts/account-env-injector';
+import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import { isWindows } from '../../../shared/platformDetection';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
@@ -23,6 +29,7 @@ import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
+import { REGEX_SESSION_SUFFIX } from '../../constants';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
@@ -58,6 +65,10 @@ export interface ProcessHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<{ sessions: any[] }>;
+	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
+	getAccountRegistry?: () => AccountRegistry | null;
+	safeSend?: SafeSendFn;
 }
 
 /**
@@ -73,8 +84,17 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
-		deps;
+	const {
+		getProcessManager,
+		getAgentDetector,
+		agentConfigsStore,
+		settingsStore,
+		getMainWindow,
+		getAccountSwitcher,
+		getAccountAuthRecovery,
+		getAccountRegistry,
+		safeSend: depsSafeSend,
+	} = deps;
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -111,6 +131,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Account multiplexing
+				accountId?: string; // Account to use for this session
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
@@ -312,6 +334,35 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 				let sshStdinScript: string | undefined;
+
+				// ========================================================================
+				// Account Multiplexing: Inject CLAUDE_CONFIG_DIR for account assignment
+				// Must happen before SSH command building so the env var is included
+				// ========================================================================
+				const registry = getAccountRegistry?.();
+				if (registry) {
+					const envToInject: Record<string, string> = customEnvVarsToPass
+						? { ...customEnvVarsToPass }
+						: {};
+					// Use base session ID for assignment (strip -ai-{tabId} etc.) so
+					// assignments are keyed consistently regardless of spawn vs restore.
+					const baseSessionIdForAccount = config.sessionId.replace(REGEX_SESSION_SUFFIX, '');
+					const assignedAccountId = injectAccountEnv(
+						baseSessionIdForAccount,
+						config.toolType,
+						envToInject,
+						registry,
+						config.accountId, // May be passed from renderer
+						depsSafeSend,
+						() => {
+							const db = getStatsDB();
+							return db.isReady() ? db : null;
+						}
+					);
+					if (assignedAccountId) {
+						customEnvVarsToPass = envToInject;
+					}
+				}
 
 				if (config.sessionCustomPath) {
 					logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
@@ -580,7 +631,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionId,
 				dataLength: data.length,
 			});
-			return processManager.write(sessionId, data);
+			const result = processManager.write(sessionId, data);
+
+			// Record the last prompt for account switching/auth recovery resume
+			const accountSwitcher = getAccountSwitcher?.();
+			if (accountSwitcher) {
+				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+			const authRecovery = getAccountAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.recordLastPrompt(sessionId, data);
+			}
+
+			return result;
 		})
 	);
 

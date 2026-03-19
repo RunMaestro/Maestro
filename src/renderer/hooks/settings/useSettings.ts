@@ -25,6 +25,7 @@ import type {
 	KeyboardMasteryStats,
 	ThinkingMode,
 	DirectorNotesSettings,
+	TeamOrchestrationSettings,
 	EncoreFeatureFlags,
 } from '../../types';
 import {
@@ -294,6 +295,10 @@ export interface UseSettingsReturn {
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+
+	// Team Orchestration settings
+	teamOrchestrationSettings: TeamOrchestrationSettings;
+	setTeamOrchestrationSettings: (value: TeamOrchestrationSettings) => void;
 
 	// WakaTime integration settings
 	wakatimeApiKey: string;

@@ -32,6 +32,10 @@ export const REGEX_AI_TAB_ID = /-ai-(.+)$/;
 export const REGEX_BATCH_SESSION = /-batch-\d+$/;
 export const REGEX_SYNOPSIS_SESSION = /-synopsis-\d+$/;
 
+// Combined pattern to strip all session ID suffixes back to the base session ID.
+// Matches: -ai-{tabId}, -terminal, -batch-{timestamp}, -synopsis-{timestamp}
+export const REGEX_SESSION_SUFFIX = /-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/;
+
 // ============================================================================
 // Buffer Size Limits
 // ============================================================================

@@ -54,6 +54,21 @@ import {
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
+import {
+	upsertAccountUsageWindow,
+	getAccountUsageInWindow,
+	insertThrottleEvent,
+	getThrottleEvents,
+	getAccountDailyUsage,
+	getAccountMonthlyUsage,
+	getAccountWindowHistory,
+	clearAccountUsageCache,
+	type AccountUsageTokens,
+	type AccountUsageSummary,
+	type AccountDailyUsage,
+	type AccountMonthlyUsage,
+	type ThrottleEvent,
+} from './account-usage';
 
 /**
  * StatsDB manages the SQLite database for usage statistics.
@@ -151,6 +166,7 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearAccountUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -785,6 +801,66 @@ export class StatsDB {
 
 	exportToCsv(range: StatsTimeRange): string {
 		return exportToCsv(this.database, range);
+	}
+
+	// ============================================================================
+	// Account Usage (delegated)
+	// ============================================================================
+
+	upsertAccountUsageWindow(
+		accountId: string,
+		windowStart: number,
+		windowEnd: number,
+		tokens: AccountUsageTokens
+	): void {
+		return upsertAccountUsageWindow(this.database, accountId, windowStart, windowEnd, tokens);
+	}
+
+	getAccountUsageInWindow(
+		accountId: string,
+		windowStart: number,
+		windowEnd: number
+	): AccountUsageSummary {
+		return getAccountUsageInWindow(this.database, accountId, windowStart, windowEnd);
+	}
+
+	insertThrottleEvent(
+		accountId: string,
+		sessionId: string | null,
+		reason: string,
+		tokensAtThrottle: number,
+		windowStart?: number,
+		windowEnd?: number
+	): string {
+		return insertThrottleEvent(
+			this.database,
+			accountId,
+			sessionId,
+			reason,
+			tokensAtThrottle,
+			windowStart,
+			windowEnd
+		);
+	}
+
+	getThrottleEvents(accountId?: string, since?: number): ThrottleEvent[] {
+		return getThrottleEvents(this.database, accountId, since);
+	}
+
+	getAccountDailyUsage(accountId: string, sinceMs: number, untilMs: number): AccountDailyUsage[] {
+		return getAccountDailyUsage(this.database, accountId, sinceMs, untilMs);
+	}
+
+	getAccountMonthlyUsage(
+		accountId: string,
+		sinceMs: number,
+		untilMs: number
+	): AccountMonthlyUsage[] {
+		return getAccountMonthlyUsage(this.database, accountId, sinceMs, untilMs);
+	}
+
+	getAccountWindowHistory(accountId: string, windowCount?: number) {
+		return getAccountWindowHistory(this.database, accountId, windowCount);
 	}
 
 	// ============================================================================

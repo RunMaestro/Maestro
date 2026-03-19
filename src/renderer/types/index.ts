@@ -732,6 +732,25 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	/** Account ID assigned to this session for multiplexing */
+	accountId?: string;
+	/** Display name of the assigned account (for UI display without lookup) */
+	accountName?: string;
+
+	// Provider migration provenance (Virtuosos vertical swapping)
+	/** ID of the session this was migrated FROM (null if original) */
+	migratedFromSessionId?: string;
+	/** ID of the session this was migrated TO (set on source after switch) */
+	migratedToSessionId?: string;
+	/** Timestamp of the provider migration */
+	migratedAt?: number;
+	/** Whether this session was auto-archived after provider switch */
+	archivedByMigration?: boolean;
+	/** Migration generation counter (0 = original, increments with each switch) */
+	migrationGeneration?: number;
+	/** Timestamp of last merge-back (when an archived session was reactivated with new context) */
+	lastMergeBackAt?: number;
 }
 
 export interface AgentConfigOption {
@@ -941,6 +960,8 @@ export interface EncoreFeatureFlags {
 	usageStats: boolean;
 	symphony: boolean;
 	maestroCue: boolean;
+	virtuosos: boolean;
+	teamOrchestration: boolean;
 }
 
 // Director's Notes settings for synopsis generation
@@ -955,6 +976,22 @@ export interface DirectorNotesSettings {
 	customArgs?: string;
 	/** Custom environment variables for the agent */
 	customEnvVars?: Record<string, string>;
+}
+
+// Team Orchestration settings for multi-agent coordination
+export type TerminationMode = 'moderator-decides' | 'max-iterations' | 'quality-gate';
+
+export interface TeamOrchestrationSettings {
+	/** Team Templates sub-feature */
+	enableTemplates: boolean;
+	/** Graph-based routing (advanced) */
+	enableWorkflowTopology: boolean;
+	/** Workflow graph visualization */
+	enableVisualization: boolean;
+	/** Default max loop iterations */
+	maxIterations: number;
+	/** How the system decides when a workflow is complete */
+	defaultTerminationMode: TerminationMode;
 }
 
 // Context management settings for merge and transfer operations

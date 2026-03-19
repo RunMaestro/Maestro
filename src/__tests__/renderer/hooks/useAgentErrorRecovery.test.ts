@@ -29,7 +29,7 @@ describe('useAgentErrorRecovery', () => {
 		const [authAction, newSessionAction] = result.current.recoveryActions;
 
 		expect(authAction.id).toBe('authenticate');
-		expect(authAction.label).toBe('Use Terminal');
+		expect(authAction.label).toBe('Re-authenticate');
 		expect(authAction.primary).toBe(true);
 		expect(newSessionAction.id).toBe('new-session');
 

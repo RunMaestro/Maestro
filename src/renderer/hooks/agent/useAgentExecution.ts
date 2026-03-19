@@ -252,6 +252,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										projectPath: effectiveCwd,
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
+										inputTokens: taskUsageStats?.inputTokens,
+										outputTokens: taskUsageStats?.outputTokens,
+										cacheReadTokens: taskUsageStats?.cacheReadInputTokens,
+										cacheCreationTokens: taskUsageStats?.cacheCreationInputTokens,
+										costUsd: taskUsageStats?.totalCostUsd,
 									})
 									.catch((err) => {
 										// Don't fail the batch flow if stats recording fails

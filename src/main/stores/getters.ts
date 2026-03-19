@@ -17,6 +17,7 @@ import type {
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
+import type { AccountStoreData } from './account-store-types';
 import type { SshRemoteConfig } from '../../shared/types';
 
 import { isInitialized, getStoreInstances, getCachedPaths } from './instances';
@@ -76,6 +77,11 @@ export function getClaudeSessionOriginsStore(): Store<ClaudeSessionOriginsData> 
 export function getAgentSessionOriginsStore(): Store<AgentSessionOriginsData> {
 	ensureInitialized();
 	return getStoreInstances().agentSessionOriginsStore!;
+}
+
+export function getAccountStore(): Store<AccountStoreData> {
+	ensureInitialized();
+	return getStoreInstances().accountStore!;
 }
 
 // ============================================================================
