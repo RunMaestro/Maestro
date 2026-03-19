@@ -1734,4 +1734,96 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Configure Maestro Cue: Test Session')).toBeInTheDocument();
 		});
 	});
+
+	describe('Agent switcher mode (Cmd+O)', () => {
+		it('shows agent-specific placeholder when initialMode is agents', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByPlaceholderText('Jump to agent...')).toBeInTheDocument();
+		});
+
+		it('shows Switch Agent aria-label when in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toHaveAttribute('aria-label', 'Switch Agent');
+		});
+
+		it('shows only raw agent names in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			// Agent names should be shown without "Jump to:" prefix
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.getByText('Agent Beta')).toBeInTheDocument();
+			expect(screen.queryByText(/Jump to/)).not.toBeInTheDocument();
+
+			// Non-agent actions should NOT be present
+			expect(screen.queryByText('Create New Agent')).not.toBeInTheDocument();
+			expect(screen.queryByText('Toggle Left Panel')).not.toBeInTheDocument();
+			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
+		});
+
+		it('filters agents by search text in agents mode', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					createMockSession({ id: 'session-2', name: 'Agent Beta' }),
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Jump to agent...');
+			fireEvent.change(input, { target: { value: 'alpha' } });
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Agent Beta')).not.toBeInTheDocument();
+		});
+
+		it('closes modal and switches agent on selection in agents mode', () => {
+			const props = createDefaultProps({ initialMode: 'agents' });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Test Session'));
+
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('sorts agents alphabetically with group chats at the bottom', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Zulu' }),
+					createMockSession({ id: 'session-2', name: 'Alpha' }),
+					createMockSession({ id: 'session-3', name: 'Mike' }),
+				],
+				groupChats: [{ id: 'gc-1', name: 'Design Review', participants: ['a', 'b'] }],
+				onOpenGroupChat: vi.fn(),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			const buttons = screen.getAllByRole('button');
+			const labels = buttons.map((b) => b.textContent?.replace(/\d/, '').trim() ?? '');
+
+			// Agents alphabetically first, then group chats
+			const alphaIdx = labels.findIndex((l) => l.startsWith('Alpha'));
+			const mikeIdx = labels.findIndex((l) => l.startsWith('Mike'));
+			const zuluIdx = labels.findIndex((l) => l.startsWith('Zulu'));
+			const gcIdx = labels.findIndex((l) => l.startsWith('Design Review'));
+
+			expect(alphaIdx).toBeLessThan(mikeIdx);
+			expect(mikeIdx).toBeLessThan(zuluIdx);
+			expect(zuluIdx).toBeLessThan(gcIdx);
+		});
+	});
 });

@@ -78,10 +78,21 @@ export function calculateNextScheduledTime(times: string[], days?: string[]): nu
 	return candidates.length > 0 ? Math.min(...candidates) : null;
 }
 
+/** Parameters passed to the onCueRun callback */
+export interface CueRunParams {
+	runId: string;
+	sessionId: string;
+	prompt: string;
+	subscriptionName: string;
+	event: CueEvent;
+	timeoutMs?: number;
+}
+
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
 	getSessions: () => SessionInfo[];
-	onCueRun: (sessionId: string, prompt: string, event: CueEvent) => Promise<CueRunResult>;
+	onCueRun: (params: CueRunParams) => Promise<CueRunResult>;
+	onStopCueRun: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 }
 
@@ -326,6 +337,7 @@ export class CueEngine {
 		if (!run) return false;
 
 		run.abortController?.abort();
+		this.deps.onStopCueRun(runId);
 		run.result.status = 'stopped';
 		run.result.endedAt = new Date().toISOString();
 		run.result.durationMs = Date.now() - new Date(run.result.startedAt).getTime();
@@ -1166,7 +1178,18 @@ export class CueEngine {
 		this.activeRuns.set(runId, { result, abortController });
 
 		try {
-			const runResult = await this.deps.onCueRun(sessionId, prompt, event);
+			const state = this.sessions.get(sessionId);
+			const timeoutMs = state
+				? (state.config.settings.timeout_minutes ?? 30) * 60 * 1000
+				: undefined;
+			const runResult = await this.deps.onCueRun({
+				runId,
+				sessionId,
+				prompt,
+				subscriptionName,
+				event,
+				timeoutMs,
+			});
 			result.status = runResult.status;
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
@@ -1190,7 +1213,15 @@ export class CueEngine {
 				};
 
 				const contextPrompt = `${outputPrompt}\n\n---\n\nContext from completed task:\n${result.stdout.substring(0, SOURCE_OUTPUT_MAX_CHARS)}`;
-				const outputResult = await this.deps.onCueRun(sessionId, contextPrompt, outputEvent);
+				const outputRunId = crypto.randomUUID();
+				const outputResult = await this.deps.onCueRun({
+					runId: outputRunId,
+					sessionId,
+					prompt: contextPrompt,
+					subscriptionName,
+					event: outputEvent,
+					timeoutMs,
+				});
 
 				if (outputResult.status === 'completed') {
 					result.stdout = outputResult.stdout;

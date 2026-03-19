@@ -73,8 +73,13 @@ interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsThinkingDisplay: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsWizard: boolean;
+	supportsGroupChatModeration: boolean;
+	usesJsonLineOutput: boolean;
+	usesCombinedContextWindow: boolean;
 }
 
 interface AgentConfig {
@@ -112,6 +117,10 @@ interface AgentCapabilities {
 	supportsStreamJsonInput: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsWizard: boolean;
+	supportsGroupChatModeration: boolean;
+	usesJsonLineOutput: boolean;
+	usesCombinedContextWindow: boolean;
 }
 
 interface DirectoryEntry {
@@ -325,6 +334,27 @@ interface MaestroAPI {
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
+		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
+		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
+		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
+		onRemoteConfigureAutoRun: (
+			callback: (
+				sessionId: string,
+				config: {
+					documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+					prompt?: string;
+					loopEnabled?: boolean;
+					maxLoops?: number;
+					saveAsPlaybook?: string;
+					launch?: boolean;
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteConfigureAutoRunResponse: (
+			responseChannel: string,
+			result: { success: boolean; playbookId?: string; error?: string }
+		) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
@@ -2844,6 +2874,7 @@ interface MaestroAPI {
 		triggerSubscription: (subscriptionName: string) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
+		removeSession: (sessionId: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
 		writeYaml: (
 			projectRoot: string,

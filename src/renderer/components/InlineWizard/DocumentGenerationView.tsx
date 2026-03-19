@@ -65,7 +65,7 @@ export interface DocumentGenerationViewProps {
 /**
  * Document selector dropdown for switching between generated documents
  */
-function DocumentSelector({
+export function DocumentSelector({
 	documents,
 	selectedIndex,
 	onSelect,
@@ -210,7 +210,7 @@ function ImagePreview({
 				className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
 				style={{
 					backgroundColor: theme.colors.error,
-					color: theme.colors.errorForeground,
+					color: 'white',
 				}}
 				title="Remove image"
 			>
@@ -219,8 +219,8 @@ function ImagePreview({
 			<div
 				className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate rounded-b"
 				style={{
-					backgroundColor: theme.colors.overlay,
-					color: theme.colors.textMain,
+					backgroundColor: 'rgba(0,0,0,0.6)',
+					color: 'white',
 				}}
 			>
 				{filename}
@@ -313,7 +313,7 @@ function MarkdownImage({
 /**
  * Document editor component with edit/preview modes
  */
-function DocumentEditor({
+export function DocumentEditor({
 	content,
 	onContentChange,
 	mode,
@@ -1183,7 +1183,7 @@ export function DocumentGenerationView({
 						className="mt-8 px-6 py-3 text-base font-semibold rounded-lg transition-all hover:opacity-90 hover:scale-105"
 						style={{
 							backgroundColor: theme.colors.success,
-							color: theme.colors.successForeground,
+							color: 'white',
 						}}
 					>
 						Exit Wizard
@@ -1227,9 +1227,6 @@ export function DocumentGenerationView({
 		</div>
 	);
 }
-
-// Export internal components used by PhaseReviewScreen
-export { DocumentSelector, DocumentEditor };
 
 // Re-export standalone components from their files
 export { AustinFactsDisplay } from './AustinFactsDisplay';

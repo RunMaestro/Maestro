@@ -390,7 +390,6 @@ describe('TerminalOutput', () => {
 
 			expect(mockUnregisterLayer).toHaveBeenCalled();
 		});
-
 	});
 
 	describe('keyboard navigation', () => {
@@ -1538,7 +1537,6 @@ describe('TerminalOutput', () => {
 			// And markdown should be rendered
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
 		});
-
 	});
 
 	describe('tool log detail extraction', () => {
@@ -2098,7 +2096,6 @@ describe('TerminalOutput', () => {
 
 			expect(screen.getByText(/日本語テスト.*🎉.*émojis/)).toBeInTheDocument();
 		});
-
 	});
 });
 

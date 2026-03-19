@@ -769,6 +769,69 @@ describe('ProcessMonitor', () => {
 		});
 	});
 
+	describe('SSH/Local indicator', () => {
+		it('should show "Local" badge on session row for local sessions', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByTitle('Running locally')).toBeInTheDocument();
+				expect(screen.getByText('Local')).toBeInTheDocument();
+			});
+		});
+
+		it('should show SSH badge on session row for SSH sessions', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession({
+				sshRemote: { id: 'remote-1', name: 'dev-box', host: '192.168.1.100' },
+			});
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('SSH: dev-box')).toBeInTheDocument();
+				// Both session row and process row have SSH badges with this title
+				const sshTitles = screen.getAllByTitle('SSH: dev-box (192.168.1.100)');
+				expect(sshTitles.length).toBeGreaterThanOrEqual(1);
+			});
+		});
+
+		it('should show SSH badge on process row for SSH sessions', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession({
+				sshRemote: { id: 'remote-1', name: 'prod-server', host: '10.0.0.5' },
+			});
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				// Process row should have the SSH badge
+				const sshBadges = screen.getAllByText('SSH');
+				expect(sshBadges.length).toBeGreaterThanOrEqual(1);
+			});
+		});
+
+		it('should not show SSH badge on process row for local sessions', async () => {
+			const process = createActiveProcess({ sessionId: 'session-1-ai-tab-1' });
+			getActiveProcessesMock().mockResolvedValue([process]);
+
+			const session = createSession();
+			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Test Session - AI Agent (claude-code)')).toBeInTheDocument();
+			});
+
+			// No SSH badge should appear on process rows
+			expect(screen.queryByText('SSH')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Expand/collapse', () => {
 		it('should auto-expand all nodes on initial load', async () => {
 			const process = createActiveProcess();

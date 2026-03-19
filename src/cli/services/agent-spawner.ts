@@ -10,25 +10,20 @@ import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser'
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
+import { hasCapability } from '../../main/agents/capabilities';
 import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 
 // Claude Code arguments for batch mode (stream-json format)
-const CLAUDE_ARGS = [
-	'--print',
-	'--verbose',
-	'--output-format',
-	'stream-json',
-	'--dangerously-skip-permissions',
-];
+const CLAUDE_ARGS = ['--print', '--verbose', '--output-format', 'stream-json'];
+
+// Permission bypass arg for Claude — skipped in read-only mode
+const CLAUDE_YOLO_ARGS = ['--dangerously-skip-permissions'];
 
 // Cached paths per agent type (resolved once at startup)
 const cachedPaths: Map<string, string> = new Map();
-
-// Agent types that support CLI batch mode via JSON line parsing
-const JSON_LINE_AGENTS: ToolType[] = ['codex', 'opencode', 'factory-droid'];
 
 // Result from spawning an agent
 export interface AgentResult {
@@ -194,6 +189,9 @@ async function spawnClaudeAgent(
 			if (def?.readOnlyEnvOverrides) {
 				Object.assign(env, def.readOnlyEnvOverrides);
 			}
+		} else {
+			// Only bypass permissions in non-read-only mode
+			args.push(...CLAUDE_YOLO_ARGS);
 		}
 
 		if (agentSessionId) {
@@ -357,7 +355,8 @@ async function spawnJsonLineAgent(
 	cwd: string,
 	prompt: string,
 	agentSessionId?: string,
-	_readOnlyMode?: boolean
+	readOnlyMode?: boolean,
+	customModel?: string
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv();
@@ -370,11 +369,31 @@ async function spawnJsonLineAgent(
 			}
 		}
 
+		// Apply read-only mode env overrides from agent definition
+		if (readOnlyMode && def?.readOnlyEnvOverrides) {
+			Object.assign(env, def.readOnlyEnvOverrides);
+		}
+
 		// Build args from agent definition
 		const args: string[] = [];
 		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
-		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
+
+		// In read-only mode, filter out YOLO/bypass args from batchModeArgs
+		// (they override read-only flags). In normal mode, apply all batchModeArgs.
+		// Skip filtering for agents without CLI-level read-only enforcement
+		// (e.g., Gemini CLI needs -y to avoid interactive prompts that hang with closed stdin).
+		if (def?.batchModeArgs) {
+			if (readOnlyMode && def.readOnlyCliEnforced !== false && def.yoloModeArgs?.length) {
+				const yoloSet = new Set(def.yoloModeArgs);
+				args.push(...def.batchModeArgs.filter((a) => !yoloSet.has(a)));
+			} else {
+				args.push(...def.batchModeArgs);
+			}
+		}
+
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
+		if (readOnlyMode && def?.readOnlyArgs) args.push(...def.readOnlyArgs);
+		if (customModel && def?.modelArgs) args.push(...def.modelArgs(customModel));
 
 		if (agentSessionId && def?.resumeArgs) {
 			args.push(...def.resumeArgs(agentSessionId));
@@ -479,6 +498,8 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Custom model ID from agent config (e.g., 'github-copilot/gpt-5-mini') */
+	customModel?: string;
 }
 
 /**
@@ -492,13 +513,14 @@ export async function spawnAgent(
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
 	const readOnly = options?.readOnlyMode;
+	const customModel = options?.customModel;
 
 	if (toolType === 'claude-code') {
 		return spawnClaudeAgent(cwd, prompt, agentSessionId, readOnly);
 	}
 
-	if (JSON_LINE_AGENTS.includes(toolType)) {
-		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId);
+	if (hasCapability(toolType, 'usesJsonLineOutput')) {
+		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId, readOnly, customModel);
 	}
 
 	return {

@@ -3159,17 +3159,15 @@ describe('SessionList', () => {
 
 			// Mock Cue status to return session with subscriptions
 			(window.maestro as Record<string, unknown>).cue = {
-				getStatus: vi
-					.fn()
-					.mockResolvedValue([
-						{
-							sessionId: 's1',
-							sessionName: 'Cue Session',
-							subscriptionCount: 3,
-							enabled: true,
-							activeRuns: 0,
-						},
-					]),
+				getStatus: vi.fn().mockResolvedValue([
+					{
+						sessionId: 's1',
+						sessionName: 'Cue Session',
+						subscriptionCount: 3,
+						enabled: true,
+						activeRuns: 0,
+					},
+				]),
 				getActiveRuns: vi.fn().mockResolvedValue([]),
 				getActivityLog: vi.fn().mockResolvedValue([]),
 				onActivityUpdate: vi.fn().mockReturnValue(() => {}),

@@ -433,7 +433,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 							return {
 								...s,
 								// TODO: Remove shellLogs once terminal tabs migration is complete
-								...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, errorLog] }),
+								...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, errorLog] }),
 								state: 'idle',
 								busySource: undefined,
 								thinkingStartTime: undefined,

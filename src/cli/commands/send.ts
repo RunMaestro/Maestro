@@ -5,11 +5,13 @@ import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spa
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
+import { withMaestroClient } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
 	readOnly?: boolean;
+	tab?: boolean;
 }
 
 interface SendResponse {
@@ -107,9 +109,28 @@ export async function send(
 		process.exit(1);
 	}
 
-	// Spawn agent — spawnAgent handles --resume vs --session-id internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session, {
+	// Determine which agent session to resume:
+	// 1. Explicit --session flag takes priority
+	// 2. Otherwise, use the active tab's agentSessionId to avoid creating duplicate sessions
+	// 3. If no active tab session exists, spawnAgent creates a fresh isolated session
+	let agentSessionId = options.session;
+	if (!agentSessionId) {
+		const aiTabs = (agent as any).aiTabs as
+			| Array<{ id: string; agentSessionId?: string }>
+			| undefined;
+		const activeTabId = (agent as any).activeTabId as string | undefined;
+		if (aiTabs && activeTabId) {
+			const activeTab = aiTabs.find((t) => t.id === activeTabId);
+			if (activeTab?.agentSessionId) {
+				agentSessionId = activeTab.agentSessionId;
+			}
+		}
+	}
+
+	// Spawn agent — spawnAgent handles --resume vs fresh session internally
+	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
 		readOnlyMode: options.readOnly,
+		customModel: agent.customModel,
 	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
@@ -117,5 +138,21 @@ export async function send(
 
 	if (!result.success) {
 		process.exit(1);
+	}
+
+	// If --tab flag is set, focus the session tab in Maestro desktop
+	if (options.tab) {
+		try {
+			await withMaestroClient(async (client) => {
+				await client.sendCommand(
+					{ type: 'select_session', sessionId: agentId, focus: true },
+					'select_session_result'
+				);
+			});
+		} catch {
+			console.error(
+				'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
+			);
+		}
 	}
 }

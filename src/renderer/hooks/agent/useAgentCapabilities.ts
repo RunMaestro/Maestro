@@ -220,3 +220,17 @@ export function clearCapabilitiesCache(): void {
 export function setCapabilitiesCache(agentId: string, capabilities: AgentCapabilities): void {
 	capabilitiesCache.set(agentId, capabilities);
 }
+
+/**
+ * Synchronously check a single capability from the cache.
+ * Returns false if the agent isn't cached yet (safe default).
+ */
+export function hasCapabilityCached(
+	agentId: string | null | undefined,
+	capability: keyof AgentCapabilities
+): boolean {
+	if (!agentId) return false;
+	const cached = capabilitiesCache.get(agentId);
+	if (!cached) return false;
+	return !!cached[capability];
+}

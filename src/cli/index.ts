@@ -13,6 +13,11 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { listSessions } from './commands/list-sessions';
+import { openFile } from './commands/open-file';
+import { refreshFiles } from './commands/refresh-files';
+import { refreshAutoRun } from './commands/refresh-auto-run';
+import { status } from './commands/status';
+import { autoRun } from './commands/auto-run';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -108,6 +113,48 @@ program
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
+	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.action(send);
+
+// Open file command - open a file in the Maestro desktop app
+program
+	.command('open-file <file-path>')
+	.description('Open a file as a preview tab in the Maestro desktop app')
+	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.action(openFile);
+
+// Refresh files command - refresh the file tree in the Maestro desktop app
+program
+	.command('refresh-files')
+	.description('Refresh the file tree in the Maestro desktop app')
+	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.action(refreshFiles);
+
+// Refresh auto-run command - refresh Auto Run documents in the Maestro desktop app
+program
+	.command('refresh-auto-run')
+	.description('Refresh Auto Run documents in the Maestro desktop app')
+	.option('-s, --session <id>', 'Target session (defaults to active)')
+	.action(refreshAutoRun);
+
+// Auto-run command - configure and optionally launch an auto-run session
+program
+	.command('auto-run <docs...>')
+	.description('Configure and optionally launch an auto-run with documents')
+	.option('-s, --session <id>', '[deprecated: use --agent] Target agent by ID')
+	.option('-a, --agent <id>', 'Target agent by ID (use "maestro-cli list agents" to find IDs)')
+	.option('-p, --prompt <text>', 'Custom prompt for the auto-run')
+	.option('--loop', 'Enable looping')
+	.option('--max-loops <n>', 'Maximum loop count (implies --loop)')
+	.option('--save-as <name>', "Save as a playbook with this name (don't launch)")
+	.option('--launch', 'Start the auto-run immediately (default: just configure)')
+	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
+	.action(autoRun);
+
+// Status command - check if Maestro desktop app is running and reachable
+program
+	.command('status')
+	.description('Check if the Maestro desktop app is running and reachable')
+	.action(status);
 
 program.parse();

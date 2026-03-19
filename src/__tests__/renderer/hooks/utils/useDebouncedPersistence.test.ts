@@ -1605,10 +1605,7 @@ describe('useDebouncedPersistence', () => {
 
 		it('should preserve valid activeTerminalTabId on persist', () => {
 			const session = makeSession({
-				terminalTabs: [
-					makeTerminalTab({ id: 'term-1' }),
-					makeTerminalTab({ id: 'term-2' }),
-				],
+				terminalTabs: [makeTerminalTab({ id: 'term-1' }), makeTerminalTab({ id: 'term-2' })],
 				activeTerminalTabId: 'term-2',
 			});
 
@@ -1625,10 +1622,7 @@ describe('useDebouncedPersistence', () => {
 
 		it('should normalize stale activeTerminalTabId to first tab on persist', () => {
 			const session = makeSession({
-				terminalTabs: [
-					makeTerminalTab({ id: 'term-1' }),
-					makeTerminalTab({ id: 'term-2' }),
-				],
+				terminalTabs: [makeTerminalTab({ id: 'term-1' }), makeTerminalTab({ id: 'term-2' })],
 				activeTerminalTabId: 'term-stale-999',
 			});
 

@@ -12,6 +12,7 @@ import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
+import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
 
@@ -604,7 +605,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						return {
 							...s,
 							// TODO: Remove shellLogs once terminal tabs migration is complete
-							...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, newEntry] }),
+							...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, newEntry] }),
 							state: 'busy',
 							busySource: currentMode,
 							shellCwd: newShellCwd,
@@ -851,14 +852,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
 					: `${activeSession.id}-terminal`;
 
-			// Check if this is an AI agent in batch mode (e.g., Claude Code, OpenCode, Codex, Factory Droid)
+			// Check if this is an AI agent in batch mode
 			// Batch mode agents spawn a new process per message rather than writing to stdin
 			const isBatchModeAgent =
-				currentMode === 'ai' &&
-				(activeSession.toolType === 'claude-code' ||
-					activeSession.toolType === 'opencode' ||
-					activeSession.toolType === 'codex' ||
-					activeSession.toolType === 'factory-droid');
+				currentMode === 'ai' && hasCapabilityCached(activeSession.toolType, 'supportsBatchMode');
 
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
@@ -1099,16 +1096,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
-// TODO: Remove shellLogs once terminal tabs migration is complete
-									...(!(s.terminalTabs?.length) && { shellLogs: [
-										...s.shellLogs,
-										{
-											id: generateId(),
-											timestamp: Date.now(),
-											source: 'system',
-											text: `Error: Failed to run command - ${(error as Error).message}`,
-										},
-									] }),
+									// TODO: Remove shellLogs once terminal tabs migration is complete
+									...(!s.terminalTabs?.length && {
+										shellLogs: [
+											...s.shellLogs,
+											{
+												id: generateId(),
+												timestamp: Date.now(),
+												source: 'system',
+												text: `Error: Failed to run command - ${(error as Error).message}`,
+											},
+										],
+									}),
 								};
 							})
 						);

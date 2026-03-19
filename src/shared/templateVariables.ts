@@ -9,6 +9,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CONDUCTOR_PROFILE}} - User's About Me profile (from Settings → General)
  *
  * Agent Variables:
+ *   {{AGENT_ID}}          - Agent UUID (Maestro agent identifier, for CLI commands)
  *   {{AGENT_NAME}}        - Agent name
  *   {{AGENT_PATH}}        - Agent home directory path (full path to project)
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
@@ -156,6 +157,7 @@ export interface TemplateContext {
 		ghBranch?: string;
 		ghBaseBranch?: string;
 		ghAssignees?: string;
+		ghMergedAt?: string;
 	};
 }
 
@@ -165,6 +167,7 @@ export interface TemplateContext {
 export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_DEEP_LINK}}', description: 'Deep link to this agent (maestro://)' },
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
+	{ variable: '{{AGENT_ID}}', description: 'Agent UUID (for CLI targeting)' },
 	{ variable: '{{CONDUCTOR_PROFILE}}', description: "Conductor's About Me profile" },
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
@@ -185,6 +188,7 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CUE_GH_BODY}}', description: 'PR/issue body (truncated)', cueOnly: true },
 	{ variable: '{{CUE_GH_BRANCH}}', description: 'PR head branch', cueOnly: true },
 	{ variable: '{{CUE_GH_LABELS}}', description: 'Labels (comma-separated)', cueOnly: true },
+	{ variable: '{{CUE_GH_MERGED_AT}}', description: 'PR merge timestamp', cueOnly: true },
 	{ variable: '{{CUE_GH_NUMBER}}', description: 'PR/issue number', cueOnly: true },
 	{ variable: '{{CUE_GH_REPO}}', description: 'GitHub repo (owner/repo)', cueOnly: true },
 	{ variable: '{{CUE_GH_STATE}}', description: 'PR/issue state', cueOnly: true },
@@ -293,6 +297,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONDUCTOR_PROFILE: conductorProfile || '',
 
 		// Agent variables
+		AGENT_ID: session.id,
 		AGENT_NAME: session.name,
 		AGENT_PATH: session.fullPath || session.projectRoot || session.cwd,
 		AGENT_GROUP: groupName || '',
@@ -384,6 +389,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BRANCH: context.cue?.ghBranch || '',
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
+		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
 	};
 
 	// Perform case-insensitive replacement

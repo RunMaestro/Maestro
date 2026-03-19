@@ -3397,12 +3397,12 @@ describe('MainPanel', () => {
 			});
 			useSessionStore.setState({ sessions: [sessionTerminal] });
 
-			const { rerender } = render(
-				<MainPanel {...defaultProps} activeSession={sessionTerminal} />
-			);
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
 
 			// Confirm it is visible
-			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe('true');
+			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe(
+				'true'
+			);
 
 			// Simulate switching to AI mode (inputMode changes, terminalTabs unchanged)
 			await act(async () => {
@@ -3434,9 +3434,7 @@ describe('MainPanel', () => {
 			});
 			useSessionStore.setState({ sessions: [sessionTerminal] });
 
-			const { rerender } = render(
-				<MainPanel {...defaultProps} activeSession={sessionTerminal} />
-			);
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
 
 			// Switch to AI mode
 			await act(async () => {
