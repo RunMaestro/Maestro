@@ -282,6 +282,7 @@ describe('agent-capabilities', () => {
 				'supportsGroupChatModeration',
 				'usesJsonLineOutput',
 				'usesCombinedContextWindow',
+				'supportsAppendSystemPrompt',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

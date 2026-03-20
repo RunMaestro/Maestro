@@ -393,7 +393,7 @@ describe('inlineWizardConversation', () => {
 			}
 		});
 
-		it('should use sendPromptViaStdin for claude-code on Windows', async () => {
+		it('should use sendPromptViaStdinRaw for claude-code on Windows (text-only, no images)', async () => {
 			// Mock Windows platform
 			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 
@@ -421,9 +421,9 @@ describe('inlineWizardConversation', () => {
 
 			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
 
-			// Claude Code supports stream-json, so should use sendPromptViaStdin
-			expect(spawnCall.sendPromptViaStdin).toBe(true);
-			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+			// Inline wizard never sends images, so text-only uses raw stdin (not stream-json)
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
 
 			// Clean up
 			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
@@ -507,7 +507,7 @@ describe('inlineWizardConversation', () => {
 			await messagePromise;
 		});
 
-		it('should add --input-format stream-json for claude-code on Windows', async () => {
+		it('should NOT add --input-format stream-json for claude-code on Windows (text-only)', async () => {
 			// Mock Windows platform
 			(window as any).maestro = { ...((window as any).maestro || {}), platform: 'win32' };
 
@@ -535,10 +535,8 @@ describe('inlineWizardConversation', () => {
 
 			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
 
-			// Should have --input-format stream-json in args
-			expect(spawnCall.args).toContain('--input-format');
-			const inputFormatIndex = spawnCall.args.indexOf('--input-format');
-			expect(spawnCall.args[inputFormatIndex + 1]).toBe('stream-json');
+			// Text-only messages should NOT have --input-format stream-json (only needed for images)
+			expect(spawnCall.args).not.toContain('--input-format');
 
 			// Clean up
 			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
