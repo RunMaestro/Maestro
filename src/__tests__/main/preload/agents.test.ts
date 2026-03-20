@@ -102,6 +102,14 @@ describe('Agents Preload API', () => {
 
 			expect(result).toBeNull();
 		});
+
+		it('should invoke agents:get with SSH remote ID', async () => {
+			mockInvoke.mockResolvedValue({ id: 'claude-code', available: true });
+
+			await api.get('claude-code', 'remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('agents:get', 'claude-code', 'remote-1');
+		});
 	});
 
 	describe('getCapabilities', () => {

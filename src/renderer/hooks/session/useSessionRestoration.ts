@@ -80,6 +80,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
 	// If the agent is unavailable, marks the session with error state.
+	// Called after splash hides — never blocks startup.
 	const validateAgentInBackground = useCallback(
 		async (sessionId: string, toolType: string, sshRemoteId: string | undefined) => {
 			try {
@@ -99,6 +100,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					);
 				}
 			} catch (err) {
+				// IPC failures are treated as transient (e.g. main process still
+				// starting). We don't mark the session as 'error' here because the
+				// agent may become available shortly after splash completes.
 				console.warn(`[validateAgentInBackground] Agent validation failed for ${toolType}:`, err);
 			}
 		},
@@ -280,6 +284,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 			if (!isRemoteSession) {
 				const GIT_TIMEOUT_MS = 5000;
+				// NOTE: On timeout, the inner git operations continue running in the
+				// background until the OS/filesystem eventually resolves/rejects them.
+				// This is a known trade-off of Promise.race — Promises are not cancellable.
 				try {
 					const gitResult = await Promise.race([
 						(async () => {
@@ -438,8 +445,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						const sshRemoteId =
 							session.sshRemoteId ||
 							(session.sessionSshRemoteConfig?.enabled
-								? (session.sessionSshRemoteConfig.remoteId ?? undefined)
-								: undefined);
+								? session.sessionSshRemoteConfig.remoteId
+								: undefined) ||
+							undefined;
 
 						// Validate agent availability in background (SSH-aware)
 						validateAgentInBackground(session.id, session.toolType, sshRemoteId);
