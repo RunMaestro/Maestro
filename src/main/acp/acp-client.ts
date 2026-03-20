@@ -11,6 +11,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { createInterface, Interface } from 'readline';
 import { logger } from '../utils/logger';
+import { getAppVersion } from './version';
 import type {
 	RequestId,
 	JsonRpcRequest,
@@ -29,6 +30,7 @@ import type {
 	PromptRequest,
 	PromptResponse,
 	ContentBlock,
+	ContentBlockFlat,
 	SessionNotification,
 	SessionUpdate,
 	CancelNotification,
@@ -295,7 +297,7 @@ export class ACPClient extends EventEmitter {
 			protocolVersion: CURRENT_PROTOCOL_VERSION,
 			clientInfo: this.config.clientInfo || {
 				name: 'maestro',
-				version: '0.12.0',
+				version: getAppVersion(),
 				title: 'Maestro',
 			},
 			clientCapabilities: this.config.clientCapabilities || {
@@ -361,17 +363,20 @@ export class ACPClient extends EventEmitter {
 	/**
 	 * Send a prompt to the agent
 	 *
-	 * Note: ACP ContentBlock format is { type: 'text', text: 'content' }
-	 * not { text: { text: 'content' } } as the union type suggests
+	 * Note: OpenCode uses the flat ContentBlock format: { type: 'text', text: 'content' }
+	 * rather than the nested spec format { text: { text: 'content' } }.
+	 * We use ContentBlockFlat here for OpenCode compatibility.
 	 */
 	async prompt(sessionId: SessionId, text: string): Promise<PromptResponse> {
-		// ACP uses a simpler content block format for text
-		const contentBlock = {
+		// OpenCode uses flat content block format
+		const contentBlock: ContentBlockFlat = {
 			type: 'text',
 			text,
 		};
 		const request: PromptRequest = {
 			sessionId,
+			// Cast to ContentBlock[] since PromptRequest expects that type
+			// but we're sending the flat format that OpenCode understands
 			prompt: [contentBlock as unknown as ContentBlock],
 		};
 		return (await this.sendRequest('session/prompt', request)) as PromptResponse;

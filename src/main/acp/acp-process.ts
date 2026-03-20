@@ -14,6 +14,7 @@ import { ACPClient, type ACPClientConfig } from './acp-client';
 import { acpUpdateToParseEvent, createSessionIdEvent, createResultEvent } from './acp-adapter';
 import type { SessionUpdate, SessionId } from './types';
 import { logger } from '../utils/logger';
+import { getAppVersion } from './version';
 
 const LOG_CONTEXT = '[ACPProcess]';
 
@@ -111,7 +112,7 @@ export class ACPProcess extends EventEmitter {
 			env: config.customEnvVars,
 			clientInfo: {
 				name: 'maestro',
-				version: '0.12.0',
+				version: getAppVersion(),
 				title: 'Maestro',
 			},
 			// Disable terminal capability until we implement the handlers

@@ -207,11 +207,31 @@ export interface Annotations {
 
 export type Role = 'assistant' | 'user';
 
+/**
+ * ContentBlock represents a unit of content in prompts and responses.
+ *
+ * Note: There are two formats in use:
+ * 1. Spec format (nested): { text: { text: 'content' } }
+ * 2. OpenCode format (flat): { type: 'text', text: 'content' }
+ *
+ * We define the spec format here. The flat format is handled via type casting
+ * in acp-client.ts for OpenCode compatibility.
+ */
 export type ContentBlock =
 	| { text: TextContent }
 	| { image: ImageContent }
 	| { resource_link: ResourceLink }
 	| { resource: EmbeddedResource };
+
+/**
+ * Alternative flat format used by some agents (e.g., OpenCode).
+ * Use this for agents that expect { type: 'text', text: '...' } instead of { text: { text: '...' } }
+ */
+export type ContentBlockFlat =
+	| { type: 'text'; text: string }
+	| { type: 'image'; data: string; mimeType: string }
+	| { type: 'resource_link'; uri: string; name: string }
+	| { type: 'resource'; resource: TextResourceContents | BlobResourceContents };
 
 // ============================================================================
 // Prompt

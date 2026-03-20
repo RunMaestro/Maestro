@@ -17,3 +17,4 @@ export {
 	createErrorEvent,
 } from './acp-adapter';
 export { ACPProcess, spawnACPProcess, type ACPProcessConfig } from './acp-process';
+export { getAppVersion } from './version';
