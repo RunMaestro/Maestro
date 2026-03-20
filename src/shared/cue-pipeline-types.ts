@@ -155,3 +155,22 @@ export function getNextPipelineColor(existingPipelines: CuePipeline[]): string {
 	}
 	return PIPELINE_COLORS[existingPipelines.length % PIPELINE_COLORS.length];
 }
+
+// ─── Shared pipeline-editor types ────────────────────────────────────────────
+
+/** Lightweight session descriptor used by the pipeline editor (avoids importing full Session). */
+export interface CuePipelineSessionInfo {
+	id: string;
+	groupId?: string;
+	name: string;
+	toolType: string;
+	projectRoot?: string;
+}
+
+/** Info about an incoming trigger edge for per-edge prompt editing. */
+export interface IncomingTriggerEdgeInfo {
+	edgeId: string;
+	triggerLabel: string;
+	configSummary: string;
+	prompt: string;
+}

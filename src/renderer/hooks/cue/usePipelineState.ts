@@ -27,13 +27,8 @@ import { captureException } from '../../utils/sentry';
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
-export interface SessionInfo {
-	id: string;
-	groupId?: string;
-	name: string;
-	toolType: string;
-	projectRoot?: string;
-}
+export type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
+import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
 
 export interface ActiveRunInfo {
 	subscriptionName: string;

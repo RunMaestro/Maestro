@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { getBezierPath, BaseEdge, EdgeLabelRenderer, type EdgeProps } from 'reactflow';
 import { MessageCircle, FileText } from 'lucide-react';
-import type { EdgeMode } from '../../../../shared/cue-pipeline-types';
+import { CUE_COLOR, type EdgeMode } from '../../../../shared/cue-pipeline-types';
 
 // Inject the pipeline dash animation once into the document head
 let pipelineDashInjected = false;
@@ -37,7 +37,7 @@ export const PipelineEdge = memo(function PipelineEdge({
 	markerEnd,
 }: EdgeProps<PipelineEdgeData>) {
 	ensurePipelineDashStyle();
-	const color = data?.pipelineColor ?? '#06b6d4';
+	const color = data?.pipelineColor ?? CUE_COLOR;
 	const mode = data?.mode ?? 'pass';
 	const isActive = data?.isActivePipeline !== false;
 	const isRunning = data?.isRunning ?? false;

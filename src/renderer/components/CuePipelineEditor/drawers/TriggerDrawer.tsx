@@ -1,7 +1,8 @@
 import { memo, useState, useMemo } from 'react';
-import { Clock, FileText, GitPullRequest, GitBranch, CheckSquare, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import type { CueEventType } from '../../../../shared/cue-pipeline-types';
 import type { Theme } from '../../../types';
+import { EVENT_ICONS, EVENT_COLORS } from '../cueEventConstants';
 
 export interface TriggerDrawerProps {
 	isOpen: boolean;
@@ -13,7 +14,7 @@ interface TriggerItem {
 	eventType: CueEventType;
 	label: string;
 	description: string;
-	icon: typeof Clock;
+	icon: (typeof EVENT_ICONS)[CueEventType];
 	color: string;
 }
 
@@ -22,43 +23,43 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		eventType: 'time.heartbeat',
 		label: 'Heartbeat',
 		description: 'Run every N minutes',
-		icon: Clock,
-		color: '#f59e0b',
+		icon: EVENT_ICONS['time.heartbeat'],
+		color: EVENT_COLORS['time.heartbeat'],
 	},
 	{
 		eventType: 'time.scheduled',
 		label: 'Scheduled',
 		description: 'Run at specific times & days',
-		icon: Clock,
-		color: '#8b5cf6',
+		icon: EVENT_ICONS['time.scheduled'],
+		color: EVENT_COLORS['time.scheduled'],
 	},
 	{
 		eventType: 'file.changed',
 		label: 'File Change',
 		description: 'Watch for file modifications',
-		icon: FileText,
-		color: '#3b82f6',
+		icon: EVENT_ICONS['file.changed'],
+		color: EVENT_COLORS['file.changed'],
 	},
 	{
 		eventType: 'github.pull_request',
 		label: 'Pull Request',
 		description: 'GitHub PR events',
-		icon: GitPullRequest,
-		color: '#a855f7',
+		icon: EVENT_ICONS['github.pull_request'],
+		color: EVENT_COLORS['github.pull_request'],
 	},
 	{
 		eventType: 'github.issue',
 		label: 'Issue',
 		description: 'GitHub issue events',
-		icon: GitBranch,
-		color: '#f97316',
+		icon: EVENT_ICONS['github.issue'],
+		color: EVENT_COLORS['github.issue'],
 	},
 	{
 		eventType: 'task.pending',
 		label: 'Pending Task',
 		description: 'Markdown task checkboxes',
-		icon: CheckSquare,
-		color: '#06b6d4',
+		icon: EVENT_ICONS['task.pending'],
+		color: EVENT_COLORS['task.pending'],
 	},
 ];
 

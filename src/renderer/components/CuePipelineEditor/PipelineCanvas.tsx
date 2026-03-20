@@ -26,6 +26,7 @@ import type {
 	PipelineEdge as PipelineEdgeType,
 	TriggerNodeData,
 	AgentNodeData,
+	CuePipelineSessionInfo as SessionInfo,
 } from '../../../shared/cue-pipeline-types';
 import type { CueSettings } from '../../../main/cue/cue-types';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
@@ -36,30 +37,12 @@ import { AgentDrawer } from './drawers/AgentDrawer';
 import { NodeConfigPanel, type IncomingTriggerEdgeInfo } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 import { CueSettingsPanel } from './panels/CueSettingsPanel';
+import { EVENT_COLORS } from './cueEventConstants';
 
 const nodeTypes = {
 	trigger: TriggerNode,
 	agent: AgentNode,
 };
-
-/** Event type → MiniMap node color mapping (hoisted to avoid per-render allocation) */
-const EVENT_COLORS: Record<string, string> = {
-	'time.heartbeat': '#f59e0b',
-	'time.scheduled': '#8b5cf6',
-	'file.changed': '#3b82f6',
-	'agent.completed': '#22c55e',
-	'github.pull_request': '#a855f7',
-	'github.issue': '#f97316',
-	'task.pending': '#06b6d4',
-};
-
-interface SessionInfo {
-	id: string;
-	groupId?: string;
-	name: string;
-	toolType: string;
-	projectRoot?: string;
-}
 
 export interface PipelineCanvasProps {
 	theme: Theme;

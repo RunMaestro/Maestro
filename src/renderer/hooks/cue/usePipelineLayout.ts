@@ -16,13 +16,7 @@ import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/uti
 import { mergePipelinesWithSavedLayout } from '../../components/CuePipelineEditor/utils/pipelineLayout';
 import { captureException } from '../../utils/sentry';
 
-export interface SessionInfo {
-	id: string;
-	groupId?: string;
-	name: string;
-	toolType: string;
-	projectRoot?: string;
-}
+import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
 
 export interface UsePipelineLayoutParams {
 	reactFlowInstance: ReactFlowInstance;

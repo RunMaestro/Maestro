@@ -7,21 +7,18 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import type { Node, Edge } from 'reactflow';
-import type {
-	CuePipelineState,
-	PipelineNode,
-	PipelineEdge as PipelineEdgeType,
-	TriggerNodeData,
-	AgentNodeData,
+import {
+	CUE_COLOR,
+	type CuePipelineState,
+	type PipelineNode,
+	type PipelineEdge as PipelineEdgeType,
+	type TriggerNodeData,
+	type AgentNodeData,
+	type IncomingTriggerEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { getTriggerConfigSummary } from '../../components/CuePipelineEditor/utils/pipelineGraph';
 
-export interface IncomingTriggerEdgeInfo {
-	edgeId: string;
-	triggerLabel: string;
-	configSummary: string;
-	prompt: string;
-}
+export type { IncomingTriggerEdgeInfo } from '../../../shared/cue-pipeline-types';
 
 export interface UsePipelineSelectionParams {
 	pipelineState: CuePipelineState;
@@ -134,14 +131,14 @@ export function usePipelineSelection({
 			return {
 				selectedEdge: null,
 				selectedEdgePipelineId: null,
-				selectedEdgePipelineColor: '#06b6d4',
+				selectedEdgePipelineColor: CUE_COLOR,
 			};
 		const sepIdx = selectedEdgeId.indexOf(':');
 		if (sepIdx === -1)
 			return {
 				selectedEdge: null,
 				selectedEdgePipelineId: null,
-				selectedEdgePipelineColor: '#06b6d4',
+				selectedEdgePipelineColor: CUE_COLOR,
 			};
 		const pipelineId = selectedEdgeId.substring(0, sepIdx);
 		const edgeLocalId = selectedEdgeId.substring(sepIdx + 1);
@@ -150,7 +147,7 @@ export function usePipelineSelection({
 		return {
 			selectedEdge: edge ?? null,
 			selectedEdgePipelineId: edge ? pipelineId : null,
-			selectedEdgePipelineColor: pipeline?.color ?? '#06b6d4',
+			selectedEdgePipelineColor: pipeline?.color ?? CUE_COLOR,
 		};
 	}, [selectedEdgeId, pipelineState.pipelines]);
 

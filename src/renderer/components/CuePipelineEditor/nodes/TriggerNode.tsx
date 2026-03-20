@@ -1,16 +1,8 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
-import {
-	Clock,
-	FileText,
-	GitPullRequest,
-	GitBranch,
-	CheckSquare,
-	Zap,
-	GripVertical,
-	Settings,
-} from 'lucide-react';
-import type { CueEventType } from '../../../../shared/cue-pipeline-types';
+import { GripVertical, Settings, Zap } from 'lucide-react';
+import { CUE_COLOR, type CueEventType } from '../../../../shared/cue-pipeline-types';
+import { EVENT_COLORS, EVENT_ICONS } from '../cueEventConstants';
 
 export interface TriggerNodeDataProps {
 	compositeId: string;
@@ -20,31 +12,11 @@ export interface TriggerNodeDataProps {
 	onConfigure?: (compositeId: string) => void;
 }
 
-const EVENT_COLORS: Record<CueEventType, string> = {
-	'time.heartbeat': '#f59e0b',
-	'time.scheduled': '#8b5cf6',
-	'file.changed': '#3b82f6',
-	'agent.completed': '#22c55e',
-	'github.pull_request': '#a855f7',
-	'github.issue': '#f97316',
-	'task.pending': '#06b6d4',
-};
-
-const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
-	'time.heartbeat': Clock,
-	'time.scheduled': Clock,
-	'file.changed': FileText,
-	'agent.completed': Zap,
-	'github.pull_request': GitPullRequest,
-	'github.issue': GitBranch,
-	'task.pending': CheckSquare,
-};
-
 export const TriggerNode = memo(function TriggerNode({
 	data,
 	selected,
 }: NodeProps<TriggerNodeDataProps>) {
-	const color = EVENT_COLORS[data.eventType] ?? '#06b6d4';
+	const color = EVENT_COLORS[data.eventType] ?? CUE_COLOR;
 	const Icon = EVENT_ICONS[data.eventType] ?? Zap;
 
 	return (
