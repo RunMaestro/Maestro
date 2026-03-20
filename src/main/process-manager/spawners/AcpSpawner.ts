@@ -208,10 +208,14 @@ export class AcpSpawner {
 			// For 'text' events, only emit if streaming is enabled
 			// The 'result' event will contain the final text regardless
 			if (event.type === 'text' && !showStreaming) {
-				logger.debug(`${LOG_CONTEXT} Suppressing streaming text (acpShowStreaming=false)`, LOG_CONTEXT, {
-					sessionId,
-					textLength: event.text?.length,
-				});
+				logger.debug(
+					`${LOG_CONTEXT} Suppressing streaming text (acpShowStreaming=false)`,
+					LOG_CONTEXT,
+					{
+						sessionId,
+						textLength: event.text?.length,
+					}
+				);
 				return;
 			}
 

@@ -11,9 +11,9 @@
 export { ACPClient, type ACPClientConfig, type ACPClientEvents } from './acp-client';
 export * from './types';
 export {
-  acpUpdateToParseEvent,
-  createSessionIdEvent,
-  createResultEvent,
-  createErrorEvent,
+	acpUpdateToParseEvent,
+	createSessionIdEvent,
+	createResultEvent,
+	createErrorEvent,
 } from './acp-adapter';
 export { ACPProcess, spawnACPProcess, type ACPProcessConfig } from './acp-process';
