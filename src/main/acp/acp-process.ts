@@ -15,6 +15,10 @@ import { acpUpdateToParseEvent, createSessionIdEvent, createResultEvent } from '
 import type { SessionUpdate, SessionId } from './types';
 import { logger } from '../utils/logger';
 import { getAppVersion } from './version';
+import {
+	detectAcpError,
+	isExpectedDisconnect as isExpectedDisconnectError,
+} from './acp-error-detector';
 
 const LOG_CONTEXT = '[ACPProcess]';
 
@@ -42,16 +46,10 @@ function captureError(
 
 /**
  * Check if an error is an expected disconnect (not a fatal error)
+ * Uses the centralized detection from acp-error-detector
  */
 function isExpectedDisconnect(error: Error): boolean {
-	const message = error.message.toLowerCase();
-	return (
-		message.includes('connection closed') ||
-		message.includes('process exited') ||
-		message.includes('cancelled') ||
-		message.includes('sigterm') ||
-		message.includes('sigint')
-	);
+	return isExpectedDisconnectError(error);
 }
 
 export interface ACPProcessConfig {
@@ -238,10 +236,12 @@ export class ACPProcess extends EventEmitter {
 				});
 			}
 
+			// Detect error type using ACP error detector
+			const detectedError = detectAcpError(err);
 			this.emit('agent-error', this.config.sessionId, {
-				type: 'unknown',
-				message,
-				recoverable: isExpectedDisconnect(err),
+				type: detectedError.type,
+				message: detectedError.message,
+				recoverable: detectedError.recoverable || isExpectedDisconnect(err),
 			});
 			this.emit('exit', this.config.sessionId, 1);
 
@@ -346,10 +346,12 @@ export class ACPProcess extends EventEmitter {
 				},
 			});
 
+			// Detect error type using ACP error detector
+			const detectedError = detectAcpError(err);
 			this.emit('agent-error', this.config.sessionId, {
-				type: 'unknown',
-				message,
-				recoverable: false,
+				type: detectedError.type,
+				message: detectedError.message,
+				recoverable: detectedError.recoverable,
 			});
 		}
 	}
@@ -564,10 +566,12 @@ export class ACPProcess extends EventEmitter {
 				},
 			});
 
+			// Detect error type using ACP error detector
+			const detectedError = detectAcpError(error);
 			this.emit('agent-error', this.config.sessionId, {
-				type: 'unknown',
-				message: error.message,
-				recoverable: false,
+				type: detectedError.type,
+				message: detectedError.message,
+				recoverable: detectedError.recoverable,
 			});
 		});
 	}

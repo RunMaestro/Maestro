@@ -18,3 +18,8 @@ export {
 } from './acp-adapter';
 export { ACPProcess, spawnACPProcess, type ACPProcessConfig } from './acp-process';
 export { getAppVersion } from './version';
+export {
+	detectAcpError,
+	isExpectedDisconnect,
+	type DetectedError,
+} from './acp-error-detector';
