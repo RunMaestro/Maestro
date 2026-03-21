@@ -56,6 +56,8 @@ function createDefaultProps(overrides: Partial<Parameters<typeof LiveOverlayPane
 		copyFlash: null,
 		setCopyFlash: vi.fn(),
 		handleTunnelToggle: vi.fn(),
+		persistentWebLink: false,
+		setPersistentWebLink: vi.fn(),
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		setWebInterfaceUseCustomPort: vi.fn(),
@@ -129,6 +131,13 @@ describe('LiveOverlayPanel', () => {
 		it('renders Remote Control section', () => {
 			render(<LiveOverlayPanel {...createDefaultProps()} />);
 			expect(screen.getByText('Remote Control')).toBeTruthy();
+		});
+
+		it('shows Cloudflare tunnel description under Remote Control', () => {
+			render(<LiveOverlayPanel {...createDefaultProps()} />);
+			expect(
+				screen.getByText(/Uses Cloudflare tunnel for access outside your network/)
+			).toBeTruthy();
 		});
 
 		it('calls handleTunnelToggle when toggle button is clicked', () => {

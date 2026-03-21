@@ -55,8 +55,18 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 }: LiveOverlayPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isPersistPending, setIsPersistPending] = useState(false);
+	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
 	useEffect(() => {
-		containerRef.current?.focus();
+		const el = containerRef.current;
+		if (!el) return;
+		// Position below the parent (LIVE button wrapper) using fixed positioning
+		const parent = el.parentElement;
+		if (parent) {
+			const rect = parent.getBoundingClientRect();
+			setPosition({ top: rect.bottom, left: rect.left });
+		}
+		el.focus();
 	}, []);
 
 	const handlePersistToggle = useCallback(async () => {
@@ -71,8 +81,14 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	return (
 		<div
 			ref={containerRef}
-			className="absolute top-full left-0 pt-2 z-50 outline-none"
-			style={{ width: '280px', maxHeight: 'calc(100vh - 120px)' }}
+			className="fixed pt-2 z-50 outline-none"
+			style={{
+				width: '320px',
+				maxHeight: 'calc(100vh - 120px)',
+				top: position ? `${position.top}px` : 0,
+				left: position ? `${position.left}px` : 0,
+				visibility: position ? 'visible' : 'hidden',
+			}}
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				if (tunnelStatus === 'connected') {
@@ -119,6 +135,12 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 								style={{ color: theme.colors.textDim }}
 							>
 								Remote Control
+							</div>
+							<div
+								className="text-[9px] mt-0.5"
+								style={{ color: theme.colors.textDim, opacity: 0.7 }}
+							>
+								Uses Cloudflare tunnel for access outside your network
 							</div>
 							{cloudflaredInstalled === false && (
 								<div className="text-[9px] text-yellow-500 mt-1">Install cloudflared to enable</div>
