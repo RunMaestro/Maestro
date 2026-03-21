@@ -109,23 +109,10 @@ export async function send(
 		process.exit(1);
 	}
 
-	// Determine which agent session to resume:
-	// 1. Explicit --session flag takes priority
-	// 2. Otherwise, use the active tab's agentSessionId to avoid creating duplicate sessions
-	// 3. If no active tab session exists, spawnAgent creates a fresh isolated session
-	let agentSessionId = options.session;
-	if (!agentSessionId) {
-		const aiTabs = (agent as any).aiTabs as
-			| Array<{ id: string; agentSessionId?: string }>
-			| undefined;
-		const activeTabId = (agent as any).activeTabId as string | undefined;
-		if (aiTabs && activeTabId) {
-			const activeTab = aiTabs.find((t) => t.id === activeTabId);
-			if (activeTab?.agentSessionId) {
-				agentSessionId = activeTab.agentSessionId;
-			}
-		}
-	}
+	// Only resume a session when explicitly requested via --session flag.
+	// Without -s, always create a fresh session to prevent session leakage
+	// when multiple callers (e.g. Discord threads) send concurrently.
+	const agentSessionId = options.session;
 
 	// Spawn agent — spawnAgent handles --resume vs fresh session internally
 	const result = await spawnAgent(agent.toolType, agent.cwd, message, agentSessionId, {
