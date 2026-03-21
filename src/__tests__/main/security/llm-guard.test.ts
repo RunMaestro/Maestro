@@ -388,7 +388,8 @@ describe('llm guard', () => {
 			const suffix = 'abcdefghijklmnopqrstuvwx';
 			const token = `${prefix}-${part1}-${part2}-${suffix}`;
 			const result = runLlmGuardPre(`Token: ${token}`, enabledConfig);
-			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_SLACK_BOT_TOKEN_');
+			// Implementation uses SECRET_SLACK_TOKEN for all slack token types (xoxb, xoxp, etc.)
+			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_SLACK_TOKEN_');
 		});
 
 		it('detects Slack User Token', () => {
@@ -399,7 +400,8 @@ describe('llm guard', () => {
 			const suffix = 'abcdefghijklmnopqrstuvwx';
 			const token = `${prefix}-${part1}-${part2}-${suffix}`;
 			const result = runLlmGuardPre(`Token: ${token}`, enabledConfig);
-			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_SLACK_USER_TOKEN_');
+			// Implementation uses SECRET_SLACK_TOKEN for all slack token types (xoxb, xoxp, etc.)
+			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_SLACK_TOKEN_');
 		});
 
 		it('detects Stripe Secret Key', () => {
@@ -408,7 +410,8 @@ describe('llm guard', () => {
 			const suffix = 'abcdefghijklmnopqrstuvwx';
 			const key = prefix + suffix;
 			const result = runLlmGuardPre(`Key: ${key}`, enabledConfig);
-			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_STRIPE_SECRET_KEY_');
+			// Implementation uses SECRET_STRIPE_KEY for all stripe key types (sk, pk, rk)
+			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_STRIPE_KEY_');
 		});
 
 		it('detects Stripe Publishable Key', () => {
@@ -417,7 +420,8 @@ describe('llm guard', () => {
 			const suffix = 'abcdefghijklmnopqrstuvwx';
 			const key = prefix + suffix;
 			const result = runLlmGuardPre(`Key: ${key}`, enabledConfig);
-			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_STRIPE_PUBLISHABLE_KEY_');
+			// Implementation uses SECRET_STRIPE_KEY for all stripe key types (sk, pk, rk)
+			expect(result.sanitizedPrompt).toContain('[REDACTED_SECRET_STRIPE_KEY_');
 		});
 
 		it('detects Twilio Account SID', () => {

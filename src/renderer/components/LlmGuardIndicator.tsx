@@ -110,10 +110,15 @@ export const LlmGuardIndicator = memo(function LlmGuardIndicator({
 
 			setLastEventTime(Date.now());
 
-			// Update counts based on event type
-			if (event.eventType === 'blocked') {
+			// Update counts based on action taken (more accurate than eventType)
+			// Events can be input_scan/output_scan with action 'blocked', 'warned', or 'sanitized'
+			if (event.action === 'blocked' || event.eventType === 'blocked') {
 				setRecentBlocked((prev) => prev + 1);
-			} else if (event.eventType === 'warning') {
+			} else if (
+				event.action === 'warned' ||
+				event.action === 'sanitized' ||
+				event.eventType === 'warning'
+			) {
 				setRecentWarnings((prev) => prev + 1);
 			}
 

@@ -102,6 +102,7 @@ describe('SecurityEventsPanel Export', () => {
 		});
 
 		it('sets startDate for 7d date range', () => {
+			vi.useFakeTimers();
 			const now = Date.now();
 			vi.setSystemTime(now);
 
@@ -116,6 +117,7 @@ describe('SecurityEventsPanel Export', () => {
 		});
 
 		it('sets startDate for 30d date range', () => {
+			vi.useFakeTimers();
 			const now = Date.now();
 			vi.setSystemTime(now);
 

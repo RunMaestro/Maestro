@@ -333,10 +333,10 @@ export class StdoutHandler {
 				textLength: event.text.length,
 			});
 			// Apply output guard to streaming chunks to catch sensitive content early
+			// Store the guarded chunk to avoid double-scanning at final emit time
 			const guardedChunk = this.applyOutputGuard(sessionId, managedProcess, event.text);
 			this.emitter.emit('thinking-chunk', sessionId, guardedChunk);
-			// Store original text for final result (will be guarded again at emit time)
-			managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+			managedProcess.streamedText = (managedProcess.streamedText || '') + guardedChunk;
 		}
 
 		// Handle tool execution events (OpenCode, Codex)
@@ -401,10 +401,16 @@ export class StdoutHandler {
 			!managedProcess.resultEmitted
 		) {
 			managedProcess.resultEmitted = true;
+			// Use event.text if available (needs guarding), otherwise use streamedText
+			// (already guarded during streaming chunks - don't double-guard)
+			const useStreamedText = !event.text && managedProcess.streamedText;
 			const resultText = event.text || managedProcess.streamedText || '';
 
 			if (resultText) {
-				const guardedText = this.applyOutputGuard(sessionId, managedProcess, resultText);
+				// Only guard if using fresh event.text; streamedText is already guarded
+				const guardedText = useStreamedText
+					? resultText
+					: this.applyOutputGuard(sessionId, managedProcess, resultText);
 
 				// Log synopsis result processing (for debugging empty synopsis issue)
 				// Use guardedText to avoid logging raw sensitive content

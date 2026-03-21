@@ -718,9 +718,12 @@ describe('security-logger', () => {
 
 				const html = exportToHtml();
 
-				// Script tags should be escaped
+				// Script tags should not appear in export because values are redacted
 				expect(html).not.toContain('<script>');
-				expect(html).toContain('&lt;script&gt;');
+				// Original value is redacted, so escaped script tag won't appear either
+				expect(html).not.toContain('&lt;script&gt;');
+				// Instead, the redacted placeholder should appear
+				expect(html).toContain('[REDACTED:TEST:');
 			});
 
 			it('applies filters and shows filter description', () => {

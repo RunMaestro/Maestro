@@ -223,16 +223,23 @@ export const RightPanel = memo(
 
 		// Load security event IDs - extracted as callback so it can be reused
 		const loadSecurityEventIds = useCallback(async () => {
+			// Guard: security API may not be available in all environments
+			if (!window.maestro?.security?.getEvents) return;
+
 			try {
 				const result = await window.maestro.security.getEvents(100, 0);
 				setSecurityEventIds(result.events.map((e) => e.id));
-			} catch {
-				// Ignore errors - security events are optional
+			} catch (error) {
+				// Log error but don't throw - security events are optional UI feature
+				console.warn('[RightPanel] Failed to load security events:', error);
 			}
 		}, []);
 
 		// Load security event IDs on mount and subscribe to updates
 		useEffect(() => {
+			// Guard: security API may not be available in all environments
+			if (!window.maestro?.security?.onSecurityEvent) return;
+
 			loadSecurityEventIds();
 
 			// Subscribe to real-time updates

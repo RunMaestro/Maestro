@@ -4,11 +4,15 @@ export class PiiVault {
 	private readonly entries: LlmGuardVaultEntry[] = [];
 
 	add(entry: LlmGuardVaultEntry): void {
-		this.entries.push(entry);
+		// Clone the entry to prevent external mutation
+		this.entries.push({ ...entry });
 	}
 
 	toJSON(): LlmGuardVaultSnapshot {
-		return { entries: [...this.entries] };
+		// Return deep copies to prevent external mutation of vault contents
+		return {
+			entries: this.entries.map((e) => ({ ...e })),
+		};
 	}
 
 	static deanonymize(text: string, vault?: LlmGuardVaultSnapshot): string {

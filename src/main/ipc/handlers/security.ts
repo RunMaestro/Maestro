@@ -37,6 +37,70 @@ import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandle
 const LOG_CONTEXT = '[Security]';
 
 /**
+ * Sanitize a partial LlmGuardConfig from IPC to ensure type safety.
+ * Only extracts known boolean/string/number properties - does NOT extract
+ * user-defined patterns (banSubstrings, banTopicsPatterns, customPatterns)
+ * which require full validation via parseImportedConfig.
+ */
+function sanitizePartialConfig(raw: unknown): Partial<LlmGuardConfig> {
+	if (!raw || typeof raw !== 'object') return {};
+	const obj = raw as Record<string, unknown>;
+	const safe: Partial<LlmGuardConfig> = {};
+
+	// Only extract known top-level properties with expected types
+	if (typeof obj.enabled === 'boolean') safe.enabled = obj.enabled;
+	if (obj.action === 'warn' || obj.action === 'sanitize' || obj.action === 'block') {
+		safe.action = obj.action;
+	}
+
+	// Input settings - only boolean flags
+	if (obj.input && typeof obj.input === 'object') {
+		const inp = obj.input as Record<string, unknown>;
+		safe.input = {
+			anonymizePii: typeof inp.anonymizePii === 'boolean' ? inp.anonymizePii : true,
+			redactSecrets: typeof inp.redactSecrets === 'boolean' ? inp.redactSecrets : true,
+			detectPromptInjection:
+				typeof inp.detectPromptInjection === 'boolean' ? inp.detectPromptInjection : true,
+			structuralAnalysis:
+				typeof inp.structuralAnalysis === 'boolean' ? inp.structuralAnalysis : true,
+			invisibleCharacterDetection:
+				typeof inp.invisibleCharacterDetection === 'boolean'
+					? inp.invisibleCharacterDetection
+					: true,
+			scanUrls: typeof inp.scanUrls === 'boolean' ? inp.scanUrls : true,
+		};
+	}
+
+	// Output settings - only boolean flags
+	if (obj.output && typeof obj.output === 'object') {
+		const out = obj.output as Record<string, unknown>;
+		safe.output = {
+			deanonymizePii: typeof out.deanonymizePii === 'boolean' ? out.deanonymizePii : true,
+			redactSecrets: typeof out.redactSecrets === 'boolean' ? out.redactSecrets : true,
+			detectPiiLeakage: typeof out.detectPiiLeakage === 'boolean' ? out.detectPiiLeakage : true,
+			detectOutputInjection:
+				typeof out.detectOutputInjection === 'boolean' ? out.detectOutputInjection : true,
+			scanUrls: typeof out.scanUrls === 'boolean' ? out.scanUrls : true,
+			scanCode: typeof out.scanCode === 'boolean' ? out.scanCode : true,
+		};
+	}
+
+	// Thresholds - only numbers in valid range
+	if (obj.thresholds && typeof obj.thresholds === 'object') {
+		const thresh = obj.thresholds as Record<string, unknown>;
+		if (
+			typeof thresh.promptInjection === 'number' &&
+			thresh.promptInjection >= 0 &&
+			thresh.promptInjection <= 1
+		) {
+			safe.thresholds = { promptInjection: thresh.promptInjection };
+		}
+	}
+
+	return safe;
+}
+
+/**
  * Helper to create handler options with consistent context
  */
 const handlerOpts = (
@@ -173,7 +237,7 @@ export function registerSecurityHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('getRecommendations'),
 			async (
-				config: Partial<LlmGuardConfig>,
+				config: unknown,
 				options?: {
 					minSeverity?: RecommendationSeverity;
 					categories?: RecommendationCategory[];
@@ -181,7 +245,9 @@ export function registerSecurityHandlers(): void {
 					dismissedIds?: string[];
 				}
 			): Promise<SecurityRecommendation[]> => {
-				return getRecommendations(config, options);
+				// Sanitize config from renderer to prevent arbitrary object injection
+				const safeConfig = sanitizePartialConfig(config);
+				return getRecommendations(safeConfig, options);
 			}
 		)
 	);
@@ -192,7 +258,7 @@ export function registerSecurityHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('getRecommendationsSummary'),
 			async (
-				config: Partial<LlmGuardConfig>
+				config: unknown
 			): Promise<{
 				total: number;
 				high: number;
@@ -200,7 +266,9 @@ export function registerSecurityHandlers(): void {
 				low: number;
 				categories: Record<RecommendationCategory, number>;
 			}> => {
-				return getRecommendationsSummary(config);
+				// Sanitize config from renderer to prevent arbitrary object injection
+				const safeConfig = sanitizePartialConfig(config);
+				return getRecommendationsSummary(safeConfig);
 			}
 		)
 	);
@@ -211,8 +279,10 @@ export function registerSecurityHandlers(): void {
 		'security:scanInputPreview',
 		withIpcErrorLogging(
 			handlerOpts('scanInputPreview'),
-			async (text: string, config?: Partial<LlmGuardConfig>): Promise<InputScanPreviewResult> => {
-				return scanInputForPreview(text, config);
+			async (text: string, config?: unknown): Promise<InputScanPreviewResult> => {
+				// Sanitize config from renderer to prevent arbitrary object injection
+				const safeConfig = config ? sanitizePartialConfig(config) : undefined;
+				return scanInputForPreview(text, safeConfig);
 			}
 		)
 	);

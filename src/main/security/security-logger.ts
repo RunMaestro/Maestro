@@ -14,6 +14,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import type { LlmGuardFinding } from './llm-guard/types';
+import { captureException } from '../utils/sentry';
 
 /**
  * Event types that can be logged
@@ -102,6 +103,39 @@ function getSecurityEventsPath(): string {
 }
 
 /**
+ * Redact a sensitive value for safe persistence.
+ * Shows type indicator and length, but masks the actual content.
+ * Example: "user@example.com" -> "[REDACTED:EMAIL:16chars]"
+ */
+function redactValue(value: string, type: string): string {
+	const len = value.length;
+	const shortType = type.replace(/^(PII_|SECRET_)/, '');
+	return `[REDACTED:${shortType}:${len}chars]`;
+}
+
+/**
+ * Create a redacted copy of findings for safe persistence.
+ * Preserves type, position, confidence, and replacement but masks raw values.
+ */
+function redactFindings(findings: LlmGuardFinding[]): LlmGuardFinding[] {
+	return findings.map((f) => ({
+		...f,
+		value: redactValue(f.value, f.type),
+	}));
+}
+
+/**
+ * Create a redacted copy of an event for safe file persistence.
+ * The in-memory event retains full details for UI display.
+ */
+function createRedactedEvent(event: SecurityEvent): SecurityEvent {
+	return {
+		...event,
+		findings: redactFindings(event.findings),
+	};
+}
+
+/**
  * Log a security event to the circular buffer and optionally persist to file.
  *
  * @param params - Event parameters (id and timestamp will be auto-generated)
@@ -127,23 +161,35 @@ export async function logSecurityEvent(
 	}
 	totalEventsLogged++;
 
-	// Persist to file if requested
+	// Persist to file if requested (with redacted values for security)
 	if (persistToFile) {
 		try {
-			await appendEventToFile(event);
+			const redactedEvent = createRedactedEvent(event);
+			await appendEventToFile(redactedEvent);
 		} catch (error) {
-			// Log error but don't throw - file persistence is optional
+			// Report to Sentry but don't throw - file persistence is optional but failures should be tracked
 			console.error('[SecurityLogger] Failed to persist event to file:', error);
+			captureException(error as Error, { context: 'security-logger-persist' });
 		}
 	}
 
 	// Notify listeners
+	let listenerErrors = 0;
 	for (const listener of eventListeners) {
 		try {
 			listener(event);
 		} catch (error) {
 			console.error('[SecurityLogger] Event listener error:', error);
+			listenerErrors++;
 		}
+	}
+
+	// Report listener errors to Sentry if any occurred
+	if (listenerErrors > 0) {
+		captureException(new Error(`${listenerErrors} security event listener(s) failed`), {
+			context: 'security-logger-listeners',
+			eventId: event.id,
+		});
 	}
 
 	return event;
@@ -227,7 +273,7 @@ export async function clearAllEvents(): Promise<void> {
 	try {
 		const filePath = getSecurityEventsPath();
 		await fs.writeFile(filePath, '', 'utf-8');
-	} catch (error) {
+	} catch {
 		// Ignore file errors (file may not exist)
 	}
 }
@@ -372,14 +418,16 @@ function escapeCsvField(value: string): string {
 }
 
 /**
- * Export events to JSON format
+ * Export events to JSON format (with redacted sensitive values)
  */
 export function exportToJson(filters: ExportFilterOptions = {}): string {
 	const events = filterEvents(getAllEvents(), filters);
+	// Redact sensitive values before export to avoid creating a second secrets store
+	const redactedEvents = events.map(createRedactedEvent);
 
 	const exportData = {
 		exportedAt: new Date().toISOString(),
-		totalEvents: events.length,
+		totalEvents: redactedEvents.length,
 		filters: {
 			startDate: filters.startDate ? new Date(filters.startDate).toISOString() : null,
 			endDate: filters.endDate ? new Date(filters.endDate).toISOString() : null,
@@ -387,14 +435,16 @@ export function exportToJson(filters: ExportFilterOptions = {}): string {
 			sessionIds: filters.sessionIds || null,
 			minConfidence: filters.minConfidence ?? null,
 		},
-		events,
+		events: redactedEvents,
 	};
 
 	return JSON.stringify(exportData, null, 2);
 }
 
 /**
- * Export events to CSV format
+ * Export events to CSV format.
+ * Note: CSV export intentionally excludes raw finding values for security.
+ * Only metadata (type, confidence, count) is included.
  */
 export function exportToCsv(filters: ExportFilterOptions = {}): string {
 	const events = filterEvents(getAllEvents(), filters);
@@ -460,10 +510,12 @@ function escapeHtml(text: string): string {
 }
 
 /**
- * Export events to HTML format (formatted report)
+ * Export events to HTML format (formatted report, with redacted sensitive values)
  */
 export function exportToHtml(filters: ExportFilterOptions = {}): string {
-	const events = filterEvents(getAllEvents(), filters);
+	const rawEvents = filterEvents(getAllEvents(), filters);
+	// Redact sensitive values before export
+	const events = rawEvents.map(createRedactedEvent);
 
 	// Calculate statistics
 	const stats = {
