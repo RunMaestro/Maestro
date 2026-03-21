@@ -215,7 +215,7 @@ export function GistPublishModal({
 			headerIcon={<Share2 className="w-4 h-4" style={{ color: theme.colors.accent }} />}
 			priority={MODAL_PRIORITIES.GIST_PUBLISH}
 			onClose={onClose}
-			width={450}
+			width={520}
 			zIndex={10000}
 			initialFocusRef={secretButtonRef}
 			footer={
