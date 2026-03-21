@@ -406,7 +406,7 @@ describe('process IPC handlers', () => {
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
 			mockProcessManager.spawn.mockReturnValue({ pid: 1001, success: true });
 			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
-				if (key === 'llmGuardConfig') {
+				if (key === 'llmGuardSettings') {
 					return {
 						enabled: true,
 						action: 'sanitize',
@@ -464,7 +464,7 @@ describe('process IPC handlers', () => {
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
 			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
-				if (key === 'llmGuardConfig') {
+				if (key === 'llmGuardSettings') {
 					return {
 						enabled: true,
 						action: 'block',

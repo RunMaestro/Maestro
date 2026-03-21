@@ -564,6 +564,16 @@ const mockMaestro = {
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 	},
+	// Security API (LLM Guard events)
+	security: {
+		onSecurityEvent: vi.fn().mockReturnValue(() => {}),
+		getEvents: vi.fn().mockResolvedValue({ events: [], total: 0, hasMore: false }),
+		getEventsByType: vi.fn().mockResolvedValue([]),
+		getEventsBySession: vi.fn().mockResolvedValue([]),
+		clearEvents: vi.fn().mockResolvedValue(undefined),
+		clearAllEvents: vi.fn().mockResolvedValue(undefined),
+		getStats: vi.fn().mockResolvedValue({ bufferSize: 0, totalLogged: 0, maxSize: 1000 }),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };
