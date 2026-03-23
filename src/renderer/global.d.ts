@@ -82,6 +82,7 @@ interface AgentCapabilities {
 	supportsGroupChatModeration: boolean;
 	usesJsonLineOutput: boolean;
 	usesCombinedContextWindow: boolean;
+	supportsAppendSystemPrompt: boolean;
 }
 
 interface AgentConfig {
@@ -123,6 +124,7 @@ interface AgentCapabilities {
 	supportsGroupChatModeration: boolean;
 	usesJsonLineOutput: boolean;
 	usesCombinedContextWindow: boolean;
+	supportsAppendSystemPrompt: boolean;
 }
 
 interface DirectoryEntry {

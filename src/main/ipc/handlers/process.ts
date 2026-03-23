@@ -233,6 +233,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								`maestro-sysprompt-${config.sessionId}-${Date.now()}.txt`
 							);
 							fs.writeFileSync(systemPromptTempFile, config.appendSystemPrompt, 'utf-8');
+							// Schedule cleanup early so the file is removed even if spawn fails.
+							// 30s gives the agent plenty of time to read it after spawning.
+							const tempFileToClean = systemPromptTempFile;
+							setTimeout(() => {
+								try {
+									fs.unlinkSync(tempFileToClean);
+								} catch (cleanupErr: unknown) {
+									if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+										captureException(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+											context: 'systemPromptTempFile cleanup (safety)',
+											file: tempFileToClean,
+										});
+									}
+								}
+							}, 30_000);
 							finalArgs = [...finalArgs, '--append-system-prompt-file', systemPromptTempFile];
 							logger.debug(
 								'Using --append-system-prompt-file for system prompt delivery (Windows)',
@@ -620,22 +635,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					}),
 				});
 
-				// Clean up temp system prompt file after agent has had time to read it
-				if (systemPromptTempFile) {
-					setTimeout(() => {
-						try {
-							fs.unlinkSync(systemPromptTempFile!);
-						} catch (err: unknown) {
-							// ENOENT is expected (file already cleaned up); report anything else
-							if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-								captureException(err instanceof Error ? err : new Error(String(err)), {
-									context: 'systemPromptTempFile cleanup',
-									file: systemPromptTempFile,
-								});
-							}
-						}
-					}, 5000);
-				}
+				// Temp file cleanup is scheduled at creation time (30s safety net)
+				// so it's cleaned up even if spawn fails above.
 
 				// Add power block reason for AI sessions (not terminals)
 				// This prevents system sleep while AI is processing

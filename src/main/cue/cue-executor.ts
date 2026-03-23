@@ -257,6 +257,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	let spawnCwd = projectRoot;
 	let spawnEnvVars = effectiveEnvVars;
 	let prompt: string | undefined = substitutedPrompt;
+	let sshStdinScript: string | undefined;
 
 	if (sshRemoteConfig?.enabled && sshStore) {
 		const sshWrapConfig: SshSpawnWrapConfig = {
@@ -276,6 +277,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		spawnCwd = sshResult.cwd;
 		spawnEnvVars = sshResult.customEnvVars;
 		prompt = sshResult.prompt;
+		sshStdinScript = sshResult.sshStdinScript;
 
 		if (sshResult.sshRemoteUsed) {
 			onLog(
@@ -373,8 +375,12 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		// For agents with promptArgs (like OpenCode -p), the prompt is in the args
 		// For others (like Claude --print), if prompt was passed via args separator, skip stdin
 		// When SSH wrapping returns a prompt, it means "send via stdin"
-		if (prompt && sshRemoteConfig?.enabled) {
-			// SSH large prompt mode — send via stdin
+		if (sshStdinScript && sshRemoteConfig?.enabled) {
+			// SSH stdin script mode — send the full bash script (includes prompt) via stdin
+			child.stdin?.write(sshStdinScript);
+			child.stdin?.end();
+		} else if (prompt && sshRemoteConfig?.enabled) {
+			// SSH small prompt mode — send raw prompt via stdin
 			child.stdin?.write(prompt);
 			child.stdin?.end();
 		} else {
