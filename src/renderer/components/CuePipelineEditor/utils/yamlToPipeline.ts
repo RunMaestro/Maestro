@@ -152,17 +152,24 @@ function triggerLabel(eventType: CueEventType): string {
 
 /**
  * Finds or creates an agent node, deduplicating by session name.
+ *
+ * When `forceNew` is true, always creates a fresh node even if one already
+ * exists for this session — needed for chains where the same agent appears
+ * at multiple positions (e.g. A → B → A).
  */
 function getOrCreateAgentNode(
 	sessionName: string,
 	sessions: PipelineSessionInfo[],
 	nodeMap: Map<string, PipelineNode>,
-	position: { x: number; y: number }
+	position: { x: number; y: number },
+	forceNew?: boolean
 ): PipelineNode {
 	// Check if we already have a node for this session
-	for (const [, node] of nodeMap) {
-		if (node.type === 'agent' && (node.data as AgentNodeData).sessionName === sessionName) {
-			return node;
+	if (!forceNew) {
+		for (const [, node] of nodeMap) {
+			if (node.type === 'agent' && (node.data as AgentNodeData).sessionName === sessionName) {
+				return node;
+			}
 		}
 	}
 
@@ -342,7 +349,27 @@ export function subscriptionsToPipelines(
 					y: LAYOUT.baseY + existingRows * LAYOUT.verticalSpacing,
 				};
 
-				const targetNode = getOrCreateAgentNode(targetSessionName, sessions, nodeMap, pos);
+				// Resolve source nodes BEFORE creating the target node and updating
+				// sessionToNode — if the source and target share a session name
+				// (e.g. Claude → Claude), the overwrite would make the lookup
+				// return the new target instead of the earlier source node.
+				const resolvedSources: PipelineNode[] = [];
+				for (const sourceSessionName of sourceSessions) {
+					const sourceNode = sessionToNode.get(sourceSessionName);
+					if (sourceNode) resolvedSources.push(sourceNode);
+				}
+
+				// Force a new node when this session already appeared earlier in the chain
+				// (e.g. A → B → A). Reusing the earlier node would create a back-edge
+				// instead of rendering the second occurrence as a distinct node.
+				const alreadyInChain = sessionToNode.has(targetSessionName);
+				const targetNode = getOrCreateAgentNode(
+					targetSessionName,
+					sessions,
+					nodeMap,
+					pos,
+					alreadyInChain
+				);
 				sessionToNode.set(targetSessionName, targetNode);
 				sessionColumn.set(targetSessionName, targetCol);
 				sessionRow.set(targetSessionName, existingRows);
@@ -363,19 +390,14 @@ export function subscriptionsToPipelines(
 					(targetNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 				}
 
-				// Create edges from source(s) to target
-				if (sourceSessions.length > 0) {
-					for (const sourceSessionName of sourceSessions) {
-						const sourceNode = sessionToNode.get(sourceSessionName);
-						if (sourceNode) {
-							edges.push({
-								id: `edge-${edgeCount++}`,
-								source: sourceNode.id,
-								target: targetNode.id,
-								mode: 'pass' as EdgeMode,
-							});
-						}
-					}
+				// Create edges from pre-resolved source(s) to target
+				for (const sourceNode of resolvedSources) {
+					edges.push({
+						id: `edge-${edgeCount++}`,
+						source: sourceNode.id,
+						target: targetNode.id,
+						mode: 'pass' as EdgeMode,
+					});
 				}
 			}
 		}

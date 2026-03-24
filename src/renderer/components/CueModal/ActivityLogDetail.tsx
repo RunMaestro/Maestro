@@ -51,9 +51,9 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 						style={{
 							color:
 								entry.exitCode === 0
-									? '#22c55e'
+									? theme.colors.success
 									: entry.exitCode != null
-										? '#ef4444'
+										? theme.colors.error
 										: theme.colors.textDim,
 						}}
 					>
@@ -121,12 +121,12 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 			{hasStderr && (
 				<div>
 					<div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider mb-1">
-						<AlertTriangle className="w-3 h-3" style={{ color: '#ef4444' }} />
-						<span style={{ color: '#ef4444' }}>Errors</span>
+						<AlertTriangle className="w-3 h-3" style={{ color: theme.colors.error }} />
+						<span style={{ color: theme.colors.error }}>Errors</span>
 					</div>
 					<pre
 						className="rounded px-2 py-1.5 text-[11px] max-h-32 overflow-y-auto whitespace-pre-wrap break-all"
-						style={{ backgroundColor: '#ef444410', color: '#ef4444' }}
+						style={{ backgroundColor: `${theme.colors.error}10`, color: theme.colors.error }}
 					>
 						{entry.stderr.slice(-3000)}
 					</pre>

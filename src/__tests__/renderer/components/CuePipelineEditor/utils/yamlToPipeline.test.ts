@@ -457,6 +457,110 @@ describe('subscriptionsToPipelines', () => {
 		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Pedsidian');
 	});
 
+	it('creates separate nodes when the same agent appears twice in a chain (A → B → A)', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'loop-test',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'Start',
+				interval_minutes: 10,
+				agent_id: 'session-0',
+			},
+			{
+				name: 'loop-test-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'Middle step',
+				source_session: 'alpha',
+				agent_id: 'session-1',
+			},
+			{
+				name: 'loop-test-chain-2',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'Final step',
+				source_session: 'beta',
+				agent_id: 'session-0',
+			},
+		];
+		const sessions = makeSessions('alpha', 'beta');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const alphaNodes = agents.filter(
+			(a) => (a.data as { sessionName: string }).sessionName === 'alpha'
+		);
+
+		// Should have TWO distinct nodes for "alpha", not one
+		expect(alphaNodes).toHaveLength(2);
+		expect(alphaNodes[0].id).not.toBe(alphaNodes[1].id);
+
+		// Should have 3 edges: trigger→alpha, alpha→beta, beta→alpha(2nd)
+		expect(pipelines[0].edges).toHaveLength(3);
+
+		// The last edge should connect beta → alpha(2nd), not create a self-edge
+		const lastEdge = pipelines[0].edges[2];
+		const betaNode = agents.find(
+			(a) => (a.data as { sessionName: string }).sessionName === 'beta'
+		)!;
+		expect(lastEdge.source).toBe(betaNode.id);
+		expect(lastEdge.target).toBe(alphaNodes[1].id);
+		expect(lastEdge.source).not.toBe(lastEdge.target);
+	});
+
+	it('connects edges correctly when same agent is consecutive (A → B → B)', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'consec-test',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'Start',
+				interval_minutes: 10,
+				agent_id: 'session-0',
+			},
+			{
+				name: 'consec-test-chain-1',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'First pass',
+				source_session: 'opencode',
+				agent_id: 'session-1',
+			},
+			{
+				name: 'consec-test-chain-2',
+				event: 'agent.completed',
+				enabled: true,
+				prompt: 'Second pass',
+				source_session: 'claude',
+				agent_id: 'session-1',
+			},
+		];
+		const sessions = makeSessions('opencode', 'claude');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		const claudeNodes = agents.filter(
+			(a) => (a.data as { sessionName: string }).sessionName === 'claude'
+		);
+
+		// Two distinct nodes for "claude"
+		expect(claudeNodes).toHaveLength(2);
+
+		// 3 edges: trigger→opencode, opencode→claude(1), claude(1)→claude(2)
+		expect(pipelines[0].edges).toHaveLength(3);
+
+		// Edge from first claude → second claude (not a self-edge)
+		const lastEdge = pipelines[0].edges[2];
+		expect(lastEdge.source).toBe(claudeNodes[0].id);
+		expect(lastEdge.target).toBe(claudeNodes[1].id);
+		expect(lastEdge.source).not.toBe(lastEdge.target);
+	});
+
 	it('sets default edge mode to pass', () => {
 		const subs: CueSubscription[] = [
 			{

@@ -5,6 +5,8 @@
  */
 
 import React, { useRef, useEffect } from 'react';
+import type { Theme } from '../../types';
+import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
 
 export interface ContextMenuState {
 	x: number;
@@ -16,32 +18,38 @@ export interface ContextMenuState {
 
 export interface PipelineContextMenuProps {
 	contextMenu: ContextMenuState;
+	theme: Theme;
 	onConfigure: () => void;
 	onDelete: () => void;
 	onDuplicate: () => void;
+	onDismiss: () => void;
 }
-
-const menuItemStyle: React.CSSProperties = {
-	display: 'block',
-	width: '100%',
-	textAlign: 'left',
-	padding: '6px 12px',
-	fontSize: 12,
-	color: '#e4e4e7',
-	backgroundColor: 'transparent',
-	border: 'none',
-	cursor: 'pointer',
-};
 
 export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 	contextMenu,
+	theme,
 	onConfigure,
 	onDelete,
 	onDuplicate,
+	onDismiss,
 }: PipelineContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 
-	// Auto-focus on mount so keyboard users can reach the menu actions
+	useClickOutside(menuRef, onDismiss);
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				e.stopPropagation();
+				onDismiss();
+			}
+		};
+		document.addEventListener('keydown', handleKeyDown);
+		return () => document.removeEventListener('keydown', handleKeyDown);
+	}, [onDismiss]);
+
+	const { left, top, ready } = useContextMenuPosition(menuRef, contextMenu.x, contextMenu.y);
+
 	useEffect(() => {
 		menuRef.current?.focus();
 	}, []);
@@ -52,15 +60,16 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 			className="fixed outline-none"
 			tabIndex={-1}
 			style={{
-				left: contextMenu.x,
-				top: contextMenu.y,
-				zIndex: 50,
+				left,
+				top,
+				zIndex: 10000,
+				opacity: ready ? 1 : 0,
 			}}
 		>
 			<div
 				style={{
-					backgroundColor: '#1e1e2e',
-					border: '1px solid #444',
+					backgroundColor: theme.colors.bgSidebar,
+					border: `1px solid ${theme.colors.border}`,
 					borderRadius: 6,
 					boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
 					padding: '4px 0',
@@ -69,8 +78,16 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 			>
 				<button
 					onClick={onConfigure}
-					style={menuItemStyle}
-					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+					className="block w-full text-left transition-colors"
+					style={{
+						padding: '6px 12px',
+						fontSize: 12,
+						color: theme.colors.textMain,
+						backgroundColor: 'transparent',
+						border: 'none',
+						cursor: 'pointer',
+					}}
+					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.colors.bgActivity)}
 					onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 				>
 					Configure
@@ -78,8 +95,16 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 				{contextMenu.nodeType === 'trigger' && (
 					<button
 						onClick={onDuplicate}
-						style={menuItemStyle}
-						onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+						className="block w-full text-left transition-colors"
+						style={{
+							padding: '6px 12px',
+							fontSize: 12,
+							color: theme.colors.textMain,
+							backgroundColor: 'transparent',
+							border: 'none',
+							cursor: 'pointer',
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.colors.bgActivity)}
 						onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 					>
 						Duplicate
@@ -88,14 +113,22 @@ export const PipelineContextMenu = React.memo(function PipelineContextMenu({
 				<div
 					style={{
 						height: 1,
-						backgroundColor: '#333',
+						backgroundColor: theme.colors.border,
 						margin: '4px 0',
 					}}
 				/>
 				<button
 					onClick={onDelete}
-					style={{ ...menuItemStyle, color: '#ef4444' }}
-					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+					className="block w-full text-left transition-colors"
+					style={{
+						padding: '6px 12px',
+						fontSize: 12,
+						color: theme.colors.error,
+						backgroundColor: 'transparent',
+						border: 'none',
+						cursor: 'pointer',
+					}}
+					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = theme.colors.bgActivity)}
 					onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 				>
 					Delete

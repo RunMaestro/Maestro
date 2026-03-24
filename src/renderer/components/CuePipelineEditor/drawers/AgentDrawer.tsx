@@ -244,7 +244,7 @@ export const AgentDrawer = memo(function AgentDrawer({
 												width: 6,
 												height: 6,
 												borderRadius: '50%',
-												backgroundColor: '#22c55e',
+												backgroundColor: theme.colors.success,
 												flexShrink: 0,
 											}}
 											title="On canvas"

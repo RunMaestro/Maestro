@@ -4,6 +4,7 @@ import { TriggerNode } from '../../../../../renderer/components/CuePipelineEdito
 import { ReactFlowProvider } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import type { TriggerNodeDataProps } from '../../../../../renderer/components/CuePipelineEditor/nodes/TriggerNode';
+import { THEMES } from '../../../../../renderer/constants/themes';
 
 const defaultData: TriggerNodeDataProps = {
 	compositeId: 'pipeline-1:trigger-0',
@@ -236,6 +237,29 @@ describe('TriggerNode', () => {
 			gearButton.click();
 			expect(onConfigure).toHaveBeenCalledWith('pipeline-1:trigger-0');
 		});
+	});
+
+	it('should use theme textDim color for config summary when theme provided', () => {
+		const lightTheme = THEMES['github-light'];
+		const { container } = renderTriggerNode({ theme: lightTheme, configSummary: 'every 30min' });
+		const summarySpan = container.querySelector('span[title="every 30min"]') as HTMLElement;
+		expect(summarySpan).toBeInTheDocument();
+		expect(summarySpan).toHaveStyle({ color: lightTheme.colors.textDim });
+	});
+
+	it('should use theme textDim color for drag handle when theme provided', () => {
+		const darkTheme = THEMES['dracula'];
+		const { container } = renderTriggerNode({ theme: darkTheme });
+		const dragHandle = container.querySelector('.drag-handle') as HTMLElement;
+		expect(dragHandle).toBeInTheDocument();
+		expect(dragHandle).toHaveStyle({ color: darkTheme.colors.textDim });
+	});
+
+	it('should fall back to hardcoded textDim when no theme provided', () => {
+		const { container } = renderTriggerNode({ configSummary: 'every 10min' });
+		const summarySpan = container.querySelector('span[title="every 10min"]') as HTMLElement;
+		expect(summarySpan).toBeInTheDocument();
+		expect(summarySpan).toHaveStyle({ color: '#9ca3af' });
 	});
 
 	it('should use correct color for each event type', () => {

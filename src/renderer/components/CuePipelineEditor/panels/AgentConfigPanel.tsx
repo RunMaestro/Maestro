@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ExternalLink } from 'lucide-react';
+import type { Theme } from '../../../types';
 import {
 	CUE_COLOR,
 	type PipelineNode,
@@ -16,10 +17,11 @@ import {
 import { useDebouncedCallback } from '../../../hooks/utils';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { EdgePromptRow } from './EdgePromptRow';
-import { inputStyle, labelStyle } from './triggers/triggerConfigStyles';
+import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
 interface AgentConfigPanelProps {
 	node: PipelineNode;
+	theme: Theme;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
 	hasIncomingAgentEdges?: boolean;
@@ -32,6 +34,7 @@ interface AgentConfigPanelProps {
 
 export function AgentConfigPanel({
 	node,
+	theme,
 	pipelines,
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
@@ -43,6 +46,9 @@ export function AgentConfigPanel({
 }: AgentConfigPanelProps) {
 	const data = node.data as AgentNodeData;
 	const hasMultipleTriggers = (incomingTriggerEdges?.length ?? 0) > 1;
+
+	const themedInputStyle = getInputStyle(theme);
+	const themedLabelStyle = getLabelStyle(theme);
 
 	// Single-trigger mode: use agent node's inputPrompt (existing behavior)
 	const [localInputPrompt, setLocalInputPrompt] = useState(data.inputPrompt ?? '');
@@ -112,6 +118,7 @@ export function AgentConfigPanel({
 							<EdgePromptRow
 								key={edgeInfo.edgeId}
 								edgeInfo={edgeInfo}
+								theme={theme}
 								onUpdateEdgePrompt={onUpdateEdgePrompt}
 								expanded={expanded}
 							/>
@@ -121,7 +128,7 @@ export function AgentConfigPanel({
 					<div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 						<label
 							style={{
-								...labelStyle,
+								...themedLabelStyle,
 								flex: expanded ? 1 : undefined,
 								display: 'flex',
 								flexDirection: 'column',
@@ -141,7 +148,7 @@ export function AgentConfigPanel({
 											: 'Prompt sent when this agent receives data from the pipeline...'
 								}
 								style={{
-									...inputStyle,
+									...themedInputStyle,
 									resize: 'vertical',
 									fontFamily: 'inherit',
 									lineHeight: 1.4,
@@ -157,7 +164,7 @@ export function AgentConfigPanel({
 										alignItems: 'center',
 										gap: 6,
 										fontSize: 11,
-										color: '#9ca3af',
+										color: theme.colors.textDim,
 										cursor: 'pointer',
 										marginTop: 2,
 									}}
@@ -174,12 +181,19 @@ export function AgentConfigPanel({
 									/>
 									Auto-include upstream output
 								</label>
-								<div style={{ color: '#6b7280', fontSize: 10, marginTop: 2 }}>
+								<div style={{ color: theme.colors.textDim, fontSize: 10, marginTop: 2 }}>
 									Use {'{{CUE_SOURCE_OUTPUT}}'} in your prompt to control placement.
 								</div>
 							</>
 						)}
-						<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
+						<div
+							style={{
+								color: theme.colors.textDim,
+								fontSize: 10,
+								textAlign: 'right',
+								flexShrink: 0,
+							}}
+						>
 							{localInputPrompt.length} chars
 						</div>
 					</div>
@@ -199,7 +213,7 @@ export function AgentConfigPanel({
 				>
 					<label
 						style={{
-							...labelStyle,
+							...themedLabelStyle,
 							flex: expanded ? 1 : undefined,
 							display: 'flex',
 							flexDirection: 'column',
@@ -218,7 +232,7 @@ export function AgentConfigPanel({
 									: 'Prompt executed after task completion to pass data to next agent...'
 							}
 							style={{
-								...inputStyle,
+								...themedInputStyle,
 								resize: 'vertical',
 								fontFamily: 'inherit',
 								lineHeight: 1.4,
@@ -227,7 +241,9 @@ export function AgentConfigPanel({
 							}}
 						/>
 					</label>
-					<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
+					<div
+						style={{ color: theme.colors.textDim, fontSize: 10, textAlign: 'right', flexShrink: 0 }}
+					>
 						{localOutputPrompt.length} chars
 					</div>
 				</div>
@@ -246,7 +262,7 @@ export function AgentConfigPanel({
 									alignItems: 'center',
 									gap: 4,
 									fontSize: 11,
-									color: '#9ca3af',
+									color: theme.colors.textDim,
 								}}
 							>
 								<span

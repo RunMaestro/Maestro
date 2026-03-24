@@ -39,7 +39,7 @@ export function ActiveRunsList({
 					<button
 						onClick={onStopAll}
 						className="flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
-						style={{ color: '#ef4444' }}
+						style={{ color: theme.colors.error }}
 					>
 						<StopCircle className="w-3.5 h-3.5" />
 						Stop All
@@ -57,7 +57,7 @@ export function ActiveRunsList({
 						className="flex-shrink-0 p-1 rounded hover:bg-white/10 transition-colors"
 						title="Stop run"
 					>
-						<Square className="w-3.5 h-3.5" style={{ color: '#ef4444' }} />
+						<Square className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
 					</button>
 					<div className="flex-1 min-w-0 flex items-center gap-1.5">
 						{(() => {

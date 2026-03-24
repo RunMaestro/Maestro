@@ -97,7 +97,8 @@ export function CueAiChat({
 					className="self-end p-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
 					style={{
 						backgroundColor: chatInput.trim() && !chatBusy ? CUE_COLOR : theme.colors.bgActivity,
-						color: chatInput.trim() && !chatBusy ? '#fff' : theme.colors.textDim,
+						color:
+							chatInput.trim() && !chatBusy ? theme.colors.accentForeground : theme.colors.textDim,
 					}}
 					data-testid="ai-chat-send"
 				>

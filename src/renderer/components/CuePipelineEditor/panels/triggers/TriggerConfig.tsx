@@ -6,19 +6,25 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../../hooks/utils';
-import { inputStyle, labelStyle, selectStyle } from './triggerConfigStyles';
+import { getInputStyle, getLabelStyle, getSelectStyle } from './triggerConfigStyles';
 
 interface TriggerConfigProps {
 	node: PipelineNode;
+	theme: Theme;
 	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData>) => void;
 }
 
-export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
+export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps) {
 	const data = node.data as TriggerNodeData;
 	const [localConfig, setLocalConfig] = useState(data.config);
 	const [localCustomLabel, setLocalCustomLabel] = useState(data.customLabel ?? '');
+
+	const themedInputStyle = getInputStyle(theme);
+	const themedLabelStyle = getLabelStyle(theme);
+	const themedSelectStyle = getSelectStyle(theme);
 
 	useEffect(() => {
 		setLocalConfig(data.config);
@@ -68,14 +74,14 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 	);
 
 	const nameField = (
-		<label style={labelStyle}>
+		<label style={themedLabelStyle}>
 			Name
 			<input
 				type="text"
 				value={localCustomLabel}
 				onChange={handleCustomLabelChange}
 				placeholder={data.label}
-				style={inputStyle}
+				style={themedInputStyle}
 			/>
 		</label>
 	);
@@ -85,7 +91,7 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Run every N minutes
 						<input
 							type="number"
@@ -93,7 +99,7 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 							value={localConfig.interval_minutes ?? ''}
 							onChange={(e) => updateConfig('interval_minutes', parseInt(e.target.value) || 1)}
 							placeholder="30"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
 				</div>
@@ -102,7 +108,7 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Times (HH:MM, comma-separated)
 						<input
 							type="text"
@@ -117,10 +123,10 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 								debouncedUpdate(updated);
 							}}
 							placeholder="09:00, 17:00"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Days (leave empty for every day)
 						<div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
 							{['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((day) => {
@@ -139,15 +145,15 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 											debouncedUpdate(updated);
 										}}
 										style={{
-											...inputStyle,
+											...themedInputStyle,
 											width: 'auto',
 											padding: '2px 8px',
 											cursor: 'pointer',
 											fontSize: 11,
 											textTransform: 'capitalize',
-											backgroundColor: isActive ? '#8b5cf6' : '#2a2a3e',
-											color: isActive ? '#fff' : '#9ca3af',
-											border: `1px solid ${isActive ? '#8b5cf6' : '#444'}`,
+											backgroundColor: isActive ? theme.colors.accent : theme.colors.bgActivity,
+											color: isActive ? theme.colors.accentForeground : theme.colors.textDim,
+											border: `1px solid ${isActive ? theme.colors.accent : theme.colors.border}`,
 										}}
 									>
 										{day}
@@ -162,22 +168,22 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Watch pattern
 						<input
 							type="text"
 							value={localConfig.watch ?? ''}
 							onChange={(e) => updateConfig('watch', e.target.value)}
 							placeholder="**/*.ts"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Change type
 						<select
 							value={(localConfig.filter?.changeType as string) ?? 'any'}
 							onChange={(e) => updateFilter('changeType', e.target.value)}
-							style={selectStyle}
+							style={themedSelectStyle}
 						>
 							<option value="any">Any</option>
 							<option value="created">Created</option>
@@ -191,7 +197,7 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<div style={{ color: '#9ca3af', fontSize: 12, fontStyle: 'italic' }}>
+					<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
 						Source agent is determined by incoming edges. Connect a trigger or agent node to
 						configure the source.
 					</div>
@@ -202,17 +208,17 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Repository
 						<input
 							type="text"
 							value={localConfig.repo ?? ''}
 							onChange={(e) => updateConfig('repo', e.target.value)}
 							placeholder="owner/repo"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Poll every N minutes
 						<input
 							type="number"
@@ -220,7 +226,7 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 							value={localConfig.poll_minutes ?? ''}
 							onChange={(e) => updateConfig('poll_minutes', parseInt(e.target.value) || 5)}
 							placeholder="5"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
 				</div>
@@ -229,14 +235,14 @@ export function TriggerConfig({ node, onUpdateNode }: TriggerConfigProps) {
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 					{nameField}
-					<label style={labelStyle}>
+					<label style={themedLabelStyle}>
 						Scan pattern
 						<input
 							type="text"
 							value={localConfig.watch ?? ''}
 							onChange={(e) => updateConfig('watch', e.target.value)}
 							placeholder="**/*.md"
-							style={inputStyle}
+							style={themedInputStyle}
 						/>
 					</label>
 				</div>

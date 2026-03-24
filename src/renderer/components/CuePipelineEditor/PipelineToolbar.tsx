@@ -91,6 +91,7 @@ export const PipelineToolbar = React.memo(function PipelineToolbar({
 						onDeletePipeline={deletePipeline}
 						onRenamePipeline={renamePipeline}
 						onChangePipelineColor={changePipelineColor}
+						theme={theme}
 						textColor={theme.colors.textMain}
 						borderColor={theme.colors.border}
 					/>
@@ -157,25 +158,25 @@ export const PipelineToolbar = React.memo(function PipelineToolbar({
 						style={{
 							backgroundColor:
 								saveStatus === 'success'
-									? '#22c55e20'
+									? `${theme.colors.success}20`
 									: saveStatus === 'error'
-										? '#ef444420'
+										? `${theme.colors.error}20`
 										: isDirty
 											? `${theme.colors.accent}20`
 											: 'transparent',
 							color:
 								saveStatus === 'success'
-									? '#22c55e'
+									? theme.colors.success
 									: saveStatus === 'error'
-										? '#ef4444'
+										? theme.colors.error
 										: isDirty
 											? theme.colors.accent
 											: theme.colors.textDim,
 							border: `1px solid ${
 								saveStatus === 'success'
-									? '#22c55e'
+									? theme.colors.success
 									: saveStatus === 'error'
-										? '#ef4444'
+										? theme.colors.error
 										: isDirty
 											? theme.colors.accent
 											: theme.colors.border
@@ -222,11 +223,14 @@ export const PipelineToolbar = React.memo(function PipelineToolbar({
 			{validationErrors.length > 0 && (
 				<div
 					className="px-4 py-2 text-xs flex items-center gap-2 flex-wrap"
-					style={{ backgroundColor: '#ef444415', borderBottom: `1px solid #ef4444` }}
+					style={{
+						backgroundColor: `${theme.colors.error}15`,
+						borderBottom: `1px solid ${theme.colors.error}`,
+					}}
 				>
-					<AlertTriangle size={12} style={{ color: '#ef4444', flexShrink: 0 }} />
+					<AlertTriangle size={12} style={{ color: theme.colors.error, flexShrink: 0 }} />
 					{validationErrors.map((err, i) => (
-						<span key={i} style={{ color: '#ef4444' }}>
+						<span key={i} style={{ color: theme.colors.error }}>
 							{err}
 							{i < validationErrors.length - 1 ? ';' : ''}
 						</span>

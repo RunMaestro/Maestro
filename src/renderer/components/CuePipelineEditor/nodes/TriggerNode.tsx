@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from 'reactflow';
 import { GripVertical, Settings, Zap, Play, Loader2 } from 'lucide-react';
 import { CUE_COLOR, type CueEventType } from '../../../../shared/cue-pipeline-types';
 import { EVENT_COLORS, EVENT_ICONS } from '../cueEventConstants';
+import type { Theme } from '../../../types';
 
 export interface TriggerNodeDataProps {
 	compositeId: string;
@@ -18,12 +19,14 @@ export interface TriggerNodeDataProps {
 	isSaved?: boolean;
 	/** Whether this pipeline is currently running */
 	isRunning?: boolean;
+	theme?: Theme;
 }
 
 export const TriggerNode = memo(function TriggerNode({
 	data,
 	selected,
 }: NodeProps<TriggerNodeDataProps>) {
+	const theme = data.theme;
 	const color = EVENT_COLORS[data.eventType] ?? CUE_COLOR;
 	const Icon = EVENT_ICONS[data.eventType] ?? Zap;
 
@@ -58,18 +61,18 @@ export const TriggerNode = memo(function TriggerNode({
 					alignItems: 'center',
 					justifyContent: 'center',
 					cursor: 'grab',
-					color: '#555',
+					color: theme?.colors.textDim ?? '#555',
 					flexShrink: 0,
 					backgroundColor: color,
 					borderRadius: '9999px 0 0 9999px',
 					transition: 'color 0.15s, filter 0.15s',
 				}}
 				onMouseEnter={(e) => {
-					e.currentTarget.style.color = '#fff';
+					e.currentTarget.style.color = theme?.colors.accentForeground ?? '#fff';
 					e.currentTarget.style.filter = 'brightness(1.3)';
 				}}
 				onMouseLeave={(e) => {
-					e.currentTarget.style.color = '#555';
+					e.currentTarget.style.color = theme?.colors.textDim ?? '#555';
 					e.currentTarget.style.filter = 'brightness(1)';
 				}}
 				title="Drag to move"
@@ -116,7 +119,7 @@ export const TriggerNode = memo(function TriggerNode({
 				{data.configSummary && (
 					<span
 						style={{
-							color: '#9ca3af',
+							color: theme?.colors.textDim ?? '#9ca3af',
 							fontSize: 10,
 							marginTop: 2,
 							whiteSpace: 'nowrap',
@@ -158,7 +161,9 @@ export const TriggerNode = memo(function TriggerNode({
 							alignItems: 'center',
 							justifyContent: 'center',
 							cursor: data.isRunning ? 'default' : 'pointer',
-							color: data.isRunning ? '#22c55e' : `#22c55e90`,
+							color: data.isRunning
+								? (theme?.colors.success ?? '#22c55e')
+								: `${theme?.colors.success ?? '#22c55e'}90`,
 							padding: 4,
 							borderRadius: 4,
 							border: 'none',
@@ -166,10 +171,11 @@ export const TriggerNode = memo(function TriggerNode({
 							transition: 'color 0.15s',
 						}}
 						onMouseEnter={(e) => {
-							if (!data.isRunning) e.currentTarget.style.color = '#22c55e';
+							if (!data.isRunning) e.currentTarget.style.color = theme?.colors.success ?? '#22c55e';
 						}}
 						onMouseLeave={(e) => {
-							if (!data.isRunning) e.currentTarget.style.color = '#22c55e90';
+							if (!data.isRunning)
+								e.currentTarget.style.color = `${theme?.colors.success ?? '#22c55e'}90`;
 						}}
 						title={data.isRunning ? 'Running…' : 'Run now'}
 					>
@@ -210,7 +216,7 @@ export const TriggerNode = memo(function TriggerNode({
 				position={Position.Right}
 				style={{
 					backgroundColor: color,
-					border: '3px solid #1e1e2e',
+					border: `3px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
 					boxShadow: `0 0 0 2px ${color}`,
 					width: 16,
 					height: 16,

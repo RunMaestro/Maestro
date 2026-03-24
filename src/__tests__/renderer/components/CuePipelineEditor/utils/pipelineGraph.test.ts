@@ -10,6 +10,7 @@ import {
 	getTriggerConfigSummary,
 	convertToReactFlowNodes,
 	convertToReactFlowEdges,
+	computePipelineYOffsets,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
 import type {
 	CuePipeline,
@@ -704,5 +705,117 @@ describe('convertToReactFlowNodes triggerOptions', () => {
 		expect(triggerData.pipelineName).toBe('Pipeline p1');
 		expect(triggerData.isSaved).toBeUndefined();
 		expect(triggerData.isRunning).toBeUndefined();
+	});
+});
+
+// ─── computePipelineYOffsets ────────────────────────────────────────────────
+
+describe('computePipelineYOffsets', () => {
+	it('returns empty map when a pipeline is selected', () => {
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 50 })],
+				edges: [],
+			},
+			{
+				id: 'p2',
+				name: 'P2',
+				color: '#3b82f6',
+				nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 100 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, 'p1');
+		expect(offsets.size).toBe(0);
+	});
+
+	it('returns empty map when there is only one pipeline', () => {
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat')],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		expect(offsets.size).toBe(0);
+	});
+
+	it('computes offsets so pipelines stack without overlap', () => {
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+			{
+				id: 'p2',
+				name: 'P2',
+				color: '#3b82f6',
+				nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		expect(offsets.get('p1')).toBe(0); // first pipeline starts at y=0
+		expect(offsets.get('p2')).toBeGreaterThan(0); // second pipeline is pushed down
+	});
+
+	it('skips empty pipelines', () => {
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+			{ id: 'p2', name: 'P2', color: '#3b82f6', nodes: [], edges: [] },
+			{
+				id: 'p3',
+				name: 'P3',
+				color: '#22c55e',
+				nodes: [makeTrigger('t3', 'file.changed', {}, { x: 0, y: 0 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		expect(offsets.has('p2')).toBe(false);
+		expect(offsets.has('p1')).toBe(true);
+		expect(offsets.has('p3')).toBe(true);
+	});
+
+	it('produces offsets consistent with convertToReactFlowNodes', () => {
+		const pipelines: CuePipeline[] = [
+			{
+				id: 'p1',
+				name: 'P1',
+				color: '#ef4444',
+				nodes: [makeTrigger('t1', 'time.heartbeat', {}, { x: 0, y: 10 })],
+				edges: [],
+			},
+			{
+				id: 'p2',
+				name: 'P2',
+				color: '#3b82f6',
+				nodes: [makeTrigger('t2', 'file.changed', {}, { x: 0, y: 20 })],
+				edges: [],
+			},
+		];
+		const offsets = computePipelineYOffsets(pipelines, null);
+		const nodes = convertToReactFlowNodes(pipelines, null);
+
+		// The ReactFlow node position should equal canonical position + offset
+		const p1Node = nodes.find((n) => n.id === 'p1:t1')!;
+		const p2Node = nodes.find((n) => n.id === 'p2:t2')!;
+		expect(p1Node.position.y).toBe(10 + (offsets.get('p1') ?? 0));
+		expect(p2Node.position.y).toBe(20 + (offsets.get('p2') ?? 0));
 	});
 });

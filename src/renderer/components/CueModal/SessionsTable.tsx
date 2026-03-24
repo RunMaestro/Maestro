@@ -97,7 +97,7 @@ export function SessionsTable({
 							</td>
 							<td className="py-2">
 								<span className="flex items-center gap-1.5">
-									<StatusDot status={status} />
+									<StatusDot status={status} theme={theme} />
 									<span style={{ color: theme.colors.textDim }}>
 										{status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'No Config'}
 									</span>
@@ -126,7 +126,7 @@ export function SessionsTable({
 													}
 												}}
 												className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
-												style={{ color: '#22c55e' }}
+												style={{ color: theme.colors.success }}
 												title={`Run all ${subs.length} subscription(s) now`}
 											>
 												<Play className="w-3.5 h-3.5" />
@@ -155,7 +155,7 @@ export function SessionsTable({
 									<button
 										onClick={() => onRemoveCue(s)}
 										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
-										style={{ color: '#ef4444' }}
+										style={{ color: theme.colors.error }}
 										title="Remove cue.yaml"
 									>
 										<Trash2 className="w-3.5 h-3.5" />

@@ -7,6 +7,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { ChevronDown, Plus, X, Check, Layers, Pencil } from 'lucide-react';
+import type { Theme } from '../../types';
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
 import { PIPELINE_COLORS } from './pipelineColors';
@@ -19,6 +20,7 @@ export interface PipelineSelectorProps {
 	onDeletePipeline: (id: string) => void;
 	onRenamePipeline: (id: string, name: string) => void;
 	onChangePipelineColor?: (id: string, color: string) => void;
+	theme?: Theme;
 	textColor?: string;
 	borderColor?: string;
 }
@@ -31,9 +33,12 @@ export function PipelineSelector({
 	onDeletePipeline,
 	onRenamePipeline,
 	onChangePipelineColor,
-	textColor = 'rgba(255,255,255,0.9)',
-	borderColor = 'rgba(255,255,255,0.12)',
+	theme,
+	textColor,
+	borderColor,
 }: PipelineSelectorProps) {
+	const resolvedTextColor = textColor ?? theme?.colors.textMain ?? 'rgba(255,255,255,0.9)';
+	const resolvedBorderColor = borderColor ?? theme?.colors.border ?? 'rgba(255,255,255,0.12)';
 	const [isOpen, setIsOpen] = useState(false);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [renameValue, setRenameValue] = useState('');
@@ -110,9 +115,9 @@ export function PipelineSelector({
 				onClick={handleToggle}
 				className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
 				style={{
-					backgroundColor: 'rgba(255,255,255,0.05)',
-					border: `1px solid ${borderColor}`,
-					color: textColor,
+					backgroundColor: theme?.colors.bgActivity ?? 'rgba(255,255,255,0.05)',
+					border: `1px solid ${resolvedBorderColor}`,
+					color: resolvedTextColor,
 					cursor: 'pointer',
 					transition: 'all 0.15s',
 				}}
@@ -140,8 +145,8 @@ export function PipelineSelector({
 					ref={dropdownRef}
 					className="absolute top-full left-0 mt-1 rounded-md shadow-lg"
 					style={{
-						backgroundColor: '#1e1e2e',
-						border: '1px solid rgba(255,255,255,0.12)',
+						backgroundColor: theme?.colors.bgSidebar ?? '#1e1e2e',
+						border: `1px solid ${theme?.colors.border ?? 'rgba(255,255,255,0.12)'}`,
 						minWidth: 200,
 						maxHeight: 320,
 						overflowY: 'auto',
@@ -152,13 +157,14 @@ export function PipelineSelector({
 						onClick={() => handleSelect(null)}
 						className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left"
 						style={{
-							color: 'rgba(255,255,255,0.9)',
+							color: theme?.colors.textMain ?? 'rgba(255,255,255,0.9)',
 							backgroundColor: 'transparent',
 							border: 'none',
 							cursor: 'pointer',
 						}}
 						onMouseEnter={(e) => {
-							e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
+							e.currentTarget.style.backgroundColor =
+								theme?.colors.bgActivity ?? 'rgba(255,255,255,0.06)';
 						}}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.backgroundColor = 'transparent';
@@ -167,13 +173,21 @@ export function PipelineSelector({
 						<MultiColorIcon />
 						<span className="flex-1">All Pipelines</span>
 						{selectedPipelineId === null && (
-							<Check size={12} style={{ color: 'rgba(255,255,255,0.5)' }} />
+							<Check
+								size={12}
+								style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}
+							/>
 						)}
 					</button>
 
 					{/* Divider */}
 					{pipelines.length > 0 && (
-						<div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+						<div
+							style={{
+								height: 1,
+								backgroundColor: theme?.colors.border ?? 'rgba(255,255,255,0.08)',
+							}}
+						/>
 					)}
 
 					{/* Pipeline list */}
@@ -182,7 +196,7 @@ export function PipelineSelector({
 							<div
 								className="flex items-center gap-2 w-full px-3 py-2 text-xs"
 								style={{
-									color: 'rgba(255,255,255,0.9)',
+									color: theme?.colors.textMain ?? 'rgba(255,255,255,0.9)',
 									cursor: 'pointer',
 								}}
 								onClick={() => {
@@ -195,7 +209,8 @@ export function PipelineSelector({
 									handleStartRename(pipeline);
 								}}
 								onMouseEnter={(e) => {
-									e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
+									e.currentTarget.style.backgroundColor =
+										theme?.colors.bgActivity ?? 'rgba(255,255,255,0.06)';
 								}}
 								onMouseLeave={(e) => {
 									e.currentTarget.style.backgroundColor = 'transparent';
@@ -211,7 +226,7 @@ export function PipelineSelector({
 										cursor: onChangePipelineColor ? 'pointer' : 'default',
 										border:
 											colorPickerId === pipeline.id
-												? '2px solid rgba(255,255,255,0.8)'
+												? `2px solid ${theme?.colors.textMain ?? 'rgba(255,255,255,0.8)'}`
 												: '2px solid transparent',
 										transition: 'border-color 0.15s',
 									}}
@@ -233,9 +248,9 @@ export function PipelineSelector({
 										onClick={(e) => e.stopPropagation()}
 										className="flex-1 text-xs rounded px-1"
 										style={{
-											backgroundColor: 'rgba(255,255,255,0.1)',
-											border: '1px solid rgba(255,255,255,0.2)',
-											color: 'rgba(255,255,255,0.9)',
+											backgroundColor: theme?.colors.bgActivity ?? 'rgba(255,255,255,0.1)',
+											border: `1px solid ${theme?.colors.border ?? 'rgba(255,255,255,0.2)'}`,
+											color: theme?.colors.textMain ?? 'rgba(255,255,255,0.9)',
 											outline: 'none',
 										}}
 									/>
@@ -243,7 +258,10 @@ export function PipelineSelector({
 									<span className="flex-1 truncate">{pipeline.name}</span>
 								)}
 								{selectedPipelineId === pipeline.id && renamingId !== pipeline.id && (
-									<Check size={12} style={{ color: 'rgba(255,255,255,0.5)' }} />
+									<Check
+										size={12}
+										style={{ color: theme?.colors.textDim ?? 'rgba(255,255,255,0.5)' }}
+									/>
 								)}
 								{renamingId !== pipeline.id && (
 									<button
@@ -257,16 +275,18 @@ export function PipelineSelector({
 											height: 16,
 											backgroundColor: 'transparent',
 											border: 'none',
-											color: 'rgba(255,255,255,0.3)',
+											color: theme?.colors.textDim ?? 'rgba(255,255,255,0.3)',
 											cursor: 'pointer',
 											flexShrink: 0,
 											transition: 'color 0.15s',
 										}}
 										onMouseEnter={(e) => {
-											e.currentTarget.style.color = 'rgba(255,255,255,0.8)';
+											e.currentTarget.style.color =
+												theme?.colors.textMain ?? 'rgba(255,255,255,0.8)';
 										}}
 										onMouseLeave={(e) => {
-											e.currentTarget.style.color = 'rgba(255,255,255,0.3)';
+											e.currentTarget.style.color =
+												theme?.colors.textDim ?? 'rgba(255,255,255,0.3)';
 										}}
 										title="Rename pipeline"
 									>
@@ -281,16 +301,16 @@ export function PipelineSelector({
 										height: 16,
 										backgroundColor: 'transparent',
 										border: 'none',
-										color: 'rgba(255,255,255,0.3)',
+										color: theme?.colors.textDim ?? 'rgba(255,255,255,0.3)',
 										cursor: 'pointer',
 										flexShrink: 0,
 										transition: 'color 0.15s',
 									}}
 									onMouseEnter={(e) => {
-										e.currentTarget.style.color = '#ef4444';
+										e.currentTarget.style.color = theme?.colors.error ?? '#ef4444';
 									}}
 									onMouseLeave={(e) => {
-										e.currentTarget.style.color = 'rgba(255,255,255,0.3)';
+										e.currentTarget.style.color = theme?.colors.textDim ?? 'rgba(255,255,255,0.3)';
 									}}
 								>
 									<X size={10} />
@@ -305,8 +325,8 @@ export function PipelineSelector({
 										gridTemplateColumns: 'repeat(6, 1fr)',
 										gap: 4,
 										padding: '8px 10px',
-										backgroundColor: '#16162a',
-										borderTop: '1px solid rgba(255,255,255,0.08)',
+										backgroundColor: theme?.colors.bgMain ?? '#16162a',
+										borderTop: `1px solid ${theme?.colors.border ?? 'rgba(255,255,255,0.08)'}`,
 										zIndex: 10,
 									}}
 								>
@@ -324,7 +344,7 @@ export function PipelineSelector({
 												backgroundColor: c,
 												border:
 													c === pipeline.color
-														? '2px solid rgba(255,255,255,0.9)'
+														? `2px solid ${theme?.colors.textMain ?? 'rgba(255,255,255,0.9)'}`
 														: '2px solid transparent',
 												cursor: 'pointer',
 												transition: 'transform 0.1s, border-color 0.15s',
@@ -345,25 +365,28 @@ export function PipelineSelector({
 					))}
 
 					{/* Divider */}
-					<div style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+					<div
+						style={{ height: 1, backgroundColor: theme?.colors.border ?? 'rgba(255,255,255,0.08)' }}
+					/>
 
 					{/* New Pipeline button */}
 					<button
 						onClick={handleCreate}
 						className="flex items-center gap-2 w-full px-3 py-2 text-xs text-left"
 						style={{
-							color: 'rgba(255,255,255,0.6)',
+							color: theme?.colors.textDim ?? 'rgba(255,255,255,0.6)',
 							backgroundColor: 'transparent',
 							border: 'none',
 							cursor: 'pointer',
 						}}
 						onMouseEnter={(e) => {
-							e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
-							e.currentTarget.style.color = 'rgba(255,255,255,0.9)';
+							e.currentTarget.style.backgroundColor =
+								theme?.colors.bgActivity ?? 'rgba(255,255,255,0.06)';
+							e.currentTarget.style.color = theme?.colors.textMain ?? 'rgba(255,255,255,0.9)';
 						}}
 						onMouseLeave={(e) => {
 							e.currentTarget.style.backgroundColor = 'transparent';
-							e.currentTarget.style.color = 'rgba(255,255,255,0.6)';
+							e.currentTarget.style.color = theme?.colors.textDim ?? 'rgba(255,255,255,0.6)';
 						}}
 					>
 						<Plus size={12} />

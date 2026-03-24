@@ -6,18 +6,28 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type { Theme } from '../../../types';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { useDebouncedCallback } from '../../../hooks/utils';
-import { inputStyle, labelStyle } from './triggers/triggerConfigStyles';
+import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
 interface EdgePromptRowProps {
 	edgeInfo: IncomingTriggerEdgeInfo;
+	theme: Theme;
 	onUpdateEdgePrompt: (edgeId: string, prompt: string) => void;
 	expanded?: boolean;
 }
 
-export function EdgePromptRow({ edgeInfo, onUpdateEdgePrompt, expanded }: EdgePromptRowProps) {
+export function EdgePromptRow({
+	edgeInfo,
+	theme,
+	onUpdateEdgePrompt,
+	expanded,
+}: EdgePromptRowProps) {
 	const [localPrompt, setLocalPrompt] = useState(edgeInfo.prompt);
+
+	const themedInputStyle = getInputStyle(theme);
+	const themedLabelStyle = getLabelStyle(theme);
 
 	useEffect(() => {
 		setLocalPrompt(edgeInfo.prompt);
@@ -39,7 +49,7 @@ export function EdgePromptRow({ edgeInfo, onUpdateEdgePrompt, expanded }: EdgePr
 		<div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 			<label
 				style={{
-					...labelStyle,
+					...themedLabelStyle,
 					flex: expanded ? 1 : undefined,
 					display: 'flex',
 					flexDirection: 'column',
@@ -47,11 +57,13 @@ export function EdgePromptRow({ edgeInfo, onUpdateEdgePrompt, expanded }: EdgePr
 				}}
 			>
 				<span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-					<span style={{ color: '#e4e4e7', fontWeight: 600, fontSize: 11 }}>
+					<span style={{ color: theme.colors.textMain, fontWeight: 600, fontSize: 11 }}>
 						{edgeInfo.triggerLabel}
 					</span>
 					{edgeInfo.configSummary && (
-						<span style={{ color: '#6b7280', fontSize: 10 }}>{edgeInfo.configSummary}</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+							{edgeInfo.configSummary}
+						</span>
 					)}
 				</span>
 				<textarea
@@ -60,7 +72,7 @@ export function EdgePromptRow({ edgeInfo, onUpdateEdgePrompt, expanded }: EdgePr
 					rows={expanded ? undefined : 2}
 					placeholder="Prompt for this trigger..."
 					style={{
-						...inputStyle,
+						...themedInputStyle,
 						resize: 'vertical',
 						fontFamily: 'inherit',
 						lineHeight: 1.4,
@@ -69,7 +81,7 @@ export function EdgePromptRow({ edgeInfo, onUpdateEdgePrompt, expanded }: EdgePr
 					}}
 				/>
 			</label>
-			<div style={{ color: '#6b7280', fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
+			<div style={{ color: theme.colors.textDim, fontSize: 10, textAlign: 'right', flexShrink: 0 }}>
 				{localPrompt.length} chars
 			</div>
 		</div>

@@ -4,6 +4,7 @@ import { AgentNode } from '../../../../../renderer/components/CuePipelineEditor/
 import { ReactFlowProvider } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import type { AgentNodeDataProps } from '../../../../../renderer/components/CuePipelineEditor/nodes/AgentNode';
+import { THEMES } from '../../../../../renderer/constants/themes';
 
 const defaultData: AgentNodeDataProps = {
 	compositeId: 'pipeline-1:agent-1',
@@ -112,5 +113,25 @@ describe('AgentNode', () => {
 		// MessageSquare icon renders as an SVG
 		const svg = container.querySelector('svg');
 		expect(svg).not.toBeNull();
+	});
+
+	it('should use theme colors for background when theme is provided', () => {
+		const lightTheme = THEMES['github-light'];
+		const { container } = renderAgentNode({ theme: lightTheme });
+		const rootDiv = container.querySelector('div[style*="min-width: 180px"]') as HTMLElement;
+		expect(rootDiv).toHaveStyle({ backgroundColor: lightTheme.colors.bgMain });
+	});
+
+	it('should use theme colors for text when theme is provided', () => {
+		const lightTheme = THEMES['github-light'];
+		const { getByText } = renderAgentNode({ theme: lightTheme });
+		expect(getByText('Test Agent')).toHaveStyle({ color: lightTheme.colors.textMain });
+	});
+
+	it('should fall back to hardcoded colors when no theme is provided', () => {
+		const { container } = renderAgentNode();
+		const rootDiv = container.querySelector('div[style*="min-width: 180px"]') as HTMLElement;
+		// When no theme, falls back to '#1e1e2e'
+		expect(rootDiv).toHaveStyle({ backgroundColor: '#1e1e2e' });
 	});
 });

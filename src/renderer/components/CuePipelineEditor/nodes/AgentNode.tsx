@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
 import { MessageSquare, GripVertical, Settings } from 'lucide-react';
+import type { Theme } from '../../../types';
 
 export interface AgentNodeDataProps {
 	compositeId: string;
@@ -13,12 +14,14 @@ export interface AgentNodeDataProps {
 	pipelineCount: number;
 	pipelineColors: string[];
 	onConfigure?: (compositeId: string) => void;
+	theme?: Theme;
 }
 
 export const AgentNode = memo(function AgentNode({
 	data,
 	selected,
 }: NodeProps<AgentNodeDataProps>) {
+	const theme = data.theme;
 	const accentColor = data.pipelineColor;
 
 	return (
@@ -28,8 +31,8 @@ export const AgentNode = memo(function AgentNode({
 				maxWidth: 360,
 				height: 80,
 				borderRadius: 8,
-				backgroundColor: '#1e1e2e',
-				border: `2px solid ${selected ? accentColor : '#333'}`,
+				backgroundColor: theme?.colors.bgMain ?? '#1e1e2e',
+				border: `2px solid ${selected ? accentColor : (theme?.colors.border ?? '#333')}`,
 				boxShadow: selected ? `0 4px 16px ${accentColor}30` : '0 2px 8px rgba(0,0,0,0.3)',
 				animation: selected ? 'pipeline-node-pulse 2s ease-in-out infinite' : undefined,
 				['--node-color-40' as string]: `${accentColor}40`,
@@ -52,18 +55,18 @@ export const AgentNode = memo(function AgentNode({
 					alignItems: 'center',
 					justifyContent: 'center',
 					cursor: 'grab',
-					color: '#555',
+					color: theme?.colors.textDim ?? '#555',
 					flexShrink: 0,
 					backgroundColor: accentColor,
 					borderRadius: '6px 0 0 6px',
 					transition: 'color 0.15s, filter 0.15s',
 				}}
 				onMouseEnter={(e) => {
-					e.currentTarget.style.color = '#fff';
+					e.currentTarget.style.color = theme?.colors.accentForeground ?? '#fff';
 					e.currentTarget.style.filter = 'brightness(1.3)';
 				}}
 				onMouseLeave={(e) => {
-					e.currentTarget.style.color = '#555';
+					e.currentTarget.style.color = theme?.colors.textDim ?? '#555';
 					e.currentTarget.style.filter = 'brightness(1)';
 				}}
 				title="Drag to move"
@@ -85,7 +88,7 @@ export const AgentNode = memo(function AgentNode({
 				<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
 					<span
 						style={{
-							color: '#e4e4e7',
+							color: theme?.colors.textMain ?? '#e4e4e7',
 							fontSize: 13,
 							fontWeight: 600,
 							whiteSpace: 'nowrap',
@@ -95,12 +98,15 @@ export const AgentNode = memo(function AgentNode({
 						{data.sessionName}
 					</span>
 					{data.hasPrompt && (
-						<MessageSquare size={12} style={{ color: '#9ca3af', flexShrink: 0 }} />
+						<MessageSquare
+							size={12}
+							style={{ color: theme?.colors.textDim ?? '#9ca3af', flexShrink: 0 }}
+						/>
 					)}
 				</div>
 				<span
 					style={{
-						color: '#6b7280',
+						color: theme?.colors.textDim ?? '#6b7280',
 						fontSize: 11,
 						marginTop: 2,
 					}}
@@ -143,7 +149,7 @@ export const AgentNode = memo(function AgentNode({
 					alignItems: 'center',
 					justifyContent: 'center',
 					cursor: 'pointer',
-					color: selected ? accentColor : '#555',
+					color: selected ? accentColor : (theme?.colors.textDim ?? '#555'),
 					flexShrink: 0,
 					padding: '0 6px',
 					marginRight: 14,
@@ -151,7 +157,9 @@ export const AgentNode = memo(function AgentNode({
 					transition: 'color 0.15s',
 				}}
 				onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
-				onMouseLeave={(e) => (e.currentTarget.style.color = selected ? accentColor : '#555')}
+				onMouseLeave={(e) =>
+					(e.currentTarget.style.color = selected ? accentColor : (theme?.colors.textDim ?? '#555'))
+				}
 				title="Configure"
 			>
 				<Settings size={14} />
@@ -168,13 +176,13 @@ export const AgentNode = memo(function AgentNode({
 						height: 20,
 						borderRadius: '50%',
 						backgroundColor: accentColor,
-						color: '#fff',
+						color: theme?.colors.accentForeground ?? '#fff',
 						fontSize: 10,
 						fontWeight: 700,
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						border: '2px solid #1e1e2e',
+						border: `2px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
 					}}
 				>
 					{data.pipelineCount}
@@ -186,7 +194,7 @@ export const AgentNode = memo(function AgentNode({
 				position={Position.Left}
 				style={{
 					backgroundColor: accentColor,
-					border: '3px solid #1e1e2e',
+					border: `3px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
 					boxShadow: `0 0 0 2px ${accentColor}`,
 					width: 16,
 					height: 16,
@@ -199,7 +207,7 @@ export const AgentNode = memo(function AgentNode({
 				position={Position.Right}
 				style={{
 					backgroundColor: accentColor,
-					border: '3px solid #1e1e2e',
+					border: `3px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
 					boxShadow: `0 0 0 2px ${accentColor}`,
 					width: 16,
 					height: 16,

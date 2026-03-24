@@ -11,6 +11,7 @@ import type {
 	TriggerNodeData,
 	AgentNodeData,
 } from '../../../../shared/cue-pipeline-types';
+import type { Theme } from '../../../../shared/theme-types';
 import type { TriggerNodeDataProps } from '../nodes/TriggerNode';
 import type { AgentNodeDataProps } from '../nodes/AgentNode';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
@@ -45,6 +46,41 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 	}
 }
 
+// ─── Pipeline Y-offset (for "All Pipelines" view) ──────────────────────────
+
+const PIPELINE_GAP = 100; // px between pipeline groups
+const NODE_HEIGHT = 100; // approximate node height
+
+/**
+ * Computes vertical offsets so pipeline groups don't overlap in the
+ * "All Pipelines" view. Returns an empty map when a single pipeline is
+ * selected (offsets are only needed for the combined view).
+ *
+ * Exported so `onNodesChange` can subtract offsets before writing
+ * ReactFlow's screen-space positions back to the canonical state.
+ */
+export function computePipelineYOffsets(
+	pipelines: CuePipelineState['pipelines'],
+	selectedPipelineId: string | null
+): Map<string, number> {
+	const offsets = new Map<string, number>();
+	if (selectedPipelineId !== null || pipelines.length <= 1) return offsets;
+
+	let currentY = 0;
+	for (const pipeline of pipelines) {
+		if (pipeline.nodes.length === 0) continue;
+		let minY = Infinity;
+		let maxY = -Infinity;
+		for (const node of pipeline.nodes) {
+			minY = Math.min(minY, node.position.y);
+			maxY = Math.max(maxY, node.position.y);
+		}
+		offsets.set(pipeline.id, currentY - minY);
+		currentY += maxY - minY + NODE_HEIGHT + PIPELINE_GAP;
+	}
+	return offsets;
+}
+
 // ─── Node conversion ─────────────────────────────────────────────────────────
 
 /**
@@ -69,29 +105,18 @@ export function convertToReactFlowNodes(
 		onTriggerPipeline?: (pipelineName: string) => void;
 		isSaved?: boolean;
 		runningPipelineIds?: Set<string>;
-	}
+	},
+	theme?: Theme,
+	/** Pre-computed Y-offsets to use instead of recomputing from bounding boxes.
+	 *  Passed during drag so rendering uses the same offsets as onNodesChange. */
+	frozenYOffsets?: Map<string, number> | null
 ): Node[] {
 	const nodes: Node[] = [];
 
-	// When showing all pipelines, compute vertical offsets to prevent overlap
-	const pipelineYOffsets = new Map<string, number>();
-	if (selectedPipelineId === null && pipelines.length > 1) {
-		const PIPELINE_GAP = 100; // px between pipeline groups
-		const NODE_HEIGHT = 100; // approximate node height
-		let currentY = 0;
-		for (const pipeline of pipelines) {
-			if (pipeline.nodes.length === 0) continue;
-			let minY = Infinity;
-			let maxY = -Infinity;
-			for (const node of pipeline.nodes) {
-				minY = Math.min(minY, node.position.y);
-				maxY = Math.max(maxY, node.position.y);
-			}
-			// Offset so this pipeline's top starts at currentY
-			pipelineYOffsets.set(pipeline.id, currentY - minY);
-			currentY += maxY - minY + NODE_HEIGHT + PIPELINE_GAP;
-		}
-	}
+	// When showing all pipelines, compute vertical offsets to prevent overlap.
+	// During drag, use frozen offsets so the display stays consistent with the
+	// offsets subtracted in onNodesChange (prevents visual jump on drag end).
+	const pipelineYOffsets = frozenYOffsets ?? computePipelineYOffsets(pipelines, selectedPipelineId);
 
 	// First pass: compute all pipeline colors per agent session (for multi-color indicator)
 	const agentPipelineMap = new Map<string, string[]>();
@@ -148,6 +173,7 @@ export function convertToReactFlowNodes(
 					pipelineName: pipeline.name,
 					isSaved: triggerOptions?.isSaved,
 					isRunning: triggerOptions?.runningPipelineIds?.has(pipeline.id),
+					theme,
 				};
 				nodes.push({
 					id: compositeId,
@@ -172,6 +198,7 @@ export function convertToReactFlowNodes(
 					pipelineCount: agentPipelineCount.get(agentData.sessionId) ?? 1,
 					pipelineColors,
 					onConfigure: onConfigureNode,
+					theme,
 				};
 				nodes.push({
 					id: compositeId,
@@ -199,7 +226,8 @@ export function convertToReactFlowEdges(
 	pipelines: CuePipelineState['pipelines'],
 	selectedPipelineId: string | null,
 	runningPipelineIds?: Set<string>,
-	selectedEdgeId?: string | null
+	selectedEdgeId?: string | null,
+	theme?: Theme
 ): Edge[] {
 	const edges: Edge[] = [];
 
@@ -214,6 +242,7 @@ export function convertToReactFlowEdges(
 				mode: pEdge.mode,
 				isActivePipeline: isActive,
 				isRunning,
+				theme,
 			};
 			edges.push({
 				id: compositeId,

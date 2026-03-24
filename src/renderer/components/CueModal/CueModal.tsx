@@ -380,9 +380,9 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 											<div
 												className="flex items-center gap-2 px-3 py-2 rounded-md text-xs"
 												style={{
-													backgroundColor: '#ef444415',
-													border: '1px solid #ef444440',
-													color: '#ef4444',
+													backgroundColor: `${theme.colors.error}15`,
+													border: `1px solid ${theme.colors.error}40`,
+													color: theme.colors.error,
 												}}
 											>
 												<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />

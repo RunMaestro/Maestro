@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-react';
+import type { Theme } from '../../../types';
 import type {
 	PipelineNode,
 	TriggerNodeData,
@@ -22,6 +23,7 @@ export type { IncomingTriggerEdgeInfo } from '../../../../shared/cue-pipeline-ty
 
 interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
+	theme: Theme;
 	pipelines: CuePipeline[];
 	hasOutgoingEdge?: boolean;
 	/** Whether the selected agent has incoming edges from other agents (not triggers) */
@@ -46,6 +48,7 @@ interface NodeConfigPanelProps {
 
 export function NodeConfigPanel({
 	selectedNode,
+	theme,
 	pipelines,
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
@@ -83,10 +86,10 @@ export function NodeConfigPanel({
 				left: triggerDrawerOpen ? 220 : 0,
 				right: agentDrawerOpen ? 240 : 0,
 				height: expanded ? '80%' : collapsedHeight,
-				backgroundColor: '#1a1a2e',
-				borderTop: '1px solid #333',
-				borderLeft: '1px solid #333',
-				borderRight: '1px solid #333',
+				backgroundColor: theme.colors.bgMain,
+				borderTop: `1px solid ${theme.colors.border}`,
+				borderLeft: `1px solid ${theme.colors.border}`,
+				borderRight: `1px solid ${theme.colors.border}`,
 				borderRadius: '8px 8px 0 0',
 				boxShadow: '0 -4px 16px rgba(0,0,0,0.3)',
 				display: 'flex',
@@ -110,22 +113,22 @@ export function NodeConfigPanel({
 					alignItems: 'center',
 					justifyContent: 'space-between',
 					padding: '8px 16px',
-					borderBottom: '1px solid #2a2a3e',
+					borderBottom: `1px solid ${theme.colors.bgActivity}`,
 					flexShrink: 0,
 				}}
 			>
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 					{isTrigger && Icon && (
 						<>
-							<Icon size={14} style={{ color: '#f59e0b' }} />
-							<span style={{ color: '#e4e4e7', fontSize: 13, fontWeight: 600 }}>
+							<Icon size={14} style={{ color: theme.colors.warning }} />
+							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
 								Configure Trigger
 							</span>
 							<span
 								style={{
 									fontSize: 10,
-									color: '#9ca3af',
-									backgroundColor: '#2a2a3e',
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
 									padding: '1px 6px',
 									borderRadius: 4,
 								}}
@@ -136,14 +139,14 @@ export function NodeConfigPanel({
 					)}
 					{!isTrigger && agentData && (
 						<>
-							<span style={{ color: '#e4e4e7', fontSize: 13, fontWeight: 600 }}>
+							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
 								{agentData.sessionName}
 							</span>
 							<span
 								style={{
 									fontSize: 10,
-									color: '#9ca3af',
-									backgroundColor: '#2a2a3e',
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
 									padding: '1px 6px',
 									borderRadius: 4,
 								}}
@@ -162,19 +165,19 @@ export function NodeConfigPanel({
 								display: 'flex',
 								alignItems: 'center',
 								padding: 4,
-								color: isRunning ? '#22c55e' : '#6b7280',
+								color: isRunning ? theme.colors.success : theme.colors.textDim,
 								backgroundColor: 'transparent',
 								border: 'none',
 								borderRadius: 4,
 								cursor: isRunning ? 'default' : 'pointer',
 							}}
 							onMouseEnter={(e) => {
-								if (!isRunning) e.currentTarget.style.color = '#22c55e';
+								if (!isRunning) e.currentTarget.style.color = theme.colors.success;
 							}}
 							onMouseLeave={(e) => {
-								if (!isRunning) e.currentTarget.style.color = '#6b7280';
+								if (!isRunning) e.currentTarget.style.color = theme.colors.textDim;
 							}}
-							title={isRunning ? 'Running…' : 'Run now'}
+							title={isRunning ? 'Running...' : 'Run now'}
 						>
 							{isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
 						</button>
@@ -186,14 +189,14 @@ export function NodeConfigPanel({
 								display: 'flex',
 								alignItems: 'center',
 								padding: 4,
-								color: '#6b7280',
+								color: theme.colors.textDim,
 								backgroundColor: 'transparent',
 								border: 'none',
 								borderRadius: 4,
 								cursor: 'pointer',
 							}}
-							onMouseEnter={(e) => (e.currentTarget.style.color = '#e4e4e7')}
-							onMouseLeave={(e) => (e.currentTarget.style.color = '#6b7280')}
+							onMouseEnter={(e) => (e.currentTarget.style.color = theme.colors.textMain)}
+							onMouseLeave={(e) => (e.currentTarget.style.color = theme.colors.textDim)}
 							title={expanded ? 'Collapse panel' : 'Expand panel'}
 						>
 							<ExpandIcon size={14} />
@@ -205,14 +208,14 @@ export function NodeConfigPanel({
 							display: 'flex',
 							alignItems: 'center',
 							padding: 4,
-							color: '#6b7280',
+							color: theme.colors.textDim,
 							backgroundColor: 'transparent',
 							border: 'none',
 							borderRadius: 4,
 							cursor: 'pointer',
 						}}
-						onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
-						onMouseLeave={(e) => (e.currentTarget.style.color = '#6b7280')}
+						onMouseEnter={(e) => (e.currentTarget.style.color = theme.colors.error)}
+						onMouseLeave={(e) => (e.currentTarget.style.color = theme.colors.textDim)}
 						title="Delete node"
 					>
 						<Trash2 size={14} />
@@ -231,10 +234,13 @@ export function NodeConfigPanel({
 					minHeight: 0,
 				}}
 			>
-				{isTrigger && <TriggerConfig node={selectedNode} onUpdateNode={onUpdateNode} />}
+				{isTrigger && (
+					<TriggerConfig node={selectedNode} theme={theme} onUpdateNode={onUpdateNode} />
+				)}
 				{!isTrigger && (
 					<AgentConfigPanel
 						node={selectedNode}
+						theme={theme}
 						pipelines={pipelines}
 						hasOutgoingEdge={hasOutgoingEdge}
 						hasIncomingAgentEdges={hasIncomingAgentEdges}

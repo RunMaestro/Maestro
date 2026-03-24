@@ -26,7 +26,11 @@ import type {
 	CuePipeline,
 } from '../../../shared/cue-pipeline-types';
 import { getNextPipelineColor } from './pipelineColors';
-import { convertToReactFlowNodes, convertToReactFlowEdges } from './utils/pipelineGraph';
+import {
+	convertToReactFlowNodes,
+	convertToReactFlowEdges,
+	computePipelineYOffsets,
+} from './utils/pipelineGraph';
 import { usePipelineState, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
 import type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
 import { usePipelineSelection } from '../../hooks/cue/usePipelineSelection';
@@ -136,6 +140,32 @@ function CuePipelineEditorInner({
 		onDeleteEdge,
 	} = stateHook;
 
+	// Stable Y-offsets for the "All Pipelines" view.
+	//
+	// In this view, pipelines are stacked vertically using computed offsets so
+	// they don't overlap. These offsets are a VIEW-LAYER concern: they affect
+	// how ReactFlow positions are derived from (and mapped back to) canonical
+	// pipeline-state positions. Both convertToReactFlowNodes (display) and
+	// onNodesChange (write-back) must use the SAME offsets on every frame,
+	// otherwise nodes jump or vanish.
+	//
+	// We recompute offsets only when the pipeline structure changes (pipelines
+	// added/removed, nodes added/removed) — NOT on every position change.
+	// This prevents the feedback loop where dragging a node changes the
+	// bounding box and shifts all pipelines below.
+	const pipelineStructureKey = useMemo(
+		() =>
+			pipelineState.pipelines
+				.map((p) => `${p.id}:${p.nodes.length}:${p.nodes.map((n) => n.id).join(',')}`)
+				.join('|'),
+		[pipelineState.pipelines]
+	);
+	const stableYOffsets = useMemo(
+		() => computePipelineYOffsets(pipelineState.pipelines, pipelineState.selectedPipelineId),
+
+		[pipelineStructureKey, pipelineState.selectedPipelineId]
+	);
+
 	const {
 		selectedNodeId,
 		setSelectedNodeId,
@@ -170,7 +200,9 @@ function CuePipelineEditorInner({
 					onTriggerPipeline,
 					isSaved: !isDirty,
 					runningPipelineIds,
-				}
+				},
+				theme,
+				stableYOffsets
 			),
 		[
 			pipelineState.pipelines,
@@ -179,6 +211,8 @@ function CuePipelineEditorInner({
 			onTriggerPipeline,
 			isDirty,
 			runningPipelineIds,
+			theme,
+			stableYOffsets,
 		]
 	);
 
@@ -188,12 +222,25 @@ function CuePipelineEditorInner({
 				pipelineState.pipelines,
 				pipelineState.selectedPipelineId,
 				runningPipelineIds,
-				selectedEdgeId
+				selectedEdgeId,
+				theme
 			),
-		[pipelineState.pipelines, pipelineState.selectedPipelineId, runningPipelineIds, selectedEdgeId]
+		[
+			pipelineState.pipelines,
+			pipelineState.selectedPipelineId,
+			runningPipelineIds,
+			selectedEdgeId,
+			theme,
+		]
 	);
 
 	// ─── Canvas callbacks ────────────────────────────────────────────────────
+
+	// Ref mirror so onNodesChange reads the latest stable offsets without
+	// adding them as a dependency (which would recreate the callback and
+	// break ReactFlow memoisation).
+	const stableYOffsetsRef = useRef(stableYOffsets);
+	stableYOffsetsRef.current = stableYOffsets;
 
 	const onNodesChange: OnNodesChange = useCallback(
 		(changes) => {
@@ -210,16 +257,45 @@ function CuePipelineEditorInner({
 
 			if (positionUpdates.size > 0) {
 				setPipelineState((prev) => {
-					const newPipelines = prev.pipelines.map((pipeline) => ({
-						...pipeline,
-						nodes: pipeline.nodes.map((pNode) => {
-							const newPos = positionUpdates.get(`${pipeline.id}:${pNode.id}`);
-							if (newPos) {
-								return { ...pNode, position: newPos };
-							}
-							return pNode;
-						}),
-					}));
+					const isAllPipelines = prev.selectedPipelineId === null;
+
+					// In single-pipeline view there are no Y-offsets — write
+					// ReactFlow positions straight through (original behavior).
+					if (!isAllPipelines) {
+						const newPipelines = prev.pipelines.map((pipeline) => ({
+							...pipeline,
+							nodes: pipeline.nodes.map((pNode) => {
+								const newPos = positionUpdates.get(`${pipeline.id}:${pNode.id}`);
+								return newPos ? { ...pNode, position: newPos } : pNode;
+							}),
+						}));
+						return { ...prev, pipelines: newPipelines };
+					}
+
+					// All Pipelines view: ReactFlow positions include the visual
+					// Y-offsets from convertToReactFlowNodes. Subtract the same
+					// stable offsets used for display so the round-trip is clean.
+					const yOffsets = stableYOffsetsRef.current;
+
+					const newPipelines = prev.pipelines.map((pipeline) => {
+						const yOffset = yOffsets.get(pipeline.id) ?? 0;
+						return {
+							...pipeline,
+							nodes: pipeline.nodes.map((pNode) => {
+								const newPos = positionUpdates.get(`${pipeline.id}:${pNode.id}`);
+								if (newPos) {
+									return {
+										...pNode,
+										position: {
+											x: newPos.x,
+											y: newPos.y - yOffset,
+										},
+									};
+								}
+								return pNode;
+							}),
+						};
+					});
 					return { ...prev, pipelines: newPipelines };
 				});
 			}
@@ -607,9 +683,11 @@ function CuePipelineEditorInner({
 			{contextMenu && (
 				<PipelineContextMenu
 					contextMenu={contextMenu}
+					theme={theme}
 					onConfigure={handleContextMenuConfigure}
 					onDelete={handleContextMenuDelete}
 					onDuplicate={handleContextMenuDuplicate}
+					onDismiss={() => setContextMenu(null)}
 				/>
 			)}
 		</div>

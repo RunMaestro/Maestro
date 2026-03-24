@@ -88,7 +88,10 @@ export function ActivityLog({ log, theme, subscriptionPipelineMap }: ActivityLog
 								{isReconciled && (
 									<span
 										className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold"
-										style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
+										style={{
+											backgroundColor: `${theme.colors.warning}20`,
+											color: theme.colors.warning,
+										}}
 									>
 										catch-up
 									</span>
@@ -100,11 +103,11 @@ export function ActivityLog({ log, theme, subscriptionPipelineMap }: ActivityLog
 									{githubPayload} →{' '}
 								</span>
 								{isFailed ? (
-									<span style={{ color: '#ef4444' }}>{entry.status} ✗</span>
+									<span style={{ color: theme.colors.error }}>{entry.status} ✗</span>
 								) : entry.status === 'stopped' ? (
-									<span style={{ color: '#f59e0b' }}>stopped</span>
+									<span style={{ color: theme.colors.warning }}>stopped</span>
 								) : (
-									<span style={{ color: '#22c55e' }}>
+									<span style={{ color: theme.colors.success }}>
 										completed in {formatDuration(entry.durationMs)} ✓
 									</span>
 								)}

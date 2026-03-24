@@ -358,6 +358,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 						setIsDirty(true);
 					}}
 					onClose={() => setShowSettings(false)}
+					theme={theme}
 				/>
 			)}
 
@@ -371,6 +372,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 					return (
 						<NodeConfigPanel
 							selectedNode={selectedNode}
+							theme={theme}
 							pipelines={pipelines}
 							hasOutgoingEdge={selectedNodeHasOutgoingEdge}
 							hasIncomingAgentEdges={hasIncomingAgentEdges}
@@ -391,6 +393,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			{selectedEdge && !selectedNode && (
 				<EdgeConfigPanel
 					selectedEdge={selectedEdge}
+					theme={theme}
 					sourceNode={edgeSourceNode}
 					targetNode={edgeTargetNode}
 					pipelineColor={selectedEdgePipelineColor}

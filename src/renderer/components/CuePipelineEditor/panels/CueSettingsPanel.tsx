@@ -4,48 +4,65 @@
  * Configures: timeout, failure behavior, concurrency, queue size.
  */
 
+import { useRef, useEffect } from 'react';
+import type { Theme } from '../../../types';
 import type { CueSettings } from '../../../../main/cue/cue-types';
-
-const inputStyle: React.CSSProperties = {
-	backgroundColor: '#2a2a3e',
-	border: '1px solid #444',
-	borderRadius: 4,
-	color: '#e4e4e7',
-	padding: '4px 8px',
-	fontSize: 12,
-	width: '100%',
-	outline: 'none',
-};
-
-const selectStyle: React.CSSProperties = {
-	...inputStyle,
-	cursor: 'pointer',
-};
-
-const labelStyle: React.CSSProperties = {
-	color: '#9ca3af',
-	fontSize: 11,
-	fontWeight: 500,
-	marginBottom: 2,
-};
+import { useClickOutside } from '../../../hooks/ui';
 
 interface CueSettingsPanelProps {
 	settings: CueSettings;
+	theme: Theme;
 	onChange: (settings: CueSettings) => void;
 	onClose: () => void;
 }
 
-export function CueSettingsPanel({ settings, onChange, onClose }: CueSettingsPanelProps) {
+export function CueSettingsPanel({ settings, theme, onChange, onClose }: CueSettingsPanelProps) {
+	const panelRef = useRef<HTMLDivElement>(null);
+
+	useClickOutside(panelRef, onClose);
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') onClose();
+		};
+		document.addEventListener('keydown', handleKeyDown);
+		return () => document.removeEventListener('keydown', handleKeyDown);
+	}, [onClose]);
+
+	const inputStyle: React.CSSProperties = {
+		backgroundColor: theme.colors.bgActivity,
+		border: `1px solid ${theme.colors.border}`,
+		borderRadius: 4,
+		color: theme.colors.textMain,
+		padding: '4px 8px',
+		fontSize: 12,
+		width: '100%',
+		outline: 'none',
+	};
+
+	const selectStyle: React.CSSProperties = {
+		...inputStyle,
+		cursor: 'pointer',
+	};
+
+	const labelStyle: React.CSSProperties = {
+		color: theme.colors.textDim,
+		fontSize: 11,
+		fontWeight: 500,
+		marginBottom: 2,
+	};
+
 	return (
 		<div
+			ref={panelRef}
 			style={{
 				position: 'absolute',
 				top: 44,
 				right: 8,
 				zIndex: 20,
 				width: 280,
-				backgroundColor: '#1e1e2e',
-				border: '1px solid #444',
+				backgroundColor: theme.colors.bgSidebar,
+				border: `1px solid ${theme.colors.border}`,
 				borderRadius: 8,
 				boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
 				padding: 16,
@@ -59,13 +76,15 @@ export function CueSettingsPanel({ settings, onChange, onClose }: CueSettingsPan
 					marginBottom: 12,
 				}}
 			>
-				<span style={{ color: '#e4e4e7', fontSize: 13, fontWeight: 600 }}>Cue Settings</span>
+				<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
+					Cue Settings
+				</span>
 				<button
 					onClick={onClose}
 					style={{
 						backgroundColor: 'transparent',
 						border: 'none',
-						color: '#6b7280',
+						color: theme.colors.textDim,
 						cursor: 'pointer',
 						fontSize: 16,
 						lineHeight: 1,
@@ -154,8 +173,8 @@ export function CueSettingsPanel({ settings, onChange, onClose }: CueSettingsPan
 				style={{
 					marginTop: 12,
 					paddingTop: 8,
-					borderTop: '1px solid #333',
-					color: '#6b7280',
+					borderTop: `1px solid ${theme.colors.border}`,
+					color: theme.colors.textDim,
 					fontSize: 10,
 					lineHeight: 1.4,
 				}}

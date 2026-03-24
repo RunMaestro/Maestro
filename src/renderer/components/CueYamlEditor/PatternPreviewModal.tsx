@@ -53,7 +53,7 @@ export function PatternPreviewModal({ pattern, theme, onClose }: PatternPreviewM
 						className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: copied ? theme.colors.success : CUE_COLOR,
-							color: '#fff',
+							color: theme.colors.accentForeground,
 						}}
 					>
 						{copied ? (
