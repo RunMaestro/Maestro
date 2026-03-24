@@ -128,8 +128,8 @@ Codex uses incrementally-written `.jsonl` rollout files at `~/.codex/sessions/YY
 | ------------- | --------------- | ------------------------- | ------------------ |
 | Codex         | Yes             | JSONL rollout files       | Yes                |
 | Claude Code   | N/A             | Has native mid-turn stdin | No (already works) |
-| OpenCode      | TBD             | TBD                       | Investigate        |
-| Factory Droid | TBD             | TBD                       | Investigate        |
+| OpenCode      | Yes             | Local session files       | Yes                |
+| Factory Droid | Yes             | `~/.factory/sessions/`    | Yes                |
 
 ## References
 

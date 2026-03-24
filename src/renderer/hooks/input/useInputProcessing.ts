@@ -653,9 +653,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== activeSessionId) return s;
+							// Replace any existing continuation for this tab to avoid
+							// stacking stale fallbacks on rapid double-interrupt
+							const filtered = s.executionQueue.filter(
+								(q) => !(q.tabId === activeTab.id && q.interjectionLogId)
+							);
 							return {
 								...s,
-								executionQueue: [continuationItem, ...s.executionQueue],
+								executionQueue: [continuationItem, ...filtered],
 							};
 						})
 					);
