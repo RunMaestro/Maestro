@@ -616,7 +616,11 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					type: 'button',
 					className: 'underline',
 					style: { color: theme.colors.accent },
-					onClick: () => href && window.maestro.shell.openExternal(href),
+					onClick: () => {
+						if (href && /^https?:\/\/|^mailto:/.test(href)) {
+							window.maestro.shell.openExternal(href);
+						}
+					},
 				},
 				children
 			),
@@ -713,7 +717,9 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					href,
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
-						if (href) window.maestro.shell.openExternal(href);
+						if (href && /^https?:\/\/|^mailto:/.test(href)) {
+							window.maestro.shell.openExternal(href);
+						}
 					},
 					className: 'hover:underline cursor-pointer',
 					style: { color: theme.colors.accent },

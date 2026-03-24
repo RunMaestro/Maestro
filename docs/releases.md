@@ -29,49 +29,40 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🤖 **Factory.ai Droid Support** — Added support for the [Factory.ai](https://factory.ai/product/cli) droid agent. Full session management and output parsing integration.
 
-## Change in v0.15.2
+## Changes in v0.15.3
 
-Patch release with bug fixes, UX improvements, and cherry-picks from the 0.16.0 RC.
+Patch release with new features, SSH remote hardening, mobile improvements, and cross-platform fixes.
 
 ### New Features
 
-- **Cmd+0 → Last Tab:** Remapped Cmd+0 to jump to last tab; Cmd+Shift+0 now resets font size
-- **Unsent draft protection:** Confirm dialog before closing tabs with unsent draft input
-- **Read-only CLI flag:** Added `--read-only` flag to `maestro-cli send` command
-- **Gemini read-only enforcement:** Gemini `-y` flag now works in read-only mode
-- **Capability-based providers:** Replaced hardcoded agent ID checks with capability flags and shared metadata
+- **Persistent web link:** The web/mobile interface link now persists across app restarts — no need to re-enable it each session
+- **OpenCode v1.2+ session support:** Automatically reads OpenCode's new SQLite session storage format alongside the legacy JSONL format
+- **Group chat @mentions:** Use `@agent-name` syntax in the prompt composer to direct messages to specific agents in group chat
+- **Batch resume/abort:** New controls in the right panel for resuming or aborting batch operations
+- **Default worktree directory:** Worktree configuration now defaults to the parent of the agent's working directory instead of blank
 
 ### Bug Fixes
 
-- **Sticky overlay scroll:** Fixed sticky overlays breaking tab scroll-into-view
-- **Director's Notes stats:** Count only agents with entries in lookback window
-- **SSH remote config:** Check `sessionSshRemoteConfig` as primary SSH remote ID source
-- **.maestro file tree:** Always show .maestro directory even when dotfiles are hidden
-- **Provider hardening:** Prototype safety, capability gates, stale map cleanup
-- **Session search:** Per-session error resilience and metadata-based title matching
-- **File tree stale loads:** Load sequence counter prevents stale file tree updates
-- **File tree Unicode:** NFC normalization prevents duplicate entries
-- **File tree duplicates:** Tree-structured data resolves duplicate entries
-- **File tree auto-refresh:** Timer no longer destroyed on right panel tab switch
-- **Menu z-index:** Branding header menu renders above sidebar content
-- **Dropdown clipping:** Fixed hamburger menu and live overlay dropdown clipping
-- **Font size shortcuts:** Restored Cmd+/- font size shortcuts lost with custom menu
-- **Draft input preservation:** Replaying a previous message no longer discards current draft
-- **SSH directory collision:** Skip warning when agents are on different SSH hosts
-- **IPC error handling:** Handle expected IPC errors gracefully
-- **Auto-focus on mode switch:** Input field auto-focuses when toggling AI/Shell mode
-- **OpenCode parser:** Preserve JSON error events; reset resultEmitted on step_start
-- **NDJSON performance:** Eliminated triple JSON parsing on hot path
-- **Agent config overrides:** Apply config overrides in context groomer before spawning
-- **Stale closure fix:** Resolved model not saving in wizard agent config
+- **Windows stop button:** Stop/cancel button now correctly terminates Claude Code agents on Windows
+- **PTY spawn failures:** Graceful error handling when terminal process spawn fails instead of silent failure
+- **Toast notification z-index:** Toast notifications now render above modal backdrops via React portal
+- **SSH remote wizard support:** Full SSH remote ID threading through wizard file operations — documents read, write, and save correctly on remote hosts
+- **Auto Run subfolder path:** Fixed disk fallback path for Auto Run document retrieval when using subfolders
+- **Git push PATH:** Resolved PATH issues that could cause git push to fail in certain environments
+- **Execution queue drag-and-drop:** Fixed drag-and-drop reordering failing when the execution queue contains only 2 items
+- **Sentry-reported crash guards:** Defensive null checks in error pattern matching, session storage readers, and CLI activity monitoring to prevent crashes reported via Sentry
+- **Version manager PATH:** Agent spawning now includes version manager binary directories (nvm, fnm, mise, etc.) in the expanded PATH
+- **WebContents crash handler:** Restored the renderer crash handler that was accidentally removed during a prior refactor
 
-### Visual Polish
+### Mobile
 
-- **Light theme contrast:** Improved syntax highlighting contrast across all light themes
-- **Context warning sash:** Dark text colors in light mode for readability
-- **Session name dimming:** Use `textMain` color to prevent visual dimming
-- **Session name pill:** Allow shrinking so date doesn't collide with type pill
-- **Scroll-to-bottom arrow:** Removed noisy indicator from terminal output view
+- **Remote session stability:** Stabilized mobile remote session UI with improved composer, scoped drafts, and connection handling
+
+### Internal
+
+- **RC branch CI:** CI pipelines, Sentry source maps, and CodeRabbit reviews now work on release candidate branches
+- **Cross-platform test suite:** 57 tests converted to run correctly on Windows, Linux, and macOS
+- **Shared utilities:** Extracted `getParentDir` helper to `shared/formatters` for reuse across main and renderer
 
 ### Previous Releases in this Series
 

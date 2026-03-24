@@ -176,13 +176,15 @@ describe('group-chat-agent', () => {
 			).rejects.toThrow(/not found/i);
 		});
 
-		it('throws for duplicate participant name', async () => {
+		it('is idempotent for duplicate participant name', async () => {
 			const chat = await createTestChatWithModerator('Duplicate Test');
-			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			const first = await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
 
-			await expect(
-				addParticipant(chat.id, 'Client', 'opencode', mockProcessManager)
-			).rejects.toThrow(/already exists/i);
+			// Adding same name again should return existing participant, not throw
+			const second = await addParticipant(chat.id, 'Client', 'opencode', mockProcessManager);
+
+			expect(second.name).toBe(first.name);
+			expect(second.sessionId).toBe(first.sessionId);
 		});
 
 		it('throws when spawn fails', async () => {

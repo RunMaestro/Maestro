@@ -393,9 +393,9 @@ export function addParticipantToChat(
 			throw new Error(`Group chat not found: ${id}`);
 		}
 
-		// Check for duplicate names
+		// Idempotent: if participant already exists, return current state
 		if (chat.participants.some((p) => p.name === participant.name)) {
-			throw new Error(`Participant with name '${participant.name}' already exists`);
+			return chat;
 		}
 
 		const updated: GroupChat = {
