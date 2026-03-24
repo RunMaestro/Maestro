@@ -1559,7 +1559,11 @@ export function registerSymphonyHandlers({
 				const branchResult = await createBranch(localPath, branchName);
 				if (!branchResult.success) {
 					// Cleanup
-					await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
+					await fs
+						.rm(localPath, { recursive: true, force: true })
+						.catch((err) =>
+							logger.warn(`Failed to clean up directory ${localPath}: ${err}`, LOG_CONTEXT)
+						);
 					return { error: `Branch creation failed: ${branchResult.error}` };
 				}
 
@@ -1567,7 +1571,11 @@ export function registerSymphonyHandlers({
 				logger.info('Checking fork requirements', LOG_CONTEXT, { repoSlug });
 				const forkResult = await ensureForkSetup(localPath, repoSlug);
 				if (forkResult.error) {
-					await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
+					await fs
+						.rm(localPath, { recursive: true, force: true })
+						.catch((err) =>
+							logger.warn(`Failed to clean up directory ${localPath}: ${err}`, LOG_CONTEXT)
+						);
 					return { error: `Fork setup failed: ${forkResult.error}` };
 				}
 				if (forkResult.isFork) {
@@ -1612,7 +1620,11 @@ This PR will be updated automatically when the Auto Run completes.`;
 				);
 				if (!prResult.success) {
 					// Cleanup
-					await fs.rm(localPath, { recursive: true, force: true }).catch(() => {});
+					await fs
+						.rm(localPath, { recursive: true, force: true })
+						.catch((err) =>
+							logger.warn(`Failed to clean up directory ${localPath}: ${err}`, LOG_CONTEXT)
+						);
 					return { error: `PR creation failed: ${prResult.error}` };
 				}
 

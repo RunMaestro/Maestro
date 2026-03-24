@@ -33,7 +33,9 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 			initialScanDoneRef.current = true;
 			for (const session of sessions) {
 				if (session.projectRoot) {
-					window.maestro.cue.refreshSession(session.id, session.projectRoot).catch(() => {});
+					window.maestro.cue
+						.refreshSession(session.id, session.projectRoot)
+						.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err));
 				}
 			}
 			prevSessionIdsRef.current = currentIds;
@@ -54,14 +56,18 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 		// --- Detect new sessions ---
 		for (const session of sessions) {
 			if (!prevIds.has(session.id) && session.projectRoot) {
-				window.maestro.cue.refreshSession(session.id, session.projectRoot).catch(() => {});
+				window.maestro.cue
+					.refreshSession(session.id, session.projectRoot)
+					.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err));
 			}
 		}
 
 		// --- Detect removed sessions ---
 		for (const prevId of prevIds) {
 			if (!currentIds.has(prevId)) {
-				window.maestro.cue.removeSession(prevId).catch(() => {});
+				window.maestro.cue
+					.removeSession(prevId)
+					.catch((err) => console.error('[CueAutoDiscovery] Failed to remove session:', err));
 			}
 		}
 
@@ -86,14 +92,20 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 						sessions
 							.filter((session) => !!session.projectRoot)
 							.map((session) =>
-								window.maestro.cue.refreshSession(session.id, session.projectRoot).catch(() => {})
+								window.maestro.cue
+									.refreshSession(session.id, session.projectRoot)
+									.catch((err) =>
+										console.error('[CueAutoDiscovery] Failed to refresh session:', err)
+									)
 							)
 					)
 				)
-				.catch(() => {});
+				.catch((err) => console.error('[CueAutoDiscovery] Failed to enable Cue:', err));
 		} else {
 			// Feature was just disabled — stop the engine
-			window.maestro.cue.disable().catch(() => {});
+			window.maestro.cue
+				.disable()
+				.catch((err) => console.error('[CueAutoDiscovery] Failed to disable Cue:', err));
 		}
 	}, [encoreFeatures.maestroCue, sessions, sessionsLoaded]);
 }

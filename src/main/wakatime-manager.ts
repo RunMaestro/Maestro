@@ -305,7 +305,9 @@ export class WakaTimeManager {
 			const now = Date.now();
 			if (now - this.lastUpdateCheck >= UPDATE_CHECK_INTERVAL_MS) {
 				this.lastUpdateCheck = now;
-				this.checkForUpdate().catch(() => {});
+				this.checkForUpdate().catch((err) =>
+					logger.debug(`Update check failed: ${err}`, LOG_CONTEXT)
+				);
 			}
 			return true;
 		}
