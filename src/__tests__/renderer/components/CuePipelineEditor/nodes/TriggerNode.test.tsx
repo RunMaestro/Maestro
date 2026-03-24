@@ -251,12 +251,14 @@ describe('TriggerNode', () => {
 		const darkTheme = THEMES['dracula'];
 		const { container } = renderTriggerNode({ theme: darkTheme });
 		const dragHandle = container.querySelector('.drag-handle') as HTMLElement;
+		expect(dragHandle).toBeInTheDocument();
 		expect(dragHandle).toHaveStyle({ color: darkTheme.colors.textDim });
 	});
 
 	it('should fall back to hardcoded textDim when no theme provided', () => {
 		const { container } = renderTriggerNode({ configSummary: 'every 10min' });
 		const summarySpan = container.querySelector('span[title="every 10min"]') as HTMLElement;
+		expect(summarySpan).toBeInTheDocument();
 		expect(summarySpan).toHaveStyle({ color: '#9ca3af' });
 	});
 
