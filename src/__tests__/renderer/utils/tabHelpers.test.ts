@@ -473,6 +473,28 @@ describe('tabHelpers', () => {
 			expect(result!.session.closedTabHistory).toHaveLength(1); // Still only the old one
 			expect(result!.session.closedTabHistory[0].tab.id).toBe('old-tab');
 		});
+
+		it('uses repaired order to find neighbor when unifiedTabOrder has stale refs', () => {
+			const tab1 = createMockTab({ id: 'tab-1' });
+			const tab2 = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				aiTabs: [tab1, tab2],
+				activeTabId: 'tab-2',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'tab-1' },
+					{ type: 'ai', id: 'deleted-tab' }, // stale ref
+					{ type: 'ai', id: 'tab-2' },
+				],
+			});
+
+			// Close the active tab (tab-2). Without repaired order, the stale ref
+			// at index 1 would be the fallback neighbor and cause a bad lookup.
+			const result = closeTab(session, 'tab-2');
+			expect(result).not.toBeNull();
+			// Should fall back to tab-1 (the live tab to the left), not the stale ref
+			expect(result!.session.activeTabId).toBe('tab-1');
+		});
 	});
 
 	describe('reopenClosedTab', () => {

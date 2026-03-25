@@ -69,6 +69,11 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 	const handleMouseEnter = useCallback(() => {
 		setIsHovered(true);
 		if (options?.shouldOpen && !options.shouldOpen()) return;
+		// Clear any pending close timer so it doesn't fire while we're opening
+		if (hoverTimeoutRef.current) {
+			clearTimeout(hoverTimeoutRef.current);
+			hoverTimeoutRef.current = null;
+		}
 		hoverTimeoutRef.current = setTimeout(() => {
 			if (tabRef.current) {
 				const rect = tabRef.current.getBoundingClientRect();

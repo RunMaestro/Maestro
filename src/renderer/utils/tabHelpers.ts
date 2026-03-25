@@ -499,11 +499,12 @@ export function closeTab(
 				newActiveTabId = updatedTabs[newIndex].id;
 			}
 		} else {
-			// Normal mode: use unifiedTabOrder to find the correct left neighbor.
+			// Normal mode: use repaired unifiedTabOrder to find the correct left neighbor.
 			// This respects the visual tab order which includes terminal and file tabs —
 			// without this, closing an AI tab that sits to the right of a terminal tab
 			// would fall back to a random AI tab instead of the adjacent terminal tab.
-			const unifiedOrder = session.unifiedTabOrder || [];
+			// We use getRepairedUnifiedTabOrder to skip stale/duplicate refs (same as rendering).
+			const unifiedOrder = getRepairedUnifiedTabOrder(session);
 			const closedUnifiedIndex = unifiedOrder.findIndex(
 				(ref) => ref.type === 'ai' && ref.id === tabId
 			);
@@ -720,24 +721,25 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 		return null;
 	}
 
-	// Find the position in unifiedTabOrder
-	const unifiedIndex = session.unifiedTabOrder.findIndex(
-		(ref) => ref.type === 'file' && ref.id === tabId
-	);
+	// Use repaired order to skip stale/duplicate refs (same as rendering)
+	const repairedOrder = getRepairedUnifiedTabOrder(session);
+
+	// Find the position in the repaired unifiedTabOrder
+	const unifiedIndex = repairedOrder.findIndex((ref) => ref.type === 'file' && ref.id === tabId);
 
 	// Create closed tab entry
 	const closedTabEntry: ClosedTabEntry = {
 		type: 'file',
 		tab: { ...tabToClose },
-		unifiedIndex: unifiedIndex !== -1 ? unifiedIndex : session.unifiedTabOrder.length,
+		unifiedIndex: unifiedIndex !== -1 ? unifiedIndex : repairedOrder.length,
 		closedAt: Date.now(),
 	};
 
 	// Remove from filePreviewTabs
 	const updatedFilePreviewTabs = session.filePreviewTabs.filter((tab) => tab.id !== tabId);
 
-	// Remove from unifiedTabOrder
-	const updatedUnifiedTabOrder = session.unifiedTabOrder.filter(
+	// Remove from unifiedTabOrder (filter from repaired order to persist the fix)
+	const updatedUnifiedTabOrder = repairedOrder.filter(
 		(ref) => !(ref.type === 'file' && ref.id === tabId)
 	);
 

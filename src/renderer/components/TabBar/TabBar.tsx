@@ -129,6 +129,9 @@ function TabBarInner({
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;
 		if (!showUnreadOnly) return unifiedTabs;
+		// In filter mode: AI tabs filtered by unread/busy/active/draft;
+		// file and terminal tabs always shown (they have no unread state,
+		// and hiding them causes navigation/display mismatch).
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
 				return (
@@ -138,8 +141,8 @@ function TabBarInner({
 					hasDraft(ut.data)
 				);
 			}
-			if (ut.type === 'file') return ut.id === activeFileTabId;
-			return inputMode === 'terminal' && ut.id === activeTerminalTabId;
+			// File and terminal tabs are always visible
+			return true;
 		});
 	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId, activeTerminalTabId, inputMode]);
 
