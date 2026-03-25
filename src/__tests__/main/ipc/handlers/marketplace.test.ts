@@ -914,11 +914,11 @@ describe('marketplace IPC handlers', () => {
 			// Verify documents were READ FROM LOCAL FILESYSTEM (not fetched from GitHub)
 			// The fs.readFile mock should have been called for the document paths
 			expect(fs.readFile).toHaveBeenCalledWith(
-				path.normalize('/Users/test/custom-playbooks/my-playbook/phase-1.md'),
+				path.resolve('/Users/test/custom-playbooks/my-playbook', 'phase-1.md'),
 				'utf-8'
 			);
 			expect(fs.readFile).toHaveBeenCalledWith(
-				path.normalize('/Users/test/custom-playbooks/my-playbook/phase-2.md'),
+				path.resolve('/Users/test/custom-playbooks/my-playbook', 'phase-2.md'),
 				'utf-8'
 			);
 

@@ -1,4 +1,5 @@
 import React, { memo, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 
@@ -307,10 +308,10 @@ export const ToastContainer = memo(function ToastContainer({
 
 	if (toasts.length === 0) return null;
 
-	return (
+	return createPortal(
 		<div
-			className="fixed bottom-4 right-4 z-50 flex flex-col-reverse"
-			style={{ pointerEvents: 'none' }}
+			className="fixed bottom-4 right-4 flex flex-col-reverse"
+			style={{ pointerEvents: 'none', zIndex: 100000 }}
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (
@@ -323,6 +324,7 @@ export const ToastContainer = memo(function ToastContainer({
 					/>
 				))}
 			</div>
-		</div>
+		</div>,
+		document.body
 	);
 });

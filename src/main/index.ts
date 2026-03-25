@@ -214,6 +214,10 @@ if (crashReportingEnabled && !isDevelopment) {
 			});
 			// Add installation ID to Sentry for error correlation across installations
 			setTag('installationId', installationId);
+			// Tag release channel (rc vs stable) based on version string
+			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
+			const version = app.getVersion();
+			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 500MB heap
@@ -452,6 +456,7 @@ function setupIpcHandlers() {
 			webServer = server;
 		},
 		createWebServer,
+		settingsStore: store,
 	});
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts

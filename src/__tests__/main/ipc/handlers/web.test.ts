@@ -34,6 +34,7 @@ describe('web handlers', () => {
 	let mockWebServer: any;
 	let webServerRef: { current: any };
 	let mockCreateWebServer: any;
+	let mockSettingsStore: any;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -54,12 +55,17 @@ describe('web handlers', () => {
 			broadcastTabsChange: vi.fn(),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
+			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
 			start: vi.fn().mockResolvedValue({ port: 8080, url: 'http://localhost:8080' }),
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
 
 		webServerRef = { current: mockWebServer };
 		mockCreateWebServer = vi.fn().mockReturnValue(mockWebServer);
+		mockSettingsStore = {
+			get: vi.fn(),
+			set: vi.fn(),
+		};
 
 		registerWebHandlers({
 			getWebServer: () => webServerRef.current,
@@ -67,6 +73,7 @@ describe('web handlers', () => {
 				webServerRef.current = server;
 			},
 			createWebServer: mockCreateWebServer,
+			settingsStore: mockSettingsStore,
 		});
 	});
 
@@ -96,6 +103,11 @@ describe('web handlers', () => {
 			);
 			expect(ipcMain.handle).toHaveBeenCalledWith('live:startServer', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('live:stopServer', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith('live:persistCurrentToken', expect.any(Function));
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'live:clearPersistentToken',
+				expect.any(Function)
+			);
 			expect(ipcMain.handle).toHaveBeenCalledWith('live:disableAll', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith('webserver:getUrl', expect.any(Function));
 			expect(ipcMain.handle).toHaveBeenCalledWith(
@@ -343,6 +355,87 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toEqual({ success: true, count: 0 });
+		});
+	});
+
+	describe('live:persistCurrentToken', () => {
+		it('should write flag before token for crash safety', async () => {
+			const handler = registeredHandlers.get('live:persistCurrentToken');
+			const result = await handler!({});
+
+			expect(mockWebServer.getSecurityToken).toHaveBeenCalled();
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('persistentWebLink', true);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('webAuthToken', 'mock-security-token');
+			expect(result).toEqual({ success: true });
+
+			// Verify crash-safe write order: flag enabled before token.
+			// A crash between the two writes leaves persistentWebLink=true with
+			// a missing token, which the factory handles by generating a fresh UUID.
+			const setCalls = vi.mocked(mockSettingsStore.set).mock.calls;
+			const flagIndex = setCalls.findIndex(([key]) => key === 'persistentWebLink');
+			const tokenIndex = setCalls.findIndex(([key]) => key === 'webAuthToken');
+			expect(flagIndex).toBeLessThan(tokenIndex);
+		});
+
+		it('should return failure when web server is null', async () => {
+			webServerRef.current = null;
+
+			const handler = registeredHandlers.get('live:persistCurrentToken');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: false, message: 'Web server is not running.' });
+		});
+
+		it('should return failure when web server is not active', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const handler = registeredHandlers.get('live:persistCurrentToken');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: false, message: 'Web server is not running.' });
+			expect(mockWebServer.getSecurityToken).not.toHaveBeenCalled();
+		});
+
+		it('should return failure when settings write throws', async () => {
+			mockSettingsStore.set.mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			const handler = registeredHandlers.get('live:persistCurrentToken');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: false, message: 'disk full' });
+		});
+	});
+
+	describe('live:clearPersistentToken', () => {
+		it('should clear flag before token for crash safety', async () => {
+			const handler = registeredHandlers.get('live:clearPersistentToken');
+			const result = await handler!({});
+
+			// Verify both writes are made
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('persistentWebLink', false);
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('webAuthToken', null);
+			expect(result).toEqual({ success: true });
+
+			// Verify crash-safe write order: flag cleared before token.
+			// A crash between the two writes must leave persistentWebLink=false
+			// so the factory ignores the stale token on next startup.
+			const setCalls = vi.mocked(mockSettingsStore.set).mock.calls;
+			const flagIndex = setCalls.findIndex(([key]) => key === 'persistentWebLink');
+			const tokenIndex = setCalls.findIndex(([key]) => key === 'webAuthToken');
+			expect(flagIndex).toBeLessThan(tokenIndex);
+		});
+
+		it('should return failure when settings write throws', async () => {
+			mockSettingsStore.set.mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+
+			const handler = registeredHandlers.get('live:clearPersistentToken');
+			const result = await handler!({});
+
+			expect(result).toEqual({ success: false, message: 'disk full' });
 		});
 	});
 

@@ -70,6 +70,11 @@ vi.mock('../../../../main/services/gitSettingsStore', () => ({
 	},
 }));
 
+// Mock getShellPath
+vi.mock('../../../../main/runtime/getShellPath', () => ({
+	getShellPath: vi.fn().mockResolvedValue('/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'),
+}));
+
 // Mock remote-git
 vi.mock('../../../../main/utils/remote-git', () => ({
 	execGitRemote: vi.fn(),
@@ -2687,7 +2692,8 @@ export function Component() {
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'git',
 				['push', '-u', 'origin', 'HEAD'],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'gh',
@@ -2701,7 +2707,8 @@ export function Component() {
 					'--body',
 					'This PR adds a new feature',
 				],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(result).toEqual({
 				success: true,
@@ -2831,11 +2838,49 @@ export function Component() {
 			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
 				'/opt/homebrew/bin/gh',
 				['pr', 'create', '--base', 'main', '--title', 'Title', '--body', 'Body'],
-				'/worktree/path'
+				'/worktree/path',
+				expect.objectContaining({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
 			);
 			expect(result).toEqual({
 				success: true,
 				prUrl: 'https://github.com/user/repo/pull/456',
+			});
+		});
+
+		it('should proceed without enriched PATH when getShellPath rejects', async () => {
+			// Force getShellPath to reject
+			const shellPathModule = await import('../../../../main/runtime/getShellPath');
+			vi.mocked(shellPathModule.getShellPath).mockRejectedValueOnce(
+				new Error('Shell exited with code 1')
+			);
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					// git push -u origin HEAD
+					stdout: 'Everything up-to-date',
+					stderr: '',
+					exitCode: 0,
+				})
+				.mockResolvedValueOnce({
+					// gh pr create
+					stdout: 'https://github.com/user/repo/pull/789',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:createPR');
+			const result = await handler!({} as any, '/worktree/path', 'main', 'Title', 'Body');
+
+			// Both subprocess calls should proceed with undefined env (default)
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['push', '-u', 'origin', 'HEAD'],
+				'/worktree/path',
+				undefined
+			);
+			expect(result).toEqual({
+				success: true,
+				prUrl: 'https://github.com/user/repo/pull/789',
 			});
 		});
 

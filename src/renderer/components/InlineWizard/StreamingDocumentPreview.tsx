@@ -14,13 +14,13 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { FileText, Code2, AlignLeft } from 'lucide-react';
 import type { Theme } from '../../types';
-import { generateProseStyles, createMarkdownComponents } from '../../utils/markdownConfig';
-
-// Memoize remarkPlugins array - it never changes
-const REMARK_PLUGINS = [remarkGfm];
+import {
+	REMARK_GFM_PLUGINS,
+	createMarkdownComponents,
+	generateInlineWizardPreviewProseStyles,
+} from '../../utils/markdownConfig';
 
 /**
  * Props for StreamingDocumentPreview
@@ -138,11 +138,7 @@ export function StreamingDocumentPreview({
 
 	// Prose styles for markdown preview - scoped to .streaming-preview
 	const proseStyles = useMemo(
-		() =>
-			generateProseStyles({
-				theme,
-				scopeSelector: '.streaming-preview',
-			}),
+		() => generateInlineWizardPreviewProseStyles(theme, '.streaming-preview', 'streaming'),
 		[theme]
 	);
 
@@ -152,6 +148,10 @@ export function StreamingDocumentPreview({
 			createMarkdownComponents({
 				theme,
 				onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+				codeBlockStyle: {
+					padding: '0.75em',
+					fontSize: '0.85em',
+				},
 			}),
 		[theme]
 	);
@@ -252,7 +252,7 @@ export function StreamingDocumentPreview({
 					/* Markdown preview */
 					<div className="prose prose-sm max-w-none text-sm">
 						<style>{proseStyles}</style>
-						<ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
 							{cleanedContent}
 						</ReactMarkdown>
 						{/* Blinking cursor at end */}

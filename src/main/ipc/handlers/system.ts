@@ -14,7 +14,7 @@
  * Extracted from main/index.ts to improve code organization.
  */
 
-import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage, BrowserWindow, App } from 'electron';
 import * as path from 'path';
 import * as fsSync from 'fs';
 import Store from 'electron-store';
@@ -287,6 +287,18 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		if (errorMessage) {
 			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
+	});
+
+	// Clipboard operations - copy image to system clipboard via Electron native API
+	ipcMain.handle('clipboard:writeImage', async (_event, dataUrl: string) => {
+		if (!dataUrl || typeof dataUrl !== 'string') {
+			throw new Error('Invalid data URL: must be a non-empty string');
+		}
+		const img = nativeImage.createFromDataURL(dataUrl);
+		if (img.isEmpty()) {
+			throw new Error('Failed to create image from data URL');
+		}
+		clipboard.writeImage(img);
 	});
 
 	// ============ Tunnel Handlers (Cloudflare) ============

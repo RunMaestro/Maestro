@@ -12,6 +12,8 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { resolveGhPath, getCachedGhStatus, setCachedGhStatus } from '../../utils/cliDetection';
+import { getShellPath } from '../../runtime/getShellPath';
+import { captureMessage } from '../../utils/sentry';
 import {
 	parseGitBranches,
 	parseGitTags,
@@ -820,11 +822,27 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				const ghCommand = await resolveGhPath(ghPath);
 				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
 
+				// Build env with the user's full shell PATH so git hooks
+				// (e.g. Husky pre-push running npm) can find Node/npm binaries
+				let shellEnv: NodeJS.ProcessEnv | undefined;
+				try {
+					const shellPath = await getShellPath();
+					if (shellPath) {
+						shellEnv = { ...process.env, PATH: shellPath };
+					}
+				} catch (error) {
+					captureMessage(
+						`git:createPR falling back to default PATH: ${error instanceof Error ? error.message : String(error)}`,
+						'warning'
+					);
+				}
+
 				// First, push the current branch to origin
 				const pushResult = await execFileNoThrow(
 					'git',
 					['push', '-u', 'origin', 'HEAD'],
-					worktreePath
+					worktreePath,
+					shellEnv
 				);
 				if (pushResult.exitCode !== 0) {
 					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
@@ -834,7 +852,8 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				const prResult = await execFileNoThrow(
 					ghCommand,
 					['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
-					worktreePath
+					worktreePath,
+					shellEnv
 				);
 
 				if (prResult.exitCode !== 0) {

@@ -768,6 +768,9 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 
 							// Save documents to disk in "Initiation" subfolder
 							setProgressMessage('Saving documents...');
+							const sshRemoteId = state.sessionSshRemoteConfig?.enabled
+								? (state.sessionSshRemoteConfig.remoteId ?? undefined)
+								: undefined;
 							const saveResult = await phaseGenerator.saveDocuments(
 								state.directoryPath,
 								genResult.documents,
@@ -775,7 +778,8 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 									// Add file to the created files list as it's saved
 									addCreatedFile(file);
 								},
-								'Initiation' // Save in Initiation subfolder
+								'Initiation', // Save in Initiation subfolder
+								sshRemoteId
 							);
 
 							if (saveResult.success) {
@@ -828,6 +832,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 		state.directoryPath,
 		state.agentName,
 		state.conversationHistory,
+		state.sessionSshRemoteConfig,
 		setGeneratingDocuments,
 		setGeneratedDocuments,
 		setGenerationError,

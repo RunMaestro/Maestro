@@ -10,7 +10,6 @@ import {
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
 import {
 	Eye,
@@ -52,7 +51,11 @@ import {
 	imageCache,
 } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
-import { generateAutoRunProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
+import {
+	REMARK_GFM_PLUGINS,
+	generateAutoRunProseStyles,
+	createMarkdownComponents,
+} from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 
@@ -1428,7 +1431,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Memoize remarkPlugins - include remarkFileLinks when we have file tree
 	const remarkPlugins = useMemo(() => {
-		const plugins: any[] = [remarkGfm];
+		const plugins: any[] = [...REMARK_GFM_PLUGINS];
 		if (fileTree.length > 0) {
 			// cwd is empty since we're at the root of the Auto Run folder
 			plugins.push([remarkFileLinks, { indices: fileTreeIndices || undefined, cwd: '' }]);

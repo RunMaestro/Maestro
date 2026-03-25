@@ -75,6 +75,7 @@ Patch release with bug fixes, UX improvements, and cherry-picks from the 0.16.0 
 
 ### Previous Releases in this Series
 
+- **v0.15.2** (March 12, 2026) - Maestro Symphony
 - **v0.15.1** (March 3, 2026) - Maestro Symphony
 
 ---

@@ -14,6 +14,8 @@ import {
 	GitBranch,
 	Skull,
 	AlertTriangle,
+	Play,
+	XCircle,
 } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -689,7 +691,7 @@ export const RightPanel = memo(
 						{/* Overall completed count with loop info */}
 						<div className="mt-2 flex items-start justify-between gap-2">
 							<span
-								className="text-[10px]"
+								className="text-[10px] min-w-0 flex-1 truncate"
 								style={{
 									color: currentSessionBatchState.errorPaused
 										? theme.colors.error
@@ -704,6 +706,39 @@ export const RightPanel = memo(
 											? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
 											: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
 							</span>
+							{/* Resume/Abort buttons when error-paused */}
+							{currentSessionBatchState.errorPaused && (
+								<div className="flex items-center gap-1.5 shrink-0">
+									{currentSessionBatchState.error?.recoverable && onResumeAfterError && (
+										<button
+											onClick={onResumeAfterError}
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.accent,
+												color: theme.colors.accentForeground,
+											}}
+											title="Resume Auto Run after re-authenticating"
+										>
+											<Play className="w-3 h-3" />
+											Resume
+										</button>
+									)}
+									{onAbortBatchOnError && (
+										<button
+											onClick={onAbortBatchOnError}
+											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.error,
+												color: 'white',
+											}}
+											title="Stop Auto Run completely"
+										>
+											<XCircle className="w-3 h-3" />
+											Abort
+										</button>
+									)}
+								</div>
+							)}
 							<div className="flex items-center gap-2 shrink-0">
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (

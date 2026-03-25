@@ -119,8 +119,9 @@ export class StdoutHandler {
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) return;
 
-		// SSH-launched agent CLIs can leak terminal mode switches like ESC[?1h ESC=
-		// before their real output. Strip non-printing control bytes before parsing.
+		// Strip ANSI/control sequences before parsing. Applied unconditionally —
+		// control codes are never useful on the child-process stdout path regardless
+		// of transport (local or SSH).
 		const cleanedOutput = stripAllAnsiCodes(output);
 		if (!cleanedOutput) return;
 

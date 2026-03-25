@@ -434,6 +434,14 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		setStagedImages((prev) => prev.filter((x) => x !== img));
 	}, []);
 
+	// Auto-resize textarea as content changes (matches InputArea behavior)
+	useEffect(() => {
+		if (inputRef.current) {
+			inputRef.current.style.height = 'auto';
+			inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 176)}px`;
+		}
+	}, [message]);
+
 	const isBusy = state !== 'idle';
 	const hasQueuedItems = executionQueue && executionQueue.length > 0;
 
@@ -557,11 +565,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						placeholder={
 							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
 						}
-						rows={2}
+						rows={1}
 						className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
 						style={{
 							color: theme.colors.textMain,
-							maxHeight: '7rem',
+							maxHeight: '11rem',
 						}}
 					/>
 

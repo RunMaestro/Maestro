@@ -224,6 +224,12 @@ describe('terminalFilter', () => {
 				expect(result).toBe('textmore');
 			});
 
+			it('should remove transient PTY wrapper control bytes before visible output', () => {
+				const input = '\x04\x08\x08file1.txt\nfile2.txt';
+				const result = stripControlSequences(input);
+				expect(result).toBe('file1.txt\nfile2.txt');
+			});
+
 			it('should preserve newlines', () => {
 				const input = 'line1\nline2';
 				const result = stripControlSequences(input);

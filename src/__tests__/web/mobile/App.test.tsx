@@ -1116,6 +1116,106 @@ describe('MobileApp', () => {
 				mode: 'terminal',
 			});
 		});
+
+		it('keeps separate drafts for AI and terminal mode', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-1', name: 'Main', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-1',
+					}),
+				]);
+			});
+
+			const input = screen.getByTestId('command-input');
+			fireEvent.change(input, { target: { value: 'Explain the repo status' } });
+
+			fireEvent.click(screen.getByTestId('mode-toggle'));
+
+			expect(screen.getByTestId('input-mode')).toHaveTextContent('terminal');
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+
+			fireEvent.change(screen.getByTestId('command-input'), { target: { value: 'pwd' } });
+			fireEvent.click(screen.getByTestId('mode-toggle'));
+
+			expect(screen.getByTestId('input-mode')).toHaveTextContent('ai');
+			expect(screen.getByTestId('command-input')).toHaveValue('Explain the repo status');
+		});
+	});
+
+	describe('draft scoping', () => {
+		it('keeps drafts scoped to the selected session', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						name: 'Session 1',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-1', name: 'Main', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-1',
+					}),
+					createMockSession({
+						id: 'session-2',
+						name: 'Session 2',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-2', name: 'Main', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-2',
+					}),
+				]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for session one' },
+			});
+
+			fireEvent.click(screen.getByTestId('session-session-2'));
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'draft for session two' },
+			});
+
+			fireEvent.click(screen.getByTestId('session-session-1'));
+			expect(screen.getByTestId('command-input')).toHaveValue('draft for session one');
+		});
+
+		it('falls back to desktop AI draft after submit clears the local override', async () => {
+			render(<MobileApp />);
+
+			await act(async () => {
+				mockHandlers.onSessionsUpdate?.([
+					createMockSession({
+						id: 'session-1',
+						inputMode: 'ai',
+						aiTabs: [{ id: 'tab-1', name: 'Main', state: 'idle', inputValue: '' }],
+						activeTabId: 'tab-1',
+					}),
+				]);
+			});
+
+			fireEvent.change(screen.getByTestId('command-input'), {
+				target: { value: 'temporary local draft' },
+			});
+
+			fireEvent.click(screen.getByTestId('submit-command'));
+			expect(screen.getByTestId('command-input')).toHaveValue('');
+
+			await act(async () => {
+				mockHandlers.onTabsChanged?.(
+					'session-1',
+					[{ id: 'tab-1', name: 'Main', state: 'idle', inputValue: 'desktop restored draft' }],
+					'tab-1'
+				);
+			});
+
+			expect(screen.getByTestId('command-input')).toHaveValue('desktop restored draft');
+		});
 	});
 
 	describe('interrupt handling', () => {

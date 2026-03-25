@@ -4,19 +4,19 @@
  */
 
 import { BrowserWindow, ipcMain } from 'electron';
+import { randomUUID } from 'crypto';
 import { WebServer } from './WebServer';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
-import type { StoredSession } from '../stores/types';
+import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
 
-/** Store interface for settings */
-interface SettingsStore {
-	get<T>(key: string, defaultValue?: T): T;
-}
+/** UUID v4 format regex for validating stored security tokens.
+ *  Enforces version nibble (4) and variant bits ([89ab]). */
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Store interface for sessions */
 interface SessionsStore {
@@ -58,7 +58,36 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		const useCustomPort = settingsStore.get('webInterfaceUseCustomPort', false);
 		const customPort = settingsStore.get('webInterfaceCustomPort', 8080);
 		const port = useCustomPort ? customPort : 0;
-		const server = new WebServer(port); // Custom or random port with auto-generated security token
+
+		// Determine security token: persistent or ephemeral
+		let securityToken: string | undefined;
+		const persistentWebLink = settingsStore.get('persistentWebLink', false);
+		if (persistentWebLink) {
+			const storedToken = settingsStore.get<string | null>('webAuthToken', null);
+			// Validate stored token is a proper UUID before trusting it
+			if (storedToken && UUID_V4_REGEX.test(storedToken)) {
+				securityToken = storedToken;
+			} else {
+				if (storedToken) {
+					logger.warn(
+						'Stored webAuthToken is not a valid UUID, generating new token',
+						'WebServerFactory'
+					);
+				}
+				securityToken = randomUUID();
+				try {
+					settingsStore.set('webAuthToken', securityToken);
+				} catch (e) {
+					// Persist failure is non-fatal — server starts with an ephemeral token
+					logger.warn(
+						'Failed to persist new webAuthToken, URL will not survive restart',
+						'WebServerFactory'
+					);
+				}
+			}
+		}
+
+		const server = new WebServer(port, securityToken);
 
 		// Set up callback for web server to fetch sessions list
 		server.setGetSessionsCallback(() => {

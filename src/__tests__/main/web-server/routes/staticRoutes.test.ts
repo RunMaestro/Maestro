@@ -14,6 +14,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
 import { StaticRoutes } from '../../../../main/web-server/routes/staticRoutes';
 
 // Mock the logger
@@ -168,6 +171,52 @@ describe('StaticRoutes', () => {
 			expect(customFastify.routes.has(`GET:/${customToken}/manifest.json`)).toBe(true);
 			expect(customFastify.routes.has(`GET:/${customToken}/sw.js`)).toBe(true);
 			expect(customFastify.routes.has(`GET:/${customToken}/session/:sessionId`)).toBe(true);
+		});
+	});
+
+	describe('Index HTML freshness', () => {
+		it('should serve updated index.html content after the file changes on disk', async () => {
+			const tempRoot = mkdtempSync(path.join(tmpdir(), 'maestro-static-routes-'));
+			const tempAssetsPath = path.join(tempRoot, 'web');
+			const tempIndexPath = path.join(tempAssetsPath, 'index.html');
+
+			mkdirSync(tempAssetsPath, { recursive: true });
+
+			try {
+				writeFileSync(
+					tempIndexPath,
+					'<!doctype html><html><head><script type="module" src="./assets/main-old.js"></script></head><body></body></html>',
+					'utf8'
+				);
+
+				const freshRoutes = new StaticRoutes(securityToken, tempAssetsPath);
+				const freshFastify = createMockFastify();
+				freshRoutes.registerRoutes(freshFastify as any);
+
+				const route = freshFastify.getRoute('GET', `/${securityToken}`);
+				const firstReply = createMockReply();
+				await route!.handler({}, firstReply);
+
+				expect(firstReply.type).toHaveBeenCalledWith('text/html');
+				expect(firstReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`/${securityToken}/assets/main-old.js`)
+				);
+
+				writeFileSync(
+					tempIndexPath,
+					'<!doctype html><html><head><script type="module" src="./assets/main-new.js"></script></head><body></body></html>',
+					'utf8'
+				);
+
+				const secondReply = createMockReply();
+				await route!.handler({}, secondReply);
+
+				expect(secondReply.send).toHaveBeenCalledWith(
+					expect.stringContaining(`/${securityToken}/assets/main-new.js`)
+				);
+			} finally {
+				rmSync(tempRoot, { recursive: true, force: true });
+			}
 		});
 	});
 

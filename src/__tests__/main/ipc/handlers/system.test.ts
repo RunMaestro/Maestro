@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as path from 'path';
 import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
 import Store from 'electron-store';
 import {
@@ -250,6 +251,8 @@ describe('system IPC handlers', () => {
 				'power:getStatus',
 				'power:addReason',
 				'power:removeReason',
+				// Clipboard handlers
+				'clipboard:writeImage',
 			];
 
 			for (const channel of expectedChannels) {
@@ -593,7 +596,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:showItemInFolder');
 			await handler!({} as any, '/path/to/file.txt');
 
-			expect(shell.showItemInFolder).toHaveBeenCalledWith('/path/to/file.txt');
+			expect(shell.showItemInFolder).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
 		});
 
 		it('should throw error for empty path', async () => {
@@ -621,7 +624,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:trashItem');
 			await handler!({} as any, '/path/to/file.txt');
 
-			expect(shell.trashItem).toHaveBeenCalledWith('/path/to/file.txt');
+			expect(shell.trashItem).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
 		});
 
 		it('should throw error for empty path', async () => {
@@ -663,7 +666,7 @@ describe('system IPC handlers', () => {
 			const handler = handlers.get('shell:openPath');
 			await handler!({} as any, '/path/to/file.txt');
 
-			expect(shell.openPath).toHaveBeenCalledWith('/path/to/file.txt');
+			expect(shell.openPath).toHaveBeenCalledWith(path.resolve('/path/to/file.txt'));
 		});
 
 		it('should throw error for empty path', async () => {

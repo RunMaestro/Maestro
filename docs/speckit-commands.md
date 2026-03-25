@@ -47,6 +47,22 @@ Access Spec-Kit commands via **Settings → AI Commands** tab. Here you can:
 
 Commands marked with a Maestro badge (`/speckit.help`, `/speckit.implement`) are Maestro-specific and not updated from upstream.
 
+## Prerequisites
+
+Maestro does not automatically create the folder structure or scripts required to run Spec-Kit. You’ll need to set these up manually.
+
+Get started: Follow the instructions in the “Get Started” section of the [GitHub Spec-Kit repository](https://github.com/github/spec-kit?tab=readme-ov-file#1-install-specify-cli):
+
+```bash
+# Create new project
+specify init <PROJECT_NAME>
+
+# Or initialize in existing project
+specify init . --ai claude
+# or
+specify init --here --ai claude
+```
+
 ## Core Workflow (Recommended Order)
 
 ### 1. `/speckit.constitution` — Define Project Principles

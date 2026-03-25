@@ -6,7 +6,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ConfirmModal } from './ConfirmModal';
-import { safeClipboardWrite, safeClipboardWriteBlob } from '../utils/clipboard';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../utils/clipboard';
 
 // ============================================================================
 // AutoRunLightbox - Full-screen image viewer with navigation, copy, delete
@@ -119,9 +119,7 @@ export const AutoRunLightbox = memo(
 			if (!imageUrl) return;
 
 			try {
-				const response = await fetch(imageUrl);
-				const blob = await response.blob();
-				const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
+				const ok = await safeClipboardWriteImage(imageUrl);
 				if (ok) {
 					setCopied(true);
 					setTimeout(() => setCopied(false), 2000);

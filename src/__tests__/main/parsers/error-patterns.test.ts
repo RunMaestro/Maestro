@@ -423,6 +423,19 @@ describe('error-patterns', () => {
 				const result = matchErrorPattern({}, 'rate limit exceeded');
 				expect(result).toBeNull();
 			});
+
+			it('should return null for non-string line input', () => {
+				// Runtime guard: obj.message may be an object instead of string
+				const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, {
+					type: 'error',
+				} as unknown as string);
+				expect(result).toBeNull();
+			});
+
+			it('should return null for null/undefined line input', () => {
+				expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, null as unknown as string)).toBeNull();
+				expect(matchErrorPattern(CLAUDE_ERROR_PATTERNS, undefined as unknown as string)).toBeNull();
+			});
 		});
 
 		describe('Codex-specific patterns', () => {

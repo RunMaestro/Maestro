@@ -38,6 +38,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
+const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Get Codex sessions base directory (platform-specific)
@@ -232,6 +233,14 @@ async function parseSessionFile(
 	stats: { size: number; mtimeMs: number }
 ): Promise<AgentSessionInfo | null> {
 	try {
+		if (stats.size > MAX_SESSION_FILE_SIZE) {
+			logger.warn('Skipping oversized Codex session file', LOG_CONTEXT, {
+				filePath,
+				size: stats.size,
+			});
+			return null;
+		}
+
 		const content = await fs.readFile(filePath, 'utf-8');
 		const lines = content.split('\n').filter((l) => l.trim());
 
@@ -586,6 +595,14 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		sshConfig: SshRemoteConfig
 	): Promise<AgentSessionInfo | null> {
 		try {
+			if (stats.size > MAX_SESSION_FILE_SIZE) {
+				logger.warn('Skipping oversized remote Codex session file', LOG_CONTEXT, {
+					filePath,
+					size: stats.size,
+				});
+				return null;
+			}
+
 			const result = await readFileRemote(filePath, sshConfig);
 			if (!result.success || !result.data) {
 				logger.error(

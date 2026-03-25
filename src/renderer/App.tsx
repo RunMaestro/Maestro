@@ -16,7 +16,13 @@ import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
 import { WindowsWarningModal } from './components/WindowsWarningModal';
 import { GistPublishModal } from './components/GistPublishModal';
-import { MaestroWizard, useWizard, WizardResumeModal } from './components/Wizard';
+import {
+	MaestroWizard,
+	useWizard,
+	WizardResumeModal,
+	type SerializableWizardState,
+	type WizardStep,
+} from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 // CONDUCTOR_BADGES moved to useAutoRunAchievements hook
 import { EmptyStateView } from './components/EmptyStateView';
@@ -41,6 +47,8 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+
+import { captureException } from './utils/sentry';
 
 // SymphonyContributionData type moved to useSymphonyContribution hook
 
@@ -339,7 +347,7 @@ function MaestroConsoleInner() {
 	// --- WIZARD (onboarding wizard for new users) ---
 	const {
 		state: wizardState,
-		openWizard: openWizardModal,
+		openWizard: _baseOpenWizardModal,
 		restoreState: restoreWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
@@ -348,6 +356,36 @@ function MaestroConsoleInner() {
 		goToStep: wizardGoToStep,
 	} = useWizard();
 
+	// Wrapper for openWizard that checks for resume state
+	const openWizardModal = useCallback(async () => {
+		try {
+			const saved = await window.maestro.settings.get('wizardResumeState');
+			// Validate saved state has a resumable step before casting
+			// These are the steps where we can resume the wizard (not agent-selection)
+			const resumableSteps: WizardStep[] = [
+				'directory-selection',
+				'conversation',
+				'preparing-plan',
+				'phase-review',
+			];
+			if (
+				saved &&
+				typeof saved === 'object' &&
+				'currentStep' in saved &&
+				typeof saved.currentStep === 'string' &&
+				resumableSteps.includes(saved.currentStep as WizardStep)
+			) {
+				useModalStore
+					.getState()
+					.openModal('wizardResume', { state: saved as SerializableWizardState });
+				return;
+			}
+		} catch (e) {
+			captureException(e, { extra: { context: 'openWizardModal', setting: 'wizardResumeState' } });
+			console.error('[App] Failed to check wizard resume state:', e);
+		}
+		_baseOpenWizardModal();
+	}, [_baseOpenWizardModal]);
 	// --- SETTINGS (from useSettings hook) ---
 	const settings = useSettings();
 	const {

@@ -38,9 +38,15 @@ export function useCliActivityMonitoring(
 	// Listen for CLI activity changes (when CLI is running playbooks)
 	// Update session states to show busy when CLI is active
 	useEffect(() => {
+		// Guard: cli API may not be available in all environments
+		if (!window.maestro?.cli) {
+			return;
+		}
+
 		const checkCliActivity = async () => {
 			try {
 				const activities = await window.maestro.cli.getActivity();
+				if (!Array.isArray(activities)) return;
 				setSessions((prev) =>
 					prev.map((session) => {
 						const cliActivity = activities.find((a) => a.sessionId === session.id);

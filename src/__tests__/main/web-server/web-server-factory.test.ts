@@ -19,6 +19,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 	return {
 		WebServer: class MockWebServer {
 			port: number;
+			securityToken: string | undefined;
 			setGetSessionsCallback = vi.fn();
 			setGetSessionDetailCallback = vi.fn();
 			setGetThemeCallback = vi.fn();
@@ -37,8 +38,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 
-			constructor(port: number) {
+			constructor(port: number, securityToken?: string) {
 				this.port = port;
+				this.securityToken = securityToken;
 			}
 		},
 	};
@@ -94,11 +96,14 @@ describe('web-server/web-server-factory', () => {
 				const values: Record<string, any> = {
 					webInterfaceUseCustomPort: false,
 					webInterfaceCustomPort: 8080,
+					persistentWebLink: false,
+					webAuthToken: null,
 					activeThemeId: 'dracula',
 					customAICommands: [],
 				};
 				return values[key] ?? defaultValue;
 			}),
+			set: vi.fn(),
 		};
 
 		mockSessionsStore = {
@@ -198,6 +203,82 @@ describe('web-server/web-server-factory', () => {
 
 			// Check that the server was created with custom port
 			expect((server as any).port).toBe(9999);
+		});
+
+		it('should not pass security token when persistentWebLink is false', () => {
+			vi.mocked(mockSettingsStore.get).mockImplementation((key: string, defaultValue?: any) => {
+				if (key === 'persistentWebLink') return false;
+				return defaultValue;
+			});
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			expect((server as any).securityToken).toBeUndefined();
+		});
+
+		it('should use stored token when persistentWebLink is true and token is a valid UUID', () => {
+			const validUuid = '550e8400-e29b-4bd4-a716-446655440000';
+			vi.mocked(mockSettingsStore.get).mockImplementation((key: string, defaultValue?: any) => {
+				if (key === 'persistentWebLink') return true;
+				if (key === 'webAuthToken') return validUuid;
+				return defaultValue;
+			});
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			expect((server as any).securityToken).toBe(validUuid);
+		});
+
+		it('should reject invalid stored token and generate a new UUID', () => {
+			vi.mocked(mockSettingsStore.get).mockImplementation((key: string, defaultValue?: any) => {
+				if (key === 'persistentWebLink') return true;
+				if (key === 'webAuthToken') return 'not-a-valid-uuid';
+				return defaultValue;
+			});
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			// Should have generated a new token, not used the invalid one
+			expect((server as any).securityToken).not.toBe('not-a-valid-uuid');
+			expect((server as any).securityToken).toBeDefined();
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('webAuthToken', expect.any(String));
+			// Token written to settings must match the one given to the server
+			const storedToken = vi
+				.mocked(mockSettingsStore.set)
+				.mock.calls.find(([key]) => key === 'webAuthToken')?.[1];
+			expect((server as any).securityToken).toBe(storedToken);
+			// Generated replacement must be a valid UUID v4
+			expect(storedToken).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+			);
+		});
+
+		it('should generate and store new token when persistentWebLink is true and no token exists', () => {
+			vi.mocked(mockSettingsStore.get).mockImplementation((key: string, defaultValue?: any) => {
+				if (key === 'persistentWebLink') return true;
+				if (key === 'webAuthToken') return null;
+				return defaultValue;
+			});
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			// Should have generated a token and stored it
+			expect((server as any).securityToken).toBeDefined();
+			expect(typeof (server as any).securityToken).toBe('string');
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('webAuthToken', expect.any(String));
+			// Token written to settings must match the one given to the server
+			const storedToken = vi
+				.mocked(mockSettingsStore.set)
+				.mock.calls.find(([key]) => key === 'webAuthToken')?.[1];
+			expect((server as any).securityToken).toBe(storedToken);
+			// Generated token must be a valid UUID v4
+			expect(storedToken).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+			);
 		});
 	});
 

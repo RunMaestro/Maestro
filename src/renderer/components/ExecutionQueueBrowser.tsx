@@ -254,6 +254,7 @@ export function ExecutionQueueBrowser({
 												onDragStart={() => handleDragStart(session.id, item.id, index)}
 												onDragEnd={handleDragEnd}
 												onDragCancel={handleDragCancel}
+												onDragOverItem={(dropIndex) => handleDragOver(session.id, dropIndex)}
 											/>
 										</React.Fragment>
 									))}
@@ -320,6 +321,7 @@ interface QueueItemRowProps {
 	onDragStart?: () => void;
 	onDragEnd?: () => void;
 	onDragCancel?: () => void;
+	onDragOverItem?: (dropIndex: number) => void;
 }
 
 function QueueItemRow({
@@ -334,11 +336,13 @@ function QueueItemRow({
 	onDragStart,
 	onDragEnd,
 	onDragCancel,
+	onDragOverItem,
 }: QueueItemRowProps) {
 	const [isPressed, setIsPressed] = useState(false);
 	const [isHovered, setIsHovered] = useState(false);
 	const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const isDraggingRef = useRef(false);
+	const rowRef = useRef<HTMLDivElement>(null);
 
 	const isCommand = item.type === 'command';
 	const displayText = isCommand
@@ -350,6 +354,15 @@ function QueueItemRow({
 	const timeSinceQueued = Date.now() - item.timestamp;
 	const minutes = Math.floor(timeSinceQueued / 60000);
 	const timeDisplay = minutes < 1 ? 'Just now' : `${minutes}m ago`;
+
+	// When another item is being dragged, use cursor position relative to this item's
+	// vertical midpoint to determine if the drop should be before or after this item.
+	const handleMouseMoveForDrop = (e: React.MouseEvent) => {
+		if (!isAnyDragging || isDragging || !rowRef.current || !onDragOverItem) return;
+		const rect = rowRef.current.getBoundingClientRect();
+		const midY = rect.top + rect.height / 2;
+		onDragOverItem(e.clientY < midY ? index : index + 1);
+	};
 
 	// Handle mouse down for drag initiation
 	const handleMouseDown = (e: React.MouseEvent) => {
@@ -431,10 +444,12 @@ function QueueItemRow({
 
 	return (
 		<div
+			ref={rowRef}
 			className="relative my-1"
 			style={{
 				zIndex: isDragging ? 50 : 1,
 			}}
+			onMouseMove={handleMouseMoveForDrop}
 		>
 			<div
 				className="flex items-start gap-3 px-3 py-2.5 rounded-lg border group select-none"

@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import type { Group, SessionInfo, HistoryEntry } from '../../../shared/types';
 
 // Store original env values
@@ -98,7 +99,9 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/Users/testuser/Library/Application Support/Maestro');
+			expect(result).toBe(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro')
+			);
 		});
 
 		it('should return Windows config path with APPDATA', () => {
@@ -130,7 +133,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.custom-config/Maestro');
+			expect(result).toBe(path.join('/home/testuser/.custom-config', 'Maestro'));
 		});
 
 		it('should return Linux config path fallback without XDG_CONFIG_HOME', () => {
@@ -140,7 +143,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.config/Maestro');
+			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
 		});
 
 		it('should use Linux path for unknown platforms', () => {
@@ -150,7 +153,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe('/home/testuser/.config/Maestro');
+			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
 		});
 	});
 
@@ -829,7 +832,9 @@ describe('storage service', () => {
 
 			const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
 			expect(writeCall[0]).toContain('maestro-history.json');
-			expect(writeCall[0]).toContain('/Users/testuser/Library/Application Support/Maestro');
+			expect(writeCall[0]).toContain(
+				path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro')
+			);
 		});
 	});
 
@@ -919,11 +924,11 @@ describe('storage service', () => {
 		beforeEach(() => {
 			// Enable migrated mode by making existsSync return true for migration marker
 			vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-				const pathStr = String(filepath);
+				const pathStr = path.normalize(String(filepath));
 				if (pathStr.includes('history-migrated.json')) {
 					return true;
 				}
-				if (pathStr.includes('/history/')) {
+				if (pathStr.includes(`${path.sep}history${path.sep}`)) {
 					// Check specific session file existence
 					return pathStr.includes('session-123.json') || pathStr.includes('session-456.json');
 				}
@@ -971,15 +976,15 @@ describe('storage service', () => {
 				] as unknown as fs.Dirent[]);
 
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
-					if (pathStr.includes('history-migrated.json') || pathStr.includes('/history')) {
+					const pathStr = path.normalize(String(filepath));
+					if (pathStr.includes('history-migrated.json') || pathStr.includes(`${path.sep}history`)) {
 						return true;
 					}
 					return false;
 				});
 
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
 						return JSON.stringify({
 							version: 1,
@@ -1016,15 +1021,15 @@ describe('storage service', () => {
 				] as unknown as fs.Dirent[]);
 
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
-					if (pathStr.includes('history-migrated.json') || pathStr.includes('/history')) {
+					const pathStr = path.normalize(String(filepath));
+					if (pathStr.includes('history-migrated.json') || pathStr.includes(`${path.sep}history`)) {
 						return true;
 					}
 					return false;
 				});
 
 				vi.mocked(fs.readFileSync).mockImplementation((filepath) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('session-123.json')) {
 						return JSON.stringify({
 							version: 1,
@@ -1066,14 +1071,14 @@ describe('storage service', () => {
 
 			it('should write entry to session-specific file', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					if (pathStr.includes('/history/session-123.json')) {
+					if (pathStr.includes(`${path.sep}history${path.sep}session-123.json`)) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				const existingData = {
@@ -1093,7 +1098,7 @@ describe('storage service', () => {
 
 				expect(fs.writeFileSync).toHaveBeenCalled();
 				const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-				expect(writeCall[0]).toContain('/history/session-123.json');
+				expect(writeCall[0]).toContain(path.join('history', 'session-123.json'));
 				const writtenData = JSON.parse(writeCall[1] as string);
 				expect(writtenData.entries).toHaveLength(2);
 				expect(writtenData.entries[0].id).toBe('new-entry'); // New entry at beginning
@@ -1101,7 +1106,7 @@ describe('storage service', () => {
 
 			it('should create history directory if it does not exist', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
@@ -1115,18 +1120,18 @@ describe('storage service', () => {
 				});
 				addHistoryEntry(newEntry);
 
-				expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('/history'), {
+				expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining(`${path.sep}history`), {
 					recursive: true,
 				});
 			});
 
 			it('should skip entries without sessionId', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				const newEntry = mockHistoryEntry({
@@ -1143,11 +1148,11 @@ describe('storage service', () => {
 
 			it('should enforce max entries limit (5000)', () => {
 				vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
-					const pathStr = String(filepath);
+					const pathStr = path.normalize(String(filepath));
 					if (pathStr.includes('history-migrated.json')) {
 						return true;
 					}
-					return pathStr.includes('/history');
+					return pathStr.includes(`${path.sep}history`);
 				});
 
 				// Create 5000 existing entries

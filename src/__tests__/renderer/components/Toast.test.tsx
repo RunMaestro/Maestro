@@ -75,8 +75,9 @@ describe('Toast', () => {
 
 	describe('empty state', () => {
 		it('returns null when no toasts', () => {
-			const { container } = render(<ToastContainer theme={mockTheme} />);
-			expect(container.firstChild).toBeNull();
+			render(<ToastContainer theme={mockTheme} />);
+			// Portal renders to document.body, so no toast elements should exist
+			expect(document.body.querySelector('.fixed.bottom-4')).toBeNull();
 		});
 	});
 
@@ -191,10 +192,8 @@ describe('Toast', () => {
 			const onSessionClick = vi.fn();
 			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
 
-			const { container } = render(
-				<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />
-			);
-			const clickableToast = container.querySelector('.cursor-pointer');
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
 			fireEvent.click(clickableToast!);
 
 			expect(onSessionClick).toHaveBeenCalledWith('session-1', undefined);
@@ -204,10 +203,8 @@ describe('Toast', () => {
 			const onSessionClick = vi.fn();
 			setStoreToasts([createMockToast({ sessionId: 'session-1', tabId: 'tab-1' })]);
 
-			const { container } = render(
-				<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />
-			);
-			const clickableToast = container.querySelector('.cursor-pointer');
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			const clickableToast = document.body.querySelector('.cursor-pointer');
 			fireEvent.click(clickableToast!);
 
 			expect(onSessionClick).toHaveBeenCalledWith('session-1', 'tab-1');
@@ -217,10 +214,8 @@ describe('Toast', () => {
 			const onSessionClick = vi.fn();
 			setStoreToasts([createMockToast()]);
 
-			const { container } = render(
-				<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />
-			);
-			expect(container.querySelector('.cursor-pointer')).not.toBeInTheDocument();
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			expect(document.body.querySelector('.cursor-pointer')).not.toBeInTheDocument();
 		});
 	});
 
@@ -228,8 +223,8 @@ describe('Toast', () => {
 		it('starts with entering animation then transitions to normal', () => {
 			setStoreToasts([createMockToast()]);
 
-			const { container } = render(<ToastContainer theme={mockTheme} />);
-			const toastOuter = container.querySelector('.relative.overflow-hidden');
+			render(<ToastContainer theme={mockTheme} />);
+			const toastOuter = document.body.querySelector('.relative.overflow-hidden');
 
 			// Initially entering
 			expect(toastOuter).toHaveStyle({ transform: 'translateX(100%)' });
@@ -246,15 +241,15 @@ describe('Toast', () => {
 		it('renders when duration is provided', () => {
 			setStoreToasts([createMockToast({ duration: 5000 })]);
 
-			const { container } = render(<ToastContainer theme={mockTheme} />);
-			expect(container.querySelector('.h-1.rounded-b-lg')).toBeInTheDocument();
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.h-1.rounded-b-lg')).toBeInTheDocument();
 		});
 
 		it('does not render when duration is 0', () => {
 			setStoreToasts([createMockToast({ duration: 0 })]);
 
-			const { container } = render(<ToastContainer theme={mockTheme} />);
-			expect(container.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
 		});
 	});
 
@@ -328,9 +323,9 @@ describe('Toast', () => {
 		it('does not render metadata section when no group/project/tabName', () => {
 			setStoreToasts([createMockToast()]);
 
-			const { container } = render(<ToastContainer theme={mockTheme} />);
+			render(<ToastContainer theme={mockTheme} />);
 			// The metadata row has accentDim styled spans - should not exist
-			const accentSpans = container.querySelectorAll('.px-1\\.5.py-0\\.5.rounded');
+			const accentSpans = document.body.querySelectorAll('.px-1\\.5.py-0\\.5.rounded');
 			expect(accentSpans).toHaveLength(0);
 		});
 	});

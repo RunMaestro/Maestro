@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PromptComposerModal } from '../../../renderer/components/PromptComposerModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
-import type { Theme } from '../../../renderer/types';
+import type { Theme, Session, Group } from '../../../renderer/types';
 
 // Mock Lucide icons
 vi.mock('lucide-react', () => ({
@@ -28,6 +28,15 @@ vi.mock('lucide-react', () => ({
 	),
 	Eye: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="eye-icon" className={className} style={style} />
+	),
+	Users: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="users-icon" className={className} style={style} />
+	),
+	Brain: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="brain-icon" className={className} style={style} />
+	),
+	Pin: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="pin-icon" className={className} style={style} />
 	),
 }));
 
@@ -1091,6 +1100,281 @@ describe('PromptComposerModal', () => {
 
 			const sendButton = screen.getByRole('button', { name: /send/i });
 			expect(sendButton).toBeInTheDocument();
+		});
+	});
+
+	describe('@mention autocomplete (group chat mode)', () => {
+		function createMockSession(
+			id: string,
+			name: string,
+			toolType: string = 'claude-code'
+		): Session {
+			return {
+				id,
+				name,
+				toolType,
+				state: 'idle',
+				cwd: '/test',
+				fullPath: '/test',
+				projectRoot: '/test',
+				aiLogs: [],
+				shellLogs: [],
+				workLog: [],
+				contextUsage: 0,
+				inputMode: 'ai',
+				aiPid: 0,
+				terminalPid: 0,
+				port: 0,
+				isLive: false,
+				changedFiles: [],
+				isGitRepo: false,
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				executionQueue: [],
+				activeTimeMs: 0,
+				aiTabs: [],
+				activeTabId: '',
+				closedTabHistory: [],
+			};
+		}
+
+		function createMockGroup(id: string, name: string, emoji: string = '📁'): Group {
+			return { id, name, emoji, collapsed: false };
+		}
+
+		it('should show mention placeholder when sessions are provided', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			expect(
+				screen.getByPlaceholderText('Write your prompt here... (@ to mention agent)')
+			).toBeInTheDocument();
+		});
+
+		it('should show mention dropdown when typing @', () => {
+			const sessions = [createMockSession('s1', 'Agent1'), createMockSession('s2', 'Agent2')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+			expect(screen.getByText('@Agent2')).toBeInTheDocument();
+		});
+
+		it('should filter mentions as user types', () => {
+			const sessions = [createMockSession('s1', 'Agent1'), createMockSession('s2', 'Other')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@Age' } });
+
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+			expect(screen.queryByText('@Other')).not.toBeInTheDocument();
+		});
+
+		it('should insert mention on click', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.click(screen.getByText('@Agent1'));
+
+			expect(textarea.value).toBe('@Agent1 ');
+		});
+
+		it('should insert mention on Tab key', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(textarea.value).toBe('@Agent1 ');
+		});
+
+		it('should navigate mentions with arrow keys', () => {
+			const sessions = [createMockSession('s1', 'Agent1'), createMockSession('s2', 'Agent2')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+			fireEvent.keyDown(textarea, { key: 'Tab' });
+
+			expect(textarea.value).toBe('@Agent2 ');
+		});
+
+		it('should close dropdown on Escape', () => {
+			const sessions = [createMockSession('s1', 'Agent1')];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+			expect(screen.queryByText('@Agent1')).not.toBeInTheDocument();
+		});
+
+		it('should exclude terminal sessions', () => {
+			const sessions = [
+				createMockSession('s1', 'Agent1', 'claude-code'),
+				createMockSession('s2', 'Terminal', 'terminal'),
+			];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			);
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			expect(screen.getByText('@Agent1')).toBeInTheDocument();
+			expect(screen.queryByText('@Terminal')).not.toBeInTheDocument();
+		});
+
+		it('should expand group into member mentions', () => {
+			const groups = [createMockGroup('g1', 'TEAM', '🏢')];
+			const sessions = [
+				{ ...createMockSession('s1', 'Agent1'), groupId: 'g1' },
+				{ ...createMockSession('s2', 'Agent2'), groupId: 'g1' },
+			];
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+					sessions={sessions}
+					groups={groups}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText(
+				'Write your prompt here... (@ to mention agent)'
+			) as HTMLTextAreaElement;
+			fireEvent.change(textarea, { target: { value: '@' } });
+			fireEvent.click(screen.getByText('@TEAM'));
+
+			expect(textarea.value).toBe('@Agent1 @Agent2 ');
+		});
+
+		it('should not show mention dropdown without sessions prop', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue=""
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			const textarea = screen.getByPlaceholderText('Write your prompt here...');
+			fireEvent.change(textarea, { target: { value: '@' } });
+
+			// No mention dropdown should appear
+			const buttons = screen.queryAllByRole('button');
+			const mentionButtons = buttons.filter((btn) => btn.textContent?.startsWith('@'));
+			expect(mentionButtons).toHaveLength(0);
 		});
 	});
 });

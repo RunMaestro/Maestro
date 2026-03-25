@@ -221,6 +221,7 @@ export interface SettingsStoreState {
 	firstAutoRunCompleted: boolean;
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
+	persistentWebLink: boolean;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
@@ -295,6 +296,7 @@ export interface SettingsStoreActions {
 	setTourCompleted: (value: boolean) => void;
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
+	setPersistentWebLink: (value: boolean) => Promise<void>;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setColorBlindMode: (value: boolean) => void;
@@ -387,853 +389,926 @@ export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 // Store Implementation
 // ============================================================================
 
-export const useSettingsStore = create<SettingsStore>()((set, get) => ({
-	// ============================================================================
-	// State (defaults)
-	// ============================================================================
-
-	settingsLoaded: false,
-	conductorProfile: '',
-	llmProvider: 'openrouter',
-	modelSlug: 'anthropic/claude-3.5-sonnet',
-	apiKey: '',
-	defaultShell: 'zsh',
-	customShellPath: '',
-	shellArgs: '',
-	shellEnvVars: {},
-	ghPath: '',
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
-	fontSize: 14,
-	activeThemeId: 'dracula',
-	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
-	customThemeBaseId: 'dracula',
-	enterToSendAI: false,
-	enterToSendTerminal: true,
-	defaultSaveToHistory: true,
-	defaultShowThinking: 'off',
-	leftSidebarWidth: 256,
-	rightPanelWidth: 384,
-	markdownEditMode: false,
-	chatRawTextMode: false,
-	showHiddenFiles: true,
-	terminalWidth: 100,
-	logLevel: 'info',
-	maxLogBuffer: 5000,
-	maxOutputLines: 25,
-	osNotificationsEnabled: true,
-	audioFeedbackEnabled: false,
-	audioFeedbackCommand: 'say',
-	toastDuration: 20,
-	checkForUpdatesOnStartup: true,
-	enableBetaUpdates: false,
-	crashReportingEnabled: true,
-	logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
-	shortcuts: DEFAULT_SHORTCUTS,
-	tabShortcuts: TAB_SHORTCUTS,
-	customAICommands: DEFAULT_AI_COMMANDS,
-	totalActiveTimeMs: 0,
-	autoRunStats: DEFAULT_AUTO_RUN_STATS,
-	usageStats: DEFAULT_USAGE_STATS,
-	ungroupedCollapsed: false,
-	tourCompleted: false,
-	firstAutoRunCompleted: false,
-	onboardingStats: DEFAULT_ONBOARDING_STATS,
-	leaderboardRegistration: null,
-	webInterfaceUseCustomPort: false,
-	webInterfaceCustomPort: 8080,
-	contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
-	keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
-	colorBlindMode: false,
-	documentGraphShowExternalLinks: false,
-	documentGraphMaxNodes: 50,
-	documentGraphPreviewCharLimit: 100,
-	documentGraphLayoutType: 'mindmap',
-	statsCollectionEnabled: true,
-	defaultStatsTimeRange: 'week',
-	preventSleepEnabled: false,
-	disableGpuAcceleration: false,
-	disableConfetti: false,
-	localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
-	localHonorGitignore: true,
-	sshRemoteIgnorePatterns: ['.git', '*cache*'],
-	sshRemoteHonorGitignore: true,
-	automaticTabNamingEnabled: true,
-	fileTabAutoRefreshEnabled: false,
-	suppressWindowsWarning: false,
-	autoScrollAiMode: false,
-	userMessageAlignment: 'right',
-	encoreFeatures: DEFAULT_ENCORE_FEATURES,
-	directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
-	wakatimeApiKey: '',
-	wakatimeEnabled: false,
-	wakatimeDetailedTracking: false,
-	useNativeTitleBar: false,
-	autoHideMenuBar: false,
-
-	// ============================================================================
-	// Simple Setters
-	// ============================================================================
-
-	setConductorProfile: (value) => {
-		const trimmed = value.slice(0, 1000);
-		set({ conductorProfile: trimmed });
-		window.maestro.settings.set('conductorProfile', trimmed);
-	},
-
-	setLlmProvider: (value) => {
-		set({ llmProvider: value });
-		window.maestro.settings.set('llmProvider', value);
-	},
-
-	setModelSlug: (value) => {
-		set({ modelSlug: value });
-		window.maestro.settings.set('modelSlug', value);
-	},
-
-	setApiKey: (value) => {
-		set({ apiKey: value });
-		window.maestro.settings.set('apiKey', value);
-	},
-
-	setDefaultShell: (value) => {
-		set({ defaultShell: value });
-		window.maestro.settings.set('defaultShell', value);
-	},
-
-	setCustomShellPath: (value) => {
-		set({ customShellPath: value });
-		window.maestro.settings.set('customShellPath', value);
-	},
-
-	setShellArgs: (value) => {
-		set({ shellArgs: value });
-		window.maestro.settings.set('shellArgs', value);
-	},
-
-	setShellEnvVars: (value) => {
-		set({ shellEnvVars: value });
-		window.maestro.settings.set('shellEnvVars', value);
-	},
-
-	setGhPath: (value) => {
-		set({ ghPath: value });
-		window.maestro.settings.set('ghPath', value);
-	},
-
-	setFontFamily: (value) => {
-		set({ fontFamily: value });
-		window.maestro.settings.set('fontFamily', value);
-	},
-
-	setFontSize: (value) => {
-		set({ fontSize: value });
-		window.maestro.settings.set('fontSize', value);
-	},
-
-	setActiveThemeId: (value) => {
-		set({ activeThemeId: value });
-		window.maestro.settings.set('activeThemeId', value);
-	},
-
-	setCustomThemeColors: (value) => {
-		set({ customThemeColors: value });
-		window.maestro.settings.set('customThemeColors', value);
-	},
-
-	setCustomThemeBaseId: (value) => {
-		set({ customThemeBaseId: value });
-		window.maestro.settings.set('customThemeBaseId', value);
-	},
-
-	setEnterToSendAI: (value) => {
-		set({ enterToSendAI: value });
-		window.maestro.settings.set('enterToSendAI', value);
-	},
-
-	setEnterToSendTerminal: (value) => {
-		set({ enterToSendTerminal: value });
-		window.maestro.settings.set('enterToSendTerminal', value);
-	},
-
-	setDefaultSaveToHistory: (value) => {
-		set({ defaultSaveToHistory: value });
-		window.maestro.settings.set('defaultSaveToHistory', value);
-	},
-
-	setDefaultShowThinking: (value) => {
-		set({ defaultShowThinking: value });
-		window.maestro.settings.set('defaultShowThinking', value);
-	},
-
-	setLeftSidebarWidth: (value) => {
-		const clamped = Math.max(256, Math.min(600, value));
-		set({ leftSidebarWidth: clamped });
-		window.maestro.settings.set('leftSidebarWidth', clamped);
-	},
-
-	setRightPanelWidth: (value) => {
-		set({ rightPanelWidth: value });
-		window.maestro.settings.set('rightPanelWidth', value);
-	},
-
-	setMarkdownEditMode: (value) => {
-		set({ markdownEditMode: value });
-		window.maestro.settings.set('markdownEditMode', value);
-	},
-
-	setChatRawTextMode: (value) => {
-		set({ chatRawTextMode: value });
-		window.maestro.settings.set('chatRawTextMode', value);
-	},
-
-	setShowHiddenFiles: (value) => {
-		set({ showHiddenFiles: value });
-		window.maestro.settings.set('showHiddenFiles', value);
-	},
-
-	setTerminalWidth: (value) => {
-		set({ terminalWidth: value });
-		window.maestro.settings.set('terminalWidth', value);
-	},
-
-	setMaxOutputLines: (value) => {
-		set({ maxOutputLines: value });
-		window.maestro.settings.set('maxOutputLines', value);
-	},
-
-	setOsNotificationsEnabled: (value) => {
-		set({ osNotificationsEnabled: value });
-		window.maestro.settings.set('osNotificationsEnabled', value);
-	},
-
-	setAudioFeedbackEnabled: (value) => {
-		set({ audioFeedbackEnabled: value });
-		window.maestro.settings.set('audioFeedbackEnabled', value);
-	},
-
-	setAudioFeedbackCommand: (value) => {
-		set({ audioFeedbackCommand: value });
-		window.maestro.settings.set('audioFeedbackCommand', value);
-	},
-
-	setToastDuration: (value) => {
-		set({ toastDuration: value });
-		window.maestro.settings.set('toastDuration', value);
-	},
-
-	setCheckForUpdatesOnStartup: (value) => {
-		set({ checkForUpdatesOnStartup: value });
-		window.maestro.settings.set('checkForUpdatesOnStartup', value);
-	},
-
-	setEnableBetaUpdates: (value) => {
-		set({ enableBetaUpdates: value });
-		window.maestro.settings.set('enableBetaUpdates', value);
-	},
-
-	setCrashReportingEnabled: (value) => {
-		set({ crashReportingEnabled: value });
-		window.maestro.settings.set('crashReportingEnabled', value);
-	},
-
-	setLogViewerSelectedLevels: (value) => {
-		set({ logViewerSelectedLevels: value });
-		window.maestro.settings.set('logViewerSelectedLevels', value);
-	},
-
-	setShortcuts: (value) => {
-		set({ shortcuts: value });
-		window.maestro.settings.set('shortcuts', value);
-	},
-
-	setTabShortcuts: (value) => {
-		set({ tabShortcuts: value });
-		window.maestro.settings.set('tabShortcuts', value);
-	},
-
-	setCustomAICommands: (value) => {
-		set({ customAICommands: value });
-		window.maestro.settings.set('customAICommands', value);
-	},
-
-	setUngroupedCollapsed: (value) => {
-		set({ ungroupedCollapsed: value });
-		window.maestro.settings.set('ungroupedCollapsed', value);
-	},
-
-	setTourCompleted: (value) => {
-		set({ tourCompleted: value });
-		window.maestro.settings.set('tourCompleted', value);
-	},
-
-	setFirstAutoRunCompleted: (value) => {
-		set({ firstAutoRunCompleted: value });
-		window.maestro.settings.set('firstAutoRunCompleted', value);
-	},
-
-	setLeaderboardRegistration: (value) => {
-		set({ leaderboardRegistration: value });
-		window.maestro.settings.set('leaderboardRegistration', value);
-	},
-
-	setWebInterfaceUseCustomPort: (value) => {
-		set({ webInterfaceUseCustomPort: value });
-		window.maestro.settings.set('webInterfaceUseCustomPort', value);
-	},
-
-	setWebInterfaceCustomPort: (value) => {
-		// Store the value as-is during typing; validation happens on blur/submit
-		set({ webInterfaceCustomPort: value });
-		// Only persist valid port values
-		if (value >= 1024 && value <= 65535) {
-			window.maestro.settings.set('webInterfaceCustomPort', value);
-		}
-	},
-
-	setColorBlindMode: (value) => {
-		set({ colorBlindMode: value });
-		window.maestro.settings.set('colorBlindMode', value);
-	},
-
-	setDocumentGraphShowExternalLinks: (value) => {
-		set({ documentGraphShowExternalLinks: value });
-		window.maestro.settings.set('documentGraphShowExternalLinks', value);
-	},
-
-	setDocumentGraphMaxNodes: (value) => {
-		const clamped = Math.max(50, Math.min(1000, value));
-		set({ documentGraphMaxNodes: clamped });
-		window.maestro.settings.set('documentGraphMaxNodes', clamped);
-	},
-
-	setDocumentGraphPreviewCharLimit: (value) => {
-		const clamped = Math.max(50, Math.min(500, value));
-		set({ documentGraphPreviewCharLimit: clamped });
-		window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
-	},
-
-	setDocumentGraphLayoutType: (value) => {
-		const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'mindmap';
-		set({ documentGraphLayoutType: layoutType });
-		window.maestro.settings.set('documentGraphLayoutType', layoutType);
-	},
-
-	setStatsCollectionEnabled: (value) => {
-		set({ statsCollectionEnabled: value });
-		window.maestro.settings.set('statsCollectionEnabled', value);
-	},
-
-	setDefaultStatsTimeRange: (value) => {
-		set({ defaultStatsTimeRange: value });
-		window.maestro.settings.set('defaultStatsTimeRange', value);
-	},
-
-	setDisableGpuAcceleration: (value) => {
-		set({ disableGpuAcceleration: value });
-		window.maestro.settings.set('disableGpuAcceleration', value);
-	},
-
-	setDisableConfetti: (value) => {
-		set({ disableConfetti: value });
-		window.maestro.settings.set('disableConfetti', value);
-	},
-
-	setLocalIgnorePatterns: (value) => {
-		set({ localIgnorePatterns: value });
-		window.maestro.settings.set('localIgnorePatterns', value);
-	},
-
-	setLocalHonorGitignore: (value) => {
-		set({ localHonorGitignore: value });
-		window.maestro.settings.set('localHonorGitignore', value);
-	},
-
-	setSshRemoteIgnorePatterns: (value) => {
-		set({ sshRemoteIgnorePatterns: value });
-		window.maestro.settings.set('sshRemoteIgnorePatterns', value);
-	},
-
-	setSshRemoteHonorGitignore: (value) => {
-		set({ sshRemoteHonorGitignore: value });
-		window.maestro.settings.set('sshRemoteHonorGitignore', value);
-	},
-
-	setAutomaticTabNamingEnabled: (value) => {
-		set({ automaticTabNamingEnabled: value });
-		window.maestro.settings.set('automaticTabNamingEnabled', value);
-	},
-
-	setFileTabAutoRefreshEnabled: (value) => {
-		set({ fileTabAutoRefreshEnabled: value });
-		window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
-	},
-
-	setSuppressWindowsWarning: (value) => {
-		set({ suppressWindowsWarning: value });
-		window.maestro.settings.set('suppressWindowsWarning', value);
-	},
-
-	setAutoScrollAiMode: (value) => {
-		set({ autoScrollAiMode: value });
-		window.maestro.settings.set('autoScrollAiMode', value);
-	},
-
-	setUserMessageAlignment: (value) => {
-		set({ userMessageAlignment: value });
-		window.maestro.settings.set('userMessageAlignment', value);
-	},
-
-	setEncoreFeatures: (value) => {
-		set({ encoreFeatures: value });
-		window.maestro.settings.set('encoreFeatures', value);
-	},
-
-	setDirectorNotesSettings: (value) => {
-		set({ directorNotesSettings: value });
-		window.maestro.settings.set('directorNotesSettings', value);
-	},
-
-	setWakatimeApiKey: (value) => {
-		set({ wakatimeApiKey: value });
-		window.maestro.settings.set('wakatimeApiKey', value);
-	},
-
-	setWakatimeEnabled: (value) => {
-		set({ wakatimeEnabled: value });
-		window.maestro.settings.set('wakatimeEnabled', value);
-	},
-
-	setWakatimeDetailedTracking: (value) => {
-		set({ wakatimeDetailedTracking: value });
-		window.maestro.settings.set('wakatimeDetailedTracking', value);
-	},
-
-	setUseNativeTitleBar: (value) => {
-		set({ useNativeTitleBar: value });
-		window.maestro.settings.set('useNativeTitleBar', value);
-	},
-
-	setAutoHideMenuBar: (value) => {
-		set({ autoHideMenuBar: value });
-		window.maestro.settings.set('autoHideMenuBar', value);
-	},
-
-	// ============================================================================
-	// Async Setters
-	// ============================================================================
-
-	setLogLevel: async (value) => {
-		set({ logLevel: value });
-		await window.maestro.logger.setLogLevel(value);
-	},
-
-	setMaxLogBuffer: async (value) => {
-		set({ maxLogBuffer: value });
-		await window.maestro.logger.setMaxLogBuffer(value);
-	},
-
-	setPreventSleepEnabled: async (value) => {
-		const prev = get().preventSleepEnabled;
-		set({ preventSleepEnabled: value });
-		try {
-			await window.maestro.settings.set('preventSleepEnabled', value);
-			await window.maestro.power.setEnabled(value);
-		} catch (error) {
-			// Rollback on failure so UI stays in sync with actual power state
-			set({ preventSleepEnabled: prev });
-			throw error; // Let Sentry capture
-		}
-	},
-
-	// ============================================================================
-	// Standalone Active Time Actions
-	// ============================================================================
-
-	setTotalActiveTimeMs: (value) => {
-		set({ totalActiveTimeMs: value });
-		window.maestro.settings.set('totalActiveTimeMs', value);
-	},
-
-	addTotalActiveTimeMs: (delta) => {
-		const prev = get().totalActiveTimeMs;
-		const updated = prev + delta;
-		set({ totalActiveTimeMs: updated });
-		window.maestro.settings.set('totalActiveTimeMs', updated);
-	},
-
-	// ============================================================================
-	// Usage Stats Actions
-	// ============================================================================
-
-	setUsageStats: (value) => {
-		const prev = get().usageStats;
-		const updated: MaestroUsageStats = {
-			maxAgents: Math.max(prev.maxAgents, value.maxAgents ?? 0),
-			maxDefinedAgents: Math.max(prev.maxDefinedAgents, value.maxDefinedAgents ?? 0),
-			maxSimultaneousAutoRuns: Math.max(
-				prev.maxSimultaneousAutoRuns,
-				value.maxSimultaneousAutoRuns ?? 0
-			),
-			maxSimultaneousQueries: Math.max(
-				prev.maxSimultaneousQueries,
-				value.maxSimultaneousQueries ?? 0
-			),
-			maxQueueDepth: Math.max(prev.maxQueueDepth, value.maxQueueDepth ?? 0),
-		};
-		set({ usageStats: updated });
-		window.maestro.settings.set('usageStats', updated);
-	},
-
-	updateUsageStats: (currentValues) => {
-		const prev = get().usageStats;
-		const updated: MaestroUsageStats = {
-			maxAgents: Math.max(prev.maxAgents, currentValues.maxAgents ?? 0),
-			maxDefinedAgents: Math.max(prev.maxDefinedAgents, currentValues.maxDefinedAgents ?? 0),
-			maxSimultaneousAutoRuns: Math.max(
-				prev.maxSimultaneousAutoRuns,
-				currentValues.maxSimultaneousAutoRuns ?? 0
-			),
-			maxSimultaneousQueries: Math.max(
-				prev.maxSimultaneousQueries,
-				currentValues.maxSimultaneousQueries ?? 0
-			),
-			maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
-		};
-		// Only persist if any value actually changed
-		if (
-			updated.maxAgents !== prev.maxAgents ||
-			updated.maxDefinedAgents !== prev.maxDefinedAgents ||
-			updated.maxSimultaneousAutoRuns !== prev.maxSimultaneousAutoRuns ||
-			updated.maxSimultaneousQueries !== prev.maxSimultaneousQueries ||
-			updated.maxQueueDepth !== prev.maxQueueDepth
-		) {
+export const useSettingsStore = create<SettingsStore>()((set, get) => {
+	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
+	let persistentWebLinkRequestSeq = 0;
+
+	return {
+		// ============================================================================
+		// State (defaults)
+		// ============================================================================
+
+		settingsLoaded: false,
+		conductorProfile: '',
+		llmProvider: 'openrouter',
+		modelSlug: 'anthropic/claude-3.5-sonnet',
+		apiKey: '',
+		defaultShell: 'zsh',
+		customShellPath: '',
+		shellArgs: '',
+		shellEnvVars: {},
+		ghPath: '',
+		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontSize: 14,
+		activeThemeId: 'dracula',
+		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
+		customThemeBaseId: 'dracula',
+		enterToSendAI: false,
+		enterToSendTerminal: true,
+		defaultSaveToHistory: true,
+		defaultShowThinking: 'off',
+		leftSidebarWidth: 256,
+		rightPanelWidth: 384,
+		markdownEditMode: false,
+		chatRawTextMode: false,
+		showHiddenFiles: true,
+		terminalWidth: 100,
+		logLevel: 'info',
+		maxLogBuffer: 5000,
+		maxOutputLines: 25,
+		osNotificationsEnabled: true,
+		audioFeedbackEnabled: false,
+		audioFeedbackCommand: 'say',
+		toastDuration: 20,
+		checkForUpdatesOnStartup: true,
+		enableBetaUpdates: false,
+		crashReportingEnabled: true,
+		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
+		shortcuts: DEFAULT_SHORTCUTS,
+		tabShortcuts: TAB_SHORTCUTS,
+		customAICommands: DEFAULT_AI_COMMANDS,
+		totalActiveTimeMs: 0,
+		autoRunStats: DEFAULT_AUTO_RUN_STATS,
+		usageStats: DEFAULT_USAGE_STATS,
+		ungroupedCollapsed: false,
+		tourCompleted: false,
+		firstAutoRunCompleted: false,
+		onboardingStats: DEFAULT_ONBOARDING_STATS,
+		leaderboardRegistration: null,
+		persistentWebLink: false,
+		webInterfaceUseCustomPort: false,
+		webInterfaceCustomPort: 8080,
+		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
+		colorBlindMode: false,
+		documentGraphShowExternalLinks: false,
+		documentGraphMaxNodes: 50,
+		documentGraphPreviewCharLimit: 100,
+		documentGraphLayoutType: 'mindmap',
+		statsCollectionEnabled: true,
+		defaultStatsTimeRange: 'week',
+		preventSleepEnabled: false,
+		disableGpuAcceleration: false,
+		disableConfetti: false,
+		localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
+		localHonorGitignore: true,
+		sshRemoteIgnorePatterns: ['.git', '*cache*'],
+		sshRemoteHonorGitignore: true,
+		automaticTabNamingEnabled: true,
+		fileTabAutoRefreshEnabled: false,
+		suppressWindowsWarning: false,
+		autoScrollAiMode: false,
+		userMessageAlignment: 'right',
+		encoreFeatures: DEFAULT_ENCORE_FEATURES,
+		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		wakatimeApiKey: '',
+		wakatimeEnabled: false,
+		wakatimeDetailedTracking: false,
+		useNativeTitleBar: false,
+		autoHideMenuBar: false,
+
+		// ============================================================================
+		// Simple Setters
+		// ============================================================================
+
+		setConductorProfile: (value) => {
+			const trimmed = value.slice(0, 1000);
+			set({ conductorProfile: trimmed });
+			window.maestro.settings.set('conductorProfile', trimmed);
+		},
+
+		setLlmProvider: (value) => {
+			set({ llmProvider: value });
+			window.maestro.settings.set('llmProvider', value);
+		},
+
+		setModelSlug: (value) => {
+			set({ modelSlug: value });
+			window.maestro.settings.set('modelSlug', value);
+		},
+
+		setApiKey: (value) => {
+			set({ apiKey: value });
+			window.maestro.settings.set('apiKey', value);
+		},
+
+		setDefaultShell: (value) => {
+			set({ defaultShell: value });
+			window.maestro.settings.set('defaultShell', value);
+		},
+
+		setCustomShellPath: (value) => {
+			set({ customShellPath: value });
+			window.maestro.settings.set('customShellPath', value);
+		},
+
+		setShellArgs: (value) => {
+			set({ shellArgs: value });
+			window.maestro.settings.set('shellArgs', value);
+		},
+
+		setShellEnvVars: (value) => {
+			set({ shellEnvVars: value });
+			window.maestro.settings.set('shellEnvVars', value);
+		},
+
+		setGhPath: (value) => {
+			set({ ghPath: value });
+			window.maestro.settings.set('ghPath', value);
+		},
+
+		setFontFamily: (value) => {
+			set({ fontFamily: value });
+			window.maestro.settings.set('fontFamily', value);
+		},
+
+		setFontSize: (value) => {
+			set({ fontSize: value });
+			window.maestro.settings.set('fontSize', value);
+		},
+
+		setActiveThemeId: (value) => {
+			set({ activeThemeId: value });
+			window.maestro.settings.set('activeThemeId', value);
+		},
+
+		setCustomThemeColors: (value) => {
+			set({ customThemeColors: value });
+			window.maestro.settings.set('customThemeColors', value);
+		},
+
+		setCustomThemeBaseId: (value) => {
+			set({ customThemeBaseId: value });
+			window.maestro.settings.set('customThemeBaseId', value);
+		},
+
+		setEnterToSendAI: (value) => {
+			set({ enterToSendAI: value });
+			window.maestro.settings.set('enterToSendAI', value);
+		},
+
+		setEnterToSendTerminal: (value) => {
+			set({ enterToSendTerminal: value });
+			window.maestro.settings.set('enterToSendTerminal', value);
+		},
+
+		setDefaultSaveToHistory: (value) => {
+			set({ defaultSaveToHistory: value });
+			window.maestro.settings.set('defaultSaveToHistory', value);
+		},
+
+		setDefaultShowThinking: (value) => {
+			set({ defaultShowThinking: value });
+			window.maestro.settings.set('defaultShowThinking', value);
+		},
+
+		setLeftSidebarWidth: (value) => {
+			const clamped = Math.max(256, Math.min(600, value));
+			set({ leftSidebarWidth: clamped });
+			window.maestro.settings.set('leftSidebarWidth', clamped);
+		},
+
+		setRightPanelWidth: (value) => {
+			set({ rightPanelWidth: value });
+			window.maestro.settings.set('rightPanelWidth', value);
+		},
+
+		setMarkdownEditMode: (value) => {
+			set({ markdownEditMode: value });
+			window.maestro.settings.set('markdownEditMode', value);
+		},
+
+		setChatRawTextMode: (value) => {
+			set({ chatRawTextMode: value });
+			window.maestro.settings.set('chatRawTextMode', value);
+		},
+
+		setShowHiddenFiles: (value) => {
+			set({ showHiddenFiles: value });
+			window.maestro.settings.set('showHiddenFiles', value);
+		},
+
+		setTerminalWidth: (value) => {
+			set({ terminalWidth: value });
+			window.maestro.settings.set('terminalWidth', value);
+		},
+
+		setMaxOutputLines: (value) => {
+			set({ maxOutputLines: value });
+			window.maestro.settings.set('maxOutputLines', value);
+		},
+
+		setOsNotificationsEnabled: (value) => {
+			set({ osNotificationsEnabled: value });
+			window.maestro.settings.set('osNotificationsEnabled', value);
+		},
+
+		setAudioFeedbackEnabled: (value) => {
+			set({ audioFeedbackEnabled: value });
+			window.maestro.settings.set('audioFeedbackEnabled', value);
+		},
+
+		setAudioFeedbackCommand: (value) => {
+			set({ audioFeedbackCommand: value });
+			window.maestro.settings.set('audioFeedbackCommand', value);
+		},
+
+		setToastDuration: (value) => {
+			set({ toastDuration: value });
+			window.maestro.settings.set('toastDuration', value);
+		},
+
+		setCheckForUpdatesOnStartup: (value) => {
+			set({ checkForUpdatesOnStartup: value });
+			window.maestro.settings.set('checkForUpdatesOnStartup', value);
+		},
+
+		setEnableBetaUpdates: (value) => {
+			set({ enableBetaUpdates: value });
+			window.maestro.settings.set('enableBetaUpdates', value);
+		},
+
+		setCrashReportingEnabled: (value) => {
+			set({ crashReportingEnabled: value });
+			window.maestro.settings.set('crashReportingEnabled', value);
+		},
+
+		setLogViewerSelectedLevels: (value) => {
+			set({ logViewerSelectedLevels: value });
+			window.maestro.settings.set('logViewerSelectedLevels', value);
+		},
+
+		setShortcuts: (value) => {
+			set({ shortcuts: value });
+			window.maestro.settings.set('shortcuts', value);
+		},
+
+		setTabShortcuts: (value) => {
+			set({ tabShortcuts: value });
+			window.maestro.settings.set('tabShortcuts', value);
+		},
+
+		setCustomAICommands: (value) => {
+			set({ customAICommands: value });
+			window.maestro.settings.set('customAICommands', value);
+		},
+
+		setUngroupedCollapsed: (value) => {
+			set({ ungroupedCollapsed: value });
+			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setTourCompleted: (value) => {
+			set({ tourCompleted: value });
+			window.maestro.settings.set('tourCompleted', value);
+		},
+
+		setFirstAutoRunCompleted: (value) => {
+			set({ firstAutoRunCompleted: value });
+			window.maestro.settings.set('firstAutoRunCompleted', value);
+		},
+
+		setLeaderboardRegistration: (value) => {
+			set({ leaderboardRegistration: value });
+			window.maestro.settings.set('leaderboardRegistration', value);
+		},
+
+		setPersistentWebLink: async (value) => {
+			const requestSeq = ++persistentWebLinkRequestSeq;
+			// Optimistic update — immediately reflect user intent in UI
+			set({ persistentWebLink: value });
+			if (value) {
+				try {
+					// persistCurrentToken writes both webAuthToken and persistentWebLink
+					// on the main side — the factory ignores webAuthToken unless
+					// persistentWebLink is also true, so partial writes are safe
+					const result = await window.maestro.live.persistCurrentToken();
+					if (requestSeq !== persistentWebLinkRequestSeq) {
+						// Stale: another call was made while this IPC was in-flight.
+						// The IPC handler already wrote the token and flag in main —
+						// only clear them if the user's latest intent was to disable.
+						// Note: the superseding disable call may have already issued its
+						// own clearPersistentToken, making this a redundant but harmless
+						// second call — the handler is idempotent.
+						if (!get().persistentWebLink) {
+							try {
+								await window.maestro.live.clearPersistentToken();
+							} catch (clearError) {
+								console.error('[Settings] Failed to clear stale persistent web link:', clearError);
+							}
+						}
+						return;
+					}
+					if (!result.success) {
+						// Rollback optimistic update on soft failure
+						set({ persistentWebLink: false });
+						console.warn('[Settings] Failed to persist web link token:', result.message);
+					}
+				} catch (error) {
+					if (requestSeq === persistentWebLinkRequestSeq) {
+						// Rollback optimistic update on hard failure
+						set({ persistentWebLink: false });
+						console.error('[Settings] Failed to persist web link token:', error);
+					}
+				}
+			} else {
+				try {
+					// Atomically clear both keys on the main side
+					const result = await window.maestro.live.clearPersistentToken();
+					if (requestSeq !== persistentWebLinkRequestSeq) {
+						// Stale: user re-enabled while this clear was in-flight.
+						// The enable path will handle persisting — nothing to undo here.
+						return;
+					}
+					if (!result.success) {
+						// Rollback optimistic update on soft failure
+						set({ persistentWebLink: true });
+						console.warn('[Settings] Failed to clear persistent web link:', result.message);
+					}
+				} catch (error) {
+					if (requestSeq === persistentWebLinkRequestSeq) {
+						// Clear failed — rollback Zustand to match main-side state
+						set({ persistentWebLink: true });
+						console.error('[Settings] Failed to clear persistent web link:', error);
+					}
+					// else: stale — a newer call is in charge, nothing to do
+				}
+			}
+		},
+
+		setWebInterfaceUseCustomPort: (value) => {
+			set({ webInterfaceUseCustomPort: value });
+			window.maestro.settings.set('webInterfaceUseCustomPort', value);
+		},
+
+		setWebInterfaceCustomPort: (value) => {
+			// Store the value as-is during typing; validation happens on blur/submit
+			set({ webInterfaceCustomPort: value });
+			// Only persist valid port values
+			if (value >= 1024 && value <= 65535) {
+				window.maestro.settings.set('webInterfaceCustomPort', value);
+			}
+		},
+
+		setColorBlindMode: (value) => {
+			set({ colorBlindMode: value });
+			window.maestro.settings.set('colorBlindMode', value);
+		},
+
+		setDocumentGraphShowExternalLinks: (value) => {
+			set({ documentGraphShowExternalLinks: value });
+			window.maestro.settings.set('documentGraphShowExternalLinks', value);
+		},
+
+		setDocumentGraphMaxNodes: (value) => {
+			const clamped = Math.max(50, Math.min(1000, value));
+			set({ documentGraphMaxNodes: clamped });
+			window.maestro.settings.set('documentGraphMaxNodes', clamped);
+		},
+
+		setDocumentGraphPreviewCharLimit: (value) => {
+			const clamped = Math.max(50, Math.min(500, value));
+			set({ documentGraphPreviewCharLimit: clamped });
+			window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
+		},
+
+		setDocumentGraphLayoutType: (value) => {
+			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'mindmap';
+			set({ documentGraphLayoutType: layoutType });
+			window.maestro.settings.set('documentGraphLayoutType', layoutType);
+		},
+
+		setStatsCollectionEnabled: (value) => {
+			set({ statsCollectionEnabled: value });
+			window.maestro.settings.set('statsCollectionEnabled', value);
+		},
+
+		setDefaultStatsTimeRange: (value) => {
+			set({ defaultStatsTimeRange: value });
+			window.maestro.settings.set('defaultStatsTimeRange', value);
+		},
+
+		setDisableGpuAcceleration: (value) => {
+			set({ disableGpuAcceleration: value });
+			window.maestro.settings.set('disableGpuAcceleration', value);
+		},
+
+		setDisableConfetti: (value) => {
+			set({ disableConfetti: value });
+			window.maestro.settings.set('disableConfetti', value);
+		},
+
+		setLocalIgnorePatterns: (value) => {
+			set({ localIgnorePatterns: value });
+			window.maestro.settings.set('localIgnorePatterns', value);
+		},
+
+		setLocalHonorGitignore: (value) => {
+			set({ localHonorGitignore: value });
+			window.maestro.settings.set('localHonorGitignore', value);
+		},
+
+		setSshRemoteIgnorePatterns: (value) => {
+			set({ sshRemoteIgnorePatterns: value });
+			window.maestro.settings.set('sshRemoteIgnorePatterns', value);
+		},
+
+		setSshRemoteHonorGitignore: (value) => {
+			set({ sshRemoteHonorGitignore: value });
+			window.maestro.settings.set('sshRemoteHonorGitignore', value);
+		},
+
+		setAutomaticTabNamingEnabled: (value) => {
+			set({ automaticTabNamingEnabled: value });
+			window.maestro.settings.set('automaticTabNamingEnabled', value);
+		},
+
+		setFileTabAutoRefreshEnabled: (value) => {
+			set({ fileTabAutoRefreshEnabled: value });
+			window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
+		},
+
+		setSuppressWindowsWarning: (value) => {
+			set({ suppressWindowsWarning: value });
+			window.maestro.settings.set('suppressWindowsWarning', value);
+		},
+
+		setAutoScrollAiMode: (value) => {
+			set({ autoScrollAiMode: value });
+			window.maestro.settings.set('autoScrollAiMode', value);
+		},
+
+		setUserMessageAlignment: (value) => {
+			set({ userMessageAlignment: value });
+			window.maestro.settings.set('userMessageAlignment', value);
+		},
+
+		setEncoreFeatures: (value) => {
+			set({ encoreFeatures: value });
+			window.maestro.settings.set('encoreFeatures', value);
+		},
+
+		setDirectorNotesSettings: (value) => {
+			set({ directorNotesSettings: value });
+			window.maestro.settings.set('directorNotesSettings', value);
+		},
+
+		setWakatimeApiKey: (value) => {
+			set({ wakatimeApiKey: value });
+			window.maestro.settings.set('wakatimeApiKey', value);
+		},
+
+		setWakatimeEnabled: (value) => {
+			set({ wakatimeEnabled: value });
+			window.maestro.settings.set('wakatimeEnabled', value);
+		},
+
+		setWakatimeDetailedTracking: (value) => {
+			set({ wakatimeDetailedTracking: value });
+			window.maestro.settings.set('wakatimeDetailedTracking', value);
+		},
+
+		setUseNativeTitleBar: (value) => {
+			set({ useNativeTitleBar: value });
+			window.maestro.settings.set('useNativeTitleBar', value);
+		},
+
+		setAutoHideMenuBar: (value) => {
+			set({ autoHideMenuBar: value });
+			window.maestro.settings.set('autoHideMenuBar', value);
+		},
+
+		// ============================================================================
+		// Async Setters
+		// ============================================================================
+
+		setLogLevel: async (value) => {
+			set({ logLevel: value });
+			await window.maestro.logger.setLogLevel(value);
+		},
+
+		setMaxLogBuffer: async (value) => {
+			set({ maxLogBuffer: value });
+			await window.maestro.logger.setMaxLogBuffer(value);
+		},
+
+		setPreventSleepEnabled: async (value) => {
+			const prev = get().preventSleepEnabled;
+			set({ preventSleepEnabled: value });
+			try {
+				await window.maestro.settings.set('preventSleepEnabled', value);
+				await window.maestro.power.setEnabled(value);
+			} catch (error) {
+				// Rollback on failure so UI stays in sync with actual power state
+				set({ preventSleepEnabled: prev });
+				throw error; // Let Sentry capture
+			}
+		},
+
+		// ============================================================================
+		// Standalone Active Time Actions
+		// ============================================================================
+
+		setTotalActiveTimeMs: (value) => {
+			set({ totalActiveTimeMs: value });
+			window.maestro.settings.set('totalActiveTimeMs', value);
+		},
+
+		addTotalActiveTimeMs: (delta) => {
+			const prev = get().totalActiveTimeMs;
+			const updated = prev + delta;
+			set({ totalActiveTimeMs: updated });
+			window.maestro.settings.set('totalActiveTimeMs', updated);
+		},
+
+		// ============================================================================
+		// Usage Stats Actions
+		// ============================================================================
+
+		setUsageStats: (value) => {
+			const prev = get().usageStats;
+			const updated: MaestroUsageStats = {
+				maxAgents: Math.max(prev.maxAgents, value.maxAgents ?? 0),
+				maxDefinedAgents: Math.max(prev.maxDefinedAgents, value.maxDefinedAgents ?? 0),
+				maxSimultaneousAutoRuns: Math.max(
+					prev.maxSimultaneousAutoRuns,
+					value.maxSimultaneousAutoRuns ?? 0
+				),
+				maxSimultaneousQueries: Math.max(
+					prev.maxSimultaneousQueries,
+					value.maxSimultaneousQueries ?? 0
+				),
+				maxQueueDepth: Math.max(prev.maxQueueDepth, value.maxQueueDepth ?? 0),
+			};
+			set({ usageStats: updated });
 			window.maestro.settings.set('usageStats', updated);
-		}
-		set({ usageStats: updated });
-	},
+		},
 
-	// ============================================================================
-	// Auto-run Stats Actions
-	// ============================================================================
+		updateUsageStats: (currentValues) => {
+			const prev = get().usageStats;
+			const updated: MaestroUsageStats = {
+				maxAgents: Math.max(prev.maxAgents, currentValues.maxAgents ?? 0),
+				maxDefinedAgents: Math.max(prev.maxDefinedAgents, currentValues.maxDefinedAgents ?? 0),
+				maxSimultaneousAutoRuns: Math.max(
+					prev.maxSimultaneousAutoRuns,
+					currentValues.maxSimultaneousAutoRuns ?? 0
+				),
+				maxSimultaneousQueries: Math.max(
+					prev.maxSimultaneousQueries,
+					currentValues.maxSimultaneousQueries ?? 0
+				),
+				maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
+			};
+			// Only persist if any value actually changed
+			if (
+				updated.maxAgents !== prev.maxAgents ||
+				updated.maxDefinedAgents !== prev.maxDefinedAgents ||
+				updated.maxSimultaneousAutoRuns !== prev.maxSimultaneousAutoRuns ||
+				updated.maxSimultaneousQueries !== prev.maxSimultaneousQueries ||
+				updated.maxQueueDepth !== prev.maxQueueDepth
+			) {
+				window.maestro.settings.set('usageStats', updated);
+			}
+			set({ usageStats: updated });
+		},
 
-	setAutoRunStats: (value) => {
-		set({ autoRunStats: value });
-		window.maestro.settings.set('autoRunStats', value);
-	},
+		// ============================================================================
+		// Auto-run Stats Actions
+		// ============================================================================
 
-	recordAutoRunComplete: (elapsedTimeMs) => {
-		const prev = get().autoRunStats;
+		setAutoRunStats: (value) => {
+			set({ autoRunStats: value });
+			window.maestro.settings.set('autoRunStats', value);
+		},
 
-		// Don't add to cumulative time - it was already added incrementally during the run
-		// Just check current badge level in case a badge wasn't triggered during incremental updates
-		const newBadgeLevelCalc = getBadgeLevelForTime(prev.cumulativeTimeMs);
+		recordAutoRunComplete: (elapsedTimeMs) => {
+			const prev = get().autoRunStats;
 
-		// Check if this would be a new badge (edge case: badge threshold crossed between updates)
-		let newBadgeLevel: number | null = null;
-		if (newBadgeLevelCalc > prev.lastBadgeUnlockLevel) {
-			newBadgeLevel = newBadgeLevelCalc;
-		}
+			// Don't add to cumulative time - it was already added incrementally during the run
+			// Just check current badge level in case a badge wasn't triggered during incremental updates
+			const newBadgeLevelCalc = getBadgeLevelForTime(prev.cumulativeTimeMs);
 
-		// Check if this is a new longest run record
-		const isNewRecord = elapsedTimeMs > prev.longestRunMs;
+			// Check if this would be a new badge (edge case: badge threshold crossed between updates)
+			let newBadgeLevel: number | null = null;
+			if (newBadgeLevelCalc > prev.lastBadgeUnlockLevel) {
+				newBadgeLevel = newBadgeLevelCalc;
+			}
 
-		// Build updated badge history if new badge unlocked
-		let updatedBadgeHistory = prev.badgeHistory || [];
-		if (newBadgeLevel !== null) {
-			updatedBadgeHistory = [
-				...updatedBadgeHistory,
-				{ level: newBadgeLevel, unlockedAt: Date.now() },
-			];
-		}
+			// Check if this is a new longest run record
+			const isNewRecord = elapsedTimeMs > prev.longestRunMs;
 
-		const updated: AutoRunStats = {
-			cumulativeTimeMs: prev.cumulativeTimeMs, // Already updated incrementally
-			longestRunMs: isNewRecord ? elapsedTimeMs : prev.longestRunMs,
-			longestRunTimestamp: isNewRecord ? Date.now() : prev.longestRunTimestamp,
-			totalRuns: prev.totalRuns + 1,
-			currentBadgeLevel: newBadgeLevelCalc,
-			lastBadgeUnlockLevel: newBadgeLevel !== null ? newBadgeLevelCalc : prev.lastBadgeUnlockLevel,
-			lastAcknowledgedBadgeLevel: prev.lastAcknowledgedBadgeLevel ?? 0,
-			badgeHistory: updatedBadgeHistory,
-		};
+			// Build updated badge history if new badge unlocked
+			let updatedBadgeHistory = prev.badgeHistory || [];
+			if (newBadgeLevel !== null) {
+				updatedBadgeHistory = [
+					...updatedBadgeHistory,
+					{ level: newBadgeLevel, unlockedAt: Date.now() },
+				];
+			}
 
-		set({ autoRunStats: updated });
-		window.maestro.settings.set('autoRunStats', updated);
+			const updated: AutoRunStats = {
+				cumulativeTimeMs: prev.cumulativeTimeMs, // Already updated incrementally
+				longestRunMs: isNewRecord ? elapsedTimeMs : prev.longestRunMs,
+				longestRunTimestamp: isNewRecord ? Date.now() : prev.longestRunTimestamp,
+				totalRuns: prev.totalRuns + 1,
+				currentBadgeLevel: newBadgeLevelCalc,
+				lastBadgeUnlockLevel:
+					newBadgeLevel !== null ? newBadgeLevelCalc : prev.lastBadgeUnlockLevel,
+				lastAcknowledgedBadgeLevel: prev.lastAcknowledgedBadgeLevel ?? 0,
+				badgeHistory: updatedBadgeHistory,
+			};
 
-		return { newBadgeLevel, isNewRecord };
-	},
+			set({ autoRunStats: updated });
+			window.maestro.settings.set('autoRunStats', updated);
 
-	updateAutoRunProgress: (deltaMs) => {
-		const prev = get().autoRunStats;
+			return { newBadgeLevel, isNewRecord };
+		},
 
-		// Add the delta to cumulative time
-		const newCumulativeTime = prev.cumulativeTimeMs + deltaMs;
-		const newBadgeLevelCalc = getBadgeLevelForTime(newCumulativeTime);
+		updateAutoRunProgress: (deltaMs) => {
+			const prev = get().autoRunStats;
 
-		// Check if this unlocks a new badge
-		let newBadgeLevel: number | null = null;
-		if (newBadgeLevelCalc > prev.lastBadgeUnlockLevel) {
-			newBadgeLevel = newBadgeLevelCalc;
-		}
+			// Add the delta to cumulative time
+			const newCumulativeTime = prev.cumulativeTimeMs + deltaMs;
+			const newBadgeLevelCalc = getBadgeLevelForTime(newCumulativeTime);
 
-		// Build updated badge history if new badge unlocked
-		let updatedBadgeHistory = prev.badgeHistory || [];
-		if (newBadgeLevel !== null) {
-			updatedBadgeHistory = [
-				...updatedBadgeHistory,
-				{ level: newBadgeLevel, unlockedAt: Date.now() },
-			];
-		}
+			// Check if this unlocks a new badge
+			let newBadgeLevel: number | null = null;
+			if (newBadgeLevelCalc > prev.lastBadgeUnlockLevel) {
+				newBadgeLevel = newBadgeLevelCalc;
+			}
 
-		const updated: AutoRunStats = {
-			cumulativeTimeMs: newCumulativeTime,
-			longestRunMs: prev.longestRunMs, // Don't update until run completes
-			longestRunTimestamp: prev.longestRunTimestamp,
-			totalRuns: prev.totalRuns, // Don't increment - run not complete yet
-			currentBadgeLevel: newBadgeLevelCalc,
-			lastBadgeUnlockLevel: newBadgeLevel !== null ? newBadgeLevelCalc : prev.lastBadgeUnlockLevel,
-			lastAcknowledgedBadgeLevel: prev.lastAcknowledgedBadgeLevel ?? 0,
-			badgeHistory: updatedBadgeHistory,
-		};
+			// Build updated badge history if new badge unlocked
+			let updatedBadgeHistory = prev.badgeHistory || [];
+			if (newBadgeLevel !== null) {
+				updatedBadgeHistory = [
+					...updatedBadgeHistory,
+					{ level: newBadgeLevel, unlockedAt: Date.now() },
+				];
+			}
 
-		set({ autoRunStats: updated });
-		window.maestro.settings.set('autoRunStats', updated);
+			const updated: AutoRunStats = {
+				cumulativeTimeMs: newCumulativeTime,
+				longestRunMs: prev.longestRunMs, // Don't update until run completes
+				longestRunTimestamp: prev.longestRunTimestamp,
+				totalRuns: prev.totalRuns, // Don't increment - run not complete yet
+				currentBadgeLevel: newBadgeLevelCalc,
+				lastBadgeUnlockLevel:
+					newBadgeLevel !== null ? newBadgeLevelCalc : prev.lastBadgeUnlockLevel,
+				lastAcknowledgedBadgeLevel: prev.lastAcknowledgedBadgeLevel ?? 0,
+				badgeHistory: updatedBadgeHistory,
+			};
 
-		// Note: isNewRecord is always false during progress - we don't know total run time yet
-		return { newBadgeLevel, isNewRecord: false };
-	},
+			set({ autoRunStats: updated });
+			window.maestro.settings.set('autoRunStats', updated);
 
-	acknowledgeBadge: (level) => {
-		const prev = get().autoRunStats;
-		const updated: AutoRunStats = {
-			...prev,
-			lastAcknowledgedBadgeLevel: Math.max(level, prev.lastAcknowledgedBadgeLevel ?? 0),
-		};
-		set({ autoRunStats: updated });
-		window.maestro.settings.set('autoRunStats', updated);
-	},
+			// Note: isNewRecord is always false during progress - we don't know total run time yet
+			return { newBadgeLevel, isNewRecord: false };
+		},
 
-	getUnacknowledgedBadgeLevel: () => {
-		const stats = get().autoRunStats;
-		const acknowledged = stats.lastAcknowledgedBadgeLevel ?? 0;
-		const current = stats.currentBadgeLevel;
-		if (current > acknowledged) {
-			return current;
-		}
-		return null;
-	},
+		acknowledgeBadge: (level) => {
+			const prev = get().autoRunStats;
+			const updated: AutoRunStats = {
+				...prev,
+				lastAcknowledgedBadgeLevel: Math.max(level, prev.lastAcknowledgedBadgeLevel ?? 0),
+			};
+			set({ autoRunStats: updated });
+			window.maestro.settings.set('autoRunStats', updated);
+		},
 
-	// ============================================================================
-	// Onboarding Stats Actions
-	// ============================================================================
+		getUnacknowledgedBadgeLevel: () => {
+			const stats = get().autoRunStats;
+			const acknowledged = stats.lastAcknowledgedBadgeLevel ?? 0;
+			const current = stats.currentBadgeLevel;
+			if (current > acknowledged) {
+				return current;
+			}
+			return null;
+		},
 
-	setOnboardingStats: (value) => {
-		set({ onboardingStats: value });
-		window.maestro.settings.set('onboardingStats', value);
-	},
+		// ============================================================================
+		// Onboarding Stats Actions
+		// ============================================================================
 
-	recordWizardStart: () => {
-		const prev = get().onboardingStats;
-		const updated: OnboardingStats = {
-			...prev,
-			wizardStartCount: prev.wizardStartCount + 1,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+		setOnboardingStats: (value) => {
+			set({ onboardingStats: value });
+			window.maestro.settings.set('onboardingStats', value);
+		},
 
-	recordWizardComplete: (durationMs, conversationExchanges, phasesGenerated, tasksGenerated) => {
-		const prev = get().onboardingStats;
-		const newCompletionCount = prev.wizardCompletionCount + 1;
-		const newTotalDuration = prev.totalWizardDurationMs + durationMs;
-		const newTotalExchanges = prev.totalConversationExchanges + conversationExchanges;
-		const newTotalPhases = prev.totalPhasesGenerated + phasesGenerated;
-		const newTotalTasks = prev.totalTasksGenerated + tasksGenerated;
+		recordWizardStart: () => {
+			const prev = get().onboardingStats;
+			const updated: OnboardingStats = {
+				...prev,
+				wizardStartCount: prev.wizardStartCount + 1,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-		const updated: OnboardingStats = {
-			...prev,
-			wizardCompletionCount: newCompletionCount,
-			totalWizardDurationMs: newTotalDuration,
-			averageWizardDurationMs: Math.round(newTotalDuration / newCompletionCount),
-			lastWizardCompletedAt: Date.now(),
+		recordWizardComplete: (durationMs, conversationExchanges, phasesGenerated, tasksGenerated) => {
+			const prev = get().onboardingStats;
+			const newCompletionCount = prev.wizardCompletionCount + 1;
+			const newTotalDuration = prev.totalWizardDurationMs + durationMs;
+			const newTotalExchanges = prev.totalConversationExchanges + conversationExchanges;
+			const newTotalPhases = prev.totalPhasesGenerated + phasesGenerated;
+			const newTotalTasks = prev.totalTasksGenerated + tasksGenerated;
 
-			// Conversation stats
-			totalConversationExchanges: newTotalExchanges,
-			totalConversationsCompleted: prev.totalConversationsCompleted + 1,
-			averageConversationExchanges:
-				newCompletionCount > 0 ? Math.round((newTotalExchanges / newCompletionCount) * 10) / 10 : 0,
+			const updated: OnboardingStats = {
+				...prev,
+				wizardCompletionCount: newCompletionCount,
+				totalWizardDurationMs: newTotalDuration,
+				averageWizardDurationMs: Math.round(newTotalDuration / newCompletionCount),
+				lastWizardCompletedAt: Date.now(),
 
-			// Phase generation stats
-			totalPhasesGenerated: newTotalPhases,
-			averagePhasesPerWizard:
-				newCompletionCount > 0 ? Math.round((newTotalPhases / newCompletionCount) * 10) / 10 : 0,
-			totalTasksGenerated: newTotalTasks,
-			averageTasksPerPhase:
-				newTotalPhases > 0 ? Math.round((newTotalTasks / newTotalPhases) * 10) / 10 : 0,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+				// Conversation stats
+				totalConversationExchanges: newTotalExchanges,
+				totalConversationsCompleted: prev.totalConversationsCompleted + 1,
+				averageConversationExchanges:
+					newCompletionCount > 0
+						? Math.round((newTotalExchanges / newCompletionCount) * 10) / 10
+						: 0,
 
-	recordWizardAbandon: () => {
-		const prev = get().onboardingStats;
-		const updated: OnboardingStats = {
-			...prev,
-			wizardAbandonCount: prev.wizardAbandonCount + 1,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+				// Phase generation stats
+				totalPhasesGenerated: newTotalPhases,
+				averagePhasesPerWizard:
+					newCompletionCount > 0 ? Math.round((newTotalPhases / newCompletionCount) * 10) / 10 : 0,
+				totalTasksGenerated: newTotalTasks,
+				averageTasksPerPhase:
+					newTotalPhases > 0 ? Math.round((newTotalTasks / newTotalPhases) * 10) / 10 : 0,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-	recordWizardResume: () => {
-		const prev = get().onboardingStats;
-		const updated: OnboardingStats = {
-			...prev,
-			wizardResumeCount: prev.wizardResumeCount + 1,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+		recordWizardAbandon: () => {
+			const prev = get().onboardingStats;
+			const updated: OnboardingStats = {
+				...prev,
+				wizardAbandonCount: prev.wizardAbandonCount + 1,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-	recordTourStart: () => {
-		const prev = get().onboardingStats;
-		const updated: OnboardingStats = {
-			...prev,
-			tourStartCount: prev.tourStartCount + 1,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+		recordWizardResume: () => {
+			const prev = get().onboardingStats;
+			const updated: OnboardingStats = {
+				...prev,
+				wizardResumeCount: prev.wizardResumeCount + 1,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-	recordTourComplete: (stepsViewed) => {
-		const prev = get().onboardingStats;
-		const newCompletionCount = prev.tourCompletionCount + 1;
-		const newTotalStepsViewed = prev.tourStepsViewedTotal + stepsViewed;
-		const totalTours = newCompletionCount + prev.tourSkipCount;
+		recordTourStart: () => {
+			const prev = get().onboardingStats;
+			const updated: OnboardingStats = {
+				...prev,
+				tourStartCount: prev.tourStartCount + 1,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-		const updated: OnboardingStats = {
-			...prev,
-			tourCompletionCount: newCompletionCount,
-			tourStepsViewedTotal: newTotalStepsViewed,
-			averageTourStepsViewed:
-				totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+		recordTourComplete: (stepsViewed) => {
+			const prev = get().onboardingStats;
+			const newCompletionCount = prev.tourCompletionCount + 1;
+			const newTotalStepsViewed = prev.tourStepsViewedTotal + stepsViewed;
+			const totalTours = newCompletionCount + prev.tourSkipCount;
 
-	recordTourSkip: (stepsViewed) => {
-		const prev = get().onboardingStats;
-		const newSkipCount = prev.tourSkipCount + 1;
-		const newTotalStepsViewed = prev.tourStepsViewedTotal + stepsViewed;
-		const totalTours = prev.tourCompletionCount + newSkipCount;
+			const updated: OnboardingStats = {
+				...prev,
+				tourCompletionCount: newCompletionCount,
+				tourStepsViewedTotal: newTotalStepsViewed,
+				averageTourStepsViewed:
+					totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-		const updated: OnboardingStats = {
-			...prev,
-			tourSkipCount: newSkipCount,
-			tourStepsViewedTotal: newTotalStepsViewed,
-			averageTourStepsViewed:
-				totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
-		};
-		set({ onboardingStats: updated });
-		window.maestro.settings.set('onboardingStats', updated);
-	},
+		recordTourSkip: (stepsViewed) => {
+			const prev = get().onboardingStats;
+			const newSkipCount = prev.tourSkipCount + 1;
+			const newTotalStepsViewed = prev.tourStepsViewedTotal + stepsViewed;
+			const totalTours = prev.tourCompletionCount + newSkipCount;
 
-	getOnboardingAnalytics: () => {
-		const stats = get().onboardingStats;
-		const totalWizardAttempts = stats.wizardStartCount;
-		const totalTourAttempts = stats.tourStartCount;
+			const updated: OnboardingStats = {
+				...prev,
+				tourSkipCount: newSkipCount,
+				tourStepsViewedTotal: newTotalStepsViewed,
+				averageTourStepsViewed:
+					totalTours > 0 ? Math.round((newTotalStepsViewed / totalTours) * 10) / 10 : stepsViewed,
+			};
+			set({ onboardingStats: updated });
+			window.maestro.settings.set('onboardingStats', updated);
+		},
 
-		return {
-			wizardCompletionRate:
-				totalWizardAttempts > 0
-					? Math.round((stats.wizardCompletionCount / totalWizardAttempts) * 100)
-					: 0,
-			tourCompletionRate:
-				totalTourAttempts > 0
-					? Math.round((stats.tourCompletionCount / totalTourAttempts) * 100)
-					: 0,
-			averageConversationExchanges: stats.averageConversationExchanges,
-			averagePhasesPerWizard: stats.averagePhasesPerWizard,
-		};
-	},
+		getOnboardingAnalytics: () => {
+			const stats = get().onboardingStats;
+			const totalWizardAttempts = stats.wizardStartCount;
+			const totalTourAttempts = stats.tourStartCount;
 
-	// ============================================================================
-	// Context Management Actions
-	// ============================================================================
+			return {
+				wizardCompletionRate:
+					totalWizardAttempts > 0
+						? Math.round((stats.wizardCompletionCount / totalWizardAttempts) * 100)
+						: 0,
+				tourCompletionRate:
+					totalTourAttempts > 0
+						? Math.round((stats.tourCompletionCount / totalTourAttempts) * 100)
+						: 0,
+				averageConversationExchanges: stats.averageConversationExchanges,
+				averagePhasesPerWizard: stats.averagePhasesPerWizard,
+			};
+		},
 
-	setContextManagementSettings: (value) => {
-		set({ contextManagementSettings: value });
-		window.maestro.settings.set('contextManagementSettings', value);
-	},
+		// ============================================================================
+		// Context Management Actions
+		// ============================================================================
 
-	updateContextManagementSettings: (partial) => {
-		const prev = get().contextManagementSettings;
-		const updated = { ...prev, ...partial };
-		set({ contextManagementSettings: updated });
-		window.maestro.settings.set('contextManagementSettings', updated);
-	},
+		setContextManagementSettings: (value) => {
+			set({ contextManagementSettings: value });
+			window.maestro.settings.set('contextManagementSettings', value);
+		},
 
-	// ============================================================================
-	// Keyboard Mastery Actions
-	// ============================================================================
+		updateContextManagementSettings: (partial) => {
+			const prev = get().contextManagementSettings;
+			const updated = { ...prev, ...partial };
+			set({ contextManagementSettings: updated });
+			window.maestro.settings.set('contextManagementSettings', updated);
+		},
 
-	setKeyboardMasteryStats: (value) => {
-		set({ keyboardMasteryStats: value });
-		window.maestro.settings.set('keyboardMasteryStats', value);
-	},
+		// ============================================================================
+		// Keyboard Mastery Actions
+		// ============================================================================
 
-	recordShortcutUsage: (shortcutId) => {
-		const currentStats = get().keyboardMasteryStats;
+		setKeyboardMasteryStats: (value) => {
+			set({ keyboardMasteryStats: value });
+			window.maestro.settings.set('keyboardMasteryStats', value);
+		},
 
-		// Skip if already tracked
-		if (currentStats.usedShortcuts.includes(shortcutId)) {
-			return { newLevel: null };
-		}
+		recordShortcutUsage: (shortcutId) => {
+			const currentStats = get().keyboardMasteryStats;
 
-		// Add new shortcut to the list
-		const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
+			// Skip if already tracked
+			if (currentStats.usedShortcuts.includes(shortcutId)) {
+				return { newLevel: null };
+			}
 
-		// Calculate new percentage and level
-		const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
-		const newLevelIndex = getLevelIndex(percentage);
+			// Add new shortcut to the list
+			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-		// Check if user leveled up
-		const newLevel = newLevelIndex > currentStats.currentLevel ? newLevelIndex : null;
+			// Calculate new percentage and level
+			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			const newLevelIndex = getLevelIndex(percentage);
 
-		const updated: KeyboardMasteryStats = {
-			usedShortcuts: updatedShortcuts,
-			currentLevel: newLevelIndex,
-			lastLevelUpTimestamp: newLevel !== null ? Date.now() : currentStats.lastLevelUpTimestamp,
-			lastAcknowledgedLevel: currentStats.lastAcknowledgedLevel,
-		};
+			// Check if user leveled up
+			const newLevel = newLevelIndex > currentStats.currentLevel ? newLevelIndex : null;
 
-		set({ keyboardMasteryStats: updated });
-		window.maestro.settings.set('keyboardMasteryStats', updated);
+			const updated: KeyboardMasteryStats = {
+				usedShortcuts: updatedShortcuts,
+				currentLevel: newLevelIndex,
+				lastLevelUpTimestamp: newLevel !== null ? Date.now() : currentStats.lastLevelUpTimestamp,
+				lastAcknowledgedLevel: currentStats.lastAcknowledgedLevel,
+			};
 
-		return { newLevel };
-	},
+			set({ keyboardMasteryStats: updated });
+			window.maestro.settings.set('keyboardMasteryStats', updated);
 
-	acknowledgeKeyboardMasteryLevel: (level) => {
-		const prev = get().keyboardMasteryStats;
-		const updated: KeyboardMasteryStats = {
-			...prev,
-			lastAcknowledgedLevel: Math.max(level, prev.lastAcknowledgedLevel),
-		};
-		set({ keyboardMasteryStats: updated });
-		window.maestro.settings.set('keyboardMasteryStats', updated);
-	},
+			return { newLevel };
+		},
 
-	getUnacknowledgedKeyboardMasteryLevel: () => {
-		const stats = get().keyboardMasteryStats;
-		const acknowledged = stats.lastAcknowledgedLevel;
-		const current = stats.currentLevel;
-		if (current > acknowledged) {
-			return current;
-		}
-		return null;
-	},
-}));
+		acknowledgeKeyboardMasteryLevel: (level) => {
+			const prev = get().keyboardMasteryStats;
+			const updated: KeyboardMasteryStats = {
+				...prev,
+				lastAcknowledgedLevel: Math.max(level, prev.lastAcknowledgedLevel),
+			};
+			set({ keyboardMasteryStats: updated });
+			window.maestro.settings.set('keyboardMasteryStats', updated);
+		},
+
+		getUnacknowledgedKeyboardMasteryLevel: () => {
+			const stats = get().keyboardMasteryStats;
+			const acknowledged = stats.lastAcknowledgedLevel;
+			const current = stats.currentLevel;
+			if (current > acknowledged) {
+				return current;
+			}
+			return null;
+		},
+	};
+});
 
 // ============================================================================
 // Selectors
@@ -1590,6 +1665,9 @@ export async function loadAllSettings(): Promise<void> {
 				'leaderboardRegistration'
 			] as LeaderboardRegistration | null;
 
+		if (allSettings['persistentWebLink'] !== undefined)
+			patch.persistentWebLink = allSettings['persistentWebLink'] as boolean;
+
 		if (allSettings['webInterfaceUseCustomPort'] !== undefined)
 			patch.webInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'] as boolean;
 
@@ -1800,6 +1878,7 @@ export function getSettingsActions() {
 		recordTourSkip: state.recordTourSkip,
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
+		setPersistentWebLink: state.setPersistentWebLink,
 		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
 		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
 		setContextManagementSettings: state.setContextManagementSettings,

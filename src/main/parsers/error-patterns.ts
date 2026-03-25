@@ -904,6 +904,11 @@ export function matchErrorPattern(
 	patterns: AgentErrorPatterns,
 	line: string
 ): { type: AgentErrorType; message: string; recoverable: boolean } | null {
+	// Guard against non-string input (e.g. when obj.message is an object)
+	if (typeof line !== 'string') {
+		return null;
+	}
+
 	// Check each error type's patterns
 	const errorTypes: AgentErrorType[] = [
 		'auth_expired',

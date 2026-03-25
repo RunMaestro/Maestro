@@ -6,6 +6,7 @@ Work\ Trees/
 community-data/
 .mcp.json
 specs/
+.maestro/
 
 # Tests
 coverage/
@@ -25,6 +26,7 @@ src/generated/
 *.log
 tmp/
 scratch/
+dogfood-output/
 
 # Environment
 .env

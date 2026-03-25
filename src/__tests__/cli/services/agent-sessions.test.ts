@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
 
 // Mock fs
@@ -28,7 +29,7 @@ describe('listClaudeSessions', () => {
 	const projectPath = '/path/to/project';
 	// encodeClaudeProjectPath: replace all non-alphanumeric with -
 	const encodedPath = '-path-to-project';
-	const sessionsDir = `/home/testuser/.claude/projects/${encodedPath}`;
+	const sessionsDir = path.join('/home/testuser', '.claude', 'projects', encodedPath);
 
 	const makeJsonlContent = (
 		opts: {

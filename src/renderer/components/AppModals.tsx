@@ -1384,6 +1384,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					supportsThinking={promptSupportsThinking}
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
+					sessions={activeGroupChatId ? sessions : undefined}
+					groups={activeGroupChatId ? groups : undefined}
 				/>
 			)}
 

@@ -36,3 +36,23 @@ export async function safeClipboardWriteBlob(items: ClipboardItem[]): Promise<bo
 		return false;
 	}
 }
+
+/**
+ * Copy an image to the clipboard using Electron's native clipboard API.
+ * Accepts a data URL (e.g. from a canvas or pasted image).
+ * Falls back to the browser Clipboard API if the Electron IPC is unavailable.
+ */
+export async function safeClipboardWriteImage(dataUrl: string): Promise<boolean> {
+	try {
+		if (window.maestro?.shell?.copyImageToClipboard) {
+			await window.maestro.shell.copyImageToClipboard(dataUrl);
+			return true;
+		}
+		// Fallback: browser Clipboard API (may not work in all Electron contexts)
+		const response = await fetch(dataUrl);
+		const blob = await response.blob();
+		return safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
+	} catch {
+		return false;
+	}
+}

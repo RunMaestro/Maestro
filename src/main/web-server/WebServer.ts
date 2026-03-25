@@ -3,7 +3,7 @@
  *
  * Architecture:
  * - Single server on random port
- * - Security token (UUID) generated at startup, required in all URLs
+ * - Security token (UUID) per startup or persistent across restarts, required in all URLs
  * - Routes: /$TOKEN/ (dashboard), /$TOKEN/session/:id (session view)
  * - Live sessions: Only sessions marked as "live" appear in dashboard
  * - WebSocket: Real-time updates for session state, logs, theme
@@ -15,7 +15,7 @@
  *   http://localhost:PORT/$TOKEN/ws                → WebSocket
  *
  * Security:
- * - Token regenerated on each app restart
+ * - Token regenerated on each app restart (unless Persistent Web Link is enabled)
  * - Invalid/missing token redirects to website
  * - No access without knowing the token
  */
@@ -86,7 +86,7 @@ export class WebServer {
 	private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
 	private webAssetsPath: string | null = null;
 
-	// Security token - regenerated on each app startup
+	// Security token - persistent or regenerated per startup
 	private securityToken: string;
 
 	// Local IP address for generating URLs (detected at startup)
@@ -107,7 +107,7 @@ export class WebServer {
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
 
-	constructor(port: number = 0) {
+	constructor(port: number = 0, securityToken?: string) {
 		// Use port 0 to let OS assign a random available port
 		this.port = port;
 		this.server = Fastify({
@@ -116,9 +116,14 @@ export class WebServer {
 			},
 		});
 
-		// Generate a new security token (UUID v4)
-		this.securityToken = randomUUID();
-		logger.debug('Security token generated', LOG_CONTEXT);
+		// Use provided token (persistent mode) or generate a new one (ephemeral mode)
+		if (securityToken) {
+			this.securityToken = securityToken;
+			logger.debug('Using persistent security token', LOG_CONTEXT);
+		} else {
+			this.securityToken = randomUUID();
+			logger.debug('Security token generated', LOG_CONTEXT);
+		}
 
 		// Determine web assets path (production vs development)
 		this.webAssetsPath = this.resolveWebAssetsPath();
