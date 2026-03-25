@@ -68,8 +68,6 @@ const CODE_FENCE_REGEX = /^(`{3,}|~{3,})/;
 const HEADING_REGEX = /^(#{1,6})\s+(.+)$/;
 const HIGHLIGHT_TEXT_REGEX = /==([^=]+)==/g;
 const FILE_PROTOCOL_REGEX = /^file:\/\//;
-const CODE_LANGUAGE_REGEX = /language-(\w+)/;
-const TRAILING_NEWLINE_REGEX = /\n$/;
 const SEARCH_SPECIAL_CHARS_REGEX = /[.*+?^${}()|[\]\\]/g;
 
 // Clean up old cache entries periodically
@@ -930,92 +928,23 @@ export const FilePreview = React.memo(
 		// Memoize ReactMarkdown components to prevent infinite render loops
 		// The img component was causing loops because MarkdownImage useEffect sets state,
 		// which triggers parent re-render, creating new components object, remounting MarkdownImage
-		const markdownComponents = useMemo(
-			() => ({
-				a: ({ node: _node, href, children, ...props }: any) => {
-					// Check for maestro-file:// protocol OR data-maestro-file attribute
-					// (data attribute is fallback when rehype strips custom protocols)
-					const dataFilePath = (props as any)['data-maestro-file'];
-					const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
-					const filePath =
-						dataFilePath ||
-						(href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
-
-					// Check for anchor links (same-page navigation)
-					const isAnchorLink = href?.startsWith('#') ?? false;
-					const anchorId = isAnchorLink && href ? href.slice(1) : null;
-
-					return (
-						<a
-							href={href}
-							{...props}
-							onClick={(e) => {
-								e.preventDefault();
-								if (isMaestroFile && filePath && onFileClick) {
-									// Cmd/Ctrl+Click opens in new tab, regular click replaces current tab
-									const openInNewTab = e.metaKey || e.ctrlKey;
-									onFileClick(filePath, { openInNewTab });
-								} else if (isAnchorLink && anchorId) {
-									// Handle anchor links - scroll to the target element
-									const targetElement = markdownContainerRef.current
-										? markdownContainerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
-										: document.getElementById(anchorId);
-									if (targetElement) {
-										targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-									}
-								} else if (href) {
-									if (FILE_PROTOCOL_REGEX.test(href)) {
-										window.maestro.shell.openPath(href.replace(FILE_PROTOCOL_REGEX, ''));
-									} else {
-										window.maestro.shell.openExternal(href);
-									}
-								}
-							}}
-							style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
-						>
-							{children}
-						</a>
-					);
+		const markdownComponents = useMemo(() => {
+			const components = createMarkdownComponents({
+				theme,
+				customLanguageRenderers: {
+					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
-				pre: ({ children }: any) => {
-					// In react-markdown v10, block code is <pre><code>...</code></pre>
-					// Extract the code element and render with SyntaxHighlighter
-					const codeElement = React.Children.toArray(children).find(
-						(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-					) as React.ReactElement<any> | undefined;
-
-					if (codeElement?.props) {
-						const { className, children: codeChildren } = codeElement.props;
-						const match = (className || '').match(CODE_LANGUAGE_REGEX);
-						const lang = match ? match[1] : 'text';
-						const codeContent = String(codeChildren).replace(TRAILING_NEWLINE_REGEX, '');
-
-						// Handle mermaid code blocks
-						if (lang === 'mermaid') {
-							return <MermaidRenderer chart={codeContent} theme={theme} />;
-						}
-
-						return (
-							<SyntaxHighlighter
-								language={lang}
-								style={getSyntaxStyle(theme.mode)}
-								customStyle={{
-									margin: '0.5em 0',
-									padding: '1em',
-									background: theme.colors.bgActivity,
-									fontSize: '0.9em',
-									borderRadius: '6px',
-								}}
-								PreTag="div"
-							>
-								{codeContent}
-							</SyntaxHighlighter>
-						);
+				onFileClick,
+				onExternalLinkClick: (href) => {
+					if (FILE_PROTOCOL_REGEX.test(href)) {
+						window.maestro.shell.openPath(href.replace(FILE_PROTOCOL_REGEX, ''));
+					} else {
+						window.maestro.shell.openExternal(href);
 					}
-					void window.maestro.shell.openExternal(href);
 				},
 				containerRef: markdownContainerRef,
 			});
+
 			return {
 				...components,
 				img: ({ src, alt, ...props }: any) => {
@@ -1050,10 +979,6 @@ export const FilePreview = React.memo(
 						/>
 					);
 				},
-				// Strip event handler attributes (e.g. onToggle) that rehype-raw may
-				// pass through as strings from AI-generated HTML, which React rejects.
-				// Fixes MAESTRO-8Q
-				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
 		}, [onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
 
