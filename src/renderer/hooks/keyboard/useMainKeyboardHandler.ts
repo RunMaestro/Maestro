@@ -129,8 +129,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(e.metaKey || e.ctrlKey) &&
 					e.shiftKey &&
 					(keyLower === 'f' || keyLower === 'h' || keyLower === 's');
-				// Allow jumpToBottom (Cmd+Shift+J) from anywhere - always scroll main panel to bottom
-				const isJumpToBottomShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && keyLower === 'j';
+				// Allow jumpToBottom and jumpToTerminal from anywhere - benign navigation actions
+				const isJumpToBottomShortcut = ctx.isShortcut(e, 'jumpToBottom');
+				const isJumpToTerminalShortcut = ctx.isShortcut(e, 'jumpToTerminal');
 				// Allow markdown toggle (Cmd+E) for chat history, even when overlays are open
 				// (e.g., when output search is open, user should still be able to toggle markdown mode)
 				const isMarkdownToggleShortcut =
@@ -176,18 +177,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
 					// BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump,
-					// jumpToBottom, markdown toggle, and font size to work (these are benign viewing preferences)
+					// jumpToBottom, jumpToTerminal, markdown toggle, and font size to work (these are benign navigation/viewing preferences)
 					if (
 						!isLayoutShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
+						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut
 					) {
 						return;
 					}
-					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle/font size shortcuts below
+					// Fall through to handle layout/system utility/session jump/jumpToBottom/jumpToTerminal/markdown toggle/font size shortcuts below
 				} else {
 					// Only OVERLAYS are open (file tabs, LogViewer, etc.)
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
@@ -201,6 +203,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
+						!isJumpToTerminalShortcut &&
 						!isMarkdownToggleShortcut &&
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&

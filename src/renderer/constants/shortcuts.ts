@@ -55,7 +55,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', 'Meta', 'p'],
 	},
 	usageDashboard: { id: 'usageDashboard', label: 'Usage Dashboard', keys: ['Alt', 'Meta', 'u'] },
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
@@ -92,7 +92,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
 		label: 'Jump to Terminal Tab',
-		keys: ['Alt', 'j'],
+		keys: ['Meta', 'Shift', 'j'],
 	},
 	fontSizeReset: {
 		id: 'fontSizeReset',
