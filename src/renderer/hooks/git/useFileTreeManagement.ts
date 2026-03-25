@@ -230,7 +230,12 @@ export function useFileTreeManagement(
 				// Fetch stats independently — a directorySize failure should not
 				// prevent the file tree from refreshing (same as initial load).
 				const statsPromise = window.maestro.fs
-					.directorySize(treeRoot, sshContext?.sshRemoteId)
+					.directorySize(
+						treeRoot,
+						sshContext?.sshRemoteId,
+						localOptions?.ignorePatterns,
+						localOptions?.honorGitignore
+					)
 					.catch((err) => {
 						logger.warn('directorySize failed during refresh (non-fatal)', 'FileTreeManagement', {
 							error: err?.message || 'Unknown error',
@@ -307,7 +312,12 @@ export function useFileTreeManagement(
 				// Fetch stats independently — directorySize failure should not
 				// prevent the file tree or git state from refreshing.
 				const statsPromise = window.maestro.fs
-					.directorySize(treeRoot, sshContext?.sshRemoteId)
+					.directorySize(
+						treeRoot,
+						sshContext?.sshRemoteId,
+						localOptions?.ignorePatterns,
+						localOptions?.honorGitignore
+					)
 					.catch((err) => {
 						logger.warn(
 							'directorySize failed during git refresh (non-fatal)',
@@ -477,7 +487,12 @@ export function useFileTreeManagement(
 			// Fetch stats independently — a directorySize failure (e.g., `du` timeout
 			// on large repos over SSH) should not prevent the file tree from loading.
 			const statsPromise = window.maestro.fs
-				.directorySize(treeRoot, sshContext?.sshRemoteId)
+				.directorySize(
+					treeRoot,
+					sshContext?.sshRemoteId,
+					localOptions?.ignorePatterns,
+					localOptions?.honorGitignore
+				)
 				.catch((err) => {
 					logger.warn('directorySize failed (non-fatal)', 'FileTreeManagement', {
 						error: err?.message || 'Unknown error',
@@ -621,13 +636,17 @@ export function useFileTreeManagement(
 		// Capture stable session ID for async callback (same stale closure fix as initial load)
 		const sessionId = session.id;
 
-		// No ignore patterns needed for stats-only fetch
 		const sshContext = getSshContext(session);
 		const treeRoot = session.projectRoot || session.cwd;
 
 		// Fetch stats only (don't re-fetch tree)
 		window.maestro.fs
-			.directorySize(treeRoot, sshContext?.sshRemoteId)
+			.directorySize(
+				treeRoot,
+				sshContext?.sshRemoteId,
+				localOptions?.ignorePatterns,
+				localOptions?.honorGitignore
+			)
 			.then((stats) => {
 				setSessions((prev) =>
 					prev.map((s) =>

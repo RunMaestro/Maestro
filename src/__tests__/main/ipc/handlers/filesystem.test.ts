@@ -403,6 +403,100 @@ describe('filesystem handlers', () => {
 				folderCount: 5,
 			});
 		});
+
+		it('should respect custom ignore patterns for local directories', async () => {
+			const mockFs = (await import('fs/promises')).default;
+
+			// Root has: src/ (dir), .git/ (dir), file.txt (file)
+			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+				if (dirPath === '/project') {
+					return [
+						{ name: 'src', isDirectory: () => true, isFile: () => false },
+						{ name: '.git', isDirectory: () => true, isFile: () => false },
+						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+					] as any;
+				}
+				if (dirPath.includes('/src')) {
+					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+				}
+				return [];
+			});
+			vi.mocked(mockFs.stat).mockResolvedValue({ size: 100 } as any);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+
+			// Without ignore patterns — uses defaults (node_modules, __pycache__)
+			// .git is NOT ignored by default
+			const resultNoIgnore = await handler!({}, '/project');
+			expect(resultNoIgnore.folderCount).toBe(2); // src + .git
+			expect(resultNoIgnore.fileCount).toBe(2); // file.txt + index.ts
+
+			// With .git in ignore patterns — .git is excluded
+			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+				if (dirPath === '/project') {
+					return [
+						{ name: 'src', isDirectory: () => true, isFile: () => false },
+						{ name: '.git', isDirectory: () => true, isFile: () => false },
+						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+					] as any;
+				}
+				if (dirPath.includes('/src')) {
+					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+				}
+				return [];
+			});
+
+			const resultWithIgnore = await handler!(
+				{},
+				'/project',
+				undefined, // no SSH
+				['.git', 'node_modules'], // custom ignore patterns
+				false // no gitignore
+			);
+			expect(resultWithIgnore.folderCount).toBe(1); // only src
+			expect(resultWithIgnore.fileCount).toBe(2); // file.txt + index.ts
+		});
+
+		it('should honor .gitignore when enabled', async () => {
+			const mockFs = (await import('fs/promises')).default;
+
+			// .gitignore contains "dist"
+			vi.mocked(mockFs.readFile).mockImplementation(async (filePath: any) => {
+				if (typeof filePath === 'string' && filePath.endsWith('.gitignore')) {
+					return 'dist\n*.log\n';
+				}
+				throw new Error('ENOENT');
+			});
+
+			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+				if (dirPath === '/project') {
+					return [
+						{ name: 'src', isDirectory: () => true, isFile: () => false },
+						{ name: 'dist', isDirectory: () => true, isFile: () => false },
+						{ name: 'app.ts', isDirectory: () => false, isFile: () => true },
+						{ name: 'debug.log', isDirectory: () => false, isFile: () => true },
+					] as any;
+				}
+				if (dirPath.includes('/src')) {
+					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+				}
+				return [];
+			});
+			vi.mocked(mockFs.stat).mockResolvedValue({ size: 50 } as any);
+
+			const handler = registeredHandlers.get('fs:directorySize');
+			const result = await handler!(
+				{},
+				'/project',
+				undefined, // no SSH
+				['node_modules'], // base patterns
+				true // honor gitignore
+			);
+
+			// dist is ignored (from .gitignore), debug.log is ignored (from .gitignore *.log)
+			expect(result.folderCount).toBe(1); // only src
+			expect(result.fileCount).toBe(2); // app.ts + index.ts
+		});
 	});
 
 	describe('fs:fetchImageAsBase64', () => {

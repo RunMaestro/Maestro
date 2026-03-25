@@ -89,8 +89,13 @@ export function createFsApi() {
 		/**
 		 * Get directory size information
 		 */
-		directorySize: (dirPath: string, sshRemoteId?: string): Promise<DirectorySizeInfo> =>
-			ipcRenderer.invoke('fs:directorySize', dirPath, sshRemoteId),
+		directorySize: (
+			dirPath: string,
+			sshRemoteId?: string,
+			ignorePatterns?: string[],
+			honorGitignore?: boolean
+		): Promise<DirectorySizeInfo> =>
+			ipcRenderer.invoke('fs:directorySize', dirPath, sshRemoteId, ignorePatterns, honorGitignore),
 
 		/**
 		 * Fetch an image from URL and return as base64

@@ -5,10 +5,9 @@ import {
 	getAllFolderPaths,
 	flattenTree,
 	compareFileTrees,
-	matchGlobPattern,
-	shouldIgnore,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
+import { matchGlobPattern, shouldIgnore } from '../../../shared/globUtils';
 
 describe('fileExplorer utils', () => {
 	// ============================================================================

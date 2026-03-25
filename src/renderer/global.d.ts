@@ -684,7 +684,9 @@ interface MaestroAPI {
 		}>;
 		directorySize: (
 			dirPath: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ignorePatterns?: string[],
+			honorGitignore?: boolean
 		) => Promise<{
 			totalSize: number;
 			fileCount: number;

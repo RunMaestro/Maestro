@@ -134,7 +134,30 @@ describe('Filesystem Preload API', () => {
 
 			const result = await api.directorySize('/home/user/project');
 
-			expect(mockInvoke).toHaveBeenCalledWith('fs:directorySize', '/home/user/project', undefined);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:directorySize',
+				'/home/user/project',
+				undefined,
+				undefined,
+				undefined
+			);
+			expect(result).toEqual(mockSize);
+		});
+
+		it('should pass ignore patterns and honorGitignore to IPC', async () => {
+			const mockSize = { totalSize: 5120, fileCount: 5, folderCount: 1 };
+			mockInvoke.mockResolvedValue(mockSize);
+
+			const patterns = ['.git', 'node_modules', '*.log'];
+			const result = await api.directorySize('/project', undefined, patterns, true);
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'fs:directorySize',
+				'/project',
+				undefined,
+				patterns,
+				true
+			);
 			expect(result).toEqual(mockSize);
 		});
 	});
