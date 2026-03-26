@@ -325,6 +325,166 @@ describe('useFileTreeManagement', () => {
 		);
 	});
 
+	it('fires shallow load before full load for SSH sessions on initial mount', async () => {
+		const shallowTree: FileNode[] = [
+			{ name: 'src', type: 'folder', children: [] },
+			{ name: 'README.md', type: 'file' },
+		];
+		const fullTree: FileNode[] = [
+			{
+				name: 'src',
+				type: 'folder',
+				children: [{ name: 'index.ts', type: 'file' }],
+			},
+			{ name: 'README.md', type: 'file' },
+		];
+
+		// First call (shallow, depth=1) returns quickly, second call (full, depth=10) returns later
+		vi.mocked(loadFileTree).mockResolvedValueOnce(shallowTree).mockResolvedValueOnce(fullTree);
+
+		const mockDirectorySize = vi.fn().mockResolvedValue({
+			fileCount: 2,
+			folderCount: 1,
+			totalSize: 1000,
+		});
+
+		const originalFs = window.maestro?.fs;
+		window.maestro = {
+			...window.maestro,
+			fs: {
+				...originalFs,
+				directorySize: mockDirectorySize,
+			},
+		};
+
+		const sshSession = createMockSession({
+			fileTree: [],
+			sshRemoteId: 'my-ssh-remote',
+			remoteCwd: '/remote/project',
+		});
+		const state = createSessionsState([sshSession]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			// Shallow load should be called with depth=1
+			expect(loadFileTree).toHaveBeenCalledWith(
+				'/test/project',
+				1,
+				0,
+				expect.objectContaining({ sshRemoteId: 'my-ssh-remote' }),
+				undefined,
+				undefined
+			);
+			// Full load should be called with depth=10
+			expect(loadFileTree).toHaveBeenCalledWith(
+				'/test/project',
+				10,
+				0,
+				expect.objectContaining({ sshRemoteId: 'my-ssh-remote' }),
+				expect.any(Function),
+				undefined
+			);
+		});
+
+		// After both complete, final tree should be the full tree
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTree).toEqual(fullTree);
+			expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		});
+
+		if (originalFs) {
+			window.maestro.fs = originalFs;
+		}
+	});
+
+	it('does not fire shallow load for local sessions on initial mount', async () => {
+		const fullTree: FileNode[] = [{ name: 'loaded.txt', type: 'file' }];
+		vi.mocked(loadFileTree).mockResolvedValue(fullTree);
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTree).toEqual(fullTree);
+		});
+
+		// loadFileTree should only be called once (full load, no shallow pass)
+		expect(loadFileTree).toHaveBeenCalledTimes(1);
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/test/project',
+			10,
+			0,
+			undefined,
+			undefined,
+			undefined
+		);
+	});
+
+	it('decouples stats from tree display in initial load', async () => {
+		const fullTree: FileNode[] = [{ name: 'file.txt', type: 'file' }];
+
+		// Tree resolves immediately
+		vi.mocked(loadFileTree).mockResolvedValue(fullTree);
+
+		// Stats resolve after a delay
+		let resolveStats: (value: {
+			fileCount: number;
+			folderCount: number;
+			totalSize: number;
+		}) => void;
+		const statsPromise = new Promise<{ fileCount: number; folderCount: number; totalSize: number }>(
+			(resolve) => {
+				resolveStats = resolve;
+			}
+		);
+		const mockDirectorySize = vi.fn().mockReturnValue(statsPromise);
+
+		const originalFs = window.maestro?.fs;
+		window.maestro = {
+			...window.maestro,
+			fs: {
+				...originalFs,
+				directorySize: mockDirectorySize,
+			},
+		};
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		// Tree should be set before stats resolve
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTree).toEqual(fullTree);
+			expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		});
+
+		// Stats should not be set yet
+		expect(state.getSessions()[0].fileTreeStats).toBeUndefined();
+
+		// Now resolve stats
+		await act(async () => {
+			resolveStats!({ fileCount: 5, folderCount: 2, totalSize: 10000 });
+			// Allow microtasks to flush
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		});
+
+		// Stats should now be populated
+		expect(state.getSessions()[0].fileTreeStats).toEqual({
+			fileCount: 5,
+			folderCount: 2,
+			totalSize: 10000,
+		});
+
+		if (originalFs) {
+			window.maestro.fs = originalFs;
+		}
+	});
+
 	it('fetches stats for sessions with file tree but no stats (migration)', async () => {
 		// Mock directorySize for the migration
 		const mockDirectorySize = vi.fn().mockResolvedValue({

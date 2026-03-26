@@ -227,30 +227,40 @@ export function useFileTreeManagement(
 			const treeRoot = session.projectRoot || session.cwd;
 
 			try {
-				// Fetch stats independently — a directorySize failure should not
-				// prevent the file tree from refreshing (same as initial load).
-				const statsPromise = window.maestro.fs
+				// Fire stats independently — update asynchronously without blocking tree refresh.
+				window.maestro.fs
 					.directorySize(
 						treeRoot,
 						sshContext?.sshRemoteId,
 						localOptions?.ignorePatterns,
 						localOptions?.honorGitignore
 					)
+					.then((stats) => {
+						if (isStale(sessionId, seq)) return;
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? {
+											...s,
+											fileTreeStats: {
+												fileCount: stats.fileCount,
+												folderCount: stats.folderCount,
+												totalSize: stats.totalSize,
+											},
+										}
+									: s
+							)
+						);
+					})
 					.catch((err) => {
 						logger.warn('directorySize failed during refresh (non-fatal)', 'FileTreeManagement', {
 							error: err?.message || 'Unknown error',
 						});
-						return undefined;
 					});
 
 				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
 
 				// Discard if a newer load started for this session while we were awaiting
-				if (isStale(sessionId, seq)) return undefined;
-
-				const stats = await statsPromise;
-
-				// Re-check after stats await — another load may have started during directorySize
 				if (isStale(sessionId, seq)) return undefined;
 
 				const oldTree = session.fileTree || [];
@@ -263,13 +273,6 @@ export function useFileTreeManagement(
 									...s,
 									fileTree: newTree,
 									fileTreeError: undefined,
-									fileTreeStats: stats
-										? {
-												fileCount: stats.fileCount,
-												folderCount: stats.folderCount,
-												totalSize: stats.totalSize,
-											}
-										: s.fileTreeStats, // Keep existing stats if refresh stats failed
 								}
 							: s
 					)
@@ -309,15 +312,31 @@ export function useFileTreeManagement(
 			const sshContext = getSshContext(session, sshContextOptions);
 
 			try {
-				// Fetch stats independently — directorySize failure should not
-				// prevent the file tree or git state from refreshing.
-				const statsPromise = window.maestro.fs
+				// Fire stats independently — update asynchronously without blocking tree/git refresh.
+				window.maestro.fs
 					.directorySize(
 						treeRoot,
 						sshContext?.sshRemoteId,
 						localOptions?.ignorePatterns,
 						localOptions?.honorGitignore
 					)
+					.then((stats) => {
+						if (isStale(sessionId, seq)) return;
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? {
+											...s,
+											fileTreeStats: {
+												fileCount: stats.fileCount,
+												folderCount: stats.folderCount,
+												totalSize: stats.totalSize,
+											},
+										}
+									: s
+							)
+						);
+					})
 					.catch((err) => {
 						logger.warn(
 							'directorySize failed during git refresh (non-fatal)',
@@ -326,7 +345,6 @@ export function useFileTreeManagement(
 								error: err?.message || 'Unknown error',
 							}
 						);
-						return undefined;
 					});
 
 				// Refresh file tree and git repo status in parallel
@@ -336,11 +354,6 @@ export function useFileTreeManagement(
 				]);
 
 				// Discard if a newer load started for this session while we were awaiting
-				if (isStale(sessionId, seq)) return;
-
-				const stats = await statsPromise;
-
-				// Re-check after stats await
 				if (isStale(sessionId, seq)) return;
 
 				let gitBranches: string[] | undefined;
@@ -365,13 +378,6 @@ export function useFileTreeManagement(
 									...s,
 									fileTree: tree,
 									fileTreeError: undefined,
-									fileTreeStats: stats
-										? {
-												fileCount: stats.fileCount,
-												folderCount: stats.folderCount,
-												totalSize: stats.totalSize,
-											}
-										: s.fileTreeStats, // Keep existing stats if refresh stats failed
 									isGitRepo,
 									gitBranches,
 									gitTags,
@@ -479,46 +485,76 @@ export function useFileTreeManagement(
 			// Increment per-session load sequence so concurrent loads can detect staleness
 			const seq = nextSeq(sessionId);
 
-			// Load tree with progress callback for SSH sessions
+			// For SSH sessions, fire a shallow load (depth 1) first so the root-level
+			// tree renders almost instantly (single round-trip), then backfill with
+			// the full recursive walk. Local sessions skip the shallow pass since
+			// local readdir is fast enough that the overhead isn't worth it.
+			if (sshContext) {
+				loadFileTree(treeRoot, 1, 0, sshContext, undefined, localOptions)
+					.then((shallowTree) => {
+						if (isStale(sessionId, seq)) return;
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId && s.fileTreeLoading
+									? {
+											...s,
+											fileTree: shallowTree,
+											fileTreeError: undefined,
+											fileTreeRetryAt: undefined,
+										}
+									: s
+							)
+						);
+						signalInitialFileTreeReady();
+					})
+					.catch(() => {
+						// Shallow load failed — full load will handle the error below
+					});
+			}
+
+			// Full recursive tree load (with progress callback for SSH)
 			const treePromise = sshContext
 				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localOptions)
 				: loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
 
 			// Fetch stats independently — a directorySize failure (e.g., `du` timeout
 			// on large repos over SSH) should not prevent the file tree from loading.
-			const statsPromise = window.maestro.fs
+			// Stats update the UI asynchronously after the tree is already displayed.
+			window.maestro.fs
 				.directorySize(
 					treeRoot,
 					sshContext?.sshRemoteId,
 					localOptions?.ignorePatterns,
 					localOptions?.honorGitignore
 				)
+				.then((stats) => {
+					if (isStale(sessionId, seq)) return;
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId
+								? {
+										...s,
+										fileTreeStats: {
+											fileCount: stats.fileCount,
+											folderCount: stats.folderCount,
+											totalSize: stats.totalSize,
+										},
+									}
+								: s
+						)
+					);
+				})
 				.catch((err) => {
 					logger.warn('directorySize failed (non-fatal)', 'FileTreeManagement', {
 						error: err?.message || 'Unknown error',
 					});
-					return undefined;
 				});
 
 			treePromise
-				.then(async (tree) => {
+				.then((tree) => {
 					// Discard if a newer load started for this session while we were awaiting
 					if (isStale(sessionId, seq)) {
 						// Reset loading state so this session can retry later
-						setSessions((prev) =>
-							prev.map((s) =>
-								s.id === sessionId
-									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
-									: s
-							)
-						);
-						return;
-					}
-
-					const stats = await statsPromise;
-
-					// Re-check after stats await — another load may have started during directorySize
-					if (isStale(sessionId, seq)) {
 						setSessions((prev) =>
 							prev.map((s) =>
 								s.id === sessionId
@@ -539,13 +575,6 @@ export function useFileTreeManagement(
 										fileTreeRetryAt: undefined,
 										fileTreeLoading: false,
 										fileTreeLoadingProgress: undefined,
-										fileTreeStats: stats
-											? {
-													fileCount: stats.fileCount,
-													folderCount: stats.folderCount,
-													totalSize: stats.totalSize,
-												}
-											: undefined,
 									}
 								: s
 						)
