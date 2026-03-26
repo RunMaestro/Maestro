@@ -223,6 +223,8 @@ export function useTabHandlers(): TabHandlersReturn {
 							...s,
 							filePreviewTabs: updatedTabs,
 							activeFileTabId: existingTab.id,
+							activeTerminalTabId: null,
+							inputMode: 'ai' as const,
 							activeTabId: s.activeTabId,
 							unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
 						};
@@ -355,6 +357,8 @@ export function useTabHandlers(): TabHandlersReturn {
 						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
 						unifiedTabOrder: updatedUnifiedTabOrder,
 						activeFileTabId: newTabId,
+						activeTerminalTabId: null,
+						inputMode: 'ai' as const,
 					};
 				})
 			);
