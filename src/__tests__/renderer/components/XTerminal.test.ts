@@ -5,8 +5,8 @@
  * falling back to mode-appropriate ANSI palettes when the theme lacks
  * individual ANSI color fields.
  *
- * evaluateCustomKeyEvent determines whether xterm should handle a key,
- * pass it through to Maestro's shortcut handler, or send ESC directly.
+ * evaluateCustomKeyEvent determines whether xterm should handle a key
+ * or pass it through to Maestro's shortcut handler.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -139,12 +139,12 @@ function makeKeyEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
 }
 
 describe('evaluateCustomKeyEvent', () => {
-	it('returns "escape" for Escape keydown (vi/vim fix)', () => {
+	it('returns "handle" for Escape keydown (xterm sends \\x1b via onData)', () => {
 		const e = makeKeyEvent({ key: 'Escape', type: 'keydown' });
-		expect(evaluateCustomKeyEvent(e)).toBe('escape');
+		expect(evaluateCustomKeyEvent(e)).toBe('handle');
 	});
 
-	it('returns "handle" for Escape keyup (let xterm manage focus)', () => {
+	it('returns "handle" for Escape keyup', () => {
 		const e = makeKeyEvent({ key: 'Escape', type: 'keyup' });
 		expect(evaluateCustomKeyEvent(e)).toBe('handle');
 	});

@@ -20,15 +20,9 @@ import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
  * Returns:
  * - 'passthrough': xterm should NOT handle this key (return false to xterm) —
  *   the event bubbles to Maestro's window-level shortcut handler instead.
- * - 'escape': the Escape key was pressed on keydown — caller must send \x1b
- *   to the PTY directly, then return false to xterm to avoid double-send.
  * - 'handle': xterm should handle this key normally (return true to xterm).
  */
-export type XtermKeyAction =
-	| 'passthrough'
-	| 'escape'
-	| 'handle'
-	| { action: 'write'; data: string };
+export type XtermKeyAction = 'passthrough' | 'handle' | { action: 'write'; data: string };
 
 /**
  * Return the escape sequence for a terminal-navigation key combo, or null
@@ -76,12 +70,11 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	// by default — these events would just produce dead/special characters
 	// that aren't useful in the terminal context.
 	if (e.altKey) return 'passthrough';
-	// Explicitly send ESC byte (\x1b) to the PTY for vi/vim/nano compatibility.
-	// xterm.js v6 may not reliably generate the escape byte through its internal
-	// key processing pipeline (CompositionHelper interactions, dead key state).
-	// We write directly to the PTY on keydown and return false so xterm doesn't
-	// also attempt to process it (preventing double-send).
-	if (e.key === 'Escape' && e.type === 'keydown') return 'escape';
+	// Let xterm.js handle Escape normally — it sends \x1b through the standard
+	// onData pipeline which writes to the PTY. Previous manual handling (writing
+	// \x1b directly and returning false on keydown) caused xterm's internal key
+	// processing state to become inconsistent (keydown blocked but keyup allowed),
+	// breaking interactive apps like vim/vi/nano that depend on Escape.
 	return 'handle';
 }
 
@@ -422,10 +415,6 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			const action = evaluateCustomKeyEvent(e);
 			if (typeof action === 'object' && action.action === 'write') {
 				window.maestro.process.write(sessionId, action.data);
-				return false;
-			}
-			if (action === 'escape') {
-				window.maestro.process.write(sessionId, '\x1b');
 				return false;
 			}
 			return action === 'handle';

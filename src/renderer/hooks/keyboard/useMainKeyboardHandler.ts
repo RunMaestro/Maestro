@@ -322,15 +322,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
-				// In terminal mode, Cmd+K clears the active terminal instead of opening Quick Actions
-				if (ctx.activeSession?.inputMode === 'terminal') {
-					ctx.mainPanelRef?.current?.clearActiveTerminal();
-					trackShortcut('clearTerminal');
-				} else if (ctx.sessions.length > 0) {
-					// Only open quick actions if there are agents
+				if (ctx.sessions.length > 0) {
 					ctx.setQuickActionOpen(true, 'main');
 					trackShortcut('quickAction');
 				}
+			} else if (
+				(e.metaKey || e.ctrlKey) &&
+				e.shiftKey &&
+				e.key.toLowerCase() === 'k' &&
+				ctx.activeSession?.inputMode === 'terminal'
+			) {
+				// Cmd+Shift+K clears the active xterm buffer in terminal mode
+				e.preventDefault();
+				ctx.mainPanelRef?.current?.clearActiveTerminal();
+				trackShortcut('clearTerminal');
 			} else if (ctx.isShortcut(e, 'help')) {
 				e.preventDefault();
 				ctx.setShortcutsHelpOpen(true);

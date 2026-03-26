@@ -162,7 +162,7 @@ export const TERMINAL_SHORTCUTS: Record<string, Shortcut> = {
 	clearTerminal: {
 		id: 'clearTerminal',
 		label: 'Clear Terminal',
-		keys: ['Meta', 'k'],
+		keys: ['Meta', 'Shift', 'k'],
 	},
 };
 
