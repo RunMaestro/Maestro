@@ -136,6 +136,43 @@ describe('mergePipelinesWithSavedLayout', () => {
 		expect(triggerNode?.position).toEqual({ x: 0, y: 0 });
 	});
 
+	it('restores saved color and name over live-derived values', () => {
+		// Live pipelines get colors from parse order (the bug scenario)
+		const livePipelines = [
+			makePipeline({ id: 'p1', name: 'Pipeline 1', color: '#06b6d4' }),
+			makePipeline({ id: 'p2', name: 'Pipeline 2', color: '#8b5cf6' }),
+		];
+		// Saved layout has different (original) colors and names
+		const savedLayout: PipelineLayoutState = {
+			pipelines: [
+				makePipeline({ id: 'p1', name: 'My Custom Name', color: '#ef4444' }),
+				makePipeline({ id: 'p2', name: 'Another Name', color: '#22c55e' }),
+			],
+			selectedPipelineId: null,
+		};
+
+		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+
+		expect(result.pipelines[0].name).toBe('My Custom Name');
+		expect(result.pipelines[0].color).toBe('#ef4444');
+		expect(result.pipelines[1].name).toBe('Another Name');
+		expect(result.pipelines[1].color).toBe('#22c55e');
+	});
+
+	it('keeps live color and name when no saved layout match exists', () => {
+		const livePipelines = [makePipeline({ id: 'p-new', name: 'Brand New', color: '#3b82f6' })];
+		const savedLayout: PipelineLayoutState = {
+			pipelines: [makePipeline({ id: 'p-old', name: 'Old One', color: '#ef4444' })],
+			selectedPipelineId: null,
+		};
+
+		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+
+		// No matching ID in saved layout — live values preserved
+		expect(result.pipelines[0].name).toBe('Brand New');
+		expect(result.pipelines[0].color).toBe('#3b82f6');
+	});
+
 	it('returns all live pipelines even when saved layout has fewer', () => {
 		const livePipelines = [
 			makePipeline({ id: 'p1', name: 'first' }),

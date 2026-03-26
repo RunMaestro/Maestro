@@ -234,6 +234,22 @@ function CuePipelineEditorInner({
 		]
 	);
 
+	// ─── Fit view on pipeline selection change ──────────────────────────────
+	// When switching between "All Pipelines" and a single pipeline (or between
+	// two different pipelines), the visible nodes change. Without a fitView call
+	// the viewport stays where it was, so the selected pipeline may appear off-screen.
+	const prevSelectedIdRef = useRef(pipelineState.selectedPipelineId);
+	useEffect(() => {
+		if (prevSelectedIdRef.current === pipelineState.selectedPipelineId) return;
+		prevSelectedIdRef.current = pipelineState.selectedPipelineId;
+
+		// Short delay so ReactFlow has rendered the new node set before fitting
+		const timer = setTimeout(() => {
+			reactFlowInstance.fitView({ padding: 0.15, duration: 200 });
+		}, 50);
+		return () => clearTimeout(timer);
+	}, [pipelineState.selectedPipelineId, reactFlowInstance]);
+
 	// ─── Canvas callbacks ────────────────────────────────────────────────────
 
 	// Ref mirror so onNodesChange reads the latest stable offsets without

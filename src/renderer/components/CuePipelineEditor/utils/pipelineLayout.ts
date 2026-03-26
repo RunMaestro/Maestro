@@ -23,19 +23,26 @@ export function mergePipelinesWithSavedLayout(
 	savedLayout: PipelineLayoutState
 ): CuePipelineState {
 	const savedPositions = new Map<string, { x: number; y: number }>();
+	const savedPipelineProps = new Map<string, { name: string; color: string }>();
 	for (const sp of savedLayout.pipelines) {
+		savedPipelineProps.set(sp.id, { name: sp.name, color: sp.color });
 		for (const node of sp.nodes) {
 			savedPositions.set(`${sp.id}:${node.id}`, node.position);
 		}
 	}
 
-	const mergedPipelines = livePipelines.map((pipeline) => ({
-		...pipeline,
-		nodes: pipeline.nodes.map((node) => {
-			const savedPos = savedPositions.get(`${pipeline.id}:${node.id}`);
-			return savedPos ? { ...node, position: savedPos } : node;
-		}),
-	}));
+	const mergedPipelines = livePipelines.map((pipeline) => {
+		const savedProps = savedPipelineProps.get(pipeline.id);
+		return {
+			...pipeline,
+			// Restore saved name and color so they don't change on reload
+			...(savedProps && { name: savedProps.name, color: savedProps.color }),
+			nodes: pipeline.nodes.map((node) => {
+				const savedPos = savedPositions.get(`${pipeline.id}:${node.id}`);
+				return savedPos ? { ...node, position: savedPos } : node;
+			}),
+		};
+	});
 
 	return {
 		pipelines: mergedPipelines,
