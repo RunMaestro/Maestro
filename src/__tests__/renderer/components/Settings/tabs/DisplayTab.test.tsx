@@ -31,6 +31,7 @@ const mockSetTerminalWidth = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
+const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
 const mockSetAutoHideMenuBar = vi.fn();
 const mockSetDocumentGraphShowExternalLinks = vi.fn();
@@ -56,6 +57,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setMaxOutputLines: mockSetMaxOutputLines,
 		userMessageAlignment: 'right',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
+		fileExplorerIconTheme: 'default',
+		setFileExplorerIconTheme: mockSetFileExplorerIconTheme,
 		useNativeTitleBar: false,
 		setUseNativeTitleBar: mockSetUseNativeTitleBar,
 		autoHideMenuBar: false,
@@ -163,6 +166,25 @@ describe('DisplayTab', () => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		mockUseSettingsOverrides = {};
+	});
+
+	describe('Files Pane Icon Theme', () => {
+		it('should render the Files Pane Icon Theme control and helper copy', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Files Pane Icon Theme')).toBeInTheDocument();
+			expect(
+				screen.getByText(/Rich uses Material Icon Theme style file and folder SVGs/i)
+			).toBeInTheDocument();
+		});
+
+		it('should call setFileExplorerIconTheme when Rich is selected', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rich' }));
+
+			expect(mockSetFileExplorerIconTheme).toHaveBeenCalledWith('rich');
+		});
 	});
 
 	// =========================================================================

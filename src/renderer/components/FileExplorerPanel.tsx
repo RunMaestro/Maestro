@@ -39,6 +39,7 @@ import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { getRevealLabel } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
+import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 
@@ -356,6 +357,7 @@ interface FileExplorerPanelProps {
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
 	showHiddenFiles: boolean;
+	fileExplorerIconTheme: FileExplorerIconTheme;
 	setShowHiddenFiles: (value: boolean) => void;
 	/** Callback to open graph view focused on a specific file (relative path to session.cwd) */
 	onFocusFileInGraph?: (relativePath: string) => void;
@@ -390,6 +392,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		onAutoRefreshChange,
 		onShowFlash,
 		showHiddenFiles,
+		fileExplorerIconTheme,
 		setShowHiddenFiles,
 		onFocusFileInGraph,
 		lastGraphFocusFile,
@@ -1017,8 +1020,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					)}
 					<span className="flex-shrink-0">
 						{isFolder
-							? getExplorerFolderIcon(node.name, isExpanded, theme)
-							: getExplorerFileIcon(node.name, theme, change?.type)}
+							? getExplorerFolderIcon(node.name, isExpanded, theme, fileExplorerIconTheme)
+							: getExplorerFileIcon(node.name, theme, change?.type, fileExplorerIconTheme)}
 					</span>
 					<span
 						className={`truncate min-w-0 flex-1 ${change ? 'font-medium' : ''}`}
@@ -1067,6 +1070,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			setActiveFocus,
 			handleFileClick,
 			fileTreeFilter,
+			fileExplorerIconTheme,
 			handleContextMenu,
 		]
 	);

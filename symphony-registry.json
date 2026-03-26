@@ -1,6 +1,6 @@
 {
 	"schemaVersion": "1.0",
-	"lastUpdated": "2026-02-28T00:00:00Z",
+	"lastUpdated": "2026-03-24T00:00:00Z",
 	"repositories": [
 		{
 			"slug": "RunMaestro/Maestro",
@@ -106,6 +106,21 @@
 			"isActive": true,
 			"featured": false,
 			"addedAt": "2026-02-28"
+		},
+		{
+			"slug": "needmorecowbell/drawfinity",
+			"name": "Drawfinity",
+			"description": "Infinite canvas drawing app with pressure-sensitive brushes, real-time collaboration via WebSocket/Yjs CRDT sync, and a WebGL2 rendering pipeline, built on Tauri.",
+			"url": "https://github.com/needmorecowbell/drawfinity",
+			"category": "desktop",
+			"tags": ["drawing", "collaboration", "creative-tools", "tauri"],
+			"maintainer": {
+				"name": "needmorecowbell",
+				"url": "https://github.com/needmorecowbell"
+			},
+			"isActive": true,
+			"featured": false,
+			"addedAt": "2026-03-24"
 		}
 	]
 }

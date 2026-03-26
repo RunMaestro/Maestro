@@ -34,6 +34,8 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
+import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { commitCommandPrompt } from '../../prompts';
 
 // ============================================================================
@@ -198,6 +200,7 @@ export interface SettingsStoreState {
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	showHiddenFiles: boolean;
+	fileExplorerIconTheme: FileExplorerIconTheme;
 	terminalWidth: number;
 	logLevel: string;
 	maxLogBuffer: number;
@@ -279,6 +282,7 @@ export interface SettingsStoreActions {
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setShowHiddenFiles: (value: boolean) => void;
+	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
 	setTerminalWidth: (value: number) => void;
 	setMaxOutputLines: (value: number) => void;
 	setOsNotificationsEnabled: (value: boolean) => void;
@@ -422,6 +426,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		showHiddenFiles: true,
+		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -596,6 +601,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowHiddenFiles: (value) => {
 			set({ showHiddenFiles: value });
 			window.maestro.settings.set('showHiddenFiles', value);
+		},
+
+		setFileExplorerIconTheme: (value) => {
+			set({ fileExplorerIconTheme: value });
+			window.maestro.settings.set('fileExplorerIconTheme', value);
 		},
 
 		setTerminalWidth: (value) => {
@@ -1474,6 +1484,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showHiddenFiles'] !== undefined)
 			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
+		if (allSettings['fileExplorerIconTheme'] !== undefined) {
+			patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
+				? allSettings['fileExplorerIconTheme']
+				: 'default';
+		}
+
 		if (allSettings['terminalWidth'] !== undefined)
 			patch.terminalWidth = allSettings['terminalWidth'] as number;
 
@@ -1841,6 +1857,7 @@ export function getSettingsActions() {
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
 		setShowHiddenFiles: state.setShowHiddenFiles,
+		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
 		setTerminalWidth: state.setTerminalWidth,
 		setLogLevel: state.setLogLevel,
 		setMaxLogBuffer: state.setMaxLogBuffer,

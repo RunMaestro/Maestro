@@ -27,6 +27,7 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../../types';
+import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -97,6 +98,8 @@ export interface UseSettingsReturn {
 	setChatRawTextMode: (value: boolean) => void;
 	showHiddenFiles: boolean;
 	setShowHiddenFiles: (value: boolean) => void;
+	fileExplorerIconTheme: FileExplorerIconTheme;
+	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
 
 	// Terminal settings
 	terminalWidth: number;

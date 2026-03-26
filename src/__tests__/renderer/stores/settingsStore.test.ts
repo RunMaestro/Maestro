@@ -14,6 +14,7 @@ import {
 	DEFAULT_AI_COMMANDS,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
+import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
@@ -47,6 +48,7 @@ function resetStore() {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		showHiddenFiles: true,
+		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -118,7 +120,7 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
-		it('has correct default values for all 65 fields', () => {
+		it('has correct default values for all 66 fields', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -145,6 +147,7 @@ describe('settingsStore', () => {
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.showHiddenFiles).toBe(true);
+			expect(state.fileExplorerIconTheme).toBe('default');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
@@ -344,6 +347,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setShowHiddenFiles(false);
 				expect(useSettingsStore.getState().showHiddenFiles).toBe(false);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('showHiddenFiles', false);
+			});
+
+			it('setFileExplorerIconTheme updates state and persists', () => {
+				useSettingsStore.getState().setFileExplorerIconTheme('rich');
+				expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('fileExplorerIconTheme', 'rich');
 			});
 		});
 
@@ -1337,6 +1346,27 @@ describe('settingsStore', () => {
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('loads fileExplorerIconTheme when the persisted value is valid', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'rich' satisfies FileExplorerIconTheme,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
+		});
+
+		it('falls back to default for invalid fileExplorerIconTheme values', async () => {
+			useSettingsStore.setState({ fileExplorerIconTheme: 'rich' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				fileExplorerIconTheme: 'neon' as any,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('default');
 		});
 
 		it('uses defaults when settings are empty/undefined', async () => {

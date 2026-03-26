@@ -33,6 +33,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setMaxOutputLines,
 		userMessageAlignment,
 		setUserMessageAlignment,
+		fileExplorerIconTheme,
+		setFileExplorerIconTheme,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -195,6 +197,25 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				<p className="text-xs opacity-50 mt-2">
 					Position your messages on the left or right side of the chat. AI responses appear on the
 					opposite side.
+				</p>
+			</div>
+
+			<div>
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
+					Files Pane Icon Theme
+				</div>
+				<ToggleButtonGroup
+					options={[
+						{ value: 'default', label: 'Default' },
+						{ value: 'rich', label: 'Rich' },
+					]}
+					value={fileExplorerIconTheme}
+					onChange={setFileExplorerIconTheme}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Rich uses Material Icon Theme style file and folder SVGs in the Files pane. Default
+					preserves Maestro&apos;s current icon behavior.
 				</p>
 			</div>
 
