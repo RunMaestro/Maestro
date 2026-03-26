@@ -22,6 +22,16 @@ interface FeedbackAttachment {
 	sizeBytes: number;
 }
 
+type FeedbackCategory = 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+
+const FEEDBACK_CATEGORY_OPTIONS: Array<{ value: FeedbackCategory; label: string }> = [
+	{ value: 'bug_report', label: 'Bug report' },
+	{ value: 'feature_request', label: 'Feature request' },
+	{ value: 'improvement', label: 'Improvement' },
+	{ value: 'general_feedback', label: 'General feedback' },
+];
+
+const MAX_SUMMARY_LENGTH = 120;
 const MAX_FEEDBACK_LENGTH = 5000;
 const CHAR_COUNT_WARNING_THRESHOLD = 4000;
 const MAX_ATTACHMENTS = 5;
@@ -41,7 +51,8 @@ function isRunningSession(session: Session): boolean {
 }
 
 function getSessionAgentSessionId(session: Session): string | null {
-	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId) ?? session.aiTabs?.[0];
+	const activeTab =
+		session.aiTabs?.find((tab) => tab.id === session.activeTabId) ?? session.aiTabs?.[0];
 	return activeTab?.agentSessionId || session.agentSessionId || null;
 }
 
@@ -70,7 +81,12 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: FeedbackViewProps) {
-	const [feedbackText, setFeedbackText] = useState('');
+	const [category, setCategory] = useState<FeedbackCategory>('bug_report');
+	const [summary, setSummary] = useState('');
+	const [expectedBehavior, setExpectedBehavior] = useState('');
+	const [details, setDetails] = useState('');
+	const [reproductionSteps, setReproductionSteps] = useState('');
+	const [additionalContext, setAdditionalContext] = useState('');
 	const [selectedSessionId, setSelectedSessionId] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const [activeProcessIds, setActiveProcessIds] = useState<Set<string>>(new Set());
@@ -133,11 +149,17 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 
 	const isSubmittingDisabled = submitting || authState.checking;
 	const isFormDisabled = isSubmittingDisabled || !authState.authenticated;
+	const isBugReport = category === 'bug_report';
+	const expectedBehaviorLabel = isBugReport ? 'Expected Behavior' : 'Desired Outcome';
+	const detailsLabel = isBugReport ? 'Actual Behavior' : 'Details';
 
 	const canSubmit =
 		!submitting &&
 		selectedSessionId.length > 0 &&
-		feedbackText.trim().length > 0 &&
+		summary.trim().length > 0 &&
+		expectedBehavior.trim().length > 0 &&
+		details.trim().length > 0 &&
+		(!isBugReport || reproductionSteps.trim().length > 0) &&
 		Boolean(selectedTarget) &&
 		authState.authenticated;
 
@@ -172,7 +194,9 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 				return;
 			}
 
-			const imageFiles = files.filter((file) => file.type.startsWith('image/')).slice(0, availableSlots);
+			const imageFiles = files
+				.filter((file) => file.type.startsWith('image/'))
+				.slice(0, availableSlots);
 			if (imageFiles.length === 0) {
 				setSubmitError('Only image files can be attached to feedback.');
 				return;
@@ -274,6 +298,7 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 			}));
 
 			if (!authResult.authenticated) {
+				setSubmitError(authResult.message || 'GitHub authentication is required to send feedback.');
 				setSubmitting(false);
 				return;
 			}
@@ -281,16 +306,27 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 			const latestTarget =
 				feedbackTargets.find((target) => target.session.id === selectedSessionId) ?? selectedTarget;
 			if (!latestTarget) {
-				setSubmitError('The selected session is no longer available.');
+				setSubmitError('The selected agent is no longer available.');
 				setSubmitting(false);
 				return;
 			}
 
-			const result = await window.maestro.feedback.submit(
-				selectedSessionId,
-				feedbackText.trim(),
-				attachments.map(({ name, dataUrl }) => ({ name, dataUrl }))
-			);
+			const result = await window.maestro.feedback.submit({
+				sessionId: selectedSessionId,
+				category,
+				summary: summary.trim(),
+				expectedBehavior: expectedBehavior.trim(),
+				details: details.trim(),
+				reproductionSteps: isBugReport ? reproductionSteps.trim() : undefined,
+				additionalContext: additionalContext.trim() || undefined,
+				agentProvider: latestTarget.session.toolType,
+				sshRemoteEnabled: Boolean(
+					latestTarget.session.sessionSshRemoteConfig?.enabled ||
+					latestTarget.session.sshRemoteId ||
+					latestTarget.session.sshRemote
+				),
+				attachments: attachments.map(({ name, dataUrl }) => ({ name, dataUrl })),
+			});
 
 			if (!result.success) {
 				setSubmitError(result.error || 'Failed to create GitHub issue from feedback.');
@@ -310,10 +346,17 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 	}, [
 		attachments,
 		canSubmit,
-		feedbackText,
+		additionalContext,
+		category,
+		details,
+		expectedBehavior,
+		feedbackTargets,
+		isBugReport,
 		onSubmitSuccess,
+		reproductionSteps,
 		selectedSessionId,
 		selectedTarget,
+		summary,
 	]);
 
 	const handleTextareaKeyDown = useCallback(
@@ -380,25 +423,145 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 									</option>
 								))}
 							</select>
-							</div>
+						</div>
 
 						<div className="space-y-2">
 							<label
-								htmlFor="feedback-text"
+								htmlFor="feedback-category"
 								className="text-sm font-medium"
 								style={{ color: theme.colors.textMain }}
 							>
-								Feedback
+								Issue Type
+							</label>
+							<select
+								id="feedback-category"
+								value={category}
+								onChange={(event) => setCategory(event.target.value as FeedbackCategory)}
+								disabled={isFormDisabled}
+								className="w-full rounded border bg-transparent px-2 py-2 text-sm outline-none focus:ring-2"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									boxShadow: `0 0 0 2px ${theme.colors.accent}10`,
+								}}
+							>
+								{FEEDBACK_CATEGORY_OPTIONS.map((option) => (
+									<option key={option.value} value={option.value}>
+										{option.label}
+									</option>
+								))}
+							</select>
+						</div>
+
+						<div className="space-y-2">
+							<div className="flex items-center justify-between gap-4">
+								<label
+									htmlFor="feedback-summary"
+									className="text-sm font-medium"
+									style={{ color: theme.colors.textMain }}
+								>
+									Summary
+								</label>
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									{summary.length.toLocaleString()}/{MAX_SUMMARY_LENGTH.toLocaleString()}
+								</span>
+							</div>
+							<input
+								id="feedback-summary"
+								type="text"
+								value={summary}
+								onChange={(event) => setSummary(event.target.value.slice(0, MAX_SUMMARY_LENGTH))}
+								disabled={isFormDisabled}
+								placeholder="Short issue title for GitHub"
+								className="w-full rounded border bg-transparent px-2 py-2 text-sm outline-none focus:ring-2"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									boxShadow: `0 0 0 2px ${theme.colors.accent}10`,
+								}}
+								maxLength={MAX_SUMMARY_LENGTH}
+							/>
+						</div>
+
+						{isBugReport && (
+							<div className="space-y-2">
+								<label
+									htmlFor="feedback-reproduction-steps"
+									className="text-sm font-medium"
+									style={{ color: theme.colors.textMain }}
+								>
+									Steps to Reproduce
+								</label>
+								<textarea
+									id="feedback-reproduction-steps"
+									value={reproductionSteps}
+									onChange={(event) =>
+										setReproductionSteps(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))
+									}
+									disabled={isFormDisabled}
+									placeholder={'1. Open Maestro\n2. Click ...\n3. Observe ...'}
+									className="w-full rounded border px-2 py-2 text-sm outline-none focus:ring-2 min-h-[110px] resize-y"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										backgroundColor: 'transparent',
+										boxShadow: `0 0 0 2px ${theme.colors.accent}10`,
+									}}
+									maxLength={MAX_FEEDBACK_LENGTH}
+								/>
+							</div>
+						)}
+
+						<div className="space-y-2">
+							<label
+								htmlFor="feedback-expected-behavior"
+								className="text-sm font-medium"
+								style={{ color: theme.colors.textMain }}
+							>
+								{expectedBehaviorLabel}
 							</label>
 							<textarea
-								id="feedback-text"
-								value={feedbackText}
+								id="feedback-expected-behavior"
+								value={expectedBehavior}
 								onChange={(event) =>
-									setFeedbackText(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))
+									setExpectedBehavior(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))
 								}
+								disabled={isFormDisabled}
+								placeholder={
+									isBugReport
+										? 'Describe what should have happened.'
+										: 'Describe the outcome you want.'
+								}
+								className="w-full rounded border px-2 py-2 text-sm outline-none focus:ring-2 min-h-[110px] resize-y"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor: 'transparent',
+									boxShadow: `0 0 0 2px ${theme.colors.accent}10`,
+								}}
+								maxLength={MAX_FEEDBACK_LENGTH}
+							/>
+						</div>
+
+						<div className="space-y-2">
+							<label
+								htmlFor="feedback-details"
+								className="text-sm font-medium"
+								style={{ color: theme.colors.textMain }}
+							>
+								{detailsLabel}
+							</label>
+							<textarea
+								id="feedback-details"
+								value={details}
+								onChange={(event) => setDetails(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))}
 								onKeyDown={handleTextareaKeyDown}
 								disabled={isFormDisabled}
-								placeholder="Describe the bug, feature request, or feedback..."
+								placeholder={
+									isBugReport
+										? 'Describe what happened instead.'
+										: 'Describe the request, idea, or problem in more detail.'
+								}
 								className="w-full rounded border px-2 py-2 text-sm outline-none focus:ring-2 min-h-[120px] resize-y"
 								style={{
 									borderColor: theme.colors.border,
@@ -408,19 +571,46 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 								}}
 								maxLength={MAX_FEEDBACK_LENGTH}
 							/>
-							{feedbackText.length > CHAR_COUNT_WARNING_THRESHOLD && (
+							{details.length > CHAR_COUNT_WARNING_THRESHOLD && (
 								<p
 									className="text-xs text-right"
 									style={{
 										color:
-											feedbackText.length === MAX_FEEDBACK_LENGTH
+											details.length === MAX_FEEDBACK_LENGTH
 												? theme.colors.error
 												: theme.colors.textDim,
 									}}
 								>
-									{feedbackText.length.toLocaleString()}/{MAX_FEEDBACK_LENGTH.toLocaleString()}
+									{details.length.toLocaleString()}/{MAX_FEEDBACK_LENGTH.toLocaleString()}
 								</p>
 							)}
+						</div>
+
+						<div className="space-y-2">
+							<label
+								htmlFor="feedback-additional-context"
+								className="text-sm font-medium"
+								style={{ color: theme.colors.textMain }}
+							>
+								Logs / Additional Context
+							</label>
+							<textarea
+								id="feedback-additional-context"
+								value={additionalContext}
+								onChange={(event) =>
+									setAdditionalContext(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))
+								}
+								disabled={isFormDisabled}
+								placeholder="Paste errors, worktree context, or anything else that helps triage."
+								className="w-full rounded border px-2 py-2 text-sm outline-none focus:ring-2 min-h-[110px] resize-y"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor: 'transparent',
+									boxShadow: `0 0 0 2px ${theme.colors.accent}10`,
+								}}
+								maxLength={MAX_FEEDBACK_LENGTH}
+							/>
 						</div>
 
 						<div className="space-y-2">

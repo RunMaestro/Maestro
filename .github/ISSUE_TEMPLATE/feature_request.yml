@@ -1,0 +1,114 @@
+name: Feature request
+description: Propose a new capability or workflow improvement for Maestro.
+title: 'Feature: '
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for feature requests and improvements. Be specific about the workflow gap and the outcome you want.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the request.
+      placeholder: Add a copy-diagnostics action for issue reporting
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_or_opportunity
+    attributes:
+      label: Problem or opportunity
+      description: What is missing or painful today?
+      placeholder: Filing actionable bug reports still requires manually collecting environment details and logs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired_outcome
+    attributes:
+      label: Desired outcome
+      description: What would success look like?
+      placeholder: A single action should copy a safe diagnostics block that matches the GitHub bug-report form.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: Optional. Share implementation ideas if you have them.
+      placeholder: Add a diagnostics exporter to the feedback modal and link it from the Help menu.
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Optional screenshots, examples, or workflows this would unblock.
+      placeholder: Include mockups, related issues, or workaround details.
+
+  - type: input
+    id: maestro_version
+    attributes:
+      label: Maestro version
+      description: Optional but helpful if this request is tied to a recent release.
+      placeholder: 0.15.3
+
+  - type: dropdown
+    id: operating_system
+    attributes:
+      label: Operating system
+      options:
+        - Not relevant
+        - macOS
+        - Windows
+        - Linux
+        - Other
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Install source
+      options:
+        - Not relevant
+        - Release build
+        - Dev build
+        - Packaged locally
+
+  - type: dropdown
+    id: product_area
+    attributes:
+      label: Product area
+      options:
+        - Local agent session
+        - SSH remote session
+        - Group chat
+        - Auto Run
+        - Symphony
+        - Desktop UI / shell
+        - Other / not sure
+
+  - type: dropdown
+    id: agent_provider
+    attributes:
+      label: Agent/provider involved
+      options:
+        - Not applicable
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Factory Droid
+        - Terminal
+        - Multiple
+
+  - type: dropdown
+    id: ssh_remote_enabled
+    attributes:
+      label: Is SSH remote execution part of this request?
+      options:
+        - Not relevant
+        - 'Yes'
+        - 'No'

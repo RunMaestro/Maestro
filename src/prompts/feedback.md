@@ -20,19 +20,28 @@ Do not ask for clarification. Use the text as-is and proceed.
 
 2. Write a concise GitHub issue title prefixed with the type, e.g., "Bug: ...".
 
-3. Write issue body with these sections:
+3. Write the issue body so it matches Maestro's structured intake shape:
 
-- Description
-- Expected vs Current Behavior
-- Steps to Reproduce (for bug reports; if unavailable, clearly note "Not provided")
-- Proposed Solution (for feature/improvement items)
-- Impact and Priority (brief)
+- Summary
+- Environment
+  - Maestro version
+  - Operating system
+  - Install source
+  - Agent/provider involved
+  - SSH remote execution
+- Steps to Reproduce (bug reports; if unavailable, clearly note "Not provided")
+- Expected Behavior (bug reports) or Desired Outcome (non-bug items)
+- Actual Behavior (bug reports) or Details (non-bug items)
+- Additional Context
+- Screenshots / Recordings
+
+If a section is not available from the feedback text, explicitly write `Not provided.`
 
 4. Ensure the `Maestro-feedback` label exists.
    First check whether it already exists.
    Only create it if it is missing.
 
-5. If the attachment context is not `None`, you MUST add a `## Screenshots` section to the issue body
+5. If the attachment context is not `None`, you MUST add a `## Screenshots / Recordings` section to the issue body
    and paste the provided markdown image lines exactly as given.
    Do not alter the alt text, URLs, or markdown formatting.
 

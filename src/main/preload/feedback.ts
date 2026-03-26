@@ -29,6 +29,25 @@ export interface FeedbackAttachmentPayload {
 	dataUrl: string;
 }
 
+export type FeedbackCategory =
+	| 'bug_report'
+	| 'feature_request'
+	| 'improvement'
+	| 'general_feedback';
+
+export interface FeedbackSubmissionPayload {
+	sessionId: string;
+	category: FeedbackCategory;
+	summary: string;
+	expectedBehavior: string;
+	details: string;
+	reproductionSteps?: string;
+	additionalContext?: string;
+	agentProvider?: string;
+	sshRemoteEnabled?: boolean;
+	attachments?: FeedbackAttachmentPayload[];
+}
+
 /**
  * Feedback API
  */
@@ -38,13 +57,9 @@ export interface FeedbackApi {
 	 */
 	checkGhAuth: () => Promise<FeedbackAuthResponse>;
 	/**
-	 * Submit user feedback to an active agent session
+	 * Submit structured user feedback and create a GitHub issue
 	 */
-	submit: (
-		sessionId: string,
-		feedbackText: string,
-		attachments?: FeedbackAttachmentPayload[]
-	) => Promise<FeedbackSubmitResponse>;
+	submit: (payload: FeedbackSubmissionPayload) => Promise<FeedbackSubmitResponse>;
 	composePrompt: (
 		feedbackText: string,
 		attachments?: FeedbackAttachmentPayload[]
@@ -54,16 +69,15 @@ export interface FeedbackApi {
 /**
  * Creates the feedback API object for preload exposure
  */
-export function createFeedbackApi() {
+export function createFeedbackApi(): FeedbackApi {
 	return {
 		checkGhAuth: (): Promise<FeedbackAuthResponse> => ipcRenderer.invoke('feedback:check-gh-auth'),
 
-		submit: (
-			sessionId: string,
-			feedbackText: string,
-			attachments: FeedbackAttachmentPayload[] = []
-		): Promise<FeedbackSubmitResponse> =>
-			ipcRenderer.invoke('feedback:submit', { sessionId, feedbackText, attachments }),
+		submit: (payload: FeedbackSubmissionPayload): Promise<FeedbackSubmitResponse> =>
+			ipcRenderer.invoke('feedback:submit', {
+				...payload,
+				attachments: payload.attachments ?? [],
+			}),
 
 		composePrompt: (
 			feedbackText: string,

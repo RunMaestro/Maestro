@@ -29,14 +29,23 @@ describe('Feedback Preload API', () => {
 
 	it('invokes feedback:submit with attachments payload', async () => {
 		mockInvoke.mockResolvedValue({ success: true });
-		const attachments = [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }];
+		const payload = {
+			sessionId: 'session-123',
+			category: 'bug_report' as const,
+			summary: 'Feedback modal crashes',
+			expectedBehavior: 'The issue should be created.',
+			details: 'The modal closes without creating an issue.',
+			reproductionSteps: '1. Open Feedback\n2. Click Send Feedback',
+			agentProvider: 'codex',
+			sshRemoteEnabled: false,
+			attachments: [{ name: 'bug.png', dataUrl: 'data:image/png;base64,abc123' }],
+		};
 
-		const result = await api.submit('session-123', 'Something broke', attachments);
+		const result = await api.submit(payload);
 
 		expect(mockInvoke).toHaveBeenCalledWith('feedback:submit', {
-			sessionId: 'session-123',
-			feedbackText: 'Something broke',
-			attachments,
+			...payload,
+			attachments: payload.attachments,
 		});
 		expect(result.success).toBe(true);
 	});

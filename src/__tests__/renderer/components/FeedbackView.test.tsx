@@ -92,7 +92,7 @@ describe('FeedbackView', () => {
 			/>
 		);
 
-		await screen.findByLabelText(/feedback/i);
+		await screen.findByLabelText(/summary/i);
 
 		const file = new File(['image-bytes'], 'bug.png', { type: 'image/png' });
 		fireEvent.drop(screen.getByTestId('feedback-attachment-dropzone'), {
@@ -105,21 +105,38 @@ describe('FeedbackView', () => {
 			expect(screen.getByText('bug.png')).toBeInTheDocument();
 		});
 
-		fireEvent.change(screen.getByLabelText(/feedback/i), {
+		fireEvent.change(screen.getByLabelText(/summary/i), {
+			target: { value: 'Feedback modal crashes' },
+		});
+		fireEvent.change(screen.getByLabelText(/steps to reproduce/i), {
+			target: { value: '1. Open Maestro\n2. Click Feedback\n3. Click Send Feedback' },
+		});
+		fireEvent.change(screen.getByLabelText(/expected behavior/i), {
+			target: { value: 'The issue should be created successfully.' },
+		});
+		fireEvent.change(screen.getByLabelText(/actual behavior/i), {
 			target: { value: 'The feedback modal crashes on open.' },
 		});
 		fireEvent.click(screen.getByRole('button', { name: /send feedback/i }));
 
 		await waitFor(() => {
 			expect(window.maestro.feedback.submit).toHaveBeenCalledWith(
-				'session-1',
-				'The feedback modal crashes on open.',
-				[
-					expect.objectContaining({
-						name: 'bug.png',
-						dataUrl: 'data:image/png;base64,mock-bug.png',
-					}),
-				]
+				expect.objectContaining({
+					sessionId: 'session-1',
+					category: 'bug_report',
+					summary: 'Feedback modal crashes',
+					expectedBehavior: 'The issue should be created successfully.',
+					details: 'The feedback modal crashes on open.',
+					reproductionSteps: '1. Open Maestro\n2. Click Feedback\n3. Click Send Feedback',
+					agentProvider: 'codex',
+					sshRemoteEnabled: false,
+					attachments: [
+						expect.objectContaining({
+							name: 'bug.png',
+							dataUrl: 'data:image/png;base64,mock-bug.png',
+						}),
+					],
+				})
 			);
 		});
 	});
@@ -146,13 +163,15 @@ describe('FeedbackView', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/no live or resumable ai sessions are available yet/i)).toBeInTheDocument();
+			expect(
+				screen.getByText(/no live or resumable ai sessions are available yet/i)
+			).toBeInTheDocument();
 		});
 
-		expect(screen.queryByLabelText(/feedback/i)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/summary/i)).not.toBeInTheDocument();
 	});
 
-	it('resumes a session with agent history when no live process is attached', async () => {
+	it('submits a feature request against a resumable session when no live process is attached', async () => {
 		window.maestro.process.getActiveProcesses.mockResolvedValue([]);
 
 		render(
@@ -166,17 +185,33 @@ describe('FeedbackView', () => {
 
 		const targetSelect = await screen.findByLabelText(/target agent/i);
 		expect(targetSelect).toHaveDisplayValue(/tester2 \(codex, will resume\)/i);
+		fireEvent.change(screen.getByLabelText(/issue type/i), {
+			target: { value: 'feature_request' },
+		});
 
-		fireEvent.change(screen.getByLabelText(/feedback/i), {
-			target: { value: 'Please file a bug for this issue.' },
+		fireEvent.change(screen.getByLabelText(/summary/i), {
+			target: { value: 'Add a diagnostics copy action' },
+		});
+		fireEvent.change(screen.getByLabelText(/desired outcome/i), {
+			target: { value: 'Users should be able to copy a diagnostics block directly.' },
+		});
+		fireEvent.change(screen.getByLabelText(/^details$/i), {
+			target: { value: 'Issue reporting still requires manually gathering environment details.' },
 		});
 		fireEvent.click(screen.getByRole('button', { name: /send feedback/i }));
 
 		await waitFor(() => {
 			expect(window.maestro.feedback.submit).toHaveBeenCalledWith(
-				'session-1',
-				'Please file a bug for this issue.',
-				[]
+				expect.objectContaining({
+					sessionId: 'session-1',
+					category: 'feature_request',
+					summary: 'Add a diagnostics copy action',
+					expectedBehavior: 'Users should be able to copy a diagnostics block directly.',
+					details: 'Issue reporting still requires manually gathering environment details.',
+					agentProvider: 'codex',
+					sshRemoteEnabled: false,
+					attachments: [],
+				})
 			);
 		});
 		expect(window.maestro.process.spawn).not.toHaveBeenCalled();

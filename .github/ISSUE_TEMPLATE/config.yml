@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Maestro troubleshooting guide
+    url: https://docs.runmaestro.ai/troubleshooting
+    about: Check the troubleshooting guide first for setup, auth, and environment issues.

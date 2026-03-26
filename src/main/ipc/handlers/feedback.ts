@@ -3,7 +3,7 @@
  *
  * This module handles:
  * - Checking GitHub CLI availability and authentication
- * - Submitting feedback text to the selected agent as a structured prompt
+ * - Creating structured GitHub issues from in-app feedback
  */
 
 import { ipcMain, app } from 'electron';
@@ -22,6 +22,10 @@ import { execFileNoThrow } from '../../utils/execFile';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
+const MAX_SUMMARY_LENGTH = 120;
+const MAX_FEEDBACK_FIELD_LENGTH = 5000;
+
+type FeedbackCategory = 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
 
 const GH_NOT_INSTALLED_MESSAGE =
 	'GitHub CLI (gh) is not installed. Install it from https://cli.github.com';
@@ -60,15 +64,159 @@ export interface FeedbackAttachmentInput {
 	dataUrl: string;
 }
 
+interface FeedbackSubmitPayload {
+	sessionId: string;
+	category: FeedbackCategory;
+	summary: string;
+	expectedBehavior: string;
+	details: string;
+	reproductionSteps?: string;
+	additionalContext?: string;
+	agentProvider?: string;
+	sshRemoteEnabled?: boolean;
+	attachments?: FeedbackAttachmentInput[];
+}
+
+interface FeedbackEnvironmentSummary {
+	maestroVersion: string;
+	operatingSystem: string;
+	installSource: string;
+	agentProvider: string;
+	sshRemoteExecution: string;
+}
+
+const FEEDBACK_CATEGORY_PREFIX: Record<FeedbackCategory, string> = {
+	bug_report: 'Bug',
+	feature_request: 'Feature',
+	improvement: 'Improvement',
+	general_feedback: 'Feedback',
+};
+
+function isFeedbackCategory(value: unknown): value is FeedbackCategory {
+	return (
+		value === 'bug_report' ||
+		value === 'feature_request' ||
+		value === 'improvement' ||
+		value === 'general_feedback'
+	);
+}
+
+function sanitizeTextInput(value: string): string {
+	return value
+		.replace(/\r\n/g, '\n')
+		.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+		.replace(/\n{4,}/g, '\n\n\n')
+		.trim();
+}
+
+function readRequiredField(
+	value: unknown,
+	fieldLabel: string,
+	maxLength: number
+): { value?: string; error?: string } {
+	if (typeof value !== 'string') {
+		return { error: `${fieldLabel} is required.` };
+	}
+
+	const sanitized = sanitizeTextInput(value);
+	if (!sanitized) {
+		return { error: `${fieldLabel} is required.` };
+	}
+	if (sanitized.length > maxLength) {
+		return { error: `${fieldLabel} exceeds the maximum length (${maxLength}).` };
+	}
+
+	return { value: sanitized };
+}
+
+function readOptionalField(
+	value: unknown,
+	fieldLabel: string,
+	maxLength: number
+): { value?: string; error?: string } {
+	if (value == null || value === '') {
+		return {};
+	}
+	if (typeof value !== 'string') {
+		return { error: `${fieldLabel} must be plain text.` };
+	}
+
+	const sanitized = sanitizeTextInput(value);
+	if (!sanitized) {
+		return {};
+	}
+	if (sanitized.length > maxLength) {
+		return { error: `${fieldLabel} exceeds the maximum length (${maxLength}).` };
+	}
+
+	return { value: sanitized };
+}
+
+function getPlatformLabel(platform: NodeJS.Platform): string {
+	switch (platform) {
+		case 'darwin':
+			return 'macOS';
+		case 'win32':
+			return 'Windows';
+		case 'linux':
+			return 'Linux';
+		default:
+			return platform;
+	}
+}
+
+function inferInstallSource(): string {
+	if (!app.isPackaged) {
+		return 'Dev build';
+	}
+
+	const execPath = process.execPath.toLowerCase();
+	if (execPath.includes('electron')) {
+		return 'Packaged locally';
+	}
+
+	return 'Packaged build (release build or locally packaged)';
+}
+
+function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnvironmentSummary {
+	const platformLabel = getPlatformLabel(process.platform);
+	const osVersion = typeof os.version === 'function' ? os.version() : '';
+	const release = os.release();
+	const operatingSystem = osVersion
+		? `${platformLabel} (${osVersion}, ${release})`
+		: `${platformLabel} (${release})`;
+
+	return {
+		maestroVersion: app.getVersion(),
+		operatingSystem,
+		installSource: inferInstallSource(),
+		agentProvider: payload.agentProvider?.trim() || 'Not provided',
+		sshRemoteExecution:
+			typeof payload.sshRemoteEnabled === 'boolean'
+				? payload.sshRemoteEnabled
+					? 'Enabled'
+					: 'Disabled'
+				: 'Not provided',
+	};
+}
+
 async function getGitHubLogin(): Promise<string> {
-	const result = await execFileNoThrow('gh', ['api', 'user', '--jq', '.login'], undefined, getExpandedEnv());
+	const result = await execFileNoThrow(
+		'gh',
+		['api', 'user', '--jq', '.login'],
+		undefined,
+		getExpandedEnv()
+	);
 	if (result.exitCode !== 0 || !result.stdout.trim()) {
 		throw new Error(result.stderr || 'Failed to resolve GitHub login.');
 	}
 	return result.stdout.trim();
 }
 
-function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): { base64: string; filename: string } {
+function parseAttachmentDataUrl(attachment: FeedbackAttachmentInput): {
+	base64: string;
+	filename: string;
+} {
 	const match = attachment.dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
 	if (!match) {
 		throw new Error(`Unsupported image data for ${attachment.name}.`);
@@ -131,7 +279,10 @@ async function uploadAttachments(
 		const { base64, filename } = parseAttachmentDataUrl(attachment);
 		const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '-');
 		const repoPath = `feedback/${Date.now()}-${index}-${safeFilename}`;
-		const payloadPath = path.join(os.tmpdir(), `maestro-feedback-upload-${Date.now()}-${index}.json`);
+		const payloadPath = path.join(
+			os.tmpdir(),
+			`maestro-feedback-upload-${Date.now()}-${index}.json`
+		);
 		await fs.writeFile(
 			payloadPath,
 			JSON.stringify({
@@ -211,26 +362,43 @@ async function ensureFeedbackLabel(): Promise<void> {
 	}
 }
 
-function buildIssueTitle(feedbackText: string): string {
-	const firstLine = feedbackText
-		.split('\n')
-		.map((line) => line.trim())
-		.find(Boolean);
-	const baseTitle = firstLine || 'Feedback submission';
-	const compact = baseTitle.replace(/\s+/g, ' ');
+function buildIssueTitle(category: FeedbackCategory, summary: string): string {
+	const compact = summary.replace(/\s+/g, ' ');
 	const trimmed = compact.length > 72 ? `${compact.slice(0, 69)}...` : compact;
-	return trimmed.toLowerCase().startsWith('bug:')
-		? trimmed
-		: `General feedback: ${trimmed}`;
+	return `${FEEDBACK_CATEGORY_PREFIX[category]}: ${trimmed}`;
 }
 
-function buildIssueBody(feedbackText: string, attachmentMarkdown: string): string {
-	const sections = [`## Description\n${feedbackText}`];
-	if (attachmentMarkdown !== 'None') {
-		sections.push(`## Screenshots\n${attachmentMarkdown}`);
+function buildEnvironmentSection(environment: FeedbackEnvironmentSummary): string {
+	return [
+		'## Environment',
+		`- Maestro version: ${environment.maestroVersion}`,
+		`- Operating system: ${environment.operatingSystem}`,
+		`- Install source: ${environment.installSource}`,
+		`- Agent/provider involved: ${environment.agentProvider}`,
+		`- SSH remote execution: ${environment.sshRemoteExecution}`,
+	].join('\n');
+}
+
+function buildIssueBody(
+	payload: FeedbackSubmitPayload,
+	environment: FeedbackEnvironmentSummary,
+	attachmentMarkdown: string
+): string {
+	const sections = [`## Summary\n${payload.summary}`, buildEnvironmentSection(environment)];
+
+	if (payload.category === 'bug_report') {
+		sections.push(`## Steps to Reproduce\n${payload.reproductionSteps || 'Not provided.'}`);
+		sections.push(`## Expected Behavior\n${payload.expectedBehavior}`);
+		sections.push(`## Actual Behavior\n${payload.details}`);
+	} else {
+		sections.push(`## Details\n${payload.details}`);
+		sections.push(`## Desired Outcome\n${payload.expectedBehavior}`);
 	}
-	sections.push('## Expected vs Current Behavior\nNot provided.');
-	sections.push('## Impact and Priority\nNot provided.');
+
+	sections.push(`## Additional Context\n${payload.additionalContext || 'Not provided.'}`);
+	sections.push(
+		`## Screenshots / Recordings\n${attachmentMarkdown !== 'None' ? attachmentMarkdown : 'Not provided.'}`
+	);
 	return sections.join('\n\n');
 }
 
@@ -284,30 +452,70 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		)
 	);
 
-	// Submit feedback by writing to an active process
+	// Submit feedback by creating a structured GitHub issue directly
 	ipcMain.handle(
 		'feedback:submit',
 		withIpcErrorLogging(
 			handlerOpts('submit'),
-			async ({
-				sessionId,
-				feedbackText,
-				attachments,
-			}: {
-				sessionId: string;
-				feedbackText: string;
-				attachments?: FeedbackAttachmentInput[];
-			}): Promise<{ success: boolean; error?: string }> => {
+			async (rawPayload: FeedbackSubmitPayload): Promise<{ success: boolean; error?: string }> => {
+				if (!rawPayload || typeof rawPayload !== 'object') {
+					return { success: false, error: 'Feedback payload is missing.' };
+				}
+
+				const { sessionId, category, agentProvider, sshRemoteEnabled, attachments } = rawPayload;
 				if (!sessionId || typeof sessionId !== 'string') {
 					return { success: false, error: 'No target agent was selected.' };
 				}
-
-				const trimmedFeedback = typeof feedbackText === 'string' ? feedbackText.trim() : '';
-				if (!trimmedFeedback) {
-					return { success: false, error: 'Feedback cannot be empty.' };
+				if (!isFeedbackCategory(category)) {
+					return { success: false, error: 'Feedback type is invalid.' };
 				}
-				if (trimmedFeedback.length > 5000) {
-					return { success: false, error: 'Feedback exceeds the maximum length (5000).' };
+
+				const summaryResult = readRequiredField(rawPayload.summary, 'Summary', MAX_SUMMARY_LENGTH);
+				if (summaryResult.error) {
+					return { success: false, error: summaryResult.error };
+				}
+
+				const expectedBehaviorResult = readRequiredField(
+					rawPayload.expectedBehavior,
+					category === 'bug_report' ? 'Expected behavior' : 'Desired outcome',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (expectedBehaviorResult.error) {
+					return { success: false, error: expectedBehaviorResult.error };
+				}
+
+				const detailsResult = readRequiredField(
+					rawPayload.details,
+					category === 'bug_report' ? 'Actual behavior' : 'Details',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (detailsResult.error) {
+					return { success: false, error: detailsResult.error };
+				}
+
+				const reproductionStepsResult =
+					category === 'bug_report'
+						? readRequiredField(
+								rawPayload.reproductionSteps,
+								'Steps to reproduce',
+								MAX_FEEDBACK_FIELD_LENGTH
+							)
+						: readOptionalField(
+								rawPayload.reproductionSteps,
+								'Steps to reproduce',
+								MAX_FEEDBACK_FIELD_LENGTH
+							);
+				if (reproductionStepsResult.error) {
+					return { success: false, error: reproductionStepsResult.error };
+				}
+
+				const additionalContextResult = readOptionalField(
+					rawPayload.additionalContext,
+					'Additional context',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (additionalContextResult.error) {
+					return { success: false, error: additionalContextResult.error };
 				}
 
 				const normalizedAttachments = Array.isArray(attachments)
@@ -319,11 +527,31 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 								attachment.dataUrl.startsWith('data:image/')
 						)
 					: [];
+				const normalizedPayload: FeedbackSubmitPayload = {
+					sessionId,
+					category,
+					summary: summaryResult.value!,
+					expectedBehavior: expectedBehaviorResult.value!,
+					details: detailsResult.value!,
+					reproductionSteps: reproductionStepsResult.value,
+					additionalContext: additionalContextResult.value,
+					agentProvider:
+						typeof agentProvider === 'string'
+							? sanitizeTextInput(agentProvider).slice(0, 80)
+							: undefined,
+					sshRemoteEnabled: typeof sshRemoteEnabled === 'boolean' ? sshRemoteEnabled : undefined,
+					attachments: normalizedAttachments,
+				};
 				const { markdown } = await uploadAttachments(normalizedAttachments);
 				await ensureFeedbackLabel();
+				const environment = buildEnvironmentSummary(normalizedPayload);
 
 				const bodyPath = path.join(os.tmpdir(), `maestro-feedback-body-${Date.now()}.md`);
-				await fs.writeFile(bodyPath, buildIssueBody(trimmedFeedback, markdown), 'utf8');
+				await fs.writeFile(
+					bodyPath,
+					buildIssueBody(normalizedPayload, environment, markdown),
+					'utf8'
+				);
 				const issueCreate = await execFileNoThrow(
 					'gh',
 					[
@@ -332,7 +560,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 						'-R',
 						'RunMaestro/Maestro',
 						'--title',
-						buildIssueTitle(trimmedFeedback),
+						buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
 						'--body-file',
 						bodyPath,
 						'--label',
