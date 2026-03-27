@@ -134,6 +134,26 @@ export const THEMES: Record<ThemeId, Theme> = {
 			error: '#fb4934',
 		},
 	},
+	'solarized-dark': {
+		id: 'solarized-dark',
+		name: 'Solarized Dark',
+		mode: 'dark',
+		colors: {
+			bgMain: '#002b36',
+			bgSidebar: '#073642',
+			bgActivity: '#0a4050',
+			border: '#2f4f56',
+			textMain: '#93a1a1',
+			textDim: '#657b83',
+			accent: '#268bd2',
+			accentDim: 'rgba(38, 139, 210, 0.2)',
+			accentText: '#5fddd5',
+			accentForeground: '#002b36',
+			success: '#859900',
+			warning: '#b58900',
+			error: '#dc322f',
+		},
+	},
 	// Light themes
 	'github-light': {
 		id: 'github-light',
