@@ -42,6 +42,7 @@ import { MarkdownImage } from './MarkdownImage';
 import { remarkHighlight } from './remarkHighlight';
 import { useFilePreviewSearch } from '../../hooks/file';
 import { FilePreviewHeader } from './FilePreviewHeader';
+import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
 
 export const FilePreview = React.memo(
@@ -1005,14 +1006,7 @@ export const FilePreview = React.memo(
 						</div>
 					)}
 					{isImage ? (
-						<div className="flex items-center justify-center h-full">
-							<img
-								src={file.content}
-								alt={file.name}
-								className="max-w-full max-h-full object-contain"
-								style={{ imageRendering: 'crisp-edges' }}
-							/>
-						</div>
+						<ImageViewer src={file.content} alt={file.name} theme={theme} />
 					) : isBinary ? (
 						<div className="flex flex-col items-center justify-center h-full gap-4">
 							<FileCode className="w-16 h-16" style={{ color: theme.colors.textDim }} />
