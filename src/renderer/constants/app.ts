@@ -102,16 +102,36 @@ export const OPENCODE_BUILTIN_COMMANDS: Record<string, string> = {
 };
 
 /**
+ * Built-in GitHub Copilot CLI slash commands with their descriptions
+ */
+export const COPILOT_BUILTIN_COMMANDS: Record<string, string> = {
+	help: 'Show available commands and their usage',
+	clear: 'Clear conversation history and start fresh',
+	compact: 'Summarize conversation to reduce context usage',
+	context: 'Show current context window and token usage',
+	model: 'Switch to a different AI model',
+	usage: 'Show token and premium request usage',
+	session: 'Display session details and metrics',
+	share: 'Export session as markdown or Gist',
+	mcp: 'Manage MCP server configurations',
+	fleet: 'Run tasks in parallel with multiple subagents',
+	tasks: 'Monitor and manage fleet subtask progress',
+	delegate: 'Delegate a task to another Copilot agent',
+	review: 'Review code changes',
+};
+
+/**
  * Agent-specific built-in command maps, keyed by agent ID
  */
 const AGENT_BUILTIN_COMMANDS: Record<string, Record<string, string>> = {
 	'claude-code': CLAUDE_BUILTIN_COMMANDS,
 	opencode: OPENCODE_BUILTIN_COMMANDS,
+	copilot: COPILOT_BUILTIN_COMMANDS,
 };
 
 /**
  * Get description for agent slash commands.
- * Checks all known agent built-in command maps, then falls back to generic description.
+ * Checks agent-specific built-in command maps first, then falls back to generic description.
  */
 export function getSlashCommandDescription(cmd: string, agentId?: string): string {
 	// Remove leading slash if present
@@ -122,12 +142,10 @@ export function getSlashCommandDescription(cmd: string, agentId?: string): strin
 		return AGENT_BUILTIN_COMMANDS[agentId][cmdName];
 	}
 
-	// Check all agent command maps only when no specific agent was requested
-	if (!agentId) {
-		for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
-			if (commands[cmdName]) {
-				return commands[cmdName];
-			}
+	// Check all agent command maps (for backwards compatibility when agentId is not provided)
+	for (const commands of Object.values(AGENT_BUILTIN_COMMANDS)) {
+		if (commands[cmdName]) {
+			return commands[cmdName];
 		}
 	}
 

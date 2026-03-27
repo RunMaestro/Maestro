@@ -71,6 +71,19 @@ describe('agent-definitions', () => {
 			expect(opencode?.noPromptSeparator).toBeUndefined();
 		});
 
+		it('should have copilot configured to use a PTY for interactive sessions', () => {
+			const copilot = AGENT_DEFINITIONS.find((def) => def.id === 'copilot');
+			expect(copilot).toBeDefined();
+			expect(copilot?.requiresPty).toBe(true);
+			expect(copilot?.jsonOutputArgs).toEqual(['--output-format', 'json']);
+			expect(copilot?.readOnlyArgs).toEqual([
+				'--allow-tool=read,url',
+				'--deny-tool=write,shell,memory,github',
+				'--no-ask-user',
+			]);
+			expect(copilot?.readOnlyCliEnforced).toBe(true);
+		});
+
 		it('should have opencode with default env vars for YOLO mode and disabled question tool', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode?.defaultEnvVars).toBeDefined();
@@ -196,6 +209,14 @@ describe('agent-definitions', () => {
 			expect(args).toEqual(['-C', '/path/to/project']);
 		});
 
+		it('should use = syntax for Copilot resume args', () => {
+			const copilot = getAgentDefinition('copilot');
+			expect(copilot?.resumeArgs).toBeDefined();
+
+			const args = copilot?.resumeArgs?.('session-789');
+			expect(args).toEqual(['--resume=session-789']);
+		});
+
 		it('should have imageArgs function for codex', () => {
 			const codex = getAgentDefinition('codex');
 			expect(codex?.imageArgs).toBeDefined();
@@ -210,6 +231,18 @@ describe('agent-definitions', () => {
 
 			const args = opencode?.imageArgs?.('/path/to/image.png');
 			expect(args).toEqual(['-f', '/path/to/image.png']);
+		});
+
+		it('should embed Copilot images into prompts using @mentions', () => {
+			const copilot = getAgentDefinition('copilot');
+			expect(copilot?.imagePromptBuilder).toBeDefined();
+
+			const promptPrefix = copilot?.imagePromptBuilder?.([
+				'/tmp/screenshot-1.png',
+				'/tmp/screenshot-2.jpg',
+			]);
+			expect(promptPrefix).toContain('@/tmp/screenshot-1.png');
+			expect(promptPrefix).toContain('@/tmp/screenshot-2.jpg');
 		});
 	});
 
@@ -239,6 +272,32 @@ describe('agent-definitions', () => {
 			expect(modelOption?.argBuilder?.('ollama/qwen3:8b')).toEqual(['--model', 'ollama/qwen3:8b']);
 			expect(modelOption?.argBuilder?.('')).toEqual([]);
 			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
+		});
+
+		it('should have Copilot-specific config options for supported CLI flags', () => {
+			const copilot = getAgentDefinition('copilot');
+			expect(copilot?.configOptions).toBeDefined();
+
+			const reasoningEffort = copilot?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
+			expect(reasoningEffort?.type).toBe('select');
+			expect(reasoningEffort?.argBuilder?.('high')).toEqual(['--reasoning-effort', 'high']);
+
+			const autopilot = copilot?.configOptions?.find((opt) => opt.key === 'autopilot');
+			expect(autopilot?.type).toBe('checkbox');
+			expect(autopilot?.argBuilder?.(true)).toEqual(['--autopilot']);
+			expect(autopilot?.argBuilder?.(false)).toEqual([]);
+
+			const allowAllPaths = copilot?.configOptions?.find((opt) => opt.key === 'allowAllPaths');
+			expect(allowAllPaths?.argBuilder?.(true)).toEqual(['--allow-all-paths']);
+
+			const allowAllUrls = copilot?.configOptions?.find((opt) => opt.key === 'allowAllUrls');
+			expect(allowAllUrls?.argBuilder?.(true)).toEqual(['--allow-all-urls']);
+
+			const experimental = copilot?.configOptions?.find((opt) => opt.key === 'experimental');
+			expect(experimental?.argBuilder?.(true)).toEqual(['--experimental']);
+
+			const screenReader = copilot?.configOptions?.find((opt) => opt.key === 'screenReader');
+			expect(screenReader?.argBuilder?.(true)).toEqual(['--screen-reader']);
 		});
 	});
 

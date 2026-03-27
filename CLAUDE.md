@@ -102,13 +102,14 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 
 ### Supported Agents
 
-| ID              | Name          | Status     |
-| --------------- | ------------- | ---------- |
-| `claude-code`   | Claude Code   | **Active** |
-| `codex`         | OpenAI Codex  | **Active** |
-| `opencode`      | OpenCode      | **Active** |
-| `factory-droid` | Factory Droid | **Active** |
-| `terminal`      | Terminal      | Internal   |
+| ID              | Name           | Status     |
+| --------------- | -------------- | ---------- |
+| `claude-code`   | Claude Code    | **Active** |
+| `codex`         | OpenAI Codex   | **Active** |
+| `opencode`      | OpenCode       | **Active** |
+| `factory-droid` | Factory Droid  | **Active** |
+| `copilot`       | GitHub Copilot | **Beta**   |
+| `terminal`      | Terminal       | Internal   |
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
 

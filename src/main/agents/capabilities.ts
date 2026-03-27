@@ -397,6 +397,39 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
 	},
+
+	/**
+	 * GitHub Copilot CLI - AI coding assistant from GitHub
+	 * https://github.com/github/copilot-cli
+	 *
+	 * Capabilities based on verified CLI help output (copilot --help).
+	 * Conservative approach: only mark capabilities as true if explicitly verified.
+	 */
+	copilot: {
+		supportsResume: true, // --continue, --resume[=sessionId]
+		supportsReadOnlyMode: true, // Maestro enforces read-only via Copilot's CLI tool permission rules
+		supportsJsonOutput: true, // --output-format json (JSONL)
+		supportsSessionId: true, // result event includes sessionId
+		supportsImageInput: true, // Copilot supports @file/@image mentions; Maestro maps uploads to temp-file mentions
+		supportsImageInputOnResume: true, // Prompt-based @image mentions work for resumed sessions as well
+		supportsSlashCommands: true, // Interactive mode supports slash commands
+		supportsSessionStorage: true, // ~/.copilot/session-state/<session-id>/
+		supportsCostTracking: false, // Not verified
+		supportsUsageStats: true, // session.shutdown event includes modelMetrics with per-model token counts
+		supportsBatchMode: true, // -p, --prompt <text> for batch mode
+		requiresPromptToStart: false, // Default interactive mode works without prompt, -i flag allows initial prompt
+		supportsStreaming: true, // Streams assistant/tool execution events as JSONL
+		supportsResultMessages: true, // assistant.message with phase=final_answer
+		supportsModelSelection: true, // --model <model>
+		supportsStreamJsonInput: false, // Not verified
+		supportsThinkingDisplay: true, // assistant.reasoning events are rendered through Maestro's thinking-chunk pipeline
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Wizard structured output works with Copilot JSON final_answer events
+		supportsGroupChatModeration: true, // Group chat moderation uses the standard batch-mode orchestration path
+		usesJsonLineOutput: true, // --output-format json produces JSONL
+		usesCombinedContextWindow: false, // Default Copilot model is Claude Sonnet; model-specific behavior varies
+	},
 };
 
 /**

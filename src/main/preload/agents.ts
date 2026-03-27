@@ -31,6 +31,14 @@ export interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsThinkingDisplay: boolean;
+	supportsContextMerge: boolean;
+	supportsContextExport: boolean;
+	supportsWizard: boolean;
+	supportsGroupChatModeration: boolean;
+	usesJsonLineOutput: boolean;
+	usesCombinedContextWindow: boolean;
+	imageResumeMode?: 'prompt-embed';
 }
 
 /**
@@ -173,14 +181,14 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:getModels', agentId, forceRefresh, sshRemoteId),
 
 		/**
-		 * Discover available slash commands for an agent.
-		 * Returns objects with name and optional prompt for all agents.
+		 * Discover available slash commands for an agent by spawning it briefly
+		 * Returns array of command names (e.g., ['compact', 'help', 'my-custom-command'])
 		 */
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
 			customPath?: string
-		): Promise<{ name: string; prompt?: string }[] | null> =>
+		): Promise<string[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath),
 	};
 }

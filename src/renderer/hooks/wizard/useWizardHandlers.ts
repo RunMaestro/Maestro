@@ -180,7 +180,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			.getState()
 			.sessions.find((s) => s.id === activeSession?.id);
 		if (!currentSession) return;
-		if (currentSession.toolType !== 'claude-code' && currentSession.toolType !== 'opencode') return;
+		if (
+			currentSession.toolType !== 'claude-code' &&
+			currentSession.toolType !== 'opencode' &&
+			currentSession.toolType !== 'copilot'
+		)
+			return;
 		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
 
 		const sessionId = currentSession.id;

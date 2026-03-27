@@ -19,7 +19,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ### Major 0.15.x Additions
 
-🎶 **Maestro Symphony** — Contribute to open source with AI assistance! Browse curated issues from projects with the `runmaestro.ai` label, clone repos with one click, and automatically process the relevant Auto Run playbooks. Track your contributions, streaks, and stats. You're contributing CPU and tokens towards your favorite open source projects and features.
+🎶 **Maestro Symphony** — Contribute to open source with AI assistance! Browse curated issues from projects with the `runmaestro.ai` label, clone repos with one click, and automatically process the relevant Auto Run playbooks. Track your contributions, streaks, and stats. You're contributing CPU and tokens towards your favorite open-source projects and features.
 
 🎬 **Director's Notes** — Aggregates history across all agents into a unified timeline with search, filters, and an activity graph. Includes an AI Overview tab that generates a structured synopsis of recent work. Off by default, gated behind a new "Encore Features" panel under settings. This is a precursor to an eventual plugin system, allowing for extensions and customizations without bloating the core app.
 
@@ -29,7 +29,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 🤖 **Factory.ai Droid Support** — Added support for the [Factory.ai](https://factory.ai/product/cli) droid agent. Full session management and output parsing integration.
 
-## Change in v0.15.2
+### Changes in v0.15.2
 
 Patch release with bug fixes, UX improvements, and cherry-picks from the 0.16.0 RC.
 
@@ -179,7 +179,7 @@ The big changes in the v0.12.x line are the following three:
 
 ### Context Management Tools
 
-📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will received (configurable) warnings at 60% and 80% context consumption with a hint to compact.
+📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will receive (configurable) warnings at 60% and 80% context consumption with a hint to compact.
 
 ## Changes Specific to v0.12.3:
 
@@ -200,7 +200,7 @@ The big changes in the v0.12.x line are the following three:
 
 **Latest: v0.11.0** | Released December 22, 2025
 
-🌳 Github Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
+🌳 GitHub Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
 
 ### Other Changes
 
@@ -239,7 +239,7 @@ The big changes in the v0.12.x line are the following three:
 
 ### Changes
 
-- Add Sentry crashing reporting monitoring with opt-out 🐛
+- Added Sentry crash reporting with opt-out 🐛
 - Stability fixes on v0.9.0 along with all the changes it brought along, including...
   - Major refactor to enable supporting of multiple providers 👨‍👩‍👧‍👦
   - Added OpenAI Codex support 👨‍💻
@@ -265,7 +265,7 @@ The big changes in the v0.12.x line are the following three:
 - Implemented fuzzy file search in quick actions for instant navigation 🔍
 - Added "clear" command support to clean terminal shell logs 🧹
 - Simplified search highlighting by integrating into markdown pipeline ✨
-- Enhanced update checker to filter prerelease tags like -rc, -beta 🚀
+- Enhanced update checker to filter pre-release tags like -rc, -beta 🚀
 - Fixed RPM package compatibility for OpenSUSE Tumbleweed 🐧 (H/T @JOduMonT)
 - Added libuuid1 support alongside standard libuuid dependency 📦
 - Introduced Cmd+Shift+U shortcut for tab unread toggle ⌨️

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
+import fs from 'fs/promises';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
 import {
@@ -371,6 +372,185 @@ describe('CodexSessionStorage', () => {
 	});
 });
 
+describe('CopilotSessionStorage', () => {
+	let originalCopilotConfigDir: string | undefined;
+	const copilotSessionStateDir = path.join(
+		'/tmp/maestro-session-storage-home',
+		'.copilot',
+		'session-state'
+	);
+
+	async function writeCopilotSessionFixture(
+		sessionId: string,
+		workspaceContent: string,
+		eventsContent?: string
+	): Promise<void> {
+		const sessionDir = path.join(copilotSessionStateDir, sessionId);
+		await fs.mkdir(sessionDir, { recursive: true });
+		await fs.writeFile(path.join(sessionDir, 'workspace.yaml'), workspaceContent, 'utf8');
+		if (eventsContent !== undefined) {
+			await fs.writeFile(path.join(sessionDir, 'events.jsonl'), eventsContent, 'utf8');
+		}
+	}
+
+	beforeEach(async () => {
+		originalCopilotConfigDir = process.env.COPILOT_CONFIG_DIR;
+		delete process.env.COPILOT_CONFIG_DIR;
+		await fs.rm(path.join('/tmp/maestro-session-storage-home', '.copilot'), {
+			recursive: true,
+			force: true,
+		});
+	});
+
+	afterEach(async () => {
+		await fs.rm(path.join('/tmp/maestro-session-storage-home', '.copilot'), {
+			recursive: true,
+			force: true,
+		});
+		if (originalCopilotConfigDir === undefined) {
+			delete process.env.COPILOT_CONFIG_DIR;
+		} else {
+			process.env.COPILOT_CONFIG_DIR = originalCopilotConfigDir;
+		}
+	});
+
+	it('should be importable', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		expect(CopilotSessionStorage).toBeDefined();
+	});
+
+	it('should have copilot as agentId', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+		expect(storage.agentId).toBe('copilot');
+	});
+
+	it('should return empty results for non-existent projects', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessions = await storage.listSessions('/test/nonexistent/project');
+		expect(sessions).toEqual([]);
+
+		const messages = await storage.readSessionMessages('/test/nonexistent/project', 'session-123');
+		expect(messages.messages).toEqual([]);
+		expect(messages.total).toBe(0);
+	});
+
+	it('should return local events path for getSessionPath', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessionPath = storage.getSessionPath('/test/project', 'session-123');
+		expect(sessionPath).toContain('.copilot');
+		expect(sessionPath).toContain('session-state');
+		expect(sessionPath).toContain('session-123');
+		expect(sessionPath).toContain('events.jsonl');
+	});
+
+	it('should return remote events path for getSessionPath with sshConfig', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const sessionPath = storage.getSessionPath('/test/project', 'session-123', {
+			id: 'test-ssh',
+			name: 'Test SSH Server',
+			host: 'test-server.example.com',
+			port: 22,
+			username: 'testuser',
+			useSshConfig: false,
+			enabled: true,
+		});
+		expect(sessionPath).toBe('~/.copilot/session-state/session-123/events.jsonl');
+	});
+
+	it('should report delete as unsupported', async () => {
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+
+		const result = await storage.deleteMessagePair('/test/project', 'session-123', 'uuid-456');
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('not supported');
+	});
+
+	it('should parse camelCase workspace metadata keys when loading sessions', async () => {
+		await writeCopilotSessionFixture(
+			'session-camel',
+			[
+				'id: session-camel',
+				'cwd: /test/project',
+				'gitRoot: /test/project',
+				'createdAt: 2026-03-13T00:00:00.000Z',
+				'updatedAt: 2026-03-13T00:05:00.000Z',
+				'summary: Camel case metadata',
+			].join('\n'),
+			[
+				JSON.stringify({
+					type: 'user.message',
+					id: 'user-1',
+					timestamp: '2026-03-13T00:00:00.000Z',
+					data: { content: 'Hello from Copilot' },
+				}),
+			].join('\n')
+		);
+
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+		const sessions = await storage.listSessions('/test/project');
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]).toEqual(
+			expect.objectContaining({
+				sessionId: 'session-camel',
+				projectPath: '/test/project',
+				timestamp: '2026-03-13T00:00:00.000Z',
+				modifiedAt: '2026-03-13T00:05:00.000Z',
+				firstMessage: 'Hello from Copilot',
+				messageCount: 1,
+			})
+		);
+	});
+
+	it('should skip missing, empty, and malformed Copilot event logs', async () => {
+		await writeCopilotSessionFixture(
+			'session-valid',
+			['id: session-valid', 'cwd: /test/project', 'git_root: /test/project'].join('\n'),
+			[
+				JSON.stringify({
+					type: 'assistant.message',
+					id: 'assistant-1',
+					timestamp: '2026-03-13T00:00:00.000Z',
+					data: { content: 'Ready', phase: 'final_answer' },
+				}),
+			].join('\n')
+		);
+
+		await writeCopilotSessionFixture(
+			'session-empty',
+			['id: session-empty', 'cwd: /test/project', 'git_root: /test/project'].join('\n'),
+			'   \n'
+		);
+
+		await writeCopilotSessionFixture(
+			'session-malformed',
+			['id: session-malformed', 'cwd: /test/project', 'git_root: /test/project'].join('\n'),
+			'not-json\nstill-not-json\n'
+		);
+
+		await writeCopilotSessionFixture(
+			'session-missing-events',
+			['id: session-missing-events', 'cwd: /test/project', 'git_root: /test/project'].join('\n')
+		);
+
+		const { CopilotSessionStorage } = await import('../../../main/storage/copilot-session-storage');
+		const storage = new CopilotSessionStorage();
+		const sessions = await storage.listSessions('/test/project');
+
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sessionId).toBe('session-valid');
+	});
+});
+
 describe('Storage Module Initialization', () => {
 	it('should export initializeSessionStorages function', async () => {
 		const { initializeSessionStorages } = await import('../../../main/storage/index');
@@ -453,7 +633,6 @@ describe('CodexSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
-		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -796,7 +975,6 @@ describe('OpenCodeSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
-		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1111,7 +1289,6 @@ describe('FactoryDroidSessionStorage SSH Remote Support', () => {
 		host: 'test-server.example.com',
 		port: 22,
 		username: 'testuser',
-		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1558,7 +1735,6 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: 'dev-server.internal.example.com',
 		port: 22,
 		username: 'developer',
-		privateKeyPath: '',
 		useSshConfig: true,
 		enabled: true,
 	};
@@ -1570,7 +1746,6 @@ describe('SSH Config Integration Flow Verification', () => {
 		host: '192.168.1.100',
 		port: 2222,
 		username: 'admin',
-		privateKeyPath: '',
 		useSshConfig: false,
 		enabled: true,
 	};
@@ -1832,7 +2007,6 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'full.example.com',
 				port: 22,
 				username: 'fulluser',
-				privateKeyPath: '',
 				useSshConfig: true,
 				enabled: true,
 			};
@@ -1860,7 +2034,6 @@ describe('SSH Config Integration Flow Verification', () => {
 				host: 'min.example.com',
 				port: 22,
 				username: 'user',
-				privateKeyPath: '',
 				useSshConfig: false,
 				enabled: true,
 			};

@@ -29,6 +29,35 @@ const handlerOpts = (
 	operation,
 });
 
+// Copilot CLI built-in slash commands (always available in interactive mode)
+const COPILOT_BUILTIN_COMMANDS = [
+	'help',
+	'clear',
+	'compact',
+	'context',
+	'model',
+	'usage',
+	'session',
+	'share',
+	'mcp',
+	'fleet',
+	'tasks',
+	'delegate',
+	'review',
+];
+
+/**
+ * Discover GitHub Copilot CLI slash commands.
+ *
+ * Unlike Claude Code (which emits commands via its init JSON event), Copilot
+ * commands are interactive-only and cannot be discovered by spawning the CLI
+ * in batch mode.  We return a static list of well-documented built-in commands.
+ */
+function discoverCopilotSlashCommands(): { name: string; description: string }[] {
+	logger.info(`Discovered ${COPILOT_BUILTIN_COMMANDS.length} Copilot slash commands`, LOG_CONTEXT);
+	return COPILOT_BUILTIN_COMMANDS.map((cmd) => ({ name: cmd, description: '' }));
+}
+
 /**
  * Discover OpenCode slash commands by reading from disk.
  *
@@ -223,7 +252,7 @@ function getSshRemoteById(
  * Helper to strip non-serializable functions from agent configs.
  * Agent configs can have function properties that cannot be sent over IPC:
  * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, promptArgs on the agent config
+ * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
  */
 function stripAgentFunctions(agent: any) {
 	if (!agent) return null;
@@ -234,6 +263,7 @@ function stripAgentFunctions(agent: any) {
 		modelArgs: _modelArgs,
 		workingDirArgs: _workingDirArgs,
 		imageArgs: _imageArgs,
+		imagePromptBuilder: _imagePromptBuilder,
 		promptArgs: _promptArgs,
 		...serializableAgent
 	} = agent;
@@ -1005,6 +1035,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return discoverOpenCodeSlashCommands(cwd);
 				}
 
+				if (agentId === 'copilot') {
+					return discoverCopilotSlashCommands();
+				}
+
+				// Only Claude Code supports slash command discovery via init message
 				if (agentId !== 'claude-code') {
 					logger.debug(`Agent ${agentId} does not support slash command discovery`, LOG_CONTEXT);
 					return null;

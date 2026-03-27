@@ -94,6 +94,7 @@ export interface AgentConfig {
 	yoloModeArgs?: string[]; // Args for YOLO/full-access mode (e.g., ['--dangerously-bypass-approvals-and-sandbox'])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
+	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
@@ -400,6 +401,112 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		binaryName: 'aider',
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
+	},
+	{
+		id: 'copilot',
+		name: 'GitHub Copilot',
+		binaryName: 'copilot',
+		command: 'copilot',
+		args: [], // Base args for interactive mode (default copilot)
+		requiresPty: true, // Interactive Copilot exits immediately when launched over plain pipes without a TTY
+		// GitHub Copilot CLI argument builders
+		// Interactive mode: copilot (default)
+		// Interactive with initial prompt: copilot -i "prompt"
+		// Batch mode: copilot -p "prompt" (or --prompt "prompt")
+		// Silent/non-interactive: -s, --silent
+		batchModePrefix: [], // No exec subcommand needed
+		batchModeArgs: ['--allow-all-tools', '--silent'], // Non-interactive mode requires tool auto-approval
+		jsonOutputArgs: ['--output-format', 'json'], // JSONL output
+		resumeArgs: (sessionId: string) => [`--resume=${sessionId}`], // Resume with session ID (--continue or --resume=sessionId)
+		readOnlyArgs: [
+			'--allow-tool=read,url',
+			'--deny-tool=write,shell,memory,github',
+			'--no-ask-user',
+		], // Enforce read-only by denying write/shell/memory/github actions at the Copilot CLI layer
+		readOnlyCliEnforced: true, // CLI-enforced via explicit tool permission rules
+		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
+		yoloModeArgs: ['--allow-all-tools'], // Auto-approve all tools (--allow-all-tools or --allow-all)
+		imagePromptBuilder: (imagePaths: string[]) =>
+			imagePaths.length > 0
+				? `Use these attached images as context:\n${imagePaths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`
+				: '',
+		promptArgs: (prompt: string) => ['-p', prompt], // Batch mode prompt arg
+		// Agent-specific configuration options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., claude-sonnet-4.6, gpt-5.3-codex). Leave empty for default.',
+				default: '', // Empty = use Copilot's default model
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000, // Default for Claude/GPT-5 models
+			},
+			{
+				key: 'reasoningEffort',
+				type: 'select',
+				label: 'Reasoning Effort',
+				description: 'Control how much deliberate reasoning Copilot uses before responding.',
+				options: ['', 'low', 'medium', 'high', 'xhigh'],
+				default: '',
+				argBuilder: (value: string) =>
+					value && value.trim() ? ['--reasoning-effort', value.trim()] : [],
+			},
+			{
+				key: 'autopilot',
+				type: 'checkbox',
+				label: 'Autopilot',
+				description: 'Allow Copilot to continue with follow-up turns automatically in prompt mode.',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--autopilot'] : []),
+			},
+			{
+				key: 'allowAllPaths',
+				type: 'checkbox',
+				label: 'Allow All Paths',
+				description:
+					'Disable file path verification and allow access to any path without prompting.',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--allow-all-paths'] : []),
+			},
+			{
+				key: 'allowAllUrls',
+				type: 'checkbox',
+				label: 'Allow All URLs',
+				description: 'Allow network access to any URL without prompting.',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--allow-all-urls'] : []),
+			},
+			{
+				key: 'experimental',
+				type: 'checkbox',
+				label: 'Experimental Features',
+				description: 'Enable Copilot CLI experimental features for this agent.',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--experimental'] : []),
+			},
+			{
+				key: 'screenReader',
+				type: 'checkbox',
+				label: 'Screen Reader Mode',
+				description: 'Enable Copilot CLI screen reader optimizations.',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--screen-reader'] : []),
+			},
+		],
 	},
 ];
 

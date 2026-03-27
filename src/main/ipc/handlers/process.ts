@@ -564,12 +564,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							// File-based image agents (Codex, OpenCode): pass images for remote temp file creation
 							// Also needed for resume-with-prompt-embed (still creates temp files, just no -i args)
 							images:
-								hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
+								hasImages &&
+								(agent?.imageArgs || agent?.imagePromptBuilder) &&
+								!agent?.capabilities?.supportsStreamJsonInput
 									? config.images
 									: undefined,
 							imageArgs:
 								hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
 									? agent.imageArgs
+									: undefined,
+							imagePromptBuilder:
+								hasImages &&
+								agent?.imagePromptBuilder &&
+								!agent?.capabilities?.supportsStreamJsonInput
+									? agent.imagePromptBuilder
 									: undefined,
 							// Signal resume mode for prompt embedding instead of -i CLI args
 							imageResumeMode: isResumeWithImages ? 'prompt-embed' : undefined,
@@ -634,6 +642,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					// When using SSH, env vars are passed in the stdin script, not locally
 					customEnvVars: customEnvVarsToPass,
 					imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
+					imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 					promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 					noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 					// Stats tracking: use cwd as projectPath if not explicitly provided
