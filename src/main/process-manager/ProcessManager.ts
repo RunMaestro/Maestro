@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
+import { AcpSpawner } from './spawners/AcpSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
@@ -23,7 +24,7 @@ import type { SshRemoteConfig } from '../../shared/types';
  * ProcessManager orchestrates spawning and managing processes for sessions.
  *
  * Responsibilities:
- * - Spawn PTY and child processes
+ * - Spawn PTY, child processes, and ACP processes
  * - Route data events from processes
  * - Provide process lifecycle management (write, resize, interrupt, kill)
  * - Execute commands (local and SSH remote)
@@ -33,6 +34,7 @@ export class ProcessManager extends EventEmitter {
 	private bufferManager: DataBufferManager;
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
+	private acpSpawner: AcpSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
@@ -41,14 +43,38 @@ export class ProcessManager extends EventEmitter {
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
+		this.acpSpawner = new AcpSpawner(this.processes, this);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 	}
 
 	/**
-	 * Spawn a new process for a session
+	 * Spawn a new process for a session.
+	 * Routes to appropriate spawner based on config:
+	 * - ACP mode: AcpSpawner (async)
+	 * - PTY mode: PtySpawner
+	 * - Default: ChildProcessSpawner
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
+		// ACP mode requires async spawning, but we maintain sync interface
+		// for backwards compatibility. The caller should use spawnAsync for ACP.
+		if (config.useACP) {
+			logger.warn(
+				'[ProcessManager] spawn() called with useACP=true, use spawnAsync() instead',
+				'ProcessManager',
+				{ sessionId: config.sessionId }
+			);
+			// Start async spawn but return immediately
+			// The actual result will come via events
+			this.spawnAsync(config).catch((error) => {
+				logger.error('[ProcessManager] ACP spawn failed', 'ProcessManager', {
+					sessionId: config.sessionId,
+					error: String(error),
+				});
+			});
+			return { pid: -1, success: true }; // Placeholder until async completes
+		}
+
 		const usePty = this.shouldUsePty(config);
 
 		if (usePty) {
@@ -56,6 +82,19 @@ export class ProcessManager extends EventEmitter {
 		} else {
 			return this.childProcessSpawner.spawn(config);
 		}
+	}
+
+	/**
+	 * Spawn a new process asynchronously.
+	 * Required for ACP mode which involves async initialization.
+	 */
+	async spawnAsync(config: ProcessConfig): Promise<SpawnResult> {
+		if (config.useACP) {
+			return this.acpSpawner.spawn(config);
+		}
+
+		// For non-ACP, delegate to sync spawn
+		return this.spawn(config);
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {
@@ -82,6 +121,15 @@ export class ProcessManager extends EventEmitter {
 					process.lastCommand = command.trim();
 				}
 				process.ptyProcess.write(data);
+				return true;
+			} else if (process.acpProcess) {
+				// ACP mode: write is async, fire and forget
+				process.acpProcess.write(data).catch((error) => {
+					logger.error('[ProcessManager] ACP write failed', 'ProcessManager', {
+						sessionId,
+						error: String(error),
+					});
+				});
 				return true;
 			} else if (process.childProcess?.stdin) {
 				process.childProcess.stdin.write(data);
@@ -132,6 +180,10 @@ export class ProcessManager extends EventEmitter {
 		try {
 			if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.write('\x03');
+				return true;
+			} else if (process.acpProcess) {
+				// ACP mode: use the cancel method
+				process.acpProcess.interrupt();
 				return true;
 			} else if (process.childProcess) {
 				const child = process.childProcess;
@@ -206,6 +258,9 @@ export class ProcessManager extends EventEmitter {
 
 			if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.kill();
+			} else if (process.acpProcess) {
+				// ACP mode: use the kill method
+				process.acpProcess.kill();
 			} else if (process.childProcess) {
 				const pid = process.childProcess.pid;
 				if (isWindows() && pid) {

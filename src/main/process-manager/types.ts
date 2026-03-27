@@ -36,6 +36,19 @@ export interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** If true, use ACP (Agent Client Protocol) for communication */
+	useACP?: boolean;
+	/** If true, show streaming output in ACP mode (default: true) */
+	acpShowStreaming?: boolean;
+	/** ACP session ID for resuming a session */
+	acpSessionId?: string;
+	/**
+	 * ACP-specific arguments that enable the agent's ACP mode.
+	 * These are prepended before any custom args.
+	 * Examples: ['acp'] for OpenCode, ['--acp'] for Gemini CLI.
+	 * Defaults to ['acp'] if not specified.
+	 */
+	acpArgs?: string[];
 }
 
 /**
@@ -46,11 +59,14 @@ export interface ManagedProcess {
 	toolType: string;
 	ptyProcess?: IPty;
 	childProcess?: ChildProcess;
+	acpProcess?: import('../acp').ACPProcess;
 	cwd: string;
 	pid: number;
 	isTerminal: boolean;
 	isBatchMode?: boolean;
 	isStreamJsonMode?: boolean;
+	isAcpMode?: boolean;
+	acpShowStreaming?: boolean;
 	jsonBuffer?: string;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;

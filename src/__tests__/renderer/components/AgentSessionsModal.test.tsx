@@ -944,10 +944,15 @@ describe('AgentSessionsModal', () => {
 
 			const input = screen.getByPlaceholderText(/Search.*sessions/);
 
-			// Navigate down then up
+			// Navigate down first and wait for the state update
 			fireEvent.keyDown(input, { key: 'ArrowDown' });
-			fireEvent.keyDown(input, { key: 'ArrowUp' });
+			await waitFor(() => {
+				const secondButton = screen.getByText('Second').closest('button');
+				expect(secondButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			});
 
+			// Then navigate back up
+			fireEvent.keyDown(input, { key: 'ArrowUp' });
 			await waitFor(() => {
 				const firstButton = screen.getByText('First').closest('button');
 				expect(firstButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });

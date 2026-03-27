@@ -99,6 +99,8 @@ export interface AgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
+	/** ACP-specific args that enable the agent's ACP mode (e.g., ['acp'] for OpenCode, ['--acp'] for Gemini CLI) */
+	acpArgs?: string[];
 }
 
 /**
@@ -208,6 +210,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		imageArgs: undefined,
 		modelArgs: (modelId: string) => ['-m', modelId],
 		promptArgs: (prompt: string) => ['-p', prompt],
+		// ACP mode: gemini --acp (uses '--acp' flag, not 'acp' subcommand)
+		acpArgs: ['--acp'],
 		configOptions: [
 			{
 				key: 'model',
@@ -236,6 +240,22 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				description:
 					'Maximum context window size in tokens. Common values: 1048576 (Gemini 2.5 Pro), 32767 (Gemini 2.5 Flash).',
 				default: 1048576,
+			},
+			{
+				key: 'useACP',
+				type: 'checkbox' as const,
+				label: 'Use ACP Protocol',
+				description:
+					'Use the Agent Client Protocol (ACP) for communication instead of JSON output parsing. ACP provides a standardized protocol for agent communication.',
+				default: false, // Opt-in for now
+			},
+			{
+				key: 'acpShowStreaming',
+				type: 'checkbox' as const,
+				label: 'Show Streaming Output',
+				description:
+					'Show streaming text output in real-time when using ACP mode. Disable for cleaner output with only the final result.',
+				default: true, // Show streaming by default
 			},
 		],
 	},
@@ -280,6 +300,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyEnvOverrides: {
 			OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
 		},
+		// ACP mode: opencode acp (uses 'acp' subcommand)
+		acpArgs: ['acp'],
 		// Agent-specific configuration options shown in UI
 		configOptions: [
 			{
@@ -304,6 +326,22 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				description:
 					'Maximum context window size in tokens. Required for context usage display. Varies by model (e.g., 400000 for Claude/GPT-5.2, 128000 for GPT-4o).',
 				default: 128000, // Default for common models (GPT-4, etc.)
+			},
+			{
+				key: 'useACP',
+				type: 'checkbox',
+				label: 'Use ACP Protocol',
+				description:
+					'Use the Agent Client Protocol (ACP) for communication instead of JSON output parsing. ACP provides a standardized protocol for agent communication.',
+				default: false, // Opt-in for now, will become default once stable
+			},
+			{
+				key: 'acpShowStreaming',
+				type: 'checkbox',
+				label: 'Show Streaming Output',
+				description:
+					'Show streaming text output in real-time when using ACP mode. Disable for cleaner output with only the final result.',
+				default: true, // Show streaming by default for better UX
 			},
 		],
 	},

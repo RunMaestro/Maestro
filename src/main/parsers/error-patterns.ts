@@ -674,6 +674,209 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Gemini CLI Error Patterns
+// ============================================================================
+
+const GEMINI_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			// Google OAuth authentication failure
+			pattern: /google.*auth.*fail|oauth.*fail|oauth.*error/i,
+			message: 'Google authentication failed. Please re-authenticate with Google.',
+			recoverable: true,
+		},
+		{
+			// API key not set or invalid
+			pattern: /GOOGLE_API_KEY/i,
+			message: 'Google API key not set. Please set GOOGLE_API_KEY environment variable.',
+			recoverable: true,
+		},
+		{
+			// Cloud project not configured
+			pattern: /GOOGLE_CLOUD_PROJECT/i,
+			message:
+				'Google Cloud project not configured. Please set GOOGLE_CLOUD_PROJECT environment variable.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*api.*key/i,
+			message: 'Invalid API key. Please check your Google credentials.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication.*failed/i,
+			message: 'Authentication failed. Please verify your Google credentials.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized/i,
+			message: 'Unauthorized access. Please check your Google API key or OAuth token.',
+			recoverable: true,
+		},
+		{
+			// API 401 from Google
+			pattern: /api.*error:\s*401|status.*code.*401/i,
+			message: 'Authentication failed (401). Please re-authenticate with Google.',
+			recoverable: true,
+		},
+		{
+			pattern: /api.*key.*expired/i,
+			message: 'Your API key has expired. Please renew your Google credentials.',
+			recoverable: true,
+		},
+		{
+			// Google-specific login prompt
+			pattern: /please.*log\s*in|please.*authenticate|login required/i,
+			message: 'Authentication required. Please log in to Google.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*exceeded/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum.*tokens/i,
+			message: 'Maximum token limit reached. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /token.*limit/i,
+			message: 'Token limit reached. Consider starting a fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /input.*too large/i,
+			message: 'Input is too large for the context window.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate.*limit/i,
+			message: 'Rate limit exceeded. Please wait before trying again.',
+			recoverable: true,
+		},
+		{
+			pattern: /too many requests/i,
+			message: 'Too many requests. Please wait before sending more messages.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+		{
+			// HTTP 429 - Rate limited
+			pattern: /\b429\b/,
+			message: 'Rate limited. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			// Google-specific: RESOURCE_EXHAUSTED gRPC error
+			pattern: /RESOURCE_EXHAUSTED/i,
+			message: 'Google API resource exhausted. Please wait and try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /usage.?limit|hit your.*limit/i,
+			message: 'Usage limit reached. Please wait or check your plan quota.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection\s*(failed|refused|error|reset|closed)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /request\s+timed?\s*out|timed?\s*out\s+waiting/i,
+			message: 'Request timed out. Please try again.',
+			recoverable: true,
+		},
+		{
+			pattern: /network\s+(error|failure|unavailable)/i,
+			message: 'Network error occurred. Please check your connection.',
+			recoverable: true,
+		},
+		{
+			// Google-specific: UNAVAILABLE gRPC error
+			pattern: /UNAVAILABLE/i,
+			message: 'Google API service unavailable. Please try again later.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /permission denied/i,
+			message: 'Permission denied. The agent cannot access the requested resource.',
+			recoverable: false,
+		},
+		{
+			pattern: /access denied/i,
+			message: 'Access denied to the requested resource.',
+			recoverable: false,
+		},
+		{
+			// Google-specific: PERMISSION_DENIED gRPC error
+			pattern: /PERMISSION_DENIED/i,
+			message: 'Google API permission denied. Check your project permissions.',
+			recoverable: false,
+		},
+		{
+			pattern: /\b403\b.*forbidden|\bforbidden\b.*\b403\b/i,
+			message: 'Forbidden. You may need additional Google Cloud permissions.',
+			recoverable: false,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in the agent.',
+			recoverable: true,
+		},
+		{
+			// Google-specific: INTERNAL gRPC error
+			pattern: /\bINTERNAL\b/,
+			message: 'Google API internal error. Please try again.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not found/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // SSH Error Patterns
 // ============================================================================
 
@@ -864,6 +1067,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
+	['gemini-cli', GEMINI_CLI_ERROR_PATTERNS],
 ]);
 
 /**

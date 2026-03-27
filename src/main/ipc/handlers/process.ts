@@ -299,6 +299,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				);
 
 				// ========================================================================
+				// ACP Mode Detection: Check if agent supports ACP and it's enabled
+				// ACP provides a standardized JSON-RPC protocol for agent communication
+				// ========================================================================
+				const useACP =
+					agent?.capabilities?.supportsACP && (agentConfigValues.useACP === true || false);
+				const acpShowStreaming = agentConfigValues.acpShowStreaming !== false; // Default to true
+
+				if (useACP) {
+					logger.info(`Using ACP mode for ${config.toolType}`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						acpShowStreaming,
+					});
+				}
+
+				// ========================================================================
 				// Command Resolution: Apply session-level custom path override if set
 				// This allows users to override the detected agent path per-session
 				//
@@ -494,6 +509,37 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					isSshCommand: !!sshRemoteUsed,
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
+
+				// For ACP mode, we need to use spawnAsync since ACP initialization is async
+				if (useACP && !sshRemoteUsed) {
+					const result = await processManager.spawnAsync({
+						...config,
+						command: commandToSpawn,
+						args: argsToSpawn,
+						cwd: config.cwd,
+						requiresPty: false, // ACP doesn't use PTY
+						prompt: config.prompt,
+						contextWindow,
+						customEnvVars: customEnvVarsToPass,
+						projectPath: config.cwd,
+						useACP: true,
+						acpShowStreaming,
+						acpSessionId: config.agentSessionId, // For session resume
+						acpArgs: agent?.acpArgs, // Agent-specific ACP args (e.g., ['acp'] for OpenCode, ['--acp'] for Gemini CLI)
+					});
+
+					logger.info(`ACP process spawned successfully`, LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						pid: result.pid,
+						useACP: true,
+						acpShowStreaming,
+					});
+
+					// Add power block reason for AI sessions
+					powerManager.addBlockReason(`session:${config.sessionId}`);
+
+					return result;
+				}
 
 				const result = processManager.spawn({
 					...config,

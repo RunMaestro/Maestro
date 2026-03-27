@@ -29,6 +29,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsResultMessages).toBe(false);
 			expect(capabilities.supportsWizard).toBe(false);
 			expect(capabilities.supportsGroupChatModeration).toBe(false);
+			expect(capabilities.supportsACP).toBe(false);
 			expect(capabilities.usesJsonLineOutput).toBe(false);
 			expect(capabilities.usesCombinedContextWindow).toBe(false);
 		});
@@ -51,6 +52,7 @@ describe('agent-capabilities', () => {
 			expect(DEFAULT_CAPABILITIES.supportsResultMessages).toBe(false);
 			expect(DEFAULT_CAPABILITIES.supportsWizard).toBe(false);
 			expect(DEFAULT_CAPABILITIES.supportsGroupChatModeration).toBe(false);
+			expect(DEFAULT_CAPABILITIES.supportsACP).toBe(false);
 			expect(DEFAULT_CAPABILITIES.usesJsonLineOutput).toBe(false);
 			expect(DEFAULT_CAPABILITIES.usesCombinedContextWindow).toBe(false);
 		});
@@ -165,6 +167,7 @@ describe('agent-capabilities', () => {
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsResultMessages).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsWizard).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].supportsGroupChatModeration).toBe('boolean');
+				expect(typeof AGENT_CAPABILITIES[agentId].supportsACP).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].usesJsonLineOutput).toBe('boolean');
 				expect(typeof AGENT_CAPABILITIES[agentId].usesCombinedContextWindow).toBe('boolean');
 			}
@@ -253,6 +256,12 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('codex', 'usesCombinedContextWindow')).toBe(true);
 			expect(hasCapability('claude-code', 'usesCombinedContextWindow')).toBe(false);
 			expect(hasCapability('opencode', 'usesCombinedContextWindow')).toBe(false);
+
+			// supportsACP
+			expect(hasCapability('opencode', 'supportsACP')).toBe(true);
+			expect(hasCapability('claude-code', 'supportsACP')).toBe(false);
+			expect(hasCapability('codex', 'supportsACP')).toBe(false);
+			expect(hasCapability('terminal', 'supportsACP')).toBe(false);
 		});
 	});
 
@@ -280,6 +289,7 @@ describe('agent-capabilities', () => {
 				'supportsContextExport',
 				'supportsWizard',
 				'supportsGroupChatModeration',
+				'supportsACP',
 				'usesJsonLineOutput',
 				'usesCombinedContextWindow',
 			];

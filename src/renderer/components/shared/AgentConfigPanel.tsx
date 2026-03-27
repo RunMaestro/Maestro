@@ -606,10 +606,22 @@ export function AgentConfigPanel({
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 					>
 						<label
-							className="block text-xs font-medium mb-2"
+							className="block text-xs font-medium mb-2 flex items-center gap-2"
 							style={{ color: theme.colors.textDim }}
 						>
-							{option.label}
+							<span>{option.label}</span>
+							{/* BETA badge for experimental ACP features */}
+							{(option.key === 'useACP' || option.key === 'acpShowStreaming') && (
+								<span
+									className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.bgMain,
+									}}
+								>
+									BETA
+								</span>
+							)}
 						</label>
 						{option.type === 'number' && (
 							<input
