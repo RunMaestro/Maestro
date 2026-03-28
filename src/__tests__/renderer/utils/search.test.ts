@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatch, fuzzyMatchWithScore, FuzzyMatchResult } from '../../../renderer/utils/search';
+import {
+	fuzzyMatch,
+	fuzzyMatchWithScore,
+	fuzzyMatchWithIndices,
+	FuzzyMatchResult,
+} from '../../../renderer/utils/search';
 
 describe('search utils', () => {
 	describe('fuzzyMatch', () => {
@@ -490,6 +495,53 @@ describe('search utils', () => {
 				// handleUserInput should match
 				expect(results.some((r) => r.symbol === 'handleUserInput')).toBe(true);
 			});
+		});
+	});
+
+	describe('fuzzyMatchWithIndices', () => {
+		it('returns empty array for empty query', () => {
+			expect(fuzzyMatchWithIndices('anything', '')).toEqual([]);
+		});
+
+		it('returns empty array for non-match', () => {
+			expect(fuzzyMatchWithIndices('history', 'xyz')).toEqual([]);
+		});
+
+		it('returns correct indices for prefix match', () => {
+			expect(fuzzyMatchWithIndices('history', 'hist')).toEqual([0, 1, 2, 3]);
+		});
+
+		it('returns correct indices for fuzzy match across dot boundary', () => {
+			const indices = fuzzyMatchWithIndices('speckit.plan', 'splan');
+			expect(indices).toHaveLength(5);
+			expect(indices[0]).toBe(0); // s
+		});
+
+		it('returns empty array when query is longer than text', () => {
+			expect(fuzzyMatchWithIndices('hi', 'history')).toEqual([]);
+		});
+	});
+
+	describe('slash command fuzzy matching', () => {
+		it('matches boundary-anchored abbreviation (splan → speckit.plan)', () => {
+			expect(fuzzyMatchWithScore('speckit.plan', 'splan').matches).toBe(true);
+		});
+
+		it('ranks prefix match above fuzzy match', () => {
+			const prefix = fuzzyMatchWithScore('speckit.plan', 'spec');
+			const fuzzy = fuzzyMatchWithScore('speckit.plan', 'splan');
+			expect(prefix.score).toBeGreaterThan(fuzzy.score);
+		});
+
+		it('matches across dot boundaries', () => {
+			expect(fuzzyMatchWithScore('openspec.plan', 'oplan').matches).toBe(true);
+			expect(fuzzyMatchWithScore('speckit.list', 'slist').matches).toBe(true);
+		});
+
+		it('gives dot boundary bonus', () => {
+			const dotBoundary = fuzzyMatchWithScore('hello.world', 'w');
+			const midWord = fuzzyMatchWithScore('hewollo', 'w');
+			expect(dotBoundary.score).toBeGreaterThan(midWord.score);
 		});
 	});
 });
