@@ -26,6 +26,9 @@ vi.mock('lucide-react', () => ({
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
 	RefreshCw: () => <span data-testid="refresh-icon">RefreshCw</span>,
 	X: () => <span data-testid="x-icon">X</span>,
+	ZoomIn: () => <span data-testid="zoom-in-icon">ZoomIn</span>,
+	ZoomOut: () => <span data-testid="zoom-out-icon">ZoomOut</span>,
+	Maximize2: () => <span data-testid="maximize-icon">Maximize2</span>,
 }));
 
 // Mock react-markdown
