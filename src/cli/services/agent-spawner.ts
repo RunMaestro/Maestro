@@ -217,10 +217,49 @@ async function spawnClaudeAgent(
 
 		let jsonBuffer = '';
 		let result: string | undefined;
+		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
+
+		// Process a single parsed JSON message from Claude Code's stream-json output
+
+		const processMessage = (msg: any) => {
+			// Capture result text (only once)
+			if (msg.type === 'result' && msg.result && !resultEmitted) {
+				resultEmitted = true;
+				result = msg.result;
+			}
+
+			// Accumulate text from assistant messages — Claude Code may emit
+			// an empty result field with the actual text in assistant messages
+			if (msg.type === 'assistant' && msg.message?.content) {
+				const content = msg.message.content;
+				if (typeof content === 'string') {
+					if (assistantText) assistantText += '\n';
+					assistantText += content;
+				} else if (Array.isArray(content)) {
+					for (const block of content) {
+						if (block.type === 'text' && block.text) {
+							if (assistantText) assistantText += '\n';
+							assistantText += block.text;
+						}
+					}
+				}
+			}
+
+			// Capture session_id (only once)
+			if (msg.session_id && !sessionIdEmitted) {
+				sessionIdEmitted = true;
+				sessionId = msg.session_id;
+			}
+
+			// Extract usage statistics using shared aggregator
+			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
+				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+			}
+		};
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
@@ -234,28 +273,7 @@ async function spawnClaudeAgent(
 				if (!line.trim()) continue;
 
 				try {
-					const msg = JSON.parse(line);
-
-					// Capture result (only once)
-					if (msg.type === 'result' && msg.result && !resultEmitted) {
-						resultEmitted = true;
-						result = msg.result;
-					}
-
-					// Capture session_id (only once)
-					if (msg.session_id && !sessionIdEmitted) {
-						sessionIdEmitted = true;
-						sessionId = msg.session_id;
-					}
-
-					// Extract usage statistics using shared aggregator
-					if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-						usageStats = aggregateModelUsage(
-							msg.modelUsage,
-							msg.usage || {},
-							msg.total_cost_usd || 0
-						);
-					}
+					processMessage(JSON.parse(line));
 				} catch {
 					// Ignore non-JSON lines
 				}
@@ -273,10 +291,26 @@ async function spawnClaudeAgent(
 
 		// Handle completion
 		child.on('close', (code) => {
-			if (code === 0 && result) {
+			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
+			if (jsonBuffer.trim()) {
+				let parsed;
+				try {
+					parsed = JSON.parse(jsonBuffer);
+				} catch {
+					// Ignore non-JSON remnants
+				}
+				if (parsed) {
+					processMessage(parsed);
+				}
+			}
+
+			// Use accumulated assistant text as fallback when result field is empty
+			const finalResult = result || assistantText || undefined;
+
+			if (code === 0 && finalResult) {
 				resolve({
 					success: true,
-					response: result,
+					response: finalResult,
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -427,6 +461,36 @@ async function spawnJsonLineAgent(
 		let stderr = '';
 		let errorText: string | undefined;
 
+		// Process a single parsed event from an agent's JSON line output
+		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
+			if (!event) return;
+
+			if (event.type === 'init' && event.sessionId && !sessionId) {
+				sessionId = event.sessionId;
+			}
+
+			if (event.type === 'result' && event.text) {
+				result = result ? `${result}\n${event.text}` : event.text;
+			}
+
+			if (event.type === 'error' && event.text && !errorText) {
+				errorText = event.text;
+			}
+
+			const usage = parser.extractUsage(event);
+			if (usage) {
+				usageStats = mergeUsageStats(usageStats, {
+					inputTokens: usage.inputTokens || 0,
+					outputTokens: usage.outputTokens || 0,
+					cacheReadTokens: usage.cacheReadTokens || 0,
+					cacheCreationTokens: usage.cacheCreationTokens || 0,
+					costUsd: usage.costUsd || 0,
+					contextWindow: usage.contextWindow || 0,
+					reasoningTokens: usage.reasoningTokens || 0,
+				});
+			}
+		};
+
 		child.stdout?.on('data', (data: Buffer) => {
 			jsonBuffer += data.toString();
 			const lines = jsonBuffer.split('\n');
@@ -434,33 +498,7 @@ async function spawnJsonLineAgent(
 
 			for (const line of lines) {
 				if (!line.trim()) continue;
-				const event = parser.parseJsonLine(line);
-				if (!event) continue;
-
-				if (event.type === 'init' && event.sessionId && !sessionId) {
-					sessionId = event.sessionId;
-				}
-
-				if (event.type === 'result' && event.text) {
-					result = result ? `${result}\n${event.text}` : event.text;
-				}
-
-				if (event.type === 'error' && event.text && !errorText) {
-					errorText = event.text;
-				}
-
-				const usage = parser.extractUsage(event);
-				if (usage) {
-					usageStats = mergeUsageStats(usageStats, {
-						inputTokens: usage.inputTokens || 0,
-						outputTokens: usage.outputTokens || 0,
-						cacheReadTokens: usage.cacheReadTokens || 0,
-						cacheCreationTokens: usage.cacheCreationTokens || 0,
-						costUsd: usage.costUsd || 0,
-						contextWindow: usage.contextWindow || 0,
-						reasoningTokens: usage.reasoningTokens || 0,
-					});
-				}
+				processEvent(parser.parseJsonLine(line));
 			}
 		});
 
@@ -472,6 +510,11 @@ async function spawnJsonLineAgent(
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code) => {
+			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
+			if (jsonBuffer.trim()) {
+				processEvent(parser.parseJsonLine(jsonBuffer));
+			}
+
 			if (code === 0 && !errorText) {
 				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
 			} else {

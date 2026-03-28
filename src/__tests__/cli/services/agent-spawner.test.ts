@@ -1064,6 +1064,135 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('Complete');
 		});
 
+		it('should flush buffer on close when last line lacks trailing newline', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Result line without trailing newline (stays in buffer until close)
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Flushed"}'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Flushed');
+		});
+
+		it('should flush buffer with session_id and usage on close', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Earlier lines with newlines are processed normally
+			mockStdout.emit('data', Buffer.from('{"session_id":"sess-1"}\n'));
+			// Final result without trailing newline
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"result","result":"Done","total_cost_usd":0.05}')
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Done');
+			expect(result.agentSessionId).toBe('sess-1');
+			expect(result.usageStats?.totalCostUsd).toBe(0.05);
+		});
+
+		it('should use assistant message text when result field is empty', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Assistant message with response text (as Claude Code actually emits)
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"CLI capture test OK"}]}}\n'
+				)
+			);
+			// Result message with empty result field (matches real Claude Code behavior)
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"","total_cost_usd":0.02}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('CLI capture test OK');
+		});
+
+		it('should prefer result field over assistant text when both present', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}\n'
+				)
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Final answer"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Final answer');
+		});
+
+		it('should handle assistant message with string content', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"assistant","message":{"role":"assistant","content":"Hello world"}}\n')
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":""}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Hello world');
+		});
+
+		it('should separate multiple assistant messages with newlines', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"First part."}]}}\n'
+				)
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Second part."}]}}\n'
+				)
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":""}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('First part.\nSecond part.');
+		});
+
 		it('should ignore non-JSON lines', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
