@@ -224,17 +224,18 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			);
 		});
 
-		it('still uses activeSession.autoRunFolderPath for document source', async () => {
+		it('copies queued docs to worktree and uses worktree folder path', async () => {
 			const session = createMockSession({
 				autoRunFolderPath: '/my/autorun/folder',
 			});
 			const deps = createMockDeps();
 
-			// Populate store with target session
+			// Populate store with target session (has its own autoRunFolderPath)
 			const worktreeChild = createMockSession({
 				id: 'worktree-child-99',
 				state: 'idle',
 				parentSessionId: session.id,
+				autoRunFolderPath: '/worktrees/feature/Auto Run Docs',
 			});
 			useSessionStore.setState({
 				sessions: [session, worktreeChild],
@@ -258,9 +259,22 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			// folderPath (third arg) comes from the parent session, not the worktree
+			// Docs should be read from parent's folder
+			expect(window.maestro.autorun.readDoc).toHaveBeenCalledWith(
+				'/my/autorun/folder',
+				'Phase 1.md',
+				undefined
+			);
+			// Docs should be written to worktree's folder
+			expect(window.maestro.autorun.writeDoc).toHaveBeenCalledWith(
+				'/worktrees/feature/Auto Run Docs',
+				'Phase 1.md',
+				'',
+				undefined
+			);
+			// Batch run uses the worktree's folder path (where docs were copied)
 			const [, , folderPath] = deps.startBatchRun.mock.calls[0];
-			expect(folderPath).toBe('/my/autorun/folder');
+			expect(folderPath).toBe('/worktrees/feature/Auto Run Docs');
 		});
 
 		it('does not call worktreeSetup for existing-open sessions', async () => {

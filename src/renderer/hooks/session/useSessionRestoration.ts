@@ -20,6 +20,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { isPathUnderRoot } from '../../utils/worktreeSession';
 
 // ============================================================================
 // Return type
@@ -167,6 +168,22 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					...session,
 					autoRunFolderPath: `${session.projectRoot}/${AUTO_RUN_FOLDER_NAME}`,
 				};
+			}
+
+			// Migration: worktree sessions should use their own Auto Run folder path,
+			// not the parent's. Old sessions inherited the parent's path directly.
+			// Rebase to projectRoot (which is the worktree's cwd) if the current path
+			// doesn't already point there.
+			if (session.parentSessionId && session.autoRunFolderPath && session.projectRoot) {
+				if (!isPathUnderRoot(session.autoRunFolderPath, session.projectRoot)) {
+					console.warn(
+						`[restoreSession] Worktree session autoRunFolderPath was under parent, rebasing to ${session.projectRoot}`
+					);
+					session = {
+						...session,
+						autoRunFolderPath: `${session.projectRoot}/${AUTO_RUN_FOLDER_NAME}`,
+					};
+				}
 			}
 
 			// Migration: ensure fileTreeAutoRefreshInterval is set (default 180s for legacy sessions)

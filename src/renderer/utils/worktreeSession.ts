@@ -33,6 +33,60 @@ export interface BuildWorktreeSessionParams {
 	worktreeParentPath?: string;
 }
 
+/** Normalize path separators to forward slashes for comparison. */
+const normSep = (p: string) => p.replace(/\\/g, '/');
+
+/**
+ * Check whether `filePath` is located under (or equal to) `root` (platform-aware).
+ * Windows paths use case-insensitive comparison; Unix paths are case-sensitive.
+ */
+export function isPathUnderRoot(filePath: string, root: string): boolean {
+	const normalizedFile = normSep(filePath);
+	const normalizedRoot = normSep(root);
+	const prefix = normalizedRoot.endsWith('/') ? normalizedRoot : normalizedRoot + '/';
+	// Either argument having a drive letter means we're on Windows
+	const isWin = /^[A-Za-z]:/.test(filePath) || /^[A-Za-z]:/.test(root);
+	if (isWin) {
+		return (
+			normalizedFile.toLowerCase() === normalizedRoot.toLowerCase() ||
+			normalizedFile.toLowerCase().startsWith(prefix.toLowerCase())
+		);
+	}
+	return normalizedFile === normalizedRoot || normalizedFile.startsWith(prefix);
+}
+
+/**
+ * Resolves the Auto Run folder path for a worktree session.
+ *
+ * - Relative paths are kept as-is (they resolve from each session's own cwd).
+ * - Absolute paths under the parent's cwd are rebased onto the worktree's cwd.
+ * - Absolute paths outside the parent's cwd are kept as-is (intentionally external).
+ */
+function resolveWorktreeAutoRunPath(
+	parentAutoRunPath: string | undefined,
+	parentCwd: string,
+	worktreeCwd: string
+): string | undefined {
+	if (!parentAutoRunPath) return undefined;
+
+	// Check if the path is absolute (Unix / or Windows drive letter)
+	const isAbsolute = /^\/|^[A-Za-z]:[/\\]/.test(parentAutoRunPath);
+	if (!isAbsolute) return parentAutoRunPath;
+
+	if (isPathUnderRoot(parentAutoRunPath, parentCwd)) {
+		// Strip trailing slash for consistent slicing
+		const normalizedParentCwd = normSep(parentCwd).replace(/\/$/, '');
+		const normalized = normSep(parentAutoRunPath);
+		const relativePart = normalized.slice(normalizedParentCwd.length);
+		const result = normSep(worktreeCwd) + relativePart;
+		// Preserve original separator style
+		return parentAutoRunPath.includes('\\') ? result.replace(/\//g, '\\') : result;
+	}
+
+	// External absolute path - keep as-is
+	return parentAutoRunPath;
+}
+
 export function buildWorktreeSession(params: BuildWorktreeSessionParams): Session {
 	const newId = generateId();
 	const initialTabId = generateId();
@@ -120,6 +174,12 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		nudgeMessage: isLegacy ? undefined : params.parentSession.nudgeMessage,
-		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,
+		autoRunFolderPath: isLegacy
+			? undefined
+			: resolveWorktreeAutoRunPath(
+					params.parentSession.autoRunFolderPath,
+					params.parentSession.cwd,
+					params.path
+				),
 	} as Session;
 }
