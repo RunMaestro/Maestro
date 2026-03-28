@@ -12,10 +12,11 @@
  * - Scrollable list for many commands
  */
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { InputMode } from './CommandInputBar';
 import { MIN_TOUCH_TARGET } from './constants';
+import { fuzzyMatchWithScore, fuzzyMatchWithIndices } from '../../renderer/utils/search';
 
 /**
  * Slash command definition
@@ -92,17 +93,24 @@ export function SlashCommandAutocomplete({
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Filter commands based on input and mode
-	const filteredCommands = commands.filter((cmd) => {
-		// Check if command is only available in terminal mode
-		if (cmd.terminalOnly && inputMode !== 'terminal') return false;
-		// Check if command is only available in AI mode
-		if (cmd.aiOnly && inputMode === 'terminal') return false;
-		// If input is empty or doesn't start with /, show all commands (opened via button)
-		if (!inputValue || !inputValue.startsWith('/')) return true;
-		// Check if command matches input (case insensitive)
-		return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
-	});
+	// Filter commands based on input and mode (fuzzy matching)
+	const filteredCommands = useMemo(() => {
+		const query = (inputValue || '').toLowerCase().replace(/^\//, '');
+		return commands
+			.filter((cmd) => {
+				if (cmd.terminalOnly && inputMode !== 'terminal') return false;
+				if (cmd.aiOnly && inputMode === 'terminal') return false;
+				if (!inputValue || !inputValue.startsWith('/') || !query) return true;
+				return fuzzyMatchWithScore(cmd.command.slice(1), query).matches;
+			})
+			.sort((a, b) => {
+				if (!query) return 0;
+				return (
+					fuzzyMatchWithScore(b.command.slice(1), query).score -
+					fuzzyMatchWithScore(a.command.slice(1), query).score
+				);
+			});
+	}, [commands, inputMode, inputValue]);
 
 	// Clamp selectedIndex to valid range when filtered list changes
 	useEffect(() => {
@@ -291,7 +299,25 @@ export function SlashCommandAutocomplete({
 								fontWeight: 500,
 							}}
 						>
-							{cmd.command}
+							{(() => {
+								const query = (inputValue || '').toLowerCase().replace(/^\//, '');
+								if (!query) return cmd.command;
+								const indices = new Set(
+									fuzzyMatchWithIndices(cmd.command.slice(1).toLowerCase(), query).map((i) => i + 1)
+								);
+								if (indices.size === 0) return cmd.command;
+								return Array.from(cmd.command).map((ch, i) =>
+									indices.has(i) ? (
+										<span key={i} style={{ fontWeight: 700 }}>
+											{ch}
+										</span>
+									) : (
+										<span key={i} style={{ opacity: 0.8 }}>
+											{ch}
+										</span>
+									)
+								);
+							})()}
 						</div>
 						{/* Command description */}
 						<div

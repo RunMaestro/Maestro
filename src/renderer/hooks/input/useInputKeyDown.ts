@@ -16,6 +16,7 @@ import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { fuzzyMatchWithScore } from '../../utils/search';
 
 // ============================================================================
 // Dependencies interface
@@ -205,11 +206,21 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Handle slash command autocomplete
 			if (slashCommandOpen) {
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
-				const filteredCommands = allSlashCommands.filter((cmd) => {
-					if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
-					if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-					return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
-				});
+				const query = inputValue.toLowerCase().replace(/^\//, '');
+				const filteredCommands = allSlashCommands
+					.filter((cmd) => {
+						if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
+						if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
+						if (!query) return true;
+						return fuzzyMatchWithScore(cmd.command.slice(1), query).matches;
+					})
+					.sort((a, b) => {
+						if (!query) return 0;
+						return (
+							fuzzyMatchWithScore(b.command.slice(1), query).score -
+							fuzzyMatchWithScore(a.command.slice(1), query).score
+						);
+					});
 
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();

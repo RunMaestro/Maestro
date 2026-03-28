@@ -74,13 +74,14 @@ export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResu
 				score += 5;
 			}
 
-			// Bonus for match at word boundary (after space, dash, underscore, or start)
+			// Bonus for match at word boundary (after space, dash, underscore, dot, or start)
 			if (
 				i === 0 ||
 				text[i - 1] === ' ' ||
 				text[i - 1] === '-' ||
 				text[i - 1] === '_' ||
-				text[i - 1] === '/'
+				text[i - 1] === '/' ||
+				text[i - 1] === '.'
 			) {
 				score += 8;
 			}
@@ -116,4 +117,27 @@ export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResu
 	}
 
 	return { matches, score };
+};
+
+/**
+ * Returns the indices in `text` that match `query` as a fuzzy subsequence.
+ * Uses the same greedy left-to-right algorithm as fuzzyMatch.
+ * Returns empty array if no match.
+ */
+export const fuzzyMatchWithIndices = (text: string, query: string): number[] => {
+	if (!query || query.length > text.length) return [];
+
+	const lowerText = text.toLowerCase();
+	const lowerQuery = query.toLowerCase();
+	const indices: number[] = [];
+	let qi = 0;
+
+	for (let i = 0; i < lowerText.length && qi < lowerQuery.length; i++) {
+		if (lowerText[i] === lowerQuery[qi]) {
+			indices.push(i);
+			qi++;
+		}
+	}
+
+	return qi === lowerQuery.length ? indices : [];
 };

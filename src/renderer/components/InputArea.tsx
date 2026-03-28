@@ -38,6 +38,7 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
+import { fuzzyMatchWithScore, fuzzyMatchWithIndices } from '../utils/search';
 
 interface SlashCommand {
 	command: string;
@@ -318,14 +319,21 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// recalculating on every render - inputValue changes on every keystroke
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const filteredSlashCommands = useMemo(() => {
-		return slashCommands.filter((cmd) => {
-			// Check if command is only available in terminal mode
-			if (cmd.terminalOnly && !isTerminalMode) return false;
-			// Check if command is only available in AI mode
-			if (cmd.aiOnly && isTerminalMode) return false;
-			// Check if command matches input
-			return cmd.command.toLowerCase().startsWith(inputValueLower);
-		});
+		const query = inputValueLower.replace(/^\//, '');
+		return slashCommands
+			.filter((cmd) => {
+				if (cmd.terminalOnly && !isTerminalMode) return false;
+				if (cmd.aiOnly && isTerminalMode) return false;
+				if (!query) return true;
+				return fuzzyMatchWithScore(cmd.command.slice(1), query).matches;
+			})
+			.sort((a, b) => {
+				if (!query) return 0;
+				return (
+					fuzzyMatchWithScore(b.command.slice(1), query).score -
+					fuzzyMatchWithScore(a.command.slice(1), query).score
+				);
+			});
 	}, [slashCommands, isTerminalMode, inputValueLower]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
@@ -527,7 +535,30 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								}}
 								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
 							>
-								<div className="font-mono text-sm">{cmd.command}</div>
+								<div className="font-mono text-sm">
+									{(() => {
+										const query = inputValueLower.replace(/^\//, '');
+										if (!query) return cmd.command;
+										// Match indices on the part after "/", then offset by 1 for the "/"
+										const indices = new Set(
+											fuzzyMatchWithIndices(cmd.command.slice(1).toLowerCase(), query).map(
+												(i) => i + 1
+											)
+										);
+										if (indices.size === 0) return cmd.command;
+										return Array.from(cmd.command).map((ch, i) =>
+											indices.has(i) ? (
+												<span key={i} style={{ fontWeight: 700 }}>
+													{ch}
+												</span>
+											) : (
+												<span key={i} style={{ opacity: 0.8 }}>
+													{ch}
+												</span>
+											)
+										);
+									})()}
+								</div>
 								<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
 							</button>
 						))}
