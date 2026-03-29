@@ -68,7 +68,6 @@ export function ContextManagementSheet({
 	const [progress, setProgress] = useState(0);
 	const [resultMessage, setResultMessage] = useState('');
 	const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout>>();
-	const progressListenerRef = useRef<((event: MessageEvent) => void) | null>(null);
 
 	const handleClose = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
@@ -220,15 +219,6 @@ export function ContextManagementSheet({
 				return colors.warning;
 		}
 	};
-
-	// Clean up WebSocket listener on unmount
-	useEffect(() => {
-		return () => {
-			if (progressListenerRef.current) {
-				progressListenerRef.current = null;
-			}
-		};
-	}, []);
 
 	return (
 		<div

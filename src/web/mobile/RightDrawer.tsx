@@ -63,10 +63,10 @@ export function RightDrawer({
 	onClose,
 	onFileSelect,
 	projectPath,
-	onAutoRunOpenDocument,
+	onAutoRunOpenDocument: _onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
-	sendRequest,
-	send,
+	sendRequest: _sendRequest,
+	send: _send,
 	onViewDiff,
 }: RightDrawerProps) {
 	const colors = useThemeColors();
@@ -226,14 +226,7 @@ export function RightDrawer({
 						<HistoryTabContent sessionId={sessionId} projectPath={projectPath} />
 					)}
 					{currentTab === 'autorun' && (
-						<AutoRunTabContent
-							sessionId={sessionId}
-							autoRunState={autoRunState}
-							onOpenDocument={onAutoRunOpenDocument}
-							onOpenSetup={onAutoRunOpenSetup}
-							sendRequest={sendRequest}
-							send={send}
-						/>
+						<AutoRunTabContent autoRunState={autoRunState} onOpenSetup={onAutoRunOpenSetup} />
 					)}
 					{currentTab === 'git' && (
 						<GitStatusPanel sessionId={sessionId} gitStatus={gitStatus} onViewDiff={onViewDiff} />
@@ -424,12 +417,8 @@ function AutoRunTabContent({
 	autoRunState,
 	onOpenSetup,
 }: {
-	sessionId: string;
 	autoRunState: AutoRunState | null;
-	onOpenDocument?: (filename: string) => void;
 	onOpenSetup?: () => void;
-	sendRequest: UseWebSocketReturn['sendRequest'];
-	send: UseWebSocketReturn['send'];
 }) {
 	const colors = useThemeColors();
 	const isRunning = autoRunState?.isRunning ?? false;
