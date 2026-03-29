@@ -109,18 +109,19 @@ describe('SlashCommandAutocomplete', () => {
 
 		it('filters commands by prefix when input starts with /', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} inputValue="/cl" inputMode="ai" />);
-			expect(screen.getByText('/clear')).toBeInTheDocument();
-			expect(screen.queryByText('/history')).not.toBeInTheDocument();
+			// Fuzzy highlight splits text into spans, so use a function matcher
+			expect(screen.getByText((_, el) => el?.textContent === '/clear')).toBeInTheDocument();
+			expect(screen.queryByText((_, el) => el?.textContent === '/history')).not.toBeInTheDocument();
 		});
 
 		it('filtering is case insensitive', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} inputValue="/CL" inputMode="ai" />);
-			expect(screen.getByText('/clear')).toBeInTheDocument();
+			expect(screen.getByText((_, el) => el?.textContent === '/clear')).toBeInTheDocument();
 		});
 
 		it('shows exact match', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} inputValue="/clear" inputMode="ai" />);
-			expect(screen.getByText('/clear')).toBeInTheDocument();
+			expect(screen.getByText((_, el) => el?.textContent === '/clear')).toBeInTheDocument();
 		});
 	});
 
@@ -184,8 +185,8 @@ describe('SlashCommandAutocomplete', () => {
 					inputMode="ai"
 				/>
 			);
-			expect(screen.getByText('/custom1')).toBeInTheDocument();
-			expect(screen.queryByText('/custom2')).not.toBeInTheDocument();
+			expect(screen.getByText((_, el) => el?.textContent === '/custom1')).toBeInTheDocument();
+			expect(screen.queryByText((_, el) => el?.textContent === '/custom2')).not.toBeInTheDocument();
 		});
 	});
 
@@ -273,8 +274,8 @@ describe('SlashCommandAutocomplete', () => {
 			);
 
 			// Index 5 is out of range for default commands (only 2 in AI mode)
-			// Effect should clamp to 0
-			expect(onSelectedIndexChange).toHaveBeenCalledWith(0);
+			// Effect should clamp to last valid index
+			expect(onSelectedIndexChange).toHaveBeenCalledWith(1);
 		});
 	});
 

@@ -552,9 +552,9 @@ describe('Slash command autocomplete', () => {
 
 	it('filters out aiOnly commands in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
-		// Only /run is aiOnly, so it should be filtered out
-		// Input is '/r' which only matches /run
-		const deps = createMockDeps({ inputValue: '/r', allSlashCommands: commands });
+		// /run is aiOnly, so it should be filtered out in terminal mode
+		// Use '/run' which exactly matches only the aiOnly command
+		const deps = createMockDeps({ inputValue: '/run', allSlashCommands: commands });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
 

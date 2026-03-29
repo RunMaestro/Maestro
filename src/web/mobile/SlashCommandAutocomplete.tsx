@@ -16,7 +16,7 @@ import React, { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { InputMode } from './CommandInputBar';
 import { MIN_TOUCH_TARGET } from './constants';
-import { fuzzyMatchWithScore, fuzzyMatchWithIndices } from '../../renderer/utils/search';
+import { filterSlashCommands, highlightSlashCommand } from '../../renderer/utils/search';
 
 /**
  * Slash command definition
@@ -95,27 +95,15 @@ export function SlashCommandAutocomplete({
 
 	// Filter commands based on input and mode (fuzzy matching)
 	const filteredCommands = useMemo(() => {
-		const query = (inputValue || '').toLowerCase().replace(/^\//, '');
-		return commands
-			.filter((cmd) => {
-				if (cmd.terminalOnly && inputMode !== 'terminal') return false;
-				if (cmd.aiOnly && inputMode === 'terminal') return false;
-				if (!inputValue || !inputValue.startsWith('/') || !query) return true;
-				return fuzzyMatchWithScore(cmd.command.slice(1), query).matches;
-			})
-			.sort((a, b) => {
-				if (!query) return 0;
-				return (
-					fuzzyMatchWithScore(b.command.slice(1), query).score -
-					fuzzyMatchWithScore(a.command.slice(1), query).score
-				);
-			});
+		const shouldFuzzyFilter = inputValue && inputValue.startsWith('/');
+		const query = shouldFuzzyFilter ? (inputValue || '').toLowerCase().replace(/^\//, '') : '';
+		return filterSlashCommands(commands, query, inputMode === 'terminal');
 	}, [commands, inputMode, inputValue]);
 
 	// Clamp selectedIndex to valid range when filtered list changes
 	useEffect(() => {
 		if (filteredCommands.length > 0 && selectedIndex >= filteredCommands.length) {
-			onSelectedIndexChange?.(0);
+			onSelectedIndexChange?.(filteredCommands.length - 1);
 		}
 	}, [filteredCommands.length, selectedIndex, onSelectedIndexChange]);
 
@@ -299,25 +287,12 @@ export function SlashCommandAutocomplete({
 								fontWeight: 500,
 							}}
 						>
-							{(() => {
-								const query = (inputValue || '').toLowerCase().replace(/^\//, '');
-								if (!query) return cmd.command;
-								const indices = new Set(
-									fuzzyMatchWithIndices(cmd.command.slice(1).toLowerCase(), query).map((i) => i + 1)
-								);
-								if (indices.size === 0) return cmd.command;
-								return Array.from(cmd.command).map((ch, i) =>
-									indices.has(i) ? (
-										<span key={i} style={{ fontWeight: 700 }}>
-											{ch}
-										</span>
-									) : (
-										<span key={i} style={{ opacity: 0.8 }}>
-											{ch}
-										</span>
-									)
-								);
-							})()}
+							{highlightSlashCommand(
+								cmd.command,
+								inputValue && inputValue.startsWith('/')
+									? (inputValue || '').toLowerCase().replace(/^\//, '')
+									: ''
+							)}
 						</div>
 						{/* Command description */}
 						<div

@@ -1,3 +1,5 @@
+import React from 'react';
+
 /**
  * Fuzzy search result with scoring information
  */
@@ -40,7 +42,11 @@ export const fuzzyMatch = (text: string, query: string): boolean => {
  * @param query - The search query
  * @returns FuzzyMatchResult with matches boolean and score for ranking
  */
-export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResult => {
+export const fuzzyMatchWithScore = (
+	text: string,
+	query: string,
+	extraBoundaryChars?: string
+): FuzzyMatchResult => {
 	if (!query) {
 		return { matches: true, score: 0 };
 	}
@@ -74,14 +80,14 @@ export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResu
 				score += 5;
 			}
 
-			// Bonus for match at word boundary (after space, dash, underscore, dot, or start)
+			// Bonus for match at word boundary (after space, dash, underscore, or start)
 			if (
 				i === 0 ||
 				text[i - 1] === ' ' ||
 				text[i - 1] === '-' ||
 				text[i - 1] === '_' ||
 				text[i - 1] === '/' ||
-				text[i - 1] === '.'
+				(extraBoundaryChars && extraBoundaryChars.includes(text[i - 1]))
 			) {
 				score += 8;
 			}
@@ -120,24 +126,117 @@ export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResu
 };
 
 /**
- * Returns the indices in `text` that match `query` as a fuzzy subsequence.
- * Uses the same greedy left-to-right algorithm as fuzzyMatch.
+ * Returns the indices in `text` that match `query` as a fuzzy subsequence,
+ * preferring boundary-anchored positions (after separator chars).
  * Returns empty array if no match.
  */
-export const fuzzyMatchWithIndices = (text: string, query: string): number[] => {
+export const fuzzyMatchWithIndices = (
+	text: string,
+	query: string,
+	extraBoundaryChars?: string
+): number[] => {
 	if (!query || query.length > text.length) return [];
 
 	const lowerText = text.toLowerCase();
 	const lowerQuery = query.toLowerCase();
+	const defaultBoundary = ' -_/';
+	const boundaryChars = extraBoundaryChars ? defaultBoundary + extraBoundaryChars : defaultBoundary;
+
+	const isBoundary = (i: number) => i === 0 || boundaryChars.includes(text[i - 1]);
+
+	// Check if lowerQuery[from..] is a subsequence of lowerText[after..]
+	const canMatchRest = (after: number, from: number): boolean => {
+		let q = from;
+		for (let j = after; j < lowerText.length && q < lowerQuery.length; j++) {
+			if (lowerText[j] === lowerQuery[q]) q++;
+		}
+		return q === lowerQuery.length;
+	};
+
+	// For each query char, prefer a boundary-anchored position, but only if
+	// the remaining query can still be matched after that position.
 	const indices: number[] = [];
 	let qi = 0;
+	let ti = 0;
 
-	for (let i = 0; i < lowerText.length && qi < lowerQuery.length; i++) {
-		if (lowerText[i] === lowerQuery[qi]) {
-			indices.push(i);
-			qi++;
+	while (qi < lowerQuery.length && ti < lowerText.length) {
+		let firstMatch = -1;
+		let boundaryMatch = -1;
+
+		for (let j = ti; j < lowerText.length; j++) {
+			if (lowerText[j] === lowerQuery[qi]) {
+				if (firstMatch === -1) firstMatch = j;
+				if (isBoundary(j) && canMatchRest(j + 1, qi + 1)) {
+					boundaryMatch = j;
+					break;
+				}
+			}
 		}
+
+		if (firstMatch === -1) return []; // no match possible
+
+		const chosen = boundaryMatch !== -1 ? boundaryMatch : firstMatch;
+		indices.push(chosen);
+		ti = chosen + 1;
+		qi++;
 	}
 
 	return qi === lowerQuery.length ? indices : [];
+};
+
+/**
+ * Slash command definition shape accepted by shared helpers.
+ */
+interface SlashCommandLike {
+	command: string;
+	terminalOnly?: boolean;
+	aiOnly?: boolean;
+}
+
+/**
+ * Filter and sort slash commands by fuzzy match against query.
+ * Single-pass scoring: each command is scored at most once.
+ */
+export const filterSlashCommands = <T extends SlashCommandLike>(
+	commands: T[],
+	query: string,
+	isTerminalMode: boolean
+): T[] => {
+	return commands
+		.filter((cmd) => {
+			if (cmd.terminalOnly && !isTerminalMode) return false;
+			if (cmd.aiOnly && isTerminalMode) return false;
+			return true;
+		})
+		.map((cmd) => {
+			const { matches, score } = query
+				? fuzzyMatchWithScore(cmd.command.slice(1), query, '.')
+				: { matches: true, score: 0 };
+			return { cmd, matches, score };
+		})
+		.filter(({ matches }) => matches)
+		.sort((a, b) => b.score - a.score)
+		.map(({ cmd }) => cmd);
+};
+
+/**
+ * Render a slash command with fuzzy-matched characters highlighted.
+ * Returns a React node: plain string when no query, spans with bold/dim otherwise.
+ */
+export const highlightSlashCommand = (command: string, query: string): React.ReactNode => {
+	if (!query) return command;
+	const indices = new Set(
+		fuzzyMatchWithIndices(command.slice(1).toLowerCase(), query, '.').map((i) => i + 1)
+	);
+	if (indices.size === 0) return command;
+	return Array.from(command).map((ch, i) =>
+		React.createElement(
+			'span',
+			{
+				key: i,
+				style: indices.has(i) ? { fontWeight: 700 } : { opacity: 0.8 },
+			},
+			ch
+		)
+	);
 };

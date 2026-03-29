@@ -671,8 +671,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			expect(screen.getByText('/clear')).toBeInTheDocument();
-			expect(screen.queryByText('/help')).not.toBeInTheDocument();
+			// Fuzzy highlight splits text into spans, so use a function matcher
+			expect(screen.getByText((_, el) => el?.textContent === '/clear')).toBeInTheDocument();
+			expect(screen.queryByText((_, el) => el?.textContent === '/help')).not.toBeInTheDocument();
 		});
 
 		it('shows terminalOnly commands in terminal mode', () => {

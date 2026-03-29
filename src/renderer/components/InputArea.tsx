@@ -38,7 +38,7 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
-import { fuzzyMatchWithScore, fuzzyMatchWithIndices } from '../utils/search';
+import { filterSlashCommands, highlightSlashCommand } from '../utils/search';
 
 interface SlashCommand {
 	command: string;
@@ -320,20 +320,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const filteredSlashCommands = useMemo(() => {
 		const query = inputValueLower.replace(/^\//, '');
-		return slashCommands
-			.filter((cmd) => {
-				if (cmd.terminalOnly && !isTerminalMode) return false;
-				if (cmd.aiOnly && isTerminalMode) return false;
-				if (!query) return true;
-				return fuzzyMatchWithScore(cmd.command.slice(1), query).matches;
-			})
-			.sort((a, b) => {
-				if (!query) return 0;
-				return (
-					fuzzyMatchWithScore(b.command.slice(1), query).score -
-					fuzzyMatchWithScore(a.command.slice(1), query).score
-				);
-			});
+		return filterSlashCommands(slashCommands, query, isTerminalMode);
 	}, [slashCommands, isTerminalMode, inputValueLower]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
@@ -536,28 +523,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
 							>
 								<div className="font-mono text-sm">
-									{(() => {
-										const query = inputValueLower.replace(/^\//, '');
-										if (!query) return cmd.command;
-										// Match indices on the part after "/", then offset by 1 for the "/"
-										const indices = new Set(
-											fuzzyMatchWithIndices(cmd.command.slice(1).toLowerCase(), query).map(
-												(i) => i + 1
-											)
-										);
-										if (indices.size === 0) return cmd.command;
-										return Array.from(cmd.command).map((ch, i) =>
-											indices.has(i) ? (
-												<span key={i} style={{ fontWeight: 700 }}>
-													{ch}
-												</span>
-											) : (
-												<span key={i} style={{ opacity: 0.8 }}>
-													{ch}
-												</span>
-											)
-										);
-									})()}
+									{highlightSlashCommand(cmd.command, inputValueLower.replace(/^\//, ''))}
 								</div>
 								<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
 							</button>
