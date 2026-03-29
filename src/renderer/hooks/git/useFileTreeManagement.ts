@@ -164,12 +164,19 @@ export function useFileTreeManagement(
 	// Prevents SSH-configured sessions with unreachable hosts from blocking app startup
 	// indefinitely (SSH connect timeout + retries can take 30-60s).
 	// The file tree load continues in the background — the user just isn't blocked.
+	//
+	// Gated on sessionsLoaded so the 5-second budget is dedicated to the file tree
+	// load itself, not burned while settings/sessions are still restoring. Without
+	// this gate, session restoration (git checks, migrations) can consume most of
+	// the timeout, causing the splash to dismiss before the tree has loaded.
+	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	useEffect(() => {
+		if (!sessionsLoaded) return;
 		const timer = setTimeout(() => {
 			signalInitialFileTreeReady();
 		}, 5000);
 		return () => clearTimeout(timer);
-	}, [signalInitialFileTreeReady]);
+	}, [sessionsLoaded, signalInitialFileTreeReady]);
 
 	// Per-session sequence counters to discard stale file tree loads.
 	// Keyed by sessionId so loads for different sessions don't cancel each other.

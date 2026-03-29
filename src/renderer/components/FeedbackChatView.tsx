@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ImagePlus,
 	Loader2,
+	MessageSquareHeart,
 	Send,
 	X,
 	Package,
@@ -526,9 +527,18 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	if (step === 'provider-select') {
 		return (
 			<div className="flex flex-col gap-5 p-6">
+				<div className="flex justify-center">
+					<div
+						className="w-12 h-12 rounded-xl flex items-center justify-center"
+						style={{ backgroundColor: `${theme.colors.accent}20` }}
+					>
+						<MessageSquareHeart className="w-6 h-6" style={{ color: theme.colors.accent }} />
+					</div>
+				</div>
 				<p className="text-sm" style={{ color: theme.colors.textDim }}>
-					Choose an agent to help collect your feedback. The agent will have a short conversation
-					with you to understand your issue and create a well-structured GitHub issue.
+					Thank you for taking the time to give us feedback! Whether you're reporting an issue or
+					recommending a feature, you'll work with an AI agent that will understand what you need
+					and create a GitHub issue for us to act on.
 				</p>
 
 				<div className="flex flex-col gap-2">

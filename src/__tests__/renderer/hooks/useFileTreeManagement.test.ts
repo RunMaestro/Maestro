@@ -19,6 +19,7 @@ import type { RefObject, SetStateAction } from 'react';
 import { loadFileTree, compareFileTrees } from '../../../renderer/utils/fileExplorer';
 import { gitService } from '../../../renderer/services/git';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 vi.mock('../../../renderer/utils/fileExplorer', () => ({
 	loadFileTree: vi.fn(),
@@ -105,6 +106,8 @@ describe('useFileTreeManagement', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		useFileExplorerStore.setState({ fileTreeFilter: '' });
+		// Most tests assume sessions are loaded (safety timeout can fire)
+		useSessionStore.setState({ sessionsLoaded: true });
 		originalHistory = window.maestro.history as typeof window.maestro.history | undefined;
 		window.maestro = {
 			...window.maestro,
@@ -115,6 +118,7 @@ describe('useFileTreeManagement', () => {
 	});
 
 	afterEach(() => {
+		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
 		if (originalHistory) {
 			window.maestro.history = originalHistory;
 		} else {
@@ -538,6 +542,45 @@ describe('useFileTreeManagement', () => {
 		if (originalFs) {
 			window.maestro.fs = originalFs;
 		}
+	});
+
+	it('does not fire safety timeout until sessionsLoaded is true', () => {
+		vi.useFakeTimers();
+
+		// Start with sessionsLoaded = false (simulates startup before sessions restore)
+		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		// Advance past the 5-second safety timeout
+		act(() => {
+			vi.advanceTimersByTime(6000);
+		});
+
+		// initialFileTreeReady should still be false — timer hasn't started yet
+		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
+
+		// Now mark sessions as loaded
+		act(() => {
+			useSessionStore.setState({ sessionsLoaded: true });
+		});
+
+		// Advance just under the 5-second threshold
+		act(() => {
+			vi.advanceTimersByTime(4900);
+		});
+		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
+
+		// Advance past the threshold
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+		expect(useSessionStore.getState().initialFileTreeReady).toBe(true);
+
+		vi.useRealTimers();
 	});
 
 	it('does not fetch stats when session already has stats', async () => {
