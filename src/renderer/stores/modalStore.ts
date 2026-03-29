@@ -165,6 +165,7 @@ export type ModalId =
 	| 'feedback'
 	| 'updateCheck'
 	// Instance Management
+	| 'newAgentChoice'
 	| 'newInstance'
 	| 'editAgent'
 	| 'deleteAgent'

@@ -19,7 +19,7 @@ import type { ToolType, Session, AITab } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getModalActions } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -107,7 +107,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// --- Store actions (stable via getState) ---
 	const { setSessions, setActiveSessionId, setGroups } = useSessionStore.getState();
 	const { setEditingSessionId, setDraggingSessionId, setActiveFocus } = useUIStore.getState();
-	const { setNewInstanceModalOpen, setDeleteAgentSession } = getModalActions();
+	const { setDeleteAgentSession } = getModalActions();
 
 	// --- Local state ---
 	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] = useState<string | null>(
@@ -115,11 +115,11 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	);
 
 	// ========================================================================
-	// addNewSession — opens the new instance modal
+	// addNewSession — opens the new agent choice modal (Manual vs Wizard)
 	// ========================================================================
 	const addNewSession = useCallback(() => {
-		setNewInstanceModalOpen(true);
-	}, [setNewInstanceModalOpen]);
+		useModalStore.getState().openModal('newAgentChoice');
+	}, []);
 
 	// ========================================================================
 	// createNewSession — core session creation logic

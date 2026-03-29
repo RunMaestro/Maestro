@@ -1,7 +1,7 @@
 import type { Session, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
-import { FeedbackView } from './FeedbackView';
+import { FeedbackChatView } from './FeedbackChatView';
 
 interface FeedbackModalProps {
 	theme: Theme;
@@ -17,9 +17,10 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 			title="Send Feedback"
 			priority={MODAL_PRIORITIES.FEEDBACK}
 			onClose={onClose}
-			width={450}
+			width={780}
+			maxHeight="85vh"
 		>
-			<FeedbackView
+			<FeedbackChatView
 				theme={theme}
 				sessions={sessions}
 				onCancel={onClose}

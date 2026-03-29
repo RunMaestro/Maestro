@@ -902,6 +902,15 @@ function setupIpcHandlers() {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: () => processManager,
+		debugPackageDeps: {
+			getAgentDetector: () => agentDetector,
+			getProcessManager: () => processManager,
+			getWebServer: () => webServer,
+			settingsStore: store,
+			sessionsStore,
+			groupsStore,
+			bootstrapStore,
+		},
 	});
 }
 

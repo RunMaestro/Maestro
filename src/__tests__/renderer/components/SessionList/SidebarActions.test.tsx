@@ -33,7 +33,6 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 		shortcuts: defaultShortcuts,
 		showUnreadAgentsOnly: false,
 		addNewSession: vi.fn(),
-		openWizard: vi.fn(),
 		setLeftSidebarOpen: vi.fn(),
 		toggleShowUnreadAgentsOnly: vi.fn(),
 		...overrides,
@@ -41,27 +40,28 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 }
 
 describe('SidebarActions', () => {
-	it('renders collapse button, New Agent, and Wizard when sidebar is open', () => {
-		render(<SidebarActions {...createProps()} />);
+	it('renders collapse button, New Agent, and Feedback when sidebar is open', () => {
+		render(<SidebarActions {...createProps({ openFeedback: vi.fn() })} />);
 
 		expect(screen.getByText('New Agent')).toBeTruthy();
-		expect(screen.getByText('Wizard')).toBeTruthy();
+		expect(screen.getByText('Feedback')).toBeTruthy();
 	});
 
-	it('hides New Agent, Wizard, and unread filter when sidebar is collapsed', () => {
+	it('hides New Agent, Feedback, and unread filter when sidebar is collapsed', () => {
 		render(<SidebarActions {...createProps({ leftSidebarOpen: false })} />);
 
 		expect(screen.queryByText('New Agent')).toBeNull();
-		expect(screen.queryByText('Wizard')).toBeNull();
+		expect(screen.queryByText('Feedback')).toBeNull();
 		expect(screen.queryByTitle(/Filter unread agents/)).toBeNull();
 		expect(screen.queryByTitle(/Showing unread agents only/)).toBeNull();
 	});
 
-	it('hides Wizard button when openWizard is undefined', () => {
-		render(<SidebarActions {...createProps({ openWizard: undefined })} />);
+	it('disables Feedback button when openFeedback is undefined', () => {
+		render(<SidebarActions {...createProps({ openFeedback: undefined })} />);
 
 		expect(screen.getByText('New Agent')).toBeTruthy();
-		expect(screen.queryByText('Wizard')).toBeNull();
+		const feedbackBtn = screen.getByText('Feedback').closest('button');
+		expect(feedbackBtn?.disabled).toBe(true);
 	});
 
 	it('calls addNewSession when New Agent is clicked', () => {
@@ -72,12 +72,12 @@ describe('SidebarActions', () => {
 		expect(addNewSession).toHaveBeenCalledOnce();
 	});
 
-	it('calls openWizard when Wizard is clicked', () => {
-		const openWizard = vi.fn();
-		render(<SidebarActions {...createProps({ openWizard })} />);
+	it('calls openFeedback when Feedback is clicked', () => {
+		const openFeedback = vi.fn();
+		render(<SidebarActions {...createProps({ openFeedback })} />);
 
-		fireEvent.click(screen.getByText('Wizard'));
-		expect(openWizard).toHaveBeenCalledOnce();
+		fireEvent.click(screen.getByText('Feedback'));
+		expect(openFeedback).toHaveBeenCalledOnce();
 	});
 
 	it('toggles sidebar open/closed on collapse button click', () => {
@@ -132,5 +132,13 @@ describe('SidebarActions', () => {
 	it('shows active state when showUnreadAgentsOnly is true', () => {
 		render(<SidebarActions {...createProps({ showUnreadAgentsOnly: true })} />);
 		expect(screen.getByTitle(/Showing unread agents only/)).toBeTruthy();
+	});
+
+	it('renders two-column grid layout', () => {
+		render(<SidebarActions {...createProps({ openFeedback: vi.fn() })} />);
+
+		const newAgentBtn = screen.getByText('New Agent');
+		const grid = newAgentBtn.closest('div[style]');
+		expect(grid?.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
 	});
 });

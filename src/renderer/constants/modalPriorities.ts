@@ -98,6 +98,9 @@ export const MODAL_PRIORITIES = {
 	/** Worktree configuration modal */
 	WORKTREE_CONFIG: 752,
 
+	/** New agent choice modal (Manual vs Wizard) */
+	NEW_AGENT_CHOICE: 756,
+
 	/** New instance creation modal */
 	NEW_INSTANCE: 750,
 

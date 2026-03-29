@@ -22,6 +22,7 @@ export interface FeedbackAuthResponse {
 export interface FeedbackSubmitResponse {
 	success: boolean;
 	error?: string;
+	issueUrl?: string;
 }
 
 export interface FeedbackAttachmentPayload {
@@ -51,6 +52,19 @@ export interface FeedbackSubmissionPayload {
 /**
  * Feedback API
  */
+export interface FeedbackConversationSubmitPayload {
+	category: FeedbackCategory;
+	summary: string;
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps?: string;
+	additionalContext?: string;
+	agentProvider?: string;
+	sshRemoteEnabled?: boolean;
+	attachments?: FeedbackAttachmentPayload[];
+	includeDebugPackage?: boolean;
+}
+
 export interface FeedbackApi {
 	/**
 	 * Check whether gh CLI is available and authenticated
@@ -64,6 +78,35 @@ export interface FeedbackApi {
 		feedbackText: string,
 		attachments?: FeedbackAttachmentPayload[]
 	) => Promise<{ prompt: string }>;
+	/**
+	 * Get the conversation system prompt for the feedback chat interface
+	 */
+	getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+	/**
+	 * Submit feedback from the conversational interface
+	 */
+	submitConversation: (
+		payload: FeedbackConversationSubmitPayload
+	) => Promise<FeedbackSubmitResponse>;
+	/**
+	 * Search existing GitHub issues for potential duplicates
+	 */
+	searchIssues: (query: string) => Promise<{
+		issues: Array<{
+			number: number;
+			title: string;
+			url: string;
+			state: string;
+			labels: string[];
+			createdAt: string;
+			author: string;
+			commentCount: number;
+		}>;
+	}>;
+	/**
+	 * Subscribe to an existing issue (+1 reaction) and optionally comment
+	 */
+	subscribeIssue: (issueNumber: number, comment?: string) => Promise<FeedbackSubmitResponse>;
 }
 
 /**
@@ -84,5 +127,18 @@ export function createFeedbackApi(): FeedbackApi {
 			attachments: FeedbackAttachmentPayload[] = []
 		): Promise<{ prompt: string }> =>
 			ipcRenderer.invoke('feedback:compose-prompt', { feedbackText, attachments }),
+
+		getConversationPrompt: (): Promise<{ prompt: string; environment: string }> =>
+			ipcRenderer.invoke('feedback:get-conversation-prompt'),
+
+		submitConversation: (
+			payload: FeedbackConversationSubmitPayload
+		): Promise<FeedbackSubmitResponse> =>
+			ipcRenderer.invoke('feedback:submit-conversation', payload),
+
+		searchIssues: (query: string) => ipcRenderer.invoke('feedback:search-issues', { query }),
+
+		subscribeIssue: (issueNumber: number, comment?: string): Promise<FeedbackSubmitResponse> =>
+			ipcRenderer.invoke('feedback:subscribe-issue', { issueNumber, comment }),
 	};
 }

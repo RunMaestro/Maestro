@@ -29,9 +29,32 @@ vi.mock('../../../renderer/components/RenameTabModal', () => ({
 vi.mock('../../../renderer/components/TerminalTabRenameModal', () => ({
 	TerminalTabRenameModal: (props: any) => <div data-testid="terminal-tab-rename-modal" />,
 }));
+vi.mock('../../../renderer/components/NewAgentChoiceModal', () => ({
+	NewAgentChoiceModal: (props: any) => <div data-testid="new-agent-choice-modal" />,
+}));
 vi.mock('../../../renderer/utils/terminalTabHelpers', () => ({
 	getTerminalTabDisplayName: vi.fn(() => 'Terminal 1'),
 }));
+vi.mock('../../../renderer/stores/modalStore', () => {
+	const store = {
+		getState: () => ({
+			modals: new Map(),
+			openModal: vi.fn(),
+			closeModal: vi.fn(),
+		}),
+		subscribe: vi.fn(() => vi.fn()),
+		setState: vi.fn(),
+		destroy: vi.fn(),
+	};
+	return {
+		useModalStore: Object.assign((selector: any) => selector(store.getState()), store),
+		selectModalOpen: (id: string) => (state: any) => state.modals.get(id)?.open ?? false,
+		getModalActions: () => ({
+			setNewInstanceModalOpen: vi.fn(),
+			setDeleteAgentSession: vi.fn(),
+		}),
+	};
+});
 
 const testTheme: Theme = {
 	id: 'test-theme',
@@ -94,6 +117,10 @@ const defaultProps = {
 	renameTabInitialName: '',
 	onCloseRenameTabModal: vi.fn(),
 	onRenameTab: vi.fn(),
+	// NewAgentChoiceModal
+	onOpenManualSetup: vi.fn(),
+	onOpenWizardSetup: vi.fn(),
+	wizardAvailable: true,
 };
 
 describe('AppSessionModals', () => {

@@ -19,6 +19,7 @@ import {
 	getExpandedEnv,
 } from '../../utils/cliDetection';
 import { execFileNoThrow } from '../../utils/execFile';
+import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -57,6 +58,7 @@ const handlerOpts = (
  */
 export interface FeedbackHandlerDependencies {
 	getProcessManager: () => unknown;
+	debugPackageDeps?: DebugPackageDependencies;
 }
 
 export interface FeedbackAttachmentInput {
@@ -273,7 +275,7 @@ async function uploadAttachments(
 	const owner = await getGitHubLogin();
 	await ensureAttachmentsRepo(owner);
 
-	const uploadedMarkdown = [];
+	const uploadedMarkdown: string[] = [];
 	for (let index = 0; index < attachments.length; index += 1) {
 		const attachment = attachments[index];
 		const { base64, filename } = parseAttachmentDataUrl(attachment);
@@ -452,6 +454,141 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		)
 	);
 
+	// Search existing GitHub issues for potential duplicates
+	ipcMain.handle(
+		'feedback:search-issues',
+		withIpcErrorLogging(
+			handlerOpts('search-issues'),
+			async (payload: {
+				query: string;
+			}): Promise<{
+				issues: Array<{
+					number: number;
+					title: string;
+					url: string;
+					state: string;
+					labels: string[];
+					createdAt: string;
+					author: string;
+					commentCount: number;
+				}>;
+			}> => {
+				const query = typeof payload?.query === 'string' ? payload.query.trim() : '';
+				if (!query) {
+					return { issues: [] };
+				}
+
+				// Use `gh search issues` for full-text search across open AND closed issues
+				const searchResult = await execFileNoThrow(
+					'gh',
+					[
+						'search',
+						'issues',
+						query,
+						'--repo',
+						'RunMaestro/Maestro',
+						'--limit',
+						'10',
+						'--json',
+						'number,title,url,state,labels,createdAt,author',
+					],
+					undefined,
+					getExpandedEnv()
+				);
+
+				if (searchResult.exitCode !== 0 || !searchResult.stdout.trim()) {
+					return { issues: [] };
+				}
+
+				try {
+					const raw = JSON.parse(searchResult.stdout) as Array<{
+						number: number;
+						title: string;
+						url: string;
+						state: string;
+						labels: Array<{ name: string }>;
+						createdAt: string;
+						author: { login: string };
+					}>;
+
+					return {
+						issues: raw.map((issue) => ({
+							number: issue.number,
+							title: issue.title,
+							url: issue.url,
+							state: issue.state,
+							labels: issue.labels?.map((l) => l.name) ?? [],
+							createdAt: issue.createdAt,
+							author: issue.author?.login ?? 'unknown',
+							commentCount: 0, // gh search issues doesn't include comment count
+						})),
+					};
+				} catch {
+					return { issues: [] };
+				}
+			}
+		)
+	);
+
+	// Subscribe to an existing issue (add a thumbs-up reaction + optional comment)
+	ipcMain.handle(
+		'feedback:subscribe-issue',
+		withIpcErrorLogging(
+			handlerOpts('subscribe-issue'),
+			async (payload: {
+				issueNumber: number;
+				comment?: string;
+			}): Promise<{ success: boolean; error?: string }> => {
+				const { issueNumber, comment } = payload;
+				if (!issueNumber || typeof issueNumber !== 'number') {
+					return { success: false, error: 'Invalid issue number.' };
+				}
+
+				// Add a +1 reaction to show interest
+				await execFileNoThrow(
+					'gh',
+					[
+						'api',
+						`repos/RunMaestro/Maestro/issues/${issueNumber}/reactions`,
+						'--method',
+						'POST',
+						'-f',
+						'content=+1',
+					],
+					undefined,
+					getExpandedEnv()
+				);
+
+				// Add a comment if provided
+				if (comment && comment.trim()) {
+					const commentResult = await execFileNoThrow(
+						'gh',
+						[
+							'issue',
+							'comment',
+							String(issueNumber),
+							'-R',
+							'RunMaestro/Maestro',
+							'--body',
+							comment.trim(),
+						],
+						undefined,
+						getExpandedEnv()
+					);
+
+					if (commentResult.exitCode !== 0) {
+						return {
+							success: false,
+							error: commentResult.stderr || 'Failed to add comment.',
+						};
+					}
+				}
+
+				return { success: true };
+			}
+		)
+	);
+
 	// Submit feedback by creating a structured GitHub issue directly
 	ipcMain.handle(
 		'feedback:submit',
@@ -575,6 +712,224 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 				}
 
 				return { success: true };
+			}
+		)
+	);
+
+	// Get the conversation system prompt for the feedback chat interface
+	ipcMain.handle(
+		'feedback:get-conversation-prompt',
+		withIpcErrorLogging(
+			handlerOpts('get-conversation-prompt'),
+			async (): Promise<{ prompt: string; environment: string }> => {
+				const conversationPromptPath = app.isPackaged
+					? path.join(process.resourcesPath, 'prompts', 'feedback-conversation.md')
+					: path.join(app.getAppPath(), 'src', 'prompts', 'feedback-conversation.md');
+
+				const promptTemplate = await fs.readFile(conversationPromptPath, 'utf-8');
+
+				const platformLabel = getPlatformLabel(process.platform);
+				const osVersion = typeof os.version === 'function' ? os.version() : '';
+				const release = os.release();
+				const operatingSystem = osVersion
+					? `${platformLabel} (${osVersion}, ${release})`
+					: `${platformLabel} (${release})`;
+
+				const environment = [
+					`- Maestro version: ${app.getVersion()}`,
+					`- Operating system: ${operatingSystem}`,
+					`- Install source: ${inferInstallSource()}`,
+				].join('\n');
+
+				const prompt = promptTemplate.replace('{{ENVIRONMENT}}', environment);
+
+				return { prompt, environment };
+			}
+		)
+	);
+
+	// Submit structured feedback by creating a GitHub issue from conversational data
+	ipcMain.handle(
+		'feedback:submit-conversation',
+		withIpcErrorLogging(
+			handlerOpts('submit-conversation'),
+			async (payload: {
+				category: FeedbackCategory;
+				summary: string;
+				expectedBehavior: string;
+				actualBehavior: string;
+				reproductionSteps?: string;
+				additionalContext?: string;
+				agentProvider?: string;
+				sshRemoteEnabled?: boolean;
+				attachments?: FeedbackAttachmentInput[];
+				includeDebugPackage?: boolean;
+			}): Promise<{ success: boolean; error?: string; issueUrl?: string }> => {
+				if (!isFeedbackCategory(payload.category)) {
+					return { success: false, error: 'Invalid feedback category.' };
+				}
+
+				const summaryField = readRequiredField(payload.summary, 'Summary', MAX_SUMMARY_LENGTH);
+				if (summaryField.error) return { success: false, error: summaryField.error };
+
+				const expectedField = readRequiredField(
+					payload.expectedBehavior,
+					'Expected Behavior',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (expectedField.error) return { success: false, error: expectedField.error };
+
+				const actualField = readRequiredField(
+					payload.actualBehavior,
+					'Actual Behavior',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (actualField.error) return { success: false, error: actualField.error };
+
+				const reproField = readOptionalField(
+					payload.reproductionSteps,
+					'Reproduction Steps',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (reproField.error) return { success: false, error: reproField.error };
+
+				const contextField = readOptionalField(
+					payload.additionalContext,
+					'Additional Context',
+					MAX_FEEDBACK_FIELD_LENGTH
+				);
+				if (contextField.error) return { success: false, error: contextField.error };
+
+				const environment = buildEnvironmentSummary({
+					sessionId: 'conversation',
+					category: payload.category,
+					summary: summaryField.value!,
+					expectedBehavior: expectedField.value!,
+					details: actualField.value!,
+					agentProvider: payload.agentProvider,
+					sshRemoteEnabled: payload.sshRemoteEnabled,
+				});
+
+				// Upload attachments
+				const normalizedAttachments = Array.isArray(payload.attachments)
+					? payload.attachments.filter(
+							(a): a is FeedbackAttachmentInput =>
+								Boolean(a) &&
+								typeof a.name === 'string' &&
+								typeof a.dataUrl === 'string' &&
+								a.dataUrl.startsWith('data:image/')
+						)
+					: [];
+				const { markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments);
+
+				// Generate and upload debug package if requested
+				let debugPackageMarkdown = '';
+				if (payload.includeDebugPackage && _deps.debugPackageDeps) {
+					try {
+						const tmpDir = os.tmpdir();
+						const packageResult = await generateDebugPackage(tmpDir, _deps.debugPackageDeps);
+						if (packageResult.success && packageResult.path) {
+							const zipData = await fs.readFile(packageResult.path);
+							const zipBase64 = zipData.toString('base64');
+							const owner = await getGitHubLogin();
+							await ensureAttachmentsRepo(owner);
+							const zipFilename = path.basename(packageResult.path);
+							const repoPath = `feedback/${Date.now()}-${zipFilename}`;
+							const payloadPath = path.join(tmpDir, `maestro-feedback-debug-${Date.now()}.json`);
+							await fs.writeFile(
+								payloadPath,
+								JSON.stringify({
+									message: `Add feedback debug package ${Date.now()}`,
+									content: zipBase64,
+								}),
+								'utf8'
+							);
+							const uploadResult = await execFileNoThrow(
+								'gh',
+								[
+									'api',
+									`repos/${owner}/${ATTACHMENTS_REPO}/contents/${repoPath}`,
+									'--method',
+									'PUT',
+									'--input',
+									payloadPath,
+								],
+								undefined,
+								getExpandedEnv()
+							);
+							await fs.unlink(payloadPath).catch(() => {});
+							await fs.unlink(packageResult.path).catch(() => {});
+							if (uploadResult.exitCode === 0) {
+								const uploadJson = JSON.parse(uploadResult.stdout);
+								const rawUrl =
+									uploadJson.content?.download_url ||
+									`https://raw.githubusercontent.com/${owner}/${ATTACHMENTS_REPO}/main/${repoPath}`;
+								debugPackageMarkdown = `[maestro-debug-package.zip](${rawUrl})`;
+							}
+						}
+					} catch (e) {
+						logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+					}
+				}
+
+				// Build issue body
+				const title = buildIssueTitle(payload.category, summaryField.value!);
+				const isBug = payload.category === 'bug_report';
+				const sections = [
+					`## Summary\n${summaryField.value!}`,
+					buildEnvironmentSection(environment),
+					isBug ? `## Steps to Reproduce\n${reproField.value || 'Not provided.'}` : null,
+					`## ${isBug ? 'Expected Behavior' : 'Desired Outcome'}\n${expectedField.value!}`,
+					`## ${isBug ? 'Actual Behavior' : 'Details'}\n${actualField.value!}`,
+					contextField.value ? `## Additional Context\n${contextField.value}` : null,
+					attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
+					debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
+				]
+					.filter(Boolean)
+					.join('\n\n');
+
+				// Ensure label and create issue
+				try {
+					await ensureFeedbackLabel();
+				} catch {
+					// Continue without label
+				}
+
+				const bodyFile = path.join(os.tmpdir(), `maestro-feedback-${Date.now()}.md`);
+				await fs.writeFile(bodyFile, sections, 'utf-8');
+
+				try {
+					const issueCreate = await execFileNoThrow(
+						'gh',
+						[
+							'issue',
+							'create',
+							'-R',
+							'RunMaestro/Maestro',
+							'--title',
+							title,
+							'--body-file',
+							bodyFile,
+							'--label',
+							'Maestro-feedback',
+						],
+						undefined,
+						getExpandedEnv()
+					);
+
+					if (issueCreate.exitCode !== 0) {
+						return {
+							success: false,
+							error: issueCreate.stderr || 'Failed to create GitHub issue.',
+						};
+					}
+
+					// gh issue create prints the issue URL to stdout
+					const issueUrl = issueCreate.stdout.trim();
+					return { success: true, issueUrl: issueUrl || undefined };
+				} finally {
+					await fs.unlink(bodyFile).catch(() => {});
+				}
 			}
 		)
 	);

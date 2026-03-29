@@ -29,26 +29,26 @@ const shortcuts = {
 } as Record<string, Shortcut>;
 
 describe('SidebarActions', () => {
-	it('renders feedback button next to new agent and wizard when sidebar is open', () => {
+	it('renders feedback button next to new agent when sidebar is open', () => {
 		render(
 			<SidebarActions
 				theme={theme}
 				leftSidebarOpen={true}
 				hasNoSessions={false}
 				shortcuts={shortcuts}
+				showUnreadAgentsOnly={false}
 				addNewSession={vi.fn()}
-				openWizard={vi.fn()}
 				openFeedback={vi.fn()}
 				setLeftSidebarOpen={vi.fn()}
+				toggleShowUnreadAgentsOnly={vi.fn()}
 			/>
 		);
 
 		expect(screen.getByRole('button', { name: /new agent/i })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /wizard/i })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /feedback/i })).toBeInTheDocument();
 	});
 
-	it('opens feedback modal from the new sidebar button', () => {
+	it('opens feedback modal from the sidebar button', () => {
 		const openFeedback = vi.fn();
 
 		render(
@@ -57,10 +57,11 @@ describe('SidebarActions', () => {
 				leftSidebarOpen={true}
 				hasNoSessions={false}
 				shortcuts={shortcuts}
+				showUnreadAgentsOnly={false}
 				addNewSession={vi.fn()}
-				openWizard={vi.fn()}
 				openFeedback={openFeedback}
 				setLeftSidebarOpen={vi.fn()}
+				toggleShowUnreadAgentsOnly={vi.fn()}
 			/>
 		);
 

@@ -72,9 +72,11 @@ export function useKeyboardShortcutHelpers(
 			if (mainKey === 'arrowup' && key === 'arrowup') return true;
 			if (mainKey === 'arrowdown' && key === 'arrowdown') return true;
 			if (mainKey === 'backspace' && key === 'backspace') return true;
-			// Handle Shift+[ producing { and Shift+] producing }
+			// Handle Shift producing different characters for punctuation keys
 			if (mainKey === '[' && (key === '[' || key === '{')) return true;
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
+			if (mainKey === ',' && (key === ',' || key === '<')) return true;
+			if (mainKey === '.' && (key === '.' || key === '>')) return true;
 			// Handle Shift+number producing symbol (US keyboard layout)
 			// Shift+1='!', Shift+2='@', Shift+3='#', etc.
 			const shiftNumberMap: Record<string, string> = {
@@ -144,9 +146,11 @@ export function useKeyboardShortcutHelpers(
 			if (altPressed !== configAlt) return false;
 
 			const mainKey = keys[keys.length - 1];
-			// Handle Shift+[ producing { and Shift+] producing }
+			// Handle Shift producing different characters for punctuation keys
 			if (mainKey === '[' && (key === '[' || key === '{')) return true;
 			if (mainKey === ']' && (key === ']' || key === '}')) return true;
+			if (mainKey === ',' && (key === ',' || key === '<')) return true;
+			if (mainKey === '.' && (key === '.' || key === '>')) return true;
 
 			// For Alt+Meta shortcuts on macOS, e.key produces special characters (e.g., Alt+t = †)
 			// Use e.code to get the physical key pressed instead

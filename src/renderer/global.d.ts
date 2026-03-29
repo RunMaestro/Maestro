@@ -409,6 +409,35 @@ interface MaestroAPI {
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
 		) => Promise<{ prompt: string }>;
+		getConversationPrompt: () => Promise<{ prompt: string; environment: string }>;
+		submitConversation: (payload: {
+			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
+			summary: string;
+			expectedBehavior: string;
+			actualBehavior: string;
+			reproductionSteps?: string;
+			additionalContext?: string;
+			agentProvider?: string;
+			sshRemoteEnabled?: boolean;
+			attachments?: Array<{ name: string; dataUrl: string }>;
+			includeDebugPackage?: boolean;
+		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		searchIssues: (query: string) => Promise<{
+			issues: Array<{
+				number: number;
+				title: string;
+				url: string;
+				state: string;
+				labels: string[];
+				createdAt: string;
+				author: string;
+				commentCount: number;
+			}>;
+		}>;
+		subscribeIssue: (
+			issueNumber: number,
+			comment?: string
+		) => Promise<{ success: boolean; error?: string }>;
 	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;

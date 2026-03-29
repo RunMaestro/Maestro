@@ -811,6 +811,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				renameTabInitialName={renameTabInitialName}
 				onCloseRenameTabModal={onCloseRenameTabModal}
 				onRenameTab={onRenameTab}
+				onOpenManualSetup={() =>
+					useModalStore.getState().openModal('newInstance', { duplicatingSessionId: null })
+				}
+				onOpenWizardSetup={openWizard}
+				wizardAvailable={Boolean(openWizard)}
 			/>
 
 			{/* Group Management Modals */}
