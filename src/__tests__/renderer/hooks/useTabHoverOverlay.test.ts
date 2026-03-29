@@ -216,6 +216,176 @@ describe('useTabHoverOverlay', () => {
 		expect(result.current.overlayOpen).toBe(false);
 	});
 
+	it('returns positionReady as false initially', () => {
+		const { result } = renderHook(() => useTabHoverOverlay());
+		expect(result.current.positionReady).toBe(false);
+	});
+
+	it('clamps overlay position when it overflows the right edge of the viewport', () => {
+		// Viewport: 800px wide
+		Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+		Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		// Tab near right edge — overlay would start at left: 700
+		const mockTab = { getBoundingClientRect: () => ({ bottom: 40, left: 700, width: 80 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockTab as unknown as HTMLDivElement;
+
+		// Attach overlay ref before opening so useLayoutEffect can measure it
+		const mockOverlay = document.createElement('div');
+		vi.spyOn(mockOverlay, 'getBoundingClientRect').mockReturnValue({
+			width: 250,
+			height: 300,
+			top: 40,
+			left: 700,
+			bottom: 340,
+			right: 950,
+			x: 700,
+			y: 40,
+			toJSON: () => ({}),
+		});
+		act(() => {
+			result.current.setOverlayRef(mockOverlay);
+		});
+
+		// Open overlay
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+
+		expect(result.current.overlayOpen).toBe(true);
+		// Clamped: max left = 800 - 250 - 8 = 542
+		expect(result.current.overlayPosition?.left).toBe(542);
+		expect(result.current.positionReady).toBe(true);
+	});
+
+	it('clamps overlay position when it overflows the bottom edge of the viewport', () => {
+		Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+		Object.defineProperty(window, 'innerHeight', { value: 400, configurable: true });
+
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		// Tab positioned so overlay starts at top: 200
+		const mockTab = { getBoundingClientRect: () => ({ bottom: 200, left: 50, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockTab as unknown as HTMLDivElement;
+
+		const mockOverlay = document.createElement('div');
+		vi.spyOn(mockOverlay, 'getBoundingClientRect').mockReturnValue({
+			width: 250,
+			height: 300,
+			top: 200,
+			left: 50,
+			bottom: 500,
+			right: 300,
+			x: 50,
+			y: 200,
+			toJSON: () => ({}),
+		});
+		act(() => {
+			result.current.setOverlayRef(mockOverlay);
+		});
+
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+
+		expect(result.current.overlayOpen).toBe(true);
+		// Clamped: max top = 400 - 300 - 8 = 92
+		expect(result.current.overlayPosition?.top).toBe(92);
+		expect(result.current.overlayPosition?.left).toBe(50); // unchanged
+		expect(result.current.positionReady).toBe(true);
+	});
+
+	it('does not clamp overlay position when it fits within viewport', () => {
+		Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
+		Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockTab = { getBoundingClientRect: () => ({ bottom: 40, left: 100, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockTab as unknown as HTMLDivElement;
+
+		const mockOverlay = document.createElement('div');
+		vi.spyOn(mockOverlay, 'getBoundingClientRect').mockReturnValue({
+			width: 250,
+			height: 300,
+			top: 40,
+			left: 100,
+			bottom: 340,
+			right: 350,
+			x: 100,
+			y: 40,
+			toJSON: () => ({}),
+		});
+		act(() => {
+			result.current.setOverlayRef(mockOverlay);
+		});
+
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+
+		expect(result.current.overlayOpen).toBe(true);
+		// No clamping needed — position unchanged
+		expect(result.current.overlayPosition).toEqual({ top: 40, left: 100, tabWidth: 120 });
+		expect(result.current.positionReady).toBe(true);
+	});
+
+	it('resets positionReady when overlay closes', () => {
+		Object.defineProperty(window, 'innerWidth', { value: 1200, configurable: true });
+		Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+
+		const { result } = renderHook(() => useTabHoverOverlay());
+
+		const mockTab = { getBoundingClientRect: () => ({ bottom: 40, left: 100, width: 120 }) };
+		(result.current.tabRef as React.MutableRefObject<HTMLDivElement | null>).current =
+			mockTab as unknown as HTMLDivElement;
+
+		const mockOverlay = document.createElement('div');
+		vi.spyOn(mockOverlay, 'getBoundingClientRect').mockReturnValue({
+			width: 250,
+			height: 300,
+			top: 40,
+			left: 100,
+			bottom: 340,
+			right: 350,
+			x: 100,
+			y: 40,
+			toJSON: () => ({}),
+		});
+		act(() => {
+			result.current.setOverlayRef(mockOverlay);
+		});
+
+		// Open overlay
+		act(() => {
+			result.current.handleMouseEnter();
+		});
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		expect(result.current.positionReady).toBe(true);
+
+		// Close overlay
+		act(() => {
+			result.current.overlayMouseLeave();
+		});
+		expect(result.current.positionReady).toBe(false);
+	});
+
 	it('overlayMouseEnter clears pending close timeout', () => {
 		const { result } = renderHook(() => useTabHoverOverlay());
 

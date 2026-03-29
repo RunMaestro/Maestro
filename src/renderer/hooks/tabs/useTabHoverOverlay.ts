@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 
 export interface OverlayPosition {
 	top: number;
@@ -22,6 +22,10 @@ export interface UseTabHoverOverlayReturn {
 	tabRef: React.RefObject<HTMLDivElement | null>;
 	hoverTimeoutRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
 	isOverOverlayRef: React.MutableRefObject<boolean>;
+	/** Ref callback to attach to the portal overlay div for viewport clamping */
+	setOverlayRef: (el: HTMLDivElement | null) => void;
+	/** False until the overlay has been measured and clamped to the viewport */
+	positionReady: boolean;
 	/** Combined ref callback — sets internal tabRef and calls parent registerRef */
 	setTabRef: (el: HTMLDivElement | null) => void;
 	handleMouseEnter: () => void;
@@ -41,8 +45,10 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 	const [isHovered, setIsHovered] = useState(false);
 	const [overlayOpen, setOverlayOpen] = useState(false);
 	const [overlayPosition, setOverlayPosition] = useState<OverlayPosition | null>(null);
+	const [positionReady, setPositionReady] = useState(false);
 	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement | null>(null);
+	const overlayRef = useRef<HTMLDivElement | null>(null);
 	const isOverOverlayRef = useRef(false);
 
 	// Stabilize registerRef in a ref so setTabRef doesn't recreate on every render
@@ -110,6 +116,34 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		setIsHovered(false);
 	}, []);
 
+	// Reset positionReady when overlay closes
+	useEffect(() => {
+		if (!overlayOpen) setPositionReady(false);
+	}, [overlayOpen]);
+
+	// Measure overlay and clamp to viewport before paint
+	useLayoutEffect(() => {
+		const el = overlayRef.current;
+		if (!overlayOpen || !overlayPosition || !el) return;
+
+		const { width, height } = el.getBoundingClientRect();
+		const padding = 8;
+		const maxLeft = window.innerWidth - width - padding;
+		const maxTop = window.innerHeight - height - padding;
+
+		const clampedLeft = Math.max(padding, Math.min(overlayPosition.left, maxLeft));
+		const clampedTop = Math.max(padding, Math.min(overlayPosition.top, maxTop));
+
+		if (clampedLeft !== overlayPosition.left || clampedTop !== overlayPosition.top) {
+			setOverlayPosition({
+				top: clampedTop,
+				left: clampedLeft,
+				tabWidth: overlayPosition.tabWidth,
+			});
+		}
+		setPositionReady(true);
+	}, [overlayOpen, overlayPosition]);
+
 	return {
 		isHovered,
 		setIsHovered,
@@ -119,6 +153,10 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		tabRef,
 		hoverTimeoutRef,
 		isOverOverlayRef,
+		setOverlayRef: useCallback((el: HTMLDivElement | null) => {
+			overlayRef.current = el;
+		}, []),
+		positionReady,
 		setTabRef,
 		handleMouseEnter,
 		handleMouseLeave,

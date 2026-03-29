@@ -73,6 +73,8 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		overlayOpen,
 		setOverlayOpen,
 		overlayPosition,
+		setOverlayRef,
+		positionReady,
 		setTabRef,
 		handleMouseEnter,
 		handleMouseLeave,
@@ -303,8 +305,13 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 				overlayPosition &&
 				createPortal(
 					<div
+						ref={setOverlayRef}
 						className="fixed z-[100]"
-						style={{ top: overlayPosition.top, left: overlayPosition.left }}
+						style={{
+							top: overlayPosition.top,
+							left: overlayPosition.left,
+							opacity: positionReady ? 1 : 0,
+						}}
 						onClick={(e) => e.stopPropagation()}
 						onMouseEnter={overlayMouseEnter}
 						onMouseLeave={overlayMouseLeave}
