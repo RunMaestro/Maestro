@@ -200,7 +200,7 @@ describe('useSessionCrud', () => {
 	// addNewSession
 	// ========================================================================
 	describe('addNewSession', () => {
-		it('opens the new instance modal', () => {
+		it('opens the new agent choice modal', () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
 
@@ -208,7 +208,7 @@ describe('useSessionCrud', () => {
 				result.current.addNewSession();
 			});
 
-			expect(useModalStore.getState().isOpen('newInstance')).toBe(true);
+			expect(useModalStore.getState().isOpen('newAgentChoice')).toBe(true);
 		});
 	});
 
