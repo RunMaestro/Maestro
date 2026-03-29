@@ -8,6 +8,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | --------------- | ------------- | ---------- | ---------------------------------------------------------------- |
 | `claude-code`   | Claude Code   | **Active** | Primary agent, `--print --verbose --output-format stream-json`   |
 | `codex`         | Codex         | **Active** | Full support, `--json`, YOLO mode default                        |
+| `cursor`        | Cursor        | **Beta**   | Cursor CLI agent, `-p --output-format stream-json --force`       |
 | `opencode`      | OpenCode      | **Active** | Multi-provider support (75+ LLMs), stub provider session storage |
 | `factory-droid` | Factory Droid | **Active** | Factory's AI coding assistant, `-o stream-json`                  |
 | `terminal`      | Terminal      | Internal   | Hidden from UI, used for shell sessions                          |

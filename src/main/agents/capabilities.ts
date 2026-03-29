@@ -232,6 +232,40 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Cursor - Cursor's CLI agent
+	 * https://cursor.com/docs/cli/overview
+	 *
+	 * Capabilities based on CLI documentation research (2026-03-17).
+	 * See AGENT_SUPPORT.md for investigation details.
+	 */
+	cursor: {
+		supportsResume: true, // --resume="chat-id" or --continue
+		supportsReadOnlyMode: true, // --mode=ask (read-only) or --mode=plan (plan-only)
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: false, // Not documented in stream-json output
+		supportsImageInput: false, // No dedicated image flag; images referenced via file path in prompt
+		supportsImageInputOnResume: false, // No image flag available
+		supportsSlashCommands: false, // Cursor supports slash commands but they are not exposed in stream-json output
+		supportsSessionStorage: false, // Sessions stored locally but exact disk format unknown
+		supportsCostTracking: false, // Not exposed in CLI output
+		supportsUsageStats: false, // Not exposed in CLI output
+		supportsBatchMode: true, // -p flag for headless/scripting mode
+		requiresPromptToStart: true, // -p mode requires a prompt argument
+		supportsStreaming: true, // --output-format stream-json with streaming events
+		supportsResultMessages: true, // "result" event type in stream-json output
+		supportsModelSelection: true, // --model flag
+		supportsStreamJsonInput: false, // Not documented
+		supportsThinkingDisplay: true, // Emits streaming assistant messages
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: false, // Exact session storage format unknown
+		supportsWizard: false, // Not yet integrated with wizard
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: false, // Uses stream-json (similar to Claude Code)
+		usesCombinedContextWindow: false, // Varies by model, not documented
+		supportsAppendSystemPrompt: false, // Cursor CLI does not support --append-system-prompt
+	},
+
+	/**
 	 * Gemini CLI - Google's Gemini model CLI
 	 *
 	 * PLACEHOLDER: Most capabilities set to false until Gemini CLI is stable

@@ -316,6 +316,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// pip installation
 			...pythonScripts('aider'),
 		],
+		agent: [
+			// Cursor CLI installer (irm 'https://cursor.com/install?win32=true' | iex)
+			...localBin('agent'),
+			// Possible winget distribution
+			...wingetLinks('agent'),
+		],
 	};
 
 	return knownPaths[binaryName] || [];
@@ -425,6 +431,12 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('aider'),
 			// Node version managers (in case installed via npm)
 			...nodeVersionManagers('aider'),
+		],
+		agent: [
+			// Cursor CLI installer (curl https://cursor.com/install -fsS | bash)
+			...localBin('agent'),
+			// Homebrew (if Cursor publishes a tap)
+			...homebrew('agent'),
 		],
 	};
 

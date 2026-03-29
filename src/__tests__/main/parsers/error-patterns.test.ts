@@ -5,7 +5,7 @@
  * for detecting agent errors from output text.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
 	getErrorPatterns,
 	matchErrorPattern,
@@ -21,6 +21,8 @@ import {
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
 const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
 const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
+const CURSOR_ERROR_PATTERNS = getErrorPatterns('cursor');
+const FACTORY_DROID_ERROR_PATTERNS = getErrorPatterns('factory-droid');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -563,6 +565,175 @@ describe('error-patterns', () => {
 		});
 	});
 
+	describe('CURSOR_ERROR_PATTERNS', () => {
+		it('should define auth_expired patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.auth_expired).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.auth_expired?.length).toBeGreaterThan(0);
+		});
+
+		it('should define token_exhaustion patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.token_exhaustion).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.token_exhaustion?.length).toBeGreaterThan(0);
+		});
+
+		it('should define rate_limited patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.rate_limited).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.rate_limited?.length).toBeGreaterThan(0);
+		});
+
+		it('should define network_error patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.network_error).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.network_error?.length).toBeGreaterThan(0);
+		});
+
+		it('should define permission_denied patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.permission_denied).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.permission_denied?.length).toBeGreaterThan(0);
+		});
+
+		it('should define agent_crashed patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.agent_crashed).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.agent_crashed?.length).toBeGreaterThan(0);
+		});
+
+		it('should define session_not_found patterns', () => {
+			expect(CURSOR_ERROR_PATTERNS.session_not_found).toBeDefined();
+			expect(CURSOR_ERROR_PATTERNS.session_not_found?.length).toBeGreaterThan(0);
+		});
+
+		describe('auth_expired patterns', () => {
+			it('should match "invalid api key"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'invalid api key');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+
+			it('should match "not authenticated"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'not authenticated');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+
+			it('should match "unauthorized"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'unauthorized');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('auth_expired');
+			});
+		});
+
+		describe('rate_limited patterns', () => {
+			it('should match "rate limit"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'rate limit exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+
+			it('should match "429"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'Error 429: Rate limited');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+
+			it('should match "usage limit"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'usage limit reached');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+			});
+		});
+
+		describe('token_exhaustion patterns', () => {
+			it('should match "context length"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'context length exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+
+			it('should match "prompt too long"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'prompt is too long');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+
+			it('should match "context window"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'context window exceeded');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('token_exhaustion');
+			});
+		});
+
+		describe('session_not_found patterns', () => {
+			it('should match "conversation not found"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'conversation not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+
+			it('should match "session not found"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'session not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('session_not_found');
+			});
+		});
+
+		describe('network_error patterns', () => {
+			it('should match "connection failed"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'connection failed');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match "ECONNREFUSED"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'Error: ECONNREFUSED');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+			});
+
+			it('should match "request timed out"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'request timed out');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('network_error');
+			});
+		});
+
+		describe('permission_denied patterns', () => {
+			it('should match "permission denied"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'permission denied');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('permission_denied');
+				expect(result?.recoverable).toBe(false);
+			});
+
+			it('should match "access denied"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'access denied');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('permission_denied');
+			});
+		});
+
+		describe('agent_crashed patterns', () => {
+			it('should match "fatal error"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'fatal error occurred');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+				expect(result?.recoverable).toBe(true);
+			});
+
+			it('should match "unexpected error"', () => {
+				const result = matchErrorPattern(CURSOR_ERROR_PATTERNS, 'unexpected error in agent');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+			});
+		});
+	});
+
+	describe('getErrorPatterns - cursor', () => {
+		it('should return cursor patterns', () => {
+			const patterns = getErrorPatterns('cursor');
+			expect(patterns).toBe(CURSOR_ERROR_PATTERNS);
+		});
+	});
+
 	describe('SSH_ERROR_PATTERNS', () => {
 		it('should define permission_denied patterns', () => {
 			expect(SSH_ERROR_PATTERNS.permission_denied).toBeDefined();
@@ -756,6 +927,23 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('agent_crashed');
 			});
+
+			it('should match "bash: agent: command not found" (cursor binary)', () => {
+				const result = matchSshErrorPattern('bash: agent: command not found');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+			});
+
+			it('should match "zsh: command not found: agent" (cursor binary)', () => {
+				const result = matchSshErrorPattern('zsh: command not found: agent');
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('agent_crashed');
+			});
+
+			it('should NOT match "ssh-agent: command not found" (anti-collision)', () => {
+				const result = matchSshErrorPattern('bash: ssh-agent: command not found');
+				expect(result).toBeNull();
+			});
 		});
 
 		describe('non-matching lines', () => {
@@ -827,6 +1015,8 @@ describe('error-patterns', () => {
 			registerErrorPatterns('claude-code', CLAUDE_ERROR_PATTERNS);
 			registerErrorPatterns('opencode', OPENCODE_ERROR_PATTERNS);
 			registerErrorPatterns('codex', CODEX_ERROR_PATTERNS);
+			registerErrorPatterns('cursor', CURSOR_ERROR_PATTERNS);
+			registerErrorPatterns('factory-droid', FACTORY_DROID_ERROR_PATTERNS);
 		});
 
 		it('should register custom patterns', () => {
@@ -868,6 +1058,8 @@ describe('error-patterns', () => {
 			registerErrorPatterns('claude-code', CLAUDE_ERROR_PATTERNS);
 			registerErrorPatterns('opencode', OPENCODE_ERROR_PATTERNS);
 			registerErrorPatterns('codex', CODEX_ERROR_PATTERNS);
+			registerErrorPatterns('cursor', CURSOR_ERROR_PATTERNS);
+			registerErrorPatterns('factory-droid', FACTORY_DROID_ERROR_PATTERNS);
 		});
 
 		it('should clear all registered patterns', () => {

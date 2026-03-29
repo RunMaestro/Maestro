@@ -189,6 +189,55 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'cursor',
+		name: 'Cursor',
+		// Cursor CLI ships as `agent` (not `cursor`). Verified against Cursor CLI v1.x.
+		// Collision risk: `agent` is generic; PATH lookup may resolve to unrelated binaries.
+		// Maestro's binary resolution logic uses customPath when set, falling back to PATH lookup.
+		binaryName: 'agent',
+		command: 'agent',
+		// Cursor CLI uses -p for headless/batch mode (like Claude Code's --print)
+		// --output-format stream-json for structured parsing (same flag name as Claude Code)
+		// Note: --force (YOLO mode) is in yoloModeArgs, not base args, so it's excluded
+		// when readOnlyMode adds --mode ask. Unlike Claude Code which always needs
+		// --dangerously-skip-permissions, Cursor's --force conflicts with --mode ask.
+		args: ['-p', '--output-format', 'stream-json'],
+		requiresPty: false, // Batch-only agent (requiresPromptToStart: true in capabilities)
+		// Note: supportsSessionId is false in capabilities (IDs not in stream-json output),
+		// but resumeArgs is defined for manual resume via user-provided session IDs from `agent ls`.
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--mode', 'ask'], // Read-only exploration mode (no file changes)
+		readOnlyCliEnforced: true, // CLI enforces read-only via --mode ask
+		yoloModeArgs: ['--force'], // Full access mode (--force or --yolo)
+		modelArgs: (modelId: string) => ['--model', modelId],
+		// No workingDirArgs - Cursor uses CWD (no --cwd flag)
+		// No imageArgs - images referenced via file path in prompt text
+		noPromptSeparator: true, // Prompt is passed as positional argument
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description: 'Model override (e.g., gpt-5.2). Leave empty to use the default.',
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Varies by model. Set this for context usage display.',
+				default: 200000,
+			},
+		],
+	},
+	{
 		id: 'gemini-cli',
 		name: 'Gemini CLI',
 		binaryName: 'gemini',

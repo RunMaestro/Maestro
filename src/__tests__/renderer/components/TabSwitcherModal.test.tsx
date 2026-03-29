@@ -1180,9 +1180,18 @@ describe('TabSwitcherModal', () => {
 	describe('search functionality', () => {
 		it('filters tabs by name', () => {
 			const tabs = [
-				createTestTab({ name: 'Alpha Session' }),
-				createTestTab({ name: 'Beta Session' }),
-				createTestTab({ name: 'Gamma Session' }),
+				createTestTab({
+					name: 'Alpha Session',
+					agentSessionId: 'aaaaaaaa-aaaa-1234-5678-123456789abc',
+				}),
+				createTestTab({
+					name: 'Beta Session',
+					agentSessionId: 'cccccccc-cccc-1234-5678-123456789abc',
+				}),
+				createTestTab({
+					name: 'Gamma Session',
+					agentSessionId: 'dddddddd-dddd-1234-5678-123456789abc',
+				}),
 			];
 
 			renderWithLayerStack(
