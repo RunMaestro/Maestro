@@ -486,7 +486,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
 		wakatimeDetailedTracking: false,
-		useNativeTitleBar: false,
+		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
 
 		// ============================================================================

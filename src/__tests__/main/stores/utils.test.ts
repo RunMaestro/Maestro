@@ -240,6 +240,19 @@ describe('stores/utils', () => {
 			});
 		});
 
+		it('should default useNativeTitleBar to true on Windows', () => {
+			Object.defineProperty(process, 'platform', { value: 'win32' });
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result).toEqual({
+				crashReportingEnabled: true,
+				disableGpuAcceleration: false,
+				useNativeTitleBar: true,
+				autoHideMenuBar: false,
+			});
+		});
+
 		it('should not auto-disable GPU acceleration on native Linux', () => {
 			// Mock Linux platform
 			Object.defineProperty(process, 'platform', { value: 'linux' });

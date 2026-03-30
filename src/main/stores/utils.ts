@@ -221,7 +221,7 @@ export function getEarlySettings(syncPath: string): {
 	return {
 		crashReportingEnabled: earlyStore.get('crashReportingEnabled', true),
 		disableGpuAcceleration: explicitGpuSetting ?? defaultDisableGpu,
-		useNativeTitleBar: earlyStore.get('useNativeTitleBar', false),
+		useNativeTitleBar: earlyStore.get('useNativeTitleBar') ?? isWindows(),
 		autoHideMenuBar: earlyStore.get('autoHideMenuBar', false),
 	};
 }
