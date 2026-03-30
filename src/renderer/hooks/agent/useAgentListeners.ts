@@ -1122,6 +1122,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					agentId: error.agentId,
 					sessionId: error.sessionId,
 					timestamp: error.timestamp,
+					rateLimitResetAt: error.rateLimitResetAt,
 					raw: error.raw,
 					parsedJson: error.parsedJson,
 				};

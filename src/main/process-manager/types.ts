@@ -78,6 +78,8 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** Pending rate-limit error waiting for stdin probe response with reset time */
+	pendingRateLimitError?: AgentError;
 }
 
 export interface UsageTotals {

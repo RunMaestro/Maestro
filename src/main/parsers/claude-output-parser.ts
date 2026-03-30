@@ -14,7 +14,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern, parseRateLimitResetTime } from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -67,6 +67,13 @@ interface ClaudeRawMessage {
  */
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
+
+	/**
+	 * Cached rate-limit reset timestamp from a `rate_limit_event` JSON event.
+	 * Claude CLI sends this event (with `resetsAt` as epoch seconds) BEFORE the
+	 * actual error event, so we cache it here and attach it to the next error.
+	 */
+	private lastRateLimitResetAt: number | null = null;
 
 	/**
 	 * Parse a single JSON line from Claude Code output.
@@ -182,6 +189,22 @@ export class ClaudeOutputParser implements AgentOutputParser {
 
 		// Handle system messages (other subtypes)
 		if (msg.type === 'system') {
+			return {
+				type: 'system',
+				sessionId: msg.session_id,
+				raw: msg,
+			};
+		}
+
+		// Handle rate_limit_event — cache the reset timestamp for the next error
+		if (msg.type === 'rate_limit_event') {
+			const rateLimitInfo = (msg as unknown as Record<string, unknown>).rate_limit_info as
+				| Record<string, unknown>
+				| undefined;
+			if (rateLimitInfo?.resetsAt && typeof rateLimitInfo.resetsAt === 'number') {
+				// resetsAt is in epoch seconds — convert to milliseconds
+				this.lastRateLimitResetAt = rateLimitInfo.resetsAt * 1000;
+			}
 			return {
 				type: 'system',
 				sessionId: msg.session_id,
@@ -358,7 +381,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			const patterns = getErrorPatterns(this.agentId);
 			const match = matchErrorPattern(patterns, errorText);
 			if (match) {
-				return {
+				const mixedError: AgentError = {
 					type: match.type,
 					message: match.message,
 					recoverable: match.recoverable,
@@ -366,6 +389,16 @@ export class ClaudeOutputParser implements AgentOutputParser {
 					timestamp: Date.now(),
 					raw: { errorLine: line },
 				};
+
+				// For rate-limit errors, try to parse the reset time
+				if (match.type === 'rate_limited') {
+					const resetAt = parseRateLimitResetTime(errorText);
+					if (resetAt) {
+						mixedError.rateLimitResetAt = resetAt;
+					}
+				}
+
+				return mixedError;
 			}
 			return null;
 		}
@@ -406,7 +439,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		const match = matchErrorPattern(patterns, errorText);
 
 		if (match) {
-			return {
+			const error: AgentError = {
 				type: match.type,
 				message: match.message,
 				recoverable: match.recoverable,
@@ -414,6 +447,46 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				timestamp: Date.now(),
 				parsedJson,
 			};
+
+			// For rate-limit errors, attach the reset time.
+			// Priority: (1) cached rate_limit_event.resetsAt, (2) message.content text, (3) errorText
+			if (match.type === 'rate_limited') {
+				let resetAt: number | null = null;
+
+				// Best source: the rate_limit_event that arrived just before this error
+				if (this.lastRateLimitResetAt && this.lastRateLimitResetAt > Date.now()) {
+					resetAt = this.lastRateLimitResetAt;
+					this.lastRateLimitResetAt = null;
+				}
+
+				// Fallback: parse from message.content text blocks
+				if (!resetAt && obj) {
+					const message = (obj as Record<string, unknown>).message as
+						| Record<string, unknown>
+						| undefined;
+					if (message?.content && Array.isArray(message.content)) {
+						for (const block of message.content) {
+							if (typeof block === 'string') {
+								resetAt = parseRateLimitResetTime(block);
+							} else if (block && typeof block === 'object' && 'text' in block) {
+								resetAt = parseRateLimitResetTime((block as { text: string }).text);
+							}
+							if (resetAt) break;
+						}
+					}
+				}
+
+				// Last resort: try the error text itself
+				if (!resetAt && errorText) {
+					resetAt = parseRateLimitResetTime(errorText);
+				}
+
+				if (resetAt) {
+					error.rateLimitResetAt = resetAt;
+				}
+			}
+
+			return error;
 		}
 
 		// Structured error event that didn't match a known pattern —
