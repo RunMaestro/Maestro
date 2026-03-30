@@ -1603,7 +1603,10 @@ export function navigateToNextUnifiedTab(
 		return null;
 	}
 
-	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts
+	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts.
+	// The active AI tab (session.activeTabId) is always navigable because the TabBar always
+	// displays it — without this, switching to a terminal/file tab and pressing next/prev
+	// would fail to navigate back to the visible AI tab.
 	if (showUnreadOnly) {
 		for (let offset = 1; offset < length; offset++) {
 			const nextIndex = (currentIndex + offset) % length;
@@ -1616,9 +1619,16 @@ export function navigateToNextUnifiedTab(
 				continue; // Orphaned tab, skip
 			}
 
-			// For AI tabs, check if it's unread or has a draft
+			// For AI tabs, check if it's unread, busy, has a draft, or is the active tab
+			// (the active tab is always shown in the tab bar, so it must be reachable)
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
-			if (aiTab && (aiTab.hasUnread || aiTab.state === 'busy' || hasDraft(aiTab))) {
+			if (
+				aiTab &&
+				(aiTab.hasUnread ||
+					aiTab.state === 'busy' ||
+					hasDraft(aiTab) ||
+					tabRef.id === session.activeTabId)
+			) {
 				return navigateToUnifiedTabByIndex(session, nextIndex);
 			}
 		}
@@ -1675,7 +1685,10 @@ export function navigateToPrevUnifiedTab(
 		return null;
 	}
 
-	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts
+	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts.
+	// The active AI tab (session.activeTabId) is always navigable because the TabBar always
+	// displays it — without this, switching to a terminal/file tab and pressing next/prev
+	// would fail to navigate back to the visible AI tab.
 	if (showUnreadOnly) {
 		for (let offset = 1; offset < length; offset++) {
 			const prevIndex = (currentIndex - offset + length) % length;
@@ -1688,9 +1701,16 @@ export function navigateToPrevUnifiedTab(
 				continue; // Orphaned tab, skip
 			}
 
-			// For AI tabs, check if it's unread, busy, or has a draft
+			// For AI tabs, check if it's unread, busy, has a draft, or is the active tab
+			// (the active tab is always shown in the tab bar, so it must be reachable)
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
-			if (aiTab && (aiTab.hasUnread || aiTab.state === 'busy' || hasDraft(aiTab))) {
+			if (
+				aiTab &&
+				(aiTab.hasUnread ||
+					aiTab.state === 'busy' ||
+					hasDraft(aiTab) ||
+					tabRef.id === session.activeTabId)
+			) {
 				return navigateToUnifiedTabByIndex(session, prevIndex);
 			}
 		}
