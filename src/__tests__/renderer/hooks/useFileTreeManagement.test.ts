@@ -544,7 +544,7 @@ describe('useFileTreeManagement', () => {
 		}
 	});
 
-	it('does not fire safety timeout until sessionsLoaded is true', () => {
+	it('does not fire file-tree safety timeout until sessionsLoaded is true', () => {
 		vi.useFakeTimers();
 
 		// Start with sessionsLoaded = false (simulates startup before sessions restore)
@@ -555,12 +555,12 @@ describe('useFileTreeManagement', () => {
 
 		renderHook(() => useFileTreeManagement(deps));
 
-		// Advance past the 5-second safety timeout
+		// Advance past the 5-second file-tree timeout but not the 8-second backstop
 		act(() => {
 			vi.advanceTimersByTime(6000);
 		});
 
-		// initialFileTreeReady should still be false — timer hasn't started yet
+		// initialFileTreeReady should still be false — gated timer hasn't started yet
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
 		// Now mark sessions as loaded
@@ -570,11 +570,39 @@ describe('useFileTreeManagement', () => {
 
 		// Advance just under the 5-second threshold
 		act(() => {
-			vi.advanceTimersByTime(4900);
+			vi.advanceTimersByTime(1900);
 		});
 		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
 
-		// Advance past the threshold
+		// Advance past the gated 5-second threshold (total 7.9s from mount)
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+
+		// The backstop hasn't fired yet (only 8.1s from mount, but the gated timer has)
+		expect(useSessionStore.getState().initialFileTreeReady).toBe(true);
+
+		vi.useRealTimers();
+	});
+
+	it('absolute backstop fires at 8s even if sessionsLoaded is never set', () => {
+		vi.useFakeTimers();
+
+		// sessionsLoaded stays false — simulates a stuck session restoration
+		useSessionStore.setState({ sessionsLoaded: false, initialFileTreeReady: false });
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+
+		renderHook(() => useFileTreeManagement(deps));
+
+		// At 7.9s — backstop hasn't fired yet
+		act(() => {
+			vi.advanceTimersByTime(7900);
+		});
+		expect(useSessionStore.getState().initialFileTreeReady).toBe(false);
+
+		// At 8s — backstop fires
 		act(() => {
 			vi.advanceTimersByTime(200);
 		});
