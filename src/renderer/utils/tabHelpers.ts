@@ -372,15 +372,18 @@ export function createTab(
 		showThinking,
 	};
 
-	// Update the session with the new tab added and set as active
-	// Also clear activeFileTabId so the new AI tab is shown in the main panel
-	// Add the new tab to unifiedTabOrder so it appears in the unified tab bar
+	// Update the session with the new tab added and set as active.
+	// Clear activeFileTabId and activeTerminalTabId so the new AI tab is shown in the
+	// main panel, and set inputMode to 'ai' so callers don't need to patch it manually.
+	// Add the new tab to unifiedTabOrder so it appears in the unified tab bar.
 	const newTabRef = { type: 'ai' as const, id: newTab.id };
 	const updatedSession: Session = {
 		...session,
 		aiTabs: [...(session.aiTabs || []), newTab],
 		activeTabId: newTab.id,
 		activeFileTabId: null,
+		activeTerminalTabId: null,
+		inputMode: 'ai' as const,
 		unifiedTabOrder: [...(session.unifiedTabOrder || []), newTabRef],
 	};
 
@@ -1430,10 +1433,14 @@ export function navigateToUnifiedTabByIndex(
 		const aiTab = session.aiTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!aiTab) return null;
 
-		// If already active and in AI mode, return current state (with repair if needed)
+		// If already active, no file/terminal tab selected, and in AI mode, return current state.
+		// The activeTerminalTabId check is critical: without it, a stale terminal selection
+		// causes the early return to fire and skip the clearing update below, leaving
+		// getCurrentUnifiedTabIndex pointing at the wrong tab.
 		if (
 			session.activeTabId === targetTabRef.id &&
 			session.activeFileTabId === null &&
+			session.activeTerminalTabId === null &&
 			session.inputMode === 'ai'
 		) {
 			return {
