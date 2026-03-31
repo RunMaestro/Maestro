@@ -6,9 +6,10 @@
  * Sessions are grouped by their group, with status dots and mode indicators.
  */
 
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useEffect } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { StatusDot, type SessionStatus } from '../components/Badge';
+import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { truncatePath } from '../../shared/formatters';
@@ -156,6 +157,35 @@ export function LeftPanel({
 }: LeftPanelProps) {
 	const colors = useThemeColors();
 
+	// Slide-in animation state (full-screen overlay mode only)
+	const [isOpen, setIsOpen] = useState(false);
+	useEffect(() => {
+		if (isFullScreen) {
+			requestAnimationFrame(() => setIsOpen(true));
+		}
+	}, [isFullScreen]);
+
+	// Swipe left to close (full-screen overlay mode only)
+	const {
+		handlers: swipeHandlers,
+		offsetX,
+		isSwiping,
+	} = useSwipeGestures({
+		onSwipeLeft: () => handleClose(),
+		trackOffset: true,
+		maxOffset: 200,
+		threshold: 100,
+		lockDirection: true,
+		enabled: !!isFullScreen,
+	});
+
+	const handleClose = useCallback(() => {
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		setIsOpen(false);
+		// Wait for close animation before unmounting
+		setTimeout(() => onClose(), 300);
+	}, [onClose]);
+
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
 	const toggleGroup = useCallback((groupName: string) => {
@@ -200,18 +230,27 @@ export function LeftPanel({
 		[onSelectSession]
 	);
 
+	// Calculate drawer transform based on open state and swipe offset
+	const swipeOffset = isSwiping && offsetX < 0 ? offsetX : 0;
+	const drawerTransform = isOpen ? `translateX(${swipeOffset}px)` : 'translateX(-100%)';
+
 	const panelStyle: React.CSSProperties = isFullScreen
 		? {
 				position: 'fixed',
 				top: 0,
 				left: 0,
-				right: 0,
 				bottom: 0,
+				width: '85vw',
+				maxWidth: '400px',
 				zIndex: 50,
 				display: 'flex',
 				flexDirection: 'column',
 				backgroundColor: colors.bgSidebar,
 				overflow: 'hidden',
+				transform: drawerTransform,
+				transition: isSwiping ? 'none' : 'transform 0.3s ease-out',
+				boxShadow: isOpen ? '4px 0 24px rgba(0, 0, 0, 0.3)' : 'none',
+				touchAction: 'pan-y',
 			}
 		: {
 				width: `${width ?? 240}px`,
@@ -228,20 +267,21 @@ export function LeftPanel({
 		<>
 			{isFullScreen && (
 				<div
-					onClick={onClose}
+					onClick={handleClose}
 					style={{
 						position: 'fixed',
 						top: 0,
 						left: 0,
 						right: 0,
 						bottom: 0,
-						backgroundColor: 'rgba(0, 0, 0, 0.5)',
+						backgroundColor: isOpen ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0)',
 						zIndex: 49,
+						transition: 'background-color 0.3s ease-out',
 					}}
 					aria-label="Close panel"
 				/>
 			)}
-			<div ref={panelRef} style={panelStyle}>
+			<div ref={panelRef} {...(isFullScreen ? swipeHandlers : {})} style={panelStyle}>
 				{/* Header */}
 				<div
 					style={{
@@ -303,7 +343,7 @@ export function LeftPanel({
 							</button>
 						)}
 						<button
-							onClick={onClose}
+							onClick={isFullScreen ? handleClose : onClose}
 							style={{
 								width: '24px',
 								height: '24px',

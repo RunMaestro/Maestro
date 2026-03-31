@@ -172,11 +172,9 @@ function OverflowMenuItem({
  */
 interface MobileHeaderProps {
 	activeSession?: Session | null;
-	autoRunState?: AutoRunState | null;
 	onMenuTap?: () => void;
 	isLeftPanelOpen?: boolean;
 	onSearchTap?: () => void;
-	onAutoRunTap?: () => void;
 	onRightDrawerTap?: () => void;
 	isRightPanelOpen?: boolean;
 	onCueTap?: () => void;
@@ -204,11 +202,9 @@ interface MobileHeaderProps {
 
 function MobileHeader({
 	activeSession,
-	autoRunState,
 	onMenuTap,
 	isLeftPanelOpen = false,
 	onSearchTap,
-	onAutoRunTap,
 	onRightDrawerTap,
 	isRightPanelOpen = false,
 	onCueTap,
@@ -394,49 +390,6 @@ function MobileHeader({
 						<line x1="21" y1="21" x2="16.65" y2="16.65" />
 					</svg>
 				</button>
-
-				{/* Auto Run status (only with active session) */}
-				{activeSession && (
-					<button
-						onClick={onAutoRunTap}
-						style={headerIconButton(colors, !!autoRunState?.isRunning)}
-						aria-label="Auto Run"
-						title="Auto Run"
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill={autoRunState?.isRunning ? 'currentColor' : 'none'}
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<polygon points="5,3 19,12 5,21" />
-						</svg>
-						{autoRunState?.isRunning && autoRunState.totalTasks > 0 && (
-							<span
-								style={{
-									position: 'absolute',
-									top: '-4px',
-									right: '-4px',
-									fontSize: '8px',
-									fontWeight: 700,
-									color: 'white',
-									backgroundColor: colors.accent,
-									borderRadius: '8px',
-									padding: '1px 3px',
-									minWidth: '14px',
-									textAlign: 'center',
-									lineHeight: '12px',
-								}}
-							>
-								{Math.round((autoRunState.completedTasks / autoRunState.totalTasks) * 100)}%
-							</span>
-						)}
-					</button>
-				)}
 
 				{/* Right Panel toggle */}
 				<button
@@ -1449,6 +1402,21 @@ export default function MobileApp() {
 			onTerminalData: (_sessionId, data) => {
 				webTerminalRef.current?.write(data);
 			},
+			onTerminalReady: (sessionId) => {
+				// PTY just spawned — refit xterm and re-send current dimensions
+				// so the PTY matches the actual terminal viewport.
+				// Use wsSendRef (not send) to avoid circular dependency — send
+				// comes from useWebSocket which is still being initialized here.
+				const size = webTerminalRef.current?.fitAndGetSize();
+				if (size) {
+					wsSendRef.current?.({
+						type: 'terminal_resize',
+						sessionId,
+						cols: size.cols,
+						rows: size.rows,
+					});
+				}
+			},
 			onSettingsChanged: (settings) => {
 				settingsChangedRef.current?.(settings as WebSettings);
 			},
@@ -1483,11 +1451,11 @@ export default function MobileApp() {
 
 	// Auto Run hook for panel operations
 	const currentAutoRunState = activeSessionId ? (autoRunStates[activeSessionId] ?? null) : null;
-	const { documents: autoRunDocuments, launchAutoRun } = useAutoRun(
-		sendRequest,
-		send,
-		currentAutoRunState
-	);
+	const {
+		documents: autoRunDocuments,
+		loadDocuments: loadAutoRunDocuments,
+		launchAutoRun,
+	} = useAutoRun(sendRequest, send, currentAutoRunState);
 
 	// Auto Run panel handlers
 	const handleOpenAutoRunPanel = useCallback(() => {
@@ -1511,7 +1479,11 @@ export default function MobileApp() {
 
 	const handleAutoRunOpenSetup = useCallback(() => {
 		setShowAutoRunSetup(true);
-	}, []);
+		// Load documents when setup sheet opens so it has the latest list
+		if (activeSessionId) {
+			loadAutoRunDocuments(activeSessionId);
+		}
+	}, [activeSessionId, loadAutoRunDocuments]);
 
 	const handleAutoRunCloseSetup = useCallback(() => {
 		setShowAutoRunSetup(false);
@@ -2160,32 +2132,44 @@ export default function MobileApp() {
 		isCommandPaletteOpen: showCommandPalette,
 	});
 
-	// Swipe-from-right-edge gesture to open right drawer
-	const rightEdgeSwipeRef = useRef<{ startX: number; startY: number } | null>(null);
+	// Swipe-from-edge gestures to open left panel / right drawer
+	const edgeSwipeRef = useRef<{ startX: number; startY: number; edge: 'left' | 'right' } | null>(
+		null
+	);
 	const handleMainTouchStart = useCallback((e: React.TouchEvent) => {
 		const touch = e.touches[0];
 		const viewportWidth = window.innerWidth;
-		// Only track touches starting within 20px of the right edge
-		if (touch.clientX >= viewportWidth - 20) {
-			rightEdgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY };
+		// Track touches starting within 20px of either edge
+		if (touch.clientX <= 20) {
+			edgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY, edge: 'left' };
+		} else if (touch.clientX >= viewportWidth - 20) {
+			edgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY, edge: 'right' };
 		}
 	}, []);
 	const handleMainTouchMove = useCallback(
 		(e: React.TouchEvent) => {
-			if (!rightEdgeSwipeRef.current) return;
+			if (!edgeSwipeRef.current) return;
 			const touch = e.touches[0];
-			const deltaX = rightEdgeSwipeRef.current.startX - touch.clientX;
-			const deltaY = Math.abs(touch.clientY - rightEdgeSwipeRef.current.startY);
-			// Swipe left from right edge — open drawer if moved > 60px and more horizontal than vertical
-			if (deltaX > 60 && deltaX > deltaY) {
-				rightEdgeSwipeRef.current = null;
-				handleOpenRightDrawer('files');
+			const deltaX = touch.clientX - edgeSwipeRef.current.startX;
+			const deltaY = Math.abs(touch.clientY - edgeSwipeRef.current.startY);
+			const absDeltaX = Math.abs(deltaX);
+			// Must move > 60px horizontally and be more horizontal than vertical
+			if (absDeltaX > 60 && absDeltaX > deltaY) {
+				const { edge } = edgeSwipeRef.current;
+				edgeSwipeRef.current = null;
+				if (edge === 'right' && deltaX < 0) {
+					// Swipe left from right edge — open right drawer
+					handleOpenRightDrawer('files');
+				} else if (edge === 'left' && deltaX > 0) {
+					// Swipe right from left edge — open left panel
+					setShowLeftPanel(true);
+				}
 			}
 		},
 		[handleOpenRightDrawer]
 	);
 	const handleMainTouchEnd = useCallback(() => {
-		rightEdgeSwipeRef.current = null;
+		edgeSwipeRef.current = null;
 	}, []);
 
 	// Handle viewing a git diff from the right drawer
@@ -2890,6 +2874,7 @@ export default function MobileApp() {
 			>
 				{currentInputMode === 'terminal' ? (
 					<WebTerminal
+						key={`terminal-${activeSessionId}`}
 						ref={webTerminalRef}
 						theme={theme}
 						onData={(data) => {
@@ -2971,11 +2956,9 @@ export default function MobileApp() {
 			{/* Header with session info */}
 			<MobileHeader
 				activeSession={activeSession}
-				autoRunState={currentAutoRunState}
 				onMenuTap={() => setShowLeftPanel((prev) => !prev)}
 				isLeftPanelOpen={showLeftPanel}
 				onSearchTap={handleOpenCommandPalette}
-				onAutoRunTap={handleOpenAutoRunPanel}
 				onRightDrawerTap={() => {
 					if (showRightDrawer) {
 						handleCloseRightDrawer();
@@ -3258,11 +3241,12 @@ export default function MobileApp() {
 						flex: 1,
 						display: 'flex',
 						flexDirection: 'column',
-						alignItems: 'center',
+						alignItems: currentInputMode === 'terminal' ? 'stretch' : 'center',
 						justifyContent: 'flex-start',
-						padding: '12px',
-						paddingBottom: 'calc(80px + env(safe-area-inset-bottom))',
-						textAlign: 'center',
+						padding: currentInputMode === 'terminal' ? '0' : '12px',
+						paddingBottom:
+							currentInputMode === 'terminal' ? '0' : 'calc(80px + env(safe-area-inset-bottom))',
+						textAlign: currentInputMode === 'terminal' ? 'left' : 'center',
 						overflow: 'hidden',
 						minHeight: 0,
 						minWidth: 0,
@@ -3274,7 +3258,7 @@ export default function MobileApp() {
 							flex: 1,
 							display: 'flex',
 							flexDirection: 'column',
-							alignItems: 'center',
+							alignItems: currentInputMode === 'terminal' ? 'stretch' : 'center',
 							justifyContent:
 								connectionState === 'connected' || connectionState === 'authenticated'
 									? 'flex-start'
@@ -3315,34 +3299,34 @@ export default function MobileApp() {
 				)}
 			</div>
 
-			{/* Sticky bottom command input bar */}
-			<CommandInputBar
-				isOffline={isOffline}
-				isConnected={connectionState === 'connected' || connectionState === 'authenticated'}
-				value={commandInput}
-				onChange={handleCommandChange}
-				onSubmit={handleCommandSubmit}
-				placeholder={
-					!activeSessionId
-						? 'Select a session first...'
-						: activeSession?.inputMode === 'ai'
-							? isSmallScreen
+			{/* Sticky bottom command input bar — hidden in terminal mode (xterm.js handles all input) */}
+			{currentInputMode !== 'terminal' && (
+				<CommandInputBar
+					isOffline={isOffline}
+					isConnected={connectionState === 'connected' || connectionState === 'authenticated'}
+					value={commandInput}
+					onChange={handleCommandChange}
+					onSubmit={handleCommandSubmit}
+					placeholder={
+						!activeSessionId
+							? 'Select a session first...'
+							: isSmallScreen
 								? 'Ask AI...'
 								: `Ask ${activeSession?.toolType === 'claude-code' ? 'Claude' : activeSession?.toolType || 'AI'} about ${activeSession?.name || 'this session'}...`
-							: 'Run shell command...'
-				}
-				disabled={!activeSessionId}
-				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
-				isSessionBusy={activeSession?.state === 'busy'}
-				onInterrupt={handleInterrupt}
-				cwd={activeSession?.cwd}
-				slashCommands={allSlashCommands}
-				showRecentCommands={false}
-				onOpenCommandPalette={handleOpenCommandPalette}
-				thinkingMode={thinkingMode}
-				onToggleThinking={handleToggleThinking}
-				supportsThinking={activeSession?.toolType === 'claude-code'}
-			/>
+					}
+					disabled={!activeSessionId}
+					inputMode={'ai'}
+					isSessionBusy={activeSession?.state === 'busy'}
+					onInterrupt={handleInterrupt}
+					cwd={activeSession?.cwd}
+					slashCommands={allSlashCommands}
+					showRecentCommands={false}
+					onOpenCommandPalette={handleOpenCommandPalette}
+					thinkingMode={thinkingMode}
+					onToggleThinking={handleToggleThinking}
+					supportsThinking={activeSession?.toolType === 'claude-code'}
+				/>
+			)}
 
 			{/* Command palette */}
 			<QuickActionsMenu
