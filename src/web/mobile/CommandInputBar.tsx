@@ -38,12 +38,13 @@ import {
 } from './SlashCommandAutocomplete';
 import { triggerHaptic } from './constants';
 import {
-	InputModeToggleButton,
 	VoiceInputButton,
 	SlashCommandButton,
 	SendInterruptButton,
 	ExpandedModeSendInterruptButton,
+	ThinkingToggleButton,
 } from './CommandInputButtons';
+import type { ThinkingMode } from '../../shared/types';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
 
 /** Default minimum height for the text input area */
@@ -111,8 +112,6 @@ export interface CommandInputBarProps {
 	disabled?: boolean;
 	/** Current input mode (AI or terminal) */
 	inputMode?: InputMode;
-	/** Callback when input mode is toggled */
-	onModeToggle?: (mode: InputMode) => void;
 	/** Whether the active session is busy (AI thinking) */
 	isSessionBusy?: boolean;
 	/** Callback when interrupt button is pressed */
@@ -135,6 +134,12 @@ export interface CommandInputBarProps {
 	showRecentCommands?: boolean;
 	/** Callback when command palette should open (long-press of send button) */
 	onOpenCommandPalette?: () => void;
+	/** Current thinking mode: 'off' | 'on' | 'sticky' */
+	thinkingMode?: ThinkingMode;
+	/** Callback to cycle thinking mode */
+	onToggleThinking?: () => void;
+	/** Whether the active agent supports thinking display */
+	supportsThinking?: boolean;
 }
 
 /**
@@ -152,7 +157,6 @@ export function CommandInputBar({
 	value: controlledValue,
 	disabled: externalDisabled,
 	inputMode = 'ai',
-	onModeToggle,
 	isSessionBusy = false,
 	onInterrupt,
 	onHistoryOpen,
@@ -164,6 +168,9 @@ export function CommandInputBar({
 	onInputBlur,
 	showRecentCommands = true,
 	onOpenCommandPalette,
+	thinkingMode = 'off',
+	onToggleThinking,
+	supportsThinking = false,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -249,7 +256,6 @@ export function CommandInputBar({
 		handleTouchMove: handleSendButtonTouchMove,
 	} = useLongPressMenu({
 		inputMode,
-		onModeToggle,
 		disabled: isDisabled,
 		value,
 		onOpenCommandPalette,
@@ -369,14 +375,6 @@ export function CommandInputBar({
 		},
 		[handleSubmit, inputMode, isSendBlocked]
 	);
-
-	/**
-	 * Handle mode toggle between AI and Terminal
-	 */
-	const handleModeToggle = useCallback(() => {
-		const newMode = inputMode === 'ai' ? 'terminal' : 'ai';
-		onModeToggle?.(newMode);
-	}, [inputMode, onModeToggle]);
 
 	/**
 	 * Focus input when mode changes
@@ -654,13 +652,6 @@ export function CommandInputBar({
 					{/* Terminal mode: $ prefix + input in a container - single line, tight height */}
 					{inputMode === 'terminal' ? (
 						<>
-							{/* Mode toggle button - AI / Terminal */}
-							{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
-							<InputModeToggleButton
-								inputMode={inputMode}
-								onModeToggle={handleModeToggle}
-								disabled={externalDisabled || isOffline || !isConnected}
-							/>
 							<div
 								style={{
 									flex: 1,
@@ -748,14 +739,6 @@ export function CommandInputBar({
 						<>
 							{!shouldStackPhoneComposer && (
 								<>
-									{/* Mode toggle button - AI / Terminal */}
-									{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
-									<InputModeToggleButton
-										inputMode={inputMode}
-										onModeToggle={handleModeToggle}
-										disabled={externalDisabled || isOffline || !isConnected}
-									/>
-
 									{/* Voice input button - only shown if speech recognition is supported */}
 									{voiceSupported && !shouldCompressPhoneActions && (
 										<VoiceInputButton
@@ -770,6 +753,15 @@ export function CommandInputBar({
 										<SlashCommandButton
 											isOpen={slashCommandOpen}
 											onOpen={openSlashCommandAutocomplete}
+											disabled={isDisabled}
+										/>
+									)}
+
+									{/* Thinking toggle button - only shown in AI mode for agents that support it */}
+									{inputMode === 'ai' && supportsThinking && onToggleThinking && (
+										<ThinkingToggleButton
+											thinkingMode={thinkingMode}
+											onToggle={onToggleThinking}
 											disabled={isDisabled}
 										/>
 									)}
@@ -868,11 +860,6 @@ export function CommandInputBar({
 										width: '100%',
 									}}
 								>
-									<InputModeToggleButton
-										inputMode={inputMode}
-										onModeToggle={handleModeToggle}
-										disabled={externalDisabled || isOffline || !isConnected}
-									/>
 									<div style={{ marginLeft: 'auto' }}>
 										<SendInterruptButton
 											isInterruptMode={inputMode === 'ai' && isSessionBusy}

@@ -439,6 +439,35 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Broadcast a tool execution event for the thinking stream
+	 */
+	broadcastToolEvent(
+		sessionId: string,
+		tabId: string,
+		toolLog: {
+			id: string;
+			timestamp: number;
+			source: 'tool';
+			text: string;
+			metadata?: {
+				toolState?: {
+					name: string;
+					status: 'running' | 'completed' | 'error';
+					input?: Record<string, unknown>;
+				};
+			};
+		}
+	): void {
+		this.broadcastToSession(sessionId, {
+			type: 'tool_event',
+			sessionId,
+			tabId,
+			toolLog,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
 	 * Broadcast Cue subscriptions changed to all connected web clients
 	 */
 	broadcastCueSubscriptionsChanged(subscriptions: CueSubscriptionInfo[]): void {

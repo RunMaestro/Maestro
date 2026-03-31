@@ -303,6 +303,21 @@ export class WebServer {
 		this.callbackRegistry.setWriteToSessionCallback(callback);
 	}
 
+	private writeToTerminalCallback: ((sessionId: string, data: string) => boolean) | null = null;
+	private resizeTerminalCallback:
+		| ((sessionId: string, cols: number, rows: number) => boolean)
+		| null = null;
+
+	setWriteToTerminalCallback(callback: (sessionId: string, data: string) => boolean): void {
+		this.writeToTerminalCallback = callback;
+	}
+
+	setResizeTerminalCallback(
+		callback: (sessionId: string, cols: number, rows: number) => boolean
+	): void {
+		this.resizeTerminalCallback = callback;
+	}
+
 	setExecuteCommandCallback(callback: ExecuteCommandCallback): void {
 		this.callbackRegistry.setExecuteCommandCallback(callback);
 	}
@@ -693,6 +708,10 @@ export class WebServer {
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
+			writeToTerminal: (sessionId: string, data: string) =>
+				this.writeToTerminalCallback?.(sessionId, data) ?? false,
+			resizeTerminal: (sessionId: string, cols: number, rows: number) =>
+				this.resizeTerminalCallback?.(sessionId, cols, rows) ?? false,
 		});
 	}
 
@@ -790,6 +809,26 @@ export class WebServer {
 
 	broadcastCueSubscriptionsChanged(subscriptions: CueSubscriptionInfo[]): void {
 		this.broadcastService.broadcastCueSubscriptionsChanged(subscriptions);
+	}
+
+	broadcastToolEvent(
+		sessionId: string,
+		tabId: string,
+		toolLog: {
+			id: string;
+			timestamp: number;
+			source: 'tool';
+			text: string;
+			metadata?: {
+				toolState?: {
+					name: string;
+					status: 'running' | 'completed' | 'error';
+					input?: Record<string, unknown>;
+				};
+			};
+		}
+	): void {
+		this.broadcastService.broadcastToolEvent(sessionId, tabId, toolLog);
 	}
 
 	// ============ Server Lifecycle ============

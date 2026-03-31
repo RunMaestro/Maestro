@@ -101,9 +101,19 @@ export function setupDataListener(
 		// Web interface terminal commands use runCommand() which emits with plain session IDs.
 		const webServer = getWebServer();
 		if (webServer) {
-			// Don't broadcast raw PTY terminal output to web clients
+			// Broadcast raw PTY terminal output as terminal_data (for xterm.js in web client)
 			if (sessionId.endsWith('-terminal')) {
-				debugLog('WebBroadcast', `SKIPPING PTY terminal output for web: session=${sessionId}`);
+				const baseSessionId = sessionId.replace(/-terminal$/, '');
+				debugLog(
+					'WebBroadcast',
+					`Broadcasting terminal_data: session=${baseSessionId}, dataLen=${data.length}`
+				);
+				webServer.broadcastToSessionClients(baseSessionId, {
+					type: 'terminal_data',
+					sessionId: baseSessionId,
+					data,
+					timestamp: Date.now(),
+				});
 				return;
 			}
 

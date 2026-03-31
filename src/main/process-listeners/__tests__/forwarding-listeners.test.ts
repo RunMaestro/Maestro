@@ -12,12 +12,22 @@ describe('Forwarding Listeners', () => {
 	let mockProcessManager: ProcessManager;
 	let mockSafeSend: SafeSendFn;
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
+	 
+	let mockDeps: any;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
 		mockSafeSend = vi.fn();
+		mockDeps = {
+			safeSend: mockSafeSend,
+			getWebServer: () => null,
+			patterns: {
+				REGEX_AI_SUFFIX: /-ai-[^-]+$/,
+				REGEX_AI_TAB_ID: /-ai-([^-]+)$/,
+			},
+		};
 
 		mockProcessManager = {
 			on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
@@ -27,7 +37,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should register all forwarding event listeners', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('slash-commands', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('thinking-chunk', expect.any(Function));
@@ -37,7 +47,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward slash-commands events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		const handler = eventHandlers.get('slash-commands');
 		const testSessionId = 'test-session-123';
@@ -53,7 +63,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward thinking-chunk events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		const handler = eventHandlers.get('thinking-chunk');
 		const testSessionId = 'test-session-123';
@@ -65,7 +75,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward tool-execution events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		const handler = eventHandlers.get('tool-execution');
 		const testSessionId = 'test-session-123';
@@ -81,7 +91,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward stderr events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		const handler = eventHandlers.get('stderr');
 		const testSessionId = 'test-session-123';
@@ -93,7 +103,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward command-exit events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, mockDeps);
 
 		const handler = eventHandlers.get('command-exit');
 		const testSessionId = 'test-session-123';

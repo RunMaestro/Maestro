@@ -5,7 +5,7 @@
  * Shows messages in a scrollable container with user/AI differentiation.
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
@@ -21,8 +21,15 @@ export interface LogEntry {
 	timestamp: number;
 	text?: string;
 	content?: string;
-	source?: 'user' | 'stdout' | 'stderr' | 'system';
+	source?: 'user' | 'stdout' | 'stderr' | 'system' | 'thinking' | 'tool';
 	type?: string;
+	metadata?: {
+		toolState?: {
+			name?: string;
+			status?: 'running' | 'completed' | 'error';
+			input?: Record<string, unknown>;
+		};
+	};
 }
 
 export interface MessageHistoryProps {
@@ -36,6 +43,10 @@ export interface MessageHistoryProps {
 	maxHeight?: string;
 	/** Callback when user taps a message */
 	onMessageTap?: (entry: LogEntry) => void;
+	/** Current thinking display mode */
+	thinkingMode?: 'off' | 'on' | 'sticky';
+	/** Session state (e.g. 'busy', 'idle') — needed for 'on' mode */
+	sessionState?: string;
 }
 
 /**
@@ -59,6 +70,26 @@ function formatTime(timestamp: number): string {
 }
 
 /**
+ * Summarize tool input for display (simplified from desktop TerminalOutput)
+ */
+function summarizeToolInput(input: Record<string, unknown>): string {
+	// File operations
+	if (typeof input.file_path === 'string') return input.file_path;
+	if (typeof input.path === 'string') return input.path;
+	// Bash commands
+	if (typeof input.command === 'string') {
+		const cmd = input.command as string;
+		return cmd.length > 80 ? cmd.substring(0, 80) + '\u2026' : cmd;
+	}
+	// Search operations
+	if (typeof input.pattern === 'string') return `/${input.pattern}/`;
+	// Fallback
+	const keys = Object.keys(input);
+	if (keys.length === 0) return '';
+	return keys.slice(0, 2).join(', ');
+}
+
+/**
  * MessageHistory component
  */
 export function MessageHistory({
@@ -67,6 +98,8 @@ export function MessageHistory({
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
+	thinkingMode,
+	sessionState,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -199,7 +232,19 @@ export function MessageHistory({
 		}
 	}, []);
 
-	if (!logs || logs.length === 0) {
+	// Filter logs based on thinking mode (tool entries follow same visibility as thinking)
+	const displayLogs = useMemo(() => {
+		if (!logs) return [];
+		const mode = thinkingMode ?? 'off';
+		if (mode === 'sticky') return logs; // Show everything
+		if (mode === 'off')
+			return logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+		// 'on' mode: show thinking/tool only while busy, hide after completion
+		if (sessionState === 'busy') return logs;
+		return logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+	}, [logs, thinkingMode, sessionState]);
+
+	if (!displayLogs || displayLogs.length === 0) {
 		return (
 			<div
 				style={{
@@ -240,14 +285,70 @@ export function MessageHistory({
 					border: `1px solid ${colors.border}`,
 				}}
 			>
-				{logs.map((entry, index) => {
+				{displayLogs.map((entry, index) => {
 					const rawText = entry.text || entry.content || '';
 					const text = stripAnsiCodes(rawText);
 					const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+					const messageKey = entry.id || `${entry.timestamp}-${index}`;
+
+					// Tool entries render as compact inline cards
+					if (source === 'tool') {
+						const toolInput = entry.metadata?.toolState?.input as
+							| Record<string, unknown>
+							| undefined;
+						const toolDetail = toolInput ? summarizeToolInput(toolInput) : null;
+
+						return (
+							<div
+								key={messageKey}
+								style={{
+									padding: '4px 16px',
+									fontSize: '12px',
+									fontFamily: 'ui-monospace, monospace',
+									borderLeft: `2px solid ${colors.accent}`,
+									marginLeft: '12px',
+									color: colors.textMain,
+								}}
+							>
+								<div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+									<span
+										style={{
+											color: colors.accent,
+											fontSize: '11px',
+											fontWeight: 500,
+											flexShrink: 0,
+										}}
+									>
+										{text}
+									</span>
+									{entry.metadata?.toolState?.status === 'running' && (
+										<span
+											style={{
+												color: colors.warning ?? '#f59e0b',
+												animation: 'pulse 1.5s ease-in-out infinite',
+											}}
+										>
+											&#9679;
+										</span>
+									)}
+									{entry.metadata?.toolState?.status === 'completed' && (
+										<span style={{ color: colors.success ?? '#22c55e' }}>&#10003;</span>
+									)}
+									{entry.metadata?.toolState?.status === 'error' && (
+										<span style={{ color: colors.error ?? '#ef4444' }}>&#10007;</span>
+									)}
+									{toolDetail && (
+										<span style={{ opacity: 0.7, wordBreak: 'break-word' }}>{toolDetail}</span>
+									)}
+								</div>
+							</div>
+						);
+					}
+
 					const isUser = source === 'user';
 					const isError = source === 'stderr';
 					const isSystem = source === 'system';
-					const messageKey = entry.id || `${entry.timestamp}-${index}`;
+					const isThinking = source === 'thinking';
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
@@ -273,10 +374,15 @@ export function MessageHistory({
 										? `${colors.error}10`
 										: isSystem
 											? `${colors.textDim}10`
-											: colors.bgSidebar,
-								border: `1px solid ${
-									isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
-								}`,
+											: isThinking
+												? `${colors.accent}08`
+												: colors.bgSidebar,
+								borderLeft: isThinking ? `2px solid ${colors.accent}` : undefined,
+								border: isThinking
+									? undefined
+									: `1px solid ${
+											isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
+										}`,
 								cursor: isTruncatable ? 'pointer' : 'default',
 								// Align user messages to the right
 								alignSelf: isUser ? 'flex-end' : 'flex-start',
@@ -298,18 +404,26 @@ export function MessageHistory({
 										fontWeight: 600,
 										textTransform: 'uppercase',
 										letterSpacing: '0.5px',
-										color: isUser ? colors.accent : isError ? colors.error : colors.textDim,
+										color: isUser
+											? colors.accent
+											: isError
+												? colors.error
+												: isThinking
+													? colors.accent
+													: colors.textDim,
 									}}
 								>
 									{isUser
 										? 'You'
 										: isError
 											? 'Error'
-											: isSystem
-												? 'System'
-												: inputMode === 'ai'
-													? 'AI'
-													: 'Output'}
+											: isThinking
+												? 'Thinking'
+												: isSystem
+													? 'System'
+													: inputMode === 'ai'
+														? 'AI'
+														: 'Output'}
 								</span>
 								<span style={{ opacity: 0.7 }}>{formatTime(entry.timestamp)}</span>
 								{/* Show expand/collapse indicator for truncatable messages */}

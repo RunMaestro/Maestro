@@ -47,7 +47,14 @@ export interface LogEntry {
 	id: string;
 	timestamp: number;
 	text: string;
-	source: 'user' | 'stdout' | 'stderr';
+	source: 'user' | 'stdout' | 'stderr' | 'thinking' | 'tool';
+	metadata?: {
+		toolState?: {
+			name?: string;
+			status?: 'running' | 'completed' | 'error';
+			input?: Record<string, unknown>;
+		};
+	};
 }
 
 /**
@@ -105,6 +112,23 @@ export interface MobileSessionHandlers {
 	onSessionAdded: (session: Session) => void;
 	onSessionRemoved: (sessionId: string) => void;
 	onActiveSessionChanged: (sessionId: string) => void;
+	onToolEvent: (
+		sessionId: string,
+		tabId: string,
+		toolLog: {
+			id: string;
+			timestamp: number;
+			source: 'tool';
+			text: string;
+			metadata?: {
+				toolState?: {
+					name: string;
+					status: 'running' | 'completed' | 'error';
+					input?: Record<string, unknown>;
+				};
+			};
+		}
+	) => void;
 	onSessionOutput: (
 		sessionId: string,
 		data: string,
@@ -222,6 +246,8 @@ export function useMobileSessionManagement(
 	const activeSessionIdRef = useRef<string | null>(urlSessionId || savedActiveSessionId);
 	// Ref to track activeTabId for use in callbacks (avoids stale closure issues)
 	const activeTabIdRef = useRef<string | null>(urlTabId || savedActiveTabId);
+	// Timestamp of last local session selection — used to ignore server echoes
+	const lastLocalSelectionRef = useRef<number>(0);
 
 	// Keep activeSessionIdRef in sync with state
 	useEffect(() => {
@@ -253,13 +279,15 @@ export function useMobileSessionManagement(
 			return;
 		}
 
+		const controller = new AbortController();
+
 		const fetchSessionLogs = async () => {
 			setIsLoadingLogs(true);
 			try {
 				// Pass tabId explicitly to avoid race conditions with activeTabId sync
 				const tabParam = activeTabId ? `?tabId=${activeTabId}` : '';
 				const apiUrl = buildApiUrl(`/session/${activeSessionId}${tabParam}`);
-				const response = await fetch(apiUrl);
+				const response = await fetch(apiUrl, { signal: controller.signal });
 				if (response.ok) {
 					const data = await response.json();
 					const session = data.session;
@@ -275,6 +303,7 @@ export function useMobileSessionManagement(
 					});
 				}
 			} catch (err) {
+				if ((err as Error).name === 'AbortError') return;
 				webLogger.error('Failed to fetch session logs', 'Mobile', err);
 			} finally {
 				setIsLoadingLogs(false);
@@ -282,6 +311,7 @@ export function useMobileSessionManagement(
 		};
 
 		fetchSessionLogs();
+		return () => controller.abort();
 	}, [activeSessionId, activeTabId, isOffline]);
 
 	// Handle session selection - also notifies desktop to switch
@@ -291,11 +321,25 @@ export function useMobileSessionManagement(
 			const session = sessions.find((s) => s.id === sessionId);
 			// Update refs synchronously BEFORE state updates to avoid race conditions
 			// with WebSocket messages arriving during the render cycle
+			lastLocalSelectionRef.current = Date.now();
 			activeSessionIdRef.current = sessionId;
 			activeTabIdRef.current = session?.activeTabId || null;
 			setActiveSessionId(sessionId);
 			setActiveTabId(session?.activeTabId || null);
 			triggerHaptic(hapticTapPattern);
+			// Clear unread flags when switching to this session
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs?.map((tab) => ({
+							...tab,
+							hasUnread: false,
+						})),
+					};
+				})
+			);
 			// Notify desktop to switch to this session (include activeTabId if available)
 			sendRef.current?.({
 				type: 'select_session',
@@ -511,6 +555,17 @@ export function useMobileSessionManagement(
 				}
 			},
 			onActiveSessionChanged: (sessionId: string) => {
+				// Ignore server echoes that arrive shortly after a local selection
+				// (user selected a session in web, server echoed it back — but user may
+				// have already clicked another session by the time the echo arrives)
+				const timeSinceLocalSelect = Date.now() - lastLocalSelectionRef.current;
+				if (timeSinceLocalSelect < 2000) {
+					webLogger.debug(
+						`Ignoring server echo for ${sessionId} (${timeSinceLocalSelect}ms after local select)`,
+						'Mobile'
+					);
+					return;
+				}
 				// Desktop app switched to a different session - sync with web
 				webLogger.debug(`Desktop active session changed: ${sessionId}`, 'Mobile');
 				// Update refs synchronously BEFORE state updates to avoid race conditions
@@ -518,6 +573,43 @@ export function useMobileSessionManagement(
 				activeTabIdRef.current = null;
 				setActiveSessionId(sessionId);
 				setActiveTabId(null);
+			},
+			onToolEvent: (
+				sessionId: string,
+				tabId: string,
+				toolLog: {
+					id: string;
+					timestamp: number;
+					source: 'tool';
+					text: string;
+					metadata?: {
+						toolState?: {
+							name: string;
+							status: 'running' | 'completed' | 'error';
+							input?: Record<string, unknown>;
+						};
+					};
+				}
+			) => {
+				// Tool execution event - append to session AI logs for thinking stream
+				const currentActiveId = activeSessionIdRef.current;
+				if (currentActiveId !== sessionId) return;
+
+				// For tabbed sessions, only show tool events for the active tab
+				const currentActiveTabId = activeTabIdRef.current;
+				if (tabId && currentActiveTabId && tabId !== currentActiveTabId) return;
+
+				setSessionLogs((prev) => {
+					const existingLogs = prev.aiLogs || [];
+					const newEntry: LogEntry = {
+						id: toolLog.id,
+						timestamp: toolLog.timestamp,
+						source: 'tool',
+						text: toolLog.text,
+						metadata: toolLog.metadata,
+					};
+					return { ...prev, aiLogs: [...existingLogs, newEntry] };
+				});
 			},
 			onSessionOutput: (
 				sessionId: string,
@@ -538,12 +630,24 @@ export function useMobileSessionManagement(
 					dataLen: data?.length || 0,
 				});
 
-				// Only update if this is the active session
+				// Mark as unread if output is for a non-active session
 				if (currentActiveId !== sessionId) {
-					webLogger.debug('Skipping output - not active session', 'Mobile', {
+					webLogger.debug('Marking session as unread - not active session', 'Mobile', {
 						sessionId,
 						activeSessionId: currentActiveId,
 					});
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs?.map((tab) => ({
+									...tab,
+									hasUnread: true,
+								})),
+							};
+						})
+					);
 					return;
 				}
 

@@ -49,6 +49,7 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	hasUnread?: boolean;
 }
 
 /**
@@ -135,6 +136,8 @@ export type ServerMessageType =
 	| 'context_operation_complete'
 	| 'cue_activity_event'
 	| 'cue_subscriptions_changed'
+	| 'tool_event'
+	| 'terminal_data'
 	| 'pong'
 	| 'subscribed'
 	| 'echo'
@@ -425,6 +428,28 @@ export interface GroupChatStateChangeBroadcast extends ServerMessage {
 }
 
 /**
+ * Tool event message from server (real-time tool execution in thinking stream)
+ */
+export interface ToolEventMessage extends ServerMessage {
+	type: 'tool_event';
+	sessionId: string;
+	tabId: string;
+	toolLog: {
+		id: string;
+		timestamp: number;
+		source: 'tool';
+		text: string;
+		metadata?: {
+			toolState?: {
+				name: string;
+				status: 'running' | 'completed' | 'error';
+				input?: Record<string, unknown>;
+			};
+		};
+	};
+}
+
+/**
  * Error message from server
  */
 export interface ErrorMessage extends ServerMessage {
@@ -458,6 +483,7 @@ export type TypedServerMessage =
 	| TabsChangedMessage
 	| GroupChatMessageBroadcast
 	| GroupChatStateChangeBroadcast
+	| ToolEventMessage
 	| ErrorMessage
 	| ServerMessage;
 
@@ -479,6 +505,8 @@ export interface WebSocketEventHandlers {
 	onSessionRemoved?: (sessionId: string) => void;
 	/** Called when the active session changes on the desktop */
 	onActiveSessionChanged?: (sessionId: string) => void;
+	/** Called when a tool execution event is received (real-time tool usage in thinking stream) */
+	onToolEvent?: (sessionId: string, tabId: string, toolLog: ToolEventMessage['toolLog']) => void;
 	/** Called when session output is received (real-time AI/terminal output) */
 	onSessionOutput?: (
 		sessionId: string,
@@ -503,6 +531,8 @@ export interface WebSocketEventHandlers {
 	) => void;
 	/** Called when a notification event is received */
 	onNotificationEvent?: (event: NotificationEventMessage) => void;
+	/** Called when raw terminal PTY data is received (for xterm.js) */
+	onTerminalData?: (sessionId: string, data: string) => void;
 	/** Called when settings are changed (from web or desktop) */
 	onSettingsChanged?: (settings: SettingsChangedMessage['settings']) => void;
 	/** Called when groups are changed (created, renamed, deleted, membership) */
@@ -837,6 +867,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						break;
 					}
 
+					case 'tool_event': {
+						const toolMsg = message as ToolEventMessage;
+						handlersRef.current?.onToolEvent?.(toolMsg.sessionId, toolMsg.tabId, toolMsg.toolLog);
+						break;
+					}
+
 					case 'session_exit': {
 						const exitMsg = message as SessionExitMessage;
 						handlersRef.current?.onSessionExit?.(exitMsg.sessionId, exitMsg.exitCode);
@@ -884,6 +920,15 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					case 'notification_event': {
 						const notifMsg = message as NotificationEventMessage;
 						handlersRef.current?.onNotificationEvent?.(notifMsg);
+						break;
+					}
+
+					case 'terminal_data': {
+						const sessionId = message.sessionId as string;
+						const data = message.data as string;
+						if (sessionId && data) {
+							handlersRef.current?.onTerminalData?.(sessionId, data);
+						}
 						break;
 					}
 

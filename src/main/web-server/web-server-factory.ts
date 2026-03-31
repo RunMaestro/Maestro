@@ -174,7 +174,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 			// Get the requested tab's logs (or active tab if no tabId provided)
 			// Tabs are the source of truth for AI conversation history
-			// Filter out thinking and tool logs - these should never be shown on the web interface
+			// AI logs include thinking and tool entries for UX parity with desktop
 			let aiLogs: any[] = [];
 			const targetTabId = tabId || session.activeTabId;
 			if (session.aiTabs && session.aiTabs.length > 0) {
@@ -185,8 +185,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					aiLogs = [];
 				} else {
 					const rawLogs = (targetTab || session.aiTabs[0])?.logs || [];
-					// Web interface should never show thinking/tool logs regardless of desktop settings
-					aiLogs = rawLogs.filter((log: any) => log.source !== 'thinking' && log.source !== 'tool');
+					// Include thinking and tool logs for UX parity with desktop
+					aiLogs = rawLogs;
 				}
 			}
 
@@ -270,6 +270,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			const result = processManager.write(targetSessionId, data);
 			logger.debug(`Write result: ${result}`, 'WebServer');
 			return result;
+		});
+
+		// Set up callbacks for raw terminal PTY write and resize (for xterm.js in web client)
+		server.setWriteToTerminalCallback((sessionId: string, data: string) => {
+			const processManager = getProcessManager();
+			if (!processManager) {
+				logger.warn('processManager is null for writeToTerminal', 'WebServer');
+				return false;
+			}
+			return processManager.write(`${sessionId}-terminal`, data);
+		});
+
+		server.setResizeTerminalCallback((sessionId: string, cols: number, rows: number) => {
+			const processManager = getProcessManager();
+			if (!processManager) {
+				logger.warn('processManager is null for resizeTerminal', 'WebServer');
+				return false;
+			}
+			return processManager.resize(`${sessionId}-terminal`, cols, rows);
 		});
 
 		// Set up callback for web server to execute commands through the desktop

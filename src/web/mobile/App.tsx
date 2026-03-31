@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { useThemeColors } from '../components/ThemeProvider';
+import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -25,17 +25,22 @@ import { useOfflineStatus, useDesktopTheme } from '../main';
 import { buildApiUrl } from '../utils/config';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
-import { SessionPillBar } from './SessionPillBar';
 import { AllSessionsView } from './AllSessionsView';
-import { RightDrawer, type RightDrawerTab } from './RightDrawer';
+import { type RightDrawerTab } from './RightDrawer';
+import { RightPanel } from './RightPanel';
+import { LeftPanel } from './LeftPanel';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useGitStatus } from '../hooks/useGitStatus';
+import { useResizableWebPanel } from '../hooks/useResizableWebPanel';
 import { GitDiffViewer } from './GitDiffViewer';
 import { CommandInputBar, type InputMode } from './CommandInputBar';
+import type { ThinkingMode } from '../../shared/types';
 import { DEFAULT_SLASH_COMMANDS, type SlashCommand } from './SlashCommandAutocomplete';
 // CommandHistoryDrawer and RecentCommandChips removed for simpler mobile UI
 import { ResponseViewer, type ResponseItem } from './ResponseViewer';
 import { OfflineQueueBanner } from './OfflineQueueBanner';
 import { MessageHistory } from './MessageHistory';
+import { WebTerminal, type WebTerminalHandle } from './WebTerminal';
 import { AutoRunIndicator } from './AutoRunIndicator';
 import { AutoRunPanel } from './AutoRunPanel';
 import { AutoRunDocumentViewer } from './AutoRunDocumentViewer';
@@ -169,14 +174,25 @@ interface MobileHeaderProps {
 	activeSession?: Session | null;
 	autoRunState?: AutoRunState | null;
 	onMenuTap?: () => void;
+	isLeftPanelOpen?: boolean;
 	onSearchTap?: () => void;
 	onAutoRunTap?: () => void;
 	onRightDrawerTap?: () => void;
+	isRightPanelOpen?: boolean;
 	onCueTap?: () => void;
 	hasRunningCue?: boolean;
 	onNotificationTap?: () => void;
 	onSettingsTap?: () => void;
 	notificationCount?: number;
+	completedAgents?: Array<{
+		sessionId: string;
+		sessionName: string;
+		timestamp: number;
+		eventType: string;
+	}>;
+	onSelectAgent?: (sessionId: string) => void;
+	onClearNotifications?: () => void;
+	onOpenNotificationSettings?: () => void;
 	// Overflow menu actions
 	onGroupChatTap?: () => void;
 	groupChatCount?: number;
@@ -190,14 +206,20 @@ function MobileHeader({
 	activeSession,
 	autoRunState,
 	onMenuTap,
+	isLeftPanelOpen = false,
 	onSearchTap,
 	onAutoRunTap,
 	onRightDrawerTap,
+	isRightPanelOpen = false,
 	onCueTap,
 	hasRunningCue = false,
-	onNotificationTap,
+	onNotificationTap: _onNotificationTap,
 	onSettingsTap,
-	notificationCount = 0,
+	notificationCount: _notificationCount = 0,
+	completedAgents = [],
+	onSelectAgent,
+	onClearNotifications,
+	onOpenNotificationSettings,
 	onGroupChatTap,
 	groupChatCount = 0,
 	onUsageDashboardTap,
@@ -208,6 +230,20 @@ function MobileHeader({
 	const colors = useThemeColors();
 	const [showOverflow, setShowOverflow] = useState(false);
 	const overflowRef = useRef<HTMLDivElement>(null);
+	const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+	const notifDropdownRef = useRef<HTMLDivElement>(null);
+
+	// Close notification dropdown on outside click
+	useEffect(() => {
+		if (!showNotifDropdown) return;
+		const handleClick = (e: MouseEvent) => {
+			if (notifDropdownRef.current && !notifDropdownRef.current.contains(e.target as Node)) {
+				setShowNotifDropdown(false);
+			}
+		};
+		document.addEventListener('mousedown', handleClick);
+		return () => document.removeEventListener('mousedown', handleClick);
+	}, [showNotifDropdown]);
 
 	// Get active tab for per-tab data (agentSessionId, usageStats)
 	const activeTab = getActiveTabFromSession(activeSession);
@@ -264,18 +300,14 @@ function MobileHeader({
 				gap: '6px',
 			}}
 		>
-			{/* Left: Menu / hamburger button */}
+			{/* Left: Agents panel toggle */}
 			<button
 				onClick={onMenuTap}
-				style={{
-					...headerIconButton(colors),
-					border: 'none',
-					backgroundColor: 'transparent',
-				}}
-				aria-label="Menu"
-				title="All Sessions"
+				style={headerIconButton(colors, isLeftPanelOpen)}
+				aria-label="Agents"
+				title="Agents"
 			>
-				{/* Hamburger icon */}
+				{/* Robot head agent icon */}
 				<svg
 					width="16"
 					height="16"
@@ -286,9 +318,11 @@ function MobileHeader({
 					strokeLinecap="round"
 					strokeLinejoin="round"
 				>
-					<line x1="3" y1="6" x2="21" y2="6" />
-					<line x1="3" y1="12" x2="21" y2="12" />
-					<line x1="3" y1="18" x2="21" y2="18" />
+					<rect x="4" y="8" width="16" height="12" rx="2" />
+					<circle cx="9" cy="14" r="1.5" fill="currentColor" stroke="none" />
+					<circle cx="15" cy="14" r="1.5" fill="currentColor" stroke="none" />
+					<line x1="12" y1="4" x2="12" y2="8" />
+					<circle cx="12" cy="3" r="1" />
 				</svg>
 			</button>
 
@@ -404,10 +438,10 @@ function MobileHeader({
 					</button>
 				)}
 
-				{/* Right Drawer toggle */}
+				{/* Right Panel toggle */}
 				<button
 					onClick={onRightDrawerTap}
-					style={headerIconButton(colors)}
+					style={headerIconButton(colors, isRightPanelOpen)}
 					aria-label="Files & History"
 					title="Files / History / Git"
 				>
@@ -461,47 +495,210 @@ function MobileHeader({
 					)}
 				</button>
 
-				{/* Notifications (badge with count) */}
-				<button
-					onClick={onNotificationTap}
-					style={headerIconButton(colors)}
-					aria-label="Notifications"
-					title="Notifications"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{/* Notifications (badge with count + dropdown) */}
+				<div ref={notifDropdownRef} style={{ position: 'relative' }}>
+					<button
+						onClick={() => setShowNotifDropdown((prev) => !prev)}
+						style={headerIconButton(colors, showNotifDropdown)}
+						aria-label="Notifications"
+						title="Notifications"
 					>
-						<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-						<path d="M13.73 21a2 2 0 0 1-3.46 0" />
-					</svg>
-					{notificationCount > 0 && (
-						<span
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+							<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+						</svg>
+						{completedAgents.length > 0 && (
+							<span
+								style={{
+									position: 'absolute',
+									top: '-4px',
+									right: '-4px',
+									fontSize: '8px',
+									fontWeight: 700,
+									color: 'white',
+									backgroundColor: colors.error,
+									borderRadius: '8px',
+									padding: '1px 3px',
+									minWidth: '14px',
+									textAlign: 'center',
+									lineHeight: '12px',
+								}}
+							>
+								{completedAgents.length > 99 ? '99+' : completedAgents.length}
+							</span>
+						)}
+					</button>
+					{showNotifDropdown && (
+						<div
 							style={{
 								position: 'absolute',
-								top: '-4px',
-								right: '-4px',
-								fontSize: '8px',
-								fontWeight: 700,
-								color: 'white',
-								backgroundColor: colors.error,
-								borderRadius: '8px',
-								padding: '1px 3px',
-								minWidth: '14px',
-								textAlign: 'center',
-								lineHeight: '12px',
+								top: '100%',
+								right: '0',
+								marginTop: '8px',
+								backgroundColor: colors.bgSidebar,
+								border: `1px solid ${colors.border}`,
+								borderRadius: '10px',
+								boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+								zIndex: 200,
+								width: '280px',
+								maxHeight: '360px',
+								overflow: 'hidden',
+								display: 'flex',
+								flexDirection: 'column',
 							}}
 						>
-							{notificationCount > 99 ? '99+' : notificationCount}
-						</span>
+							{/* Header */}
+							<div
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'space-between',
+									padding: '10px 12px',
+									borderBottom: `1px solid ${colors.border}`,
+								}}
+							>
+								<span style={{ fontSize: '13px', fontWeight: 600, color: colors.textMain }}>
+									Completed Agents
+								</span>
+								<div style={{ display: 'flex', gap: '4px' }}>
+									{onClearNotifications && completedAgents.length > 0 && (
+										<button
+											onClick={() => {
+												onClearNotifications();
+												setShowNotifDropdown(false);
+											}}
+											style={{
+												border: 'none',
+												backgroundColor: 'transparent',
+												color: colors.textDim,
+												fontSize: '11px',
+												cursor: 'pointer',
+												padding: '2px 6px',
+												borderRadius: '4px',
+											}}
+										>
+											Clear
+										</button>
+									)}
+									{onOpenNotificationSettings && (
+										<button
+											onClick={() => {
+												onOpenNotificationSettings();
+												setShowNotifDropdown(false);
+											}}
+											style={{
+												border: 'none',
+												backgroundColor: 'transparent',
+												color: colors.textDim,
+												cursor: 'pointer',
+												padding: '2px 4px',
+												borderRadius: '4px',
+												display: 'flex',
+												alignItems: 'center',
+											}}
+											title="Notification Settings"
+										>
+											<svg
+												width="12"
+												height="12"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<circle cx="12" cy="12" r="3" />
+												<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+											</svg>
+										</button>
+									)}
+								</div>
+							</div>
+							{/* Agent list */}
+							<div style={{ overflowY: 'auto', flex: 1 }}>
+								{completedAgents.length === 0 ? (
+									<div
+										style={{
+											padding: '24px 12px',
+											textAlign: 'center',
+											color: colors.textDim,
+											fontSize: '13px',
+										}}
+									>
+										No completed agents yet
+									</div>
+								) : (
+									completedAgents.map((agent, i) => {
+										const timeAgo = Math.round((Date.now() - agent.timestamp) / 60000);
+										const timeLabel =
+											timeAgo < 1
+												? 'just now'
+												: timeAgo < 60
+													? `${timeAgo}m ago`
+													: `${Math.round(timeAgo / 60)}h ago`;
+										return (
+											<button
+												key={`${agent.sessionId}-${agent.timestamp}`}
+												onClick={() => {
+													onSelectAgent?.(agent.sessionId);
+													setShowNotifDropdown(false);
+												}}
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: '10px',
+													width: '100%',
+													padding: '10px 12px',
+													border: 'none',
+													borderTop: i > 0 ? `1px solid ${colors.border}20` : 'none',
+													backgroundColor: 'transparent',
+													color: colors.textMain,
+													fontSize: '13px',
+													cursor: 'pointer',
+													textAlign: 'left',
+												}}
+											>
+												<span
+													style={{
+														width: '8px',
+														height: '8px',
+														borderRadius: '50%',
+														backgroundColor:
+															agent.eventType === 'agent_error' ? colors.error : colors.success,
+														flexShrink: 0,
+													}}
+												/>
+												<span
+													style={{
+														flex: 1,
+														overflow: 'hidden',
+														textOverflow: 'ellipsis',
+														whiteSpace: 'nowrap',
+													}}
+												>
+													{agent.sessionName}
+												</span>
+												<span style={{ fontSize: '11px', color: colors.textDim, flexShrink: 0 }}>
+													{timeLabel}
+												</span>
+											</button>
+										);
+									})
+								)}
+							</div>
+						</div>
 					)}
-				</button>
+				</div>
 
 				{/* Settings — shown directly on wide screens */}
 				{isWide && (
@@ -923,7 +1120,9 @@ function GroupChatListSheet({ chats, onSelectChat, onNewChat, onClose }: GroupCh
  */
 export default function MobileApp() {
 	const colors = useThemeColors();
+	const { theme } = useTheme();
 	const isOffline = useOfflineStatus();
+	const webTerminalRef = useRef<WebTerminalHandle>(null);
 	const { setDesktopTheme } = useDesktopTheme();
 
 	// View state persistence and screen tracking (hook consolidates multiple effects)
@@ -936,11 +1135,33 @@ export default function MobileApp() {
 		persistSessionSelection,
 	} = useMobileViewState();
 
+	// Responsive: detect mobile viewport for full-screen panel mode
+	const isMobile = useIsMobile();
+
+	// Resizable panel hooks
+	const leftPanelResize = useResizableWebPanel({
+		side: 'left',
+		defaultWidth: 240,
+		minWidth: 200,
+		maxWidth: 400,
+		storageKey: 'maestro-web-left-panel-width',
+	});
+
+	const rightPanelResize = useResizableWebPanel({
+		side: 'right',
+		defaultWidth: 320,
+		minWidth: 260,
+		maxWidth: 500,
+		storageKey: 'maestro-web-right-panel-width',
+	});
+
 	// UI state (not part of session management)
 	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
+	const [showLeftPanel, setShowLeftPanel] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
+	const [thinkingMode, setThinkingMode] = useState<ThinkingMode>('off');
 	const [commandDrafts, setCommandDrafts] = useState<CommandDraftStore>({});
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
@@ -960,6 +1181,11 @@ export default function MobileApp() {
 	// Notification settings sheet state
 	const [showNotificationSettings, setShowNotificationSettings] = useState(false);
 	const [notificationCount, setNotificationCount] = useState(0);
+
+	// Completed agents for notification dropdown
+	const [completedAgents, setCompletedAgents] = useState<
+		Array<{ sessionId: string; sessionName: string; timestamp: number; eventType: string }>
+	>([]);
 
 	// Settings panel state
 	const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -1206,6 +1432,22 @@ export default function MobileApp() {
 					severity: event.severity,
 				});
 				setNotificationCount((prev) => prev + 1);
+				if (event.eventType === 'agent_complete' || event.eventType === 'agent_error') {
+					setCompletedAgents((prev) =>
+						[
+							{
+								sessionId: event.sessionId,
+								sessionName: event.sessionName || 'Unknown Agent',
+								timestamp: Date.now(),
+								eventType: event.eventType,
+							},
+							...prev,
+						].slice(0, 50)
+					);
+				}
+			},
+			onTerminalData: (_sessionId, data) => {
+				webTerminalRef.current?.write(data);
 			},
 			onSettingsChanged: (settings) => {
 				settingsChangedRef.current?.(settings as WebSettings);
@@ -1885,6 +2127,16 @@ export default function MobileApp() {
 		setShowResponseViewer(false);
 		// Keep selectedResponse so animation can complete
 		setTimeout(() => setSelectedResponse(null), 300);
+	}, []);
+
+	// Handle thinking mode toggle (cycles: off -> on -> sticky -> off)
+	const handleToggleThinking = useCallback(() => {
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		setThinkingMode((prev) => {
+			if (prev === 'off') return 'on';
+			if (prev === 'on') return 'sticky';
+			return 'off';
+		});
 	}, []);
 
 	// Command palette: open/close handlers (defined before keyboard handler that uses them)
@@ -2636,7 +2888,31 @@ export default function MobileApp() {
 					overflow: 'hidden', // Contain MessageHistory's scroll
 				}}
 			>
-				{isLoadingLogs ? (
+				{currentInputMode === 'terminal' ? (
+					<WebTerminal
+						ref={webTerminalRef}
+						theme={theme}
+						onData={(data) => {
+							if (activeSessionId) {
+								send({
+									type: 'terminal_write',
+									sessionId: activeSessionId,
+									data,
+								});
+							}
+						}}
+						onResize={(cols, rows) => {
+							if (activeSessionId) {
+								send({
+									type: 'terminal_resize',
+									sessionId: activeSessionId,
+									cols,
+									rows,
+								});
+							}
+						}}
+					/>
+				) : isLoadingLogs ? (
 					<div
 						style={{
 							padding: '16px',
@@ -2656,16 +2932,16 @@ export default function MobileApp() {
 							fontSize: '14px',
 						}}
 					>
-						{activeSession.inputMode === 'ai'
-							? 'Ask your AI assistant anything'
-							: 'Run shell commands'}
+						Ask your AI assistant anything
 					</div>
 				) : (
 					<MessageHistory
 						logs={currentLogs}
-						inputMode={activeSession.inputMode as 'ai' | 'terminal'}
+						inputMode={'ai'}
 						autoScroll={true}
 						maxHeight="none"
+						thinkingMode={thinkingMode}
+						sessionState={activeSession?.state}
 					/>
 				)}
 			</div>
@@ -2685,12 +2961,6 @@ export default function MobileApp() {
 		fontSize: settingsHook.settings?.fontSize ? `${settingsHook.settings.fontSize}px` : undefined,
 	};
 
-	// Determine if session pill bar should be shown
-	const showSessionPillBar =
-		!isOffline &&
-		(connectionState === 'connected' || connectionState === 'authenticated') &&
-		sessions.length > 0;
-
 	return (
 		<div
 			style={containerStyle}
@@ -2702,15 +2972,33 @@ export default function MobileApp() {
 			<MobileHeader
 				activeSession={activeSession}
 				autoRunState={currentAutoRunState}
-				onMenuTap={handleOpenAllSessions}
+				onMenuTap={() => setShowLeftPanel((prev) => !prev)}
+				isLeftPanelOpen={showLeftPanel}
 				onSearchTap={handleOpenCommandPalette}
 				onAutoRunTap={handleOpenAutoRunPanel}
-				onRightDrawerTap={() => handleOpenRightDrawer('files')}
+				onRightDrawerTap={() => {
+					if (showRightDrawer) {
+						handleCloseRightDrawer();
+					} else {
+						handleOpenRightDrawer('files');
+					}
+				}}
+				isRightPanelOpen={showRightDrawer}
 				onCueTap={handleCueTap}
 				hasRunningCue={hasRunningCue}
 				onNotificationTap={handleOpenNotificationSettings}
 				onSettingsTap={handleOpenSettingsPanel}
 				notificationCount={notificationCount}
+				completedAgents={completedAgents}
+				onSelectAgent={(sessionId) => {
+					handleSelectSession(sessionId);
+					triggerHaptic(HAPTIC_PATTERNS.tap);
+				}}
+				onClearNotifications={() => {
+					setCompletedAgents([]);
+					setNotificationCount(0);
+				}}
+				onOpenNotificationSettings={handleOpenNotificationSettings}
 				onGroupChatTap={handleGroupChatTap}
 				groupChatCount={activeGroupChats.length}
 				onUsageDashboardTap={() => {
@@ -2725,38 +3013,37 @@ export default function MobileApp() {
 				onNewAgentTap={handleOpenAgentCreation}
 			/>
 
-			{/* Session pill bar - Row 1: Groups/Sessions with search button */}
-			{showSessionPillBar && (
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId={activeSessionId}
-					onSelectSession={handleSelectSession}
-					onOpenAllSessions={handleOpenAllSessions}
-					onOpenHistory={handleOpenHistoryPanel}
-					onOpenRightDrawer={() => handleOpenRightDrawer('files')}
-					onToggleBookmark={handleToggleBookmark}
-					onOpenCreateAgent={handleOpenAgentCreation}
-					onOpenContextManagement={() => setShowContextManagement(true)}
+			{/* Tab bar - Row 2: Unified tab bar with AI tabs + terminal tab */}
+			{activeSession?.aiTabs && activeSession.activeTabId && (
+				<TabBar
+					tabs={activeSession.aiTabs}
+					activeTabId={activeSession.activeTabId}
+					onSelectTab={(tabId) => {
+						// Selecting an AI tab also switches to AI mode
+						if (currentInputMode !== 'ai') {
+							handleModeToggle('ai');
+						}
+						handleSelectTab(tabId);
+					}}
+					onNewTab={handleNewTab}
+					onCloseTab={handleCloseTab}
+					onOpenTabSearch={handleOpenTabSearch}
+					onRenameTab={handleRenameTab}
+					onStarTab={handleStarTab}
+					onReorderTab={handleReorderTab}
+					inputMode={currentInputMode}
+					onSelectTerminal={() => {
+						if (currentInputMode !== 'terminal') {
+							handleModeToggle('terminal');
+						}
+					}}
+					onCloseTerminal={() => {
+						if (currentInputMode === 'terminal') {
+							handleModeToggle('ai');
+						}
+					}}
 				/>
 			)}
-
-			{/* Tab bar - Row 2: Tabs for active session with search button */}
-			{activeSession?.inputMode === 'ai' &&
-				activeSession?.aiTabs &&
-				activeSession.aiTabs.length > 1 &&
-				activeSession.activeTabId && (
-					<TabBar
-						tabs={activeSession.aiTabs}
-						activeTabId={activeSession.activeTabId}
-						onSelectTab={handleSelectTab}
-						onNewTab={handleNewTab}
-						onCloseTab={handleCloseTab}
-						onOpenTabSearch={handleOpenTabSearch}
-						onRenameTab={handleRenameTab}
-						onStarTab={handleStarTab}
-						onReorderTab={handleReorderTab}
-					/>
-				)}
 
 			{/* AutoRun indicator - shown when batch processing is active on desktop */}
 			{activeSessionId && autoRunStates[activeSessionId] && (
@@ -2792,23 +3079,6 @@ export default function MobileApp() {
 					onMoveToGroup={agentManagement.moveToGroup}
 					groups={agentManagement.groups}
 					onOpenCreateAgent={handleOpenAgentCreation}
-				/>
-			)}
-
-			{/* Right drawer - unified slide-out panel with Files, History, Auto Run, Git tabs */}
-			{showRightDrawer && activeSessionId && (
-				<RightDrawer
-					sessionId={activeSessionId}
-					activeTab={rightDrawerTab}
-					autoRunState={currentAutoRunState}
-					gitStatus={gitStatus}
-					onClose={handleCloseRightDrawer}
-					projectPath={activeSession?.cwd}
-					onAutoRunOpenDocument={handleAutoRunOpenDocument}
-					onAutoRunOpenSetup={handleAutoRunOpenSetup}
-					sendRequest={sendRequest}
-					send={send}
-					onViewDiff={handleViewGitDiff}
 				/>
 			)}
 
@@ -2855,7 +3125,7 @@ export default function MobileApp() {
 			)}
 
 			{/* Auto Run setup sheet - bottom sheet on top of panel */}
-			{showAutoRunPanel && activeSessionId && showAutoRunSetup && (
+			{activeSessionId && showAutoRunSetup && (
 				<AutoRunSetupSheet
 					sessionId={activeSessionId}
 					documents={autoRunDocuments}
@@ -2957,46 +3227,93 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Main content area */}
-			<main
+			{/* Horizontal layout: main content + optional right panel */}
+			<div
 				style={{
 					flex: 1,
 					display: 'flex',
-					flexDirection: 'column',
-					alignItems: 'center',
-					justifyContent: 'flex-start',
-					padding: '12px',
-					paddingBottom: 'calc(80px + env(safe-area-inset-bottom))', // Account for fixed input bar
-					textAlign: 'center',
-					overflow: 'hidden', // Changed from 'auto' - let MessageHistory handle scrolling
-					minHeight: 0, // Required for flex child to scroll properly
+					flexDirection: 'row',
+					minHeight: 0,
+					overflow: 'hidden',
 				}}
 			>
-				{/* Content wrapper */}
-				<div
+				{/* Left panel — agent list, toggleable */}
+				{showLeftPanel && (
+					<LeftPanel
+						sessions={sessions}
+						activeSessionId={activeSessionId}
+						onSelectSession={handleSelectSession}
+						onClose={() => setShowLeftPanel(false)}
+						onNewAgent={handleOpenAgentCreation}
+						isFullScreen={isMobile}
+						panelRef={isMobile ? undefined : leftPanelResize.panelRef}
+						width={isMobile ? undefined : leftPanelResize.width}
+						onResizeStart={isMobile ? undefined : leftPanelResize.onResizeStart}
+					/>
+				)}
+
+				{/* Main content area */}
+				<main
 					style={{
 						flex: 1,
 						display: 'flex',
 						flexDirection: 'column',
 						alignItems: 'center',
-						justifyContent:
-							connectionState === 'connected' || connectionState === 'authenticated'
-								? 'flex-start'
-								: 'center',
-						width: '100%',
+						justifyContent: 'flex-start',
+						padding: '12px',
+						paddingBottom: 'calc(80px + env(safe-area-inset-bottom))',
+						textAlign: 'center',
+						overflow: 'hidden',
 						minHeight: 0,
-						overflow: 'hidden', // Contain child scroll
+						minWidth: 0,
 					}}
 				>
-					{renderContent()}
-					{/* Show help text only when disconnected/connecting */}
-					{connectionState !== 'connected' && connectionState !== 'authenticated' && (
-						<p style={{ fontSize: '12px', color: colors.textDim }}>
-							Make sure Maestro desktop app is running
-						</p>
-					)}
-				</div>
-			</main>
+					{/* Content wrapper */}
+					<div
+						style={{
+							flex: 1,
+							display: 'flex',
+							flexDirection: 'column',
+							alignItems: 'center',
+							justifyContent:
+								connectionState === 'connected' || connectionState === 'authenticated'
+									? 'flex-start'
+									: 'center',
+							width: '100%',
+							minHeight: 0,
+							overflow: 'hidden',
+						}}
+					>
+						{renderContent()}
+						{connectionState !== 'connected' && connectionState !== 'authenticated' && (
+							<p style={{ fontSize: '12px', color: colors.textDim }}>
+								Make sure Maestro desktop app is running
+							</p>
+						)}
+					</div>
+				</main>
+
+				{/* Right panel — inline, toggleable */}
+				{showRightDrawer && activeSessionId && (
+					<RightPanel
+						sessionId={activeSessionId}
+						activeTab={rightDrawerTab}
+						autoRunState={currentAutoRunState}
+						gitStatus={gitStatus}
+						onClose={handleCloseRightDrawer}
+						projectPath={activeSession?.cwd}
+						onAutoRunOpenDocument={handleAutoRunOpenDocument}
+						onAutoRunOpenSetup={handleAutoRunOpenSetup}
+						sendRequest={sendRequest}
+						send={send}
+						onViewDiff={handleViewGitDiff}
+						isFullScreen={isMobile}
+						panelRef={isMobile ? undefined : rightPanelResize.panelRef}
+						width={isMobile ? undefined : rightPanelResize.width}
+						onResizeStart={isMobile ? undefined : rightPanelResize.onResizeStart}
+					/>
+				)}
+			</div>
 
 			{/* Sticky bottom command input bar */}
 			<CommandInputBar
@@ -3016,13 +3333,15 @@ export default function MobileApp() {
 				}
 				disabled={!activeSessionId}
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
-				onModeToggle={handleModeToggle}
 				isSessionBusy={activeSession?.state === 'busy'}
 				onInterrupt={handleInterrupt}
 				cwd={activeSession?.cwd}
 				slashCommands={allSlashCommands}
 				showRecentCommands={false}
 				onOpenCommandPalette={handleOpenCommandPalette}
+				thinkingMode={thinkingMode}
+				onToggleThinking={handleToggleThinking}
+				supportsThinking={activeSession?.toolType === 'claude-code'}
 			/>
 
 			{/* Command palette */}

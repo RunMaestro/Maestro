@@ -65,7 +65,7 @@ export function RightDrawer({
 	projectPath,
 	onAutoRunOpenDocument: _onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
-	sendRequest: _sendRequest,
+	sendRequest,
 	send: _send,
 	onViewDiff,
 }: RightDrawerProps) {
@@ -220,7 +220,12 @@ export function RightDrawer({
 					}}
 				>
 					{currentTab === 'files' && (
-						<FilesTabContent sessionId={sessionId} onFileSelect={onFileSelect} />
+						<FilesTabContent
+							sessionId={sessionId}
+							onFileSelect={onFileSelect}
+							sendRequest={sendRequest}
+							projectPath={projectPath}
+						/>
 					)}
 					{currentTab === 'history' && (
 						<HistoryTabContent sessionId={sessionId} projectPath={projectPath} />
@@ -238,39 +243,275 @@ export function RightDrawer({
 }
 
 /**
- * Files tab content - placeholder for file explorer
- * (No FileExplorerPanel exists in mobile yet)
+ * File node in the tree
  */
-function FilesTabContent(_props: { sessionId: string; onFileSelect?: (path: string) => void }) {
+interface FileNode {
+	name: string;
+	type: 'file' | 'folder';
+	children?: FileNode[];
+	path: string;
+}
+
+/**
+ * Props for FilesTabContent
+ */
+interface FilesTabContentProps {
+	sessionId: string;
+	onFileSelect?: (path: string) => void;
+	sendRequest?: UseWebSocketReturn['sendRequest'];
+	projectPath?: string;
+}
+
+/**
+ * Files tab content - file explorer tree
+ */
+function FilesTabContent({
+	sessionId,
+	onFileSelect,
+	sendRequest,
+	projectPath,
+}: FilesTabContentProps) {
 	const colors = useThemeColors();
+	const [tree, setTree] = useState<FileNode[]>([]);
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [filter, setFilter] = useState('');
+
+	const loadTree = useCallback(() => {
+		if (!sendRequest || !projectPath) return;
+		setLoading(true);
+		setError(null);
+		sendRequest<{ tree: FileNode[]; error?: string }>('get_file_tree', {
+			sessionId,
+			path: projectPath,
+			maxDepth: 3,
+		})
+			.then((response) => {
+				setTree(response.tree || []);
+				if (response.error) setError(response.error);
+				setLoading(false);
+			})
+			.catch((err: any) => {
+				setError(err.message || 'Failed to load');
+				setLoading(false);
+			});
+	}, [sendRequest, projectPath, sessionId]);
+
+	// Load on mount and when dependencies change
+	useEffect(() => {
+		loadTree();
+	}, [loadTree]);
+
+	const toggleFolder = useCallback((path: string) => {
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) next.delete(path);
+			else next.add(path);
+			return next;
+		});
+	}, []);
+
+	const filterLower = filter.toLowerCase();
+
+	const matchesFilter = useCallback(
+		(node: FileNode): boolean => {
+			if (!filterLower) return true;
+			if (node.name.toLowerCase().includes(filterLower)) return true;
+			if (node.type === 'folder' && node.children) {
+				return node.children.some((c) => matchesFilter(c));
+			}
+			return false;
+		},
+		[filterLower]
+	);
+
+	const renderNode = (node: FileNode, depth: number) => {
+		if (!matchesFilter(node)) return null;
+		const isExpanded = expanded.has(node.path) || (!!filterLower && node.type === 'folder');
+		const isFolder = node.type === 'folder';
+
+		return (
+			<div key={node.path}>
+				<button
+					onClick={() => {
+						if (isFolder) {
+							toggleFolder(node.path);
+						} else {
+							onFileSelect?.(node.path);
+						}
+					}}
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						gap: '4px',
+						width: '100%',
+						padding: '3px 8px',
+						paddingLeft: `${8 + depth * 16}px`,
+						border: 'none',
+						backgroundColor: 'transparent',
+						color: colors.textMain,
+						fontSize: '12px',
+						fontFamily: 'monospace',
+						cursor: 'pointer',
+						textAlign: 'left',
+						whiteSpace: 'nowrap',
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+					}}
+					onMouseEnter={(e) => {
+						(e.currentTarget as HTMLElement).style.backgroundColor = `${colors.textDim}10`;
+					}}
+					onMouseLeave={(e) => {
+						(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+					}}
+					title={node.path}
+				>
+					{isFolder ? (
+						<>
+							<svg
+								width="10"
+								height="10"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke={colors.textDim}
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								style={{
+									flexShrink: 0,
+									transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+									transition: 'transform 0.1s ease',
+								}}
+							>
+								<polyline points="9 18 15 12 9 6" />
+							</svg>
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill={isExpanded ? colors.accent : colors.textDim}
+								stroke="none"
+								style={{ flexShrink: 0, opacity: 0.7 }}
+							>
+								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+							</svg>
+						</>
+					) : (
+						<>
+							<span style={{ width: '10px', flexShrink: 0 }} />
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke={colors.textDim}
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								style={{ flexShrink: 0, opacity: 0.5 }}
+							>
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+								<polyline points="14 2 14 8 20 8" />
+							</svg>
+						</>
+					)}
+					<span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+				</button>
+				{isFolder && isExpanded && node.children && (
+					<div>{node.children.map((child) => renderNode(child, depth + 1))}</div>
+				)}
+			</div>
+		);
+	};
+
+	if (!sendRequest || !projectPath) {
+		return (
+			<div
+				style={{ padding: '24px', textAlign: 'center', color: colors.textDim, fontSize: '13px' }}
+			>
+				No project path available
+			</div>
+		);
+	}
 
 	return (
-		<div
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				alignItems: 'center',
-				justifyContent: 'center',
-				padding: '40px 20px',
-				textAlign: 'center',
-				height: '100%',
-			}}
-		>
-			<svg
-				width="32"
-				height="32"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke={colors.textDim}
-				strokeWidth="2"
-				strokeLinecap="round"
-				strokeLinejoin="round"
+		<div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+			{/* Filter + refresh bar */}
+			<div
+				style={{
+					display: 'flex',
+					gap: '4px',
+					padding: '8px',
+					borderBottom: `1px solid ${colors.border}`,
+					flexShrink: 0,
+				}}
 			>
-				<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-			</svg>
-			<p style={{ fontSize: '14px', color: colors.textDim, marginTop: '12px' }}>
-				File explorer coming soon
-			</p>
+				<input
+					type="text"
+					placeholder="Filter files..."
+					value={filter}
+					onChange={(e) => setFilter(e.target.value)}
+					style={{
+						flex: 1,
+						padding: '4px 8px',
+						fontSize: '12px',
+						border: `1px solid ${colors.border}`,
+						borderRadius: '4px',
+						backgroundColor: 'transparent',
+						color: colors.textMain,
+						outline: 'none',
+					}}
+				/>
+				<button
+					onClick={loadTree}
+					disabled={loading}
+					style={{
+						padding: '4px 8px',
+						border: `1px solid ${colors.border}`,
+						borderRadius: '4px',
+						backgroundColor: 'transparent',
+						color: colors.textDim,
+						cursor: loading ? 'wait' : 'pointer',
+						fontSize: '12px',
+						flexShrink: 0,
+					}}
+					title="Refresh file tree"
+				>
+					{loading ? '...' : '\u21BB'}
+				</button>
+			</div>
+			{/* Tree content */}
+			<div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '4px 0' }}>
+				{error && (
+					<div style={{ padding: '12px', color: '#ef4444', fontSize: '12px' }}>{error}</div>
+				)}
+				{loading && tree.length === 0 && (
+					<div
+						style={{
+							padding: '24px',
+							textAlign: 'center',
+							color: colors.textDim,
+							fontSize: '13px',
+						}}
+					>
+						Loading files...
+					</div>
+				)}
+				{!loading && !error && tree.length === 0 && (
+					<div
+						style={{
+							padding: '24px',
+							textAlign: 'center',
+							color: colors.textDim,
+							fontSize: '13px',
+						}}
+					>
+						No files found
+					</div>
+				)}
+				{tree.map((node) => renderNode(node, 0))}
+			</div>
 		</div>
 	);
 }
@@ -522,3 +763,6 @@ function AutoRunTabContent({
 }
 
 export default RightDrawer;
+
+// Export tab content components for reuse in RightPanel (inline mode)
+export { FilesTabContent, HistoryTabContent, AutoRunTabContent };
