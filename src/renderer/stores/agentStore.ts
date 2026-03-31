@@ -30,6 +30,7 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
+import { useSettingsStore } from './settingsStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
@@ -204,7 +205,87 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	retryAfterError: (sessionId) => {
+		const session = getSession(sessionId);
+		if (!session) return;
+
+		// 1. Clear the error state (sets session to idle)
 		get().clearAgentError(sessionId);
+
+		// 2. Find the target tab so we can grab the last user message
+		const targetTabId = session.agentErrorTabId;
+		const targetTab = targetTabId
+			? session.aiTabs.find((tab) => tab.id === targetTabId)
+			: getActiveTab(session);
+
+		if (!targetTab) return;
+
+		// 3. Find the last user string in the logs
+		const logs = targetTab.logs || [];
+		const lastUserLog = [...logs].reverse().find((l) => l.source === 'user');
+
+		if (!lastUserLog || !lastUserLog.text) {
+			console.warn('[retryAfterError] No user message found to retry.');
+			return;
+		}
+
+		// 4. Re-construct a QueuedItem 'message' to re-dispatch.
+		// By sending it as a 'message' (even if it originally was a command),
+		// we avoid double-substituting template variables, as the text in the log
+		// is already the final rendered prompt. Also, processQueuedItem does not
+		// push duplicate logs for 'message' types.
+		const queuedItem: QueuedItem = {
+			id: generateId(),
+			timestamp: Date.now(),
+			tabId: targetTab.id,
+			type: 'message',
+			text: lastUserLog.text,
+			images: lastUserLog.images,
+			tabName:
+				targetTab.name ||
+				(targetTab.agentSessionId ? targetTab.agentSessionId.split('-')[0].toUpperCase() : 'New'),
+			readOnlyMode: targetTab.readOnlyMode,
+		};
+
+		// 5. Gather required deps (we only strictly need conductorProfile for plain messages)
+		const settings = useSettingsStore.getState();
+		const deps: ProcessQueuedItemDeps = {
+			conductorProfile: settings.conductorProfile,
+			customAICommands: settings.customAICommands,
+			speckitCommands: [],
+			openspecCommands: [],
+			bmadCommands: [],
+		};
+
+		// 6. Reset session to busy/thinking state so the UI reflects the retry
+		useSessionStore.getState().setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const updatedAiTabs = s.aiTabs?.map((tab) =>
+					tab.id === targetTab.id
+						? {
+								...tab,
+								state: 'busy' as const,
+								thinkingStartTime: Date.now(),
+							}
+						: tab
+				);
+				return {
+					...s,
+					state: 'busy' as SessionState,
+					busySource: 'ai',
+					aiTabs: updatedAiTabs,
+				};
+			})
+		);
+
+		// 7. Dispatch to agent!
+		setTimeout(() => {
+			get()
+				.processQueuedItem(sessionId, queuedItem, deps)
+				.catch((err) => {
+					console.error('[retryAfterError] Failed to retry item:', err);
+				});
+		}, 0);
 	},
 
 	restartAgentAfterError: async (sessionId) => {
