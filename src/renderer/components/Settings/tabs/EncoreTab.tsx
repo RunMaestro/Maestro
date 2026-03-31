@@ -6,7 +6,7 @@
  * Usage & Stats configuration (stats collection, time ranges, WakaTime integration).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
 	Clapperboard,
 	ChevronDown,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
+import { captureException } from '../../../utils/sentry';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
@@ -61,10 +62,13 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	} | null>(null);
 	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
 	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+	const wakatimeApiKeyRef = useRef(wakatimeApiKey);
+	wakatimeApiKeyRef.current = wakatimeApiKey;
 	const handleWakatimeApiKeyChange = useCallback(
 		(value: string) => {
 			setWakatimeApiKey(value);
 			setWakatimeKeyValid(null);
+			setWakatimeKeyValidating(false);
 		},
 		[setWakatimeApiKey]
 	);
@@ -74,6 +78,13 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		if (!isOpen || !wakatimeEnabled) return;
 		let cancelled = false;
 		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const handleCliError = (err: unknown) => {
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'WakaTime CLI check' },
+			});
+			if (!cancelled) setWakatimeCliStatus({ available: false });
+		};
 
 		window.maestro.wakatime
 			.checkCli()
@@ -88,16 +99,14 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								.then((retryStatus) => {
 									if (!cancelled) setWakatimeCliStatus(retryStatus);
 								})
-								.catch(() => {
-									if (!cancelled) setWakatimeCliStatus({ available: false });
-								});
+								.catch(handleCliError);
 						}
 					}, 3000);
 				}
 			})
-			.catch(() => {
+			.catch((err) => {
 				if (cancelled) return;
-				setWakatimeCliStatus({ available: false });
+				handleCliError(err);
 				retryTimer = setTimeout(() => {
 					if (!cancelled) {
 						window.maestro.wakatime
@@ -105,9 +114,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 							.then((retryStatus) => {
 								if (!cancelled) setWakatimeCliStatus(retryStatus);
 							})
-							.catch(() => {
-								if (!cancelled) setWakatimeCliStatus({ available: false });
-							});
+							.catch(handleCliError);
 					}
 				}, 3000);
 			});
@@ -115,6 +122,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		return () => {
 			cancelled = true;
 			if (retryTimer) clearTimeout(retryTimer);
+			setWakatimeCliStatus(null);
 		};
 	}, [isOpen, wakatimeEnabled]);
 
@@ -396,7 +404,9 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						{/* API Key Input (only shown when enabled) */}
 						{wakatimeEnabled && (
 							<div>
-								<div className="block text-xs opacity-60 mb-1">API Key</div>
+								<label htmlFor="wakatime-api-key" className="block text-xs opacity-60 mb-1">
+									API Key
+								</label>
 								<div
 									className="flex items-center border rounded px-3 py-2"
 									style={{
@@ -406,18 +416,37 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								>
 									<Key className="w-4 h-4 mr-2 opacity-50" />
 									<input
+										id="wakatime-api-key"
 										type="password"
 										value={wakatimeApiKey}
 										onChange={(e) => handleWakatimeApiKeyChange(e.target.value)}
 										onBlur={() => {
-											if (wakatimeApiKey) {
+											const keyAtBlur = wakatimeApiKey;
+											if (keyAtBlur) {
 												setWakatimeKeyValidating(true);
 												setWakatimeKeyValid(null);
 												window.maestro.wakatime
-													.validateApiKey(wakatimeApiKey)
-													.then((result) => setWakatimeKeyValid(result.valid))
-													.catch(() => setWakatimeKeyValid(false))
-													.finally(() => setWakatimeKeyValidating(false));
+													.validateApiKey(keyAtBlur)
+													.then((result) => {
+														if (wakatimeApiKeyRef.current === keyAtBlur) {
+															setWakatimeKeyValid(result.valid);
+														}
+													})
+													.catch((err) => {
+														captureException(err instanceof Error ? err : new Error(String(err)), {
+															extra: {
+																context: 'WakaTime API key validation',
+															},
+														});
+														if (wakatimeApiKeyRef.current === keyAtBlur) {
+															setWakatimeKeyValid(false);
+														}
+													})
+													.finally(() => {
+														if (wakatimeApiKeyRef.current === keyAtBlur) {
+															setWakatimeKeyValidating(false);
+														}
+													});
 											}
 										}}
 										className="bg-transparent flex-1 text-sm outline-none"
@@ -428,14 +457,18 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									{!wakatimeKeyValidating && wakatimeKeyValid === true && (
 										<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
 									)}
-									{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
-										<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
-									)}
 									{wakatimeApiKey && (
 										<button
+											type="button"
+											aria-label="Clear WakaTime API key"
 											onClick={() => handleWakatimeApiKeyChange('')}
 											className="ml-2 opacity-50 hover:opacity-100"
 											title="Clear API key"
+											style={
+												!wakatimeKeyValidating && wakatimeKeyValid === false
+													? { color: theme.colors.error, opacity: 1 }
+													: undefined
+											}
 										>
 											<X className="w-3 h-3" />
 										</button>
