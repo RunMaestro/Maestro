@@ -139,6 +139,23 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		configOptions: [
+			{
+				key: 'rateLimitAutoRetry',
+				type: 'checkbox' as const,
+				label: 'Auto-retry on Rate Limit',
+				description: 'Automatically pause and retry when encountering a Claude Code rate limit.',
+				default: true,
+			},
+			{
+				key: 'rateLimitFallbackHours',
+				type: 'number' as const,
+				label: 'Rate Limit Fallback (Hours)',
+				description:
+					'Wait time to use if the exact rate limit reset time cannot be parsed (leave 0 to disable fallback).',
+				default: 2,
+			},
+		],
 	},
 	{
 		id: 'codex',

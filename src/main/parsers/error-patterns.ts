@@ -1074,47 +1074,46 @@ export function parseRateLimitResetTime(text: string): number | null {
 	const parts = formatter.formatToParts(now);
 	const getPart = (type: string) => parseInt(parts.find((p) => p.type === type)?.value || '0', 10);
 
-	const tzYear = getPart('year');
-	const tzMonth = getPart('month');
-	const tzDay = getPart('day');
 	const tzHour = getPart('hour');
 	const tzMinute = getPart('minute');
-	const tzSecond = getPart('second');
 
 	// Compute the target date in the target timezone.
 	// Start with today; if that time has already passed, use tomorrow.
-	let targetDay = tzDay;
-	let targetMonth = tzMonth;
-	let targetYear = tzYear;
-
+	let targetDate = now;
 	const nowMinutes = tzHour * 60 + tzMinute;
 	const resetMinutes = hours * 60 + minutes;
 
 	if (resetMinutes <= nowMinutes) {
 		// Reset time already passed today — advance to tomorrow
-		const tomorrow = new Date(now.getTime() + 86400000);
-		const tParts = formatter.formatToParts(tomorrow);
-		const tGetPart = (type: string) =>
-			parseInt(tParts.find((p) => p.type === type)?.value || '0', 10);
-		targetDay = tGetPart('day');
-		targetMonth = tGetPart('month');
-		targetYear = tGetPart('year');
+		targetDate = new Date(now.getTime() + 86400000);
 	}
 
-	// Build an ISO-like string for the target time and compute epoch via brute-force offset.
-	// We know the wall-clock offset from UTC by comparing now.getTime() with the tz wall clock.
-	// Approach: use a reference point to compute the UTC offset of the timezone at 'now'.
-	const utcNow = now.getTime();
-	// Wall-clock "now" as pseudo-UTC ms (treating tz wall-clock as if it were UTC)
-	const wallNowMs = Date.UTC(tzYear, tzMonth - 1, tzDay, tzHour, tzMinute, tzSecond);
-	// Offset = wallNowMs - utcNow (positive = timezone is ahead of UTC)
-	const tzOffsetMs = wallNowMs - utcNow;
+	const targetParts = formatter.formatToParts(targetDate);
+	const targetGetPart = (type: string) =>
+		parseInt(targetParts.find((p) => p.type === type)?.value || '0', 10);
 
-	// Compute target wall-clock as pseudo-UTC ms
+	const targetDay = targetGetPart('day');
+	const targetMonth = targetGetPart('month');
+	const targetYear = targetGetPart('year');
+	const targetHour = targetGetPart('hour');
+	const targetMinute = targetGetPart('minute');
+	const targetSecond = targetGetPart('second');
+
+	// Find the UTC offset exactly at the target instant
+	const targetUtcMs = targetDate.getTime();
+	const targetWallMs = Date.UTC(
+		targetYear,
+		targetMonth - 1,
+		targetDay,
+		targetHour,
+		targetMinute,
+		targetSecond
+	);
+	const targetTzOffsetMs = targetWallMs - targetUtcMs;
+
+	// Build the exact wall-clock reset target as pseudo-UTC
 	const wallTargetMs = Date.UTC(targetYear, targetMonth - 1, targetDay, hours, minutes, 0);
 
-	// Convert back to real UTC by subtracting the offset
-	const targetUtcMs = wallTargetMs - tzOffsetMs;
-
-	return targetUtcMs;
+	// Revert the offset to get real UTC
+	return wallTargetMs - targetTzOffsetMs;
 }

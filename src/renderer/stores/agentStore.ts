@@ -208,16 +208,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
-		// 1. Clear the error state (sets session to idle)
-		get().clearAgentError(sessionId);
-
-		// 2. Find the target tab so we can grab the last user message
+		// 1. Find the target tab so we can grab the last user message
 		const targetTabId = session.agentErrorTabId;
 		const targetTab = targetTabId
 			? session.aiTabs.find((tab) => tab.id === targetTabId)
 			: getActiveTab(session);
 
 		if (!targetTab) return;
+
+		// 2. Clear the error state (sets session to idle)
+		get().clearAgentError(sessionId);
 
 		// 3. Find the last user string in the logs
 		const logs = targetTab.logs || [];

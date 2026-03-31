@@ -82,6 +82,8 @@ describe('rate_limit_event caching', () => {
 		expect(agentError!.type).toBe('rate_limited');
 		// Should have a reset time from content text parsing
 		expect(agentError!.rateLimitResetAt).toBeDefined();
-		expect(agentError!.rateLimitResetAt).toBeGreaterThan(Date.now() - 86400000); // within last 24h
+		const now = Date.now();
+		expect(agentError!.rateLimitResetAt).toBeGreaterThan(now);
+		expect(agentError!.rateLimitResetAt).toBeLessThan(now + 86400000);
 	});
 });

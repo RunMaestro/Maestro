@@ -230,19 +230,53 @@ export function AgentErrorModal({
 		}
 	}, [retryAction]);
 
-	// For rate-limited errors: use parsed reset time if available, otherwise default to 60s
-	const DEFAULT_RATE_LIMIT_WAIT_MS = 2 * 60 * 60_000; // 2 hours
-	const rateLimitResetAt = useMemo(() => {
-		if (error.type !== 'rate_limited' || !retryAction) return null;
+	const [autoRetrySettings, setAutoRetrySettings] = useState<{
+		enabled: boolean;
+		fallbackHours: number;
+	} | null>(null);
 
+	useEffect(() => {
+		if (error.type === 'rate_limited') {
+			window.maestro.agents
+				.getConfig(error.agentId)
+				.then((config) => {
+					if (!config) {
+						setAutoRetrySettings({ enabled: true, fallbackHours: 2 });
+						return;
+					}
+
+					setAutoRetrySettings({
+						enabled: config.rateLimitAutoRetry ?? true,
+						fallbackHours: config.rateLimitFallbackHours ?? 2,
+					});
+				})
+				.catch((err) => {
+					console.error('Failed to load agent config for error modal:', err);
+					setAutoRetrySettings({ enabled: true, fallbackHours: 2 });
+				});
+		}
+	}, [error.type, error.agentId]);
+
+	// For rate-limited errors: use parsed reset time if available, otherwise use configured fallback
+	const rateLimitResetAt = useMemo(() => {
+		if (error.type !== 'rate_limited' || !retryAction || !autoRetrySettings) return null;
+
+		// If auto-retry is explicitly disabled by the user, don't show countdown or auto-retry
+		if (!autoRetrySettings.enabled) return null;
+
+		// Exact parsed reset time is always preferred
 		if (error.rateLimitResetAt && error.rateLimitResetAt > Date.now()) {
 			return error.rateLimitResetAt;
 		}
 
-		// Fallback: 60 seconds from when the error occurred
-		const fallback = error.timestamp + DEFAULT_RATE_LIMIT_WAIT_MS;
+		// If no fallback is configured or available, don't show countdown
+		if (autoRetrySettings.fallbackHours <= 0) return null;
+
+		// Configure fallback using the user's preferred wait time
+		const fallbackWaitMs = autoRetrySettings.fallbackHours * 60 * 60_000;
+		const fallback = error.timestamp + fallbackWaitMs;
 		return fallback > Date.now() ? fallback : null;
-	}, [error.type, error.rateLimitResetAt, error.timestamp, retryAction]);
+	}, [error.type, error.rateLimitResetAt, error.timestamp, retryAction, autoRetrySettings]);
 
 	const showCountdown = rateLimitResetAt !== null;
 

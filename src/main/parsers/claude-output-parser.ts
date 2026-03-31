@@ -392,7 +392,14 @@ export class ClaudeOutputParser implements AgentOutputParser {
 
 				// For rate-limit errors, try to parse the reset time
 				if (match.type === 'rate_limited') {
-					const resetAt = parseRateLimitResetTime(errorText);
+					let resetAt: number | null = null;
+					if (this.lastRateLimitResetAt && this.lastRateLimitResetAt > Date.now()) {
+						resetAt = this.lastRateLimitResetAt;
+						this.lastRateLimitResetAt = null;
+					}
+					if (!resetAt) {
+						resetAt = parseRateLimitResetTime(errorText);
+					}
 					if (resetAt) {
 						mixedError.rateLimitResetAt = resetAt;
 					}
