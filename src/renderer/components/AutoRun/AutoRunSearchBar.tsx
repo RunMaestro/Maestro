@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react';
-import type { Theme } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import type { Theme } from '../../types';
+import { useLayerStack } from '../../contexts/LayerStackContext';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 export interface AutoRunSearchBarProps {
 	theme: Theme;

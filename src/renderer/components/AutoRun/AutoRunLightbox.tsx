@@ -1,12 +1,12 @@
 import React, { useState, useCallback, memo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ChevronLeft, ChevronRight, Copy, Check, Trash2, FileText } from 'lucide-react';
-import type { Theme } from '../types';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { useLayerStack } from '../contexts/LayerStackContext';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { ConfirmModal } from './ConfirmModal';
-import { safeClipboardWrite, safeClipboardWriteImage } from '../utils/clipboard';
+import type { Theme } from '../../types';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { useLayerStack } from '../../contexts/LayerStackContext';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { ConfirmModal } from '../ConfirmModal';
+import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 
 // ============================================================================
 // AutoRunLightbox - Full-screen image viewer with navigation, copy, delete

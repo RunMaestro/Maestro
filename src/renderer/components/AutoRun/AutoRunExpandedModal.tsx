@@ -13,13 +13,14 @@ import {
 	LayoutGrid,
 	AlertTriangle,
 } from 'lucide-react';
-import type { Theme, BatchRunState, SessionState, Shortcut } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { AutoRun, AutoRunHandle } from './AutoRun';
+import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
+import { useLayerStack } from '../../contexts/LayerStackContext';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { AutoRun } from './AutoRun';
+import type { AutoRunHandle } from './types';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
-import { ConfirmModal } from './ConfirmModal';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { ConfirmModal } from '../ConfirmModal';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AutoRunExpandedModalProps {
 	theme: Theme;

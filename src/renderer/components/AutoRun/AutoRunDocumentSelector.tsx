@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw, FolderOpen, Plus, Folder } from 'lucide-react';
-import type { Theme } from '../types';
-import { useClickOutside } from '../hooks';
-import { getExplorerFileIcon } from '../utils/theme';
+import type { Theme } from '../../types';
+import { useClickOutside } from '../../hooks';
+import { getExplorerFileIcon } from '../../utils/theme';
 
 // Tree node type for folder structure
 export interface DocTreeNode {

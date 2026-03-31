@@ -146,5 +146,31 @@ export type { UseAutoRunDocumentLoaderReturn } from './useAutoRunDocumentLoader'
 export { useAutoRunAutoFollow } from './useAutoRunAutoFollow';
 export type { UseAutoRunAutoFollowDeps, UseAutoRunAutoFollowReturn } from './useAutoRunAutoFollow';
 
+// Auto Run content sync (local/saved content, dirty state, save/revert)
+export { useAutoRunContentSync } from './useAutoRunContentSync';
+export type {
+	UseAutoRunContentSyncParams,
+	UseAutoRunContentSyncReturn,
+} from './useAutoRunContentSync';
+
+// Auto Run textarea keyboard handler
+export { useAutoRunKeyboard } from './useAutoRunKeyboard';
+export type { UseAutoRunKeyboardParams } from './useAutoRunKeyboard';
+
+// Auto Run search (find-in-document with match navigation)
+export { useAutoRunSearch } from './useAutoRunSearch';
+export type { UseAutoRunSearchParams, UseAutoRunSearchReturn } from './useAutoRunSearch';
+
+// Auto Run markdown rendering (prose styles, task counts, token count, remark plugins, components)
+export { useAutoRunMarkdown } from './useAutoRunMarkdown';
+export type { UseAutoRunMarkdownParams, UseAutoRunMarkdownReturn } from './useAutoRunMarkdown';
+
+// Auto Run scroll sync (mode switching with scroll position preservation)
+export { useAutoRunScrollSync } from './useAutoRunScrollSync';
+export type {
+	UseAutoRunScrollSyncParams,
+	UseAutoRunScrollSyncReturn,
+} from './useAutoRunScrollSync';
+
 // Re-export ExistingDocument type from existingDocsDetector for convenience
 export type { ExistingDocument } from '../../utils/existingDocsDetector';

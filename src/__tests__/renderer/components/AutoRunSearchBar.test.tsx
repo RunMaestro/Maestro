@@ -16,7 +16,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import {
 	AutoRunSearchBar,
 	type AutoRunSearchBarProps,
-} from '../../../renderer/components/AutoRunSearchBar';
+} from '../../../renderer/components/AutoRun/AutoRunSearchBar';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 

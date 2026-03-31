@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Folder, FileText, Play, CheckSquare } from 'lucide-react';
-import type { Theme } from '../types';
-import { Modal, ModalFooter, FormInput } from './ui';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import type { Theme } from '../../types';
+import { Modal, ModalFooter, FormInput } from '../ui';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AutoRunSetupModalProps {
 	theme: Theme;

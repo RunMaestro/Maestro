@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import {
 	AutoRunDocumentSelector,
 	DocTreeNode,
-} from '../../../renderer/components/AutoRunDocumentSelector';
+} from '../../../renderer/components/AutoRun/AutoRunDocumentSelector';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react icons

@@ -58,7 +58,7 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
 	vs: {},
 }));
 
-vi.mock('../../../renderer/components/AutoRunnerHelpModal', () => ({
+vi.mock('../../../renderer/components/AutoRun/AutoRunnerHelpModal', () => ({
 	AutoRunnerHelpModal: ({ onClose }: { onClose: () => void }) => (
 		<div data-testid="help-modal">
 			<button onClick={onClose}>Close</button>
@@ -72,7 +72,7 @@ vi.mock('../../../renderer/components/MermaidRenderer', () => ({
 	),
 }));
 
-vi.mock('../../../renderer/components/AutoRunDocumentSelector', () => ({
+vi.mock('../../../renderer/components/AutoRun/AutoRunDocumentSelector', () => ({
 	AutoRunDocumentSelector: ({
 		theme,
 		documents,

@@ -14,10 +14,10 @@ import {
 	Image,
 	Variable,
 } from 'lucide-react';
-import type { Theme } from '../types';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { Modal } from './ui/Modal';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import type { Theme } from '../../types';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { Modal } from '../ui/Modal';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface AutoRunnerHelpModalProps {
 	theme: Theme;

@@ -8,7 +8,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { AutoRunnerHelpModal } from '../../../renderer/components/AutoRunnerHelpModal';
+import { AutoRunnerHelpModal } from '../../../renderer/components/AutoRun/AutoRunnerHelpModal';
 import type { Theme } from '../../../renderer/types';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 

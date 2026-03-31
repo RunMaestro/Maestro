@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AutoRunExpandedModal } from '../../../renderer/components/AutoRunExpandedModal';
+import { AutoRunExpandedModal } from '../../../renderer/components/AutoRun/AutoRunExpandedModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../../renderer/types';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -63,6 +63,24 @@ vi.mock('lucide-react', () => ({
 	LayoutGrid: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="layout-grid-icon" className={className} style={style} />
 	),
+	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-down-icon" className={className} style={style} />
+	),
+	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-right-icon" className={className} style={style} />
+	),
+	RefreshCw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="refresh-cw-icon" className={className} style={style} />
+	),
+	FolderOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="folder-open-icon" className={className} style={style} />
+	),
+	Plus: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="plus-icon" className={className} style={style} />
+	),
+	Folder: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="folder-icon" className={className} style={style} />
+	),
 }));
 
 // Track AutoRun ref methods
@@ -75,7 +93,7 @@ let autoRunRefMethods: {
 };
 
 // Mock AutoRun component
-vi.mock('../../../renderer/components/AutoRun', () => ({
+vi.mock('../../../renderer/components/AutoRun/AutoRun', () => ({
 	AutoRun: React.forwardRef((props: any, ref: any) => {
 		// Expose ref methods
 		React.useImperativeHandle(ref, () => autoRunRefMethods);

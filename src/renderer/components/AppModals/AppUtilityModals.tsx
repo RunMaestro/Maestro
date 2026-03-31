@@ -21,7 +21,7 @@ import { FileSearchModal } from '../FileSearchModal';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
-import { AutoRunSetupModal } from '../AutoRunSetupModal';
+import { AutoRunSetupModal } from '../AutoRun/AutoRunSetupModal';
 import { LightboxModal } from '../LightboxModal';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
