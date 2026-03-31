@@ -15,6 +15,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Action                      | macOS                 | Windows/Linux          |
 | --------------------------- | --------------------- | ---------------------- |
 | Quick Actions               | `Cmd+K`               | `Ctrl+K`               |
+| Agent Switcher              | `Cmd+O`               | `Ctrl+O`               |
 | Toggle Left Panel           | `Opt+Cmd+Left`        | `Alt+Ctrl+Left`        |
 | Toggle Right Panel          | `Opt+Cmd+Right`       | `Alt+Ctrl+Right`       |
 | New Agent                   | `Cmd+N`               | `Ctrl+N`               |
@@ -37,7 +38,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | System Log Viewer           | `Opt+Cmd+L`           | `Alt+Ctrl+L`           |
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
-| Jump to Bottom              | `Cmd+Shift+J`         | `Ctrl+Shift+J`         |
+| Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
@@ -67,7 +68,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode  | `Cmd+R`       | `Ctrl+R`       |
 | Toggle Show Thinking   | `Cmd+Shift+K` | `Ctrl+Shift+K` |
 | Toggle Tab Star        | `Cmd+Shift+S` | `Ctrl+Shift+S` |
-| Toggle Tab Unread      | `Cmd+Shift+U` | `Ctrl+Shift+U` |
+| Toggle Tab Unread      | `Opt+Shift+U` | `Alt+Shift+U`  |
+| Filter Unread Agents   | `Cmd+Shift+U` | `Ctrl+Shift+U` |
 | Filter Unread Tabs     | `Cmd+U`       | `Ctrl+U`       |
 | Open Image Carousel    | `Cmd+Y`       | `Ctrl+Y`       |
 | Open Prompt Composer   | `Cmd+Shift+P` | `Ctrl+Shift+P` |

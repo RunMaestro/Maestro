@@ -58,42 +58,78 @@ Open the Cue dashboard to monitor and manage all automation activity.
 
 - Press `Cmd+K` / `Ctrl+K` and search for "Maestro Cue"
 
+The modal has two tabs: **Dashboard** and **Pipeline Editor**. An **Enabled** toggle in the header lets you start and stop the engine globally.
+
 ### Sessions Table
 
-The primary view shows all agents that have a `.maestro/cue.yaml` file:
+The Dashboard tab shows all agents with Cue configurations:
 
-<!-- ![Cue Modal sessions table](./screenshots/cue-modal-sessions.png) -->
+![Cue Sessions](./screenshots/cue-sessions.png)
 
-| Column             | Description                                      |
-| ------------------ | ------------------------------------------------ |
-| **Session**        | Agent name                                       |
-| **Agent**          | Provider type (Claude Code, Codex, etc.)         |
-| **Status**         | Green dot = active, yellow = paused, gray = none |
-| **Last Triggered** | How long ago the most recent event fired         |
-| **Subs**           | Number of subscriptions in the YAML              |
-| **Queue**          | Events waiting to be processed                   |
-| **Edit**           | Opens the inline YAML editor for that agent      |
+| Column             | Description                                                  |
+| ------------------ | ------------------------------------------------------------ |
+| **Session**        | Agent name                                                   |
+| **Agent**          | Provider type (Claude Code, Codex, OpenCode, etc.)           |
+| **Pipelines**      | Color-coded dots for each pipeline configured on this agent  |
+| **Status**         | Green = active, yellow = paused, "No Config" = no YAML found |
+| **Last Triggered** | How long ago the most recent event fired                     |
+| **Subs**           | Number of subscriptions in the YAML                          |
+| **Queue**          | Events waiting to be processed                               |
 
-### Active Runs
+Each row has three action buttons:
 
-Shows currently executing Cue-triggered prompts with elapsed time and which subscription triggered them.
+- **Run Now** — Manually trigger a subscription on demand
+- **Edit YAML** — Open the inline YAML editor for that agent
+- **View in Pipeline** — Jump to the Pipeline Editor filtered to that agent
+
+### Run Now
+
+Each subscription row in the Sessions Table has a **Run Now** button that manually triggers it, bypassing its normal event conditions. This is useful for testing new subscriptions or re-running a failed automation without waiting for the next event.
 
 ### Activity Log
 
-A chronological record of completed and failed runs. Each entry shows:
+A chronological record of completed and failed runs. Click any entry to expand full details including the event payload, run ID, and exit code.
 
-- Subscription name and event type
+![Cue Activity Log](./screenshots/cue-activity-log.png)
+
+Each entry shows:
+
+- Subscription name and trigger type (e.g. `[github.pull_request]`)
 - Status (completed, failed, timeout, stopped)
 - Duration
 - Timestamp
 
+Expand an entry to see the full event data — for GitHub triggers this includes the PR/issue number, title, author, URL, and body.
+
 ### YAML Editor
 
-Click the edit button on any session row to open the inline YAML editor. Changes are validated in real-time — errors appear immediately so you can fix them before saving. The engine hot-reloads your config automatically when the file changes.
+Click **Edit YAML** on any session row to open the inline editor. The left side offers **pattern templates** (Startup, Heartbeat, Scheduled, Reactive, Sequential Chain, PR Review, Issue Triage, Task Queue, and more) — click one to insert a pre-configured subscription block. An **AI Assist** panel lets you describe what you want in plain English and have the agent edit the config for you.
+
+![Cue YAML Editor](./screenshots/cue-yaml-editor.png)
+
+The right side shows your YAML with real-time validation — a green **Valid YAML** indicator appears at the bottom when the config parses correctly. Click **Save** to write the file; the engine hot-reloads automatically.
 
 ### Help
 
 Built-in reference guide accessible from the modal header. Covers configuration syntax, event types, and template variables.
+
+## Pipeline Editor
+
+The **Pipeline Editor** tab visualizes your Cue subscriptions as a node graph — triggers on the left, agents on the right, with edges showing how events flow through your automation.
+
+![All Pipelines](./screenshots/cue-pipelines.png)
+
+Each pipeline is color-coded and labeled. Trigger nodes show the event type and configuration (glob patterns, schedule times, etc.), while agent nodes show the provider type. Pipelines from all agents are displayed together so you can see cross-agent relationships at a glance.
+
+### Inspecting a Pipeline
+
+Click any pipeline name in the top bar or select a node to drill into a single pipeline. Side drawers open for **Triggers** (left) and **Agents** (right), showing full configuration details. Selecting an agent node reveals its prompt text inline.
+
+![Pipeline Detail](./screenshots/cue-pipeline.png)
+
+The Triggers drawer lists all event types with their configurations (filter patterns, poll intervals, etc.). The Agents drawer shows all available agents with status indicators, and clicking one displays the prompt that will be sent when the trigger fires.
+
+Use the **Switch to Agent** link at the bottom to jump directly to that agent's workspace.
 
 ## Configuration File
 
@@ -101,10 +137,11 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports seven event types that trigger subscriptions:
+Cue supports eight event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
+| `app.startup`         | Maestro launches                    | —                                 |
 | `time.heartbeat`      | Periodic timer ("every N minutes")  | `interval_minutes`                |
 | `time.scheduled`      | Specific times and days of the week | `schedule_times`, `schedule_days` |
 | `file.changed`        | File created, modified, or deleted  | `watch` (glob pattern)            |

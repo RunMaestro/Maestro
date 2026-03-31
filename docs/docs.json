@@ -57,6 +57,7 @@
 							"group-chat",
 							"remote-control",
 							"ssh-remote-execution",
+							"feedback",
 							"configuration"
 						]
 					},

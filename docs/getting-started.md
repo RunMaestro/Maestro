@@ -10,19 +10,21 @@ This guide gets you from install to a first productive session with Maestro.
 
 Follow the [Installation](./installation) instructions for your platform, then launch Maestro.
 
-## 2. Create an agent (or use the Wizard)
+## 2. Create an agent
 
-Maestro supports **Claude Code**, **Codex** (OpenAI), and **OpenCode** as providers. Make sure at least one is installed and authenticated.
+Maestro supports **Claude Code**, **Codex** (OpenAI), **OpenCode**, and **Factory Droid** as providers. Make sure at least one is installed and authenticated.
 
 <Note>
 Maestro is a pass-through to your provider. Your MCP tools, custom skills, permissions, and authentication all work in Maestro exactly as they do when running the provider directly. The only difference is batch mode execution—Maestro sends a prompt and receives a response rather than running an interactive session.
 </Note>
 
-**Option A: Quick Setup**
-Create your first agent manually using the **+** button in the sidebar.
+Click the **New Agent** button in the bottom-left sidebar (or press `Cmd+N` / `Ctrl+N`). You'll see the **New Agent** selector:
 
-**Option B: Onboarding Wizard** (Recommended for new users)
-Press `Cmd+Shift+N` / `Ctrl+Shift+N` to launch the **Onboarding Wizard**, which guides you through:
+![New Agent selector](./screenshots/new-agent-selector.png)
+
+**Manual Setup** — Choose your agent, working directory, and configuration options directly. Best for power users who want full control.
+
+**Guided Setup** (Recommended for new users) — Launches the **Onboarding Wizard**, which walks you through:
 
 1. Selecting an AI provider
 2. Choosing your project directory
@@ -32,6 +34,10 @@ Press `Cmd+Shift+N` / `Ctrl+Shift+N` to launch the **Onboarding Wizard**, which 
 ![Wizard Document Generation](./screenshots/wizard-doc-generation.png)
 
 The Wizard creates a fully configured agent with an Auto Run document folder ready to go. Generated documents are saved to an `Initiation/` subfolder within `.maestro/playbooks/` to keep them organized separately from documents you create later.
+
+<Note>
+The guided wizard captures application input until it completes. For a lighter touch, create an agent manually, then run the `/wizard` slash command or click the wand button in the Auto Run panel. The in-tab wizard runs alongside your other work.
+</Note>
 
 ### Introductory Tour
 

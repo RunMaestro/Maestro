@@ -250,10 +250,9 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 
 **To create a new agent:**
 
-1. Press `Cmd+N` / `Ctrl+N`, or click the **+** button in the left panel
-2. Select an available AI provider (Claude Code, Codex, or OpenCode)
-3. Choose a working directory for the agent
-4. Optionally name the agent and configure advanced options
+1. Press `Cmd+N` / `Ctrl+N`, or click the **New Agent** button in the bottom-left sidebar
+2. Choose **Manual Setup** or **Guided Setup** (Wizard) — see [Getting Started](./getting-started) for details on each path
+3. For Manual Setup: select an available AI provider (Claude Code, Codex, OpenCode, or Factory Droid), choose a working directory, and optionally name the agent
 
 **Advanced configuration options:**
 

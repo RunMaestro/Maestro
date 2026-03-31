@@ -43,6 +43,10 @@ xdg-open "maestro://session/abc123"
 start maestro://session/abc123
 ```
 
+### From Tab Menu
+
+Right-click or hover on any AI tab to reveal the tab overlay menu, which includes a **Copy Deep Link** option. This copies the full `maestro://session/{id}/tab/{tabId}` URL to your clipboard — ready to paste into chat, tickets, documentation, or scripts.
+
 ### OS Notification Clicks
 
 When Maestro is running in the background and an agent completes a task, the OS notification is automatically linked to the originating agent and tab. Clicking the notification brings Maestro to the foreground and navigates directly to that agent's tab.

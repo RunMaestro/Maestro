@@ -37,5 +37,6 @@ icon: sparkles
 - 📊 **[Usage Dashboard](./usage-dashboard)** - Comprehensive analytics for tracking AI usage patterns. View aggregated statistics, compare agent performance, analyze activity heatmaps, and export data to CSV. Access via `Opt+Cmd+U` / `Alt+Ctrl+U`. _(Encore Feature — enable in Settings > Encore Features)_
 - 🎬 **[Director's Notes](./director-notes)** - Bird's-eye view of all agent activity in a unified timeline. Aggregate history from every agent, search and filter entries, and generate AI-powered synopses of recent work. Access via `Cmd+Shift+O` / `Ctrl+Shift+O`. _(Encore Feature — enable in Settings > Encore Features)_
 - 🏆 **[Achievements](./achievements)** - Level up from Apprentice to Titan of the Baton based on cumulative Auto Run time. 11 conductor-themed ranks to unlock.
+- 💬 **[Conversational Feedback](./feedback)** - Submit bug reports and feature requests through an AI-guided conversation. The agent asks clarifying questions, checks for duplicate issues, and creates a well-structured GitHub issue — no forms to fill out.
 
 > **Note**: Maestro currently supports Claude Code, Codex (OpenAI), OpenCode, and Factory Droid as fully-integrated providers. Support for additional providers (Gemini CLI, Qwen3 Coder) is planned for future releases based on community demand.

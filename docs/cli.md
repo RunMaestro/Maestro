@@ -42,6 +42,9 @@ maestro-cli send <agent-id> "describe the authentication flow"
 
 # Resume an existing session for follow-up
 maestro-cli send <agent-id> "now add rate limiting" -s <session-id>
+
+# Send in read-only mode (agent can read but not modify files)
+maestro-cli send <agent-id> "analyze the code structure" -r
 ```
 
 The response is always JSON:
@@ -74,6 +77,11 @@ On failure, `success` is `false` and an `error` field is included:
 	"code": "AGENT_NOT_FOUND"
 }
 ```
+
+| Flag                 | Description                                              |
+| -------------------- | -------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)   |
 
 Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`.
 

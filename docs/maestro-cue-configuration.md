@@ -28,6 +28,9 @@ subscriptions:
     event: string # Required. Event type (see Event Types)
     enabled: boolean # Optional. Default: true
     prompt: string # Required. Prompt text or path to a .md file
+    output_prompt: string # Optional. Follow-up prompt sent after the main run completes
+    output_prompt_file: string # Optional. Path to a .md file for the output prompt
+    label: string # Optional. Human-readable label displayed in the Cue dashboard
 
     # Event-specific fields
     interval_minutes: number # Required for time.heartbeat
@@ -62,18 +65,21 @@ Each subscription is a trigger-prompt pairing. When the trigger fires, Cue sends
 
 ### Optional Fields
 
-| Field              | Type            | Default | Description                                                             |
-| ------------------ | --------------- | ------- | ----------------------------------------------------------------------- |
-| `enabled`          | boolean         | `true`  | Set to `false` to pause a subscription without removing it              |
-| `interval_minutes` | number          | —       | Timer interval. Required for `time.heartbeat`                           |
-| `schedule_times`   | list of strings | —       | Times in `HH:MM` format. Required for `time.scheduled`                  |
-| `schedule_days`    | list of strings | —       | Days of week (`mon`–`sun`). Optional for `time.scheduled`               |
-| `watch`            | string (glob)   | —       | File glob pattern. Required for `file.changed`, `task.pending`          |
-| `source_session`   | string or list  | —       | Source agent name(s). Required for `agent.completed`                    |
-| `fan_out`          | list of strings | —       | Target agent names to fan out to                                        |
-| `filter`           | object          | —       | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))  |
-| `repo`             | string          | —       | GitHub repo (`owner/repo`). Auto-detected from git remote               |
-| `poll_minutes`     | number          | varies  | Poll interval for `github.*` (default 5) and `task.pending` (default 1) |
+| Field                | Type            | Default | Description                                                             |
+| -------------------- | --------------- | ------- | ----------------------------------------------------------------------- |
+| `enabled`            | boolean         | `true`  | Set to `false` to pause a subscription without removing it              |
+| `interval_minutes`   | number          | —       | Timer interval. Required for `time.heartbeat`                           |
+| `schedule_times`     | list of strings | —       | Times in `HH:MM` format. Required for `time.scheduled`                  |
+| `schedule_days`      | list of strings | —       | Days of week (`mon`–`sun`). Optional for `time.scheduled`               |
+| `watch`              | string (glob)   | —       | File glob pattern. Required for `file.changed`, `task.pending`          |
+| `source_session`     | string or list  | —       | Source agent name(s). Required for `agent.completed`                    |
+| `fan_out`            | list of strings | —       | Target agent names to fan out to                                        |
+| `filter`             | object          | —       | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))  |
+| `repo`               | string          | —       | GitHub repo (`owner/repo`). Auto-detected from git remote               |
+| `poll_minutes`       | number          | varies  | Poll interval for `github.*` (default 5) and `task.pending` (default 1) |
+| `output_prompt`      | string          | —       | Follow-up prompt sent after the main run completes successfully         |
+| `output_prompt_file` | string          | —       | Path to a `.md` file for the output prompt (alternative to inline)      |
+| `label`              | string          | —       | Human-readable label displayed in the Cue dashboard and pipeline editor |
 
 ### Prompt Field
 
@@ -93,6 +99,51 @@ prompt: prompts/lint-check.md
 ```
 
 File paths are resolved relative to the project root. Prompt files support the same `{{VARIABLE}}` template syntax as inline prompts.
+
+### Output Prompt (Two-Phase Runs)
+
+The `output_prompt` field enables a two-phase execution pattern. When the main `prompt` completes successfully, Cue automatically sends the `output_prompt` as a follow-up — with the first run's output included as context.
+
+This is useful for workflows where one phase generates data and a second phase acts on it:
+
+```yaml
+subscriptions:
+  - name: test-and-report
+    event: time.heartbeat
+    interval_minutes: 60
+    prompt: |
+      Run the full test suite with `npm test` and capture the results.
+    output_prompt: |
+      Based on the test results above, generate a summary report.
+      Include pass/fail counts and highlight any regressions.
+```
+
+You can also use `output_prompt_file` to reference a `.md` file instead of inline text:
+
+```yaml
+subscriptions:
+  - name: analyze-and-summarize
+    event: file.changed
+    watch: 'src/**/*.ts'
+    prompt: Analyze {{CUE_FILE_PATH}} for code quality issues.
+    output_prompt_file: prompts/summarize-analysis.md
+```
+
+<Note>
+The output prompt only fires when the main run completes successfully. If the main run times out or fails, the output phase is skipped.
+</Note>
+
+### Labels
+
+The `label` field provides a human-readable name displayed in the Cue dashboard and pipeline editor. Labels are purely cosmetic — the engine ignores them.
+
+```yaml
+subscriptions:
+  - name: pr-review
+    label: 'PR Review Bot'
+    event: github.pull_request
+    prompt: Review the PR at {{CUE_GH_URL}}.
+```
 
 ### Disabling Subscriptions
 
@@ -177,7 +228,9 @@ The engine validates your YAML on every load. Common validation errors:
 | `"queue_size" must be between 0-50`     | Keep queue size within the allowed range                     |
 | `filter key must be string/number/bool` | Filter values only accept primitive types                    |
 
-The inline YAML editor in the Cue Modal shows validation errors in real-time as you type.
+The inline YAML editor in the Cue Modal shows validation errors in real-time as you type. A green **Valid YAML** indicator at the bottom confirms your config parses correctly.
+
+![Cue YAML Editor](./screenshots/cue-yaml-editor.png)
 
 ## Complete Example
 
