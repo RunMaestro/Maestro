@@ -189,12 +189,12 @@ Update `CopilotCliRawMessage` interface and `transformMessage()` method to match
 | Session ID | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Image Input | ✅ | ✅ | ✅ | ✅ | ❌ | ❓ |
 | Slash Commands | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Session Storage | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Session Storage | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cost Tracking | ✅ | ❌ | ✅ | ❌ | ❌ | ❓ |
-| Usage Stats | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Usage Stats | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Batch Mode | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Streaming | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Result Messages | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ |
+| Result Messages | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Model Selection | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thinking Display | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | Context Merge | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |

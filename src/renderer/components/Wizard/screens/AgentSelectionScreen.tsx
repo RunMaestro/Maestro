@@ -95,9 +95,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 7 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 3;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
 
 /**
  * Get SVG logo for an agent with brand colors

@@ -269,14 +269,14 @@ export class CopilotCliOutputParser implements AgentOutputParser {
 					raw: msg,
 				};
 
-				// Extract usage stats
-				if (msg.usage) {
-					event.usage = {
-						inputTokens: 0, // Copilot CLI doesn't report input tokens
-						outputTokens: this.accumulatedOutputTokens,
-						// No per-token cost — Copilot uses premium requests model
-					};
-				}
+				// Always report accumulated output tokens, regardless of msg.usage
+				event.usage = {
+					inputTokens: 0,
+					outputTokens: this.accumulatedOutputTokens,
+				};
+
+				// Reset for next session (parser is a singleton)
+				this.accumulatedOutputTokens = 0;
 
 				return event;
 			}

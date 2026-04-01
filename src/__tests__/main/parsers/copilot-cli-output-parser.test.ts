@@ -261,7 +261,7 @@ describe('CopilotCliOutputParser', () => {
 				expect(event?.toolUseBlocks).toHaveLength(1);
 			});
 
-			it('should accumulate outputTokens across messages', () => {
+			it('should accumulate outputTokens across messages and reset on result', () => {
 				// Send two messages with outputTokens
 				parser.parseJsonLine(
 					JSON.stringify({
@@ -282,12 +282,22 @@ describe('CopilotCliOutputParser', () => {
 						type: 'result',
 						sessionId: 'test-session',
 						exitCode: 0,
-						usage: { premiumRequests: 1, totalApiDurationMs: 1000 },
+						usage: { premiumRequests: 1 },
 					})
 				);
 
 				expect(resultEvent?.type).toBe('usage');
 				expect(resultEvent?.usage?.outputTokens).toBe(150); // 100 + 50
+
+				// After result, tokens should be reset for next session
+				const nextResult = parser.parseJsonLine(
+					JSON.stringify({
+						type: 'result',
+						sessionId: 'test-session-2',
+						exitCode: 0,
+					})
+				);
+				expect(nextResult?.usage?.outputTokens).toBe(0); // reset
 			});
 		});
 
@@ -372,24 +382,29 @@ describe('CopilotCliOutputParser', () => {
 		// ================================================================
 
 		describe('result', () => {
-			it('should parse as usage event with sessionId', () => {
+			it('should parse as usage event with sessionId and report tokens even without usage field', () => {
+				// First accumulate some tokens
+				parser.parseJsonLine(
+					JSON.stringify({
+						type: 'assistant.message',
+						data: { content: 'Hello', toolRequests: [], outputTokens: 10 },
+					})
+				);
+
 				const line = JSON.stringify({
 					type: 'result',
 					timestamp: '2026-04-01T03:03:56.134Z',
 					sessionId: '18353c52-1a96-4ce6-ab90-1b99310f746f',
 					exitCode: 0,
-					usage: {
-						premiumRequests: 6,
-						totalApiDurationMs: 3356,
-						sessionDurationMs: 13107,
-						codeChanges: { linesAdded: 0, linesRemoved: 0, filesModified: [] },
-					},
+					// No usage field — tokens should still be reported
 				});
 
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('usage');
 				expect(event?.sessionId).toBe('18353c52-1a96-4ce6-ab90-1b99310f746f');
+				expect(event?.usage).not.toBeNull();
+				expect(event?.usage?.outputTokens).toBe(10);
 			});
 		});
 

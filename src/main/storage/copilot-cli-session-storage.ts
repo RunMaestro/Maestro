@@ -81,6 +81,11 @@ interface CopilotEvent {
 	timestamp?: string;
 }
 
+/** Validate that a session ID is a UUID to prevent path traversal */
+function isValidSessionId(sessionId: string): boolean {
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId);
+}
+
 // ============================================================================
 // Session Storage Implementation
 // ============================================================================
@@ -238,6 +243,9 @@ export class CopilotCliSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		_sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
+		if (!isValidSessionId(sessionId)) {
+			return { messages: [], total: 0, hasMore: false };
+		}
 		const sessionDir = path.join(getCopilotSessionDir(), sessionId);
 		const eventsPath = path.join(sessionDir, 'events.jsonl');
 
@@ -293,6 +301,9 @@ export class CopilotCliSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		_sshConfig?: SshRemoteConfig
 	): string | null {
+		if (!isValidSessionId(sessionId)) {
+			return null;
+		}
 		return path.join(getCopilotSessionDir(), sessionId, 'events.jsonl');
 	}
 
@@ -317,6 +328,9 @@ export class CopilotCliSessionStorage extends BaseSessionStorage {
 		_projectPath: string,
 		_sshConfig?: SshRemoteConfig
 	): Promise<SearchableMessage[]> {
+		if (!isValidSessionId(sessionId)) {
+			return [];
+		}
 		const sessionDir = path.join(getCopilotSessionDir(), sessionId);
 		const eventsPath = path.join(sessionDir, 'events.jsonl');
 
