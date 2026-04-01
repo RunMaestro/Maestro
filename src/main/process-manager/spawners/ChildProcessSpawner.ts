@@ -354,6 +354,11 @@ export class ChildProcessSpawner {
 					(arg, index) =>
 						arg === `${flag}=${value}` || (arg === flag && cliArgs[index + 1] === value)
 				);
+
+			// Create a fresh output parser instance for this process (not the shared singleton)
+			// to isolate mutable state like tool name tracking across concurrent sessions
+			const outputParser = createOutputParser(toolType) || undefined;
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
@@ -361,11 +366,8 @@ export class ChildProcessSpawner {
 				argsHaveFlagValue('--output-format', 'json') ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
-				!!config.sshStdinScript;
-
-			// Create a fresh output parser instance for this process (not the shared singleton)
-			// to isolate mutable state like tool name tracking across concurrent sessions
-			const outputParser = createOutputParser(toolType) || undefined;
+				!!config.sshStdinScript ||
+				!!outputParser; // Agents with output parsers use streaming JSONL, not batch JSON
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
