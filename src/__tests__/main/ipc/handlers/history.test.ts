@@ -25,6 +25,14 @@ vi.mock('../../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn(),
 }));
 
+// Mock the shared-history-manager module
+vi.mock('../../../../main/shared-history-manager', () => ({
+	writeEntryLocal: vi.fn(),
+	writeEntryRemote: vi.fn(() => Promise.resolve()),
+	readRemoteEntriesLocal: vi.fn(() => []),
+	readRemoteEntriesSsh: vi.fn(() => Promise.resolve([])),
+}));
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -281,7 +289,12 @@ describe('history IPC handlers', () => {
 			const handler = handlers.get('history:add');
 			const result = await handler!({} as any, entry);
 
-			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith('session-1', '/test', entry);
+			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith(
+				'session-1',
+				'/test',
+				entry,
+				undefined
+			);
 			expect(result).toBe(true);
 		});
 
@@ -300,7 +313,12 @@ describe('history IPC handlers', () => {
 			const handler = handlers.get('history:add');
 			const result = await handler!({} as any, entry);
 
-			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith('_orphaned', '/test', entry);
+			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith(
+				'_orphaned',
+				'/test',
+				entry,
+				undefined
+			);
 			expect(result).toBe(true);
 		});
 
@@ -322,7 +340,8 @@ describe('history IPC handlers', () => {
 			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith(
 				'my-session',
 				'/project/path',
-				entry
+				entry,
+				undefined
 			);
 		});
 	});

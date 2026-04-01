@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react';
 import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
 import { createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 
@@ -114,25 +115,28 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
-			await window.maestro.history.add({
-				id: generateId(),
-				type: entry.type,
-				timestamp: Date.now(),
-				summary: entry.summary,
-				fullResponse: entry.fullResponse,
-				agentSessionId: entry.agentSessionId,
-				sessionId: targetSessionId,
-				sessionName: sessionName,
-				projectPath: targetProjectPath,
-				...(shouldIncludeContextUsage ? { contextUsage: activeSession?.contextUsage } : {}),
-				// Only include usageStats if explicitly provided (per-task tracking)
-				// Never use cumulative session stats - they're lifetime totals
-				usageStats: entry.usageStats,
-				// Pass through success field for error/failure tracking
-				success: entry.success,
-				// Pass through task execution time
-				elapsedTimeMs: entry.elapsedTimeMs,
-			});
+			await window.maestro.history.add(
+				{
+					id: generateId(),
+					type: entry.type,
+					timestamp: Date.now(),
+					summary: entry.summary,
+					fullResponse: entry.fullResponse,
+					agentSessionId: entry.agentSessionId,
+					sessionId: targetSessionId,
+					sessionName: sessionName,
+					projectPath: targetProjectPath,
+					...(shouldIncludeContextUsage ? { contextUsage: activeSession?.contextUsage } : {}),
+					// Only include usageStats if explicitly provided (per-task tracking)
+					// Never use cumulative session stats - they're lifetime totals
+					usageStats: entry.usageStats,
+					// Pass through success field for error/failure tracking
+					success: entry.success,
+					// Pass through task execution time
+					elapsedTimeMs: entry.elapsedTimeMs,
+				},
+				buildSharedHistoryContext(activeSession)
+			);
 
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();

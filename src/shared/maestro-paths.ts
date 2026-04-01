@@ -19,6 +19,9 @@ export const PLAYBOOKS_FOLDER_NAME = 'playbooks';
 /** Working copies created during Auto Run loops */
 export const PLAYBOOKS_RUNS_DIR = '.maestro/playbooks/runs';
 
+/** Shared history directory for cross-host history sync */
+export const SHARED_HISTORY_DIR = '.maestro/history';
+
 /** Cue configuration file */
 export const CUE_CONFIG_PATH = '.maestro/cue.yaml';
 

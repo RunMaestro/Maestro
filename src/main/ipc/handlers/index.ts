@@ -61,6 +61,7 @@ import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
+import { getSshRemoteById } from '../../stores/getters';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -183,6 +184,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerPlaybooksHandlers(deps);
 	registerHistoryHandlers({
 		safeSend: createSafeSend(deps.getMainWindow),
+		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getSshRemoteById,
 	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,

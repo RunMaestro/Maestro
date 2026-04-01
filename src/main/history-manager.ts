@@ -191,10 +191,13 @@ export class HistoryManager {
 
 	/**
 	 * Add an entry to a session's history
+	 * @param maxEntries - Maximum entries to retain (defaults to MAX_ENTRIES_PER_SESSION).
+	 *                     Pass the user's maxLogBuffer setting to unify the cap.
 	 */
-	addEntry(sessionId: string, projectPath: string, entry: HistoryEntry): void {
+	addEntry(sessionId: string, projectPath: string, entry: HistoryEntry, maxEntries?: number): void {
 		const filePath = this.getSessionFilePath(sessionId);
 		let data: HistoryFileData;
+		const limit = maxEntries ?? MAX_ENTRIES_PER_SESSION;
 
 		if (fs.existsSync(filePath)) {
 			try {
@@ -210,8 +213,8 @@ export class HistoryManager {
 		data.entries.unshift(entry);
 
 		// Trim to max entries
-		if (data.entries.length > MAX_ENTRIES_PER_SESSION) {
-			data.entries = data.entries.slice(0, MAX_ENTRIES_PER_SESSION);
+		if (data.entries.length > limit) {
+			data.entries = data.entries.slice(0, limit);
 		}
 
 		// Update projectPath if it changed

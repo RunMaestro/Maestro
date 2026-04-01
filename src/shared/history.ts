@@ -14,8 +14,9 @@ import type { HistoryEntry } from './types';
 export const HISTORY_VERSION = 1;
 
 /**
- * Maximum number of history entries stored per session.
- * Higher than the previous global limit of 1,000.
+ * Default maximum number of history entries stored per session.
+ * Used as fallback when maxLogBuffer setting is not available.
+ * The actual limit is controlled by the maxLogBuffer user setting.
  */
 export const MAX_ENTRIES_PER_SESSION = 5000;
 

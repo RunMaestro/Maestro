@@ -34,6 +34,7 @@ export interface HistoryEntry {
 	success?: boolean;
 	elapsedTimeMs?: number;
 	validated?: boolean;
+	hostname?: string;
 }
 
 /**
@@ -53,8 +54,11 @@ export function createTempfileApi() {
  */
 export function createHistoryApi() {
 	return {
-		getAll: (projectPath?: string, sessionId?: string) =>
-			ipcRenderer.invoke('history:getAll', projectPath, sessionId),
+		getAll: (
+			projectPath?: string,
+			sessionId?: string,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		) => ipcRenderer.invoke('history:getAll', projectPath, sessionId, sharedContext),
 
 		getAllPaginated: (options?: {
 			projectPath?: string;
@@ -62,7 +66,8 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
 
-		add: (entry: HistoryEntry) => ipcRenderer.invoke('history:add', entry),
+		add: (entry: HistoryEntry, sharedContext?: { sshRemoteId: string; remoteCwd: string }) =>
+			ipcRenderer.invoke('history:add', entry, sharedContext),
 
 		clear: (projectPath?: string) => ipcRenderer.invoke('history:clear', projectPath),
 

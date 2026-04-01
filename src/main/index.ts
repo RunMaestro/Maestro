@@ -676,7 +676,11 @@ function setupIpcHandlers() {
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts
 	// Uses HistoryManager singleton for per-session storage
-	registerHistoryHandlers({ safeSend });
+	registerHistoryHandlers({
+		safeSend,
+		getMaxEntries: () => store.get('maxLogBuffer', 5000) as number,
+		getSshRemoteById,
+	});
 
 	// Director's Notes - unified history + synopsis generation
 	registerDirectorNotesHandlers({

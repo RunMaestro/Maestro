@@ -216,6 +216,65 @@ This is especially useful for:
 - Coordinating changes that span multiple servers
 - Getting perspectives from agents with access to different resources
 
+## Collaborating over SSH
+
+When multiple people (or the same person from multiple machines) work on a shared project via SSH, Maestro can synchronize history entries across all participants. This gives everyone visibility into what work has been done — regardless of which machine initiated it.
+
+### How Shared History Works
+
+Each Maestro instance writes a per-hostname history file to the project's `.maestro/history/` directory on the remote host:
+
+```
+project/
+  .maestro/
+    history/
+      history-pedbook.jsonl       # entries from pedbook
+      history-pedopswat.jsonl     # entries from pedopswat
+      history-stephan.jsonl       # entries from stephan
+```
+
+- Each machine writes **only its own file** — no conflicts between writers
+- When loading history, Maestro merges entries from all other hosts' files
+- Entries are deduplicated by ID and sorted by timestamp
+- Remote entries appear with a **☁ Remote** pill and the originating **hostname** in the History panel
+
+### Enabling Shared History
+
+Shared history is enabled per-session via the **Sync history to remote** toggle, which appears in the SSH Remote Execution dropdown when an SSH host is selected:
+
+1. Create or edit an agent session
+2. Select an SSH remote from the dropdown
+3. The **Sync history to remote** checkbox appears below the status indicator (enabled by default)
+4. When enabled, every history entry is written to both your local Maestro store and the remote project's `.maestro/history/` directory
+
+### Use Case: Same User, Multiple Machines
+
+You have Maestro on your laptop (`pedbook`) and desktop (`pedopswat`). Both machines have an agent pointed at the same project on `pedopswat`:
+
+- **pedopswat** runs the agent locally — history writes to its local store and `.maestro/history/history-pedopswat.jsonl`
+- **pedbook** runs the agent via SSH to pedopswat — history writes to its local store and `.maestro/history/history-pedbook.jsonl` on pedopswat
+- Both machines see each other's entries when loading the History panel
+
+### Use Case: Team Collaboration on a Shared Server
+
+Multiple team members (`pedbook`, `stephan`, `mattj`) each have Maestro installed locally and SSH into a shared VPS where the project lives. No Maestro is installed on the VPS — just the agent CLI:
+
+- Each person's Maestro writes to their own `history-<hostname>.jsonl` on the VPS
+- Each person sees entries from all other team members
+- Entries display the originating hostname so you can tell who did what
+
+### Entry Limits
+
+Shared history files respect the **Maximum Log Buffer** setting (Settings → Display). Each hostname's file retains up to this many entries (default: 5,000). When reading another host's file, Maestro reads only the most recent entries up to your own buffer limit.
+
+### Notes
+
+- Shared history files use JSONL format (one JSON object per line) for safe concurrent appending
+- Malformed lines are skipped gracefully — a partial write won't corrupt the file
+- If the SSH connection is unavailable when reading, local history is shown without remote entries (no error displayed)
+- The `.maestro/history/` directory is created automatically on first write
+- Consider adding `.maestro/history/` to your `.gitignore` — history is operational data, not source code
+
 ## Troubleshooting
 
 ### Authentication Errors

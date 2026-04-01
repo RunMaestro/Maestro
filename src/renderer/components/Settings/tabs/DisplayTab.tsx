@@ -138,8 +138,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					Maximum number of system log messages retained in memory for the Log Viewer. Older entries
-					are automatically discarded as new ones arrive.
+					Maximum number of entries to retain for history and system log viewer. Older entries are
+					automatically discarded as new ones arrive.
 				</p>
 			</div>
 

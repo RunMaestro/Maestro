@@ -76,6 +76,8 @@ export interface HistoryEntry {
 	cueTriggerName?: string;
 	cueEventType?: string;
 	cueSourceSession?: string;
+	/** Hostname of the machine that created this entry (for shared history) */
+	hostname?: string;
 }
 
 // Document entry within a playbook
@@ -375,6 +377,9 @@ export interface AgentSshRemoteConfig {
 
 	/** Override working directory for this agent */
 	workingDirOverride?: string;
+
+	/** Sync history entries to .maestro/history/ on the remote host (default: true) */
+	syncHistory?: boolean;
 }
 
 // ============================================================================

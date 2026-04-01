@@ -41,6 +41,7 @@ interface ProcessConfig {
 		enabled: boolean;
 		remoteId: string | null;
 		workingDirOverride?: string;
+		syncHistory?: boolean;
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
@@ -272,6 +273,7 @@ interface MaestroAPI {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
+				syncHistory?: boolean;
 			};
 		}) => Promise<{ pid: number; success: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
@@ -287,6 +289,7 @@ interface MaestroAPI {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
+				syncHistory?: boolean;
 			};
 		}) => Promise<{ exitCode: number }>;
 		getActiveProcesses: () => Promise<
@@ -1421,7 +1424,8 @@ interface MaestroAPI {
 	history: {
 		getAll: (
 			projectPath?: string,
-			sessionId?: string
+			sessionId?: string,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
 		) => Promise<
 			Array<{
 				id: string;
@@ -1438,6 +1442,7 @@ interface MaestroAPI {
 				success?: boolean;
 				elapsedTimeMs?: number;
 				validated?: boolean;
+				hostname?: string;
 			}>
 		>;
 		getAllPaginated: (options?: {
@@ -1460,28 +1465,33 @@ interface MaestroAPI {
 				success?: boolean;
 				elapsedTimeMs?: number;
 				validated?: boolean;
+				hostname?: string;
 			}>;
 			total: number;
 			limit: number;
 			offset: number;
 			hasMore: boolean;
 		}>;
-		add: (entry: {
-			id: string;
-			type: HistoryEntryType;
-			timestamp: number;
-			summary: string;
-			fullResponse?: string;
-			agentSessionId?: string;
-			projectPath: string;
-			sessionId?: string;
-			sessionName?: string;
-			contextUsage?: number;
-			usageStats?: UsageStats;
-			success?: boolean;
-			elapsedTimeMs?: number;
-			validated?: boolean;
-		}) => Promise<boolean>;
+		add: (
+			entry: {
+				id: string;
+				type: HistoryEntryType;
+				timestamp: number;
+				summary: string;
+				fullResponse?: string;
+				agentSessionId?: string;
+				projectPath: string;
+				sessionId?: string;
+				sessionName?: string;
+				contextUsage?: number;
+				usageStats?: UsageStats;
+				success?: boolean;
+				elapsedTimeMs?: number;
+				validated?: boolean;
+				hostname?: string;
+			},
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		) => Promise<boolean>;
 		clear: (projectPath?: string, sessionId?: string) => Promise<boolean>;
 		delete: (entryId: string, sessionId?: string) => Promise<boolean>;
 		update: (
@@ -2874,6 +2884,7 @@ interface MaestroAPI {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
+				syncHistory?: boolean;
 			};
 		}) => Promise<string | null>;
 	};

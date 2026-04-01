@@ -145,6 +145,17 @@ This is especially powerful for Auto Run tasks — you can pick up exactly where
 | `←` / `→` | Navigate to previous/next entry   |
 | `Esc`     | Close detail view, return to list |
 
+## Cross-Host Shared History
+
+When working with [SSH Remote Execution](/ssh-remote-execution), history entries can be synchronized across machines. Remote entries appear with a **☁ Remote** pill and a hostname badge showing their origin.
+
+This enables:
+
+- **Same user, multiple machines** — see your work from any machine you use
+- **Team collaboration** — see what teammates have done on a shared project
+
+Enable this per-session via the **Sync history to remote** toggle in the SSH Remote Execution dropdown. See [Collaborating over SSH](/ssh-remote-execution#collaborating-over-ssh) for full details.
+
 ## Storage
 
 History is stored per-session in JSON files within the `history/` subdirectory of your Maestro data folder:
@@ -153,7 +164,7 @@ History is stored per-session in JSON files within the `history/` subdirectory o
 - **Windows**: `%APPDATA%/maestro/history/<sessionId>.json`
 - **Linux**: `~/.config/maestro/history/<sessionId>.json`
 
-Each session maintains up to **5,000 entries**. History files can be passed to AI agents as context for understanding past work patterns.
+The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 5,000). History files can be passed to AI agents as context for understanding past work patterns.
 
 ## Help Panel
 

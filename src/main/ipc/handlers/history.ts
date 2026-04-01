@@ -14,16 +14,36 @@
 
 import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
-import { HistoryEntry } from '../../../shared/types';
-import { PaginationOptions, ORPHANED_SESSION_ID } from '../../../shared/history';
+import { HistoryEntry, SshRemoteConfig } from '../../../shared/types';
+import {
+	PaginationOptions,
+	ORPHANED_SESSION_ID,
+	sortEntriesByTimestamp,
+} from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
+import {
+	writeEntryLocal,
+	writeEntryRemote,
+	readRemoteEntriesLocal,
+	readRemoteEntriesSsh,
+} from '../../shared-history-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 
 const LOG_CONTEXT = '[History]';
 
+/** Context passed from the renderer for shared history operations */
+export interface SharedHistoryContext {
+	sshRemoteId: string;
+	remoteCwd: string;
+}
+
 export interface HistoryHandlerDependencies {
 	safeSend: SafeSendFn;
+	/** Returns the user's maxLogBuffer setting (used as max entries per session) */
+	getMaxEntries?: () => number;
+	/** Resolve an SSH remote config by ID */
+	getSshRemoteById?: (id: string) => SshRemoteConfig | undefined;
 }
 
 // Helper to create handler options with consistent context
@@ -51,24 +71,61 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 	// Legacy handler - returns all entries (use history:getAllPaginated for large datasets)
 	ipcMain.handle(
 		'history:getAll',
-		withIpcErrorLogging(handlerOpts('getAll'), async (projectPath?: string, sessionId?: string) => {
-			if (sessionId) {
-				// Get entries for specific session only - don't include orphaned entries
-				// to prevent history bleeding across different agent sessions in the same directory
-				const entries = historyManager.getEntries(sessionId);
-				// Sort by timestamp descending
-				entries.sort((a, b) => b.timestamp - a.timestamp);
-				return entries;
-			}
+		withIpcErrorLogging(
+			handlerOpts('getAll'),
+			async (projectPath?: string, sessionId?: string, sharedContext?: SharedHistoryContext) => {
+				const maxEntries = deps.getMaxEntries?.();
+				let localEntries: HistoryEntry[];
 
-			if (projectPath) {
-				// Get all entries for sessions in this project
-				return historyManager.getEntriesByProjectPath(projectPath);
-			}
+				if (sessionId) {
+					// Get entries for specific session only - don't include orphaned entries
+					// to prevent history bleeding across different agent sessions in the same directory
+					localEntries = historyManager.getEntries(sessionId);
+					localEntries.sort((a, b) => b.timestamp - a.timestamp);
+				} else if (projectPath) {
+					localEntries = historyManager.getEntriesByProjectPath(projectPath);
+				} else {
+					localEntries = historyManager.getAllEntries();
+				}
 
-			// Return all entries (for global view)
-			return historyManager.getAllEntries();
-		})
+				// Merge shared history entries from other hosts
+				let sharedEntries: HistoryEntry[] = [];
+				try {
+					if (sharedContext?.sshRemoteId && sharedContext?.remoteCwd) {
+						// SSH session: read shared files from remote host
+						const sshRemote = deps.getSshRemoteById?.(sharedContext.sshRemoteId);
+						if (sshRemote) {
+							sharedEntries = await readRemoteEntriesSsh(
+								sharedContext.remoteCwd,
+								sshRemote,
+								maxEntries
+							);
+						}
+					} else if (projectPath) {
+						// Local session: read shared files from local project directory
+						sharedEntries = readRemoteEntriesLocal(projectPath, maxEntries);
+					}
+				} catch (error) {
+					logger.warn(`Failed to read shared history: ${error}`, LOG_CONTEXT);
+				}
+
+				if (sharedEntries.length === 0) {
+					return localEntries;
+				}
+
+				// Merge and deduplicate by entry ID, then sort
+				const seenIds = new Set(localEntries.map((e) => e.id));
+				const merged = [...localEntries];
+				for (const entry of sharedEntries) {
+					if (!seenIds.has(entry.id)) {
+						seenIds.add(entry.id);
+						merged.push(entry);
+					}
+				}
+
+				return sortEntriesByTimestamp(merged);
+			}
+		)
 	);
 
 	// Get history entries with pagination support
@@ -112,16 +169,36 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 	// Add a new history entry
 	ipcMain.handle(
 		'history:add',
-		withIpcErrorLogging(handlerOpts('add'), async (entry: HistoryEntry) => {
-			const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
-			historyManager.addEntry(sessionId, entry.projectPath, entry);
-			logger.info(`Added history entry: ${entry.type}`, LOG_CONTEXT, { summary: entry.summary });
+		withIpcErrorLogging(
+			handlerOpts('add'),
+			async (entry: HistoryEntry, sharedContext?: SharedHistoryContext) => {
+				const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
+				const maxEntries = deps.getMaxEntries?.();
+				historyManager.addEntry(sessionId, entry.projectPath, entry, maxEntries);
+				logger.info(`Added history entry: ${entry.type}`, LOG_CONTEXT, {
+					summary: entry.summary,
+				});
 
-			// Broadcast to renderer for real-time Director's Notes streaming
-			deps.safeSend('history:entryAdded', entry, sessionId);
+				// Shared history: write to .maestro/history/ (fire-and-forget)
+				if (sharedContext?.sshRemoteId && sharedContext?.remoteCwd) {
+					// SSH session: write to remote .maestro/history/
+					const sshRemote = deps.getSshRemoteById?.(sharedContext.sshRemoteId);
+					if (sshRemote) {
+						writeEntryRemote(sharedContext.remoteCwd, entry, sshRemote).catch((err) =>
+							logger.warn(`Shared history remote write failed: ${err}`, LOG_CONTEXT)
+						);
+					}
+				} else if (entry.projectPath) {
+					// Local session: write to local .maestro/history/
+					writeEntryLocal(entry.projectPath, entry, maxEntries);
+				}
 
-			return true;
-		})
+				// Broadcast to renderer for real-time Director's Notes streaming
+				deps.safeSend('history:entryAdded', entry, sessionId);
+
+				return true;
+			}
+		)
 	);
 
 	// Clear history entries (all, by project, or by session)

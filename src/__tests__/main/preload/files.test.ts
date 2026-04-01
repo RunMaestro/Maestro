@@ -96,7 +96,7 @@ describe('Files Preload API', () => {
 
 				await api.getAll();
 
-				expect(mockInvoke).toHaveBeenCalledWith('history:getAll', undefined, undefined);
+				expect(mockInvoke).toHaveBeenCalledWith('history:getAll', undefined, undefined, undefined);
 			});
 
 			it('should invoke history:getAll with projectPath', async () => {
@@ -104,7 +104,7 @@ describe('Files Preload API', () => {
 
 				await api.getAll('/project');
 
-				expect(mockInvoke).toHaveBeenCalledWith('history:getAll', '/project', undefined);
+				expect(mockInvoke).toHaveBeenCalledWith('history:getAll', '/project', undefined, undefined);
 			});
 
 			it('should invoke history:getAll with sessionId', async () => {
@@ -112,7 +112,12 @@ describe('Files Preload API', () => {
 
 				await api.getAll('/project', 'session-123');
 
-				expect(mockInvoke).toHaveBeenCalledWith('history:getAll', '/project', 'session-123');
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'history:getAll',
+					'/project',
+					'session-123',
+					undefined
+				);
 			});
 		});
 
@@ -144,7 +149,7 @@ describe('Files Preload API', () => {
 
 				await api.add(entry);
 
-				expect(mockInvoke).toHaveBeenCalledWith('history:add', entry);
+				expect(mockInvoke).toHaveBeenCalledWith('history:add', entry, undefined);
 			});
 		});
 

@@ -296,6 +296,7 @@ export interface SessionSshInfo {
 		enabled: boolean;
 		remoteId: string | null;
 		workingDirOverride?: string;
+		syncHistory?: boolean;
 	};
 }
 
@@ -349,4 +350,34 @@ export function getSessionSshRemoteId(
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
 	if (!session) return false;
 	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+}
+
+/**
+ * Build shared history context for a session, if applicable.
+ *
+ * Returns the context needed for cross-host history sync when:
+ * - The session uses an SSH remote
+ * - The syncHistory setting is not disabled (defaults to true)
+ *
+ * @param session - Session with SSH remote fields and cwd
+ * @returns Shared context object, or undefined if not applicable
+ */
+export function buildSharedHistoryContext(
+	session: (SessionSshInfo & { cwd?: string }) | null | undefined
+): { sshRemoteId: string; remoteCwd: string } | undefined {
+	if (!session) return undefined;
+
+	const config = session.sessionSshRemoteConfig;
+	if (!config?.enabled || !config.remoteId) return undefined;
+
+	// Respect the syncHistory toggle (defaults to true)
+	if (config.syncHistory === false) return undefined;
+
+	const remoteCwd = session.cwd;
+	if (!remoteCwd) return undefined;
+
+	return {
+		sshRemoteId: config.remoteId,
+		remoteCwd,
+	};
 }

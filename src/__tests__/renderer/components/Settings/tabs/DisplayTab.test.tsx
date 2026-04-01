@@ -646,7 +646,7 @@ describe('DisplayTab', () => {
 			});
 
 			expect(
-				screen.getByText(/Maximum number of system log messages retained in memory/)
+				screen.getByText(/Maximum number of entries to retain for history and system log viewer/)
 			).toBeInTheDocument();
 		});
 	});

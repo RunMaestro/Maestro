@@ -724,6 +724,7 @@ export interface Session {
 		enabled: boolean; // Whether SSH is enabled for this session
 		remoteId: string | null; // SSH remote config ID to use
 		workingDirOverride?: string; // Override remote working directory
+		syncHistory?: boolean; // Whether to sync history to .maestro/history/ on the remote
 	};
 
 	// SSH connection status - runtime only, not persisted
@@ -813,6 +814,7 @@ export interface ProcessConfig {
 		enabled: boolean;
 		remoteId: string | null;
 		workingDirOverride?: string;
+		syncHistory?: boolean;
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt

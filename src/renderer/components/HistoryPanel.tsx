@@ -23,6 +23,7 @@ import {
 } from './History';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -98,7 +99,11 @@ export const HistoryPanel = React.memo(
 
 				try {
 					// Only show entries from this session or legacy entries without sessionId
-					const entries = await window.maestro.history.getAll(session.cwd, session.id);
+					const entries = await window.maestro.history.getAll(
+						session.cwd,
+						session.id,
+						buildSharedHistoryContext(session)
+					);
 					// Ensure entries is an array, limit to MAX_HISTORY_IN_MEMORY
 					const validEntries = Array.isArray(entries) ? entries : [];
 					setHistoryEntries(validEntries.slice(0, MAX_HISTORY_IN_MEMORY));
