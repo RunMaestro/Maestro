@@ -399,6 +399,63 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
 	},
+	{
+		id: 'copilot-cli',
+		name: 'Copilot CLI',
+		binaryName: 'copilot',
+		command: 'copilot',
+		args: [], // Base args for interactive mode (none)
+		requiresPty: false, // Batch mode uses child process
+
+		// Batch mode: copilot -p "prompt" --output-format json --allow-all
+		batchModePrefix: [],
+		batchModeArgs: ['--allow-all'],
+
+		// JSON output for parsing (JSONL format)
+		jsonOutputArgs: ['--output-format', 'json'],
+
+		// Session resume: --resume <id>
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+
+		// Read-only mode: not yet CLI-enforced; use prompt-only enforcement
+		readOnlyArgs: [],
+		readOnlyCliEnforced: false,
+
+		// YOLO mode (allow all tools, paths, and URLs)
+		yoloModeArgs: ['--allow-all'],
+
+		// Model selection
+		modelArgs: (modelId: string) => ['--model', modelId],
+
+		// Prompt is passed via -p flag
+		promptArgs: (prompt: string) => ['-p', prompt],
+
+		// -p takes the prompt directly, no separator needed
+		noPromptSeparator: true,
+
+		defaultEnvVars: {},
+
+		// UI config options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., "claude-sonnet-4", "gpt-5.1"). Leave empty for default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window in tokens. Varies by model (e.g., 200000 for Claude/GPT-5, 128000 for GPT-4o).',
+				default: 200000,
+			},
+		],
+	},
 ];
 
 /**
