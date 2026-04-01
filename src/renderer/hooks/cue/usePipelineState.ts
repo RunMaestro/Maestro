@@ -24,6 +24,7 @@ import type { CueSettings } from '../../../main/cue/cue-types';
 import { DEFAULT_CUE_SETTINGS } from '../../../main/cue/cue-types';
 import { usePipelineLayout } from './usePipelineLayout';
 import { captureException } from '../../utils/sentry';
+import { getModalActions } from '../../stores/modalStore';
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -369,27 +370,31 @@ export function usePipelineState({
 		});
 	}, []);
 
-	const deletePipeline = useCallback((id: string) => {
-		setPipelineState((prev) => {
-			const pipeline = prev.pipelines.find((p) => p.id === id);
-			if (!pipeline) return prev;
+	const deletePipeline = useCallback(
+		(id: string) => {
+			const state = pipelineState;
+			const pipeline = state.pipelines.find((p) => p.id === id);
+			if (!pipeline) return;
 
-			// Check if nodes are shared with other pipelines
-			const otherPipelines = prev.pipelines.filter((p) => p.id !== id);
-
-			const hasNodes = pipeline.nodes.length > 0;
-			if (hasNodes && !window.confirm(`Delete pipeline "${pipeline.name}" and its nodes?`)) {
-				return prev;
-			}
-
-			const newSelectedId = prev.selectedPipelineId === id ? null : prev.selectedPipelineId;
-
-			return {
-				pipelines: otherPipelines,
-				selectedPipelineId: newSelectedId,
+			const doDelete = () => {
+				setPipelineState((prev) => {
+					const otherPipelines = prev.pipelines.filter((p) => p.id !== id);
+					const newSelectedId = prev.selectedPipelineId === id ? null : prev.selectedPipelineId;
+					return { pipelines: otherPipelines, selectedPipelineId: newSelectedId };
+				});
 			};
-		});
-	}, []);
+
+			if (pipeline.nodes.length > 0) {
+				getModalActions().showConfirmation(
+					`Delete pipeline "${pipeline.name}" and its nodes?`,
+					doDelete
+				);
+			} else {
+				doDelete();
+			}
+		},
+		[pipelineState]
+	);
 
 	const renamePipeline = useCallback((id: string, name: string) => {
 		setPipelineState((prev) => ({

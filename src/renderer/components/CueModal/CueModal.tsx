@@ -130,10 +130,11 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 					return;
 				}
 				if (pipelineDirtyRef.current) {
-					const confirmed = window.confirm(
-						'You have unsaved changes in the pipeline editor. Discard and close?'
+					getModalActions().showConfirmation(
+						'You have unsaved changes in the pipeline editor. Discard and close?',
+						() => onCloseRef.current()
 					);
-					if (!confirmed) return;
+					return;
 				}
 				onCloseRef.current();
 			},
@@ -203,13 +204,14 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	}, []);
 
 	const handleRemoveCue = useCallback(
-		async (session: CueSessionStatus) => {
-			const confirmed = window.confirm(
-				`Remove Cue configuration for "${session.sessionName}"?\n\nThis will delete the cue.yaml file from this project. This cannot be undone.`
+		(session: CueSessionStatus) => {
+			getModalActions().showConfirmation(
+				`Remove Cue configuration for "${session.sessionName}"?\n\nThis will delete the cue.yaml file from this project. This cannot be undone.`,
+				async () => {
+					await window.maestro.cue.deleteYaml(session.projectRoot);
+					await refresh();
+				}
 			);
-			if (!confirmed) return;
-			await window.maestro.cue.deleteYaml(session.projectRoot);
-			await refresh();
 		},
 		[refresh]
 	);
@@ -217,10 +219,11 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	// Close with unsaved changes confirmation
 	const handleCloseWithConfirm = useCallback(() => {
 		if (pipelineDirtyRef.current) {
-			const confirmed = window.confirm(
-				'You have unsaved changes in the pipeline editor. Discard and close?'
+			getModalActions().showConfirmation(
+				'You have unsaved changes in the pipeline editor. Discard and close?',
+				() => onClose()
 			);
-			if (!confirmed) return;
+			return;
 		}
 		onClose();
 	}, [onClose]);

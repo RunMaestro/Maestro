@@ -35,6 +35,16 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/pipelineColors', () =
 	getNextPipelineColor: vi.fn(() => '#06b6d4'),
 }));
 
+const mockShowConfirmation = vi.fn((message: string, onConfirm: () => void) => {
+	// By default, immediately invoke onConfirm (simulates user clicking "Confirm")
+	onConfirm();
+});
+vi.mock('../../../../renderer/stores/modalStore', () => ({
+	getModalActions: () => ({
+		showConfirmation: mockShowConfirmation,
+	}),
+}));
+
 const mockGetSettings = vi.fn().mockResolvedValue({
 	timeout_minutes: 30,
 	timeout_on_fail: 'break',
@@ -452,8 +462,9 @@ describe('usePipelineState', () => {
 		expect(result.current.pipelineState.pipelines).toHaveLength(0);
 	});
 
-	it('deletePipeline does not remove when confirm returns false', () => {
-		vi.spyOn(window, 'confirm').mockReturnValue(false);
+	it('deletePipeline does not remove when confirm is not accepted', () => {
+		// Don't invoke onConfirm — simulates user clicking "Cancel"
+		mockShowConfirmation.mockImplementationOnce(() => {});
 		const { result } = renderHook(() => usePipelineState(createDefaultParams()));
 
 		act(() => {
@@ -490,7 +501,7 @@ describe('usePipelineState', () => {
 			result.current.deletePipeline(pipelineId);
 		});
 
-		expect(window.confirm).not.toHaveBeenCalled();
+		expect(mockShowConfirmation).not.toHaveBeenCalled();
 		expect(result.current.pipelineState.pipelines).toHaveLength(0);
 	});
 

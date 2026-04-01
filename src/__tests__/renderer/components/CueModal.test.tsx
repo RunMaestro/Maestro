@@ -65,9 +65,11 @@ vi.mock('../../../renderer/stores/sessionStore', () => ({
 
 // Mock modalStore getModalActions
 const mockOpenCueYamlEditor = vi.fn();
+const mockShowConfirmation = vi.fn();
 vi.mock('../../../renderer/stores/modalStore', () => ({
 	getModalActions: () => ({
 		openCueYamlEditor: mockOpenCueYamlEditor,
+		showConfirmation: mockShowConfirmation,
 	}),
 }));
 
@@ -494,8 +496,6 @@ describe('CueModal', () => {
 		});
 
 		it('should show confirmation when closing with unsaved pipeline changes via escape', () => {
-			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Simulate pipeline becoming dirty
@@ -508,17 +508,19 @@ describe('CueModal', () => {
 			const layerConfig = mockRegisterLayer.mock.calls[0][0];
 			layerConfig.onEscape();
 
-			expect(confirmSpy).toHaveBeenCalledWith(
-				'You have unsaved changes in the pipeline editor. Discard and close?'
+			expect(mockShowConfirmation).toHaveBeenCalledWith(
+				'You have unsaved changes in the pipeline editor. Discard and close?',
+				expect.any(Function)
 			);
-			// User declined, so onClose should NOT be called
+			// User didn't confirm (mock doesn't invoke callback), so onClose should NOT be called
 			expect(mockOnClose).not.toHaveBeenCalled();
-
-			confirmSpy.mockRestore();
 		});
 
 		it('should close when user confirms discarding unsaved changes', () => {
-			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+			// Simulate user clicking "Confirm" by invoking the callback
+			mockShowConfirmation.mockImplementationOnce((_msg: string, onConfirm: () => void) => {
+				onConfirm();
+			});
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
@@ -531,10 +533,8 @@ describe('CueModal', () => {
 			const layerConfig = mockRegisterLayer.mock.calls[0][0];
 			layerConfig.onEscape();
 
-			expect(confirmSpy).toHaveBeenCalled();
+			expect(mockShowConfirmation).toHaveBeenCalled();
 			expect(mockOnClose).toHaveBeenCalledOnce();
-
-			confirmSpy.mockRestore();
 		});
 
 		it('should not show confirmation after pipeline changes are saved (dirty cleared)', () => {
@@ -659,8 +659,6 @@ describe('CueModal', () => {
 		});
 
 		it('should show confirmation on escape when pipeline has unsaved changes', () => {
-			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Simulate dirty pipeline
@@ -672,15 +670,11 @@ describe('CueModal', () => {
 			const layerConfig = mockRegisterLayer.mock.calls[0][0];
 			layerConfig.onEscape();
 
-			expect(confirmSpy).toHaveBeenCalled();
+			expect(mockShowConfirmation).toHaveBeenCalled();
 			expect(mockOnClose).not.toHaveBeenCalled();
-
-			confirmSpy.mockRestore();
 		});
 
 		it('should not show confirmation on escape from help view even with unsaved changes', () => {
-			const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			// Make pipeline dirty
@@ -698,11 +692,9 @@ describe('CueModal', () => {
 				layerConfig.onEscape();
 			});
 
-			expect(confirmSpy).not.toHaveBeenCalled();
+			expect(mockShowConfirmation).not.toHaveBeenCalled();
 			expect(mockOnClose).not.toHaveBeenCalled();
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
-
-			confirmSpy.mockRestore();
 		});
 	});
 });
