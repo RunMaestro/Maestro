@@ -13,6 +13,7 @@ import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { getStdinFlags } from '../../../utils/spawnHelpers';
 
 /**
  * Configuration for document generation
@@ -1124,6 +1125,24 @@ class PhaseGenerator {
 			// This is critical for packaged Electron apps where PATH may not include agent locations
 			const commandToUse = agent.path || agent.command;
 
+			const isSshSession = Boolean(
+				config.sshRemoteConfig?.enabled && config.sshRemoteConfig?.remoteId
+			);
+			const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
+				getStdinFlags({
+					isSshSession,
+					supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
+					hasImages: false, // Document generation never sends images
+				});
+			if (sendViaStdin) {
+				const inputFormatIndex = argsForSpawn.findIndex((arg) => arg === '--input-format');
+				if (inputFormatIndex === -1) {
+					argsForSpawn.push('--input-format', 'stream-json');
+				} else if (argsForSpawn[inputFormatIndex + 1] !== 'stream-json') {
+					argsForSpawn[inputFormatIndex + 1] = 'stream-json';
+				}
+			}
+
 			wizardDebugLogger.log('spawn', 'Calling process.spawn', {
 				sessionId,
 				toolType: config.agentType,
@@ -1144,6 +1163,8 @@ class PhaseGenerator {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt,
+					sendPromptViaStdin: sendViaStdin,
+					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
 				})
