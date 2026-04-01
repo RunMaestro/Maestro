@@ -408,10 +408,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [], // Base args for interactive mode (none)
 		requiresPty: false, // Batch mode uses child process
 
-		// Batch mode: copilot --output-format json --allow-all -p -
-		// '-p -' tells copilot to read the prompt from stdin
+		// Batch mode: copilot --output-format json --allow-all
+		// Prompt is sent via stdin (sendPromptViaStdinRaw) - copilot reads
+		// from stdin automatically when no -p flag is provided and stdin is piped.
 		batchModePrefix: [],
-		batchModeArgs: ['--allow-all', '-p', '-'],
+		batchModeArgs: ['--allow-all'],
 
 		// JSON output for parsing (JSONL format)
 		jsonOutputArgs: ['--output-format', 'json'],
