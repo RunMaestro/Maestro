@@ -51,12 +51,12 @@ isBetaAgent(agentId): boolean                  // Check beta status
 ### Context Windows (`src/shared/agentConstants.ts`)
 
 ```typescript
-DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>>
+DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>>;
 // claude-code: 200000, codex: 200000, opencode: 128000, factory-droid: 200000, terminal: 0
 
-FALLBACK_CONTEXT_WINDOW = 200000  // Default when no entry exists
+FALLBACK_CONTEXT_WINDOW = 200000; // Default when no entry exists
 
-COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId>  // Agents with combined I/O context (codex)
+COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId>; // Agents with combined I/O context (codex)
 ```
 
 ---
@@ -69,27 +69,27 @@ Each agent definition includes CLI configuration:
 interface AgentDefinition {
 	id: string;
 	name: string;
-	binaryName: string;            // Binary to look for (e.g., 'claude', 'codex')
-	command: string;               // Default command to execute
-	args: string[];                // Base CLI args (always included)
-	requiresPty?: boolean;         // Whether agent needs pseudo-terminal
-	hidden?: boolean;              // Hide from UI (terminal is hidden)
-	configOptions?: AgentConfigOption[];  // User-configurable settings
+	binaryName: string; // Binary to look for (e.g., 'claude', 'codex')
+	command: string; // Default command to execute
+	args: string[]; // Base CLI args (always included)
+	requiresPty?: boolean; // Whether agent needs pseudo-terminal
+	hidden?: boolean; // Hide from UI (terminal is hidden)
+	configOptions?: AgentConfigOption[]; // User-configurable settings
 
 	// Argument builders (optional per agent)
-	batchModePrefix?: string[];    // Args before base args for batch mode (e.g., ['run'] for OpenCode)
-	batchModeArgs?: string[];      // Args only in batch mode
-	jsonOutputArgs?: string[];     // Args for JSON output format
-	resumeArgs?: (sessionId: string) => string[];  // Build resume flags
-	readOnlyArgs?: string[];       // Read-only mode flags
-	modelArgs?: (modelId: string) => string[];     // Model selection flags
-	yoloModeArgs?: string[];       // Full-access/bypass flags
-	workingDirArgs?: (dir: string) => string[];    // Working directory flags
-	imageArgs?: (imagePath: string) => string[];   // Image attachment flags
-	promptArgs?: (prompt: string) => string[];     // Prompt flags (e.g., [-p, prompt] for OpenCode)
-	noPromptSeparator?: boolean;   // Don't add '--' before prompt
-	defaultEnvVars?: Record<string, string>;        // Default env vars
-	readOnlyEnvOverrides?: Record<string, string>;  // Env overrides in read-only mode
+	batchModePrefix?: string[]; // Args before base args for batch mode (e.g., ['run'] for OpenCode)
+	batchModeArgs?: string[]; // Args only in batch mode
+	jsonOutputArgs?: string[]; // Args for JSON output format
+	resumeArgs?: (sessionId: string) => string[]; // Build resume flags
+	readOnlyArgs?: string[]; // Read-only mode flags
+	modelArgs?: (modelId: string) => string[]; // Model selection flags
+	yoloModeArgs?: string[]; // Full-access/bypass flags
+	workingDirArgs?: (dir: string) => string[]; // Working directory flags
+	imageArgs?: (imagePath: string) => string[]; // Image attachment flags
+	promptArgs?: (prompt: string) => string[]; // Prompt flags (e.g., [-p, prompt] for OpenCode)
+	noPromptSeparator?: boolean; // Don't add '--' before prompt
+	defaultEnvVars?: Record<string, string>; // Default env vars
+	readOnlyEnvOverrides?: Record<string, string>; // Env overrides in read-only mode
 	readOnlyCliEnforced?: boolean; // Whether CLI enforces read-only (vs prompt-only)
 }
 ```
@@ -100,10 +100,32 @@ Agent-specific UI settings using discriminated union types:
 
 ```typescript
 type AgentConfigOption =
-	| { type: 'checkbox'; key: string; label: string; description: string; default: boolean; argBuilder? }
-	| { type: 'text';     key: string; label: string; description: string; default: string;  argBuilder? }
-	| { type: 'number';   key: string; label: string; description: string; default: number;  argBuilder? }
-	| { type: 'select';   key: string; label: string; description: string; default: string; options: string[]; argBuilder? }
+	| {
+			type: 'checkbox';
+			key: string;
+			label: string;
+			description: string;
+			default: boolean;
+			argBuilder?;
+	  }
+	| { type: 'text'; key: string; label: string; description: string; default: string; argBuilder? }
+	| {
+			type: 'number';
+			key: string;
+			label: string;
+			description: string;
+			default: number;
+			argBuilder?;
+	  }
+	| {
+			type: 'select';
+			key: string;
+			label: string;
+			description: string;
+			default: string;
+			options: string[];
+			argBuilder?;
+	  };
 ```
 
 The `argBuilder` function converts the setting value to CLI arguments.
@@ -111,12 +133,14 @@ The `argBuilder` function converts the setting value to CLI arguments.
 ### Agent-Specific Examples
 
 **Claude Code** args: `['--output-format', 'stream-json', '--verbose']`
+
 - batchModePrefix: `['--print']`
 - resumeArgs: `(id) => ['--resume', id]`
 - readOnlyArgs: `['--permission-mode', 'plan']`
 - jsonOutputArgs: `['--output-format', 'stream-json']`
 
 **Codex** args: `['exec', '--json']`
+
 - batchModeArgs: `['--skip-git-repo-check']`
 - resumeArgs: `(id) => ['resume', id]`
 - readOnlyArgs: `['--sandbox', 'read-only']`
@@ -125,6 +149,7 @@ The `argBuilder` function converts the setting value to CLI arguments.
 - yoloModeArgs: `['--full-auto']`
 
 **OpenCode** args: `['run', '--format', 'json']`
+
 - resumeArgs: `(id) => ['--session', id]`
 - readOnlyArgs: `['--agent', 'plan']`
 - modelArgs: `(id) => ['--model', id]`
@@ -132,6 +157,7 @@ The `argBuilder` function converts the setting value to CLI arguments.
 - noPromptSeparator: `true`
 
 **Factory Droid** args: `['exec', '-o', 'stream-json']`
+
 - resumeArgs: `(id) => ['-s', id]`
 - readOnlyArgs: `[]` (no auto flags = read-only)
 - modelArgs: `(id) => ['-m', id]`
@@ -145,54 +171,54 @@ Feature flags that control Maestro behavior per agent:
 
 ```typescript
 interface AgentCapabilities {
-	supportsResume: boolean;              // Session resumption
-	supportsReadOnlyMode: boolean;        // Plan/read-only mode
-	supportsJsonOutput: boolean;          // JSON-formatted responses
-	supportsSessionId: boolean;           // Conversation continuity
-	supportsImageInput: boolean;          // Accept images
-	supportsImageInputOnResume: boolean;  // Images on resumed sessions
-	supportsSlashCommands: boolean;       // /help, /compact, etc.
-	supportsSessionStorage: boolean;      // Discoverable session history
-	supportsCostTracking: boolean;        // USD cost data
-	supportsUsageStats: boolean;          // Token count reporting
-	supportsBatchMode: boolean;           // Non-interactive execution
-	requiresPromptToStart: boolean;       // No eager spawn
-	supportsStreaming: boolean;           // Real-time output
-	supportsResultMessages: boolean;      // Distinct "done" events
-	supportsModelSelection: boolean;      // --model flag
-	supportsStreamJsonInput: boolean;     // stdin image input
-	supportsThinkingDisplay: boolean;     // Thinking/reasoning content
-	supportsContextMerge: boolean;        // Receive transferred context
-	supportsContextExport: boolean;       // Export context for transfer
-	supportsWizard: boolean;              // Inline wizard conversations
+	supportsResume: boolean; // Session resumption
+	supportsReadOnlyMode: boolean; // Plan/read-only mode
+	supportsJsonOutput: boolean; // JSON-formatted responses
+	supportsSessionId: boolean; // Conversation continuity
+	supportsImageInput: boolean; // Accept images
+	supportsImageInputOnResume: boolean; // Images on resumed sessions
+	supportsSlashCommands: boolean; // /help, /compact, etc.
+	supportsSessionStorage: boolean; // Discoverable session history
+	supportsCostTracking: boolean; // USD cost data
+	supportsUsageStats: boolean; // Token count reporting
+	supportsBatchMode: boolean; // Non-interactive execution
+	requiresPromptToStart: boolean; // No eager spawn
+	supportsStreaming: boolean; // Real-time output
+	supportsResultMessages: boolean; // Distinct "done" events
+	supportsModelSelection: boolean; // --model flag
+	supportsStreamJsonInput: boolean; // stdin image input
+	supportsThinkingDisplay: boolean; // Thinking/reasoning content
+	supportsContextMerge: boolean; // Receive transferred context
+	supportsContextExport: boolean; // Export context for transfer
+	supportsWizard: boolean; // Inline wizard conversations
 	supportsGroupChatModeration: boolean; // Group chat moderator
-	usesJsonLineOutput: boolean;          // JSONL output format
-	usesCombinedContextWindow: boolean;   // Combined I/O context
-	imageResumeMode?: 'prompt-embed';     // How to handle images on resume
+	usesJsonLineOutput: boolean; // JSONL output format
+	usesCombinedContextWindow: boolean; // Combined I/O context
+	imageResumeMode?: 'prompt-embed'; // How to handle images on resume
 }
 ```
 
 ### Capability Matrix (Active Agents)
 
-| Capability | Claude Code | Codex | OpenCode | Factory Droid |
-|---|:---:|:---:|:---:|:---:|
-| Resume | Y | Y | Y | Y |
-| Read-Only | Y | Y | Y | Y |
-| JSON Output | Y | Y | Y | Y |
-| Session ID | Y | Y | Y | Y |
-| Image Input | Y | Y | Y | Y |
-| Session Storage | Y | Y | Y | Y |
-| Cost Tracking | Y | N | Y | N |
-| Usage Stats | Y | Y | Y | Y |
-| Batch Mode | Y | Y | Y | Y |
-| Requires Prompt | N | Y | Y | Y |
-| Model Selection | N | Y | Y | Y |
-| Thinking Display | Y | Y | Y | Y |
-| Context Merge | Y | Y | Y | Y |
-| Wizard | Y | Y | Y | N |
-| Group Chat | Y | Y | Y | Y |
-| JSONL Output | N | Y | Y | Y |
-| Combined Context | N | Y | N | N |
+| Capability       | Claude Code | Codex | OpenCode | Factory Droid |
+| ---------------- | :---------: | :---: | :------: | :-----------: |
+| Resume           |      Y      |   Y   |    Y     |       Y       |
+| Read-Only        |      Y      |   Y   |    Y     |       Y       |
+| JSON Output      |      Y      |   Y   |    Y     |       Y       |
+| Session ID       |      Y      |   Y   |    Y     |       Y       |
+| Image Input      |      Y      |   Y   |    Y     |       Y       |
+| Session Storage  |      Y      |   Y   |    Y     |       Y       |
+| Cost Tracking    |      Y      |   N   |    Y     |       N       |
+| Usage Stats      |      Y      |   Y   |    Y     |       Y       |
+| Batch Mode       |      Y      |   Y   |    Y     |       Y       |
+| Requires Prompt  |      N      |   Y   |    Y     |       Y       |
+| Model Selection  |      N      |   Y   |    Y     |       Y       |
+| Thinking Display |      Y      |   Y   |    Y     |       Y       |
+| Context Merge    |      Y      |   Y   |    Y     |       Y       |
+| Wizard           |      Y      |   Y   |    Y     |       N       |
+| Group Chat       |      Y      |   Y   |    Y     |       Y       |
+| JSONL Output     |      N      |   Y   |    Y     |       Y       |
+| Combined Context |      N      |   Y   |    N     |       N       |
 
 ### Access Functions
 
@@ -212,14 +238,15 @@ The `AgentDetector` class detects installed agents at runtime:
 
 ```typescript
 class AgentDetector {
-	setCustomPaths(paths: Record<string, string>): void  // User-configured paths
-	async detectAgents(): Promise<AgentConfig[]>          // Detect all agents (cached)
-	async refreshAgents(): Promise<AgentConfig[]>         // Force re-detection
-	async discoverModels(agentId: string, forceRefresh?): Promise<string[]>  // Model discovery
+	setCustomPaths(paths: Record<string, string>): void; // User-configured paths
+	async detectAgents(): Promise<AgentConfig[]>; // Detect all agents (cached)
+	async refreshAgents(): Promise<AgentConfig[]>; // Force re-detection
+	async discoverModels(agentId: string, forceRefresh?): Promise<string[]>; // Model discovery
 }
 ```
 
 Detection process:
+
 1. Check custom paths first (user-configured in settings)
 2. Probe platform-specific paths (Windows registry locations, Homebrew, npm global, etc.)
 3. Fall back to PATH-based detection via `which`/`where`
@@ -287,11 +314,11 @@ interface ParsedEvent {
 
 ### Parser Implementations
 
-| Parser | File | Agent Output Format |
-|---|---|---|
-| `ClaudeOutputParser` | `claude-output-parser.ts` | Stream-JSON events (type: system/assistant/result) |
-| `CodexOutputParser` | `codex-output-parser.ts` | JSONL (thread.started, agent_message, turn.completed) |
-| `OpenCodeOutputParser` | `opencode-output-parser.ts` | JSONL (chat.start, text_delta, step_finish) |
+| Parser                     | File                             | Agent Output Format                                   |
+| -------------------------- | -------------------------------- | ----------------------------------------------------- |
+| `ClaudeOutputParser`       | `claude-output-parser.ts`        | Stream-JSON events (type: system/assistant/result)    |
+| `CodexOutputParser`        | `codex-output-parser.ts`         | JSONL (thread.started, agent_message, turn.completed) |
+| `OpenCodeOutputParser`     | `opencode-output-parser.ts`      | JSONL (chat.start, text_delta, step_finish)           |
 | `FactoryDroidOutputParser` | `factory-droid-output-parser.ts` | Stream-JSON (init, content_block_delta, message_stop) |
 
 ### Registry Functions
@@ -322,23 +349,23 @@ Regex-based error detection for agent output. Each agent has patterns organized 
 
 ```typescript
 type AgentErrorType =
-	| 'auth_expired'        // API key invalid, token expired
-	| 'token_exhaustion'    // Context window full
-	| 'rate_limited'        // Too many requests
-	| 'network_error'       // Connection failed
-	| 'agent_crashed'       // Process exited unexpectedly
-	| 'permission_denied'   // Lacks required permissions
-	| 'session_not_found'   // Session deleted or invalid
-	| 'unknown';            // Unrecognized error
+	| 'auth_expired' // API key invalid, token expired
+	| 'token_exhaustion' // Context window full
+	| 'rate_limited' // Too many requests
+	| 'network_error' // Connection failed
+	| 'agent_crashed' // Process exited unexpectedly
+	| 'permission_denied' // Lacks required permissions
+	| 'session_not_found' // Session deleted or invalid
+	| 'unknown'; // Unrecognized error
 ```
 
 ### Error Pattern Structure
 
 ```typescript
 interface ErrorPattern {
-	pattern: RegExp;                                    // Regex to match
-	message: string | ((match: RegExpMatchArray) => string);  // User message (can use captures)
-	recoverable: boolean;                               // Can recover without user intervention
+	pattern: RegExp; // Regex to match
+	message: string | ((match: RegExpMatchArray) => string); // User message (can use captures)
+	recoverable: boolean; // Can recover without user intervention
 }
 
 type AgentErrorPatterns = { [K in AgentErrorType]?: ErrorPattern[] };
@@ -346,13 +373,13 @@ type AgentErrorPatterns = { [K in AgentErrorType]?: ErrorPattern[] };
 
 ### Registered Patterns
 
-| Agent | Pattern Count | Key Patterns |
-|---|---|---|
-| `claude-code` | ~30 | OAuth expiry, prompt too long (with token counts), 529 overload, session not found |
-| `codex` | ~20 | API key, 429 rate limit, usage limit, context length |
-| `opencode` | ~15 | provider not found, fuzzysort, panic |
-| `factory-droid` | ~18 | FACTORY_API_KEY missing, autonomy level |
-| SSH (cross-agent) | ~20 | Permission denied (publickey), host key verification, command not found, broken pipe, shell parse error |
+| Agent             | Pattern Count | Key Patterns                                                                                            |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
+| `claude-code`     | ~30           | OAuth expiry, prompt too long (with token counts), 529 overload, session not found                      |
+| `codex`           | ~20           | API key, 429 rate limit, usage limit, context length                                                    |
+| `opencode`        | ~15           | provider not found, fuzzysort, panic                                                                    |
+| `factory-droid`   | ~18           | FACTORY_API_KEY missing, autonomy level                                                                 |
+| SSH (cross-agent) | ~20           | Permission denied (publickey), host key verification, command not found, broken pipe, shell parse error |
 
 ### Dynamic Error Messages
 
@@ -410,6 +437,7 @@ interface AgentSessionStorage {
 ### Base Class (`src/main/storage/base-session-storage.ts`)
 
 `BaseSessionStorage` provides shared logic:
+
 - `listSessionsPaginated()` - Cursor-based pagination over `listSessions()`
 - `searchSessions()` - Full-text search with configurable mode (title/user/assistant/all)
 - `paginateSessions()` - Static helper for cursor pagination
@@ -418,6 +446,7 @@ interface AgentSessionStorage {
 - `resolveSearchMode()` - Static helper for mode-specific result filtering
 
 Subclasses implement:
+
 - `listSessions()` - Agent-specific session discovery
 - `readSessionMessages()` - Agent-specific message loading
 - `getSessionPath()` - Agent-specific path resolution
@@ -426,12 +455,12 @@ Subclasses implement:
 
 ### Storage Implementations
 
-| Storage | File | Session Location | Format |
-|---|---|---|---|
-| `ClaudeSessionStorage` | `claude-session-storage.ts` | `~/.claude/projects/<encoded-path>/` | Stream-JSON JSONL |
-| `CodexSessionStorage` | `codex-session-storage.ts` | `~/.codex/sessions/YYYY/MM/DD/` | JSONL events |
-| `OpenCodeSessionStorage` | `opencode-session-storage.ts` | `~/.local/share/opencode/storage/` | JSON files |
-| `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/` | JSONL + settings.json |
+| Storage                      | File                               | Session Location                     | Format                |
+| ---------------------------- | ---------------------------------- | ------------------------------------ | --------------------- |
+| `ClaudeSessionStorage`       | `claude-session-storage.ts`        | `~/.claude/projects/<encoded-path>/` | Stream-JSON JSONL     |
+| `CodexSessionStorage`        | `codex-session-storage.ts`         | `~/.codex/sessions/YYYY/MM/DD/`      | JSONL events          |
+| `OpenCodeSessionStorage`     | `opencode-session-storage.ts`      | `~/.local/share/opencode/storage/`   | JSON files            |
+| `FactoryDroidSessionStorage` | `factory-droid-session-storage.ts` | `~/.factory/sessions/`               | JSONL + settings.json |
 
 ### Registry Functions
 
@@ -447,7 +476,7 @@ getAllSessionStorages(): AgentSessionStorage[]
 ```typescript
 import { initializeSessionStorages } from './storage';
 initializeSessionStorages({
-	claudeSessionOriginsStore: store,  // Optional: for session names/starred status
+	claudeSessionOriginsStore: store, // Optional: for session names/starred status
 });
 ```
 
@@ -457,20 +486,20 @@ initializeSessionStorages({
 interface AgentSessionInfo {
 	sessionId: string;
 	projectPath: string;
-	timestamp: string;        // ISO date of creation
-	modifiedAt: string;       // ISO date of last modification
-	firstMessage: string;     // First user message (truncated)
+	timestamp: string; // ISO date of creation
+	modifiedAt: string; // ISO date of last modification
+	firstMessage: string; // First user message (truncated)
 	messageCount: number;
 	sizeBytes: number;
-	costUsd?: number;         // Only for agents with cost tracking
+	costUsd?: number; // Only for agents with cost tracking
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	durationSeconds: number;
 	origin?: 'user' | 'auto'; // How session was created
-	sessionName?: string;     // Custom name (if set)
-	starred?: boolean;        // Starred status
+	sessionName?: string; // Custom name (if set)
+	starred?: boolean; // Starred status
 }
 ```
 
@@ -509,18 +538,18 @@ Agent processes are spawned and managed by `ProcessManager` (`src/main/process-m
 
 ### Key IPC Channels (process namespace)
 
-| Channel | Direction | Purpose |
-|---|---|---|
-| `process:spawn` | R -> M | Start agent process |
-| `process:kill` | R -> M | Kill process by session ID |
-| `process:write` | R -> M | Write to process stdin |
-| `process:interrupt` | R -> M | Send SIGINT/CTRL+C |
-| `output` | M -> R | Parsed agent output events |
-| `process-exit` | M -> R | Process exit notification |
-| `usage-update` | M -> R | Token/cost statistics |
-| `agent-error` | M -> R | Structured error notification |
-| `ssh-remote` | M -> R | SSH remote connection info |
-| `tool-execution` | M -> R | Tool use events for UI display |
+| Channel             | Direction | Purpose                        |
+| ------------------- | --------- | ------------------------------ |
+| `process:spawn`     | R -> M    | Start agent process            |
+| `process:kill`      | R -> M    | Kill process by session ID     |
+| `process:write`     | R -> M    | Write to process stdin         |
+| `process:interrupt` | R -> M    | Send SIGINT/CTRL+C             |
+| `output`            | M -> R    | Parsed agent output events     |
+| `process-exit`      | M -> R    | Process exit notification      |
+| `usage-update`      | M -> R    | Token/cost statistics          |
+| `agent-error`       | M -> R    | Structured error notification  |
+| `ssh-remote`        | M -> R    | SSH remote connection info     |
+| `tool-execution`    | M -> R    | Tool use events for UI display |
 
 ### ProcessConfig (Spawn Request)
 
@@ -533,7 +562,7 @@ interface ProcessConfig {
 	args: string[];
 	prompt?: string;
 	images?: string[];
-	agentSessionId?: string;        // For resume
+	agentSessionId?: string; // For resume
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;

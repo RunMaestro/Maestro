@@ -48,6 +48,7 @@ Top 30 most-repeated regex patterns across `src/**/*.{ts,tsx}`:
 Constants defined in `src/main/constants.ts` but inlined elsewhere:
 
 **Centralized definitions:**
+
 - `src/main/constants.ts:27` - `REGEX_AI_SUFFIX = /-ai-.+$/`
 - `src/main/constants.ts:28` - `REGEX_AI_TAB_ID = /-ai-(.+)$/`
 - `src/main/constants.ts:18` - `REGEX_MODERATOR_SESSION = /^group-chat-(.+)-moderator-/`
@@ -56,6 +57,7 @@ Constants defined in `src/main/constants.ts` but inlined elsewhere:
 - `src/main/constants.ts:33` - `REGEX_SYNOPSIS_SESSION = /-synopsis-\d+$/`
 
 **Inlined duplicates (not using the constants):**
+
 - `src/main/process-listeners/exit-listener.ts:439` - inline combined regex `/-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/`
 - `src/renderer/components/ProcessMonitor.tsx:290` - `/^(.+)-batch-\d+$/`
 - `src/renderer/components/ProcessMonitor.tsx:295` - `/^(.+)-synopsis-\d+$/`
@@ -73,6 +75,7 @@ Two independent implementations of `escapeRegExp`, each with the same `/[.*+?^${
 - `src/renderer/utils/groupChatExport.ts:69` - `function escapeRegExp(string: string): string {`
 
 Usage sites:
+
 - `src/renderer/hooks/batch/useAutoRunImageHandling.ts:77-79` - called 3x (filename, encodedPath, relativePath)
 - `src/renderer/utils/groupChatExport.ts:83,88` - called 2x in regex construction
 

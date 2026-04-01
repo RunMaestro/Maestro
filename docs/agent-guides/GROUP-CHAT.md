@@ -46,17 +46,17 @@ Defined in `src/shared/group-chat-types.ts` and `src/main/group-chat/group-chat-
 
 ```typescript
 interface GroupChat {
-	id: string;                          // UUID
-	name: string;                        // Display name (sanitized for filesystem)
-	createdAt: number;                   // Timestamp
-	updatedAt: number;                   // Timestamp
-	moderatorAgentId: string;            // e.g. 'claude-code'
-	moderatorSessionId: string;          // Session ID prefix for routing
-	moderatorAgentSessionId?: string;    // Agent session UUID for continuity
-	moderatorConfig?: ModeratorConfig;   // Custom path, args, env vars, model, SSH
+	id: string; // UUID
+	name: string; // Display name (sanitized for filesystem)
+	createdAt: number; // Timestamp
+	updatedAt: number; // Timestamp
+	moderatorAgentId: string; // e.g. 'claude-code'
+	moderatorSessionId: string; // Session ID prefix for routing
+	moderatorAgentSessionId?: string; // Agent session UUID for continuity
+	moderatorConfig?: ModeratorConfig; // Custom path, args, env vars, model, SSH
 	participants: GroupChatParticipant[];
-	logPath: string;                     // Path to chat.log
-	imagesDir: string;                   // Path to images/
+	logPath: string; // Path to chat.log
+	imagesDir: string; // Path to images/
 	archived?: boolean;
 }
 ```
@@ -65,20 +65,20 @@ interface GroupChat {
 
 ```typescript
 interface GroupChatParticipant {
-	name: string;                // Unique name within the chat
-	agentId: string;             // Agent type (e.g. 'claude-code')
-	sessionId: string;           // Internal process session ID for routing
-	agentSessionId?: string;     // Agent's conversation session ID for continuity
+	name: string; // Unique name within the chat
+	agentId: string; // Agent type (e.g. 'claude-code')
+	sessionId: string; // Internal process session ID for routing
+	agentSessionId?: string; // Agent's conversation session ID for continuity
 	addedAt: number;
 	lastActivity?: number;
 	lastSummary?: string;
 	contextUsage?: number;
-	color?: string;              // Assigned color for UI
+	color?: string; // Assigned color for UI
 	tokenCount?: number;
 	messageCount?: number;
 	processingTimeMs?: number;
-	totalCost?: number;          // USD
-	sshRemoteName?: string;      // SSH remote display name
+	totalCost?: number; // USD
+	sshRemoteName?: string; // SSH remote display name
 }
 ```
 
@@ -86,8 +86,8 @@ interface GroupChatParticipant {
 
 ```typescript
 interface GroupChatMessage {
-	timestamp: string;   // ISO 8601
-	from: string;        // 'user', 'moderator', or participant name
+	timestamp: string; // ISO 8601
+	from: string; // 'user', 'moderator', or participant name
 	content: string;
 	readOnly?: boolean;
 }
@@ -101,7 +101,7 @@ Stored in JSONL format for append-only activity tracking:
 interface GroupChatHistoryEntry {
 	id: string;
 	timestamp: number;
-	summary: string;              // One-sentence summary
+	summary: string; // One-sentence summary
 	participantName: string;
 	participantColor: string;
 	type: 'delegation' | 'response' | 'synthesis' | 'error';
@@ -145,6 +145,7 @@ TIMESTAMP|FROM|CONTENT|readOnly
 ```
 
 Escaping rules (applied in order):
+
 - `\` becomes `\\`
 - `|` becomes `\|`
 - newlines become `\n`
@@ -157,17 +158,18 @@ All located in `src/main/group-chat/`:
 
 The central message routing engine. Key exports:
 
-| Function | Purpose |
-|---|---|
-| `routeUserMessage()` | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
-| `routeModeratorResponse()` | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses |
-| `routeAgentResponse()` | Handles participant response, logs it, emits to renderer |
-| `spawnModeratorSynthesis()` | Spawns synthesis round after all participants respond |
-| `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss |
-| `extractMentions()` | Extracts `@Name` patterns from text, matches against participants |
-| `markParticipantResponded()` | Removes participant from pending set, returns true if last |
+| Function                           | Purpose                                                                                                                                                                                       |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `routeUserMessage()`               | Routes user message to moderator batch process. Auto-adds `@mentioned` sessions as participants. Builds the full prompt with system prompt, participant list, chat history, and user request. |
+| `routeModeratorResponse()`         | Parses moderator output for `@mentions`, dispatches to participants, tracks pending responses                                                                                                 |
+| `routeAgentResponse()`             | Handles participant response, logs it, emits to renderer                                                                                                                                      |
+| `spawnModeratorSynthesis()`        | Spawns synthesis round after all participants respond                                                                                                                                         |
+| `respawnParticipantWithRecovery()` | Re-spawns a participant with recovery context after session loss                                                                                                                              |
+| `extractMentions()`                | Extracts `@Name` patterns from text, matches against participants                                                                                                                             |
+| `markParticipantResponded()`       | Removes participant from pending set, returns true if last                                                                                                                                    |
 
 Module-level callbacks set during initialization:
+
 - `setGetSessionsCallback()` - Looks up available Maestro sessions for auto-add
 - `setGetCustomEnvVarsCallback()` - Resolves per-agent env vars
 - `setGetAgentConfigCallback()` - Resolves per-agent config (custom args, model, etc.)
@@ -177,13 +179,13 @@ Module-level callbacks set during initialization:
 
 Manages the moderator lifecycle:
 
-| Function | Purpose |
-|---|---|
-| `spawnModerator()` | Initializes session mapping, stores session ID prefix |
-| `sendToModerator()` | Logs message and writes to moderator process |
-| `killModerator()` | Kills process, clears state, removes power block |
+| Function                | Purpose                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `spawnModerator()`      | Initializes session mapping, stores session ID prefix                |
+| `sendToModerator()`     | Logs message and writes to moderator process                         |
+| `killModerator()`       | Kills process, clears state, removes power block                     |
 | `startSessionCleanup()` | Periodic cleanup of stale sessions (30min threshold, 10min interval) |
-| `stopSessionCleanup()` | Stops cleanup on shutdown |
+| `stopSessionCleanup()`  | Stops cleanup on shutdown                                            |
 
 The moderator runs in **read-only mode** to prevent unintended modifications.
 
@@ -191,12 +193,12 @@ The moderator runs in **read-only mode** to prevent unintended modifications.
 
 Manages participant agents:
 
-| Function | Purpose |
-|---|---|
-| `addParticipant()` | Resolves agent config, spawns process, stores session mapping. Supports SSH wrapping via `wrapSpawnWithSsh()`. |
-| `sendToParticipant()` | Routes message to participant, logs as `moderator->{name}` |
-| `removeParticipant()` | Kills process, removes from storage |
-| `clearAllParticipantSessions()` | Kills all participant processes for a chat |
+| Function                        | Purpose                                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `addParticipant()`              | Resolves agent config, spawns process, stores session mapping. Supports SSH wrapping via `wrapSpawnWithSsh()`. |
+| `sendToParticipant()`           | Routes message to participant, logs as `moderator->{name}`                                                     |
+| `removeParticipant()`           | Kills process, removes from storage                                                                            |
+| `clearAllParticipantSessions()` | Kills all participant processes for a chat                                                                     |
 
 Participants run with **read-write access** (not read-only) so they can make code changes.
 
@@ -204,38 +206,38 @@ Participants run with **read-write access** (not read-only) so they can make cod
 
 CRUD operations for group chat metadata:
 
-| Function | Purpose |
-|---|---|
-| `createGroupChat()` | Creates directory structure, metadata, empty log |
-| `loadGroupChat()` | Reads and parses metadata.json |
-| `listGroupChats()` | Lists all group chat directories |
-| `deleteGroupChat()` | Removes directory with retry logic for Windows file locks |
-| `updateGroupChat()` | Partial update with write serialization |
-| `addParticipantToChat()` | Appends participant to metadata |
-| `removeParticipantFromChat()` | Filters participant from metadata |
-| `updateParticipant()` | Updates participant stats (tokens, cost, etc.) |
-| `addGroupChatHistoryEntry()` | Appends JSONL history entry |
-| `getGroupChatHistory()` | Reads and sorts history entries |
+| Function                      | Purpose                                                   |
+| ----------------------------- | --------------------------------------------------------- |
+| `createGroupChat()`           | Creates directory structure, metadata, empty log          |
+| `loadGroupChat()`             | Reads and parses metadata.json                            |
+| `listGroupChats()`            | Lists all group chat directories                          |
+| `deleteGroupChat()`           | Removes directory with retry logic for Windows file locks |
+| `updateGroupChat()`           | Partial update with write serialization                   |
+| `addParticipantToChat()`      | Appends participant to metadata                           |
+| `removeParticipantFromChat()` | Filters participant from metadata                         |
+| `updateParticipant()`         | Updates participant stats (tokens, cost, etc.)            |
+| `addGroupChatHistoryEntry()`  | Appends JSONL history entry                               |
+| `getGroupChatHistory()`       | Reads and sorts history entries                           |
 
 ### group-chat-log.ts
 
 Log file I/O:
 
-| Function | Purpose |
-|---|---|
-| `appendToLog()` | Escapes content and appends timestamped line |
-| `readLog()` | Parses pipe-delimited log into `GroupChatMessage[]` |
-| `saveImage()` | Saves image buffer to images directory with UUID filename and extension whitelist validation |
-| `escapeContent()` / `unescapeContent()` | Pipe-delimited escape handling |
+| Function                                | Purpose                                                                                      |
+| --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `appendToLog()`                         | Escapes content and appends timestamped line                                                 |
+| `readLog()`                             | Parses pipe-delimited log into `GroupChatMessage[]`                                          |
+| `saveImage()`                           | Saves image buffer to images directory with UUID filename and extension whitelist validation |
+| `escapeContent()` / `unescapeContent()` | Pipe-delimited escape handling                                                               |
 
 ### group-chat-config.ts
 
 Shared configuration callbacks:
 
-| Function | Purpose |
-|---|---|
-| `setGetCustomShellPathCallback()` | Registers callback for Windows shell preference |
-| `getWindowsSpawnConfig()` | Returns shell and stdin flags for Windows agent spawning. Skipped when SSH is enabled. |
+| Function                          | Purpose                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------- |
+| `setGetCustomShellPathCallback()` | Registers callback for Windows shell preference                                        |
+| `getWindowsSpawnConfig()`         | Returns shell and stdin flags for Windows agent spawning. Skipped when SSH is enabled. |
 
 ### output-buffer.ts
 
@@ -278,79 +280,79 @@ Registered in `src/main/ipc/handlers/groupChat.ts`. All handler names are prefix
 
 ### CRUD
 
-| Handler | Description |
-|---|---|
-| `groupChat:create` | Creates a new group chat with name and moderator agent ID |
-| `groupChat:list` | Lists all group chats |
-| `groupChat:load` | Loads a single group chat by ID |
-| `groupChat:delete` | Deletes a group chat and all data |
-| `groupChat:rename` | Renames a group chat |
-| `groupChat:updateModeratorConfig` | Updates moderator custom config |
+| Handler                           | Description                                               |
+| --------------------------------- | --------------------------------------------------------- |
+| `groupChat:create`                | Creates a new group chat with name and moderator agent ID |
+| `groupChat:list`                  | Lists all group chats                                     |
+| `groupChat:load`                  | Loads a single group chat by ID                           |
+| `groupChat:delete`                | Deletes a group chat and all data                         |
+| `groupChat:rename`                | Renames a group chat                                      |
+| `groupChat:updateModeratorConfig` | Updates moderator custom config                           |
 
 ### Chat Operations
 
-| Handler | Description |
-|---|---|
+| Handler                 | Description                               |
+| ----------------------- | ----------------------------------------- |
 | `groupChat:sendMessage` | Routes user message through the moderator |
-| `groupChat:getMessages` | Gets all messages from the chat log |
-| `groupChat:saveImage` | Saves an image attachment |
+| `groupChat:getMessages` | Gets all messages from the chat log       |
+| `groupChat:saveImage`   | Saves an image attachment                 |
 
 ### Moderator
 
-| Handler | Description |
-|---|---|
-| `groupChat:startModerator` | Spawns the moderator agent |
-| `groupChat:stopModerator` | Kills the moderator and all participants |
+| Handler                    | Description                              |
+| -------------------------- | ---------------------------------------- |
+| `groupChat:startModerator` | Spawns the moderator agent               |
+| `groupChat:stopModerator`  | Kills the moderator and all participants |
 
 ### Participants
 
-| Handler | Description |
-|---|---|
-| `groupChat:addParticipant` | Adds a participant agent |
-| `groupChat:removeParticipant` | Removes a participant |
+| Handler                       | Description                               |
+| ----------------------------- | ----------------------------------------- |
+| `groupChat:addParticipant`    | Adds a participant agent                  |
+| `groupChat:removeParticipant` | Removes a participant                     |
 | `groupChat:sendToParticipant` | Sends a message to a specific participant |
 
 ### History
 
-| Handler | Description |
-|---|---|
-| `groupChat:getHistory` | Gets activity history entries |
+| Handler                        | Description                    |
+| ------------------------------ | ------------------------------ |
+| `groupChat:getHistory`         | Gets activity history entries  |
 | `groupChat:deleteHistoryEntry` | Deletes a single history entry |
-| `groupChat:clearHistory` | Clears all history |
+| `groupChat:clearHistory`       | Clears all history             |
 
 ### Emitter System
 
 The `groupChatEmitters` object provides real-time event broadcasting to the renderer:
 
-| Emitter | Event | Purpose |
-|---|---|---|
-| `emitMessage` | `groupChat:message` | New message in chat |
-| `emitStateChange` | `groupChat:stateChange` | Chat state transition |
-| `emitParticipantsChanged` | `groupChat:participantsChanged` | Participant added/removed |
-| `emitModeratorUsage` | `groupChat:moderatorUsage` | Context/cost/token updates |
-| `emitHistoryEntry` | `groupChat:historyEntry` | New history entry |
-| `emitParticipantState` | `groupChat:participantState` | Participant working/idle |
+| Emitter                   | Event                           | Purpose                    |
+| ------------------------- | ------------------------------- | -------------------------- |
+| `emitMessage`             | `groupChat:message`             | New message in chat        |
+| `emitStateChange`         | `groupChat:stateChange`         | Chat state transition      |
+| `emitParticipantsChanged` | `groupChat:participantsChanged` | Participant added/removed  |
+| `emitModeratorUsage`      | `groupChat:moderatorUsage`      | Context/cost/token updates |
+| `emitHistoryEntry`        | `groupChat:historyEntry`        | New history entry          |
+| `emitParticipantState`    | `groupChat:participantState`    | Participant working/idle   |
 
 ## Renderer Components
 
 Located in `src/renderer/components/`:
 
-| Component | Purpose |
-|---|---|
-| `GroupChatPanel.tsx` | Main panel displayed in the center workspace for an active group chat |
-| `GroupChatMessages.tsx` | Message list with sender attribution and colors |
-| `GroupChatInput.tsx` | User input area with `@mention` autocomplete |
-| `GroupChatHeader.tsx` | Chat name, state indicator, moderator controls |
-| `GroupChatParticipants.tsx` | Participant list with stats and remove buttons |
-| `GroupChatList.tsx` | Left Bar list of group chats |
-| `GroupChatModal.tsx` | Creation modal for new group chats |
-| `GroupChatRightPanel.tsx` | Right panel with chat info and participants |
-| `GroupChatInfoOverlay.tsx` | Info overlay with chat metadata |
-| `GroupChatHistoryPanel.tsx` | Activity history timeline |
-| `ParticipantCard.tsx` | Individual participant card with stats |
-| `CreateGroupModal.tsx` | Group creation dialog |
-| `DeleteGroupChatModal.tsx` | Deletion confirmation |
-| `RenameGroupChatModal.tsx` | Rename dialog |
+| Component                   | Purpose                                                               |
+| --------------------------- | --------------------------------------------------------------------- |
+| `GroupChatPanel.tsx`        | Main panel displayed in the center workspace for an active group chat |
+| `GroupChatMessages.tsx`     | Message list with sender attribution and colors                       |
+| `GroupChatInput.tsx`        | User input area with `@mention` autocomplete                          |
+| `GroupChatHeader.tsx`       | Chat name, state indicator, moderator controls                        |
+| `GroupChatParticipants.tsx` | Participant list with stats and remove buttons                        |
+| `GroupChatList.tsx`         | Left Bar list of group chats                                          |
+| `GroupChatModal.tsx`        | Creation modal for new group chats                                    |
+| `GroupChatRightPanel.tsx`   | Right panel with chat info and participants                           |
+| `GroupChatInfoOverlay.tsx`  | Info overlay with chat metadata                                       |
+| `GroupChatHistoryPanel.tsx` | Activity history timeline                                             |
+| `ParticipantCard.tsx`       | Individual participant card with stats                                |
+| `CreateGroupModal.tsx`      | Group creation dialog                                                 |
+| `DeleteGroupChatModal.tsx`  | Deletion confirmation                                                 |
+| `RenameGroupChatModal.tsx`  | Rename dialog                                                         |
 
 ## Symphony System
 
@@ -366,29 +368,29 @@ Symphony is a separate feature that connects Maestro users with open source proj
 
 Group chat uses four prompt templates from `src/prompts/`:
 
-| File | Purpose | Template Variables |
-|---|---|---|
-| `group-chat-moderator-system.md` | System prompt for the moderator. Instructs it to assist directly for simple tasks and delegate via `@mentions` for complex ones. | `{{CONDUCTOR_PROFILE}}` |
-| `group-chat-moderator-synthesis.md` | Synthesis prompt shown when reviewing agent responses. Moderator decides whether to continue delegating or summarize for the user. | None |
-| `group-chat-participant.md` | System prompt for participants. Instructs response format (overview first, then details). | `{{GROUP_CHAT_NAME}}`, `{{PARTICIPANT_NAME}}`, `{{LOG_PATH}}` |
-| `group-chat-participant-request.md` | Per-message prompt for participants with chat history and the moderator's request. | `{{PARTICIPANT_NAME}}`, `{{GROUP_CHAT_NAME}}`, `{{GROUP_CHAT_FOLDER}}`, `{{HISTORY_CONTEXT}}`, `{{MESSAGE}}`, `{{READ_ONLY_NOTE}}`, `{{READ_ONLY_LABEL}}`, `{{READ_ONLY_INSTRUCTION}}` |
+| File                                | Purpose                                                                                                                            | Template Variables                                                                                                                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `group-chat-moderator-system.md`    | System prompt for the moderator. Instructs it to assist directly for simple tasks and delegate via `@mentions` for complex ones.   | `{{CONDUCTOR_PROFILE}}`                                                                                                                                                                |
+| `group-chat-moderator-synthesis.md` | Synthesis prompt shown when reviewing agent responses. Moderator decides whether to continue delegating or summarize for the user. | None                                                                                                                                                                                   |
+| `group-chat-participant.md`         | System prompt for participants. Instructs response format (overview first, then details).                                          | `{{GROUP_CHAT_NAME}}`, `{{PARTICIPANT_NAME}}`, `{{LOG_PATH}}`                                                                                                                          |
+| `group-chat-participant-request.md` | Per-message prompt for participants with chat history and the moderator's request.                                                 | `{{PARTICIPANT_NAME}}`, `{{GROUP_CHAT_NAME}}`, `{{GROUP_CHAT_FOLDER}}`, `{{HISTORY_CONTEXT}}`, `{{MESSAGE}}`, `{{READ_ONLY_NOTE}}`, `{{READ_ONLY_LABEL}}`, `{{READ_ONLY_INSTRUCTION}}` |
 
 ## Key Source Files
 
-| File | Purpose |
-|---|---|
-| `src/main/group-chat/group-chat-router.ts` | Message routing engine |
-| `src/main/group-chat/group-chat-moderator.ts` | Moderator lifecycle management |
-| `src/main/group-chat/group-chat-agent.ts` | Participant agent management |
-| `src/main/group-chat/group-chat-storage.ts` | File-based CRUD with write serialization |
-| `src/main/group-chat/group-chat-log.ts` | Pipe-delimited log I/O |
-| `src/main/group-chat/group-chat-config.ts` | Shared Windows spawn config |
-| `src/main/group-chat/output-buffer.ts` | Streaming output buffering |
-| `src/main/group-chat/output-parser.ts` | Agent JSON/JSONL text extraction |
-| `src/main/group-chat/session-parser.ts` | Session ID parsing |
-| `src/main/group-chat/session-recovery.ts` | Session-not-found recovery |
-| `src/main/ipc/handlers/groupChat.ts` | IPC handler registration and emitters |
-| `src/shared/group-chat-types.ts` | Shared type definitions |
-| `src/shared/symphony-types.ts` | Symphony type definitions |
-| `src/shared/symphony-constants.ts` | Symphony constants |
-| `src/prompts/group-chat-*.md` | Prompt templates |
+| File                                          | Purpose                                  |
+| --------------------------------------------- | ---------------------------------------- |
+| `src/main/group-chat/group-chat-router.ts`    | Message routing engine                   |
+| `src/main/group-chat/group-chat-moderator.ts` | Moderator lifecycle management           |
+| `src/main/group-chat/group-chat-agent.ts`     | Participant agent management             |
+| `src/main/group-chat/group-chat-storage.ts`   | File-based CRUD with write serialization |
+| `src/main/group-chat/group-chat-log.ts`       | Pipe-delimited log I/O                   |
+| `src/main/group-chat/group-chat-config.ts`    | Shared Windows spawn config              |
+| `src/main/group-chat/output-buffer.ts`        | Streaming output buffering               |
+| `src/main/group-chat/output-parser.ts`        | Agent JSON/JSONL text extraction         |
+| `src/main/group-chat/session-parser.ts`       | Session ID parsing                       |
+| `src/main/group-chat/session-recovery.ts`     | Session-not-found recovery               |
+| `src/main/ipc/handlers/groupChat.ts`          | IPC handler registration and emitters    |
+| `src/shared/group-chat-types.ts`              | Shared type definitions                  |
+| `src/shared/symphony-types.ts`                | Symphony type definitions                |
+| `src/shared/symphony-constants.ts`            | Symphony constants                       |
+| `src/prompts/group-chat-*.md`                 | Prompt templates                         |

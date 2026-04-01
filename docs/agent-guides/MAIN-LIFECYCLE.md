@@ -247,14 +247,14 @@ The `createWindowManager()` factory returns a `WindowManager` with a `createWind
 
 The window manager sets up multiple crash detection handlers:
 
-| Event | Action |
-|---|---|
-| `render-process-gone` | Logs, reports to Sentry, auto-reloads (unless intentionally killed) |
-| `unresponsive` | Warns, reports to Sentry with memory usage |
-| `responsive` | Logs recovery |
-| `crashed` | Logs, reports to Sentry |
-| `did-fail-load` | Logs, reports to Sentry (ignores aborted loads) |
-| `preload-error` | Logs, reports to Sentry as fatal |
+| Event                       | Action                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `render-process-gone`       | Logs, reports to Sentry, auto-reloads (unless intentionally killed)                |
+| `unresponsive`              | Warns, reports to Sentry with memory usage                                         |
+| `responsive`                | Logs recovery                                                                      |
+| `crashed`                   | Logs, reports to Sentry                                                            |
+| `did-fail-load`             | Logs, reports to Sentry (ignores aborted loads)                                    |
+| `preload-error`             | Logs, reports to Sentry as fatal                                                   |
 | `console-message` (level 3) | Forwards renderer errors to main process logger; reports critical errors to Sentry |
 
 ### Auto-Updater Initialization
@@ -275,7 +275,7 @@ Local-only store that determines the sync path:
 ```typescript
 interface BootstrapSettings {
 	customSyncPath?: string;
-	iCloudSyncEnabled?: boolean;  // Legacy
+	iCloudSyncEnabled?: boolean; // Legacy
 }
 ```
 
@@ -309,20 +309,20 @@ interface MaestroSettings {
 	wakatimeApiKey: string;
 	wakatimeDetailedTracking: boolean;
 	totalActiveTimeMs: number;
-	[key: string]: any;  // Dynamic settings
+	[key: string]: any; // Dynamic settings
 }
 ```
 
 #### Other Stores
 
-| Store | Type | Purpose |
-|---|---|---|
-| `SessionsData` | `{ sessions: StoredSession[] }` | Active agent sessions |
-| `GroupsData` | `{ groups: Group[] }` | Session groups |
-| `AgentConfigsData` | `{ configs: Record<string, AgentConfig> }` | Per-agent custom paths, args, env vars, models |
-| `WindowState` | `{ x, y, width, height, isMaximized, isFullScreen }` | Window geometry persistence |
-| `ClaudeSessionOriginsData` | Session origin tracking for Claude Code | Session names, stars, custom origins |
-| `AgentSessionOriginsData` | Session origin tracking for all agents | Generic agent session origins |
+| Store                      | Type                                                 | Purpose                                        |
+| -------------------------- | ---------------------------------------------------- | ---------------------------------------------- |
+| `SessionsData`             | `{ sessions: StoredSession[] }`                      | Active agent sessions                          |
+| `GroupsData`               | `{ groups: Group[] }`                                | Session groups                                 |
+| `AgentConfigsData`         | `{ configs: Record<string, AgentConfig> }`           | Per-agent custom paths, args, env vars, models |
+| `WindowState`              | `{ x, y, width, height, isMaximized, isFullScreen }` | Window geometry persistence                    |
+| `ClaudeSessionOriginsData` | Session origin tracking for Claude Code              | Session names, stars, custom origins           |
+| `AgentSessionOriginsData`  | Session origin tracking for all agents               | Generic agent session origins                  |
 
 ### Store Module Organization
 
@@ -347,9 +347,9 @@ Uses `electron-updater` with lazy initialization (deferred `require()`) to avoid
 ### Configuration
 
 ```typescript
-autoUpdater.autoDownload = false;       // User must initiate download
+autoUpdater.autoDownload = false; // User must initiate download
 autoUpdater.autoInstallOnAppQuit = true; // Install on next quit
-autoUpdater.allowPrerelease = false;     // Stable channel only
+autoUpdater.allowPrerelease = false; // Stable channel only
 ```
 
 ### Update Flow
@@ -367,8 +367,14 @@ autoUpdater.allowPrerelease = false;     // Stable channel only
 
 ```typescript
 type UpdateStatus = {
-	status: 'idle' | 'checking' | 'available' | 'not-available' |
-	        'downloading' | 'downloaded' | 'error';
+	status:
+		| 'idle'
+		| 'checking'
+		| 'available'
+		| 'not-available'
+		| 'downloading'
+		| 'downloaded'
+		| 'error';
 	info?: UpdateInfo;
 	progress?: ProgressInfo;
 	error?: string;
@@ -393,20 +399,20 @@ The `PowerManager` class uses reference counting:
 
 ### Key Methods
 
-| Method | Purpose |
-|---|---|
-| `setEnabled(enabled)` | Enable/disable the feature (user preference) |
-| `addBlockReason(reason)` | Add a reason for blocking sleep |
-| `removeBlockReason(reason)` | Remove a reason |
-| `getStatus()` | Returns `{ enabled, blocking, reasons, platform }` |
+| Method                      | Purpose                                            |
+| --------------------------- | -------------------------------------------------- |
+| `setEnabled(enabled)`       | Enable/disable the feature (user preference)       |
+| `addBlockReason(reason)`    | Add a reason for blocking sleep                    |
+| `removeBlockReason(reason)` | Remove a reason                                    |
+| `getStatus()`               | Returns `{ enabled, blocking, reasons, platform }` |
 
 ### Platform Support
 
-| Platform | Implementation |
-|---|---|
-| macOS | `IOPMAssertionCreateWithName` (like `caffeinate`) |
-| Windows | `SetThreadExecutionState` |
-| Linux | Varies by DE (D-Bus or X11). Works on GNOME, KDE, XFCE. |
+| Platform | Implementation                                          |
+| -------- | ------------------------------------------------------- |
+| macOS    | `IOPMAssertionCreateWithName` (like `caffeinate`)       |
+| Windows  | `SetThreadExecutionState`                               |
+| Linux    | Varies by DE (D-Bus or X11). Works on GNOME, KDE, XFCE. |
 
 The `powerManager` singleton is exported and used across the codebase. It is wired into process listeners to automatically add/remove block reasons when agent sessions become busy/idle.
 
@@ -432,20 +438,20 @@ Defined in `src/main/wakatime-manager.ts`.
 
 ### Settings
 
-| Setting | Default | Purpose |
-|---|---|---|
-| `wakatimeEnabled` | `false` | Enable/disable WakaTime integration |
-| `wakatimeApiKey` | `""` | WakaTime API key |
-| `wakatimeDetailedTracking` | `false` | Track individual file activity |
+| Setting                    | Default | Purpose                             |
+| -------------------------- | ------- | ----------------------------------- |
+| `wakatimeEnabled`          | `false` | Enable/disable WakaTime integration |
+| `wakatimeApiKey`           | `""`    | WakaTime API key                    |
+| `wakatimeDetailedTracking` | `false` | Track individual file activity      |
 
 ### IPC Handlers
 
 Registered in `src/main/ipc/handlers/wakatime.ts`:
 
-| Handler | Purpose |
-|---|---|
-| `wakatime:checkCli` | Check if wakatime-cli is available |
-| `wakatime:validateApiKey` | Validate a WakaTime API key |
+| Handler                   | Purpose                            |
+| ------------------------- | ---------------------------------- |
+| `wakatime:checkCli`       | Check if wakatime-cli is available |
+| `wakatime:validateApiKey` | Validate a WakaTime API key        |
 
 ### Process Listener
 
@@ -496,37 +502,37 @@ const historyManager = getHistoryManager();
 
 All IPC handlers are registered in `setupIpcHandlers()` within `src/main/index.ts`. Each handler module is a self-contained file in `src/main/ipc/handlers/`:
 
-| Registration Call | Handler Module | Dependencies |
-|---|---|---|
-| `registerWebHandlers()` | `web.ts` | Web server factory, settings store |
-| `registerGitHandlers()` | `git.ts` | Settings store |
-| `registerAutorunHandlers()` | `autorun.ts` | Main window, app, settings store |
-| `registerPlaybooksHandlers()` | `playbooks.ts` | Main window, app |
-| `registerHistoryHandlers()` | `history.ts` | (uses HistoryManager singleton) |
-| `registerDirectorNotesHandlers()` | `director-notes.ts` | Process manager, agent detector, agent configs |
-| `registerAgentsHandlers()` | `agents.ts` | Agent detector, agent configs, settings |
-| `registerProcessHandlers()` | `process.ts` | Process manager, agent detector, agent configs, settings, sessions |
-| `registerPersistenceHandlers()` | `persistence.ts` | Settings, sessions, groups stores, web server |
-| `registerSystemHandlers()` | `system.ts` | Main window, app, settings, tunnel, web server, bootstrap |
-| `registerClaudeHandlers()` | `claude.ts` | Claude session origins store, main window |
-| `registerAgentSessionsHandlers()` | `agentSessions.ts` | Main window, agent session origins |
-| `registerGroupChatHandlers()` | `groupChat.ts` | Main window, process manager, agent detector, env vars, agent config |
-| `registerDebugHandlers()` | `debug.ts` | Main window, agent detector, process manager, web server, stores |
-| `registerSpeckitHandlers()` | `speckit.ts` | (none) |
-| `registerOpenSpecHandlers()` | `openspec.ts` | (none) |
-| `registerContextHandlers()` | `context.ts` | Main window, process manager, agent detector, agent configs |
-| `registerMarketplaceHandlers()` | `marketplace.ts` | App, settings store |
-| `registerStatsHandlers()` | `stats.ts` | Main window, settings store |
-| `registerDocumentGraphHandlers()` | `documentGraph.ts` | Main window, app |
-| `registerSshRemoteHandlers()` | `ssh-remote.ts` | Settings store |
-| `registerFilesystemHandlers()` | `filesystem.ts` | (none) |
-| `registerAgentErrorHandlers()` | `agent-error.ts` | (none) |
-| `registerNotificationsHandlers()` | `notifications.ts` | (none) |
-| `registerAttachmentsHandlers()` | `attachments.ts` | App |
-| `registerLeaderboardHandlers()` | `leaderboard.ts` | App, settings store |
-| `registerSymphonyHandlers()` | `symphony.ts` | App, main window, sessions store |
-| `registerTabNamingHandlers()` | `tabNaming.ts` | Process manager, agent detector, agent configs, settings |
-| `registerWakatimeHandlers()` | `wakatime.ts` | WakaTime manager |
+| Registration Call                 | Handler Module      | Dependencies                                                         |
+| --------------------------------- | ------------------- | -------------------------------------------------------------------- |
+| `registerWebHandlers()`           | `web.ts`            | Web server factory, settings store                                   |
+| `registerGitHandlers()`           | `git.ts`            | Settings store                                                       |
+| `registerAutorunHandlers()`       | `autorun.ts`        | Main window, app, settings store                                     |
+| `registerPlaybooksHandlers()`     | `playbooks.ts`      | Main window, app                                                     |
+| `registerHistoryHandlers()`       | `history.ts`        | (uses HistoryManager singleton)                                      |
+| `registerDirectorNotesHandlers()` | `director-notes.ts` | Process manager, agent detector, agent configs                       |
+| `registerAgentsHandlers()`        | `agents.ts`         | Agent detector, agent configs, settings                              |
+| `registerProcessHandlers()`       | `process.ts`        | Process manager, agent detector, agent configs, settings, sessions   |
+| `registerPersistenceHandlers()`   | `persistence.ts`    | Settings, sessions, groups stores, web server                        |
+| `registerSystemHandlers()`        | `system.ts`         | Main window, app, settings, tunnel, web server, bootstrap            |
+| `registerClaudeHandlers()`        | `claude.ts`         | Claude session origins store, main window                            |
+| `registerAgentSessionsHandlers()` | `agentSessions.ts`  | Main window, agent session origins                                   |
+| `registerGroupChatHandlers()`     | `groupChat.ts`      | Main window, process manager, agent detector, env vars, agent config |
+| `registerDebugHandlers()`         | `debug.ts`          | Main window, agent detector, process manager, web server, stores     |
+| `registerSpeckitHandlers()`       | `speckit.ts`        | (none)                                                               |
+| `registerOpenSpecHandlers()`      | `openspec.ts`       | (none)                                                               |
+| `registerContextHandlers()`       | `context.ts`        | Main window, process manager, agent detector, agent configs          |
+| `registerMarketplaceHandlers()`   | `marketplace.ts`    | App, settings store                                                  |
+| `registerStatsHandlers()`         | `stats.ts`          | Main window, settings store                                          |
+| `registerDocumentGraphHandlers()` | `documentGraph.ts`  | Main window, app                                                     |
+| `registerSshRemoteHandlers()`     | `ssh-remote.ts`     | Settings store                                                       |
+| `registerFilesystemHandlers()`    | `filesystem.ts`     | (none)                                                               |
+| `registerAgentErrorHandlers()`    | `agent-error.ts`    | (none)                                                               |
+| `registerNotificationsHandlers()` | `notifications.ts`  | (none)                                                               |
+| `registerAttachmentsHandlers()`   | `attachments.ts`    | App                                                                  |
+| `registerLeaderboardHandlers()`   | `leaderboard.ts`    | App, settings store                                                  |
+| `registerSymphonyHandlers()`      | `symphony.ts`       | App, main window, sessions store                                     |
+| `registerTabNamingHandlers()`     | `tabNaming.ts`      | Process manager, agent detector, agent configs, settings             |
+| `registerWakatimeHandlers()`      | `wakatime.ts`       | WakaTime manager                                                     |
 
 After handler registration, additional callbacks are set for the group chat router:
 
@@ -543,6 +549,7 @@ Logger event forwarding is also set up to stream logs to the renderer.
 Set up in `setupProcessListeners()`, delegating to `src/main/process-listeners/setupProcessListeners.ts`:
 
 The process manager emits events for:
+
 - **Process output streaming**: Routes `process:data` events to the renderer and web server
 - **Process exit**: Handles group chat participant/moderator completion
 - **Group chat routing**: Moderator and agent response handling
@@ -583,26 +590,26 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 
 ## Key Source Files
 
-| File | Purpose |
-|---|---|
-| `src/main/index.ts` | Entry point, startup sequence, IPC wiring |
-| `src/main/app-lifecycle/index.ts` | Lifecycle module barrel |
+| File                                       | Purpose                                                    |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| `src/main/index.ts`                        | Entry point, startup sequence, IPC wiring                  |
+| `src/main/app-lifecycle/index.ts`          | Lifecycle module barrel                                    |
 | `src/main/app-lifecycle/window-manager.ts` | BrowserWindow creation, crash detection, auto-updater init |
-| `src/main/app-lifecycle/quit-handler.ts` | Quit confirmation flow and cleanup |
-| `src/main/app-lifecycle/error-handlers.ts` | Global uncaught exception handlers |
-| `src/main/app-lifecycle/cli-watcher.ts` | CLI activity file watcher |
-| `src/main/stores/index.ts` | Store module barrel |
-| `src/main/stores/types.ts` | Store type definitions |
-| `src/main/stores/instances.ts` | Store initialization |
-| `src/main/stores/getters.ts` | Store getter functions |
-| `src/main/stores/defaults.ts` | Store default values |
-| `src/main/stores/utils.ts` | Store utilities (early settings, shell detection) |
-| `src/main/auto-updater.ts` | electron-updater integration |
-| `src/main/power-manager.ts` | System sleep prevention |
-| `src/main/wakatime-manager.ts` | WakaTime heartbeat integration |
-| `src/main/history-manager.ts` | Per-session history storage and migration |
-| `src/main/process-manager/` | Process spawning (PTY + child_process) |
-| `src/main/process-listeners/` | Process event routing |
-| `src/main/ipc/handlers/` | All IPC handler modules |
-| `src/main/utils/sentry.ts` | Sentry utilities and memory monitoring |
-| `src/main/utils/logger.ts` | Structured logging |
+| `src/main/app-lifecycle/quit-handler.ts`   | Quit confirmation flow and cleanup                         |
+| `src/main/app-lifecycle/error-handlers.ts` | Global uncaught exception handlers                         |
+| `src/main/app-lifecycle/cli-watcher.ts`    | CLI activity file watcher                                  |
+| `src/main/stores/index.ts`                 | Store module barrel                                        |
+| `src/main/stores/types.ts`                 | Store type definitions                                     |
+| `src/main/stores/instances.ts`             | Store initialization                                       |
+| `src/main/stores/getters.ts`               | Store getter functions                                     |
+| `src/main/stores/defaults.ts`              | Store default values                                       |
+| `src/main/stores/utils.ts`                 | Store utilities (early settings, shell detection)          |
+| `src/main/auto-updater.ts`                 | electron-updater integration                               |
+| `src/main/power-manager.ts`                | System sleep prevention                                    |
+| `src/main/wakatime-manager.ts`             | WakaTime heartbeat integration                             |
+| `src/main/history-manager.ts`              | Per-session history storage and migration                  |
+| `src/main/process-manager/`                | Process spawning (PTY + child_process)                     |
+| `src/main/process-listeners/`              | Process event routing                                      |
+| `src/main/ipc/handlers/`                   | All IPC handler modules                                    |
+| `src/main/utils/sentry.ts`                 | Sentry utilities and memory monitoring                     |
+| `src/main/utils/logger.ts`                 | Structured logging                                         |

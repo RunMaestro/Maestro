@@ -12,21 +12,17 @@ Config file: `vitest.config.mts`
 
 ```typescript
 // Key settings:
-environment: 'jsdom'          // Browser-like environment
-pool: 'forks'                 // Process isolation between test files
-maxWorkers: 4                 // Parallel execution
-setupFiles: ['./src/__tests__/setup.ts']
-include: ['src/**/*.{test,spec}.{ts,tsx}']
-testTimeout: 10000
-hookTimeout: 10000
-teardownTimeout: 5000
+environment: 'jsdom'; // Browser-like environment
+pool: 'forks'; // Process isolation between test files
+maxWorkers: 4; // Parallel execution
+setupFiles: ['./src/__tests__/setup.ts'];
+include: ['src/**/*.{test,spec}.{ts,tsx}'];
+testTimeout: 10000;
+hookTimeout: 10000;
+teardownTimeout: 5000;
 
 // Excluded from default run (need separate config or flags):
-exclude: [
-	'src/__tests__/integration/**',
-	'src/__tests__/e2e/**',
-	'src/__tests__/performance/**',
-]
+exclude: ['src/__tests__/integration/**', 'src/__tests__/e2e/**', 'src/__tests__/performance/**'];
 ```
 
 Coverage uses `v8` provider with `text`, `text-summary`, `json`, and `html` reporters.
@@ -124,12 +120,15 @@ All icon imports from `lucide-react` are auto-mocked via a `Proxy`:
 
 ```typescript
 vi.mock('lucide-react', () => {
-	return new Proxy({}, {
-		get(_target, prop: string) {
-			// Returns a mock SVG component with a data-testid
-			return createMockIcon(prop);
-		},
-	});
+	return new Proxy(
+		{},
+		{
+			get(_target, prop: string) {
+				// Returns a mock SVG component with a data-testid
+				return createMockIcon(prop);
+			},
+		}
+	);
 });
 ```
 
@@ -382,12 +381,7 @@ const renderWithLayerStack = (ui: React.ReactElement) => {
 
 // Usage:
 renderWithLayerStack(
-	<ConfirmModal
-		theme={testTheme}
-		message="Are you sure?"
-		onConfirm={vi.fn()}
-		onClose={vi.fn()}
-	/>
+	<ConfirmModal theme={testTheme} message="Are you sure?" onConfirm={vi.fn()} onClose={vi.fn()} />
 );
 ```
 

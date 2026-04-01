@@ -12,38 +12,38 @@ Generated: 2026-03-20
 
 Top 30 files by count:
 
-| File | Count |
-|------|-------|
-| `src/renderer/components/FilePreview.tsx` | 13 |
-| `src/renderer/components/Wizard/screens/ConversationScreen.tsx` | 12 |
-| `src/renderer/components/Wizard/screens/AgentSelectionScreen.tsx` | 9 |
-| `src/renderer/hooks/session/useSessionCrud.ts` | 8 |
-| `src/renderer/components/Wizard/screens/PhaseReviewScreen.tsx` | 6 |
-| `src/renderer/components/Wizard/WizardExitConfirmModal.tsx` | 6 |
-| `src/renderer/hooks/remote/useLiveMode.ts` | 5 |
-| `src/renderer/hooks/wizard/useWizardHandlers.ts` | 4 |
-| `src/renderer/components/Wizard/screens/DirectorySelectionScreen.tsx` | 4 |
-| `src/renderer/components/Wizard/MaestroWizard.tsx` | 4 |
-| `src/renderer/App.tsx` | 3 |
-| `src/web/mobile/SessionStatusBanner.tsx` | 2 |
-| `src/web/mobile/App.tsx` | 2 |
-| `src/renderer/utils/remarkFileLinks.ts` | 2 |
-| `src/renderer/hooks/agent/useInterruptHandler.ts` | 2 |
-| `src/renderer/components/Wizard/services/conversationManager.ts` | 2 |
-| `src/renderer/components/UsageDashboard/SessionStats.tsx` | 2 |
-| `src/main/process-manager/spawners/PtySpawner.ts` | 2 |
-| `src/main/ipc/handlers/agents.ts` | 2 |
-| `src/cli/commands/send.ts` | 2 |
-| `src/web/utils/logger.ts` | 1 |
-| `src/web/hooks/useMobileSessionManagement.ts` | 1 |
-| `src/renderer/utils/platformUtils.ts` | 1 |
-| `src/renderer/components/Wizard/tour/TourStep.tsx` | 1 |
-| `src/renderer/components/Wizard/services/phaseGenerator.ts` | 1 |
-| `src/renderer/components/WindowsWarningModal.tsx` | 1 |
-| `src/renderer/components/MarkdownRenderer.tsx` | 1 |
-| `src/renderer/components/InputArea.tsx` | 1 |
-| `src/renderer/components/GroupChatModal.tsx` | 1 |
-| `src/main/wakatime-manager.ts` | 1 |
+| File                                                                  | Count |
+| --------------------------------------------------------------------- | ----- |
+| `src/renderer/components/FilePreview.tsx`                             | 13    |
+| `src/renderer/components/Wizard/screens/ConversationScreen.tsx`       | 12    |
+| `src/renderer/components/Wizard/screens/AgentSelectionScreen.tsx`     | 9     |
+| `src/renderer/hooks/session/useSessionCrud.ts`                        | 8     |
+| `src/renderer/components/Wizard/screens/PhaseReviewScreen.tsx`        | 6     |
+| `src/renderer/components/Wizard/WizardExitConfirmModal.tsx`           | 6     |
+| `src/renderer/hooks/remote/useLiveMode.ts`                            | 5     |
+| `src/renderer/hooks/wizard/useWizardHandlers.ts`                      | 4     |
+| `src/renderer/components/Wizard/screens/DirectorySelectionScreen.tsx` | 4     |
+| `src/renderer/components/Wizard/MaestroWizard.tsx`                    | 4     |
+| `src/renderer/App.tsx`                                                | 3     |
+| `src/web/mobile/SessionStatusBanner.tsx`                              | 2     |
+| `src/web/mobile/App.tsx`                                              | 2     |
+| `src/renderer/utils/remarkFileLinks.ts`                               | 2     |
+| `src/renderer/hooks/agent/useInterruptHandler.ts`                     | 2     |
+| `src/renderer/components/Wizard/services/conversationManager.ts`      | 2     |
+| `src/renderer/components/UsageDashboard/SessionStats.tsx`             | 2     |
+| `src/main/process-manager/spawners/PtySpawner.ts`                     | 2     |
+| `src/main/ipc/handlers/agents.ts`                                     | 2     |
+| `src/cli/commands/send.ts`                                            | 2     |
+| `src/web/utils/logger.ts`                                             | 1     |
+| `src/web/hooks/useMobileSessionManagement.ts`                         | 1     |
+| `src/renderer/utils/platformUtils.ts`                                 | 1     |
+| `src/renderer/components/Wizard/tour/TourStep.tsx`                    | 1     |
+| `src/renderer/components/Wizard/services/phaseGenerator.ts`           | 1     |
+| `src/renderer/components/WindowsWarningModal.tsx`                     | 1     |
+| `src/renderer/components/MarkdownRenderer.tsx`                        | 1     |
+| `src/renderer/components/InputArea.tsx`                               | 1     |
+| `src/renderer/components/GroupChatModal.tsx`                          | 1     |
+| `src/main/wakatime-manager.ts`                                        | 1     |
 
 **Hotspot: Wizard subsystem** - 41 of 108 `as any` usages (38%) are concentrated in the Wizard components.
 
@@ -102,28 +102,28 @@ Explicit `: any` type annotations in parameters and return types (excluding `as 
 
 Top 20 files by count:
 
-| File | Count |
-|------|-------|
-| `src/renderer/hooks/agent/useAgentListeners.ts` | 41 |
-| `src/renderer/components/Wizard/services/conversationManager.ts` | 24 |
-| `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` | 6 |
-| `src/renderer/components/HistoryDetailModal.tsx` | 6 |
-| `src/renderer/components/ProcessMonitor.tsx` | 5 |
-| `src/renderer/hooks/agent/useAgentExecution.ts` | 4 |
-| `src/renderer/components/DocumentGraph/mindMapLayouts.ts` | 4 |
-| `src/renderer/utils/remarkFileLinks.ts` | 3 |
-| `src/renderer/hooks/worktree/useWorktreeHandlers.ts` | 3 |
-| `src/renderer/hooks/props/useMainPanelProps.ts` | 2 |
-| `src/renderer/hooks/input/useInputHandlers.ts` | 2 |
-| `src/renderer/hooks/batch/useInlineWizard.ts` | 2 |
-| `src/renderer/hooks/batch/useAutoRunImageHandling.ts` | 2 |
-| `src/renderer/hooks/agent/useInterruptHandler.ts` | 2 |
-| `src/renderer/components/PromptComposerModal.tsx` | 2 |
-| `src/renderer/components/NewInstanceModal.tsx` | 2 |
-| `src/renderer/components/DocumentGraph/MindMap.tsx` | 2 |
-| `src/renderer/components/CuePipelineEditor/panels/NodeConfigPanel.tsx` | 2 |
-| `src/renderer/hooks/wizard/useWizardHandlers.ts` | 1 |
-| `src/renderer/hooks/remote/useSshRemotes.ts` | 1 |
+| File                                                                   | Count |
+| ---------------------------------------------------------------------- | ----- |
+| `src/renderer/hooks/agent/useAgentListeners.ts`                        | 41    |
+| `src/renderer/components/Wizard/services/conversationManager.ts`       | 24    |
+| `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                | 6     |
+| `src/renderer/components/HistoryDetailModal.tsx`                       | 6     |
+| `src/renderer/components/ProcessMonitor.tsx`                           | 5     |
+| `src/renderer/hooks/agent/useAgentExecution.ts`                        | 4     |
+| `src/renderer/components/DocumentGraph/mindMapLayouts.ts`              | 4     |
+| `src/renderer/utils/remarkFileLinks.ts`                                | 3     |
+| `src/renderer/hooks/worktree/useWorktreeHandlers.ts`                   | 3     |
+| `src/renderer/hooks/props/useMainPanelProps.ts`                        | 2     |
+| `src/renderer/hooks/input/useInputHandlers.ts`                         | 2     |
+| `src/renderer/hooks/batch/useInlineWizard.ts`                          | 2     |
+| `src/renderer/hooks/batch/useAutoRunImageHandling.ts`                  | 2     |
+| `src/renderer/hooks/agent/useInterruptHandler.ts`                      | 2     |
+| `src/renderer/components/PromptComposerModal.tsx`                      | 2     |
+| `src/renderer/components/NewInstanceModal.tsx`                         | 2     |
+| `src/renderer/components/DocumentGraph/MindMap.tsx`                    | 2     |
+| `src/renderer/components/CuePipelineEditor/panels/NodeConfigPanel.tsx` | 2     |
+| `src/renderer/hooks/wizard/useWizardHandlers.ts`                       | 1     |
+| `src/renderer/hooks/remote/useSshRemotes.ts`                           | 1     |
 
 **Hotspot: `useAgentListeners.ts`** - 41 of 123 (33%) of all non-null assertions in renderer.
 
@@ -131,9 +131,9 @@ Top 20 files by count:
 
 ## `catch (e: any)` vs `catch (e: unknown)`
 
-| Pattern | Count |
-|---------|-------|
-| `catch (error: any)` | **17** |
+| Pattern                  | Count  |
+| ------------------------ | ------ |
+| `catch (error: any)`     | **17** |
 | `catch (error: unknown)` | **21** |
 
 ### `catch (error: any)` locations (17):

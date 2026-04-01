@@ -284,10 +284,10 @@ Note: A shared `mockMaestro` is defined in `src/__tests__/setup.ts:205` but 64 t
 
 ## Summary
 
-| Mock Type | Definitions | Suggested Action |
-|-----------|-------------|------------------|
-| `createMockSession` | 66 | Extract to shared `src/__tests__/helpers/mockSession.ts` |
-| `createMockTheme` | 31 | Extract to shared `src/__tests__/helpers/mockTheme.ts` |
-| `mockTheme` objects | 66 | Consolidate with createMockTheme |
-| `createMockTab` | 12 | Extract to shared `src/__tests__/helpers/mockTab.ts` |
-| `window.maestro` setup | 64 files | Centralize in `src/__tests__/setup.ts` (already partially done) |
+| Mock Type              | Definitions | Suggested Action                                                |
+| ---------------------- | ----------- | --------------------------------------------------------------- |
+| `createMockSession`    | 66          | Extract to shared `src/__tests__/helpers/mockSession.ts`        |
+| `createMockTheme`      | 31          | Extract to shared `src/__tests__/helpers/mockTheme.ts`          |
+| `mockTheme` objects    | 66          | Consolidate with createMockTheme                                |
+| `createMockTab`        | 12          | Extract to shared `src/__tests__/helpers/mockTab.ts`            |
+| `window.maestro` setup | 64 files    | Centralize in `src/__tests__/setup.ts` (already partially done) |

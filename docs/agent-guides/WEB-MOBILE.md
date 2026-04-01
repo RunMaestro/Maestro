@@ -92,14 +92,14 @@ src/web/
 
 ### Key Differences from Desktop Renderer
 
-| Aspect | Desktop | Web |
-|--------|---------|-----|
-| IPC | `window.maestro.*` (Electron preload) | WebSocket + REST API |
-| State | Zustand stores | React hooks + WS events |
-| Navigation | Keyboard-first | Touch-first |
-| Process control | Direct PTY spawn | Commands sent over WS |
-| Theme source | Settings store | Synced from desktop via WS |
-| File system | Direct IPC access | No direct FS access |
+| Aspect          | Desktop                               | Web                        |
+| --------------- | ------------------------------------- | -------------------------- |
+| IPC             | `window.maestro.*` (Electron preload) | WebSocket + REST API       |
+| State           | Zustand stores                        | React hooks + WS events    |
+| Navigation      | Keyboard-first                        | Touch-first                |
+| Process control | Direct PTY spawn                      | Commands sent over WS      |
+| Theme source    | Settings store                        | Synced from desktop via WS |
+| File system     | Direct IPC access                     | No direct FS access        |
 
 ---
 
@@ -111,11 +111,11 @@ The Electron main process injects configuration into `window.__MAESTRO_CONFIG__`
 
 ```typescript
 interface MaestroConfig {
-	securityToken: string;    // UUID - required in all API/WS URLs
+	securityToken: string; // UUID - required in all API/WS URLs
 	sessionId: string | null; // Viewing specific session or null for dashboard
-	tabId: string | null;     // Specific tab within session
-	apiBase: string;          // e.g., "/$TOKEN/api"
-	wsUrl: string;            // e.g., "/$TOKEN/ws"
+	tabId: string | null; // Specific tab within session
+	apiBase: string; // e.g., "/$TOKEN/api"
+	wsUrl: string; // e.g., "/$TOKEN/ws"
 }
 ```
 
@@ -161,8 +161,8 @@ interface SessionData {
 	id: string;
 	name: string;
 	toolType: string;
-	state: string;               // 'idle' | 'busy' | 'error' | 'connecting'
-	inputMode: string;           // 'ai' | 'terminal'
+	state: string; // 'idle' | 'busy' | 'error' | 'connecting'
+	inputMode: string; // 'ai' | 'terminal'
 	cwd: string;
 	groupId?: string | null;
 	groupName?: string | null;
@@ -170,7 +170,7 @@ interface SessionData {
 	usageStats?: UsageStats | null;
 	lastResponse?: LastResponsePreview | null;
 	agentSessionId?: string | null;
-	aiTabs?: AITabData[];        // Multi-tab support
+	aiTabs?: AITabData[]; // Multi-tab support
 	activeTabId?: string | null;
 }
 ```
@@ -199,10 +199,10 @@ For mobile display, responses are truncated server-side:
 
 ```typescript
 interface LastResponsePreview {
-	text: string;        // First 3 lines or ~500 chars
+	text: string; // First 3 lines or ~500 chars
 	timestamp: number;
 	source: 'stdout' | 'stderr' | 'system';
-	fullLength: number;  // Original length
+	fullLength: number; // Original length
 }
 ```
 
@@ -236,7 +236,7 @@ Sessions are grouped into `GroupInfo` objects:
 
 ```typescript
 interface GroupInfo {
-	id: string | null;    // null = ungrouped
+	id: string | null; // null = ungrouped
 	name: string;
 	emoji: string | null;
 	sessions: Session[];
@@ -326,6 +326,7 @@ interface QueuedCommand {
 ```
 
 Features:
+
 - Persists to `localStorage` (survives page reloads)
 - Max queue size: 50 commands
 - Automatic retry on reconnection with 100ms delay between sends
@@ -337,7 +338,7 @@ Browser push notification management:
 
 ```typescript
 const {
-	permission,      // 'default' | 'granted' | 'denied'
+	permission, // 'default' | 'granted' | 'denied'
 	isSupported,
 	hasPrompted,
 	requestPermission,
@@ -351,6 +352,7 @@ const {
 ### `useMobileViewState`
 
 Persists view state to `localStorage`:
+
 - Which overlays are open (all sessions, history panel, tab search)
 - History filter and search state
 - Active session and tab selection
@@ -393,14 +395,14 @@ Manages browser tab badge for unread session responses.
 
 Located in `src/web/components/`:
 
-| Component | Purpose |
-|-----------|---------|
+| Component       | Purpose                                    |
+| --------------- | ------------------------------------------ |
 | `ThemeProvider` | Provides theme context synced from desktop |
-| `Button` | Themed button with variants |
-| `Badge` | Status badges |
-| `Card` | Content cards |
-| `Input` | Form inputs |
-| `PullToRefresh` | Pull-to-refresh wrapper |
+| `Button`        | Themed button with variants                |
+| `Badge`         | Status badges                              |
+| `Card`          | Content cards                              |
+| `Input`         | Form inputs                                |
+| `PullToRefresh` | Pull-to-refresh wrapper                    |
 
 ---
 
@@ -409,10 +411,12 @@ Located in `src/web/components/`:
 ### `CommandInputBar`
 
 Primary input surface. Supports two modes:
+
 - **AI mode** - sends to AI agent
 - **Terminal mode** - sends as shell command
 
 Features:
+
 - Slash command autocomplete
 - Per-session, per-tab draft persistence
 - Voice input toggle
@@ -422,6 +426,7 @@ Features:
 ### `SessionPillBar`
 
 Horizontal scrollable session list. Each pill shows:
+
 - Session name and status color
 - Group emoji
 - Unread indicator
@@ -433,6 +438,7 @@ Tab navigation within a session (mirroring the desktop tab system).
 ### `ResponseViewer`
 
 Displays AI responses with:
+
 - Markdown rendering (`MobileMarkdownRenderer`)
 - Thinking indicator
 - Response timestamp
@@ -441,6 +447,7 @@ Displays AI responses with:
 ### `AllSessionsView`
 
 Dashboard grid showing all active sessions with:
+
 - Group organization
 - Status indicators
 - Quick session switching
@@ -449,6 +456,7 @@ Dashboard grid showing all active sessions with:
 ### `MobileHistoryPanel`
 
 History viewer with:
+
 - Filter by type (all, auto-run, user)
 - Search
 - Expandable entries
@@ -464,6 +472,7 @@ Compact auto-run status indicator showing current task progress.
 File: `src/web/utils/serviceWorker.ts`
 
 The web interface registers a service worker for:
+
 - Offline support (cached static assets)
 - `isOffline()` detection
 - Background sync for command queue
@@ -479,26 +488,26 @@ Touch interactions trigger haptic feedback via `navigator.vibrate()`:
 ```typescript
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 
-triggerHaptic(HAPTIC_PATTERNS.TAP);        // Light tap
-triggerHaptic(HAPTIC_PATTERNS.SUCCESS);    // Success pattern
-triggerHaptic(HAPTIC_PATTERNS.ERROR);      // Error pattern
+triggerHaptic(HAPTIC_PATTERNS.TAP); // Light tap
+triggerHaptic(HAPTIC_PATTERNS.SUCCESS); // Success pattern
+triggerHaptic(HAPTIC_PATTERNS.ERROR); // Error pattern
 ```
 
 ---
 
 ## Key Files Reference
 
-| Concern | Primary Files |
-|---------|--------------|
-| App root | `src/web/App.tsx`, `src/web/main.tsx` |
-| Mobile app | `src/web/mobile/App.tsx`, `src/web/mobile/index.tsx` |
-| WebSocket | `src/web/hooks/useWebSocket.ts` |
-| Sessions | `src/web/hooks/useSessions.ts` |
-| Config | `src/web/utils/config.ts` |
-| Theme | `src/web/components/ThemeProvider.tsx` |
-| Offline | `src/web/hooks/useOfflineQueue.ts`, `src/web/utils/serviceWorker.ts` |
-| View state | `src/web/hooks/useMobileViewState.ts`, `src/web/utils/viewState.ts` |
-| Notifications | `src/web/hooks/useNotifications.ts` |
-| Shared components | `src/web/components/` |
-| Mobile components | `src/web/mobile/` |
-| Development | `npm run dev:web` |
+| Concern           | Primary Files                                                        |
+| ----------------- | -------------------------------------------------------------------- |
+| App root          | `src/web/App.tsx`, `src/web/main.tsx`                                |
+| Mobile app        | `src/web/mobile/App.tsx`, `src/web/mobile/index.tsx`                 |
+| WebSocket         | `src/web/hooks/useWebSocket.ts`                                      |
+| Sessions          | `src/web/hooks/useSessions.ts`                                       |
+| Config            | `src/web/utils/config.ts`                                            |
+| Theme             | `src/web/components/ThemeProvider.tsx`                               |
+| Offline           | `src/web/hooks/useOfflineQueue.ts`, `src/web/utils/serviceWorker.ts` |
+| View state        | `src/web/hooks/useMobileViewState.ts`, `src/web/utils/viewState.ts`  |
+| Notifications     | `src/web/hooks/useNotifications.ts`                                  |
+| Shared components | `src/web/components/`                                                |
+| Mobile components | `src/web/mobile/`                                                    |
+| Development       | `npm run dev:web`                                                    |

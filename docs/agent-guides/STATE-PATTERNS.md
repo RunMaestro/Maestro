@@ -7,6 +7,7 @@ Complete reference for Maestro's frontend state management: all Zustand stores, 
 ## Store Architecture
 
 Maestro uses Zustand stores to replace React Context providers. Each store:
+
 - Uses **selector-based subscriptions** (components only re-render when their slice changes)
 - Supports **non-React access** via `useStore.getState()` and `getState()/getActions()` helpers
 - Supports **functional updaters** matching React's `setState` signature
@@ -17,19 +18,19 @@ All stores are in `src/renderer/stores/`.
 
 ## Store Inventory
 
-| Store | File | Hook | Purpose |
-|---|---|---|---|
-| **sessionStore** | `sessionStore.ts` | `useSessionStore` | Sessions, groups, active session, bookmarks, worktree tracking, initialization |
-| **uiStore** | `uiStore.ts` | `useUIStore` | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing |
-| **tabStore** | `tabStore.ts` | `useTabStore` | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore |
-| **agentStore** | `agentStore.ts` | `useAgentStore` | Agent detection cache, error recovery, queue processing, agent lifecycle |
-| **modalStore** | `modalStore.ts` | `useModalStore` | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields |
-| **groupChatStore** | `groupChatStore.ts` | `useGroupChatStore` | Group chat state: chats list, messages, moderator, participants, execution queue |
-| **settingsStore** | `settingsStore.ts` | `useSettingsStore` | App settings (theme, font, shortcuts, agent configs, etc.) |
-| **fileExplorerStore** | `fileExplorerStore.ts` | `useFileExplorerStore` | File explorer panel state |
-| **batchStore** | `batchStore.ts` | `useBatchStore` | Batch/Auto Run execution state |
-| **notificationStore** | `notificationStore.ts` | `useNotificationStore` | In-app notification queue |
-| **operationStore** | `operationStore.ts` | `useOperationStore` | Long-running operation tracking |
+| Store                 | File                   | Hook                   | Purpose                                                                                     |
+| --------------------- | ---------------------- | ---------------------- | ------------------------------------------------------------------------------------------- |
+| **sessionStore**      | `sessionStore.ts`      | `useSessionStore`      | Sessions, groups, active session, bookmarks, worktree tracking, initialization              |
+| **uiStore**           | `uiStore.ts`           | `useUIStore`           | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                   |
+| **tabStore**          | `tabStore.ts`          | `useTabStore`          | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore |
+| **agentStore**        | `agentStore.ts`        | `useAgentStore`        | Agent detection cache, error recovery, queue processing, agent lifecycle                    |
+| **modalStore**        | `modalStore.ts`        | `useModalStore`        | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields               |
+| **groupChatStore**    | `groupChatStore.ts`    | `useGroupChatStore`    | Group chat state: chats list, messages, moderator, participants, execution queue            |
+| **settingsStore**     | `settingsStore.ts`     | `useSettingsStore`     | App settings (theme, font, shortcuts, agent configs, etc.)                                  |
+| **fileExplorerStore** | `fileExplorerStore.ts` | `useFileExplorerStore` | File explorer panel state                                                                   |
+| **batchStore**        | `batchStore.ts`        | `useBatchStore`        | Batch/Auto Run execution state                                                              |
+| **notificationStore** | `notificationStore.ts` | `useNotificationStore` | In-app notification queue                                                                   |
+| **operationStore**    | `operationStore.ts`    | `useOperationStore`    | Long-running operation tracking                                                             |
 
 ---
 
@@ -42,43 +43,43 @@ All stores are in `src/renderer/stores/`.
 
 ```typescript
 interface SessionStoreState {
-	sessions: Session[];          // All sessions (agents)
-	groups: Group[];              // Session groups
-	activeSessionId: string;      // Currently selected session
-	sessionsLoaded: boolean;      // Loaded from disk
+	sessions: Session[]; // All sessions (agents)
+	groups: Group[]; // Session groups
+	activeSessionId: string; // Currently selected session
+	sessionsLoaded: boolean; // Loaded from disk
 	initialLoadComplete: boolean; // First load finished
 	removedWorktreePaths: Set<string>; // Prevent worktree re-discovery
-	cyclePosition: number;        // Cmd+J/K navigation position
+	cyclePosition: number; // Cmd+J/K navigation position
 }
 ```
 
 ### Key Actions
 
-| Action | Signature | Notes |
-|---|---|---|
-| `setSessions` | `(Session[] \| (prev => Session[]))` | Supports functional updater. Skips no-op updates. |
-| `addSession` | `(Session)` | Append to end. |
-| `removeSession` | `(id: string)` | Filter by ID. |
-| `updateSession` | `(id: string, Partial<Session>)` | Efficient single-session update. |
-| `setActiveSessionId` | `(id: string)` | Resets cycle position. |
-| `setActiveSessionIdInternal` | `(string \| (prev => string))` | For cycling - does NOT reset cycle position. |
-| `setGroups` | `(Group[] \| (prev => Group[]))` | Functional updater support. |
-| `toggleBookmark` | `(sessionId: string)` | Toggle session bookmark flag. |
-| `addLogToTab` | `(sessionId, logEntry, tabId?)` | Add log to specific tab (or active tab). |
+| Action                       | Signature                            | Notes                                             |
+| ---------------------------- | ------------------------------------ | ------------------------------------------------- |
+| `setSessions`                | `(Session[] \| (prev => Session[]))` | Supports functional updater. Skips no-op updates. |
+| `addSession`                 | `(Session)`                          | Append to end.                                    |
+| `removeSession`              | `(id: string)`                       | Filter by ID.                                     |
+| `updateSession`              | `(id: string, Partial<Session>)`     | Efficient single-session update.                  |
+| `setActiveSessionId`         | `(id: string)`                       | Resets cycle position.                            |
+| `setActiveSessionIdInternal` | `(string \| (prev => string))`       | For cycling - does NOT reset cycle position.      |
+| `setGroups`                  | `(Group[] \| (prev => Group[]))`     | Functional updater support.                       |
+| `toggleBookmark`             | `(sessionId: string)`                | Toggle session bookmark flag.                     |
+| `addLogToTab`                | `(sessionId, logEntry, tabId?)`      | Add log to specific tab (or active tab).          |
 
 ### Selectors
 
 ```typescript
 // Use with: const value = useSessionStore(selector);
-selectActiveSession        // (state) => Session | null
-selectSessionById(id)      // (state) => Session | undefined
-selectBookmarkedSessions   // (state) => Session[]
-selectSessionsByGroup(id)  // (state) => Session[]
-selectUngroupedSessions    // (state) => Session[]
-selectGroupById(id)        // (state) => Group | undefined
-selectSessionCount         // (state) => number
-selectIsReady              // (state) => boolean (loaded + initialized)
-selectIsAnySessionBusy     // (state) => boolean
+selectActiveSession; // (state) => Session | null
+selectSessionById(id); // (state) => Session | undefined
+selectBookmarkedSessions; // (state) => Session[]
+selectSessionsByGroup(id); // (state) => Session[]
+selectUngroupedSessions; // (state) => Session[]
+selectGroupById(id); // (state) => Group | undefined
+selectSessionCount; // (state) => number
+selectIsReady; // (state) => boolean (loaded + initialized)
+selectIsAnySessionBusy; // (state) => boolean
 ```
 
 ### Non-React Access
@@ -102,23 +103,23 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 
 ### State Slices
 
-| Slice | Type | Default | Purpose |
-|---|---|---|---|
-| `leftSidebarOpen` | `boolean` | `true` | Left sidebar visibility |
-| `rightPanelOpen` | `boolean` | `true` | Right panel visibility |
-| `activeFocus` | `FocusArea` | `'main'` | Current keyboard focus area |
-| `activeRightTab` | `RightPanelTab` | `'files'` | Active tab in right panel |
-| `bookmarksCollapsed` | `boolean` | `false` | Bookmarks section collapsed |
-| `groupChatsExpanded` | `boolean` | `true` | Group chats section expanded |
-| `showUnreadOnly` | `boolean` | `false` | Filter session list to unread |
-| `flashNotification` | `string \| null` | `null` | Error flash message |
-| `successFlashNotification` | `string \| null` | `null` | Success flash message |
-| `outputSearchOpen` | `boolean` | `false` | Output search bar visible |
-| `outputSearchQuery` | `string` | `''` | Current search query |
-| `sessionFilterOpen` | `boolean` | `false` | Sidebar agent filter visible |
-| `draggingSessionId` | `string \| null` | `null` | Session being dragged |
-| `editingGroupId` | `string \| null` | `null` | Group being renamed inline |
-| `editingSessionId` | `string \| null` | `null` | Session being renamed inline |
+| Slice                      | Type             | Default   | Purpose                       |
+| -------------------------- | ---------------- | --------- | ----------------------------- |
+| `leftSidebarOpen`          | `boolean`        | `true`    | Left sidebar visibility       |
+| `rightPanelOpen`           | `boolean`        | `true`    | Right panel visibility        |
+| `activeFocus`              | `FocusArea`      | `'main'`  | Current keyboard focus area   |
+| `activeRightTab`           | `RightPanelTab`  | `'files'` | Active tab in right panel     |
+| `bookmarksCollapsed`       | `boolean`        | `false`   | Bookmarks section collapsed   |
+| `groupChatsExpanded`       | `boolean`        | `true`    | Group chats section expanded  |
+| `showUnreadOnly`           | `boolean`        | `false`   | Filter session list to unread |
+| `flashNotification`        | `string \| null` | `null`    | Error flash message           |
+| `successFlashNotification` | `string \| null` | `null`    | Success flash message         |
+| `outputSearchOpen`         | `boolean`        | `false`   | Output search bar visible     |
+| `outputSearchQuery`        | `string`         | `''`      | Current search query          |
+| `sessionFilterOpen`        | `boolean`        | `false`   | Sidebar agent filter visible  |
+| `draggingSessionId`        | `string \| null` | `null`    | Session being dragged         |
+| `editingGroupId`           | `string \| null` | `null`    | Group being renamed inline    |
+| `editingSessionId`         | `string \| null` | `null`    | Session being renamed inline  |
 
 All actions support functional updaters and have toggle variants where appropriate (e.g., `toggleLeftSidebar`, `toggleRightPanel`, `toggleShowUnreadOnly`).
 
@@ -142,46 +143,46 @@ interface TabStoreState {
 
 ### Tab CRUD Actions
 
-| Action | Signature | Notes |
-|---|---|---|
-| `createTab` | `(options?) => CreateTabResult \| null` | Create AI tab in active session |
-| `closeTab` | `(tabId, options?) => CloseTabResult \| null` | Close AI tab |
-| `closeFileTab` | `(tabId) => CloseFileTabResult \| null` | Close file preview tab |
-| `reopenClosedTab` | `() => ReopenUnifiedClosedTabResult \| null` | Reopen most recently closed tab |
+| Action            | Signature                                     | Notes                           |
+| ----------------- | --------------------------------------------- | ------------------------------- |
+| `createTab`       | `(options?) => CreateTabResult \| null`       | Create AI tab in active session |
+| `closeTab`        | `(tabId, options?) => CloseTabResult \| null` | Close AI tab                    |
+| `closeFileTab`    | `(tabId) => CloseFileTabResult \| null`       | Close file preview tab          |
+| `reopenClosedTab` | `() => ReopenUnifiedClosedTabResult \| null`  | Reopen most recently closed tab |
 
 ### Tab Navigation Actions
 
-| Action | Signature | Notes |
-|---|---|---|
-| `selectTab` | `(tabId) => SetActiveTabResult \| null` | Set active AI tab |
-| `selectFileTab` | `(tabId) => void` | Set active file tab |
-| `navigateToNext` | `(showUnreadOnly?) => NavigateToUnifiedTabResult \| null` | Next tab in unified order |
-| `navigateToPrev` | `(showUnreadOnly?) => NavigateToUnifiedTabResult \| null` | Previous tab |
-| `navigateToIndex` | `(index) => NavigateToUnifiedTabResult \| null` | Tab by position |
-| `navigateToLast` | `() => NavigateToUnifiedTabResult \| null` | Last tab |
+| Action            | Signature                                                 | Notes                     |
+| ----------------- | --------------------------------------------------------- | ------------------------- |
+| `selectTab`       | `(tabId) => SetActiveTabResult \| null`                   | Set active AI tab         |
+| `selectFileTab`   | `(tabId) => void`                                         | Set active file tab       |
+| `navigateToNext`  | `(showUnreadOnly?) => NavigateToUnifiedTabResult \| null` | Next tab in unified order |
+| `navigateToPrev`  | `(showUnreadOnly?) => NavigateToUnifiedTabResult \| null` | Previous tab              |
+| `navigateToIndex` | `(index) => NavigateToUnifiedTabResult \| null`           | Tab by position           |
+| `navigateToLast`  | `() => NavigateToUnifiedTabResult \| null`                | Last tab                  |
 
 ### Tab Metadata Actions
 
-| Action | Signature | Notes |
-|---|---|---|
-| `starTab` | `(tabId)` | Toggle starred flag |
-| `markUnread` | `(tabId, unread?)` | Set hasUnread flag |
-| `updateTabName` | `(tabId, name)` | Update tab display name |
-| `toggleReadOnly` | `(tabId)` | Toggle read-only mode |
-| `toggleSaveToHistory` | `(tabId)` | Toggle history saving |
-| `cycleThinkingMode` | `(tabId)` | Cycle: off -> on -> sticky -> off |
+| Action                | Signature          | Notes                             |
+| --------------------- | ------------------ | --------------------------------- |
+| `starTab`             | `(tabId)`          | Toggle starred flag               |
+| `markUnread`          | `(tabId, unread?)` | Set hasUnread flag                |
+| `updateTabName`       | `(tabId, name)`    | Update tab display name           |
+| `toggleReadOnly`      | `(tabId)`          | Toggle read-only mode             |
+| `toggleSaveToHistory` | `(tabId)`          | Toggle history saving             |
+| `cycleThinkingMode`   | `(tabId)`          | Cycle: off -> on -> sticky -> off |
 
 ### Tab Selectors (use with useSessionStore)
 
 ```typescript
-selectActiveTab          // Active AI tab from active session
-selectActiveFileTab      // Active file tab from active session
-selectUnifiedTabs        // All tabs (AI + file) in order
-selectTabById(id)        // Specific AI tab
-selectFileTabById(id)    // Specific file tab
-selectTabCount           // AI tab count
-selectAllTabs            // All AI tabs
-selectAllFileTabs        // All file tabs
+selectActiveTab; // Active AI tab from active session
+selectActiveFileTab; // Active file tab from active session
+selectUnifiedTabs; // All tabs (AI + file) in order
+selectTabById(id); // Specific AI tab
+selectFileTabById(id); // Specific file tab
+selectTabCount; // AI tab count
+selectAllTabs; // All AI tabs
+selectAllFileTabs; // All file tabs
 ```
 
 ---
@@ -195,25 +196,25 @@ selectAllFileTabs        // All file tabs
 
 ```typescript
 interface AgentStoreState {
-	availableAgents: AgentConfig[];  // Cached detection results
-	agentsDetected: boolean;         // Detection completed at least once
+	availableAgents: AgentConfig[]; // Cached detection results
+	agentsDetected: boolean; // Detection completed at least once
 }
 ```
 
 ### Key Actions
 
-| Action | Signature | Purpose |
-|---|---|---|
-| `refreshAgents` | `(sshRemoteId?) => Promise<void>` | Detect agents and cache results |
-| `getAgentConfig` | `(agentId) => AgentConfig \| undefined` | Look up cached agent config |
-| `clearAgentError` | `(sessionId, tabId?)` | Clear error state, reset to idle |
-| `startNewSessionAfterError` | `(sessionId, options?)` | Clear error + create fresh tab |
-| `retryAfterError` | `(sessionId)` | Clear error, let user retry |
-| `restartAgentAfterError` | `(sessionId) => Promise<void>` | Kill process + clear error |
-| `authenticateAfterError` | `(sessionId)` | Switch to terminal for re-auth |
-| `processQueuedItem` | `(sessionId, item, deps) => Promise<void>` | Build spawn config and dispatch to agent |
-| `killAgent` | `(sessionId, suffix?) => Promise<void>` | Kill agent process |
-| `interruptAgent` | `(sessionId) => Promise<void>` | Send CTRL+C to agent |
+| Action                      | Signature                                  | Purpose                                  |
+| --------------------------- | ------------------------------------------ | ---------------------------------------- |
+| `refreshAgents`             | `(sshRemoteId?) => Promise<void>`          | Detect agents and cache results          |
+| `getAgentConfig`            | `(agentId) => AgentConfig \| undefined`    | Look up cached agent config              |
+| `clearAgentError`           | `(sessionId, tabId?)`                      | Clear error state, reset to idle         |
+| `startNewSessionAfterError` | `(sessionId, options?)`                    | Clear error + create fresh tab           |
+| `retryAfterError`           | `(sessionId)`                              | Clear error, let user retry              |
+| `restartAgentAfterError`    | `(sessionId) => Promise<void>`             | Kill process + clear error               |
+| `authenticateAfterError`    | `(sessionId)`                              | Switch to terminal for re-auth           |
+| `processQueuedItem`         | `(sessionId, item, deps) => Promise<void>` | Build spawn config and dispatch to agent |
+| `killAgent`                 | `(sessionId, suffix?) => Promise<void>`    | Kill agent process                       |
+| `interruptAgent`            | `(sessionId) => Promise<void>`             | Send CTRL+C to agent                     |
 
 ---
 
@@ -269,9 +270,9 @@ interface ModalDataMap {
 ### Selectors
 
 ```typescript
-selectModalOpen(id)    // (state) => boolean
-selectModalData(id)    // (state) => ModalDataFor<T> | undefined
-selectModal(id)        // (state) => ModalEntry<ModalDataFor<T>> | undefined
+selectModalOpen(id); // (state) => boolean
+selectModalData(id); // (state) => ModalDataFor<T> | undefined
+selectModal(id); // (state) => ModalEntry<ModalDataFor<T>> | undefined
 ```
 
 ### ModalContext Compatibility
@@ -292,10 +293,10 @@ interface GroupChatStoreState {
 	groupChats: GroupChat[];
 	activeGroupChatId: string | null;
 	groupChatMessages: GroupChatMessage[];
-	groupChatState: GroupChatState;             // 'idle' | 'running' | 'paused' | ...
+	groupChatState: GroupChatState; // 'idle' | 'running' | 'paused' | ...
 	participantStates: Map<string, 'idle' | 'working'>;
 	moderatorUsage: { contextUsage; totalCost; tokenCount } | null;
-	groupChatStates: Map<string, GroupChatState>;  // All chats (for sidebar indicators)
+	groupChatStates: Map<string, GroupChatState>; // All chats (for sidebar indicators)
 	allGroupChatParticipantStates: Map<string, Map<string, 'idle' | 'working'>>;
 	groupChatExecutionQueue: QueuedItem[];
 	groupChatReadOnlyMode: boolean;
@@ -324,10 +325,10 @@ All stores accept both direct values and updater functions, matching React's `se
 setSessions(newSessions);
 
 // Functional updater (access previous state)
-setSessions(prev => prev.filter(s => s.id !== deletedId));
+setSessions((prev) => prev.filter((s) => s.id !== deletedId));
 
 // Boolean toggle
-setLeftSidebarOpen(prev => !prev);
+setLeftSidebarOpen((prev) => !prev);
 ```
 
 Implementation pattern used across all stores:
@@ -360,7 +361,7 @@ const { sessions } = getSessionState();
 
 // Pattern: call actions outside React (services, orchestrators, IPC handlers)
 const { setSessions, addSession } = getSessionActions();
-setSessions(prev => [...prev, newSession]);
+setSessions((prev) => [...prev, newSession]);
 ```
 
 ### 4. Granular Selectors
@@ -369,7 +370,7 @@ Subscribe to specific slices to minimize re-renders:
 
 ```typescript
 // GOOD: Only re-renders when activeSessionId changes
-const activeId = useSessionStore(state => state.activeSessionId);
+const activeId = useSessionStore((state) => state.activeSessionId);
 
 // GOOD: Derived selector with stable reference
 const activeSession = useSessionStore(selectActiveSession);
@@ -390,7 +391,7 @@ const handleClick = () => {
 };
 
 // BAD: May capture stale closure
-const activeId = useSessionStore(s => s.activeSessionId);
+const activeId = useSessionStore((s) => s.activeSessionId);
 const handleClick = () => {
 	// activeId might be stale if component hasn't re-rendered
 };
@@ -409,9 +410,9 @@ function getActiveSession(): Session | null {
 // tabStore writes back to sessionStore
 function updateActiveSession(updated: Session): void {
 	const { activeSessionId } = useSessionStore.getState();
-	useSessionStore.getState().setSessions(
-		prev => prev.map(s => s.id === activeSessionId ? updated : s)
-	);
+	useSessionStore
+		.getState()
+		.setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? updated : s)));
 }
 ```
 
@@ -441,49 +442,49 @@ updateSession: (id, updates) => set(s => {
 
 The `Session` interface (defined in `src/renderer/types/index.ts`) represents an agent in the Left Bar. Key fields:
 
-| Field | Type | Purpose |
-|---|---|---|
-| `id` | `string` | Unique session identifier |
-| `name` | `string` | Display name |
-| `toolType` | `ToolType` | Agent type (claude-code, codex, etc.) |
-| `state` | `SessionState` | `'idle' \| 'busy' \| 'connecting'` |
-| `cwd` | `string` | Working directory |
-| `projectRoot` | `string` | Project root path |
-| `groupId` | `string?` | Group membership |
-| `bookmarked` | `boolean?` | Bookmark flag |
-| `inputMode` | `'ai' \| 'terminal'` | Current input mode |
-| `aiTabs` | `AITab[]` | AI conversation tabs |
-| `activeTabId` | `string?` | Active AI tab |
-| `filePreviewTabs` | `FilePreviewTab[]` | File preview tabs |
-| `activeFileTabId` | `string?` | Active file tab |
-| `unifiedTabOrder` | `UnifiedTabRef[]` | Combined tab ordering |
-| `agentError` | `AgentError?` | Current error state |
-| `agentErrorTabId` | `string?` | Tab that has the error |
-| `sshRemoteId` | `string?` | SSH remote config ID (set after spawn) |
-| `sessionSshRemoteConfig` | `AgentSshRemoteConfig?` | SSH config (set before spawn) |
-| `customPath` | `string?` | Per-session agent path override |
-| `customArgs` | `string?` | Per-session custom args |
-| `customEnvVars` | `Record<string,string>?` | Per-session env vars |
-| `customModel` | `string?` | Per-session model override |
-| `customContextWindow` | `number?` | Per-session context window |
-| `isGitRepo` | `boolean?` | Whether cwd is a git repo |
-| `contextUsage` | `number?` | Context window usage percentage |
-| `usageStats` | `UsageStats?` | Token/cost statistics |
+| Field                    | Type                     | Purpose                                |
+| ------------------------ | ------------------------ | -------------------------------------- |
+| `id`                     | `string`                 | Unique session identifier              |
+| `name`                   | `string`                 | Display name                           |
+| `toolType`               | `ToolType`               | Agent type (claude-code, codex, etc.)  |
+| `state`                  | `SessionState`           | `'idle' \| 'busy' \| 'connecting'`     |
+| `cwd`                    | `string`                 | Working directory                      |
+| `projectRoot`            | `string`                 | Project root path                      |
+| `groupId`                | `string?`                | Group membership                       |
+| `bookmarked`             | `boolean?`               | Bookmark flag                          |
+| `inputMode`              | `'ai' \| 'terminal'`     | Current input mode                     |
+| `aiTabs`                 | `AITab[]`                | AI conversation tabs                   |
+| `activeTabId`            | `string?`                | Active AI tab                          |
+| `filePreviewTabs`        | `FilePreviewTab[]`       | File preview tabs                      |
+| `activeFileTabId`        | `string?`                | Active file tab                        |
+| `unifiedTabOrder`        | `UnifiedTabRef[]`        | Combined tab ordering                  |
+| `agentError`             | `AgentError?`            | Current error state                    |
+| `agentErrorTabId`        | `string?`                | Tab that has the error                 |
+| `sshRemoteId`            | `string?`                | SSH remote config ID (set after spawn) |
+| `sessionSshRemoteConfig` | `AgentSshRemoteConfig?`  | SSH config (set before spawn)          |
+| `customPath`             | `string?`                | Per-session agent path override        |
+| `customArgs`             | `string?`                | Per-session custom args                |
+| `customEnvVars`          | `Record<string,string>?` | Per-session env vars                   |
+| `customModel`            | `string?`                | Per-session model override             |
+| `customContextWindow`    | `number?`                | Per-session context window             |
+| `isGitRepo`              | `boolean?`               | Whether cwd is a git repo              |
+| `contextUsage`           | `number?`                | Context window usage percentage        |
+| `usageStats`             | `UsageStats?`            | Token/cost statistics                  |
 
 ### AITab
 
 Each AI tab within a session:
 
-| Field | Type | Purpose |
-|---|---|---|
-| `id` | `string` | Tab identifier |
-| `name` | `string?` | Custom tab name |
-| `logs` | `LogEntry[]` | Conversation log entries |
-| `agentSessionId` | `string?` | Provider session ID for resume |
-| `state` | Tab state | Idle/busy per-tab |
-| `readOnlyMode` | `boolean?` | Read-only/plan mode |
-| `saveToHistory` | `boolean` | Whether to save completions |
-| `showThinking` | `ThinkingMode` | `'off' \| 'on' \| 'sticky'` |
-| `starred` | `boolean?` | Starred tab flag |
-| `hasUnread` | `boolean?` | Unread indicator |
-| `agentError` | `AgentError?` | Per-tab error state |
+| Field            | Type           | Purpose                        |
+| ---------------- | -------------- | ------------------------------ |
+| `id`             | `string`       | Tab identifier                 |
+| `name`           | `string?`      | Custom tab name                |
+| `logs`           | `LogEntry[]`   | Conversation log entries       |
+| `agentSessionId` | `string?`      | Provider session ID for resume |
+| `state`          | Tab state      | Idle/busy per-tab              |
+| `readOnlyMode`   | `boolean?`     | Read-only/plan mode            |
+| `saveToHistory`  | `boolean`      | Whether to save completions    |
+| `showThinking`   | `ThinkingMode` | `'off' \| 'on' \| 'sticky'`    |
+| `starred`        | `boolean?`     | Starred tab flag               |
+| `hasUnread`      | `boolean?`     | Unread indicator               |
+| `agentError`     | `AgentError?`  | Per-tab error state            |

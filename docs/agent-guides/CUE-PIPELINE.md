@@ -12,15 +12,15 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 
 ### Supported Trigger Types
 
-| Event Type | Description | Source Module |
-|---|---|---|
-| `time.heartbeat` | Periodic interval timer ("run every N minutes") | cue-subscription-setup |
-| `time.scheduled` | Cron-like triggers (specific times/days) | cue-subscription-setup |
-| `file.changed` | File system change via chokidar watcher | cue-file-watcher |
-| `agent.completed` | Fires when another agent finishes | cue-engine (reactive) |
-| `github.pull_request` | New PRs detected via `gh` CLI polling | cue-github-poller |
-| `github.issue` | New issues detected via `gh` CLI polling | cue-github-poller |
-| `task.pending` | Unchecked markdown tasks (`- [ ]`) found in watched files | cue-task-scanner |
+| Event Type            | Description                                               | Source Module          |
+| --------------------- | --------------------------------------------------------- | ---------------------- |
+| `time.heartbeat`      | Periodic interval timer ("run every N minutes")           | cue-subscription-setup |
+| `time.scheduled`      | Cron-like triggers (specific times/days)                  | cue-subscription-setup |
+| `file.changed`        | File system change via chokidar watcher                   | cue-file-watcher       |
+| `agent.completed`     | Fires when another agent finishes                         | cue-engine (reactive)  |
+| `github.pull_request` | New PRs detected via `gh` CLI polling                     | cue-github-poller      |
+| `github.issue`        | New issues detected via `gh` CLI polling                  | cue-github-poller      |
+| `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | cue-task-scanner       |
 
 ### Execution Patterns
 
@@ -38,6 +38,7 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 Core type definitions. Single source of truth for the Cue data model.
 
 **Key types:**
+
 - `CueEventType` - Union of all 7 trigger types
 - `CueSubscription` - A trigger-prompt pairing with optional filter, fan-out, schedule, watch pattern, etc.
 - `CueSettings` - Global config: `timeout_minutes` (default 30), `timeout_on_fail` ("break"/"continue"), `max_concurrent` (default 1), `queue_size` (default 10)
@@ -49,6 +50,7 @@ Core type definitions. Single source of truth for the Cue data model.
 - `CueGraphSession` - Session + subscriptions for the pipeline graph visualization
 
 **Key exports:**
+
 - `createCueEvent()` - Factory with auto-generated UUID and timestamp
 - `CUE_YAML_FILENAME` - Default filename: `"maestro-cue.yaml"`
 - `DEFAULT_CUE_SETTINGS` - Default settings object
@@ -60,6 +62,7 @@ The central coordinator. Manages session lifecycle, wires up all event sources, 
 **Class: `CueEngine`**
 
 Constructor dependencies (`CueEngineDeps`):
+
 - `getSessions()` - Returns all active sessions
 - `onCueRun()` - Spawns a Cue execution
 - `onStopCueRun()` - Stops a running execution
@@ -67,6 +70,7 @@ Constructor dependencies (`CueEngineDeps`):
 - `onPreventSleep()` / `onAllowSleep()` - Power management integration
 
 Key methods:
+
 - `start()` / `stop()` - Enable/disable the engine; initializes DB, scans sessions, starts heartbeat
 - `initSession()` - Loads YAML config, sets up watchers/timers/pollers per subscription type
 - `refreshSession()` - Hot-reloads YAML (tears down old, re-initializes)
@@ -78,6 +82,7 @@ Key methods:
 - `triggerSubscription()` - Manual "Run Now" by subscription name
 
 Composed submodules (created in constructor):
+
 - `CueRunManager` - Concurrency control and execution
 - `CueFanInTracker` - Multi-source completion tracking
 - `CueHeartbeat` - Sleep detection and heartbeat writing
@@ -88,6 +93,7 @@ Composed submodules (created in constructor):
 Spawns background agent processes when triggers fire. Follows the same spawn pattern as Auto Run via `process:spawn`.
 
 **Key functions:**
+
 - `executeCuePrompt(config)` - Main execution function:
   1. Resolves prompt (file path or inline text)
   2. Populates template context with Cue event data (file paths, GitHub metadata, task lists, source output)
@@ -102,6 +108,7 @@ Spawns background agent processes when triggers fire. Follows the same spawn pat
 - `recordCueHistoryEntry()` - Creates a `HistoryEntry` with type `'CUE'`
 
 Template variables populated for events:
+
 - All events: `cue.eventType`, `cue.triggerName`, `cue.runId`, `cue.eventTimestamp`
 - `file.changed`: `cue.filePath`, `cue.fileName`, `cue.fileDir`, `cue.fileExt`, `cue.fileChangeType`
 - `agent.completed`: `cue.sourceSession`, `cue.sourceOutput`, `cue.sourceStatus`, `cue.sourceExitCode`
@@ -113,6 +120,7 @@ Template variables populated for events:
 YAML discovery, parsing, validation, and watching.
 
 **Key functions:**
+
 - `resolveCueConfigPath(projectRoot)` - Checks `.maestro/cue.yaml` first, falls back to `maestro-cue.yaml`
 - `loadCueConfig(projectRoot)` - Parses YAML, resolves `prompt_file` references (reads file content into `prompt` field), validates types
 - `watchCueYaml(projectRoot, onChange)` - Chokidar watcher on both canonical and legacy paths, 1-second debounce
@@ -129,6 +137,7 @@ YAML discovery, parsing, validation, and watching.
 Sets up event source subscriptions (timers, watchers, pollers, task scanners) when a session is initialized.
 
 **Key functions:**
+
 - `calculateNextScheduledTime(times, days?)` - Computes the next occurrence of a scheduled time up to 8 days ahead
 - `setupHeartbeatSubscription()` - Fires immediately on setup, then on interval; respects filter
 - `setupScheduledSubscription()` - 60-second polling loop; deduplicates via `scheduledFiredKeys` set (scoped by sessionId)
@@ -143,6 +152,7 @@ Concurrency control, queue management, and run lifecycle.
 **Factory: `createCueRunManager(deps)`**
 
 Key behaviors:
+
 - Enforces `max_concurrent` per session (default 1)
 - Queues events when at capacity; drops oldest when queue is full
 - Drains queue on slot availability; skips stale events (older than timeout)
@@ -158,6 +168,7 @@ Multi-source completion tracking for `agent.completed` subscriptions with multip
 **Factory: `createCueFanInTracker(deps)`**
 
 Key behaviors:
+
 - Accumulates completions per subscription key (`ownerSessionId:subName`)
 - Starts a timeout timer on first source completion
 - On timeout: `timeout_on_fail: "continue"` fires with partial data, `"break"` drops silently
@@ -177,6 +188,7 @@ Wraps chokidar to watch glob patterns with per-file debouncing.
 Polls GitHub CLI for new PRs/issues, tracks "seen" state in SQLite.
 
 Key design:
+
 - Resolves `gh` CLI path via `resolveGhPath()` / `getExpandedEnv()` from shared utils
 - Auto-detects repo via `gh repo view --json nameWithOwner` if not specified
 - First poll seeds existing items as "seen" (no flood of events on first run)
@@ -215,6 +227,7 @@ Polls markdown files for unchecked tasks (`- [ ]`).
 Filter matching engine for event payload filtering.
 
 Supports:
+
 - Exact string/number/boolean match
 - Negation (`!value`)
 - Numeric comparison (`>`, `<`, `>=`, `<=`)
@@ -231,6 +244,7 @@ Simple in-memory ring buffer of completed run results (max 500). Used by the Cue
 SQLite persistence using `better-sqlite3` with WAL mode.
 
 **Tables:**
+
 - `cue_events` - Event journal (id, type, trigger_name, session_id, subscription_name, status, created_at, completed_at, payload). Indexed on `created_at` and `session_id`.
 - `cue_heartbeat` - Single-row table (id=1, last_seen) for sleep detection.
 - `cue_github_seen` - Tracks seen GitHub items per subscription (subscription_id, item_key, seen_at). Indexed on `seen_at`.
@@ -241,27 +255,27 @@ SQLite persistence using `better-sqlite3` with WAL mode.
 
 Registered in `src/main/ipc/handlers/cue.ts` via `registerCueHandlers()`.
 
-| Channel | Description |
-|---|---|
-| `cue:getSettings` | Get merged Cue settings |
-| `cue:getStatus` | Get status of all Cue-enabled sessions |
-| `cue:getActiveRuns` | Get currently running executions |
-| `cue:getActivityLog` | Get recent completed/failed runs |
-| `cue:enable` | Start the engine |
-| `cue:disable` | Stop the engine |
-| `cue:stopRun` | Stop a specific running execution |
-| `cue:stopAll` | Stop all running executions |
-| `cue:triggerSubscription` | Manual "Run Now" by name |
-| `cue:getQueueStatus` | Get queue depth per session |
-| `cue:refreshSession` | Re-read YAML for a session |
-| `cue:removeSession` | Remove a session from tracking |
-| `cue:getGraphData` | Get sessions+subscriptions for graph visualization |
-| `cue:readYaml` | Read raw YAML content |
-| `cue:writeYaml` | Write YAML + optional prompt files to `.maestro/` |
-| `cue:deleteYaml` | Delete cue config file |
-| `cue:validateYaml` | Validate YAML as Cue config |
-| `cue:savePipelineLayout` | Save visual pipeline editor layout |
-| `cue:loadPipelineLayout` | Load saved pipeline layout |
+| Channel                   | Description                                        |
+| ------------------------- | -------------------------------------------------- |
+| `cue:getSettings`         | Get merged Cue settings                            |
+| `cue:getStatus`           | Get status of all Cue-enabled sessions             |
+| `cue:getActiveRuns`       | Get currently running executions                   |
+| `cue:getActivityLog`      | Get recent completed/failed runs                   |
+| `cue:enable`              | Start the engine                                   |
+| `cue:disable`             | Stop the engine                                    |
+| `cue:stopRun`             | Stop a specific running execution                  |
+| `cue:stopAll`             | Stop all running executions                        |
+| `cue:triggerSubscription` | Manual "Run Now" by name                           |
+| `cue:getQueueStatus`      | Get queue depth per session                        |
+| `cue:refreshSession`      | Re-read YAML for a session                         |
+| `cue:removeSession`       | Remove a session from tracking                     |
+| `cue:getGraphData`        | Get sessions+subscriptions for graph visualization |
+| `cue:readYaml`            | Read raw YAML content                              |
+| `cue:writeYaml`           | Write YAML + optional prompt files to `.maestro/`  |
+| `cue:deleteYaml`          | Delete cue config file                             |
+| `cue:validateYaml`        | Validate YAML as Cue config                        |
+| `cue:savePipelineLayout`  | Save visual pipeline editor layout                 |
+| `cue:loadPipelineLayout`  | Load saved pipeline layout                         |
 
 ---
 
@@ -271,46 +285,46 @@ Registered in `src/main/ipc/handlers/cue.ts` via `registerCueHandlers()`.
 
 Dashboard modal for monitoring and controlling Cue.
 
-| File | Purpose |
-|---|---|
-| `CueModal.tsx` | Main modal shell with tabs |
-| `SessionsTable.tsx` | Table of Cue-enabled sessions with status |
-| `ActiveRunsList.tsx` | Currently running executions with stop controls |
-| `ActivityLog.tsx` | History of completed/failed runs |
-| `ActivityLogDetail.tsx` | Detailed view of a single run result |
-| `StatusDot.tsx` | Color-coded status indicator |
-| `cueModalUtils.ts` | Utility functions for the modal |
+| File                    | Purpose                                         |
+| ----------------------- | ----------------------------------------------- |
+| `CueModal.tsx`          | Main modal shell with tabs                      |
+| `SessionsTable.tsx`     | Table of Cue-enabled sessions with status       |
+| `ActiveRunsList.tsx`    | Currently running executions with stop controls |
+| `ActivityLog.tsx`       | History of completed/failed runs                |
+| `ActivityLogDetail.tsx` | Detailed view of a single run result            |
+| `StatusDot.tsx`         | Color-coded status indicator                    |
+| `cueModalUtils.ts`      | Utility functions for the modal                 |
 
 ### CuePipelineEditor (`src/renderer/components/CuePipelineEditor/`)
 
 Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 
-| File / Directory | Purpose |
-|---|---|
-| `CuePipelineEditor.tsx` | Main editor component |
-| `PipelineCanvas.tsx` | React Flow canvas with nodes and edges |
-| `PipelineSelector.tsx` | Dropdown for selecting/managing pipelines |
-| `PipelineToolbar.tsx` | Toolbar with layout and zoom controls |
-| `PipelineContextMenu.tsx` | Right-click context menu |
-| `cueEventConstants.ts` | Event type metadata and icons |
-| `pipelineColors.ts` | Pipeline color palette |
-| `drawers/` | Trigger and agent drawer panels |
-| `nodes/` | Custom React Flow node components |
-| `edges/` | Custom React Flow edge components |
-| `panels/` | Node and edge configuration panels |
-| `utils/` | Pipeline-to-YAML and YAML-to-pipeline conversion |
+| File / Directory          | Purpose                                          |
+| ------------------------- | ------------------------------------------------ |
+| `CuePipelineEditor.tsx`   | Main editor component                            |
+| `PipelineCanvas.tsx`      | React Flow canvas with nodes and edges           |
+| `PipelineSelector.tsx`    | Dropdown for selecting/managing pipelines        |
+| `PipelineToolbar.tsx`     | Toolbar with layout and zoom controls            |
+| `PipelineContextMenu.tsx` | Right-click context menu                         |
+| `cueEventConstants.ts`    | Event type metadata and icons                    |
+| `pipelineColors.ts`       | Pipeline color palette                           |
+| `drawers/`                | Trigger and agent drawer panels                  |
+| `nodes/`                  | Custom React Flow node components                |
+| `edges/`                  | Custom React Flow edge components                |
+| `panels/`                 | Node and edge configuration panels               |
+| `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
 
 ### CueYamlEditor (`src/renderer/components/CueYamlEditor/`)
 
 YAML text editor with AI assistance for writing Cue configurations.
 
-| File | Purpose |
-|---|---|
-| `CueYamlEditor.tsx` | Main editor wrapper |
-| `YamlTextEditor.tsx` | Code editor with syntax highlighting |
-| `CueAiChat.tsx` | AI chat panel for config assistance |
-| `PatternPicker.tsx` | Template pattern selection |
-| `PatternPreviewModal.tsx` | Preview a pattern before applying |
+| File                      | Purpose                              |
+| ------------------------- | ------------------------------------ |
+| `CueYamlEditor.tsx`       | Main editor wrapper                  |
+| `YamlTextEditor.tsx`      | Code editor with syntax highlighting |
+| `CueAiChat.tsx`           | AI chat panel for config assistance  |
+| `PatternPicker.tsx`       | Template pattern selection           |
+| `PatternPreviewModal.tsx` | Preview a pattern before applying    |
 
 ### CueHelpModal.tsx
 
@@ -333,6 +347,7 @@ Types for the visual pipeline editor (React Flow canvas):
 ### `src/shared/maestro-paths.ts`
 
 Path constants:
+
 - `CUE_CONFIG_PATH` = `".maestro/cue.yaml"`
 - `CUE_PROMPTS_DIR` = `".maestro/prompts"`
 - `LEGACY_CUE_CONFIG_PATH` = `"maestro-cue.yaml"` (via `LEGACY_CUE_YAML_FILENAME`)
@@ -361,12 +376,12 @@ Example `maestro-cue.yaml`:
 subscriptions:
   - name: lint-on-save
     event: file.changed
-    watch: "src/**/*.ts"
-    prompt: "Run lint on {{cue.filePath}} and fix any issues"
+    watch: 'src/**/*.ts'
+    prompt: 'Run lint on {{cue.filePath}} and fix any issues'
 
   - name: morning-standup
     event: time.scheduled
-    schedule_times: ["09:00"]
+    schedule_times: ['09:00']
     schedule_days: [mon, tue, wed, thu, fri]
     prompt_file: .maestro/prompts/standup.md
 
@@ -375,13 +390,13 @@ subscriptions:
     repo: owner/repo
     poll_minutes: 5
     gh_state: open
-    prompt: "Review PR #{{cue.ghNumber}}: {{cue.ghTitle}}"
+    prompt: 'Review PR #{{cue.ghNumber}}: {{cue.ghTitle}}'
 
   - name: aggregate-results
     event: agent.completed
     source_session: [agent-1, agent-2, agent-3]
     fan_out: [summary-agent]
-    prompt: "Summarize: {{cue.sourceOutput}}"
+    prompt: 'Summarize: {{cue.sourceOutput}}'
     filter:
       status: completed
 

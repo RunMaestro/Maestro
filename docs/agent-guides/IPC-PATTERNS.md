@@ -17,6 +17,7 @@ Renderer (React)                    Main (Electron)
 ```
 
 Three layers:
+
 1. **IPC Handlers** (`src/main/ipc/handlers/`) - Main process handlers registered via `ipcMain.handle()`
 2. **Preload Bridge** (`src/main/preload/`) - Renderer-safe API exposed via `contextBridge.exposeInMainWorld()`
 3. **Renderer Access** - Components call `window.maestro.<namespace>.<method>()`
@@ -27,54 +28,54 @@ Three layers:
 
 These namespaces are exposed on `window.maestro` via the preload bridge:
 
-| Namespace | Preload Factory | Handler File | Purpose |
-|---|---|---|---|
-| `settings` | `createSettingsApi()` | `persistence.ts` | App settings CRUD |
-| `sessions` | `createSessionsApi()` | `persistence.ts` | Session persistence (save/load) |
-| `groups` | `createGroupsApi()` | `persistence.ts` | Group persistence |
-| `process` | `createProcessApi()` | `process.ts` | Agent process lifecycle (spawn, kill, write, interrupt) |
-| `agentError` | `createAgentErrorApi()` | `agent-error.ts` | Agent error state management |
-| `context` | `createContextApi()` | `context.ts` | Context merging and grooming |
-| `web` | `createWebApi()` | `web.ts` | Web interface state sync |
-| `webserver` | `createWebserverApi()` | `web.ts` | Web server lifecycle |
-| `live` | `createLiveApi()` | `web.ts` | Live session sharing |
-| `git` | `createGitApi()` | `git.ts` | Git operations (status, diff, branch, worktree) |
-| `fs` | `createFsApi()` | `filesystem.ts` | File system operations (read, write, list, stat) |
-| `agents` | `createAgentsApi()` | `agents.ts` | Agent detection, config, capabilities |
-| `dialog` | `createDialogApi()` | `system.ts` | Native file/folder dialogs |
-| `fonts` | `createFontsApi()` | `system.ts` | System font enumeration |
-| `shells` | `createShellsApi()` | `system.ts` | Available shell detection |
-| `shell` | `createShellApi()` | `system.ts` | OS shell operations (openExternal, revealInExplorer) |
-| `tunnel` | `createTunnelApi()` | `system.ts` | Cloudflare tunnel management |
-| `sshRemote` | `createSshRemoteApi()` | `ssh-remote.ts` | SSH remote configuration and testing |
-| `sync` | `createSyncApi()` | `system.ts` | State sync between desktop and web |
-| `devtools` | `createDevtoolsApi()` | `system.ts` | DevTools toggle |
-| `power` | `createPowerApi()` | `system.ts` | Sleep prevention management |
-| `updates` | `createUpdatesApi()` | `system.ts` | App update checking |
-| `logger` | `createLoggerApi()` | `system.ts` | Log forwarding (renderer -> main) |
-| `claude` | `createClaudeApi()` | `claude.ts` | Claude Code session storage (DEPRECATED) |
-| `agentSessions` | `createAgentSessionsApi()` | `agentSessions.ts` | Multi-agent session storage (preferred) |
-| `tempfile` | `createTempfileApi()` | Files in `files.ts` | Temp file creation |
-| `history` | `createHistoryApi()` | `history.ts` | History entry CRUD |
-| `cli` | `createCliApi()` | Files in `files.ts` | CLI activity tracking |
-| `speckit` | `createSpeckitApi()` | `speckit.ts` | Spec-Kit command management |
-| `openspec` | `createOpenspecApi()` | `openspec.ts` | OpenSpec command management |
-| `notification` | `createNotificationApi()` | `notifications.ts` | OS notifications and TTS |
-| `attachments` | `createAttachmentsApi()` | `attachments.ts` | Image attachment management |
-| `autorun` | `createAutorunApi()` | `autorun.ts` | Auto Run document management |
-| `playbooks` | `createPlaybooksApi()` | `playbooks.ts` | Playbook CRUD and import/export |
-| `marketplace` | `createMarketplaceApi()` | `marketplace.ts` | Playbook marketplace |
-| `debug` | `createDebugApi()` | `debug.ts` | Debug package generation |
-| `documentGraph` | `createDocumentGraphApi()` | `documentGraph.ts` | Document graph file watching |
-| `groupChat` | `createGroupChatApi()` | `groupChat.ts` | Group chat orchestration |
-| `app` | `createAppApi()` | `system.ts` | App lifecycle (quit, version, paths) |
-| `platform` | Direct value | N/A | `process.platform` string (synchronous) |
-| `stats` | `createStatsApi()` | `stats.ts` | Usage statistics DB |
-| `leaderboard` | `createLeaderboardApi()` | `leaderboard.ts` | Leaderboard submission |
-| `symphony` | `createSymphonyApi()` | `symphony.ts` | Open source contribution system |
-| `tabNaming` | `createTabNamingApi()` | `tabNaming.ts` | Automatic tab name generation |
-| `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts` | Unified history + synopsis |
-| `wakatime` | `createWakatimeApi()` | `wakatime.ts` | WakaTime integration |
+| Namespace       | Preload Factory            | Handler File        | Purpose                                                 |
+| --------------- | -------------------------- | ------------------- | ------------------------------------------------------- |
+| `settings`      | `createSettingsApi()`      | `persistence.ts`    | App settings CRUD                                       |
+| `sessions`      | `createSessionsApi()`      | `persistence.ts`    | Session persistence (save/load)                         |
+| `groups`        | `createGroupsApi()`        | `persistence.ts`    | Group persistence                                       |
+| `process`       | `createProcessApi()`       | `process.ts`        | Agent process lifecycle (spawn, kill, write, interrupt) |
+| `agentError`    | `createAgentErrorApi()`    | `agent-error.ts`    | Agent error state management                            |
+| `context`       | `createContextApi()`       | `context.ts`        | Context merging and grooming                            |
+| `web`           | `createWebApi()`           | `web.ts`            | Web interface state sync                                |
+| `webserver`     | `createWebserverApi()`     | `web.ts`            | Web server lifecycle                                    |
+| `live`          | `createLiveApi()`          | `web.ts`            | Live session sharing                                    |
+| `git`           | `createGitApi()`           | `git.ts`            | Git operations (status, diff, branch, worktree)         |
+| `fs`            | `createFsApi()`            | `filesystem.ts`     | File system operations (read, write, list, stat)        |
+| `agents`        | `createAgentsApi()`        | `agents.ts`         | Agent detection, config, capabilities                   |
+| `dialog`        | `createDialogApi()`        | `system.ts`         | Native file/folder dialogs                              |
+| `fonts`         | `createFontsApi()`         | `system.ts`         | System font enumeration                                 |
+| `shells`        | `createShellsApi()`        | `system.ts`         | Available shell detection                               |
+| `shell`         | `createShellApi()`         | `system.ts`         | OS shell operations (openExternal, revealInExplorer)    |
+| `tunnel`        | `createTunnelApi()`        | `system.ts`         | Cloudflare tunnel management                            |
+| `sshRemote`     | `createSshRemoteApi()`     | `ssh-remote.ts`     | SSH remote configuration and testing                    |
+| `sync`          | `createSyncApi()`          | `system.ts`         | State sync between desktop and web                      |
+| `devtools`      | `createDevtoolsApi()`      | `system.ts`         | DevTools toggle                                         |
+| `power`         | `createPowerApi()`         | `system.ts`         | Sleep prevention management                             |
+| `updates`       | `createUpdatesApi()`       | `system.ts`         | App update checking                                     |
+| `logger`        | `createLoggerApi()`        | `system.ts`         | Log forwarding (renderer -> main)                       |
+| `claude`        | `createClaudeApi()`        | `claude.ts`         | Claude Code session storage (DEPRECATED)                |
+| `agentSessions` | `createAgentSessionsApi()` | `agentSessions.ts`  | Multi-agent session storage (preferred)                 |
+| `tempfile`      | `createTempfileApi()`      | Files in `files.ts` | Temp file creation                                      |
+| `history`       | `createHistoryApi()`       | `history.ts`        | History entry CRUD                                      |
+| `cli`           | `createCliApi()`           | Files in `files.ts` | CLI activity tracking                                   |
+| `speckit`       | `createSpeckitApi()`       | `speckit.ts`        | Spec-Kit command management                             |
+| `openspec`      | `createOpenspecApi()`      | `openspec.ts`       | OpenSpec command management                             |
+| `notification`  | `createNotificationApi()`  | `notifications.ts`  | OS notifications and TTS                                |
+| `attachments`   | `createAttachmentsApi()`   | `attachments.ts`    | Image attachment management                             |
+| `autorun`       | `createAutorunApi()`       | `autorun.ts`        | Auto Run document management                            |
+| `playbooks`     | `createPlaybooksApi()`     | `playbooks.ts`      | Playbook CRUD and import/export                         |
+| `marketplace`   | `createMarketplaceApi()`   | `marketplace.ts`    | Playbook marketplace                                    |
+| `debug`         | `createDebugApi()`         | `debug.ts`          | Debug package generation                                |
+| `documentGraph` | `createDocumentGraphApi()` | `documentGraph.ts`  | Document graph file watching                            |
+| `groupChat`     | `createGroupChatApi()`     | `groupChat.ts`      | Group chat orchestration                                |
+| `app`           | `createAppApi()`           | `system.ts`         | App lifecycle (quit, version, paths)                    |
+| `platform`      | Direct value               | N/A                 | `process.platform` string (synchronous)                 |
+| `stats`         | `createStatsApi()`         | `stats.ts`          | Usage statistics DB                                     |
+| `leaderboard`   | `createLeaderboardApi()`   | `leaderboard.ts`    | Leaderboard submission                                  |
+| `symphony`      | `createSymphonyApi()`      | `symphony.ts`       | Open source contribution system                         |
+| `tabNaming`     | `createTabNamingApi()`     | `tabNaming.ts`      | Automatic tab name generation                           |
+| `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts` | Unified history + synopsis                              |
+| `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`       | WakaTime integration                                    |
 
 ---
 
@@ -86,7 +87,11 @@ Create `src/main/ipc/handlers/myFeature.ts`:
 
 ```typescript
 import { ipcMain } from 'electron';
-import { createIpcHandler, createIpcDataHandler, withIpcErrorLogging } from '../../utils/ipcHandler';
+import {
+	createIpcHandler,
+	createIpcDataHandler,
+	withIpcErrorLogging,
+} from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[MyFeature]';
@@ -99,24 +104,18 @@ export function registerMyFeatureHandlers(deps: MyFeatureHandlerDependencies): v
 	// Pattern 1: Custom response shape { success, ...data }
 	ipcMain.handle(
 		'myFeature:doSomething',
-		createIpcHandler(
-			{ context: LOG_CONTEXT, operation: 'doSomething' },
-			async (arg1: string) => {
-				const result = await processData(arg1);
-				return { items: result }; // Returned as { success: true, items: [...] }
-			}
-		)
+		createIpcHandler({ context: LOG_CONTEXT, operation: 'doSomething' }, async (arg1: string) => {
+			const result = await processData(arg1);
+			return { items: result }; // Returned as { success: true, items: [...] }
+		})
 	);
 
 	// Pattern 2: Standard { success, data } response
 	ipcMain.handle(
 		'myFeature:getData',
-		createIpcDataHandler(
-			{ context: LOG_CONTEXT, operation: 'getData' },
-			async (id: string) => {
-				return await fetchData(id); // Returned as { success: true, data: ... }
-			}
-		)
+		createIpcDataHandler({ context: LOG_CONTEXT, operation: 'getData' }, async (id: string) => {
+			return await fetchData(id); // Returned as { success: true, data: ... }
+		})
 	);
 
 	// Pattern 3: Transparent error logging (re-throws)
@@ -184,6 +183,7 @@ contextBridge.exposeInMainWorld('maestro', {
 ### Step 5: Add TypeScript types
 
 Add to the `Window` interface so TypeScript knows about `window.maestro.myFeature`:
+
 - Export the API type from preload index
 - Add to the renderer's type declarations
 
@@ -194,18 +194,21 @@ Add to the `Window` interface so TypeScript knows about `window.maestro.myFeatur
 ### Standard Response Formats
 
 **Pattern 1 - Custom shape (`createIpcHandler` / `createHandler`):**
+
 ```typescript
 // Success: { success: true, items: [...], tree: [...] }
 // Error:   { success: false, error: "Error message" }
 ```
 
 **Pattern 2 - Standard data (`createIpcDataHandler` / `createDataHandler`):**
+
 ```typescript
 // Success: { success: true, data: <any> }
 // Error:   { success: false, error: "Error message" }
 ```
 
 **Pattern 3 - Transparent (`withIpcErrorLogging`):**
+
 ```typescript
 // Success: returns handler's return value unchanged
 // Error:   logs error, re-throws (caller must handle)
@@ -283,11 +286,7 @@ let spawnConfig = {
 
 // Wrap with SSH if the session is configured for remote execution
 if (session.sshRemoteConfig?.enabled) {
-	const wrapped = await wrapSpawnWithSsh(
-		spawnConfig,
-		session.sshRemoteConfig,
-		sshStore
-	);
+	const wrapped = await wrapSpawnWithSsh(spawnConfig, session.sshRemoteConfig, sshStore);
 	// Use wrapped.command, wrapped.args, wrapped.cwd
 	// wrapped.sshRemoteUsed contains the SshRemoteConfig or null
 }

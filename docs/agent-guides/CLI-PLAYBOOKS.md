@@ -79,6 +79,7 @@ maestro-cli list agents [-g, --group <id>] [--json]
 ```
 
 Options:
+
 - `--group <id>` - Filter by group ID (supports partial IDs)
 - `--json` - Output as JSON Lines
 
@@ -99,6 +100,7 @@ maestro-cli list sessions <agent-id> [-l, --limit <count>] [-k, --skip <count>] 
 ```
 
 Options:
+
 - `--limit <count>` - Max sessions to show (default: 25)
 - `--skip <count>` - Pagination offset (default: 0)
 - `--search <keyword>` - Filter by name or first message content
@@ -128,6 +130,7 @@ maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug]
 ```
 
 Options:
+
 - `--dry-run` - Show what would be executed without running
 - `--no-history` - Skip writing history entries
 - `--json` - Output as JSON Lines (machine-parseable)
@@ -146,9 +149,11 @@ maestro-cli send <agent-id> <message> [-s, --session <id>]
 ```
 
 Options:
+
 - `--session <id>` - Resume an existing agent session for multi-turn conversations
 
 Response format:
+
 ```json
 {
 	"agentId": "agent-abc-123",
@@ -213,15 +218,15 @@ Linux:   $XDG_CONFIG_HOME/Maestro/ (or ~/.config/Maestro/)
 
 ### Store Files
 
-| File | Content |
-|------|---------|
-| `maestro-sessions.json` | Agent sessions |
-| `maestro-groups.json` | Session groups |
-| `maestro-settings.json` | User settings |
-| `maestro-agent-configs.json` | Per-agent custom paths/args |
-| `maestro-history.json` | History entries (legacy format) |
-| `history/*.json` | Per-session history (new format) |
-| `playbooks/*.json` | Per-session playbook definitions |
+| File                         | Content                          |
+| ---------------------------- | -------------------------------- |
+| `maestro-sessions.json`      | Agent sessions                   |
+| `maestro-groups.json`        | Session groups                   |
+| `maestro-settings.json`      | User settings                    |
+| `maestro-agent-configs.json` | Per-agent custom paths/args      |
+| `maestro-history.json`       | History entries (legacy format)  |
+| `history/*.json`             | Per-session history (new format) |
+| `playbooks/*.json`           | Per-session playbook definitions |
 
 ### Key Functions
 
@@ -256,12 +261,12 @@ Spawns agent CLIs as child processes and parses their output.
 
 ### Supported Agents
 
-| Agent | Binary | Output Format |
-|-------|--------|---------------|
-| Claude Code | `claude` | `stream-json` (newline-delimited JSON) |
-| Codex | `codex` | Custom parser (`CodexOutputParser`) |
-| OpenCode | `opencode` | Custom parser (`OpenCodeOutputParser`) |
-| Factory Droid | `droid` | Custom parser (`FactoryDroidOutputParser`) |
+| Agent         | Binary     | Output Format                              |
+| ------------- | ---------- | ------------------------------------------ |
+| Claude Code   | `claude`   | `stream-json` (newline-delimited JSON)     |
+| Codex         | `codex`    | Custom parser (`CodexOutputParser`)        |
+| OpenCode      | `opencode` | Custom parser (`OpenCodeOutputParser`)     |
+| Factory Droid | `droid`    | Custom parser (`FactoryDroidOutputParser`) |
 
 ### Agent Detection
 
@@ -312,6 +317,7 @@ Codex, OpenCode, and Factory Droid use the shared `AgentOutputParser` interface 
 ### CLI vs Desktop Spawning
 
 The CLI spawner is simpler than the desktop process manager:
+
 - No SSH wrapping (remote execution not supported)
 - No custom model, args, or env var overrides
 - No PTY (uses plain child_process spawn)
@@ -410,20 +416,20 @@ Prompts support template variables substituted at runtime via `src/shared/templa
 
 The batch processor outputs machine-parseable JSON Lines events (defined in `src/cli/output/jsonl.ts`):
 
-| Event | Fields | Description |
-|-------|--------|-------------|
-| `start` | `playbook`, `session` | Batch run started |
-| `document_start` | `document`, `index`, `taskCount` | Starting a document |
-| `task_start` | `document`, `taskIndex` | Starting a task |
-| `task_complete` | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats` | Task finished |
-| `document_complete` | `document`, `tasksCompleted` | All tasks in document done |
-| `loop_complete` | `iteration` | One loop iteration finished |
-| `synopsis` | `text`, `sessionId` | AI-generated summary |
-| `history` | `entry` | History entry written |
-| `complete` | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost` | Batch run finished |
-| `error` | `message`, `document?`, `taskIndex?` | Error occurred |
-| `skipped` | `reason` | Task or document skipped |
-| `waiting` | `reason` | Waiting for agent |
+| Event               | Fields                                                                   | Description                 |
+| ------------------- | ------------------------------------------------------------------------ | --------------------------- |
+| `start`             | `playbook`, `session`                                                    | Batch run started           |
+| `document_start`    | `document`, `index`, `taskCount`                                         | Starting a document         |
+| `task_start`        | `document`, `taskIndex`                                                  | Starting a task             |
+| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats` | Task finished               |
+| `document_complete` | `document`, `tasksCompleted`                                             | All tasks in document done  |
+| `loop_complete`     | `iteration`                                                              | One loop iteration finished |
+| `synopsis`          | `text`, `sessionId`                                                      | AI-generated summary        |
+| `history`           | `entry`                                                                  | History entry written       |
+| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`    | Batch run finished          |
+| `error`             | `message`, `document?`, `taskIndex?`                                     | Error occurred              |
+| `skipped`           | `reason`                                                                 | Task or document skipped    |
+| `waiting`           | `reason`                                                                 | Waiting for agent           |
 
 ### Synopsis Generation
 
@@ -488,6 +494,7 @@ The service reads the Origins Store (`claude-origins.json`) to retrieve session 
 File: `src/cli/output/formatter.ts`
 
 ANSI-colored terminal output with:
+
 - Color support detection (`process.stdout.isTTY`)
 - Bold, dim, and colored text helpers
 - Truncation for long strings
@@ -503,20 +510,20 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 
 ## Key Files Reference
 
-| Concern | Primary Files |
-|---------|--------------|
-| CLI entry point | `src/cli/index.ts` |
-| Storage reader | `src/cli/services/storage.ts` |
-| Agent spawner | `src/cli/services/agent-spawner.ts` |
-| Batch processor | `src/cli/services/batch-processor.ts` |
-| Playbook management | `src/cli/services/playbooks.ts` |
-| Agent sessions | `src/cli/services/agent-sessions.ts` |
-| Human output | `src/cli/output/formatter.ts` |
-| JSONL output | `src/cli/output/jsonl.ts` |
-| Send command | `src/cli/commands/send.ts` |
-| Run playbook | `src/cli/commands/run-playbook.ts` |
-| Shared types | `src/shared/types.ts` |
-| Template variables | `src/shared/templateVariables.ts` |
-| Agent definitions | `src/main/agents/definitions.ts` |
-| CLI activity | `src/shared/cli-activity.ts` |
-| Prompt templates | `src/prompts/` |
+| Concern             | Primary Files                         |
+| ------------------- | ------------------------------------- |
+| CLI entry point     | `src/cli/index.ts`                    |
+| Storage reader      | `src/cli/services/storage.ts`         |
+| Agent spawner       | `src/cli/services/agent-spawner.ts`   |
+| Batch processor     | `src/cli/services/batch-processor.ts` |
+| Playbook management | `src/cli/services/playbooks.ts`       |
+| Agent sessions      | `src/cli/services/agent-sessions.ts`  |
+| Human output        | `src/cli/output/formatter.ts`         |
+| JSONL output        | `src/cli/output/jsonl.ts`             |
+| Send command        | `src/cli/commands/send.ts`            |
+| Run playbook        | `src/cli/commands/run-playbook.ts`    |
+| Shared types        | `src/shared/types.ts`                 |
+| Template variables  | `src/shared/templateVariables.ts`     |
+| Agent definitions   | `src/main/agents/definitions.ts`      |
+| CLI activity        | `src/shared/cli-activity.ts`          |
+| Prompt templates    | `src/prompts/`                        |

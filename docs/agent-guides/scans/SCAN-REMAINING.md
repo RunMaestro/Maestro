@@ -10,12 +10,12 @@ Scan of context providers, renderer types, web utilities, and symphony runner fo
 
 No duplication found. Each context provides data that does not exist in any zustand store:
 
-| Context | Data Source | Store Equivalent? |
-|---------|------------|-------------------|
-| GitStatusContext | `useGitStatusPolling` (IPC polling) | None - no store polls git |
-| InlineWizardContext | `useInlineWizard` hook | None - wizard state is context-only |
-| InputContext | Local `useState` calls | None - completion state not in stores |
-| LayerStackContext | `useLayerStack` hook | None - layer management not in stores |
+| Context             | Data Source                         | Store Equivalent?                     |
+| ------------------- | ----------------------------------- | ------------------------------------- |
+| GitStatusContext    | `useGitStatusPolling` (IPC polling) | None - no store polls git             |
+| InlineWizardContext | `useInlineWizard` hook              | None - wizard state is context-only   |
+| InputContext        | Local `useState` calls              | None - completion state not in stores |
+| LayerStackContext   | `useLayerStack` hook                | None - layer management not in stores |
 
 ### Usage Analysis
 
@@ -26,6 +26,7 @@ grep -rn "useContext.*GitStatus|useContext.*InlineWizard|useContext.*Input\b|use
 Results - raw `useContext` calls only appear inside the context definition files themselves (3 total). All external consumers use the exported hooks (`useGitBranch`, `useInputContext`, etc.), which is the intended pattern.
 
 **Consumer counts by hook:**
+
 - `useLayerStack` - 20+ consumers (every modal/overlay component)
 - `useGitFileStatus` - 3 consumers
 - `useGitDetail` - 2 consumers
@@ -53,6 +54,7 @@ grep -rn "export type|export interface" src/renderer/types/ --include="*.ts"
 ```
 
 81 total exports across 4 files:
+
 - `index.ts` - 61 exports (including re-exports from shared)
 - `contextMerge.ts` - 10 interfaces
 - `layer.ts` - 9 types/interfaces
@@ -68,15 +70,15 @@ Shared exports: AgentId, ToolType, ThinkingMode, Group, SessionInfo, UsageStats,
 
 ### Overlap Analysis
 
-| Type | shared/types.ts | renderer/types/index.ts | Relationship |
-|------|----------------|------------------------|-------------|
-| `HistoryEntry` | Base definition | `extends BaseHistoryEntry` adds `achievementAction` | Proper extension - no duplication |
-| `WorktreeConfig` | Base definition | `extends BaseWorktreeConfig` adds `ghPath` | Proper extension - no duplication |
-| `BatchRunConfig` | Shared version (documents, prompt, loopEnabled, maxLoops) | Renderer version adds `worktree`, `worktreeTarget` | **Parallel definitions - not extending** |
-| `BatchDocumentEntry` | Defined in shared | Re-exported from shared | Clean re-export |
-| `AgentError` | Defined in shared | Re-exported from shared | Clean re-export |
-| `UsageStats` | Defined in shared | Re-exported from shared | Clean re-export |
-| `AgentConfig` | Defined in shared | **Separate definition** in renderer | **Parallel definitions** |
+| Type                 | shared/types.ts                                           | renderer/types/index.ts                             | Relationship                             |
+| -------------------- | --------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------- |
+| `HistoryEntry`       | Base definition                                           | `extends BaseHistoryEntry` adds `achievementAction` | Proper extension - no duplication        |
+| `WorktreeConfig`     | Base definition                                           | `extends BaseWorktreeConfig` adds `ghPath`          | Proper extension - no duplication        |
+| `BatchRunConfig`     | Shared version (documents, prompt, loopEnabled, maxLoops) | Renderer version adds `worktree`, `worktreeTarget`  | **Parallel definitions - not extending** |
+| `BatchDocumentEntry` | Defined in shared                                         | Re-exported from shared                             | Clean re-export                          |
+| `AgentError`         | Defined in shared                                         | Re-exported from shared                             | Clean re-export                          |
+| `UsageStats`         | Defined in shared                                         | Re-exported from shared                             | Clean re-export                          |
+| `AgentConfig`        | Defined in shared                                         | **Separate definition** in renderer                 | **Parallel definitions**                 |
 
 ### Finding: `BatchRunConfig` Defined Twice
 
@@ -107,6 +109,7 @@ grep -rn "function |const " src/web/utils/ --include="*.ts"
 ```
 
 40 exports across 5 files:
+
 - `config.ts` - 10 functions (getMaestroConfig, buildApiUrl, buildWebSocketUrl, etc.)
 - `cssCustomProperties.ts` - 11 functions + 1 constant
 - `logger.ts` - 1 singleton (webLogger) + internal helpers
@@ -116,25 +119,30 @@ grep -rn "function |const " src/web/utils/ --include="*.ts"
 ### Cross-Reference with shared/ and renderer/utils/
 
 **Logger:**
+
 - `src/web/utils/logger.ts` imports `BaseLogLevel` and `LOG_LEVEL_PRIORITY` from `shared/logger-types.ts`
 - `src/main/utils/logger.ts` (main process logger) uses `MainLogLevel` which extends `BaseLogLevel` with 'toast' and 'autorun'
 - No duplication - web logger is a lightweight browser-specific implementation; main logger is Node.js-specific with file I/O. Both share the base type system.
 
 **CSS/Theme:**
+
 - `cssCustomProperties.ts` imports `Theme` and `ThemeColors` from `shared/theme-types.ts`
 - `src/renderer/constants/themes.ts` defines theme data but does NOT duplicate CSS property generation
 - No overlap with renderer theme handling (renderer uses Tailwind/inline styles; web interface uses CSS variables)
 
 **Config:**
+
 - `config.ts` is web-only. The renderer uses Electron's IPC bridge (`window.maestro.*`), not HTTP/WebSocket URLs.
 - No equivalent in renderer/utils/ or shared/
 
 **View State:**
+
 - `viewState.ts` uses `localStorage` for web PWA state persistence
 - `src/renderer/hooks/useSettings.ts` uses Electron's settings store for desktop persistence
 - No overlap - different persistence mechanisms for different platforms
 
 **Service Worker:**
+
 - `serviceWorker.ts` is browser-only (service worker API)
 - No equivalent in renderer or shared
 
@@ -155,11 +163,13 @@ grep -rn "useBatchProcessor|BatchProcessor|batchStateMachine|BatchProcessingStat
 No results. The CLI has no batch processor overlap with Symphony.
 
 **Symphony Runner vs. useBatchProcessor:**
+
 - Symphony Runner handles git/PR workflow only (clone, branch, fork, push, draft PR, document setup)
 - `useBatchProcessor` in `src/renderer/hooks/batch/` handles sequential document execution within a session
 - They are complementary: Symphony Runner sets up the repository and documents, then hands off to the standard batch system for actual task execution
 
 **Symphony Runner vs. CLI playbooks:**
+
 - CLI playbooks (`src/cli/services/playbooks.ts`) run playbook files against sessions
 - Symphony Runner runs against external GitHub repositories
 - No shared code or patterns
@@ -167,6 +177,7 @@ No results. The CLI has no batch processor overlap with Symphony.
 ### IPC Integration
 
 Symphony Runner is called from one location:
+
 - `src/main/ipc/handlers/symphony.ts` handler `symphony:startContribution`
 - Frontend access: `src/renderer/hooks/symphony/useSymphony.ts` -> `window.maestro.symphony.startContribution()`
 - UI: `src/renderer/components/SymphonyModal.tsx`
@@ -181,11 +192,11 @@ The `execFileNoThrow` utility it uses is shared from `src/main/utils/execFile.ts
 
 ## Summary of Findings
 
-| ID | Location | Issue | Severity | Action |
-|----|----------|-------|----------|--------|
-| R-1 | `GitStatusContext.tsx` | `useGitStatus()` deprecated with 0 consumers | Low | Remove legacy context + hook when convenient |
-| R-2 | `renderer/types/index.ts` vs `shared/types.ts` | `BatchRunConfig` defined in parallel (not extending) | Low | Refactor renderer version to `extends` shared base |
-| R-3 | `renderer/types/index.ts` vs `shared/types.ts` | `AgentConfig` defined in parallel (not extending) | Medium | Refactor renderer version to `extends` shared base |
-| R-4 | All web/utils/ files | No duplication found | None | No action needed |
-| R-5 | symphony-runner.ts | No duplication found | None | No action needed |
-| R-6 | All context providers | No context/store duplication found | None | No action needed |
+| ID  | Location                                       | Issue                                                | Severity | Action                                             |
+| --- | ---------------------------------------------- | ---------------------------------------------------- | -------- | -------------------------------------------------- |
+| R-1 | `GitStatusContext.tsx`                         | `useGitStatus()` deprecated with 0 consumers         | Low      | Remove legacy context + hook when convenient       |
+| R-2 | `renderer/types/index.ts` vs `shared/types.ts` | `BatchRunConfig` defined in parallel (not extending) | Low      | Refactor renderer version to `extends` shared base |
+| R-3 | `renderer/types/index.ts` vs `shared/types.ts` | `AgentConfig` defined in parallel (not extending)    | Medium   | Refactor renderer version to `extends` shared base |
+| R-4 | All web/utils/ files                           | No duplication found                                 | None     | No action needed                                   |
+| R-5 | symphony-runner.ts                             | No duplication found                                 | None     | No action needed                                   |
+| R-6 | All context providers                          | No context/store duplication found                   | None     | No action needed                                   |

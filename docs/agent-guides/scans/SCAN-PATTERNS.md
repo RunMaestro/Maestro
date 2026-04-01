@@ -17,6 +17,7 @@ Generated via `grep -rn` on `src/`. All matches are file:line verified. Tests ex
 ### Files with console.error but no captureException/captureMessage (118 files)
 
 **CLI (14 files):**
+
 ```
 src/cli/commands/auto-run.ts
 src/cli/commands/clean-playbooks.ts
@@ -38,6 +39,7 @@ src/cli/services/storage.ts
 ```
 
 **Main process (4 files):**
+
 ```
 src/main/cue/cue-file-watcher.ts
 src/main/ipc/handlers/context.ts
@@ -47,6 +49,7 @@ src/main/utils/logger.ts
 ```
 
 **Renderer - Components (40+ files):**
+
 ```
 src/renderer/components/AboutModal.tsx
 src/renderer/components/AchievementCard.tsx
@@ -70,6 +73,7 @@ src/renderer/components/LightboxModal.tsx
 ```
 
 **Renderer - Hooks (24 files):**
+
 ```
 src/renderer/hooks/batch/useBatchProcessor.ts
 src/renderer/hooks/batch/useDocumentProcessor.ts
@@ -98,6 +102,7 @@ src/renderer/hooks/worktree/useWorktreeHandlers.ts
 ```
 
 **Renderer - Services/Stores/Utils (14 files):**
+
 ```
 src/renderer/services/contextSummarizer.ts
 src/renderer/services/inlineWizardDocumentGeneration.ts
@@ -116,6 +121,7 @@ src/renderer/utils/tokenCounter.ts
 ```
 
 **Shared/Web (2 files):**
+
 ```
 src/shared/cli-activity.ts
 src/web/utils/logger.ts
@@ -143,18 +149,19 @@ All 5 have identical signatures and identical implementations. Should be extract
 
 These are near-identical parallel implementations:
 
-| File Pair | SpecKit | OpenSpec | Delta |
-|-----------|---------|---------|-------|
-| IPC handler | `ipc/handlers/speckit.ts` (100) | `ipc/handlers/openspec.ts` (100) | 0 |
-| Manager | `speckit-manager.ts` (530) | `openspec-manager.ts` (471) | 59 |
-| UI Panel | `SpecKitCommandsPanel.tsx` (424) | `OpenSpecCommandsPanel.tsx` (426) | 2 |
-| Service | `services/speckit.ts` (56) | `services/openspec.ts` (56) | 0 |
-| Prompts index | `prompts/speckit/index.ts` (157) | `prompts/openspec/index.ts` (111) | 46 |
-| **Total** | **1,267** | **1,164** | **103** |
+| File Pair     | SpecKit                          | OpenSpec                          | Delta   |
+| ------------- | -------------------------------- | --------------------------------- | ------- |
+| IPC handler   | `ipc/handlers/speckit.ts` (100)  | `ipc/handlers/openspec.ts` (100)  | 0       |
+| Manager       | `speckit-manager.ts` (530)       | `openspec-manager.ts` (471)       | 59      |
+| UI Panel      | `SpecKitCommandsPanel.tsx` (424) | `OpenSpecCommandsPanel.tsx` (426) | 2       |
+| Service       | `services/speckit.ts` (56)       | `services/openspec.ts` (56)       | 0       |
+| Prompts index | `prompts/speckit/index.ts` (157) | `prompts/openspec/index.ts` (111) | 46      |
+| **Total**     | **1,267**                        | **1,164**                         | **103** |
 
 The IPC handlers, services, and UI panels are virtually identical (0-2 line difference). The managers differ by 59 lines (SpecKit has more commands). Together they account for ~2,431 lines that could be reduced to ~1,300 with a shared base implementation.
 
 Notably, both also share the `EditingCommand` interface (see SCAN-TYPES.md):
+
 ```
 src/renderer/components/AICommandsPanel.tsx:25         interface EditingCommand
 src/renderer/components/OpenSpecCommandsPanel.tsx:21   interface EditingCommand
@@ -178,6 +185,7 @@ src/main/group-chat/group-chat-router.ts:1553       respawnParticipantWithRecove
 ### Shared spawn pattern across all 5 sites
 
 Each spawn site repeats this ~30-line pattern:
+
 1. Resolve agent config (command, args, env vars)
 2. Wrap with SSH if configured (`wrapSpawnWithSsh`)
 3. Get Windows spawn config (`getWindowsSpawnConfig`)
@@ -197,6 +205,7 @@ src/main/group-chat/group-chat-router.ts:1510-1560  SSH + Windows spawn config
 ### IPC layer spawn orchestration
 
 The IPC handler (`src/main/ipc/handlers/groupChat.ts`) calls these spawn functions:
+
 ```
 src/main/ipc/handlers/groupChat.ts:191     spawnModerator(chat, processManager)
 src/main/ipc/handlers/groupChat.ts:328     spawnModerator(updated, processManager)
@@ -210,9 +219,9 @@ src/main/ipc/handlers/groupChat.ts:637     batch spawn via processManager
 
 ## Summary
 
-| Pattern | Count | Impact |
-|---------|-------|--------|
-| catch + console.error (no Sentry) | 252 blocks in 118 files | Silent error swallowing, no production visibility |
-| `resolve()` in stores | 5 identical copies | Trivial dedup to shared utility |
-| SpecKit/OpenSpec parallel code | ~2,431 lines | ~1,100 lines removable via shared base |
-| Group chat spawn boilerplate | 5 sites, ~150 lines each | Extract `spawnGroupChatAgent()` helper |
+| Pattern                           | Count                    | Impact                                            |
+| --------------------------------- | ------------------------ | ------------------------------------------------- |
+| catch + console.error (no Sentry) | 252 blocks in 118 files  | Silent error swallowing, no production visibility |
+| `resolve()` in stores             | 5 identical copies       | Trivial dedup to shared utility                   |
+| SpecKit/OpenSpec parallel code    | ~2,431 lines             | ~1,100 lines removable via shared base            |
+| Group chat spawn boilerplate      | 5 sites, ~150 lines each | Extract `spawnGroupChatAgent()` helper            |

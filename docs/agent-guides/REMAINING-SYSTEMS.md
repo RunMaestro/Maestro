@@ -19,16 +19,17 @@ The dividing line: contexts own _derived/polled data_ or _popup/modal coordinati
 
 Centralizes git status polling for all sessions. Splits data into three focused sub-contexts to minimize re-renders:
 
-| Context | Hook | Data | Update Frequency |
-|---------|------|------|-----------------|
-| `GitBranchContext` | `useGitBranch()` | branch name, remote, ahead/behind | Rarely |
-| `GitFileStatusContext` | `useGitFileStatus()` | file count, `hasChanges()` | On file operations |
-| `GitDetailContext` | `useGitDetail()` | file changes, additions/deletions, `refreshGitStatus()` | Active session only |
-| `GitStatusContext` (legacy) | `useGitStatus()` | full `gitStatusMap`, everything | Deprecated |
+| Context                     | Hook                 | Data                                                    | Update Frequency    |
+| --------------------------- | -------------------- | ------------------------------------------------------- | ------------------- |
+| `GitBranchContext`          | `useGitBranch()`     | branch name, remote, ahead/behind                       | Rarely              |
+| `GitFileStatusContext`      | `useGitFileStatus()` | file count, `hasChanges()`                              | On file operations  |
+| `GitDetailContext`          | `useGitDetail()`     | file changes, additions/deletions, `refreshGitStatus()` | Active session only |
+| `GitStatusContext` (legacy) | `useGitStatus()`     | full `gitStatusMap`, everything                         | Deprecated          |
 
 **Provider props:** `sessions: Session[]`, `activeSessionId?: string`, `options?: UseGitStatusPollingOptions`
 
 **Usage counts:**
+
 - `useGitFileStatus` - 3 consumers (GitStatusWidget, MainPanel, SessionList)
 - `useGitDetail` - 2 consumers (GitStatusWidget, MainPanel)
 - `useGitBranch` - 1 consumer (MainPanel)
@@ -43,6 +44,7 @@ Wraps `useInlineWizard` hook to make `/wizard` slash command state available glo
 **Hook:** `useInlineWizardContext()` returns `UseInlineWizardReturn`
 
 **Key state fields:**
+
 - `isWizardActive`, `wizardMode` ('new' | 'iterate' | 'ask'), `wizardGoal`
 - `confidence` (0-100), `ready`, `readyToGenerate`
 - `conversationHistory`, `streamingContent`, `generationProgress`
@@ -56,12 +58,12 @@ Wraps `useInlineWizard` hook to make `/wizard` slash command state available glo
 
 Manages completion popup and command history state extracted from App.tsx. Four completion subsystems:
 
-| Subsystem | Mode | State Fields |
-|-----------|------|-------------|
-| Slash Commands | AI + terminal | `slashCommandOpen`, `selectedSlashCommandIndex` |
-| Tab Completion | Terminal only | `tabCompletionOpen`, `selectedTabCompletionIndex`, `tabCompletionFilter` |
-| @ Mention | AI only | `atMentionOpen`, `atMentionFilter`, `atMentionStartIndex`, `selectedAtMentionIndex` |
-| Command History | Both | `commandHistoryOpen`, `commandHistoryFilter`, `commandHistorySelectedIndex` |
+| Subsystem       | Mode          | State Fields                                                                        |
+| --------------- | ------------- | ----------------------------------------------------------------------------------- |
+| Slash Commands  | AI + terminal | `slashCommandOpen`, `selectedSlashCommandIndex`                                     |
+| Tab Completion  | Terminal only | `tabCompletionOpen`, `selectedTabCompletionIndex`, `tabCompletionFilter`            |
+| @ Mention       | AI only       | `atMentionOpen`, `atMentionFilter`, `atMentionStartIndex`, `selectedAtMentionIndex` |
+| Command History | Both          | `commandHistoryOpen`, `commandHistoryFilter`, `commandHistorySelectedIndex`         |
 
 **Hook:** `useInputContext()` returns all state + setters + reset methods + `closeAllCompletions()`
 
@@ -92,11 +94,13 @@ The central type file. Contains the `Session` interface (the largest type at ~20
 **Re-exports from shared:** Theme types, AgentError, ToolType, Group, UsageStats, BatchDocumentEntry, Playbook, ThinkingMode, WorktreeRunTarget, GroupChat types, SymphonySessionMetadata, HistoryEntryType.
 
 **Renderer-only type aliases:**
+
 - `SessionState` = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error'
 - `FileChangeType` = 'modified' | 'added' | 'deleted'
 - `RightPanelTab`, `SettingsTab`, `FocusArea`, `LLMProvider`
 
 **Major interfaces (renderer-only):**
+
 - `Session` - The agent data model. Contains ~200 fields: identity, tabs, file tree, SSH config, execution queue, wizard state, custom overrides, batch state, etc.
 - `AITab` - Individual conversation tab within a session. Contains logs, usage stats, input value, staged images, wizard state, scroll position, etc.
 - `FilePreviewTab` - In-tab file viewing with navigation history.
@@ -113,6 +117,7 @@ The central type file. Contains the `Session` interface (the largest type at ~20
 - `SessionWizardState`, `WizardMessage`, `WizardGeneratedDocument` - Inline wizard state.
 
 **Extended from shared base types:**
+
 - `HistoryEntry extends BaseHistoryEntry` - adds `achievementAction` field
 - `WorktreeConfig extends BaseWorktreeConfig` - adds `ghPath` field
 - `BatchRunConfig` - renderer version adds `worktree` and `worktreeTarget` fields not in the shared version
@@ -120,6 +125,7 @@ The central type file. Contains the `Session` interface (the largest type at ~20
 ### contextMerge.ts (178 lines)
 
 Types for context merge/transfer operations between sessions:
+
 - `ContextSource` - A tab or session to merge from
 - `MergeRequest` / `MergeResult` - Merge operation request/response
 - `GroomingProgress` - Progress updates during long merge operations
@@ -129,6 +135,7 @@ Types for context merge/transfer operations between sessions:
 ### layer.ts (108 lines)
 
 Type system for the LayerStackContext:
+
 - `LayerType` = 'modal' | 'overlay'
 - `FocusTrapMode` = 'strict' | 'lenient' | 'none'
 - `BaseLayer`, `ModalLayer`, `OverlayLayer` - Layer hierarchy
@@ -139,13 +146,14 @@ Type system for the LayerStackContext:
 ### fileTree.ts (7 lines)
 
 Single interface:
+
 ```typescript
 export interface FileNode {
-    name: string;
-    type: 'file' | 'folder';
-    children?: FileNode[];
-    fullPath?: string;
-    isFolder?: boolean;
+	name: string;
+	type: 'file' | 'folder';
+	children?: FileNode[];
+	fullPath?: string;
+	isFolder?: boolean;
 }
 ```
 
@@ -160,6 +168,7 @@ Utilities for the web/mobile interface (PWA). These serve the `src/web/` subsyst
 Configuration management for the web interface. Reads server-injected `window.__MAESTRO_CONFIG__` containing security token, session ID, and API base paths.
 
 **Key exports:**
+
 - `getMaestroConfig()` - Returns `MaestroConfig` (security token, session/tab IDs, API/WS base paths). Falls back to URL extraction in dev mode.
 - `isDashboardMode()` / `isSessionMode()` - View mode checks
 - `getCurrentSessionId()` / `getCurrentTabId()` - Current navigation state
@@ -173,6 +182,7 @@ Configuration management for the web interface. Reads server-injected `window.__
 Converts Maestro theme colors to CSS custom properties for dynamic theming in the web interface. Maps camelCase color keys to `--maestro-*` CSS variables.
 
 **Key exports:**
+
 - `generateCSSProperties(theme)` - Returns `Record<ThemeCSSProperty, string>` mapping
 - `generateCSSString(theme, selector?)` - Returns full CSS rule string
 - `injectCSSProperties(theme)` - Creates/updates a `<style>` element in `<head>` (SSR-safe)
@@ -196,6 +206,7 @@ Default minimum level: `warn`. Exposed on `window.__webLogger` in development fo
 Service worker lifecycle management for offline PWA capability.
 
 **Key exports:**
+
 - `registerServiceWorker(config?)` - Registers `sw.js` with token-prefixed path. Handles update detection, offline/online status events, and message forwarding.
 - `unregisterServiceWorker()` - Cleans up registration
 - `isServiceWorkerSupported()` - Feature detection
@@ -210,6 +221,7 @@ Persists web UI state to `localStorage` across page refreshes. Two storage keys:
 **State persisted:** `ViewState` includes active overlays, session/tab selection, input mode, history panel filter/search, plus `savedAt` timestamp. State older than 5 minutes is considered stale and discarded.
 
 **Key exports:**
+
 - `saveViewState(partial)` / `loadViewState()` / `clearViewState()`
 - `saveScrollPosition(view, position)` / `loadScrollState()`
 - `debouncedSaveViewState(partial, delay=300)` - 300ms debounce
@@ -242,6 +254,7 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 ### Finalization
 
 `finalizeContribution(localPath, prNumber, issueNumber, issueTitle, upstreamSlug?)`:
+
 - Commits all changes (`git add -A`)
 - Pushes to origin (fork or upstream)
 - Converts draft PR to ready-for-review via `gh pr ready`
@@ -250,6 +263,7 @@ Returns: `{ success, draftPrUrl, draftPrNumber, autoRunPath, isFork, forkSlug }`
 ### Cancellation
 
 `cancelContribution(localPath, prNumber, cleanup?, upstreamSlug?)`:
+
 - Closes the draft PR via `gh pr close`
 - Deletes branch (only for non-fork PRs; cross-fork branch deletion fails due to permissions)
 - Optionally removes local clone directory

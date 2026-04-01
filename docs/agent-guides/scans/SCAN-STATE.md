@@ -21,19 +21,19 @@ src/renderer/stores/sessionStore.ts:435     setSessionsLoaded in getSessionActio
 
 ### Heavy callers (by file, sorted by count)
 
-| File | setSessions calls | Notes |
-|------|-------------------|-------|
-| `src/renderer/hooks/wizard/useWizardHandlers.ts` | ~35 | Wizard state updates |
-| `src/renderer/hooks/worktree/useWorktreeHandlers.ts` | ~18 | Worktree session management |
-| `src/renderer/App.tsx` | ~15 | Main app coordinator |
-| `src/renderer/components/FileExplorerPanel.tsx` | ~14 | File tree mutations |
-| `src/renderer/components/QuickActionsModal.tsx` | ~7 | Quick actions |
-| `src/renderer/hooks/tabs/useTabHandlers.ts` | ~6 | Tab operations |
-| `src/renderer/hooks/ui/useAppHandlers.ts` | ~8 | App-level handlers |
-| `src/renderer/stores/agentStore.ts` | ~5 | Agent store bridging |
-| `src/renderer/stores/tabStore.ts` | ~4 | Tab store bridging |
-| `src/renderer/components/AppModals.tsx` | ~6 | Modal state updates |
-| `src/renderer/components/SessionList/SessionList.tsx` | ~5 | Session list operations |
+| File                                                  | setSessions calls | Notes                       |
+| ----------------------------------------------------- | ----------------- | --------------------------- |
+| `src/renderer/hooks/wizard/useWizardHandlers.ts`      | ~35               | Wizard state updates        |
+| `src/renderer/hooks/worktree/useWorktreeHandlers.ts`  | ~18               | Worktree session management |
+| `src/renderer/App.tsx`                                | ~15               | Main app coordinator        |
+| `src/renderer/components/FileExplorerPanel.tsx`       | ~14               | File tree mutations         |
+| `src/renderer/components/QuickActionsModal.tsx`       | ~7                | Quick actions               |
+| `src/renderer/hooks/tabs/useTabHandlers.ts`           | ~6                | Tab operations              |
+| `src/renderer/hooks/ui/useAppHandlers.ts`             | ~8                | App-level handlers          |
+| `src/renderer/stores/agentStore.ts`                   | ~5                | Agent store bridging        |
+| `src/renderer/stores/tabStore.ts`                     | ~4                | Tab store bridging          |
+| `src/renderer/components/AppModals.tsx`               | ~6                | Modal state updates         |
+| `src/renderer/components/SessionList/SessionList.tsx` | ~5                | Session list operations     |
 
 ### Type signature prop-drilling (setSessions passed as props)
 
@@ -57,6 +57,7 @@ src/renderer/hooks/agent/useAgentExecution.ts:33    setSessions in hook interfac
 ### Components accessing store directly vs receiving as prop
 
 Many components both receive `setSessions` as a prop AND access it via `useSessionStore`:
+
 ```
 src/renderer/components/RightPanel.tsx:121          useSessionStore access
 src/renderer/components/AppModals.tsx:2124          useSessionStore access
@@ -153,6 +154,7 @@ src/main/ipc/handlers/marketplace.ts:66          Local re-definition
 ### Usage sites
 
 **agentSessions.ts** (4 usages):
+
 ```
 src/main/ipc/handlers/agentSessions.ts:402
 src/main/ipc/handlers/agentSessions.ts:433
@@ -161,6 +163,7 @@ src/main/ipc/handlers/agentSessions.ts:502
 ```
 
 **agents.ts** (3 usages):
+
 ```
 src/main/ipc/handlers/agents.ts:314
 src/main/ipc/handlers/agents.ts:417
@@ -168,6 +171,7 @@ src/main/ipc/handlers/agents.ts:822
 ```
 
 **autorun.ts** (10 usages):
+
 ```
 src/main/ipc/handlers/autorun.ts:267
 src/main/ipc/handlers/autorun.ts:338
@@ -182,6 +186,7 @@ src/main/ipc/handlers/autorun.ts:993
 ```
 
 **filesystem.ts** (8 usages, imports from stores):
+
 ```
 src/main/ipc/handlers/filesystem.ts:35     import { getSshRemoteById } from '../../stores'
 src/main/ipc/handlers/filesystem.ts:97
@@ -195,6 +200,7 @@ src/main/ipc/handlers/filesystem.ts:383
 ```
 
 **git.ts** (7 usages):
+
 ```
 src/main/ipc/handlers/git.ts:103
 src/main/ipc/handlers/git.ts:117
@@ -206,6 +212,7 @@ src/main/ipc/handlers/git.ts:197
 ```
 
 **index.ts** (1 usage, imports from stores):
+
 ```
 src/main/index.ts:25      import { getSshRemoteById } from stores
 src/main/index.ts:620     usage
@@ -215,9 +222,9 @@ src/main/index.ts:620     usage
 
 ## Summary
 
-| Pattern | Count | Concern |
-|---------|-------|---------|
-| `setSessions` calls | 463 | Prop-drilling, should use store directly |
-| `sessions.find` lookups | 71 | Should use `getActiveSession` / `getSessionById` selectors |
-| `getSshRemoteById` definitions | 6 | 5 local copies of a function already exported from stores |
-| Wizard re-lookups | 8 | Re-finds session that's already in scope |
+| Pattern                        | Count | Concern                                                    |
+| ------------------------------ | ----- | ---------------------------------------------------------- |
+| `setSessions` calls            | 463   | Prop-drilling, should use store directly                   |
+| `sessions.find` lookups        | 71    | Should use `getActiveSession` / `getSessionById` selectors |
+| `getSshRemoteById` definitions | 6     | 5 local copies of a function already exported from stores  |
+| Wizard re-lookups              | 8     | Re-finds session that's already in scope                   |

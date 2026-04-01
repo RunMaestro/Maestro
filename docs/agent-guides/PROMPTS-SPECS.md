@@ -22,59 +22,59 @@ src/prompts/index.ts
 
 #### Wizard Prompts
 
-| File | Export | Purpose |
-|---|---|---|
-| `wizard-system.md` | `wizardSystemPrompt` | System prompt for the Wizard (Auto Run document generation) |
-| `wizard-system-continuation.md` | `wizardSystemContinuationPrompt` | Continuation prompt for multi-turn Wizard conversations |
-| `wizard-document-generation.md` | `wizardDocumentGenerationPrompt` | Document generation instructions |
-| `wizard-inline-system.md` | `wizardInlineSystemPrompt` | System prompt for the Inline Wizard |
-| `wizard-inline-iterate.md` | `wizardInlineIteratePrompt` | Inline Wizard iteration prompt |
-| `wizard-inline-new.md` | `wizardInlineNewPrompt` | Inline Wizard new document prompt |
-| `wizard-inline-iterate-generation.md` | `wizardInlineIterateGenerationPrompt` | Inline Wizard iteration generation |
+| File                                  | Export                                | Purpose                                                     |
+| ------------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| `wizard-system.md`                    | `wizardSystemPrompt`                  | System prompt for the Wizard (Auto Run document generation) |
+| `wizard-system-continuation.md`       | `wizardSystemContinuationPrompt`      | Continuation prompt for multi-turn Wizard conversations     |
+| `wizard-document-generation.md`       | `wizardDocumentGenerationPrompt`      | Document generation instructions                            |
+| `wizard-inline-system.md`             | `wizardInlineSystemPrompt`            | System prompt for the Inline Wizard                         |
+| `wizard-inline-iterate.md`            | `wizardInlineIteratePrompt`           | Inline Wizard iteration prompt                              |
+| `wizard-inline-new.md`                | `wizardInlineNewPrompt`               | Inline Wizard new document prompt                           |
+| `wizard-inline-iterate-generation.md` | `wizardInlineIterateGenerationPrompt` | Inline Wizard iteration generation                          |
 
 #### Auto Run Prompts
 
-| File | Export | Purpose |
-|---|---|---|
-| `autorun-default.md` | `autorunDefaultPrompt` | Default system prompt for Auto Run execution. Provides agent context, git branch, loop iteration, and working folder. Requires synopsis-first response format. |
-| `autorun-synopsis.md` | `autorunSynopsisPrompt` | Synopsis extraction prompt |
+| File                  | Export                  | Purpose                                                                                                                                                        |
+| --------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `autorun-default.md`  | `autorunDefaultPrompt`  | Default system prompt for Auto Run execution. Provides agent context, git branch, loop iteration, and working folder. Requires synopsis-first response format. |
+| `autorun-synopsis.md` | `autorunSynopsisPrompt` | Synopsis extraction prompt                                                                                                                                     |
 
 #### Group Chat Prompts
 
-| File | Export | Purpose |
-|---|---|---|
-| `group-chat-moderator-system.md` | `groupChatModeratorSystemPrompt` | Moderator system prompt. Instructs the moderator to assist directly for simple tasks and delegate via `@mentions` for complex work. |
-| `group-chat-moderator-synthesis.md` | `groupChatModeratorSynthesisPrompt` | Synthesis prompt for reviewing agent responses. Moderator decides whether to continue delegating or summarize. |
-| `group-chat-participant.md` | `groupChatParticipantPrompt` | Participant system prompt. Sets response format (overview first, then details). |
-| `group-chat-participant-request.md` | `groupChatParticipantRequestPrompt` | Per-message request prompt with chat history and moderator's delegation. |
+| File                                | Export                              | Purpose                                                                                                                             |
+| ----------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `group-chat-moderator-system.md`    | `groupChatModeratorSystemPrompt`    | Moderator system prompt. Instructs the moderator to assist directly for simple tasks and delegate via `@mentions` for complex work. |
+| `group-chat-moderator-synthesis.md` | `groupChatModeratorSynthesisPrompt` | Synthesis prompt for reviewing agent responses. Moderator decides whether to continue delegating or summarize.                      |
+| `group-chat-participant.md`         | `groupChatParticipantPrompt`        | Participant system prompt. Sets response format (overview first, then details).                                                     |
+| `group-chat-participant-request.md` | `groupChatParticipantRequestPrompt` | Per-message request prompt with chat history and moderator's delegation.                                                            |
 
 #### Context Management Prompts
 
-| File | Export | Purpose |
-|---|---|---|
-| `context-grooming.md` | `contextGroomingPrompt` | Instructions for consolidating multiple conversation contexts into one coherent context |
-| `context-transfer.md` | `contextTransferPrompt` | Instructions for transferring context between sessions |
-| `context-summarize.md` | `contextSummarizePrompt` | Instructions for summarizing a conversation context |
+| File                   | Export                   | Purpose                                                                                 |
+| ---------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `context-grooming.md`  | `contextGroomingPrompt`  | Instructions for consolidating multiple conversation contexts into one coherent context |
+| `context-transfer.md`  | `contextTransferPrompt`  | Instructions for transferring context between sessions                                  |
+| `context-summarize.md` | `contextSummarizePrompt` | Instructions for summarizing a conversation context                                     |
 
 #### Input Processing
 
-| File | Export | Purpose |
-|---|---|---|
+| File                    | Export                   | Purpose                                                 |
+| ----------------------- | ------------------------ | ------------------------------------------------------- |
 | `image-only-default.md` | `imageOnlyDefaultPrompt` | Default prompt when only images are submitted (no text) |
 
 #### Commands
 
-| File | Export | Purpose |
-|---|---|---|
+| File                | Export                | Purpose                          |
+| ------------------- | --------------------- | -------------------------------- |
 | `commit-command.md` | `commitCommandPrompt` | Prompt for the `/commit` command |
 
 #### System Prompts
 
-| File | Export | Purpose |
-|---|---|---|
+| File                       | Export                | Purpose                                                                                                                      |
+| -------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `maestro-system-prompt.md` | `maestroSystemPrompt` | Base system prompt injected into all agent sessions. Provides agent name, tool type, conductor profile, and Maestro context. |
-| `tab-naming.md` | `tabNamingPrompt` | Prompt for automatic tab naming based on conversation content |
-| `director-notes.md` | `directorNotesPrompt` | Prompt for Director's Notes (unified history + synopsis generation) |
+| `tab-naming.md`            | `tabNamingPrompt`     | Prompt for automatic tab naming based on conversation content                                                                |
+| `director-notes.md`        | `directorNotesPrompt` | Prompt for Director's Notes (unified history + synopsis generation)                                                          |
 
 ## Template Variables
 
@@ -84,63 +84,63 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 
 #### Conductor Variables (the Maestro user)
 
-| Variable | Description |
-|---|---|
+| Variable                | Description                           |
+| ----------------------- | ------------------------------------- |
 | `{{CONDUCTOR_PROFILE}}` | User's About Me profile from Settings |
 
 #### Agent Variables
 
-| Variable | Description |
-|---|---|
-| `{{AGENT_NAME}}` | Agent display name |
-| `{{AGENT_PATH}}` | Agent home directory path (full path to project) |
-| `{{AGENT_GROUP}}` | Agent's group name (if grouped) |
-| `{{AGENT_SESSION_ID}}` | Agent session ID (for conversation continuity) |
-| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file |
-| `{{TAB_NAME}}` | Custom tab name (alias: `SESSION_NAME`) |
-| `{{TOOL_TYPE}}` | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
+| Variable                 | Description                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| `{{AGENT_NAME}}`         | Agent display name                                               |
+| `{{AGENT_PATH}}`         | Agent home directory path (full path to project)                 |
+| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
+| `{{AGENT_SESSION_ID}}`   | Agent session ID (for conversation continuity)                   |
+| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                                |
+| `{{TAB_NAME}}`           | Custom tab name (alias: `SESSION_NAME`)                          |
+| `{{TOOL_TYPE}}`          | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
 
 #### Path Variables
 
-| Variable | Description |
-|---|---|
-| `{{CWD}}` | Current working directory |
+| Variable             | Description                    |
+| -------------------- | ------------------------------ |
+| `{{CWD}}`            | Current working directory      |
 | `{{AUTORUN_FOLDER}}` | Auto Run documents folder path |
 
 #### Auto Run Variables
 
-| Variable | Description |
-|---|---|
-| `{{DOCUMENT_NAME}}` | Current Auto Run document name (without `.md`) |
-| `{{DOCUMENT_PATH}}` | Full path to current Auto Run document |
-| `{{LOOP_NUMBER}}` | Current loop iteration (5-digit padded, e.g. `00001`) |
+| Variable            | Description                                           |
+| ------------------- | ----------------------------------------------------- |
+| `{{DOCUMENT_NAME}}` | Current Auto Run document name (without `.md`)        |
+| `{{DOCUMENT_PATH}}` | Full path to current Auto Run document                |
+| `{{LOOP_NUMBER}}`   | Current loop iteration (5-digit padded, e.g. `00001`) |
 
 #### Date/Time Variables
 
-| Variable | Description |
-|---|---|
-| `{{DATE}}` | Current date (`YYYY-MM-DD`) |
-| `{{TIME}}` | Current time (`HH:MM:SS`) |
-| `{{DATETIME}}` | Full datetime (`YYYY-MM-DD HH:MM:SS`) |
-| `{{TIMESTAMP}}` | Unix timestamp in milliseconds |
-| `{{DATE_SHORT}}` | Short date (`MM/DD/YY`) |
-| `{{TIME_SHORT}}` | Short time (`HH:MM`) |
-| `{{YEAR}}` | Current year |
-| `{{MONTH}}` | Current month (`01-12`) |
-| `{{DAY}}` | Current day (`01-31`) |
-| `{{WEEKDAY}}` | Day of week (e.g. `Monday`) |
+| Variable         | Description                           |
+| ---------------- | ------------------------------------- |
+| `{{DATE}}`       | Current date (`YYYY-MM-DD`)           |
+| `{{TIME}}`       | Current time (`HH:MM:SS`)             |
+| `{{DATETIME}}`   | Full datetime (`YYYY-MM-DD HH:MM:SS`) |
+| `{{TIMESTAMP}}`  | Unix timestamp in milliseconds        |
+| `{{DATE_SHORT}}` | Short date (`MM/DD/YY`)               |
+| `{{TIME_SHORT}}` | Short time (`HH:MM`)                  |
+| `{{YEAR}}`       | Current year                          |
+| `{{MONTH}}`      | Current month (`01-12`)               |
+| `{{DAY}}`        | Current day (`01-31`)                 |
+| `{{WEEKDAY}}`    | Day of week (e.g. `Monday`)           |
 
 #### Git Variables
 
-| Variable | Description |
-|---|---|
-| `{{GIT_BRANCH}}` | Current git branch name (requires git repo) |
-| `{{IS_GIT_REPO}}` | `"true"` or `"false"` |
+| Variable          | Description                                 |
+| ----------------- | ------------------------------------------- |
+| `{{GIT_BRANCH}}`  | Current git branch name (requires git repo) |
+| `{{IS_GIT_REPO}}` | `"true"` or `"false"`                       |
 
 #### Context Variables
 
-| Variable | Description |
-|---|---|
+| Variable            | Description                             |
+| ------------------- | --------------------------------------- |
 | `{{CONTEXT_USAGE}}` | Current context window usage percentage |
 
 ### Substitution Flow
@@ -173,18 +173,18 @@ SpecKit provides structured specification management for software projects. It i
 
 ### Commands
 
-| Command | ID | Description | Custom? |
-|---|---|---|---|
-| `/speckit.help` | `help` | Learn how to use spec-kit with Maestro | Yes |
-| `/speckit.constitution` | `constitution` | Create or update the project constitution | No |
-| `/speckit.specify` | `specify` | Create or update feature specification | No |
-| `/speckit.clarify` | `clarify` | Identify underspecified areas and ask clarification questions | No |
-| `/speckit.plan` | `plan` | Execute implementation planning workflow | No |
-| `/speckit.tasks` | `tasks` | Generate actionable, dependency-ordered tasks | No |
-| `/speckit.analyze` | `analyze` | Cross-artifact consistency and quality analysis | No |
-| `/speckit.checklist` | `checklist` | Generate custom checklist for feature | No |
-| `/speckit.taskstoissues` | `taskstoissues` | Convert tasks to GitHub issues | No |
-| `/speckit.implement` | `implement` | Execute tasks using Maestro Auto Run with worktree support | Yes |
+| Command                  | ID              | Description                                                   | Custom? |
+| ------------------------ | --------------- | ------------------------------------------------------------- | ------- |
+| `/speckit.help`          | `help`          | Learn how to use spec-kit with Maestro                        | Yes     |
+| `/speckit.constitution`  | `constitution`  | Create or update the project constitution                     | No      |
+| `/speckit.specify`       | `specify`       | Create or update feature specification                        | No      |
+| `/speckit.clarify`       | `clarify`       | Identify underspecified areas and ask clarification questions | No      |
+| `/speckit.plan`          | `plan`          | Execute implementation planning workflow                      | No      |
+| `/speckit.tasks`         | `tasks`         | Generate actionable, dependency-ordered tasks                 | No      |
+| `/speckit.analyze`       | `analyze`       | Cross-artifact consistency and quality analysis               | No      |
+| `/speckit.checklist`     | `checklist`     | Generate custom checklist for feature                         | No      |
+| `/speckit.taskstoissues` | `taskstoissues` | Convert tasks to GitHub issues                                | No      |
+| `/speckit.implement`     | `implement`     | Execute tasks using Maestro Auto Run with worktree support    | Yes     |
 
 Commands marked "Custom" (`isCustom: true`) are Maestro-specific additions not from the upstream spec-kit repo.
 
@@ -221,11 +221,11 @@ Data model:
 ```typescript
 interface SpecKitCommand {
 	id: string;
-	command: string;       // e.g. '/speckit.plan'
+	command: string; // e.g. '/speckit.plan'
 	description: string;
-	prompt: string;        // The full prompt text
-	isCustom: boolean;     // Whether this is a Maestro-specific command
-	isModified: boolean;   // Whether user has customized this prompt
+	prompt: string; // The full prompt text
+	isCustom: boolean; // Whether this is a Maestro-specific command
+	isModified: boolean; // Whether user has customized this prompt
 }
 
 interface SpecKitMetadata {
@@ -242,14 +242,14 @@ User customizations are stored in `{userData}/speckit-customizations.json`.
 
 Registered in `src/main/ipc/handlers/speckit.ts`:
 
-| Handler | Description |
-|---|---|
-| `speckit:getCommands` | Get all SpecKit commands with their prompts |
-| `speckit:getCommand` | Get a single command by ID |
-| `speckit:saveCustomization` | Save a user's custom prompt for a command |
-| `speckit:resetCommand` | Reset a command to its bundled default |
-| `speckit:refreshFromGitHub` | Fetch latest prompts from GitHub |
-| `speckit:getMetadata` | Get version/source metadata |
+| Handler                     | Description                                 |
+| --------------------------- | ------------------------------------------- |
+| `speckit:getCommands`       | Get all SpecKit commands with their prompts |
+| `speckit:getCommand`        | Get a single command by ID                  |
+| `speckit:saveCustomization` | Save a user's custom prompt for a command   |
+| `speckit:resetCommand`      | Reset a command to its bundled default      |
+| `speckit:refreshFromGitHub` | Fetch latest prompts from GitHub            |
+| `speckit:getMetadata`       | Get version/source metadata                 |
 
 ### Renderer Component
 
@@ -261,13 +261,13 @@ OpenSpec provides structured change management for software projects. It follows
 
 ### Commands
 
-| Command | ID | Description | Custom? |
-|---|---|---|---|
-| `/openspec.help` | `help` | Learn how to use OpenSpec with Maestro | Yes |
-| `/openspec.proposal` | `proposal` | Create a change proposal with specs, tasks, and optional design docs | No |
-| `/openspec.apply` | `apply` | Implement an approved change proposal by executing tasks | No |
-| `/openspec.archive` | `archive` | Archive a completed change after deployment | No |
-| `/openspec.implement` | `implement` | Convert OpenSpec tasks to Maestro Auto Run documents | Yes |
+| Command               | ID          | Description                                                          | Custom? |
+| --------------------- | ----------- | -------------------------------------------------------------------- | ------- |
+| `/openspec.help`      | `help`      | Learn how to use OpenSpec with Maestro                               | Yes     |
+| `/openspec.proposal`  | `proposal`  | Create a change proposal with specs, tasks, and optional design docs | No      |
+| `/openspec.apply`     | `apply`     | Implement an approved change proposal by executing tasks             | No      |
+| `/openspec.archive`   | `archive`   | Archive a completed change after deployment                          | No      |
+| `/openspec.implement` | `implement` | Convert OpenSpec tasks to Maestro Auto Run documents                 | Yes     |
 
 ### Files
 
@@ -297,7 +297,7 @@ Data model mirrors SpecKit:
 ```typescript
 interface OpenSpecCommand {
 	id: string;
-	command: string;       // e.g. '/openspec.proposal'
+	command: string; // e.g. '/openspec.proposal'
 	description: string;
 	prompt: string;
 	isCustom: boolean;
@@ -318,14 +318,14 @@ User customizations are stored in `{userData}/openspec-customizations.json`.
 
 Registered in `src/main/ipc/handlers/openspec.ts`:
 
-| Handler | Description |
-|---|---|
-| `openspec:getCommands` | Get all OpenSpec commands with their prompts |
-| `openspec:getCommand` | Get a single command by ID |
-| `openspec:saveCustomization` | Save a user's custom prompt for a command |
-| `openspec:resetCommand` | Reset a command to its bundled default |
-| `openspec:refreshFromGitHub` | Fetch latest prompts from GitHub |
-| `openspec:getMetadata` | Get version/source metadata |
+| Handler                      | Description                                  |
+| ---------------------------- | -------------------------------------------- |
+| `openspec:getCommands`       | Get all OpenSpec commands with their prompts |
+| `openspec:getCommand`        | Get a single command by ID                   |
+| `openspec:saveCustomization` | Save a user's custom prompt for a command    |
+| `openspec:resetCommand`      | Reset a command to its bundled default       |
+| `openspec:refreshFromGitHub` | Fetch latest prompts from GitHub             |
+| `openspec:getMetadata`       | Get version/source metadata                  |
 
 ### Renderer Component
 
@@ -365,19 +365,19 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 
 ## Key Source Files
 
-| File | Purpose |
-|---|---|
-| `src/prompts/index.ts` | Prompt barrel file (re-exports generated constants) |
-| `src/prompts/*.md` | Raw prompt templates |
-| `src/prompts/speckit/*.md` | Bundled SpecKit prompts |
-| `src/prompts/openspec/*.md` | Bundled OpenSpec prompts |
-| `scripts/generate-prompts.mjs` | Build-time prompt compiler |
-| `src/generated/prompts.ts` | Generated TypeScript prompt constants |
-| `src/shared/templateVariables.ts` | Template variable definitions and types |
-| `src/renderer/utils/templateVariables.ts` | Runtime template substitution |
-| `src/main/speckit-manager.ts` | SpecKit prompt loading, updates, and customization |
-| `src/main/openspec-manager.ts` | OpenSpec prompt loading, updates, and customization |
-| `src/main/ipc/handlers/speckit.ts` | SpecKit IPC handlers |
-| `src/main/ipc/handlers/openspec.ts` | OpenSpec IPC handlers |
-| `src/renderer/components/SpecKitCommandsPanel.tsx` | SpecKit UI |
-| `src/renderer/components/OpenSpecCommandsPanel.tsx` | OpenSpec UI |
+| File                                                | Purpose                                             |
+| --------------------------------------------------- | --------------------------------------------------- |
+| `src/prompts/index.ts`                              | Prompt barrel file (re-exports generated constants) |
+| `src/prompts/*.md`                                  | Raw prompt templates                                |
+| `src/prompts/speckit/*.md`                          | Bundled SpecKit prompts                             |
+| `src/prompts/openspec/*.md`                         | Bundled OpenSpec prompts                            |
+| `scripts/generate-prompts.mjs`                      | Build-time prompt compiler                          |
+| `src/generated/prompts.ts`                          | Generated TypeScript prompt constants               |
+| `src/shared/templateVariables.ts`                   | Template variable definitions and types             |
+| `src/renderer/utils/templateVariables.ts`           | Runtime template substitution                       |
+| `src/main/speckit-manager.ts`                       | SpecKit prompt loading, updates, and customization  |
+| `src/main/openspec-manager.ts`                      | OpenSpec prompt loading, updates, and customization |
+| `src/main/ipc/handlers/speckit.ts`                  | SpecKit IPC handlers                                |
+| `src/main/ipc/handlers/openspec.ts`                 | OpenSpec IPC handlers                               |
+| `src/renderer/components/SpecKitCommandsPanel.tsx`  | SpecKit UI                                          |
+| `src/renderer/components/OpenSpecCommandsPanel.tsx` | OpenSpec UI                                         |

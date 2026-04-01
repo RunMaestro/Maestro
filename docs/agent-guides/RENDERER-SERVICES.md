@@ -38,10 +38,12 @@ Central utility for wrapping IPC calls with standardized error handling.
 - **Transform**: Optional `transform` function post-processes the result before returning.
 
 Two overloaded option interfaces enforce mutual exclusivity:
+
 - `IpcMethodOptionsWithDefault<T>` - requires `defaultValue`, optional `rethrow: false`
 - `IpcMethodOptionsRethrow<T>` - requires `rethrow: true`, no `defaultValue`
 
 **`IpcCache` class** - Simple in-memory cache for IPC results with TTL (default 30s):
+
 - `getOrFetch(key, fetcher, ttl)` - Cache-or-fetch pattern
 - `invalidate(key)` / `invalidatePrefix(prefix)` / `clear()` - Cache invalidation
 - Exported as singleton `ipcCache`
@@ -55,6 +57,7 @@ Two overloaded option interfaces enforce mutual exclusivity:
 Git operations service. Every method takes an optional `sshRemoteId` parameter for remote execution.
 
 All methods use `createIpcMethod` with `defaultValue` (swallow mode):
+
 - `isRepo(cwd, sshRemoteId?)` - Returns `false` on error
 - `getStatus(cwd, sshRemoteId?)` - Parallel fetches status + branch, parses porcelain format via `parseGitStatusPorcelain` from shared utils
 - `getDiff(cwd, files?, sshRemoteId?)` - Full diff or per-file diffs
@@ -72,6 +75,7 @@ Exported as `gitService` object (not a class).
 Process management service. Wraps `window.maestro.process.*` calls.
 
 Methods using `createIpcMethod` with `rethrow: true`:
+
 - `spawn(config)` - Returns `ProcessSpawnResult` (pid, success, optional sshRemote info)
 - `write(sessionId, data)` - Write to process stdin
 - `interrupt(sessionId)` - Send SIGINT/Ctrl+C
@@ -79,6 +83,7 @@ Methods using `createIpcMethod` with `rethrow: true`:
 - `resize(sessionId, cols, rows)` - Resize PTY terminal
 
 Event listener methods (direct passthrough, no createIpcMethod):
+
 - `onData(handler)` - Process stdout data
 - `onExit(handler)` - Process exit with code
 - `onSessionId(handler)` - Batch mode session ID assignment
@@ -93,12 +98,14 @@ Exported as `processService` object.
 Manages merging multiple conversation contexts across agents.
 
 **Key exports:**
+
 - `AGENT_ARTIFACTS` - Per-agent artifact patterns to strip during transfer (slash commands, brand references, model names)
 - `AGENT_TARGET_NOTES` - Per-agent capability descriptions for transfer context
 - `buildContextTransferPrompt(sourceAgent, targetAgent)` - Builds a prompt with agent-specific artifact removal instructions
 - `ContextGroomingService` class (singleton: `contextGroomingService`)
 
 **Grooming workflow:**
+
 1. Collect and format source contexts
 2. Calculate original token count
 3. Call `window.maestro.context.groomContext()` with grooming prompt
@@ -106,6 +113,7 @@ Manages merging multiple conversation contexts across agents.
 5. Report token savings
 
 Shared utilities imported from `renderer/utils/contextExtractor`:
+
 - `formatLogsForGrooming` - Formats LogEntry arrays into text
 - `parseGroomedOutput` - Parses groomed text back to LogEntry arrays
 - `estimateTokenCount` - Estimates tokens from a ContextSource
@@ -120,6 +128,7 @@ Does NOT use `createIpcMethod`; uses direct `window.maestro.context.*` calls.
 Manages compacting a single conversation context to reduce context window usage.
 
 **Key constants:**
+
 - `MAX_SUMMARIZE_TOKENS = 50000` - Single-pass limit
 - `TARGET_COMPACTED_TOKENS = 40000` - Multi-pass target
 - `MIN_TOKENS_FOR_SUMMARIZATION = 2000` - Fallback threshold
@@ -127,6 +136,7 @@ Manages compacting a single conversation context to reduce context window usage.
 - `MAX_CONSOLIDATION_DEPTH = 3` - Prevents infinite loops
 
 **`ContextSummarizationService` class** (singleton: `contextSummarizationService`):
+
 - `summarizeContext(request, sourceLogs, onProgress)` - Main entry. Chunks large contexts automatically.
 - `canSummarize(contextUsage, logs?)` - Triple-fallback eligibility check (context %, token estimate, log count)
 - `cancelSummarization()` - Calls `window.maestro.context.cancelGrooming()`
@@ -144,11 +154,13 @@ Shares the same utilities from `contextExtractor` as contextGroomer: `formatLogs
 Parses natural language input after `/wizard` command to determine user intent.
 
 **`parseWizardIntent(input, hasExistingDocs)`** - Returns `{ mode, goal? }`:
+
 - `'new'` - Create new documents from scratch
 - `'iterate'` - Modify/extend existing documents (includes extracted goal)
 - `'ask'` - Ambiguous, needs user clarification
 
 Detection logic (priority order):
+
 1. Empty input + no docs -> `new`; empty input + docs -> `ask`
 2. Prefix match against `NEW_MODE_KEYWORDS` (21 keywords: new, fresh, start, create, begin, scratch, etc.)
 3. Prefix match against `ITERATE_MODE_KEYWORDS` (21 keywords: continue, iterate, add, update, modify, etc.)
@@ -156,6 +168,7 @@ Detection logic (priority order):
 5. Ambiguous fallback: with docs -> `ask`, without docs -> `new`
 
 **Helper functions:**
+
 - `suggestsIterateIntent(input)` - Regex-based patterns ("I want to add...", "can you update...", etc.)
 - `suggestsNewIntent(input)` - Regex-based patterns ("start from scratch", "new project", etc.)
 
@@ -168,6 +181,7 @@ Pure logic, no IPC calls.
 Manages AI conversations during inline wizard mode. Each message spawns a new agent process in batch mode (stateless per-message approach).
 
 **Key functions:**
+
 - `generateInlineWizardPrompt(config)` - Builds system prompt from mode-specific templates (`wizardInlineIteratePrompt` / `wizardInlineNewPrompt`), substitutes template variables
 - `startInlineWizardConversation(config)` - Creates session config (no process spawn yet)
 - `sendWizardMessage(session, userMessage, history, callbacks?)` - Spawns agent, collects output, parses structured JSON response
@@ -175,10 +189,12 @@ Manages AI conversations during inline wizard mode. Each message spawns a new ag
 - `endInlineWizardConversation(session)` - Kills process if active
 
 **Agent-specific handling:**
+
 - `buildArgsForAgent(agent)` - Configures per-agent CLI args. Claude Code gets `--allowedTools Read,Glob,Grep,LS` (read-only). Codex/OpenCode use base args.
 - `extractResultFromStreamJson(output, agentType)` - Parses Claude Code `result` messages, OpenCode `text` parts, Codex `agent_message` content
 
 **Process management:**
+
 - 20-minute inactivity timeout (resets on any output)
 - Registers `onData`, `onExit`, `onThinkingChunk`, `onToolExecution` listeners directly on `window.maestro.process`
 - Does NOT use `processService` wrapper
@@ -190,6 +206,7 @@ Manages AI conversations during inline wizard mode. Each message spawns a new ag
 Generates Auto Run documents from wizard conversation results. The largest service file.
 
 **Key functions:**
+
 - `generateInlineDocuments(config)` - Main orchestrator:
   1. Creates date-prefixed subfolder (e.g., "2026-03-21-Feature-Name")
   2. Sets up file watcher on subfolder for real-time streaming
@@ -205,6 +222,7 @@ Generates Auto Run documents from wizard conversation results. The largest servi
 - `extractDisplayTextFromChunk(chunk, agentType)` - Parses streaming JSON for display text
 
 **Duplicated functions** (also in inlineWizardConversation.ts):
+
 - `extractResultFromStreamJson` - Identical logic for parsing agent output
 - `buildArgsForAgent` - Similar but allows Write tool (conversation version restricts to read-only)
 
@@ -213,6 +231,7 @@ Generates Auto Run documents from wizard conversation results. The largest servi
 ### speckit.ts (~57 lines)
 
 SpecKit slash command service. Wraps `window.maestro.speckit.*`:
+
 - `getSpeckitCommands()` - Get all spec-kit commands
 - `getSpeckitMetadata()` - Get version and refresh date
 - `getSpeckitCommand(slashCommand)` - Get single command by slash string
@@ -224,6 +243,7 @@ Uses manual try/catch (does not use `createIpcMethod`).
 ### openspec.ts (~57 lines)
 
 OpenSpec slash command service. Wraps `window.maestro.openspec.*`:
+
 - `getOpenSpecCommands()` - Get all OpenSpec commands
 - `getOpenSpecMetadata()` - Get version and refresh date
 - `getOpenSpecCommand(slashCommand)` - Get single command by slash string
@@ -235,6 +255,7 @@ Structurally identical to speckit.ts - same 3 functions, same error handling pat
 ### index.ts (~36 lines)
 
 Barrel export file. Re-exports from:
+
 - `git` (gitService + types)
 - `process` (processService + types)
 - `ipcWrapper` (createIpcMethod + types)
@@ -261,6 +282,7 @@ Exports: `THEMES`, `DEFAULT_CUSTOM_THEME_COLORS`, `getThemeById`, type exports f
 Defines all keyboard shortcuts in three tiers:
 
 **`DEFAULT_SHORTCUTS`** (30+ entries) - User-configurable:
+
 - Panel toggles: sidebar, right panel, AI/shell mode
 - Agent navigation: previous/next, jump to session
 - View actions: files tab, history tab, auto run tab, git diff, git log
@@ -269,12 +291,14 @@ Defines all keyboard shortcuts in three tiers:
 - Modals: prompt composer, wizard, symphony, director's notes
 
 **`FIXED_SHORTCUTS`** (10+ entries) - Displayed but not configurable:
+
 - Jump to session (Alt+Cmd+1-0)
 - Context-specific filters (Cmd+F in various views)
 - File preview navigation (Cmd+Arrow)
 - Font size increase/decrease
 
 **`TAB_SHORTCUTS`** (20+ entries) - AI mode only:
+
 - Tab CRUD: new, close, close all, close others, close left/right, reopen
 - Tab navigation: switcher, previous/next, go to tab 1-9, last tab
 - Tab actions: rename, toggle read-only, toggle save to history, toggle show thinking, toggle unread, toggle star
@@ -321,6 +345,7 @@ Claude Code tool-related constants for output parsing.
 Maps agent type IDs to emoji display icons.
 
 **`AGENT_ICONS`** - Record mapping:
+
 - `claude-code` / `claude` -> robot emoji
 - `codex` / `openai-codex` -> diamond
 - `gemini-cli` / `gemini` -> blue diamond
@@ -340,6 +365,7 @@ Used by `SendToAgentModal` and `useAvailableAgents` hook.
 Comprehensive accessibility color system based on Wong's palette (Nature Methods, 2011).
 
 **Color Palettes:**
+
 - `COLORBLIND_AGENT_PALETTE` - 10 colors for agent/categorical data
 - `COLORBLIND_BINARY_PALETTE` - 2 colors (blue/orange) for binary comparisons
 - `COLORBLIND_HEATMAP_SCALE` - 5-level sequential scale (light yellow to dark blue)
@@ -347,9 +373,11 @@ Comprehensive accessibility color system based on Wong's palette (Nature Methods
 - `COLORBLIND_EXTENSION_PALETTE` - 15 file type categories with light/dark mode variants
 
 **Pattern fills** for additional visual distinction:
+
 - `COLORBLIND_PATTERNS` - solid, diagonal, dots, crosshatch, horizontal, vertical
 
 **Helper functions:**
+
 - `getColorBlindAgentColor(index)` - Wrapping index lookup
 - `getColorBlindHeatmapColor(intensity)` - Clamped 0-4 lookup
 - `getColorBlindPattern(index)` - Wrapping pattern lookup
@@ -381,6 +409,7 @@ Gamification system tracking cumulative AutoRun time with conductor-themed achie
 Each badge includes name, description, a historical example conductor with Wikipedia link, and flavor text.
 
 **Helper functions:**
+
 - `getBadgeForTime(cumulativeTimeMs)` - Returns highest qualifying badge
 - `getNextBadge(currentBadge)` - Returns next badge or null
 - `getProgressToNextBadge(time, current, next)` - 0-100 progress
@@ -405,6 +434,7 @@ Keyboard shortcut mastery progression system.
 | maestro | Keyboard Maestro | 100% |
 
 **Helper functions:**
+
 - `getLevelForPercentage(percentage)` - Returns highest matching level
 - `getLevelIndex(percentage)` - Returns index 0-4
 
@@ -423,6 +453,7 @@ This file does not exist in the codebase.
 **Services using `createIpcMethod`:** `git.ts` (7 calls), `process.ts` (5 calls)
 
 **Services with direct `window.maestro.*` calls:**
+
 - `contextGroomer.ts` - 2 calls to `window.maestro.context.*`
 - `contextSummarizer.ts` - 4 calls to `window.maestro.context.*`
 - `inlineWizardConversation.ts` - 8 calls to `window.maestro.process.*` and `window.maestro.agents.*`

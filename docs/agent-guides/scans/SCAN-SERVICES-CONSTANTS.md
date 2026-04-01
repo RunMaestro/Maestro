@@ -9,6 +9,7 @@
 **Files:** `inlineWizardConversation.ts:397`, `inlineWizardDocumentGeneration.ts:535`
 
 Both files define a private `extractResultFromStreamJson(output, agentType)` function with identical logic:
+
 - OpenCode: concatenate `msg.type === 'text' && msg.part?.text`
 - Codex: concatenate `msg.type === 'agent_message' && msg.content[].text` plus `msg.type === 'message' && msg.text`
 - Claude Code: find `msg.type === 'result' && msg.result`
@@ -22,6 +23,7 @@ Both files define a private `extractResultFromStreamJson(output, agentType)` fun
 **Files:** `inlineWizardConversation.ts:469`, `inlineWizardDocumentGeneration.ts:607`
 
 Both files define a private `buildArgsForAgent(agent)` with the same switch/case structure for claude-code, codex, opencode, and default. The only difference:
+
 - **Conversation version:** restricts to `--allowedTools Read,Glob,Grep,LS` (read-only)
 - **Generation version:** allows `--allowedTools Read,Glob,Grep,LS,Write` (write access for doc creation)
 
@@ -87,6 +89,7 @@ inlineWizardDocumentGeneration.ts (direct calls):
 ### 5. Shared Utilities Between contextGroomer and contextSummarizer (LOW - CLEAN)
 
 Both services import from `renderer/utils/contextExtractor`:
+
 - `formatLogsForGrooming` - contextGroomer (2 uses), contextSummarizer (3 uses)
 - `parseGroomedOutput` - contextGroomer (1 use), contextSummarizer (2 uses)
 - `estimateTokenCount` - contextGroomer (1 use)
@@ -101,10 +104,12 @@ Both services also call the same IPC endpoint `window.maestro.context.groomConte
 ### 6. `createIpcMethod` Adoption Gap (LOW)
 
 Only 2 of 9 service files use `createIpcMethod`:
+
 - `git.ts` - 7 calls (all swallow mode with defaultValue)
 - `process.ts` - 5 calls (all rethrow mode)
 
 Files NOT using it (with their own try/catch):
+
 - `contextGroomer.ts` - 2 IPC calls
 - `contextSummarizer.ts` - 4 IPC calls
 - `speckit.ts` - 3 IPC calls
@@ -137,6 +142,7 @@ Both constants in `app.ts` are only imported from `app.ts`. No inline redefiniti
 ### 9. `AGENT_ICONS` (CLEAN)
 
 Centralized in `agentIcons.ts`. Only used via imports:
+
 - `SendToAgentModal.tsx` - imports `getAgentIcon`
 - `useAvailableAgents.ts` - imports `getAgentIcon`
 
@@ -153,6 +159,7 @@ Pure re-export from `src/shared/themes.ts`. No renderer-specific theme definitio
 ### 11. Shortcut Constants (CLEAN)
 
 All three shortcut records (`DEFAULT_SHORTCUTS`, `FIXED_SHORTCUTS`, `TAB_SHORTCUTS`) are only defined in `constants/shortcuts.ts` and imported by:
+
 - `KeyboardMasteryCelebration.tsx`
 - `LeaderboardRegistrationModal.tsx`
 - `ShortcutsHelpModal.tsx`
@@ -165,6 +172,7 @@ No inline shortcut definitions found.
 ### 12. Colorblind Palettes (CLEAN)
 
 All colorblind constants are centralized in `colorblindPalettes.ts` and imported by:
+
 - `SymphonyModal.tsx` - uses `COLORBLIND_AGENT_PALETTE`
 - `ActivityHeatmap.tsx` - uses `COLORBLIND_HEATMAP_SCALE`
 - `AgentComparisonChart.tsx` - uses `COLORBLIND_AGENT_PALETTE`
@@ -179,6 +187,7 @@ No inline color definitions that should be using these palettes.
 ### 13. Conductor Badges and Keyboard Mastery (CLEAN)
 
 Both gamification systems are centralized with no duplication:
+
 - `conductorBadges.ts` - used by 4 components
 - `keyboardMastery.ts` - used by 4 components + settingsStore
 
@@ -188,15 +197,15 @@ Both gamification systems are centralized with no duplication:
 
 ### Issues Found
 
-| # | Finding | Severity | Files |
-|---|---------|----------|-------|
-| 1 | `extractResultFromStreamJson` duplicated | HIGH | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
-| 2 | `buildArgsForAgent` duplicated | MEDIUM | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
-| 3 | speckit.ts / openspec.ts structural clone | MEDIUM | speckit.ts, openspec.ts |
-| 4 | Direct process IPC bypass of processService | MEDIUM | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
-| 5 | `onThinkingChunk` missing from processService | MEDIUM | process.ts |
-| 6 | `createIpcMethod` not adopted by most services | LOW | 7 of 9 service files |
-| 7 | SpecKit/OpenSpec panel components bypass services | LOW | SpecKitCommandsPanel.tsx, OpenSpecCommandsPanel.tsx |
+| #   | Finding                                           | Severity | Files                                                          |
+| --- | ------------------------------------------------- | -------- | -------------------------------------------------------------- |
+| 1   | `extractResultFromStreamJson` duplicated          | HIGH     | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
+| 2   | `buildArgsForAgent` duplicated                    | MEDIUM   | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
+| 3   | speckit.ts / openspec.ts structural clone         | MEDIUM   | speckit.ts, openspec.ts                                        |
+| 4   | Direct process IPC bypass of processService       | MEDIUM   | inlineWizardConversation.ts, inlineWizardDocumentGeneration.ts |
+| 5   | `onThinkingChunk` missing from processService     | MEDIUM   | process.ts                                                     |
+| 6   | `createIpcMethod` not adopted by most services    | LOW      | 7 of 9 service files                                           |
+| 7   | SpecKit/OpenSpec panel components bypass services | LOW      | SpecKitCommandsPanel.tsx, OpenSpecCommandsPanel.tsx            |
 
 ### Clean Areas (No Action Needed)
 

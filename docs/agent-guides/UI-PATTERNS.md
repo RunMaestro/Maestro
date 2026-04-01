@@ -22,14 +22,15 @@ LayerStackProvider          (src/renderer/contexts/LayerStackContext.tsx)
 
 Two discriminated-union variants defined in `src/renderer/types/layer.ts`:
 
-| Type | Purpose | Extras |
-|------|---------|--------|
-| `modal` | Full dialogs that block the UI | `isDirty`, `onBeforeClose`, `parentModalId` |
-| `overlay` | Semi-transparent surfaces (file preview, lightbox) | `allowClickOutside` |
+| Type      | Purpose                                            | Extras                                      |
+| --------- | -------------------------------------------------- | ------------------------------------------- |
+| `modal`   | Full dialogs that block the UI                     | `isDirty`, `onBeforeClose`, `parentModalId` |
+| `overlay` | Semi-transparent surfaces (file preview, lightbox) | `allowClickOutside`                         |
 
 Both share `BaseLayer` fields: `id`, `priority`, `blocksLowerLayers`, `capturesFocus`, `focusTrap`, `ariaLabel`.
 
 Focus trap modes:
+
 - `strict` - Tab cycles within the layer (default for modals)
 - `lenient` - Layer captures keyboard events but focus can leave
 - `none` - No focus trapping
@@ -38,14 +39,14 @@ Focus trap modes:
 
 Defined in `src/renderer/constants/modalPriorities.ts`:
 
-| Range | Purpose | Examples |
-|-------|---------|----------|
-| 1000+ | Critical / celebrations | `QUIT_CONFIRM` (1020), `CONFIRM` (1000), `STANDING_OVATION` (1100) |
-| 900-999 | High-priority mutations | `RENAME_INSTANCE` (900), `GIST_PUBLISH` (980) |
-| 700-899 | Standard modals | `NEW_INSTANCE` (750), `BATCH_RUNNER` (720), `QUICK_ACTION` (700) |
-| 400-699 | Settings and info | `SETTINGS` (450), `ABOUT` (600), `USAGE_DASHBOARD` (540) |
-| 100-399 | Overlays and previews | `FILE_PREVIEW` (100), `GIT_DIFF` (200), `LIGHTBOX` (150) |
-| 1-99 | Autocomplete and filters | `SLASH_AUTOCOMPLETE` (50), `FILE_TREE_FILTER` (30) |
+| Range   | Purpose                  | Examples                                                           |
+| ------- | ------------------------ | ------------------------------------------------------------------ |
+| 1000+   | Critical / celebrations  | `QUIT_CONFIRM` (1020), `CONFIRM` (1000), `STANDING_OVATION` (1100) |
+| 900-999 | High-priority mutations  | `RENAME_INSTANCE` (900), `GIST_PUBLISH` (980)                      |
+| 700-899 | Standard modals          | `NEW_INSTANCE` (750), `BATCH_RUNNER` (720), `QUICK_ACTION` (700)   |
+| 400-699 | Settings and info        | `SETTINGS` (450), `ABOUT` (600), `USAGE_DASHBOARD` (540)           |
+| 100-399 | Overlays and previews    | `FILE_PREVIEW` (100), `GIT_DIFF` (200), `LIGHTBOX` (150)           |
+| 1-99    | Autocomplete and filters | `SLASH_AUTOCOMPLETE` (50), `FILE_TREE_FILTER` (30)                 |
 
 ### Registering a Modal
 
@@ -108,6 +109,7 @@ function SettingsModal({ theme, onClose }: Props) {
 ```
 
 `<Modal>` props of note:
+
 - `closeOnBackdropClick` - defaults to `false`
 - `showHeader` / `showCloseButton` - toggle header elements
 - `customHeader` / `headerIcon` - customize the header
@@ -137,6 +139,7 @@ const { hasOpenLayers, hasOpenModal, layerCount } = useLayerStack();
 ### Debug API
 
 In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
+
 - `list()` - print all layers in a table
 - `top()` - log the topmost layer
 - `simulate.escape()` - dispatch an Escape event
@@ -162,28 +165,28 @@ Each theme has:
 interface Theme {
 	id: ThemeId;
 	name: string;
-	mode: ThemeMode;  // 'light' | 'dark' | 'vibe'
+	mode: ThemeMode; // 'light' | 'dark' | 'vibe'
 	colors: ThemeColors;
 }
 ```
 
 `ThemeColors` fields (13 color slots):
 
-| Color | Purpose |
-|-------|---------|
-| `bgMain` | Main content area background |
-| `bgSidebar` | Left/right sidebar background |
-| `bgActivity` | Interactive/hover element backgrounds |
-| `border` | Dividers and outlines |
-| `textMain` | Primary text |
-| `textDim` | Secondary/muted text |
-| `accent` | Highlights and interactive elements |
-| `accentDim` | Dimmed accent (typically with alpha) |
-| `accentText` | Text in accent contexts |
+| Color              | Purpose                                     |
+| ------------------ | ------------------------------------------- |
+| `bgMain`           | Main content area background                |
+| `bgSidebar`        | Left/right sidebar background               |
+| `bgActivity`       | Interactive/hover element backgrounds       |
+| `border`           | Dividers and outlines                       |
+| `textMain`         | Primary text                                |
+| `textDim`          | Secondary/muted text                        |
+| `accent`           | Highlights and interactive elements         |
+| `accentDim`        | Dimmed accent (typically with alpha)        |
+| `accentText`       | Text in accent contexts                     |
 | `accentForeground` | Text ON accent backgrounds (contrast color) |
-| `success` | Green states |
-| `warning` | Yellow/orange states |
-| `error` | Red states |
+| `success`          | Green states                                |
+| `warning`          | Yellow/orange states                        |
+| `error`            | Red states                                  |
 
 ### Available Themes
 
@@ -243,6 +246,7 @@ src/renderer/components/ShortcutsHelpModal.tsx       - Help overlay (Cmd+/)
 Three categories defined in `src/renderer/constants/shortcuts.ts`:
 
 **DEFAULT_SHORTCUTS** - Editable by the user:
+
 - Navigation: `Cmd+[`/`]` (cycle agents), `Cmd+Shift+,`/`.` (nav back/forward)
 - Panels: `Alt+Cmd+ArrowLeft/Right` (toggle sidebars)
 - Actions: `Cmd+K` (quick actions), `Cmd+,` (settings), `Cmd+N` (new agent)
@@ -250,12 +254,14 @@ Three categories defined in `src/renderer/constants/shortcuts.ts`:
 - Focus: `Cmd+.` (toggle input/output), `Cmd+Shift+A` (focus left panel)
 
 **FIXED_SHORTCUTS** - Displayed in help but not configurable:
+
 - `Alt+Cmd+1-0` (jump to agent 1-10)
 - `Cmd+F` (context-sensitive filter/search)
 - `Cmd+ArrowLeft/Right` (file preview navigation)
 - `Cmd+=`/`Cmd+-` (font size)
 
 **TAB_SHORTCUTS** - AI mode tab management:
+
 - `Cmd+T` (new tab), `Cmd+W` (close tab), `Cmd+1-9` (go to tab N)
 - `Alt+Cmd+T` (tab switcher), `Cmd+Shift+T` (reopen closed tab)
 - `Cmd+R` (toggle read-only), `Cmd+S` (toggle save to history)
@@ -313,7 +319,7 @@ Use `notifyToast()` from anywhere (React or non-React code):
 import { notifyToast } from '../stores/notificationStore';
 
 notifyToast({
-	type: 'success',        // 'success' | 'info' | 'warning' | 'error'
+	type: 'success', // 'success' | 'info' | 'warning' | 'error'
 	title: 'Task Complete',
 	message: 'Auto Run finished phase-01.md',
 	// Optional fields:
@@ -321,7 +327,7 @@ notifyToast({
 	project: 'My Agent',
 	taskDuration: 45000,
 	tabName: 'main',
-	sessionId: 'abc-123',   // enables click-to-navigate
+	sessionId: 'abc-123', // enables click-to-navigate
 	tabId: 'tab-1',
 	actionUrl: 'https://github.com/pr/1',
 	actionLabel: 'View PR',
@@ -329,6 +335,7 @@ notifyToast({
 ```
 
 `notifyToast` handles:
+
 1. ID generation and timestamp
 2. Duration calculation (config seconds to milliseconds)
 3. Adding to visible queue (unless toasts disabled with `defaultDuration: -1`)
@@ -344,9 +351,9 @@ Managed through the notification store:
 ```typescript
 const store = useNotificationStore();
 
-store.setDefaultDuration(20);        // seconds; 0 = never dismiss; -1 = disable toasts
+store.setDefaultDuration(20); // seconds; 0 = never dismiss; -1 = disable toasts
 store.setAudioFeedback(true, 'say'); // enable TTS with command
-store.setOsNotifications(true);      // enable OS notifications
+store.setOsNotifications(true); // enable OS notifications
 ```
 
 ### Non-React Access
@@ -362,6 +369,7 @@ actions.clearToasts();
 ### ToastContainer Component
 
 Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each `ToastItem` shows:
+
 - Type icon (success/error/warning/info)
 - Optional group badge, project name, tab name
 - Title and message
@@ -388,7 +396,7 @@ Standard cancel/confirm button layout:
 	onCancel={handleClose}
 	onConfirm={handleSubmit}
 	confirmLabel="Delete"
-	destructive={true}        // red confirm button
+	destructive={true} // red confirm button
 	confirmDisabled={!canDelete}
 	showCancel={true}
 />
@@ -416,6 +424,7 @@ Themed form input with label, validation, and Enter-to-submit:
 ```
 
 Key features:
+
 - Ref forwarding for focus management
 - Built-in Enter key handling with `submitEnabled` guard
 - Error state changes border color to `theme.colors.error`
@@ -436,6 +445,7 @@ Default fallback shows error details, component stack trace, and "Try Again" / "
 ### `<MarkdownRenderer>` (`src/renderer/components/MarkdownRenderer.tsx`)
 
 Full-featured markdown renderer using `react-markdown` with:
+
 - GFM support (`remark-gfm`)
 - Frontmatter rendering as tables (`remark-frontmatter`)
 - Wiki-link resolution (`remarkFileLinks`)
@@ -478,6 +488,7 @@ Each agent supports multiple AI tabs within its workspace. Tab management hooks 
 ### Tab Shortcuts
 
 Defined in `TAB_SHORTCUTS` constant. Key bindings:
+
 - `Cmd+T` - New tab
 - `Cmd+W` - Close tab
 - `Cmd+1-9` - Jump to tab N
@@ -492,6 +503,7 @@ Defined in `TAB_SHORTCUTS` constant. Key bindings:
 ### Tab State
 
 Each tab has an `AITab` type with:
+
 - `id`, `name`, `agentSessionId`
 - `starred`, `readOnlyMode`, `saveToHistory`
 - `inputValue`, `logs`, `usageStats`
@@ -501,6 +513,7 @@ Each tab has an `AITab` type with:
 ### Tab Handlers
 
 `useTabHandlers` (`src/renderer/hooks/tabs/useTabHandlers.ts`) provides:
+
 - `createTab`, `closeTab`, `closeAllTabs`, `closeOtherTabs`
 - `navigateToNextTab`, `navigateToPreviousTab`
 - `reopenClosedTab` (keeps a closed tab stack)
@@ -592,29 +605,31 @@ The `UseSettingsReturn` interface groups settings by domain:
 
 Maestro uses Zustand stores as the primary state management solution. Located in `src/renderer/stores/`:
 
-| Store | Purpose |
-|-------|---------|
-| `settingsStore` | All user preferences and configuration |
-| `sessionStore` | Agent sessions and active session |
-| `tabStore` | Tab state per session |
-| `agentStore` | Agent detection and capabilities |
-| `batchStore` | Auto Run batch processing state |
-| `groupChatStore` | Group chat sessions |
-| `fileExplorerStore` | File tree state |
-| `modalStore` | Modal open/close flags |
-| `notificationStore` | Toast queue and config |
-| `operationStore` | Long-running operation tracking |
-| `uiStore` | Transient UI state (focus, sidebar) |
+| Store               | Purpose                                |
+| ------------------- | -------------------------------------- |
+| `settingsStore`     | All user preferences and configuration |
+| `sessionStore`      | Agent sessions and active session      |
+| `tabStore`          | Tab state per session                  |
+| `agentStore`        | Agent detection and capabilities       |
+| `batchStore`        | Auto Run batch processing state        |
+| `groupChatStore`    | Group chat sessions                    |
+| `fileExplorerStore` | File tree state                        |
+| `modalStore`        | Modal open/close flags                 |
+| `notificationStore` | Toast queue and config                 |
+| `operationStore`    | Long-running operation tracking        |
+| `uiStore`           | Transient UI state (focus, sidebar)    |
 
 ### Store Access Patterns
 
 **Inside React:**
+
 ```tsx
 const sessions = useSessionStore((s) => s.sessions);
 const addSession = useSessionStore((s) => s.addSession);
 ```
 
 **Outside React (services, orchestrators):**
+
 ```typescript
 const state = useSessionStore.getState();
 state.addSession(newSession);
@@ -626,7 +641,9 @@ Zustand stores are singletons. Reset between tests:
 
 ```typescript
 beforeEach(() => {
-	useSettingsStore.setState({ /* initial state */ });
+	useSettingsStore.setState({
+		/* initial state */
+	});
 });
 ```
 
@@ -634,19 +651,19 @@ beforeEach(() => {
 
 ## Key Files Reference
 
-| Pattern | Primary Files |
-|---------|--------------|
-| Layer stack | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx` |
-| Modal layer | `src/renderer/hooks/ui/useModalLayer.ts` |
-| Modal component | `src/renderer/components/ui/Modal.tsx` |
-| Modal priorities | `src/renderer/constants/modalPriorities.ts` |
-| Layer types | `src/renderer/types/layer.ts` |
-| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts` |
-| Shortcuts | `src/renderer/constants/shortcuts.ts` |
-| Keyboard handler | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` |
-| Notifications | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx` |
-| Form components | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx` |
-| Error boundary | `src/renderer/components/ErrorBoundary.tsx` |
-| Markdown renderer | `src/renderer/components/MarkdownRenderer.tsx` |
-| Settings hook | `src/renderer/hooks/settings/useSettings.ts` |
-| Settings store | `src/renderer/stores/settingsStore.ts` |
+| Pattern           | Primary Files                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------- |
+| Layer stack       | `src/renderer/hooks/ui/useLayerStack.ts`, `src/renderer/contexts/LayerStackContext.tsx` |
+| Modal layer       | `src/renderer/hooks/ui/useModalLayer.ts`                                                |
+| Modal component   | `src/renderer/components/ui/Modal.tsx`                                                  |
+| Modal priorities  | `src/renderer/constants/modalPriorities.ts`                                             |
+| Layer types       | `src/renderer/types/layer.ts`                                                           |
+| Theme definitions | `src/shared/themes.ts`, `src/shared/theme-types.ts`                                     |
+| Shortcuts         | `src/renderer/constants/shortcuts.ts`                                                   |
+| Keyboard handler  | `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`                                 |
+| Notifications     | `src/renderer/stores/notificationStore.ts`, `src/renderer/components/Toast.tsx`         |
+| Form components   | `src/renderer/components/ui/FormInput.tsx`, `src/renderer/components/ui/Modal.tsx`      |
+| Error boundary    | `src/renderer/components/ErrorBoundary.tsx`                                             |
+| Markdown renderer | `src/renderer/components/MarkdownRenderer.tsx`                                          |
+| Settings hook     | `src/renderer/hooks/settings/useSettings.ts`                                            |
+| Settings store    | `src/renderer/stores/settingsStore.ts`                                                  |

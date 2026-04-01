@@ -83,6 +83,7 @@ wakatime-listener.ts:76 - flushPendingFiles (file heartbeat flush)
 ### 2.2 Parsing Logic Across Listeners
 
 **data-listener.ts** and **exit-listener.ts** both:
+
 - Check `sessionId.startsWith(GROUP_CHAT_PREFIX)` for fast-path optimization
 - Match session IDs against `REGEX_MODERATOR_SESSION`
 - Parse participant session IDs via `outputParser.parseParticipantSessionId()`
@@ -92,6 +93,7 @@ wakatime-listener.ts:76 - flushPendingFiles (file heartbeat flush)
 Both files contain the same group-chat session ID detection logic: prefix check, moderator regex match, participant parsing. The difference is timing - data-listener buffers during streaming, exit-listener processes on completion.
 
 **usage-listener.ts** and **session-id-listener.ts** repeat the same pattern:
+
 - `sessionId.startsWith(GROUP_CHAT_PREFIX)` check
 - `outputParser.parseParticipantSessionId()` call
 - `sessionId.match(REGEX_MODERATOR_SESSION)` call
@@ -106,6 +108,7 @@ Both files contain the same group-chat session ID detection logic: prefix check,
 ### 2.4 Group Chat Context Loading Pattern
 
 Both `exit-listener.ts` (moderator exit and participant exit paths) load the group chat with:
+
 ```typescript
 const chat = await groupChatStorage.loadGroupChat(groupChatId);
 ```
@@ -121,6 +124,7 @@ The moderator exit path adds retry logic (`loadChatWithRetry`). The participant 
 ### 3.1 All Routes and Handlers
 
 **Static Routes (staticRoutes.ts):**
+
 ```
 GET  /                           - Redirect to runmaestro.ai
 GET  /health                     - Health check
@@ -133,6 +137,7 @@ GET  /:token                     - Invalid token catch-all
 ```
 
 **API Routes (apiRoutes.ts):**
+
 ```
 GET  /$TOKEN/api/sessions              - List sessions
 GET  /$TOKEN/api/session/:id           - Session detail
@@ -143,11 +148,13 @@ GET  /$TOKEN/api/history               - History entries
 ```
 
 **WebSocket Route (wsRoute.ts):**
+
 ```
 GET  /$TOKEN/ws                  - WebSocket endpoint
 ```
 
 **WebSocket Message Handlers (messageHandlers.ts):**
+
 ```
 ping, subscribe, send_command, switch_mode, select_session,
 get_sessions, select_tab, new_tab, close_tab, rename_tab,
@@ -186,15 +193,16 @@ messageHandlers.ts:395-403 - get_sessions message handler
 ```
 
 All three contain nearly identical code:
+
 ```typescript
 const sessionsWithLiveInfo = allSessions.map((s) => {
-    const liveInfo = this.callbacks.getLiveSessionInfo?.(s.id);
-    return {
-        ...s,
-        agentSessionId: liveInfo?.agentSessionId || s.agentSessionId,
-        liveEnabledAt: liveInfo?.enabledAt,
-        isLive: this.callbacks.isSessionLive?.(s.id) || false,
-    };
+	const liveInfo = this.callbacks.getLiveSessionInfo?.(s.id);
+	return {
+		...s,
+		agentSessionId: liveInfo?.agentSessionId || s.agentSessionId,
+		liveEnabledAt: liveInfo?.enabledAt,
+		isLive: this.callbacks.isSessionLive?.(s.id) || false,
+	};
 });
 ```
 
@@ -225,16 +233,16 @@ server.setXxxCallback(async (sessionId: string, ...) => {
 This exact structure (null check, availability check, log, send, return) repeats for: selectTab, closeTab, renameTab, starTab, reorderTab, toggleBookmark, selectSession, switchMode, interruptSession, and partially for executeCommand.
 
 **Recommendation:** Extract a helper:
+
 ```typescript
-function forwardToRenderer(
-    getMainWindow, channel: string, ...args
-): Promise<boolean> {
-    const mainWindow = getMainWindow();
-    if (!mainWindow || !isWebContentsAvailable(mainWindow)) return false;
-    mainWindow.webContents.send(channel, ...args);
-    return true;
+function forwardToRenderer(getMainWindow, channel: string, ...args): Promise<boolean> {
+	const mainWindow = getMainWindow();
+	if (!mainWindow || !isWebContentsAvailable(mainWindow)) return false;
+	mainWindow.webContents.send(channel, ...args);
+	return true;
 }
 ```
+
 This would reduce ~120 lines of repetitive code to ~20 lines.
 
 ### 3.5 WebSocket Message Handling vs IPC Patterns
@@ -260,11 +268,11 @@ Similarly, 17 callback setter methods delegate to `CallbackRegistry`.
 
 ## Summary of Actionable Findings
 
-| Priority | Location | Issue | Lines Affected |
-|----------|----------|-------|----------------|
-| HIGH | `messageHandlers.ts` | Duplicate interfaces (WebClient, WebClientMessage, LiveSessionInfo) - identical to `types.ts` | ~30 lines |
-| HIGH | `apiRoutes.ts`, `wsRoute.ts`, `messageHandlers.ts` | Triplicated session enrichment with live info | ~30 lines (3x10) |
-| MEDIUM | `web-server-factory.ts` | 11 near-identical `isWebContentsAvailable` guard patterns | ~120 lines |
-| MEDIUM | Process listeners (4 files) | Repeated group-chat session classification (prefix + regex + parser) | ~40 lines (4x10) |
-| LOW | `group-chat-router.ts` (4 sites) | Spawn config construction overlap with IPC handler | Structural, not copy-paste |
-| LOW | `exit-listener.ts` | Inconsistent retry strategy (moderator retries, participant doesn't) | ~10 lines |
+| Priority | Location                                           | Issue                                                                                         | Lines Affected             |
+| -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------- |
+| HIGH     | `messageHandlers.ts`                               | Duplicate interfaces (WebClient, WebClientMessage, LiveSessionInfo) - identical to `types.ts` | ~30 lines                  |
+| HIGH     | `apiRoutes.ts`, `wsRoute.ts`, `messageHandlers.ts` | Triplicated session enrichment with live info                                                 | ~30 lines (3x10)           |
+| MEDIUM   | `web-server-factory.ts`                            | 11 near-identical `isWebContentsAvailable` guard patterns                                     | ~120 lines                 |
+| MEDIUM   | Process listeners (4 files)                        | Repeated group-chat session classification (prefix + regex + parser)                          | ~40 lines (4x10)           |
+| LOW      | `group-chat-router.ts` (4 sites)                   | Spawn config construction overlap with IPC handler                                            | Structural, not copy-paste |
+| LOW      | `exit-listener.ts`                                 | Inconsistent retry strategy (moderator retries, participant doesn't)                          | ~10 lines                  |
