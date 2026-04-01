@@ -96,6 +96,7 @@ export interface AgentConfig {
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
+	sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text instead of CLI arg (avoids shell escaping issues with long prompts)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
@@ -427,10 +428,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Model selection
 		modelArgs: (modelId: string) => ['--model', modelId],
 
-		// Prompt is passed via -p flag
-		promptArgs: (prompt: string) => ['-p', prompt],
+		// Prompt: use '-p -' to read from stdin, avoiding shell escaping issues
+		// with long prompts on Windows. The actual prompt text is sent via stdin.
+		promptArgs: () => ['-p', '-'],
+		sendPromptViaStdinRaw: true,
 
-		// -p takes the prompt directly, no separator needed
+		// -p - reads from stdin, no separator needed
 		noPromptSeparator: true,
 
 		defaultEnvVars: {},
