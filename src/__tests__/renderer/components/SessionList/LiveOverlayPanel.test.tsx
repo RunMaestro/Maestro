@@ -66,6 +66,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof LiveOverlayPane
 		toggleGlobalLive: vi.fn(),
 		setLiveOverlayOpen: vi.fn(),
 		restartWebServer: vi.fn(),
+		restartTunnel: vi.fn(),
 		...overrides,
 	};
 }
@@ -276,6 +277,29 @@ describe('LiveOverlayPanel', () => {
 
 			fireEvent.blur(screen.getByPlaceholderText('8080'));
 			expect(restartWebServer).toHaveBeenCalled();
+		});
+
+		it('restarts tunnel along with web server when tunnel is connected', async () => {
+			const restartWebServer = vi.fn().mockResolvedValue(null);
+			const restartTunnel = vi.fn().mockResolvedValue(undefined);
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({
+						webInterfaceUseCustomPort: true,
+						isLiveMode: true,
+						tunnelStatus: 'connected',
+						restartWebServer,
+						restartTunnel,
+					})}
+				/>
+			);
+
+			fireEvent.blur(screen.getByPlaceholderText('8080'));
+			// handleServerRestart is async — flush microtasks
+			await vi.waitFor(() => {
+				expect(restartWebServer).toHaveBeenCalled();
+				expect(restartTunnel).toHaveBeenCalled();
+			});
 		});
 
 		it('clamps and restarts on Enter key', () => {

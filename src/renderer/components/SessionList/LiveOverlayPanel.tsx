@@ -28,6 +28,7 @@ interface LiveOverlayPanelProps {
 	toggleGlobalLive: () => Promise<void>;
 	setLiveOverlayOpen: (open: boolean) => void;
 	restartWebServer: () => Promise<string | null>;
+	restartTunnel: () => Promise<void>;
 }
 
 export const LiveOverlayPanel = memo(function LiveOverlayPanel({
@@ -52,6 +53,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	toggleGlobalLive,
 	setLiveOverlayOpen,
 	restartWebServer,
+	restartTunnel,
 }: LiveOverlayPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isPersistPending, setIsPersistPending] = useState(false);
@@ -68,6 +70,13 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 		}
 		el.focus();
 	}, []);
+
+	// Restart web server and tunnel together so URL/QR stay in sync
+	const handleServerRestart = useCallback(async () => {
+		if (!isLiveMode) return;
+		await restartWebServer();
+		await restartTunnel();
+	}, [isLiveMode, restartWebServer, restartTunnel]);
 
 	const handlePersistToggle = useCallback(async () => {
 		setIsPersistPending(true);
@@ -273,7 +282,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							onClick={() => {
 								setWebInterfaceUseCustomPort(!webInterfaceUseCustomPort);
 								if (isLiveMode) {
-									setTimeout(() => void restartWebServer(), 100);
+									setTimeout(() => void handleServerRestart(), 100);
 								}
 							}}
 							className={`relative w-10 h-5 rounded-full transition-colors ${
@@ -315,7 +324,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											setWebInterfaceCustomPort(clampedPort);
 										}
 										if (isLiveMode) {
-											void restartWebServer();
+											void handleServerRestart();
 										}
 									}}
 									onKeyDown={(e) => {
@@ -325,7 +334,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 												setWebInterfaceCustomPort(clampedPort);
 											}
 											if (isLiveMode) {
-												void restartWebServer();
+												void handleServerRestart();
 											}
 											(e.target as HTMLInputElement).blur();
 										}

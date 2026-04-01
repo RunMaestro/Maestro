@@ -292,6 +292,7 @@ function SessionListInner(props: SessionListProps) {
 		copyFlash,
 		setCopyFlash,
 		handleTunnelToggle,
+		restartTunnel,
 	} = useLiveOverlay(isLiveMode);
 
 	// Context menu state
@@ -780,6 +781,7 @@ function SessionListInner(props: SessionListProps) {
 										toggleGlobalLive={toggleGlobalLive}
 										setLiveOverlayOpen={setLiveOverlayOpen}
 										restartWebServer={restartWebServer}
+										restartTunnel={restartTunnel}
 									/>
 								)}
 							</div>

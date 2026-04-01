@@ -50,6 +50,8 @@ export interface UseLiveOverlayReturn {
 	// Handlers
 	/** Toggle the tunnel on/off */
 	handleTunnelToggle: () => Promise<void>;
+	/** Restart the tunnel (stop + start) if currently connected; no-op otherwise */
+	restartTunnel: () => Promise<void>;
 }
 
 /**
@@ -154,6 +156,35 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		}
 	}, [tunnelStatus]);
 
+	// Restart the tunnel when the underlying web server changes (e.g. port change)
+	const restartTunnel = useCallback(async () => {
+		if (tunnelStatus !== 'connected') return;
+
+		setTunnelStatus('starting');
+		setTunnelError(null);
+
+		try {
+			await window.maestro.tunnel.stop();
+		} catch (error) {
+			console.error('[restartTunnel] Failed to stop tunnel:', error);
+		}
+
+		try {
+			const result = await window.maestro.tunnel.start();
+			if (result.success && result.url) {
+				setTunnelStatus('connected');
+				setTunnelUrl(result.url);
+			} else {
+				setTunnelStatus('error');
+				setTunnelError(result.error || 'Failed to restart tunnel');
+			}
+		} catch (error) {
+			console.error('[restartTunnel] Failed to restart tunnel:', error);
+			setTunnelStatus('error');
+			setTunnelError(error instanceof Error ? error.message : 'Failed to restart tunnel');
+		}
+	}, [tunnelStatus]);
+
 	return {
 		// Overlay state
 		liveOverlayOpen,
@@ -177,5 +208,6 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 
 		// Handlers
 		handleTunnelToggle,
+		restartTunnel,
 	};
 }
