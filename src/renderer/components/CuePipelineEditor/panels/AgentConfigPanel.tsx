@@ -18,6 +18,7 @@ import {
 import { useDebouncedCallback } from '../../../hooks/utils';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { EdgePromptRow } from './EdgePromptRow';
+import { CueSelect } from './CueSelect';
 import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
 interface AgentConfigPanelProps {
@@ -357,7 +358,7 @@ export function AgentConfigPanel({
 								style={{ ...getInputStyle(theme), width: '100%' }}
 							/>
 						</label>
-						<label style={{ ...getLabelStyle(theme), flex: 1, margin: 0 }}>
+						<div style={{ ...getLabelStyle(theme), flex: 1, margin: 0 }}>
 							<span
 								style={{
 									fontSize: 10,
@@ -368,21 +369,21 @@ export function AgentConfigPanel({
 							>
 								On timeout
 							</span>
-							<select
+							<CueSelect
 								value={data.fanInTimeoutOnFail ?? ''}
-								onChange={(e) =>
+								options={[
+									{ value: '', label: 'Global default' },
+									{ value: 'break', label: 'Wait for all' },
+									{ value: 'continue', label: 'Continue with partial' },
+								]}
+								onChange={(v) =>
 									onUpdateNode(node.id, {
-										fanInTimeoutOnFail: (e.target.value ||
-											undefined) as AgentNodeData['fanInTimeoutOnFail'],
+										fanInTimeoutOnFail: (v || undefined) as AgentNodeData['fanInTimeoutOnFail'],
 									} as Partial<AgentNodeData>)
 								}
-								style={{ ...getInputStyle(theme), width: '100%' }}
-							>
-								<option value="">Global default</option>
-								<option value="break">Wait for all</option>
-								<option value="continue">Continue with partial</option>
-							</select>
-						</label>
+								theme={theme}
+							/>
+						</div>
 					</div>
 				</div>
 			)}

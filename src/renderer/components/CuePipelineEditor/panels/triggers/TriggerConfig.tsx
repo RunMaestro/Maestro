@@ -9,7 +9,8 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../../hooks/utils';
-import { getInputStyle, getLabelStyle, getSelectStyle } from './triggerConfigStyles';
+import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
+import { CueSelect } from '../CueSelect';
 
 interface TriggerConfigProps {
 	node: PipelineNode;
@@ -24,7 +25,6 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 
 	const themedInputStyle = getInputStyle(theme);
 	const themedLabelStyle = getLabelStyle(theme);
-	const themedSelectStyle = getSelectStyle(theme);
 
 	useEffect(() => {
 		setLocalConfig(data.config);
@@ -178,19 +178,20 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							style={themedInputStyle}
 						/>
 					</label>
-					<label style={themedLabelStyle}>
+					<div style={themedLabelStyle}>
 						Change type
-						<select
+						<CueSelect
 							value={(localConfig.filter?.changeType as string) ?? 'any'}
-							onChange={(e) => updateFilter('changeType', e.target.value)}
-							style={themedSelectStyle}
-						>
-							<option value="any">Any</option>
-							<option value="created">Created</option>
-							<option value="modified">Modified</option>
-							<option value="deleted">Deleted</option>
-						</select>
-					</label>
+							options={[
+								{ value: 'any', label: 'Any' },
+								{ value: 'created', label: 'Created' },
+								{ value: 'modified', label: 'Modified' },
+								{ value: 'deleted', label: 'Deleted' },
+							]}
+							onChange={(v) => updateFilter('changeType', v)}
+							theme={theme}
+						/>
+					</div>
 				</div>
 			);
 		case 'agent.completed':

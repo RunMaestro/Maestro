@@ -39,6 +39,7 @@ import {
 	type FeedbackParsedResponse,
 } from '../services/feedbackConversation';
 import { isBetaAgent } from '../../shared/agentMetadata';
+import { ThemedSelect } from './shared/ThemedSelect';
 
 // ============================================================================
 // Constants
@@ -545,23 +546,15 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					<label className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
 						Agent
 					</label>
-					<select
+					<ThemedSelect
 						value={selectedAgent}
-						onChange={(e) => setSelectedAgent(e.target.value as ToolType)}
-						className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					>
-						{availableTiles.map((tile) => (
-							<option key={tile.id} value={tile.id}>
-								{tile.name}
-								{isBetaAgent(tile.id) ? ' (Beta)' : ''}
-							</option>
-						))}
-					</select>
+						options={availableTiles.map((tile) => ({
+							value: tile.id,
+							label: `${tile.name}${isBetaAgent(tile.id) ? ' (Beta)' : ''}`,
+						}))}
+						onChange={(v) => setSelectedAgent(v as ToolType)}
+						theme={theme}
+					/>
 					{availableTiles.length === 0 && (
 						<p className="text-xs" style={{ color: theme.colors.warning }}>
 							No supported agents detected. Install Claude Code, Codex, or OpenCode.

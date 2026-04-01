@@ -15,13 +15,6 @@ export function getInputStyle(theme: Theme): React.CSSProperties {
 	};
 }
 
-export function getSelectStyle(theme: Theme): React.CSSProperties {
-	return {
-		...getInputStyle(theme),
-		cursor: 'pointer',
-	};
-}
-
 export function getLabelStyle(theme: Theme): React.CSSProperties {
 	return {
 		color: theme.colors.textDim,

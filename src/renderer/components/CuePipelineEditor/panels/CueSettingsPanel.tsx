@@ -8,6 +8,7 @@ import { useRef, useEffect } from 'react';
 import type { Theme } from '../../../types';
 import type { CueSettings } from '../../../../main/cue/cue-types';
 import { useClickOutside } from '../../../hooks/ui';
+import { CueSelect } from './CueSelect';
 
 interface CueSettingsPanelProps {
 	settings: CueSettings;
@@ -38,11 +39,6 @@ export function CueSettingsPanel({ settings, theme, onChange, onClose }: CueSett
 		fontSize: 12,
 		width: '100%',
 		outline: 'none',
-	};
-
-	const selectStyle: React.CSSProperties = {
-		...inputStyle,
-		cursor: 'pointer',
 	};
 
 	const labelStyle: React.CSSProperties = {
@@ -117,19 +113,20 @@ export function CueSettingsPanel({ settings, theme, onChange, onClose }: CueSett
 				{/* Timeout on fail */}
 				<div>
 					<div style={labelStyle}>On Source Failure</div>
-					<select
+					<CueSelect
 						value={settings.timeout_on_fail}
-						onChange={(e) =>
+						options={[
+							{ value: 'break', label: 'Break (stop chain)' },
+							{ value: 'continue', label: 'Continue (skip failed)' },
+						]}
+						onChange={(v) =>
 							onChange({
 								...settings,
-								timeout_on_fail: e.target.value as 'break' | 'continue',
+								timeout_on_fail: v as 'break' | 'continue',
 							})
 						}
-						style={selectStyle}
-					>
-						<option value="break">Break (stop chain)</option>
-						<option value="continue">Continue (skip failed)</option>
-					</select>
+						theme={theme}
+					/>
 				</div>
 
 				{/* Max concurrent */}
