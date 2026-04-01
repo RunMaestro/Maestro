@@ -1402,16 +1402,27 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 					// Match user messages in both legacy and v0.111.0 formats
 					if (isUserMessage(entry)) {
+						// Check payload.id first (v0.111.0 format uses real IDs)
+						if (
+							entry.type === 'response_item' &&
+							entry.payload?.id &&
+							userMessageUuid === entry.payload.id
+						) {
+							userMessageIndex = parsedLines.length - 1;
+						}
 						const text = getUserMessageContent(entry);
 						if (text) {
-							// Match by sequential message UUID (codex-msg-N)
-							if (userMessageUuid === `codex-msg-${messageIndex}`) {
+							// Fallback: match by sequential message UUID (codex-msg-N)
+							if (
+								userMessageIndex !== parsedLines.length - 1 &&
+								userMessageUuid === `codex-msg-${messageIndex}`
+							) {
 								userMessageIndex = parsedLines.length - 1;
 							}
 							messageIndex++;
 						}
 					}
-					// Match by payload.id for v0.111.0 entries
+					// Match by payload.id for non-user v0.111.0 entries (e.g. tool calls referenced by id)
 					else if (
 						entry.type === 'response_item' &&
 						entry.payload?.id &&
@@ -1443,8 +1454,30 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					) {
 						messageIndex++;
 					}
-					// Note: function_call_output merges into the preceding tool call in readSessionMessages,
-					// so it does NOT increment messageIndex (unless no match is found, but we skip that edge case)
+					// function_call_output / custom_tool_call_output normally merges into a preceding tool call
+					// in readSessionMessages. But when no matching call_id is found, readSessionMessages creates
+					// a standalone assistant message and increments messageIndex. Mirror that here.
+					if (
+						entry.type === 'response_item' &&
+						(entry.payload?.type === 'function_call_output' ||
+							entry.payload?.type === 'custom_tool_call_output')
+					) {
+						const callId = entry.payload.call_id;
+						// Check if any prior parsed line has a matching call_id
+						const hasMatchingCall = callId
+							? parsedLines.some(
+									(p) =>
+										p.entry &&
+										p.entry.type === 'response_item' &&
+										(p.entry.payload?.type === 'function_call' ||
+											p.entry.payload?.type === 'custom_tool_call') &&
+										p.entry.payload?.call_id === callId
+								)
+							: false;
+						if (!hasMatchingCall) {
+							messageIndex++;
+						}
+					}
 				} catch {
 					parsedLines.push({ line: lines[i], entry: null });
 				}
