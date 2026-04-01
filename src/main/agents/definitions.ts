@@ -453,9 +453,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [], // Base args for interactive mode (none)
 		requiresPty: false, // Batch mode uses child process
 
-		// Batch mode: copilot -p "prompt" --output-format json --allow-all
+		// Batch mode: copilot --output-format json --allow-all -p -
+		// '-p -' tells copilot to read the prompt from stdin
 		batchModePrefix: [],
-		batchModeArgs: ['--allow-all'],
+		batchModeArgs: ['--allow-all', '-p', '-'],
 
 		// JSON output for parsing (JSONL format)
 		jsonOutputArgs: ['--output-format', 'json'],
@@ -473,12 +474,10 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Model selection
 		modelArgs: (modelId: string) => ['--model', modelId],
 
-		// Prompt: use '-p -' to read from stdin, avoiding shell escaping issues
-		// with long prompts on Windows. The actual prompt text is sent via stdin.
-		promptArgs: () => ['-p', '-'],
+		// Prompt sent via stdin (avoids shell escaping issues with long prompts on Windows)
 		sendPromptViaStdinRaw: true,
 
-		// -p - reads from stdin, no separator needed
+		// No prompt separator or promptArgs needed — prompt goes via stdin
 		noPromptSeparator: true,
 
 		defaultEnvVars: {},
