@@ -35,6 +35,7 @@ describe('useSettings', () => {
 			modelSlug: 'anthropic/claude-3.5-sonnet',
 			apiKey: '',
 			defaultShell: 'zsh',
+			terminalEngine: 'xterm',
 			customShellPath: '',
 			shellArgs: '',
 			shellEnvVars: {},
@@ -168,6 +169,7 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			expect(result.current.terminalWidth).toBe(100);
+			expect(result.current.terminalEngine).toBe('xterm');
 		});
 
 		it('should have correct default values for logging settings', async () => {
@@ -662,6 +664,18 @@ describe('useSettings', () => {
 	});
 
 	describe('setter functions - terminal settings', () => {
+		it('should update terminalEngine and persist to settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setTerminalEngine('ghostty');
+			});
+
+			expect(result.current.terminalEngine).toBe('ghostty');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('terminalEngine', 'ghostty');
+		});
+
 		it('should update terminalWidth and persist to settings', async () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);

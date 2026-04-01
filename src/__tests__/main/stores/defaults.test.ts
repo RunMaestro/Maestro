@@ -122,6 +122,10 @@ describe('stores/defaults', () => {
 			expect(SETTINGS_DEFAULTS.logLevel).toBe('info');
 		});
 
+		it('should default terminalEngine to xterm', () => {
+			expect(SETTINGS_DEFAULTS.terminalEngine).toBe('xterm');
+		});
+
 		it('should have webAuthEnabled disabled by default', () => {
 			expect(SETTINGS_DEFAULTS.webAuthEnabled).toBe(false);
 		});

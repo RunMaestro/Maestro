@@ -43,6 +43,7 @@ import { commitCommandPrompt } from '../../prompts';
 // ============================================================================
 
 export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'force';
+export type TerminalEngine = 'xterm' | 'ghostty';
 const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = ['mindmap', 'radial', 'force'];
 
 // ============================================================================
@@ -182,6 +183,7 @@ export interface SettingsStoreState {
 	modelSlug: string;
 	apiKey: string;
 	defaultShell: string;
+	terminalEngine: TerminalEngine;
 	customShellPath: string;
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
@@ -264,6 +266,7 @@ export interface SettingsStoreActions {
 	setModelSlug: (value: string) => void;
 	setApiKey: (value: string) => void;
 	setDefaultShell: (value: string) => void;
+	setTerminalEngine: (value: TerminalEngine) => void;
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
@@ -408,6 +411,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
 		defaultShell: 'zsh',
+		terminalEngine: 'xterm',
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
@@ -510,6 +514,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setDefaultShell: (value) => {
 			set({ defaultShell: value });
 			window.maestro.settings.set('defaultShell', value);
+		},
+
+		setTerminalEngine: (value) => {
+			set({ terminalEngine: value });
+			window.maestro.settings.set('terminalEngine', value);
 		},
 
 		setCustomShellPath: (value) => {
@@ -1424,6 +1433,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		if (allSettings['terminalEngine'] !== undefined)
+			patch.terminalEngine = allSettings['terminalEngine'] as TerminalEngine;
+
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -1839,6 +1851,7 @@ export function getSettingsActions() {
 		setModelSlug: state.setModelSlug,
 		setApiKey: state.setApiKey,
 		setDefaultShell: state.setDefaultShell,
+		setTerminalEngine: state.setTerminalEngine,
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,

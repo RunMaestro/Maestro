@@ -30,6 +30,7 @@ function resetStore() {
 		modelSlug: 'anthropic/claude-3.5-sonnet',
 		apiKey: '',
 		defaultShell: 'zsh',
+		terminalEngine: 'xterm',
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
@@ -120,7 +121,7 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
-		it('has correct default values for all 66 fields', () => {
+		it('has correct default values for the settings store state', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -129,6 +130,7 @@ describe('settingsStore', () => {
 			expect(state.modelSlug).toBe('anthropic/claude-3.5-sonnet');
 			expect(state.apiKey).toBe('');
 			expect(state.defaultShell).toBe('zsh');
+			expect(state.terminalEngine).toBe('xterm');
 			expect(state.customShellPath).toBe('');
 			expect(state.shellArgs).toBe('');
 			expect(state.shellEnvVars).toEqual({});
@@ -229,6 +231,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setDefaultShell('bash');
 				expect(useSettingsStore.getState().defaultShell).toBe('bash');
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('defaultShell', 'bash');
+			});
+
+			it('setTerminalEngine updates state and persists', () => {
+				useSettingsStore.getState().setTerminalEngine('ghostty');
+				expect(useSettingsStore.getState().terminalEngine).toBe('ghostty');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('terminalEngine', 'ghostty');
 			});
 
 			it('setCustomShellPath updates state and persists', () => {
@@ -1332,6 +1340,7 @@ describe('settingsStore', () => {
 	describe('loadAllSettings', () => {
 		it('loads all settings from getAll() on success', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				terminalEngine: 'ghostty',
 				fontFamily: 'JetBrains Mono',
 				fontSize: 16,
 				activeThemeId: 'one-dark-pro',
@@ -1342,6 +1351,7 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
+			expect(state.terminalEngine).toBe('ghostty');
 			expect(state.fontFamily).toBe('JetBrains Mono');
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('one-dark-pro');

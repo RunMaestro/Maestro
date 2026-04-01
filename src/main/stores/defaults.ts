@@ -58,6 +58,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	customFonts: [],
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
+	terminalEngine: 'xterm',
 	webAuthEnabled: false,
 	webAuthToken: null,
 	persistentWebLink: false,

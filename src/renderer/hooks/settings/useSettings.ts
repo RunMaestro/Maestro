@@ -7,7 +7,7 @@
  * 2. Reload settings on system resume from sleep
  * 3. Apply font size to document root element
  *
- * The UseSettingsReturn interface is unchanged — zero consumer changes needed.
+ * UseSettingsReturn mirrors the store API so components can keep using one hook surface.
  */
 
 import { useEffect } from 'react';
@@ -33,7 +33,7 @@ import {
 	loadAllSettings,
 	selectIsLeaderboardRegistered,
 } from '../../stores/settingsStore';
-import type { DocumentGraphLayoutType } from '../../stores/settingsStore';
+import type { DocumentGraphLayoutType, TerminalEngine } from '../../stores/settingsStore';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -54,6 +54,8 @@ export interface UseSettingsReturn {
 	// Shell settings
 	defaultShell: string;
 	setDefaultShell: (value: string) => void;
+	terminalEngine: TerminalEngine;
+	setTerminalEngine: (value: TerminalEngine) => void;
 	customShellPath: string;
 	setCustomShellPath: (value: string) => void;
 	shellArgs: string;

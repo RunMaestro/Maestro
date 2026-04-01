@@ -54,6 +54,7 @@ export interface MaestroSettings {
 	customFonts: string[];
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
+	terminalEngine: 'xterm' | 'ghostty';
 	// Web interface authentication
 	webAuthEnabled: boolean;
 	webAuthToken: string | null;

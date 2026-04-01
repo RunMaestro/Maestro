@@ -53,6 +53,7 @@ describe('stores/types', () => {
 				customFonts: ['CustomFont'],
 				logLevel: 'info',
 				defaultShell: 'zsh',
+				terminalEngine: 'xterm',
 				webAuthEnabled: false,
 				webAuthToken: null,
 				webInterfaceUseCustomPort: false,
@@ -64,6 +65,7 @@ describe('stores/types', () => {
 
 			expect(settings.activeThemeId).toBe('dracula');
 			expect(settings.logLevel).toBe('info');
+			expect(settings.terminalEngine).toBe('xterm');
 		});
 
 		it('should allow all valid logLevel values', () => {
