@@ -267,7 +267,7 @@ export function subscriptionsToPipelines(
 
 						// Apply per-agent prompt from fan_out_prompts, fallback to shared prompt
 						const perAgentPrompt = sub.fan_out_prompts?.[i];
-						const agentPrompt = perAgentPrompt ?? (i === 0 ? sub.prompt : undefined);
+						const agentPrompt = perAgentPrompt ?? sub.prompt;
 						if (agentPrompt) {
 							(agentNode.data as AgentNodeData).inputPrompt = agentPrompt;
 						}
@@ -275,9 +275,11 @@ export function subscriptionsToPipelines(
 							(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 						}
 
-						// Store per-edge prompt when fan_out_prompts differ
+						// Store per-edge prompt when fan_out_prompts differ from shared prompt
 						const edgePrompt =
-							perAgentPrompt && perAgentPrompt !== sub.prompt ? perAgentPrompt : undefined;
+							perAgentPrompt !== undefined && perAgentPrompt !== sub.prompt
+								? perAgentPrompt
+								: undefined;
 						edges.push({
 							id: `edge-${edgeCount++}`,
 							source: triggerId,

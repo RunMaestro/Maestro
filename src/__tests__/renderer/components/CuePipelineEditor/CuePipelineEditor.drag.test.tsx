@@ -129,6 +129,7 @@ vi.mock('../../../../renderer/hooks/cue/usePipelineSelection', () => ({
 		selectedNodePipelineId: null,
 		selectedNodeHasOutgoingEdge: false,
 		hasIncomingAgentEdges: false,
+		incomingAgentEdgeCount: 0,
 		incomingTriggerEdges: [],
 		selectedEdge: null,
 		selectedEdgePipelineId: null,

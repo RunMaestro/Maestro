@@ -131,7 +131,11 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					watch: typeof sub.watch === 'string' ? sub.watch : undefined,
 					source_session: sub.source_session,
 					fan_out: Array.isArray(sub.fan_out) ? sub.fan_out : undefined,
-					fan_out_prompts: Array.isArray(sub.fan_out_prompts) ? sub.fan_out_prompts : undefined,
+					fan_out_prompts:
+						Array.isArray(sub.fan_out_prompts) &&
+						sub.fan_out_prompts.every((p: unknown) => typeof p === 'string')
+							? (sub.fan_out_prompts as string[])
+							: undefined,
 					filter,
 					repo: typeof sub.repo === 'string' ? sub.repo : undefined,
 					poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,

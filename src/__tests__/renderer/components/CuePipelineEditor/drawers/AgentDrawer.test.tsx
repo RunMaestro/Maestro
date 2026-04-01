@@ -100,7 +100,7 @@ describe('AgentDrawer', () => {
 			/>
 		);
 
-		const indicators = screen.getAllByTitle('On canvas');
+		const indicators = screen.getAllByText('on canvas');
 		expect(indicators).toHaveLength(1);
 	});
 

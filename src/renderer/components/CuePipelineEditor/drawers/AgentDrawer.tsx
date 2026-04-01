@@ -255,7 +255,6 @@ export const AgentDrawer = memo(function AgentDrawer({
 													borderRadius: '50%',
 													backgroundColor: theme.colors.success,
 												}}
-												title="On canvas"
 											/>
 											<span
 												style={{
