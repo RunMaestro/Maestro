@@ -473,7 +473,7 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(/Claude Sessions for/i)).toBeInTheDocument();
+			expect(screen.getByText(/Claude Code Sessions for/i)).toBeInTheDocument();
 		});
 
 		it('shows loading state initially', async () => {
@@ -499,7 +499,7 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(/Claude Sessions for My Project/i)).toBeInTheDocument();
+			expect(screen.getByText(/Claude Code Sessions for My Project/i)).toBeInTheDocument();
 		});
 
 		it('shows active Claude session ID badge when provided', async () => {
@@ -586,7 +586,9 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(/No Claude sessions found for this project/i)).toBeInTheDocument();
+			expect(
+				screen.getByText(/No Claude Code sessions found for this project/i)
+			).toBeInTheDocument();
 		});
 
 		it('handles API error gracefully', async () => {
@@ -613,7 +615,7 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			// Should not crash and show agent name fallback
-			expect(screen.getByText(/Claude Sessions for Agent/i)).toBeInTheDocument();
+			expect(screen.getByText(/Claude Code Sessions for Agent/i)).toBeInTheDocument();
 		});
 	});
 
