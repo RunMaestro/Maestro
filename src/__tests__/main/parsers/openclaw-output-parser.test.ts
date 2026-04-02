@@ -55,6 +55,23 @@ describe('OpenClawOutputParser', () => {
 			expect(event!.sessionId).toBe('session-1');
 		});
 
+		it('should parse wrapped OpenClaw CLI result objects', () => {
+			const wrapped = {
+				runId: 'run-1',
+				status: 'ok',
+				summary: 'completed',
+				result: makeStandardResult({
+					payloads: [{ text: 'Wrapped hello', mediaUrl: null }],
+				}),
+			};
+			const event = parser.parseJsonObject(wrapped);
+			expect(event).not.toBeNull();
+			expect(event!.type).toBe('result');
+			expect(event!.text).toBe('Wrapped hello');
+			expect(event!.sessionId).toBe('session-1');
+			expect(event!.raw).toEqual(wrapped);
+		});
+
 		it('should parse error event', () => {
 			const event = parser.parseJsonObject({ type: 'error', message: 'Boom' });
 			expect(event).not.toBeNull();

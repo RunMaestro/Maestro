@@ -66,6 +66,13 @@ interface OpenClawJsonResult {
 	};
 }
 
+interface OpenClawWrappedResult {
+	runId?: string;
+	status?: string;
+	summary?: string;
+	result?: OpenClawJsonResult;
+}
+
 export class OpenClawOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'openclaw';
 	private readonly errorPatterns: AgentErrorPatterns = getErrorPatterns('openclaw');
@@ -91,7 +98,16 @@ export class OpenClawOutputParser implements AgentOutputParser {
 
 		// Detect OpenClaw standard --json output: { payloads: [...], meta: { ... } }
 		if (Array.isArray(msg.payloads) && msg.meta) {
-			return this.parseOpenClawResult(msg as unknown as OpenClawJsonResult);
+			return this.parseOpenClawResult(msg as unknown as OpenClawJsonResult, parsed);
+		}
+
+		// Actual CLI output may wrap the payload under { status, result: { payloads, meta } }.
+		if (msg.result && typeof msg.result === 'object') {
+			const wrapped = parsed as OpenClawWrappedResult;
+			const nested = wrapped.result;
+			if (nested && Array.isArray(nested.payloads) && nested.meta) {
+				return this.parseOpenClawResult(nested, parsed);
+			}
 		}
 
 		// Fallback: future JSONL streaming support
@@ -115,7 +131,7 @@ export class OpenClawOutputParser implements AgentOutputParser {
 	/**
 	 * Convert OpenClaw completion JSON response to ParsedEvent
 	 */
-	private parseOpenClawResult(result: OpenClawJsonResult): ParsedEvent {
+	private parseOpenClawResult(result: OpenClawJsonResult, raw: unknown = result): ParsedEvent {
 		const agentMeta = result.meta?.agentMeta;
 
 		// Concatenate payload texts (usually one element)
@@ -131,8 +147,8 @@ export class OpenClawOutputParser implements AgentOutputParser {
 			usage = {
 				inputTokens: u.input || 0,
 				outputTokens: u.output || 0,
-				cacheCreationTokens: u.cacheWrite || undefined,
-				cacheReadTokens: agentMeta.lastCallUsage?.cacheRead || undefined,
+				cacheCreationTokens: u.cacheWrite || agentMeta.lastCallUsage?.cacheWrite || undefined,
+				cacheReadTokens: agentMeta.lastCallUsage?.cacheRead || u.cacheRead || undefined,
 			};
 		}
 
@@ -141,7 +157,7 @@ export class OpenClawOutputParser implements AgentOutputParser {
 			sessionId: agentMeta?.sessionId || undefined,
 			text,
 			usage,
-			raw: result,
+			raw,
 		};
 	}
 

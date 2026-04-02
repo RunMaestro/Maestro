@@ -65,6 +65,7 @@ vi.mock('../../../../main/parsers', () => ({
 vi.mock('../../../../main/agents', () => ({
 	getAgentCapabilities: vi.fn(() => ({
 		supportsStreamJsonInput: true,
+		supportsStreaming: true,
 	})),
 }));
 
@@ -163,6 +164,27 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.isStreamJsonMode).toBe(true);
+		});
+
+		it('should keep OpenClaw buffered when args contain "--json"', () => {
+			const { processes, spawner } = createTestContext();
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				supportsStreaming: false,
+			} as any);
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'openclaw',
+					command: 'openclaw',
+					args: ['agent', '--json'],
+					prompt: 'hello',
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.isStreamJsonMode).toBe(false);
+			expect(proc?.isBatchMode).toBe(true);
 		});
 
 		it('should enable stream-json mode when args contain "--format" and "json"', () => {

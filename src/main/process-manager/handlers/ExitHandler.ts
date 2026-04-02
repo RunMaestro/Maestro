@@ -237,20 +237,48 @@ export class ExitHandler {
 	private handleBatchModeExit(sessionId: string, managedProcess: ManagedProcess): void {
 		try {
 			const jsonResponse = JSON.parse(managedProcess.jsonBuffer!);
+			const outputParser = managedProcess.outputParser;
+			const parserEvent = outputParser?.parseJsonObject(jsonResponse);
+			if (parserEvent && outputParser) {
+				const resultText = parserEvent.text || managedProcess.streamedText || '';
+				if (outputParser.isResultMessage(parserEvent) && resultText && !managedProcess.resultEmitted) {
+					managedProcess.resultEmitted = true;
+					this.emitter.emit('data', sessionId, resultText);
+				}
 
-			// Emit the result text (only once per process)
+				const parsedSessionId = outputParser.extractSessionId(parserEvent);
+				if (parsedSessionId && !managedProcess.sessionIdEmitted) {
+					managedProcess.sessionIdEmitted = true;
+					this.emitter.emit('session-id', sessionId, parsedSessionId);
+				}
+
+				const parsedUsage = outputParser.extractUsage(parserEvent);
+				if (parsedUsage) {
+					this.emitter.emit('usage', sessionId, {
+						inputTokens: parsedUsage.inputTokens ?? 0,
+						outputTokens: parsedUsage.outputTokens ?? 0,
+						cacheReadInputTokens: parsedUsage.cacheReadTokens ?? 0,
+						cacheCreationInputTokens: parsedUsage.cacheCreationTokens ?? 0,
+						totalCostUsd: parsedUsage.costUsd ?? 0,
+						contextWindow: managedProcess.contextWindow ?? 0,
+						reasoningTokens: parsedUsage.reasoningTokens,
+					});
+				}
+
+				return;
+			}
+
+			// Legacy generic JSON response handling for agents without a structured parser.
 			if (jsonResponse.result && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
 				this.emitter.emit('data', sessionId, jsonResponse.result);
 			}
 
-			// Emit session_id if present (only once per process)
 			if (jsonResponse.session_id && !managedProcess.sessionIdEmitted) {
 				managedProcess.sessionIdEmitted = true;
 				this.emitter.emit('session-id', sessionId, jsonResponse.session_id);
 			}
 
-			// Extract and emit usage statistics
 			if (
 				jsonResponse.modelUsage ||
 				jsonResponse.usage ||

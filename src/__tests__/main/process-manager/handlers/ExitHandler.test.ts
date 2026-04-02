@@ -266,6 +266,61 @@ describe('ExitHandler', () => {
 		});
 	});
 
+	describe('buffered JSON batch parsing', () => {
+		it('should use the output parser for single-object batch JSON responses', () => {
+			const mockParser = createMockOutputParser({
+				parseJsonObject: vi.fn(() => ({
+					type: 'result',
+					text: 'OpenClaw hello',
+					sessionId: 'openclaw-session',
+					usage: {
+						inputTokens: 12,
+						outputTokens: 34,
+						cacheReadTokens: 5,
+						cacheCreationTokens: 6,
+					},
+				})) as unknown as AgentOutputParser['parseJsonObject'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn((event: ParsedEvent) => event.sessionId ?? null),
+				extractUsage: vi.fn((event: ParsedEvent) => event.usage ?? null),
+			});
+
+			const proc = createMockProcess({
+				toolType: 'openclaw',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: JSON.stringify({ payloads: [{ text: 'OpenClaw hello' }], meta: {} }),
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const sessionIds: string[] = [];
+			const usageEvents: any[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('session-id', (_sid: string, value: string) => sessionIds.push(value));
+			emitter.on('usage', (_sid: string, stats: any) => usageEvents.push(stats));
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.parseJsonObject).toHaveBeenCalledWith({
+				payloads: [{ text: 'OpenClaw hello' }],
+				meta: {},
+			});
+			expect(dataEvents).toContain('OpenClaw hello');
+			expect(sessionIds).toContain('openclaw-session');
+			expect(usageEvents).toContainEqual({
+				inputTokens: 12,
+				outputTokens: 34,
+				cacheReadInputTokens: 5,
+				cacheCreationInputTokens: 6,
+				totalCostUsd: 0,
+				contextWindow: 200000,
+				reasoningTokens: undefined,
+			});
+		});
+	});
+
 	describe('streamedText fallback', () => {
 		it('should emit streamedText when no result was emitted in stream-json mode', () => {
 			const proc = createMockProcess({

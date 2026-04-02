@@ -290,6 +290,15 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Possible standalone in future
 			...localBin('codex'),
 		],
+		openclaw: [
+			// OpenClaw local installer / user-local installs
+			...localBin('openclaw'),
+			// Scoop installation
+			path.join(home, 'scoop', 'shims', 'openclaw.exe'),
+			path.join(home, 'scoop', 'apps', 'openclaw', 'current', 'openclaw.exe'),
+			// Go install
+			...goBin('openclaw'),
+		],
 		opencode: [
 			// Scoop installation (recommended for OpenCode)
 			path.join(home, 'scoop', 'shims', 'opencode.exe'),
@@ -397,6 +406,16 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('codex'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('codex'),
+		],
+		openclaw: [
+			// User local / direct installs
+			...localBin('openclaw'),
+			// Homebrew paths
+			...homebrew('openclaw'),
+			// Go install location
+			path.join(home, 'go', 'bin', 'openclaw'),
+			// User bin directory
+			path.join(home, 'bin', 'openclaw'),
 		],
 		opencode: [
 			// OpenCode installer default location
