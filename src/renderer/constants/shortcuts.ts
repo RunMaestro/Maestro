@@ -99,6 +99,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Reset Font Size',
 		keys: ['Meta', 'Shift', '0'],
 	},
+	forcedParallelSend: {
+		id: 'forcedParallelSend',
+		label: 'Forced Parallel Send',
+		keys: ['Meta', 'Shift', 'Enter'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)
