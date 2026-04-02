@@ -1299,12 +1299,6 @@ export function DocumentGraphView({
 							Document Graph
 						</h2>
 						<span
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
-						>
-							Beta
-						</span>
-						<span
 							className="text-xs px-2 py-0.5 rounded"
 							style={{
 								backgroundColor: `${theme.colors.accent}20`,

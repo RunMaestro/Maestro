@@ -418,9 +418,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('encore')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'encore' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						style={{
-							color: activeTab === 'encore' ? theme.colors.textMain : theme.colors.textDim,
-						}}
 						title="Encore Features"
 					>
 						<FlaskConical className="w-4 h-4" />

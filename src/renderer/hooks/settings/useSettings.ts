@@ -228,6 +228,10 @@ export interface UseSettingsReturn {
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
 
+	// Tab filtering settings
+	showStarredInUnreadFilter: boolean;
+	setShowStarredInUnreadFilter: (value: boolean) => void;
+
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;

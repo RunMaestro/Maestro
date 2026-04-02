@@ -270,7 +270,11 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 	}
 
 	if (showUnreadOnly) {
-		return session.aiTabs.filter((tab) => tab.hasUnread || tab.state === 'busy' || hasDraft(tab));
+		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
+		return session.aiTabs.filter(
+			(tab) =>
+				tab.hasUnread || tab.state === 'busy' || hasDraft(tab) || (showStarred && tab.starred)
+		);
 	}
 
 	return session.aiTabs;
@@ -1626,7 +1630,7 @@ export function navigateToNextUnifiedTab(
 				continue; // Orphaned tab, skip
 			}
 
-			// For AI tabs, check if it's unread, busy, has a draft, or is the active tab
+			// For AI tabs, check if it's unread, busy, has a draft, starred (if setting enabled), or is the active tab
 			// (the active tab is always shown in the tab bar, so it must be reachable)
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
 			if (
@@ -1634,7 +1638,8 @@ export function navigateToNextUnifiedTab(
 				(aiTab.hasUnread ||
 					aiTab.state === 'busy' ||
 					hasDraft(aiTab) ||
-					tabRef.id === session.activeTabId)
+					tabRef.id === session.activeTabId ||
+					(useSettingsStore.getState().showStarredInUnreadFilter && aiTab.starred))
 			) {
 				return navigateToUnifiedTabByIndex(session, nextIndex);
 			}
@@ -1708,7 +1713,7 @@ export function navigateToPrevUnifiedTab(
 				continue; // Orphaned tab, skip
 			}
 
-			// For AI tabs, check if it's unread, busy, has a draft, or is the active tab
+			// For AI tabs, check if it's unread, busy, has a draft, starred (if setting enabled), or is the active tab
 			// (the active tab is always shown in the tab bar, so it must be reachable)
 			const aiTab = session.aiTabs.find((t) => t.id === tabRef.id);
 			if (
@@ -1716,7 +1721,8 @@ export function navigateToPrevUnifiedTab(
 				(aiTab.hasUnread ||
 					aiTab.state === 'busy' ||
 					hasDraft(aiTab) ||
-					tabRef.id === session.activeTabId)
+					tabRef.id === session.activeTabId ||
+					(useSettingsStore.getState().showStarredInUnreadFilter && aiTab.starred))
 			) {
 				return navigateToUnifiedTabByIndex(session, prevIndex);
 			}

@@ -10,6 +10,7 @@
  * - User message alignment toggle
  * - Native title bar toggle
  * - Auto-hide menu bar toggle
+ * - Tab filtering (starred tabs in unread filter)
  * - Document Graph settings (external links, max nodes)
  * - Context window warnings (enable/disable, threshold sliders)
  * - Local ignore patterns (add/remove, honor gitignore)
@@ -37,6 +38,7 @@ const mockSetDocumentGraphMaxNodes = vi.fn();
 const mockUpdateContextManagementSettings = vi.fn();
 const mockSetLocalIgnorePatterns = vi.fn();
 const mockSetLocalHonorGitignore = vi.fn();
+const mockSetShowStarredInUnreadFilter = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -78,6 +80,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setLocalIgnorePatterns: mockSetLocalIgnorePatterns,
 		localHonorGitignore: true,
 		setLocalHonorGitignore: mockSetLocalHonorGitignore,
+		showStarredInUnreadFilter: false,
+		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -944,11 +948,73 @@ describe('DisplayTab', () => {
 	});
 
 	// =========================================================================
+	// Tab Filtering
+	// =========================================================================
+
+	describe('Tab Filtering', () => {
+		it('should render starred tabs in unread filter toggle', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Show starred tabs when filtering by unread')).toBeInTheDocument();
+		});
+
+		it('should toggle starred in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowStarredInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should toggle starred in unread filter off when clicked (currently on)', async () => {
+			mockUseSettingsOverrides = { showStarredInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowStarredInUnreadFilter).toHaveBeenCalledWith(false);
+		});
+
+		it('should show aria-checked=true when starred in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showStarredInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+	});
+
+	// =========================================================================
 	// Document Graph
 	// =========================================================================
 
 	describe('Document Graph', () => {
-		it('should render Document Graph section with Beta badge', async () => {
+		it('should render Document Graph section', async () => {
 			render(<DisplayTab theme={mockTheme} />);
 
 			await act(async () => {
@@ -956,7 +1022,6 @@ describe('DisplayTab', () => {
 			});
 
 			expect(screen.getByText('Document Graph')).toBeInTheDocument();
-			expect(screen.getByText('Beta')).toBeInTheDocument();
 		});
 
 		it('should render show external links toggle', async () => {
