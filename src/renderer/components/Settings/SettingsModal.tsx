@@ -10,6 +10,7 @@ import {
 	FlaskConical,
 	Server,
 	Monitor,
+	Globe,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -27,6 +28,7 @@ import { DisplayTab } from './tabs/DisplayTab';
 import { EncoreTab } from './tabs/EncoreTab';
 import { ShortcutsTab } from './tabs/ShortcutsTab';
 import { ThemeTab } from './tabs/ThemeTab';
+import { EnvironmentTab } from './tabs/EnvironmentTab';
 
 // Feature flags - set to true to enable dormant features
 const FEATURE_FLAGS = {
@@ -47,6 +49,7 @@ interface SettingsModalProps {
 		| 'notifications'
 		| 'aicommands'
 		| 'ssh'
+		| 'environment'
 		| 'encore';
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
@@ -104,6 +107,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		| 'notifications'
 		| 'aicommands'
 		| 'ssh'
+		| 'environment'
 		| 'encore'
 	>('general');
 	const [testingLLM, setTestingLLM] = useState(false);
@@ -168,6 +172,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'notifications'
 				| 'aicommands'
 				| 'ssh'
+				| 'environment'
 				| 'encore'
 			> = FEATURE_FLAGS.LLM_SETTINGS
 				? [
@@ -179,6 +184,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'notifications',
 						'aicommands',
 						'ssh',
+						'environment',
 						'encore',
 					]
 				: [
@@ -189,6 +195,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'notifications',
 						'aicommands',
 						'ssh',
+						'environment',
 						'encore',
 					];
 			const currentIndex = tabs.indexOf(activeTab);
@@ -401,6 +408,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'ssh' && <span>SSH Hosts</span>}
 					</button>
 					<button
+						onClick={() => setActiveTab('environment')}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'environment' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						title="Environment"
+					>
+						<Globe className="w-4 h-4" />
+						{activeTab === 'environment' && <span>Environment</span>}
+					</button>
+					<button
 						onClick={() => setActiveTab('encore')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'encore' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						style={{
@@ -590,6 +605,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							/>
 						</div>
 					)}
+
+					{activeTab === 'environment' && <EnvironmentTab theme={theme} />}
 
 					{activeTab === 'encore' && <EncoreTab theme={theme} isOpen={isOpen} />}
 				</div>

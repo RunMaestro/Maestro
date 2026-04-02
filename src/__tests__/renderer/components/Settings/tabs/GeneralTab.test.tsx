@@ -431,23 +431,6 @@ describe('GeneralTab', () => {
 			expect(screen.getByPlaceholderText('--flag value')).toBeInTheDocument();
 		});
 
-		it('should show environment variables section when expanded', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const configButton = screen.getByText('Shell Configuration').closest('button');
-			fireEvent.click(configButton!);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Global Environment Variables')).toBeInTheDocument();
-		});
-
 		it('should collapse when clicked again', async () => {
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 

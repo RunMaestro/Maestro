@@ -27,7 +27,6 @@ import {
 	Tag,
 	User,
 	ArrowDownToLine,
-	HelpCircle,
 	ExternalLink,
 	Keyboard,
 } from 'lucide-react';
@@ -37,7 +36,6 @@ import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatt
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
-import { EnvVarsEditor } from '../EnvVarsEditor';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -56,8 +54,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setCustomShellPath,
 		shellArgs,
 		setShellArgs,
-		shellEnvVars,
-		setShellEnvVars,
 		ghPath,
 		setGhPath,
 		// Log level
@@ -404,43 +400,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 								Additional CLI arguments passed to every shell session (e.g., --login, -c).
 							</p>
 						</div>
-
-						{/* Global Environment Variables */}
-						<div className="flex items-start gap-2 mb-2">
-							<div className="flex-1">
-								<p className="text-xs opacity-50">
-									<strong>Global Environment Variables</strong> apply to all terminal sessions and
-									AI agent processes. Format: KEY=VALUE (one per line). Variables with special
-									characters should be quoted. Agent-specific settings can override these values.
-									Typical use cases: API keys, proxy settings, custom tool paths.
-								</p>
-							</div>
-							<div
-								className="group relative flex-shrink-0 mt-0.5 outline-none"
-								tabIndex={0}
-								aria-describedby="env-vars-help-tooltip"
-								title="Environment variables configured here are available to all terminal sessions, all AI agent processes (Claude, OpenCode, etc.), and any spawned child processes. Agent-specific settings can override these values."
-							>
-								<HelpCircle
-									className="w-4 h-4 cursor-help"
-									style={{ color: theme.colors.textDim }}
-								/>
-								<div
-									id="env-vars-help-tooltip"
-									role="tooltip"
-									className="absolute hidden group-hover:block group-focus-visible:block bg-black/80 text-white text-xs rounded p-2 z-50 w-60 -right-2 top-5 whitespace-normal"
-								>
-									<p className="mb-1 font-semibold">Environment variables apply to:</p>
-									<ul className="list-disc list-inside space-y-0.5">
-										<li>All terminal sessions</li>
-										<li>All AI agent processes (Claude, OpenCode, etc.)</li>
-										<li>Any spawned child processes</li>
-									</ul>
-									<p className="mt-1">Agent-specific settings can override these values.</p>
-								</div>
-							</div>
-						</div>
-						<EnvVarsEditor envVars={shellEnvVars} setEnvVars={setShellEnvVars} theme={theme} />
 					</div>
 				)}
 			</div>

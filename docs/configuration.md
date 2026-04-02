@@ -19,6 +19,7 @@ Settings are organized into tabs:
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                          |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                   |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                             |
+| **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                        |
 | **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                         |
 
 ## Conductor Profile
@@ -66,11 +67,11 @@ Configure environment variables once in Settings and they automatically apply to
 
 ### How to Configure
 
-1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **General** tab
-2. Expand **Shell Configuration** section
-3. Scroll to **Global Environment Variables**
-4. Add your variables in `KEY=VALUE` format (one per line)
-5. Variables apply immediately to new agent sessions and terminals
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Environment** tab
+2. Add your variables in `KEY=VALUE` format using the **Add Variable** button
+3. Variables apply immediately to new agent sessions and terminals
+
+![Environment Variables](./screenshots/env-vars.png)
 
 ### Example Configuration
 

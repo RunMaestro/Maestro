@@ -25,9 +25,19 @@ export interface EnvVarsEditorProps {
 	envVars: Record<string, string>;
 	setEnvVars: (vars: Record<string, string>) => void;
 	theme: Theme;
+	/** Optional label displayed above the editor. Pass null to hide. */
+	label?: string | null;
+	/** Optional description displayed below the editor. Pass null to hide. */
+	description?: string | null;
 }
 
-export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps) {
+export function EnvVarsEditor({
+	envVars,
+	setEnvVars,
+	theme,
+	label = 'Environment Variables (optional)',
+	description = 'Environment variables passed to all terminal sessions and AI agent processes.',
+}: EnvVarsEditorProps) {
 	// Convert object to array with stable IDs for editing
 	const [entries, setEntries] = useState<EnvVarEntry[]>(() => {
 		return Object.entries(envVars).map(([key, value], index) => ({
@@ -143,8 +153,15 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 	};
 
 	return (
-		<div>
-			<div className="block text-xs opacity-60 mb-1">Environment Variables (optional)</div>
+		<div
+			className="p-3 rounded border"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+		>
+			{label !== null && (
+				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+					{label}
+				</label>
+			)}
 			<div className="space-y-2">
 				{entries.map((entry) => {
 					const error = validationErrors[entry.id];
@@ -155,19 +172,14 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 									type="text"
 									value={entry.key}
 									onChange={(e) => updateEntry(entry.id, 'key', e.target.value)}
-									placeholder="VARIABLE"
-									className={`flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono ${
-										entry.key.trim() &&
-										!validateEntry({ id: entry.id, key: entry.key, value: entry.value })
-											? ''
-											: ''
-									}`}
+									placeholder="VARIABLE_NAME"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{
 										borderColor: error ? '#ef4444' : theme.colors.border,
 										color: theme.colors.textMain,
 									}}
 								/>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
 									=
 								</span>
 								<input
@@ -189,7 +201,7 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 							</div>
 							{error && (
 								<p className="text-xs mt-1 px-2" style={{ color: '#ef4444' }}>
-									⚠ {error}
+									{error}
 								</p>
 							)}
 						</div>
@@ -204,16 +216,7 @@ export function EnvVarsEditor({ envVars, setEnvVars, theme }: EnvVarsEditorProps
 					Add Variable
 				</button>
 			</div>
-			<div className="mt-2 space-y-1">
-				<p className="text-xs opacity-50">
-					Environment variables passed to all terminal sessions and AI agent processes.
-				</p>
-				{Object.keys(envVars).length > 0 && (
-					<p className="text-xs opacity-60">
-						✓ Valid ({Object.keys(envVars).length} variables loaded)
-					</p>
-				)}
-			</div>
+			{description !== null && <p className="text-xs opacity-50 mt-2">{description}</p>}
 		</div>
 	);
 }

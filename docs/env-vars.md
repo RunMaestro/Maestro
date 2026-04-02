@@ -45,7 +45,7 @@ This feature solves all of these issues by providing a single, unified source of
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    User Settings UI                          │
-│        (Settings → General → Shell Configuration)            │
+│        (Settings → Environment)            │
 └────────────────────┬────────────────────────────────────────┘
                      │
                      ▼
@@ -98,7 +98,7 @@ This feature solves all of these issues by providing a single, unified source of
 #### For Terminal Sessions
 
 ```text
-1. User opens Settings → General → Shell Configuration
+1. User opens Settings → Environment
 2. Enters environment variables: KEY=VALUE (one per line)
 3. Clicks Save or Auto-Save triggers
 4. Renderer calls: window.maestro.settings.set('shellEnvVars', {...})
@@ -139,7 +139,7 @@ Priority 1: Session-Level Custom Environment Variables
                     │ overrides
                     │
 Priority 2: Global Shell Environment Variables
-            (Settings → General → Shell Configuration)
+            (Settings → Environment)
                     ▲
                     │ overrides
                     │
