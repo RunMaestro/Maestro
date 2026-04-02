@@ -823,6 +823,92 @@ Reduce context.
 			expect(taskCompleteEvent?.verifierVerdict).toBe('WARN');
 		});
 
+		it('runs a deterministic OpenClaw smoke path with baseline metadata and renderer-ready history details', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return {
+						content: '# Tasks\n\n- [ ] Render OpenClaw result in Maestro history',
+						taskCount: 1,
+					};
+				}
+				return {
+					content: '# Tasks\n\n- [x] Render OpenClaw result in Maestro history',
+					taskCount: 0,
+				};
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Inspect baseline metadata handling and render path.',
+					agentSessionId: 'planner-openclaw-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Rendered the OpenClaw result with baseline metadata intact.',
+					agentSessionId: 'main:openclaw-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response:
+						'WARN\nOpenClaw output rendered correctly, but this smoke path uses deterministic fixtures.',
+					agentSessionId: 'verifier-openclaw-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response:
+						'**Summary:** Rendered OpenClaw baseline smoke path\n\n**Details:** Baseline metadata stayed intact and the OpenClaw result is ready for History Detail rendering.',
+				});
+
+			const session = mockSession({ toolType: 'openclaw' });
+			const playbook = mockPlaybook({
+				agentStrategy: 'plan-execute-verify',
+				promptProfile: 'compact-code',
+				documentContextMode: 'active-task-only',
+				skillPromptMode: 'brief',
+				definitionOfDone: ['Baseline metadata round-trips through Auto Run'],
+				verificationSteps: ['Confirm OpenClaw results render in History Detail'],
+			});
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { debug: true, writeHistory: true })
+			);
+
+			expect(
+				events.find(
+					(event) =>
+						event.type === 'debug' &&
+						event.category === 'config' &&
+						event.message.includes(
+							'Prompt profile: compact-code, documentContextMode=active-task-only, skillPromptMode=brief, agentStrategy=plan-execute-verify'
+						)
+				)
+			).toBeDefined();
+
+			const taskCompleteEvent = events.find((event) => event.type === 'task_complete');
+			expect(taskCompleteEvent).toMatchObject({
+				success: true,
+				agentSessionId: 'main:openclaw-session',
+				verifierVerdict: 'WARN',
+			});
+			expect(taskCompleteEvent?.summary).toMatch(/^\[WARN\]/);
+			expect(taskCompleteEvent?.fullResponse).toContain(
+				'Verifier:\nWARN\nOpenClaw output rendered correctly, but this smoke path uses deterministic fixtures.'
+			);
+
+			expect(addHistoryEntry).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'AUTO',
+					summary: expect.stringMatching(/^\[WARN\]/),
+					fullResponse: expect.stringContaining('Rendered OpenClaw baseline smoke path'),
+					agentSessionId: 'main:openclaw-session',
+					verifierVerdict: 'WARN',
+				})
+			);
+		});
+
 		it('should handle task failure', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {

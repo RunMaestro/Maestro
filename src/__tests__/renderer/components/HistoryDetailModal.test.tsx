@@ -251,6 +251,33 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText('Full response content')).toBeInTheDocument();
 		});
 
+		it('should render deterministic OpenClaw Auto Run details with verifier output', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						success: true,
+						verifierVerdict: 'WARN',
+						agentSessionId: 'main:openclaw-session',
+						fullResponse:
+							'Rendered OpenClaw baseline smoke path\n\nVerifier:\nWARN\nOpenClaw output rendered correctly, but this smoke path uses deterministic fixtures.',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByText('Rendered OpenClaw baseline smoke path')).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					/Verifier:\s+WARN\s+OpenClaw output rendered correctly, but this smoke path uses deterministic fixtures\./
+				)
+			).toBeInTheDocument();
+			expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+			expect(screen.getByTitle('Copy session ID: main:openclaw-session')).toBeInTheDocument();
+			expect(screen.getByText('MAIN:OPENCLAW')).toBeInTheDocument();
+		});
+
 		it('should strip ANSI codes from response', () => {
 			render(
 				<HistoryDetailModal
