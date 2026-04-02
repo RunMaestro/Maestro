@@ -117,6 +117,31 @@ Target: 0 remaining.
 
 ---
 
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
+
+---
+
 ## Success Criteria
 
 - `Spinner` component in `src/renderer/components/ui/`

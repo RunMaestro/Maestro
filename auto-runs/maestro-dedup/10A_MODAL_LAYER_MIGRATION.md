@@ -23,6 +23,7 @@ Migrate 50+ files from manual `registerLayer`/`unregisterLayer` boilerplate to t
 ### Task 1: Read the existing useModalLayer hook
 
 Read `src/renderer/hooks/ui/useModalLayer.ts` to understand its API:
+
 - What parameters does it accept?
 - Does it handle the `isOpen` conditional logic?
 - Does it accept priority from `modalPriorities.ts`?
@@ -31,6 +32,7 @@ Read `src/renderer/hooks/ui/useModalLayer.ts` to understand its API:
 ### Task 2: Verify useModalLayer covers all patterns
 
 The manual pattern looks like:
+
 ```typescript
 const { registerLayer, unregisterLayer } = useLayerStack();
 const onCloseRef = useRef(onClose);
@@ -81,6 +83,7 @@ useModalLayer({
 ```
 
 Process files in batches:
+
 1. Simple modals (direct `isOpen` + `onClose` props) - ~30 files
 2. Complex modals (conditional open, multiple close paths) - ~15 files
 3. Non-modal layers (drawers, panels with escape handling) - ~5 files
@@ -92,6 +95,7 @@ This is the worst offender. It likely has multiple nested modal layers. Migrate 
 ### Task 6: Verify Escape key behavior
 
 After migrating each batch, manually verify:
+
 - Escape closes the topmost modal
 - Stacked modals close in correct order
 - Escape does NOT close modals that are behind other modals
@@ -112,6 +116,31 @@ rtk grep -rn "registerLayer" src/renderer/ --include="*.ts" --include="*.tsx" | 
 ```
 
 Target: 0.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

@@ -39,6 +39,7 @@ Filter for files that implement their own debounce/throttle rather than using th
 ### Task 3: Migrate to shared hooks
 
 For each of the 15+ files:
+
 1. Identify the debounce/throttle pattern
 2. Match to the appropriate shared hook
 3. Replace the inline implementation
@@ -66,15 +67,14 @@ import { useSessionStore } from '../stores/sessionStore';
  * Use this instead of manually deriving from sessions array.
  */
 export function useActiveSession() {
-	return useSessionStore(state =>
-		state.sessions.find(s => s.id === state.activeSessionId)
-	);
+	return useSessionStore((state) => state.sessions.find((s) => s.id === state.activeSessionId));
 }
 ```
 
 ### Task 6: Migrate 28 files
 
 For each file that re-derives `activeSession`:
+
 1. Replace the derivation with `useActiveSession()` import
 2. Remove any local variable that was doing the lookup
 
@@ -96,6 +96,31 @@ rtk grep -rn "sessions\.find.*activeSessionId" src/renderer/ --include="*.ts" --
 ```
 
 Target: 0.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

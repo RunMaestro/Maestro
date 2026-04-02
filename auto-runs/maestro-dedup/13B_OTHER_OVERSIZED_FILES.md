@@ -21,6 +21,7 @@ Address the remaining oversized files after App.tsx. Priority targets are files 
 ## Important Context
 
 Current oversized files status:
+
 - `App.tsx` - 4,034 lines (REGRESSION, addressed in Phase 13-A)
 - `symphony.ts` handler - 3,318 lines
 - `TabBar.tsx` - FULLY RESOLVED (2,839 -> 542)
@@ -48,11 +49,13 @@ Only target files still over 1,500 lines.
 `src/main/ipc/handlers/symphony.ts` - the Symphony (group chat orchestration) handler.
 
 Strategy:
+
 1. Read the file to identify logical sections
 2. Extract each IPC handler into its own function or sub-module
 3. Keep the main file as a registration point
 
 Create `src/main/ipc/handlers/symphony/`:
+
 - `index.ts` - handler registration
 - `create.ts` - create group chat handlers
 - `manage.ts` - manage/update group chat handlers
@@ -63,11 +66,13 @@ Create `src/main/ipc/handlers/symphony/`:
 ### Task 3: Decompose SymphonyModal.tsx
 
 Strategy:
+
 1. Extract sub-panels into separate components
 2. Extract state management into a custom hook
 3. Keep the modal shell as the coordinator
 
 Potential extractions:
+
 - `SymphonyParticipantList.tsx`
 - `SymphonyMessageView.tsx`
 - `SymphonyConfigPanel.tsx`
@@ -76,6 +81,7 @@ Potential extractions:
 ### Task 4: Finish FilePreview.tsx decomposition (1,320 lines)
 
 Already partially split. Identify remaining extractable sections:
+
 - Language-specific renderers
 - Toolbar logic
 - Preview mode switching
@@ -85,6 +91,7 @@ Already partially split. Identify remaining extractable sections:
 After Phase 07 (session state helpers), these files should be significantly smaller. Check if they still exceed 800 lines.
 
 If still oversized:
+
 - `useTabHandlers.ts` - split by tab operation type (create, close, reorder, activate)
 - `useInputProcessing.ts` - split by input type (text, slash commands, file drops)
 
@@ -104,6 +111,31 @@ find src/ -name "*.ts" -o -name "*.tsx" | xargs wc -l | awk '$1 > 800' | sort -r
 ```
 
 Target: fewer than 40 files over 800 lines (down from 82).
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

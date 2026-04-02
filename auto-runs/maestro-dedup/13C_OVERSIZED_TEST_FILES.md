@@ -33,6 +33,7 @@ Only target files still over 2,000 lines.
 ### Task 2: Split symphony.test.ts (was 6,203 lines)
 
 If still oversized, split by test category:
+
 - `symphony.create.test.ts` - creation flow tests
 - `symphony.participants.test.ts` - participant management tests
 - `symphony.messages.test.ts` - message handling tests
@@ -41,6 +42,7 @@ If still oversized, split by test category:
 ### Task 3: Split useBatchProcessor.test.ts (was 5,988 lines)
 
 Split by feature:
+
 - `useBatchProcessor.lifecycle.test.ts`
 - `useBatchProcessor.execution.test.ts`
 - `useBatchProcessor.worktree.test.ts`
@@ -49,6 +51,7 @@ Split by feature:
 ### Task 4: Split TabBar.test.tsx (was 5,752 lines)
 
 If still oversized after mock consolidation, split by tab type:
+
 - `TabBar.aiTabs.test.tsx`
 - `TabBar.fileTabs.test.tsx`
 - `TabBar.dragDrop.test.tsx`
@@ -57,6 +60,7 @@ If still oversized after mock consolidation, split by tab type:
 ### Task 5: Create shared test utilities if patterns emerge
 
 During splitting, if common test patterns emerge, extract to:
+
 - `src/__tests__/helpers/renderWithProviders.ts` - common render setup
 - `src/__tests__/helpers/testUtils.ts` - common assertions
 
@@ -75,6 +79,31 @@ find src/__tests__/ -name "*.test.*" | xargs wc -l | awk '$1 > 2000' | wc -l
 ```
 
 Target: fewer than 10 files over 2,000 lines.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

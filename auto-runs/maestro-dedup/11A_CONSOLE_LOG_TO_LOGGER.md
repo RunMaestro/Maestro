@@ -34,6 +34,7 @@ Replace 130+ `console.log` calls in the group chat router (and 26 in group-chat-
 ### Task 1: Read the logger API
 
 Read `src/main/utils/logger.ts` to understand:
+
 - Available log levels
 - How to create a scoped logger
 - Any structured data parameters
@@ -61,6 +62,7 @@ logger.info(`Starting session for ${participantName}`);
 ```
 
 For debug-level messages:
+
 ```typescript
 // BEFORE
 console.log(`[GroupChat] Processing message:`, message);
@@ -76,6 +78,7 @@ Same pattern as Task 3.
 ### Task 5: Migrate other high-frequency files
 
 From the scan data:
+
 - `useRemoteHandlers.ts` (14 calls) - renderer, use `console.debug` or renderer-side logger
 - `phaseGenerator.ts` (14 calls)
 - `graphDataBuilder.ts` (11 calls)
@@ -97,6 +100,31 @@ rtk grep -rn "console\.log" src/main/group-chat/ --include="*.ts" | wc -l
 ```
 
 Target: 0.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

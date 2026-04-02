@@ -32,6 +32,7 @@ Read each spawn call site to understand the common pattern:
 5. `main/group-chat/group-chat-router.ts:1553`
 
 Document:
+
 - What parameters vary between sites (agent type, session config, working dir)
 - What's identical (SSH wrapping, Windows config, process manager call)
 
@@ -57,21 +58,21 @@ interface GroupChatSpawnConfig {
 export async function spawnGroupChatAgent(
 	config: GroupChatSpawnConfig,
 	processManager: ProcessManager,
-	settingsStore: SettingsStore,
+	settingsStore: SettingsStore
 ): Promise<SpawnResult> {
 	let spawnConfig = buildBaseSpawnConfig(config);
-	
+
 	// SSH wrapping
 	if (config.sshRemoteConfig?.enabled) {
 		const sshStore = createSshRemoteStoreAdapter(settingsStore);
 		spawnConfig = await wrapSpawnWithSsh(spawnConfig, config.sshRemoteConfig, sshStore);
 	}
-	
+
 	// Windows-specific adjustments
 	if (process.platform === 'win32') {
 		// ... Windows shell wrapping
 	}
-	
+
 	return processManager.spawn(spawnConfig);
 }
 ```
@@ -79,6 +80,7 @@ export async function spawnGroupChatAgent(
 ### Task 3: Write tests
 
 Create `src/__tests__/main/group-chat/spawnGroupChatAgent.test.ts`:
+
 - Spawns with basic config
 - Wraps with SSH when sshRemoteConfig is enabled
 - Applies Windows adjustments on win32
@@ -88,6 +90,7 @@ Create `src/__tests__/main/group-chat/spawnGroupChatAgent.test.ts`:
 ### Task 4: Replace the 5 spawn sites
 
 For each site:
+
 1. Replace the inline spawn logic with a call to `spawnGroupChatAgent()`
 2. Pass the site-specific config
 3. Verify the behavior is identical
@@ -145,6 +148,31 @@ rtk vitest run
 ```
 
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

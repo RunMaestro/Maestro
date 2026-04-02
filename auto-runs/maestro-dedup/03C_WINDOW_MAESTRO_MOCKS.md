@@ -29,6 +29,7 @@ rtk grep -A 50 "window.maestro" src/__tests__/setup.ts
 ```
 
 Document which `window.maestro.*` namespaces are covered:
+
 - `window.maestro.settings` ?
 - `window.maestro.process` ?
 - `window.maestro.fs` ?
@@ -71,9 +72,9 @@ Add to `src/__tests__/helpers/mockMaestro.ts`:
  */
 export function resetMaestroMocks(): void {
 	// Reset all vi.fn() mocks on window.maestro namespaces
-	Object.values(window.maestro).forEach(namespace => {
+	Object.values(window.maestro).forEach((namespace) => {
 		if (typeof namespace === 'object' && namespace !== null) {
-			Object.values(namespace).forEach(fn => {
+			Object.values(namespace).forEach((fn) => {
 				if (typeof fn === 'function' && 'mockReset' in fn) {
 					(fn as ReturnType<typeof vi.fn>).mockReset();
 				}
@@ -88,7 +89,7 @@ export function resetMaestroMocks(): void {
  */
 export function mockMaestroNamespace(
 	namespace: keyof typeof window.maestro,
-	overrides: Record<string, unknown>,
+	overrides: Record<string, unknown>
 ): void {
 	Object.assign(window.maestro[namespace], overrides);
 }
@@ -99,6 +100,7 @@ export function mockMaestroNamespace(
 Group files by the type of `window.maestro` mock they set up:
 
 **Pattern A: Full `window.maestro` reassignment** (~30 files)
+
 ```typescript
 // BEFORE
 (window as any).maestro = { settings: { get: vi.fn(), ... }, ... };
@@ -111,6 +113,7 @@ beforeEach(() => {
 ```
 
 **Pattern B: Namespace-level override** (~50 files)
+
 ```typescript
 // BEFORE
 window.maestro.settings = { get: vi.fn(), set: vi.fn(), ... };
@@ -120,6 +123,7 @@ mockMaestroNamespace('settings', { get: vi.fn().mockResolvedValue('custom') });
 ```
 
 **Pattern C: Individual method override** (~37 files)
+
 ```typescript
 // BEFORE
 (window.maestro.settings.get as any).mockResolvedValue('value');
@@ -132,6 +136,7 @@ Pattern C files may not need changes if setup.ts already provides the base mock.
 ### Task 6: Process files in directory order
 
 For each directory:
+
 1. `src/__tests__/renderer/components/` - largest group
 2. `src/__tests__/renderer/hooks/`
 3. `src/__tests__/renderer/stores/`
@@ -143,6 +148,7 @@ After each directory, run `rtk vitest run` to verify.
 ### Task 7: Handle special cases
 
 Some tests may need to completely replace a namespace (e.g., testing error paths). These should use:
+
 ```typescript
 beforeEach(() => {
 	window.maestro.settings = {
@@ -173,6 +179,31 @@ rtk grep "window\.maestro\s*=" src/__tests__/ --include="*.ts" --include="*.tsx"
 ```
 
 Target: fewer than 10 remaining (only special-case overrides).
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

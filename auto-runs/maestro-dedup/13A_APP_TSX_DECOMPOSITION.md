@@ -35,6 +35,7 @@ Break down `App.tsx` from 4,034 lines into focused modules. This is the single l
 Read the entire file and categorize its contents into logical groups:
 
 Expected categories:
+
 - **State declarations** (useState, useRef, etc.)
 - **Effect hooks** (useEffect blocks)
 - **Event handlers** (keyboard, mouse, window events)
@@ -57,6 +58,7 @@ Target: `src/renderer/hooks/useAppKeyboardHandler.ts`
 All `window.maestro.on(...)` listeners in App.tsx should move to a dedicated hook:
 
 Create `src/renderer/hooks/useAppIpcListeners.ts`:
+
 ```typescript
 export function useAppIpcListeners(deps: AppIpcDeps) {
 	useEffect(() => {
@@ -71,6 +73,7 @@ export function useAppIpcListeners(deps: AppIpcDeps) {
 App.tsx likely renders 10+ modals conditionally. Extract the modal state and render logic:
 
 Create `src/renderer/components/AppModals.tsx`:
+
 ```typescript
 interface AppModalsProps {
 	// All modal open states and handlers
@@ -108,6 +111,7 @@ Create `src/renderer/hooks/useEncoreFeatures.ts`
 ### Task 8: Verify after each extraction
 
 After extracting each module:
+
 1. `rtk npm run lint`
 2. `rtk vitest run`
 3. Verify App.tsx still composes everything correctly
@@ -124,14 +128,14 @@ export function App() {
 	// Minimal state that truly belongs to App
 	const settings = useSettings();
 	const sessions = useSessionStore();
-	
+
 	// Extracted hooks
 	useAppKeyboardHandler(...);
 	useAppIpcListeners(...);
 	useSessionLifecycle(...);
 	useAutoRunCoordination(...);
 	const encoreFeatures = useEncoreFeatures(settings);
-	
+
 	return (
 		<AppLayout>
 			<LeftBar ... />
@@ -150,6 +154,31 @@ wc -l src/renderer/App.tsx
 ```
 
 Target: <1,000 lines.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

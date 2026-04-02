@@ -23,11 +23,13 @@ Replace 35 `createMockTheme` functions and 119 inline `mockTheme` objects (154 t
 ### Task 1: Survey existing theme mock patterns
 
 Find all definitions:
+
 ```
 rtk grep "createMockTheme\|const mockTheme\|let mockTheme" src/__tests__/ --include="*.ts" --include="*.tsx" -l
 ```
 
 Read 5-6 to understand the common pattern. Key things to capture:
+
 - Theme color properties (textMain, textSecondary, background, accent, etc.)
 - Theme metadata (name, id, isDark)
 - Any variant patterns (dark theme mock, light theme mock)
@@ -85,6 +87,7 @@ export function createMockTheme(overrides: Partial<Theme> = {}): Theme {
 ### Task 4: Export from helpers/index.ts
 
 Add to `src/__tests__/helpers/index.ts`:
+
 ```typescript
 export { mockTheme, createMockTheme } from './mockTheme';
 ```
@@ -92,6 +95,7 @@ export { mockTheme, createMockTheme } from './mockTheme';
 ### Task 5: Migrate createMockTheme function definitions (35 files)
 
 For each file with a `createMockTheme` function:
+
 1. Remove the local function
 2. Add import: `import { createMockTheme } from '../helpers/mockTheme';`
 3. Verify any custom overrides still work
@@ -99,11 +103,13 @@ For each file with a `createMockTheme` function:
 ### Task 6: Migrate inline mockTheme objects (119 instances)
 
 For each file with an inline `mockTheme` object:
+
 1. Remove the local `const mockTheme = { ... }` declaration
 2. Add import: `import { mockTheme } from '../helpers/mockTheme';`
 3. If the test modifies `mockTheme` properties, switch to `createMockTheme({ ... })`
 
 **Batch by directory:**
+
 - `src/__tests__/renderer/components/` (largest group)
 - `src/__tests__/renderer/hooks/`
 - `src/__tests__/renderer/stores/`
@@ -111,6 +117,7 @@ For each file with an inline `mockTheme` object:
 ### Task 7: Run tests after each batch
 
 After migrating each directory, run:
+
 ```
 rtk vitest run
 ```
@@ -126,6 +133,31 @@ rtk grep "createMockTheme\|const mockTheme.*=.*{" src/__tests__/ --include="*.ts
 ```
 
 Should return 0 results (or only `let mockTheme` reassignments that use the imported factory).
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

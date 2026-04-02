@@ -28,6 +28,7 @@ mkdir -p src/__tests__/helpers/
 ### Task 2: Survey existing mock session factories
 
 Find all definitions:
+
 ```
 rtk grep "createMockSession" src/__tests__/ --include="*.ts" --include="*.tsx" -l
 rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --include="*.ts" --include="*.tsx"
@@ -54,13 +55,15 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
 		name: 'Test Session',
 		agentType: 'claude-code',
 		status: 'ready',
-		aiTabs: [{
-			id: 'tab-1',
-			name: 'Tab 1',
-			messages: [],
-			agentSessionId: null,
-			isLoading: false,
-		}],
+		aiTabs: [
+			{
+				id: 'tab-1',
+				name: 'Tab 1',
+				messages: [],
+				agentSessionId: null,
+				isLoading: false,
+			},
+		],
 		activeTabId: 'tab-1',
 		activeFileTabId: null,
 		filePreviewTabs: [],
@@ -76,6 +79,7 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
 ### Task 5: Create index.ts barrel export
 
 Create `src/__tests__/helpers/index.ts`:
+
 ```typescript
 export { createMockSession } from './mockSession';
 ```
@@ -83,6 +87,7 @@ export { createMockSession } from './mockSession';
 ### Task 6: Migrate test files in batches of 10
 
 For each batch:
+
 1. Open the test file
 2. Find the local `createMockSession` definition
 3. Remove it
@@ -91,6 +96,7 @@ For each batch:
 6. Run `rtk vitest run path/to/file.test.ts` to verify
 
 Process all 66 files. Group by directory to minimize path confusion:
+
 - `src/__tests__/renderer/components/*.test.tsx` (largest group)
 - `src/__tests__/renderer/hooks/*.test.ts`
 - `src/__tests__/renderer/stores/*.test.ts`
@@ -100,6 +106,7 @@ Process all 66 files. Group by directory to minimize path confusion:
 ### Task 7: Handle edge cases
 
 Some factories may have extra features (e.g., auto-incrementing IDs, different agent types). If a test file's factory has unique behavior:
+
 1. Check if it can be handled via overrides
 2. If not, create a variant (e.g., `createMockBatchSession`, `createMockRemoteSession`)
 
@@ -120,6 +127,31 @@ rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --
 ```
 
 Should return 0 results.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

@@ -3,6 +3,7 @@
 ## Objective
 
 Clean up remaining P3 (nice-to-have) duplications:
+
 - 3 redundant `AUTO_RUN_FOLDER_NAME` definitions
 - 2 `DEFAULT_CAPABILITIES` definitions
 - Compound CSS className patterns extracted to shared constants
@@ -25,6 +26,7 @@ Clean up remaining P3 (nice-to-have) duplications:
 ### Task 1: Remove AUTO_RUN_FOLDER_NAME aliases (3 definitions)
 
 The constant `AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR` exists in 3 places:
+
 1. `phaseGenerator.ts:153`
 2. `inlineWizardDocumentGeneration.ts:25`
 3. `existingDocsDetector.ts:13`
@@ -32,6 +34,7 @@ The constant `AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR` exists in 3 places:
 The canonical `PLAYBOOKS_DIR` is already exported from `shared/maestro-paths.ts:14`.
 
 For each file:
+
 1. Remove the local `AUTO_RUN_FOLDER_NAME` declaration
 2. Replace all usages with `PLAYBOOKS_DIR`
 3. Add import: `import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';`
@@ -39,15 +42,18 @@ For each file:
 ### Task 2: Consolidate DEFAULT_CAPABILITIES (2 definitions)
 
 Two locations:
+
 1. `main/agents/capabilities.ts:98` (canonical)
 2. `renderer/hooks/agent/useAgentCapabilities.ts:89`
 
 The renderer can't directly import from main process. Options:
+
 - Move `DEFAULT_CAPABILITIES` to `shared/` (best - accessible by both)
 - Share via preload bridge
 - Re-export from shared types
 
 Steps:
+
 1. Move the constant to `src/shared/agentConstants.ts` or `src/shared/types.ts`
 2. Update both import sites
 3. Remove the duplicate definition
@@ -67,13 +73,15 @@ Create `src/renderer/constants/classNames.ts`:
 /** Reusable compound className constants for common UI patterns */
 
 /** Full-width interactive list item */
-export const LIST_ITEM_CLASS = 'w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left';
+export const LIST_ITEM_CLASS =
+	'w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left';
 
 /** Section heading label */
 export const SECTION_LABEL_CLASS = 'block text-xs font-bold opacity-70 uppercase mb-2';
 ```
 
 Then migrate the 43 highest-frequency usages:
+
 ```
 rtk grep -rn "w-full flex items-center gap-3 px-3 py-2.5" src/renderer/ --include="*.tsx" -l
 rtk grep -rn "block text-xs font-bold opacity-70 uppercase mb-2" src/renderer/ --include="*.tsx" -l
@@ -87,6 +95,31 @@ rtk vitest run
 ```
 
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

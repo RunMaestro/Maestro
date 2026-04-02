@@ -3,6 +3,7 @@
 ## Objective
 
 Create two shared hooks to replace repetitive patterns:
+
 1. `useFocusAfterRender` - replaces 45 `setTimeout(() => ref.current?.focus(), N)` patterns across 28 files
 2. `useEventListener` - replaces manual `addEventListener`/`removeEventListener` pairs in 63+ files
 
@@ -44,7 +45,7 @@ import { useEffect, type RefObject } from 'react';
 export function useFocusAfterRender(
 	ref: RefObject<HTMLElement | null>,
 	shouldFocus: boolean = true,
-	delay: number = 0,
+	delay: number = 0
 ): void {
 	useEffect(() => {
 		if (!shouldFocus) return;
@@ -61,6 +62,7 @@ export function useFocusAfterRender(
 ### Task 3: Write tests for useFocusAfterRender
 
 Test:
+
 - Focuses element after render
 - Respects delay parameter
 - Cleans up timeout on unmount
@@ -69,6 +71,7 @@ Test:
 ### Task 4: Migrate setTimeout focus patterns (45 instances)
 
 For each of the 28 files:
+
 1. Find the `setTimeout(() => ref.current?.focus(), N)` pattern
 2. Determine if it's in a `useEffect` (replace entirely) or in an event handler (may need different approach)
 3. If in useEffect, replace with `useFocusAfterRender(ref, condition, delay)`
@@ -101,7 +104,7 @@ export function useEventListener<K extends keyof WindowEventMap>(
 	eventName: K,
 	handler: (event: WindowEventMap[K]) => void,
 	element?: Window | HTMLElement | null,
-	options?: boolean | AddEventListenerOptions,
+	options?: boolean | AddEventListenerOptions
 ): void {
 	const savedHandler = useRef(handler);
 
@@ -126,6 +129,7 @@ export function useEventListener<K extends keyof WindowEventMap>(
 ### Task 7: Write tests for useEventListener
 
 Test:
+
 - Attaches listener on mount
 - Removes listener on unmount
 - Updates handler without re-attaching listener
@@ -149,6 +153,7 @@ useEventListener('keydown', (e) => { ... });
 ```
 
 Start with top offenders:
+
 1. `activityBus.ts` (10 pairs)
 2. `MarketplaceModal.tsx` (10 pairs)
 3. `useMainKeyboardHandler.ts` (8 pairs)
@@ -158,6 +163,7 @@ Start with top offenders:
 ### Task 9: Export from hooks barrel
 
 Add exports to `src/renderer/hooks/utils/index.ts` (or create if doesn't exist):
+
 ```typescript
 export { useFocusAfterRender } from './useFocusAfterRender';
 export { useEventListener } from './useEventListener';
@@ -171,6 +177,31 @@ rtk vitest run
 ```
 
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

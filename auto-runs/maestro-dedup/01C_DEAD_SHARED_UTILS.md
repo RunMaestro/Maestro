@@ -22,6 +22,7 @@ Remove 43 exported types/functions/constants from `src/shared/` that have zero e
 ### Task 1: Remove dead exports from shared/agentMetadata.ts
 
 Remove these 2 exports:
+
 - `AGENT_DISPLAY_NAMES`
 - `BETA_AGENTS`
 
@@ -30,6 +31,7 @@ Verify: `rtk grep "AGENT_DISPLAY_NAMES\|BETA_AGENTS" src/ --include="*.ts" --inc
 ### Task 2: Remove ALL of shared/cli-activity.ts (if all exports dead)
 
 This file has 5 dead exports - check if the file has ANY used exports:
+
 - `CliActivityStatus`
 - `CliActivityFile`
 - `readCliActivities`
@@ -49,6 +51,7 @@ Remove: `CliServerInfo`
 ### Task 4: Remove dead exports from shared/cue-pipeline-types.ts
 
 Remove these 4 exports:
+
 - `DebateConfig`
 - `PipelineNodePosition`
 - `PipelineNodeType`
@@ -65,6 +68,7 @@ Check if the entire file can be deleted: `rtk grep "deep-link-urls" src/ | grep 
 ### Task 6: Remove dead exports from shared/gitUtils.ts
 
 Remove these 6 exports:
+
 - `GitFileStatus`
 - `GitNumstatFile`
 - `GitBehindAhead`
@@ -85,6 +89,7 @@ Remove: `shouldLogLevel`
 ### Task 9: Remove dead exports from shared/maestro-paths.ts
 
 Remove these 6 exports:
+
 - `PLAYBOOKS_FOLDER_NAME`
 - `PLAYBOOKS_RUNS_DIR`
 - `PIPELINE_INPUT_PROMPT`
@@ -103,12 +108,14 @@ Remove: `parseVersion`
 ### Task 12: Remove dead exports from shared/performance-metrics.ts
 
 Remove these 2 exports:
+
 - `PerformanceLogger`
 - `createNoOpMetrics`
 
 ### Task 13: Remove dead exports from shared/symphony-constants.ts
 
 Remove these 3 exports:
+
 - `DRAFT_PR_TITLE_TEMPLATE`
 - `DRAFT_PR_BODY_TEMPLATE`
 - `READY_PR_BODY_TEMPLATE`
@@ -116,12 +123,14 @@ Remove these 3 exports:
 ### Task 14: Remove dead exports from shared/symphony-types.ts
 
 Remove these 2 exports:
+
 - `SymphonyLabel`
 - `SymphonyErrorType`
 
 ### Task 15: Remove dead exports from shared/synopsis.ts
 
 Remove these 2 exports:
+
 - `ParsedSynopsis`
 - `isNothingToReport`
 
@@ -132,6 +141,7 @@ Remove: `TemplateSessionInfo`
 ### Task 17: Remove dead exports from shared/treeUtils.ts
 
 Remove these 3 exports:
+
 - `WalkTreeOptions`
 - `walkTree`
 - `PartitionedPaths`
@@ -154,6 +164,31 @@ rtk vitest run
 ```
 
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

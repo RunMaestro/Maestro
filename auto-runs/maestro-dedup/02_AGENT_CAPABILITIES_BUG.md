@@ -22,12 +22,14 @@ Fix `AgentCapabilities` being defined twice in the same file (`renderer/global.d
 ### Task 1: Inventory all AgentCapabilities definitions
 
 Find every definition:
+
 ```
 rtk grep "interface AgentCapabilities" src/ --include="*.ts" --include="*.tsx"
 rtk grep "type AgentCapabilities" src/ --include="*.ts" --include="*.tsx"
 ```
 
 Expected locations (6 definitions):
+
 1. `src/shared/types.ts` - Likely canonical
 2. `src/main/agents/capabilities.ts` - Domain-specific
 3. `src/renderer/global.d.ts` line ~61 - First definition
@@ -50,6 +52,7 @@ Open `src/renderer/global.d.ts` and remove the duplicate `AgentCapabilities` def
 ### Task 5: Remove redundant definitions
 
 For each non-canonical definition:
+
 - If the file imports from `shared/types.ts`, remove the local definition
 - If the file is `global.d.ts` or `preload.ts`, reference the shared type via import
 - If the file can't import (ambient declaration), ensure the definition matches exactly
@@ -77,6 +80,31 @@ rtk vitest run
 ```
 
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

@@ -25,12 +25,14 @@ Remove 53 exported store selectors/helpers that have zero external references. T
 File: `src/renderer/stores/agentStore.ts`
 
 Verify zero external references, then remove these 4 exports:
+
 - `selectAvailableAgents`
 - `selectAgentsDetected`
 - `getAgentState`
 - `getAgentActions`
 
 For each, verify with grep first:
+
 ```
 rtk grep "selectAvailableAgents" src/ --include="*.ts" --include="*.tsx" | grep -v "agentStore" | grep -v "__tests__" | grep -v "\.test\."
 ```
@@ -42,6 +44,7 @@ If grep returns 0 results, remove the export. If it's a function, remove the ent
 File: `src/renderer/stores/batchStore.ts`
 
 Remove these 3 exports:
+
 - `selectStoppingBatchSessionIds`
 - `selectBatchRunState`
 - `getBatchActions`
@@ -51,6 +54,7 @@ Remove these 3 exports:
 File: `src/renderer/stores/fileExplorerStore.ts`
 
 Remove these 2 exports:
+
 - `getFileExplorerState`
 - `getFileExplorerActions`
 
@@ -59,6 +63,7 @@ Remove these 2 exports:
 File: `src/renderer/stores/groupChatStore.ts`
 
 Remove these 2 exports:
+
 - `getGroupChatState`
 - `getGroupChatActions`
 
@@ -67,6 +72,7 @@ Remove these 2 exports:
 File: `src/renderer/stores/modalStore.ts`
 
 Remove these 2 exports:
+
 - `selectModalOpen`
 - `selectModal`
 
@@ -75,6 +81,7 @@ Remove these 2 exports:
 File: `src/renderer/stores/notificationStore.ts`
 
 Remove these 6 exports:
+
 - `selectToasts`
 - `selectToastCount`
 - `selectConfig`
@@ -87,6 +94,7 @@ Remove these 6 exports:
 File: `src/renderer/stores/operationStore.ts`
 
 Remove these 3 exports:
+
 - `selectIsAnyOperationInProgress`
 - `getOperationState`
 - `getOperationActions`
@@ -96,6 +104,7 @@ Remove these 3 exports:
 File: `src/renderer/stores/sessionStore.ts`
 
 Remove these 9 exports:
+
 - `selectBookmarkedSessions`
 - `selectSessionsByGroup`
 - `selectUngroupedSessions`
@@ -111,6 +120,7 @@ Remove these 9 exports:
 File: `src/renderer/stores/settingsStore.ts`
 
 Remove these 11 exports:
+
 - `DEFAULT_CONTEXT_MANAGEMENT_SETTINGS`
 - `DEFAULT_AUTO_RUN_STATS`
 - `DEFAULT_USAGE_STATS`
@@ -130,6 +140,7 @@ Remove these 11 exports:
 File: `src/renderer/stores/tabStore.ts`
 
 Remove these 12 exports:
+
 - `selectActiveTab`
 - `selectActiveFileTab`
 - `selectUnifiedTabs`
@@ -153,6 +164,31 @@ rtk vitest run
 **MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
 
 Both must pass. If tests fail, a test file was importing one of these selectors - check the test, and if the selector is only used in tests, remove it from the test too.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

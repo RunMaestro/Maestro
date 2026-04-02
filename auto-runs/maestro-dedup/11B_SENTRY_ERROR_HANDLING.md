@@ -20,11 +20,13 @@ Audit 252 catch blocks that use `console.error` without `captureException`/`capt
 ## Important Context
 
 From CLAUDE.md:
+
 - **DO let exceptions bubble up** when they represent unexpected failures
 - **DO handle expected/recoverable errors explicitly** (network errors, file not found, etc.)
 - **DO use Sentry utilities** for explicit reporting
 
 Sentry utilities:
+
 - Main process: `import { captureException, captureMessage } from '../utils/sentry';`
 - Renderer: `import { captureException } from '../components/ErrorBoundary';` (or similar)
 
@@ -37,12 +39,14 @@ Sentry utilities:
 Not all 252 catch blocks need Sentry. Prioritize:
 
 **MUST add Sentry (unexpected failures):**
+
 - Main process IPC handlers (user actions that fail silently)
 - Data persistence/storage operations
 - Agent spawn failures
 - Session state corruption
 
 **SKIP Sentry (expected/recoverable):**
+
 - Network timeouts (expected in SSH/remote scenarios)
 - File not found (user may have deleted it)
 - Parse errors on user input
@@ -55,6 +59,7 @@ rtk grep -rn "catch" src/main/ --include="*.ts" -A2 | grep "console.error" | gre
 ```
 
 For each catch block:
+
 1. Read the try block to understand what can fail
 2. If the error is unexpected, add `captureException`
 3. If the error is expected, add a comment explaining why Sentry is skipped
@@ -85,6 +90,7 @@ CLI errors are user-facing. Add Sentry only for internal errors, not for user in
 ### Task 4: Audit renderer components (40+ files)
 
 For UI components, most catch blocks are around:
+
 - API calls (add Sentry for unexpected failures)
 - DOM operations (usually expected, skip Sentry)
 - Data parsing (add Sentry if data comes from our systems)
@@ -118,6 +124,31 @@ done | wc -l
 ```
 
 Target: fewer than 30 remaining (expected-error-only files).
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 

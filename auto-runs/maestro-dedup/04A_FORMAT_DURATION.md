@@ -21,6 +21,7 @@ Replace 22 local `formatDuration` definitions with the canonical implementation 
 ## Important Context
 
 Two canonical implementations exist:
+
 1. `src/shared/formatters.ts:144` - `formatElapsedTime(seconds)` - takes seconds, returns "Xm Ys" format
 2. `src/shared/performance-metrics.ts:336` - `formatDuration(ms)` - takes milliseconds, returns "X.Xs" format
 
@@ -33,6 +34,7 @@ Most local definitions take **seconds** and return human-readable strings like "
 ### Task 1: Read and understand the canonical implementations
 
 Read:
+
 - `src/shared/formatters.ts` around line 144 - `formatElapsedTime`
 - `src/shared/performance-metrics.ts` around line 336 - `formatDuration`
 
@@ -45,6 +47,7 @@ rtk grep "function formatDuration\|const formatDuration\|function formatElapsed\
 ```
 
 For each definition, note:
+
 - Input type (seconds vs milliseconds)
 - Output format
 - Whether it exactly matches the canonical
@@ -64,12 +67,14 @@ Run tests after: `rtk vitest run`
 ### Task 4: Consolidate renderer component files
 
 Replace local definitions in:
+
 - `AboutModal.tsx`
 - `FirstRunCelebration.tsx`
 - `SymphonyModal.tsx`
 - `Toast.tsx`
 
 For each:
+
 1. Read the local definition to confirm it matches canonical
 2. Remove local definition
 3. Add import from `shared/formatters`
@@ -77,12 +82,14 @@ For each:
 ### Task 5: Consolidate hook and utility files
 
 Replace local definitions in:
+
 - `AIOverviewTab.tsx`
 - `useContributorStats.ts`
 
 ### Task 6: Consolidate main process files
 
 Replace local definitions in:
+
 - `groupChatExport.ts`
 - `tabExport.ts`
 
@@ -91,6 +98,7 @@ These are in the main process - they can import from `shared/formatters` (shared
 ### Task 7: Consolidate CLI files
 
 Replace local definitions in:
+
 - `cli/output/formatter.ts` (2 definitions)
 
 ### Task 8: Handle CueModal/cueModalUtils.ts
@@ -102,6 +110,7 @@ Replace the local `formatDuration` in `CueModal/cueModalUtils.ts:25`.
 ### Task 9: Verify all replacements produce identical output
 
 For any definition where the input/output format differed from the canonical:
+
 - Create a thin wrapper that adapts the canonical function
 - Or add the variant to `shared/formatters.ts` as a named export
 
@@ -121,6 +130,31 @@ rtk grep "function formatDuration\|const formatDuration" src/ --include="*.ts" -
 ```
 
 Should return 0 results.
+
+---
+
+## Verification
+
+After completing changes, run targeted tests for the files you modified:
+
+```bash
+rtk vitest run <path-to-relevant-test-files>
+```
+
+**Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable. If a test you didn't touch starts failing, investigate whether your refactoring broke it. If your change removed code that a test depended on, update that test.
+
+Do NOT run the full test suite (it takes too long). Only run tests relevant to the files you changed. Use `rtk grep` to find related test files:
+
+```bash
+rtk grep "import.*from.*<module-you-changed>" --glob "*.test.*"
+```
+
+Also verify types:
+
+```bash
+rtk tsc -p tsconfig.main.json --noEmit
+rtk tsc -p tsconfig.lint.json --noEmit
+```
 
 ---
 
