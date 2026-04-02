@@ -24,6 +24,7 @@ import type {
 	BatchRunState,
 	QueuedItem,
 } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Create a mock AITab
 const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
@@ -39,41 +40,6 @@ const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
 	saveToHistory: true,
 	...overrides,
 });
-
-// Create a mock Session
-const createMockSession = (overrides: Partial<Session> = {}): Session => {
-	const baseTab = createMockTab();
-
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 1234,
-		terminalPid: 5678,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		aiTabs: [baseTab],
-		activeTabId: baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		...overrides,
-	} as Session;
-};
 
 // Default batch state (not running)
 const defaultBatchState: BatchRunState = {

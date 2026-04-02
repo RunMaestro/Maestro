@@ -21,6 +21,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState } from '../../../renderer/types';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock InputContext
@@ -150,13 +151,9 @@ function createDefaultBatchState(overrides: Partial<BatchRunState> = {}): BatchR
 	};
 }
 
+// Wrapper: old factory had a pre-populated AI tab, cwd '/test', and projectRoot '/test'
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+	return _createMockSession({
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -167,15 +164,10 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 			},
 		],
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
 		cwd: '/test',
 		projectRoot: '/test',
-		terminalDraftInput: '',
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	} as Partial<Session>);
 }
 
 function createMockDeps(overrides: Partial<UseInputHandlersDeps> = {}): UseInputHandlersDeps {

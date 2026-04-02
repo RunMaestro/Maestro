@@ -18,6 +18,7 @@ import {
 	formatEnterToSend,
 } from '../../../../renderer/utils/shortcutFormatter';
 import type { Session, Theme } from '../../../../renderer/types';
+import { createMockSession } from '../../../helpers/mockSession';
 
 // Mock useLayerStack for the WizardExitConfirmDialog
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
@@ -54,54 +55,6 @@ const mockTheme: Theme = {
 		accentText: '#66b2ff',
 	},
 };
-
-// Mock session for testing
-const createMockSession = (overrides?: Partial<Session>): Session =>
-	({
-		id: 'test-session',
-		name: 'Test Session',
-		cwd: '/test',
-		fullPath: '/test',
-		projectRoot: '/test',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		isGitRepo: false,
-		shellLogs: [],
-		fileTree: [],
-		changedFiles: [],
-		workLog: [],
-		aiTabs: [
-			{
-				id: 'tab-1',
-				name: 'Main',
-				logs: [],
-			},
-		],
-		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		executionQueue: [],
-		contextUsage: 0,
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		isLive: false,
-		aiPid: 1234,
-		port: 3000,
-		wizardState: {
-			isActive: true,
-			mode: 'new',
-			confidence: 50,
-			conversationHistory: [],
-			previousUIState: {
-				readOnlyMode: false,
-				saveToHistory: true,
-				showThinking: 'off',
-			},
-		},
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	}) as Session;
 
 describe('WizardInputPanel', () => {
 	const defaultProps = {

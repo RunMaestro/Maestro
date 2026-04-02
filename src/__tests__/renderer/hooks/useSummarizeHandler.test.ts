@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mocks
@@ -89,42 +90,19 @@ function createMockTab(overrides: Partial<AITab> = {}): AITab {
 	} as AITab;
 }
 
+// Wrapper: old factory included a default tab with specific defaults
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
+	return _createMockSession({
 		id: 'session-1',
 		name: 'Test Agent',
-		toolType: 'claude-code',
-		state: 'idle',
 		cwd: '/projects/test',
 		fullPath: '/projects/test',
 		projectRoot: '/projects/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 75,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
 		aiTabs: [createMockTab()],
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
+		contextUsage: 75,
 		...overrides,
-	} as Session;
+	});
 }
 
 // ============================================================================

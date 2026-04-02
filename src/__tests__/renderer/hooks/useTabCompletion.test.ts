@@ -7,36 +7,7 @@ import {
 } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import type { FileNode } from '../../../renderer/types/fileTree';
-
-// Helper to create a minimal session for testing
-const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'test-session',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/project',
-		projectRoot: '/project',
-		aiPid: 0,
-		terminalPid: 0,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		isLive: false,
-		isNew: false,
-		scrollPosition: 0,
-		inputHistory: [],
-		inputHistoryIndex: -1,
-		shellCommandHistory: [],
-		shellCwd: '/project',
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	}) as Session;
+import { createMockSession } from '../../helpers/mockSession';
 
 // Helper to create a file tree
 const createFileTree = (): FileNode[] => [

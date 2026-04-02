@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { AgentSessionsModal } from '../../../renderer/components/AgentSessionsModal';
 import type { Theme, Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
@@ -51,29 +52,6 @@ const lightTheme: Theme = {
 	name: 'GitHub Light',
 	mode: 'light',
 };
-
-// Create a mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'session-1',
-		name: 'Test Session',
-		cwd: '/test/project',
-		projectRoot: '/test/project',
-		inputMode: 'ai',
-		state: 'idle',
-		toolType: 'claude-code',
-		aiPid: 12345,
-		terminalPid: 12346,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	}) as Session;
 
 // Create a mock Claude session
 interface MockClaudeSession {

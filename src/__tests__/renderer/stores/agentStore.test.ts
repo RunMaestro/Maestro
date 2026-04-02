@@ -11,58 +11,31 @@ import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
+// Wrapper: the old factory always included a default tab. Many tests depend on this.
+const defaultTab = {
+	id: 'tab-1',
+	agentSessionId: null,
+	name: null,
+	starred: false,
+	logs: [] as any[],
+	inputValue: '',
+	stagedImages: [] as any[],
+	createdAt: Date.now(),
+	state: 'idle' as const,
+};
+
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	const defaultTab = {
-		id: 'default-tab',
-		agentSessionId: null,
-		name: null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle' as const,
-	};
-	return {
-		id: overrides.id ?? `session-${Math.random().toString(36).slice(2, 8)}`,
-		name: overrides.name ?? 'Test Session',
-		toolType: overrides.toolType ?? 'claude-code',
-		state: overrides.state ?? 'idle',
-		cwd: '/test',
-		fullPath: '/test',
-		projectRoot: '/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: overrides.inputMode ?? 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: overrides.aiTabs ?? [defaultTab],
-		activeTabId: overrides.activeTabId ?? defaultTab.id,
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [{ type: 'ai' as const, id: defaultTab.id }],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
+	return _createMockSession({
+		aiTabs: [{ ...defaultTab }],
+		activeTabId: 'tab-1',
 		...overrides,
-	} as Session;
+	});
 }
 
 function createMockAgentConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -1147,6 +1120,7 @@ describe('agentStore', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				toolType: 'claude-code',
+				cwd: '/test',
 				aiTabs: [
 					{
 						id: 'tab-1',

@@ -663,29 +663,7 @@ vi.mock('../../../web/mobile/RightPanel', () => ({
 // Now import the component
 import MobileApp from '../../../web/mobile/App';
 import type { Session } from '../../../web/hooks/useSessions';
-
-// Helper to create mock sessions
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/Users/test/project',
-		toolType: 'claude-code',
-		bookmarked: false,
-		groupId: null,
-		groupName: null,
-		groupEmoji: null,
-		aiTabs: undefined,
-		activeTabId: undefined,
-		agentSessionId: undefined,
-		usageStats: undefined,
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
+import { createMockSession } from '../../helpers/mockSession';
 
 describe('MobileApp', () => {
 	let originalFetch: typeof global.fetch;

@@ -4,6 +4,7 @@ import type { RefObject } from 'react';
 import { useAgentSessionManagement } from '../../../renderer/hooks';
 import type { Session, AITab, LogEntry } from '../../../renderer/types';
 import type { RightPanelHandle } from '../../../renderer/components/RightPanel';
+import { createMockSession } from '../../helpers/mockSession';
 
 type MaestroHistoryApi = typeof window.maestro.history;
 
@@ -24,40 +25,6 @@ const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
 	saveToHistory: true,
 	...overrides,
 });
-
-const createMockSession = (overrides: Partial<Session> = {}): Session => {
-	const baseTab = createMockTab();
-
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		aiTabs: [baseTab],
-		activeTabId: baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		...overrides,
-	};
-};
 
 describe('useAgentSessionManagement', () => {
 	const originalMaestro = { ...window.maestro };

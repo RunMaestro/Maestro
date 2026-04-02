@@ -12,6 +12,7 @@ import SessionPillBar, {
 	type SessionPillBarProps,
 } from '../../../web/mobile/SessionPillBar';
 import type { Session } from '../../../web/hooks/useSessions';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Mock ThemeProvider
 const mockColors = {
@@ -45,25 +46,6 @@ vi.mock('../../../web/mobile/constants', () => ({
 		success: [30],
 	},
 }));
-
-// Helper to create mock sessions
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/Users/test/project',
-		toolType: 'claude-code',
-		bookmarked: false,
-		groupId: null,
-		groupName: null,
-		groupEmoji: null,
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
 
 // Helper to create DOMRect-like object
 function createMockDOMRect(overrides: Partial<DOMRect> = {}): DOMRect {

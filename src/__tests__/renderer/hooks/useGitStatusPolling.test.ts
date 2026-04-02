@@ -12,6 +12,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useGitStatusPolling, getScaledPollInterval } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import { gitService } from '../../../renderer/services/git';
+import { createMockSession } from '../../helpers/mockSession';
 
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -19,36 +20,6 @@ vi.mock('../../../renderer/services/git', () => ({
 		getNumstat: vi.fn(),
 	},
 }));
-
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	cwd: '/test/project',
-	fullPath: '/test/project',
-	projectRoot: '/test/project',
-	aiLogs: [],
-	shellLogs: [],
-	workLog: [],
-	contextUsage: 0,
-	inputMode: 'ai',
-	aiPid: 0,
-	terminalPid: 0,
-	port: 0,
-	isLive: false,
-	changedFiles: [],
-	isGitRepo: false,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	activeTimeMs: 0,
-	aiTabs: [],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	...overrides,
-});
 
 const setDocumentHidden = (hidden: boolean) => {
 	Object.defineProperty(document, 'hidden', {

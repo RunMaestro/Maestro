@@ -22,6 +22,7 @@ import type {
 	BatchRunState,
 	SessionState,
 } from '../../renderer/types';
+import { createMockSession } from '../helpers/mockSession';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
 const renderWithProviders = (ui: React.ReactElement) => {
@@ -221,43 +222,6 @@ const setupMaestroMock = () => {
 	(window as any).maestro = mockMaestro;
 	return mockMaestro;
 };
-
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'test-session-1',
-	name: 'Test Session 1',
-	cwd: '/test/path',
-	projectRoot: '/test/path',
-	fullPath: '/test/path',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	isGitRepo: true,
-	aiPid: 1234,
-	terminalPid: 5678,
-	port: 3000,
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	shellLogs: [],
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	changedFiles: [],
-	isLive: false,
-	contextUsage: 0,
-	workLog: [],
-	autoRunFolderPath: '/test/autorun',
-	autoRunSelectedFile: 'Phase 1',
-	autoRunMode: 'edit',
-	autoRunContent: '# Session 1 Content\n\n- [ ] Task 1',
-	autoRunContentVersion: 0,
-	autoRunCursorPosition: 0,
-	autoRunEditScrollPos: 0,
-	autoRunPreviewScrollPos: 0,
-	...overrides,
-});
 
 // Create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({

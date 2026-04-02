@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -159,30 +160,6 @@ const defaultShortcuts: Record<string, any> = {
 	toggleSidebar: { keys: ['meta', 'b'], description: 'Toggle sidebar' },
 	filterUnreadAgents: { keys: ['meta', 'shift', 'u'], description: 'Filter unread agents' },
 };
-
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: `session-${Math.random().toString(36).substr(2, 9)}`,
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
-	aiPid: 12345,
-	terminalPid: 12346,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	contextUsage: 30,
-	activeTimeMs: 60000,
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
 
 // Create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({

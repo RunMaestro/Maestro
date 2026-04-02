@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorerPanel } from '../../../renderer/components/FileExplorerPanel';
 import type { Session, Theme } from '../../../renderer/types';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
@@ -232,30 +233,18 @@ const mockTheme: Theme = {
 	},
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/Users/test/project',
-	projectRoot: '/Users/test/project',
-	fullPath: '/Users/test/project',
-	aiPid: 1234,
-	terminalPid: 5678,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	changedFiles: [],
-	fileTreeAutoRefreshInterval: 0,
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
+// Wrapper: old factory had different cwd/paths, non-zero pids, isGitRepo, and fileTreeAutoRefreshInterval: 0
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	_createMockSession({
+		cwd: '/Users/test/project',
+		projectRoot: '/Users/test/project',
+		fullPath: '/Users/test/project',
+		aiPid: 1234,
+		terminalPid: 5678,
+		isGitRepo: true,
+		fileTreeAutoRefreshInterval: 0,
+		...overrides,
+	} as Partial<Session>);
 
 // Create mock file tree
 const mockFileTree = [

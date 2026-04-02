@@ -8,6 +8,7 @@ import {
 } from '../../../renderer/hooks';
 import type { Session, AITab, LogEntry, ToolType } from '../../../renderer/types';
 import type { MergeOptions } from '../../../renderer/components/MergeSessionModal';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
 
 // Mock the context grooming service
@@ -98,48 +99,18 @@ function createMockTab(id: string, logs: LogEntry[] = [], name?: string): AITab 
 	};
 }
 
-// Create a minimal session for testing
-function createMockSession(
-	id: string,
-	toolType: ToolType = 'claude-code',
-	state: 'idle' | 'busy' | 'error' | 'connecting' = 'idle',
-	tabs?: AITab[]
-): Session {
+// Wrapper: old factory had a default tab with logs and specific session name pattern
+function createMockSession(overrides: Partial<Session> = {}): Session {
 	const defaultTab = createMockTab('tab-1', [
 		{ id: 'log-1', timestamp: Date.now(), source: 'user', text: 'Hello from source' },
 		{ id: 'log-2', timestamp: Date.now() + 100, source: 'ai', text: 'Hi! How can I help you?' },
 	]);
 
-	return {
-		id,
-		name: `Session ${id}`,
-		toolType,
-		state,
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		activeTimeMs: 0,
-		executionQueue: [],
-		aiTabs: tabs || [defaultTab],
-		activeTabId: (tabs || [defaultTab])[0].id,
-		closedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-	};
+	return _createMockSession({
+		aiTabs: [defaultTab],
+		activeTabId: defaultTab.id,
+		...overrides,
+	});
 }
 
 describe('useMergeSession', () => {
@@ -197,7 +168,12 @@ describe('useMergeSession', () => {
 			const tab2 = createMockTab('tab-2', [
 				{ id: 'log-2', timestamp: Date.now() + 1000, source: 'user', text: 'Second conversation' },
 			]);
-			const session = createMockSession('session-1', 'claude-code', 'idle', [tab1, tab2]);
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [tab1, tab2],
+			});
 
 			const request: MergeSessionRequest = {
 				sourceSession: session,
@@ -226,7 +202,12 @@ describe('useMergeSession', () => {
 			const tab2 = createMockTab('tab-2', [
 				{ id: 'log-2', timestamp: Date.now(), source: 'ai', text: 'Hi' },
 			]);
-			const session = createMockSession('session-1', 'claude-code', 'idle', [tab1, tab2]);
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [tab1, tab2],
+			});
 			session.name = 'My Project';
 
 			await act(async () => {
@@ -253,10 +234,10 @@ describe('useMergeSession', () => {
 			// Pass activeTabId to track per-tab state
 			const { result } = renderHook(() => useMergeSession('tab-1'));
 
-			const sourceSession = createMockSession('source-1', 'claude-code');
+			const sourceSession = createMockSession({ id: 'source-1', toolType: 'claude-code' });
 			sourceSession.name = 'Source Project';
 
-			const targetSession = createMockSession('target-1', 'claude-code');
+			const targetSession = createMockSession({ id: 'target-1', toolType: 'claude-code' });
 			targetSession.name = 'Target Project';
 
 			const request: MergeSessionRequest = {
@@ -279,9 +260,9 @@ describe('useMergeSession', () => {
 		it('generates combined name for cross-session merge', async () => {
 			const { result } = renderHook(() => useMergeSession());
 
-			const sourceSession = createMockSession('source-1');
+			const sourceSession = createMockSession({ id: 'source-1' });
 			sourceSession.name = 'Project A';
-			const targetSession = createMockSession('target-1');
+			const targetSession = createMockSession({ id: 'target-1' });
 			targetSession.name = 'Project B';
 
 			await act(async () => {
@@ -321,8 +302,18 @@ describe('useMergeSession', () => {
 				{ id: 'log-3', timestamp: Date.now() + 200, source: 'user', text: 'C'.repeat(5000) },
 			]);
 
-			const sourceSession = createMockSession('source', 'claude-code', 'idle', [sourceTab]);
-			const targetSession = createMockSession('target', 'claude-code', 'idle', [targetTab]);
+			const sourceSession = createMockSession({
+				id: 'source',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [sourceTab],
+			});
+			const targetSession = createMockSession({
+				id: 'target',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [targetTab],
+			});
 
 			await act(async () => {
 				await result.current.startMerge({
@@ -345,7 +336,7 @@ describe('useMergeSession', () => {
 				// Pass activeTabId to track per-tab state
 				const { result } = renderHook(() => useMergeSession('tab-1'));
 
-				const session = createMockSession('session-1');
+				const session = createMockSession({ id: 'session-1' });
 
 				let mergeResult;
 				await act(async () => {
@@ -370,8 +361,13 @@ describe('useMergeSession', () => {
 				const { result } = renderHook(() => useMergeSession('empty-tab'));
 
 				const emptyTab = createMockTab('empty-tab', []); // No logs
-				const sourceSession = createMockSession('source', 'claude-code', 'idle', [emptyTab]);
-				const targetSession = createMockSession('target');
+				const sourceSession = createMockSession({
+					id: 'source',
+					toolType: 'claude-code',
+					state: 'idle',
+					aiTabs: [emptyTab],
+				});
+				const targetSession = createMockSession({ id: 'target' });
 
 				let mergeResult;
 				await act(async () => {
@@ -395,8 +391,13 @@ describe('useMergeSession', () => {
 				const { result } = renderHook(() => useMergeSession());
 
 				const emptyTab = createMockTab('empty-tab', []);
-				const sourceSession = createMockSession('source');
-				const targetSession = createMockSession('target', 'claude-code', 'idle', [emptyTab]);
+				const sourceSession = createMockSession({ id: 'source' });
+				const targetSession = createMockSession({
+					id: 'target',
+					toolType: 'claude-code',
+					state: 'idle',
+					aiTabs: [emptyTab],
+				});
 
 				let mergeResult;
 				await act(async () => {
@@ -422,7 +423,7 @@ describe('useMergeSession', () => {
 			it('returns error when source tab is not found', async () => {
 				const { result } = renderHook(() => useMergeSession());
 
-				const session = createMockSession('session-1');
+				const session = createMockSession({ id: 'session-1' });
 
 				let mergeResult;
 				await act(async () => {
@@ -442,8 +443,8 @@ describe('useMergeSession', () => {
 			it('returns error when target tab is not found', async () => {
 				const { result } = renderHook(() => useMergeSession());
 
-				const sourceSession = createMockSession('source');
-				const targetSession = createMockSession('target');
+				const sourceSession = createMockSession({ id: 'source' });
+				const targetSession = createMockSession({ id: 'target' });
 
 				let mergeResult;
 				await act(async () => {
@@ -481,8 +482,8 @@ describe('useMergeSession', () => {
 
 				const { result } = renderHook(() => useMergeSession());
 
-				const sourceSession = createMockSession('source');
-				const targetSession = createMockSession('target');
+				const sourceSession = createMockSession({ id: 'source' });
+				const targetSession = createMockSession({ id: 'target' });
 
 				// Start first merge without awaiting
 				const firstMerge = result.current.startMerge({
@@ -520,8 +521,8 @@ describe('useMergeSession', () => {
 		it('uses AI grooming when groomContext is true', async () => {
 			const { result } = renderHook(() => useMergeSession());
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			await act(async () => {
 				await result.current.startMerge({
@@ -539,8 +540,8 @@ describe('useMergeSession', () => {
 		it('skips grooming when groomContext is false', async () => {
 			const { result } = renderHook(() => useMergeSession());
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			await act(async () => {
 				await result.current.startMerge({
@@ -566,8 +567,8 @@ describe('useMergeSession', () => {
 			// Pass activeTabId to track per-tab state
 			const { result } = renderHook(() => useMergeSession('tab-1'));
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			let mergeResult;
 			await act(async () => {
@@ -607,8 +608,8 @@ describe('useMergeSession', () => {
 			// Pass activeTabId to track per-tab state
 			const { result } = renderHook(() => useMergeSession('tab-1'));
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			// Start merge without awaiting
 			const mergePromise = result.current.startMerge({
@@ -635,8 +636,8 @@ describe('useMergeSession', () => {
 		it('resets state to idle', async () => {
 			const { result } = renderHook(() => useMergeSession());
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			// First do a merge
 			await act(async () => {
@@ -665,8 +666,8 @@ describe('useMergeSession', () => {
 		it('calls grooming service with progress callback when grooming enabled', async () => {
 			const { result } = renderHook(() => useMergeSession());
 
-			const sourceSession = createMockSession('source');
-			const targetSession = createMockSession('target');
+			const sourceSession = createMockSession({ id: 'source' });
+			const targetSession = createMockSession({ id: 'target' });
 
 			await act(async () => {
 				await result.current.startMerge({
@@ -697,8 +698,18 @@ describe('useMergeSession', () => {
 			const sourceTab = createMockTab('source-tab', [newerLog]); // Newer log
 			const targetTab = createMockTab('target-tab', [olderLog]); // Older log
 
-			const sourceSession = createMockSession('source', 'claude-code', 'idle', [sourceTab]);
-			const targetSession = createMockSession('target', 'claude-code', 'idle', [targetTab]);
+			const sourceSession = createMockSession({
+				id: 'source',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [sourceTab],
+			});
+			const targetSession = createMockSession({
+				id: 'target',
+				toolType: 'claude-code',
+				state: 'idle',
+				aiTabs: [targetTab],
+			});
 
 			let mergeResult;
 			await act(async () => {

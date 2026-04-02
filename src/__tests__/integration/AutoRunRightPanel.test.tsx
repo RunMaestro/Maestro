@@ -14,6 +14,7 @@ import React, { createRef, useState } from 'react';
 import { RightPanel, RightPanelHandle } from '../../renderer/components/RightPanel';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import type { Session, Theme, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import { createMockSession } from '../helpers/mockSession';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 
 // Mock external dependencies
@@ -167,41 +168,6 @@ const setupMaestroMock = () => {
 	(window as any).maestro = mockMaestro;
 	return mockMaestro;
 };
-
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'test-session-1',
-	name: 'Test Session',
-	cwd: '/test/path',
-	projectRoot: '/test/path',
-	fullPath: '/test/path',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	isGitRepo: true,
-	aiPid: 1234,
-	terminalPid: 5678,
-	port: 3000,
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	shellLogs: [],
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	changedFiles: [],
-	isLive: false,
-	contextUsage: 0,
-	workLog: [],
-	autoRunFolderPath: '/test/autorun',
-	autoRunSelectedFile: 'Phase 1',
-	autoRunMode: 'edit',
-	autoRunCursorPosition: 0,
-	autoRunEditScrollPos: 0,
-	autoRunPreviewScrollPos: 0,
-	...overrides,
-});
 
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({

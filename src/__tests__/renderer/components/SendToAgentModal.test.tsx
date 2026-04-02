@@ -25,6 +25,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendToAgentModal } from '../../../renderer/components/SendToAgentModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Session, AgentConfig, ToolType } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Create a test theme
 const testTheme: Theme = {
@@ -134,59 +135,6 @@ const mockSessions: Session[] = [
 	createMockTargetSession('session-codex', 'Codex Session', 'codex'),
 	createMockTargetSession('session-busy', 'Busy Session', 'claude-code', 'busy'),
 ];
-
-// Create a mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'test-session-1',
-	name: 'Test Session',
-	toolType: 'claude-code' as ToolType,
-	state: 'idle',
-	cwd: '/test/path',
-	fullPath: '/test/path',
-	projectRoot: '/test/path',
-	aiLogs: [],
-	shellLogs: [],
-	workLog: [],
-	contextUsage: 0,
-	inputMode: 'ai',
-	aiPid: 0,
-	terminalPid: 0,
-	port: 0,
-	isLive: false,
-	changedFiles: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	activeTimeMs: 0,
-	executionQueue: [],
-	aiTabs: [
-		{
-			id: 'tab-1',
-			agentSessionId: 'session-abc-123',
-			name: 'Test Tab',
-			starred: false,
-			logs: [
-				{ id: '1', timestamp: Date.now(), source: 'user', text: 'Hello' },
-				{
-					id: '2',
-					timestamp: Date.now(),
-					source: 'ai',
-					text: 'Hi there! How can I help you today?',
-				},
-			],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		},
-	],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
 
 // Helper to render with LayerStackProvider
 const renderWithLayerStack = (ui: React.ReactElement) => {

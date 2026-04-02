@@ -17,6 +17,7 @@ import { render, screen, fireEvent, waitFor, within, act } from '@testing-librar
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AllSessionsView, type AllSessionsViewProps } from '../../../web/mobile/AllSessionsView';
 import type { Session } from '../../../web/hooks/useSessions';
+import { createMockSession } from '../../helpers/mockSession';
 
 // Mock theme colors
 const mockThemeColors = {
@@ -60,26 +61,6 @@ vi.mock('../../../web/mobile/constants', () => ({
 		error: [50, 30, 50],
 	},
 }));
-
-// Helper to create mock sessions
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		state: 'idle',
-		inputMode: 'ai',
-		toolType: 'claude-code',
-		cwd: '/Users/test/project',
-		projectRoot: '/Users/test/project',
-		bookmarked: false,
-		groupId: null,
-		groupName: null,
-		groupEmoji: null,
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
 
 // Default props for AllSessionsView
 function createDefaultProps(overrides: Partial<AllSessionsViewProps> = {}): AllSessionsViewProps {

@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 // Add missing window.maestro.devtools and debug mocks
@@ -113,30 +114,18 @@ const mockShortcuts: Record<string, Shortcut> = {
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
-	aiPid: 1234,
-	terminalPid: 5678,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
+// Wrapper: old factory had different cwd, non-zero pids, isGitRepo, and a pre-populated AI tab
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	_createMockSession({
+		cwd: '/home/user/project',
+		projectRoot: '/home/user/project',
+		aiPid: 1234,
+		terminalPid: 5678,
+		isGitRepo: true,
+		aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
+		activeTabId: 'tab-1',
+		...overrides,
+	} as Partial<Session>);
 
 // Create mock group
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({

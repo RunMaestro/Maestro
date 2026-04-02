@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
+import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
@@ -34,28 +35,13 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
 import type { Session } from '../../../renderer/types';
 
-// Cast to access mock methods
-const mockGitService = gitService as {
-	isRepo: ReturnType<typeof vi.fn>;
-	getBranches: ReturnType<typeof vi.fn>;
-	getTags: ReturnType<typeof vi.fn>;
-};
-
-// ============================================================================
-// Test Helpers
-// ============================================================================
-
+// Wrapper: restoration tests depend on rich defaults (every field is tested during migration)
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
+	return _createMockSession({
 		cwd: '/projects/myapp',
 		fullPath: '/projects/myapp',
 		projectRoot: '/projects/myapp',
-		toolType: 'claude-code' as any,
 		groupId: 'group-1',
-		inputMode: 'ai' as any,
-		state: 'idle' as any,
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -68,32 +54,19 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				stagedImages: [],
 				createdAt: Date.now(),
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		aiLogs: [],
 		shellLogs: [{ id: 'log-1', timestamp: Date.now(), source: 'system' as const, text: 'hello' }],
-		workLog: [],
-		contextUsage: 0,
 		aiPid: 123,
 		terminalPid: 456,
 		port: 3000,
 		isLive: true,
 		liveUrl: 'http://localhost:3000',
-		changedFiles: [],
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		autoRunFolderPath: '/projects/myapp/.maestro-autorun',
 		fileTreeAutoRefreshInterval: 180,
-		executionQueue: [],
 		activeTimeMs: 5000,
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
-		unifiedClosedTabHistory: [],
-		busySource: 'user',
+		busySource: 'user' as any,
 		thinkingStartTime: Date.now(),
 		currentCycleTokens: 100,
 		currentCycleBytes: 2000,
@@ -101,8 +74,19 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		agentError: { message: 'stale error' } as any,
 		agentErrorPaused: true,
 		...overrides,
-	} as any;
+	}) as any;
 }
+
+// Cast to access mock methods
+const mockGitService = gitService as {
+	isRepo: ReturnType<typeof vi.fn>;
+	getBranches: ReturnType<typeof vi.fn>;
+	getTags: ReturnType<typeof vi.fn>;
+};
+
+// ============================================================================
+// Test Helpers
+// ============================================================================
 
 // Mock IPC
 const mockGetAll = vi.fn();

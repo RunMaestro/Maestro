@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState, AgentError } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock useBatchProcessor BEFORE importing useBatchHandlers
@@ -86,37 +87,6 @@ function createDefaultBatchState(overrides: Partial<BatchRunState> = {}): BatchR
 		sessionIds: [],
 		...overrides,
 	};
-}
-
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
-		aiTabs: [
-			{
-				id: 'tab-1',
-				label: 'AI',
-				type: 'ai',
-				logs: [],
-				state: 'idle',
-			},
-		],
-		activeTabId: 'tab-1',
-		terminalTabs: [],
-		executionQueue: [],
-		manualHistory: [],
-		historyIndex: -1,
-		cwd: '/test',
-		thinkingStartTime: null,
-		isStarred: false,
-		isUnread: false,
-		hasUnseenOutput: false,
-		createdAt: Date.now(),
-		...overrides,
-	} as Session;
 }
 
 const mockSpawnAgentForSession = vi.fn().mockResolvedValue({ success: true });

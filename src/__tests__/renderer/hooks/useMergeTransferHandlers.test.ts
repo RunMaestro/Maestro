@@ -19,6 +19,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -134,41 +135,6 @@ import { useSendToAgentWithSessions } from '../../../renderer/hooks/agent/useSen
 // ============================================================================
 // Helpers
 // ============================================================================
-
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
-		aiTabs: [
-			{
-				id: 'tab-1',
-				name: 'Tab 1',
-				inputValue: '',
-				data: [],
-				logs: [
-					{ id: 'log-1', timestamp: Date.now(), source: 'user', text: 'Hello' },
-					{ id: 'log-2', timestamp: Date.now(), source: 'ai', text: 'Hi there' },
-				],
-				stagedImages: [],
-				agentSessionId: 'agent-1',
-				starred: false,
-				createdAt: Date.now(),
-			},
-		],
-		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test/project',
-		shellLogs: [],
-		shellCwd: '/test',
-		terminalTabs: [],
-		activeTerminalTabId: null,
-	} as unknown as Session;
-}
 
 // Create stable deps to avoid reference changes
 const stableDeps: UseMergeTransferHandlersDeps = {
