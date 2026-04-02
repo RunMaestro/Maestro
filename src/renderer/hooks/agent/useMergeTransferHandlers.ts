@@ -28,6 +28,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
+import { getStdinFlags } from '../../utils/spawnHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -457,6 +458,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
 
+					// Determine whether to send the prompt via stdin on Windows to avoid
+					// exceeding the command line length limit. Context transfer prompts
+					// contain the full conversation history and can easily exceed ~8KB.
+					const isSshSession = Boolean(targetSession.sessionSshRemoteConfig?.enabled);
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+						hasImages: false, // Context transfer never sends images
+					});
+
 					// Build the full prompt with Maestro system prompt for new sessions
 					const effectivePrompt = contextMessage;
 
@@ -510,6 +521,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,
 						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
+						// Windows stdin handling - context transfer prompts contain the
+						// full conversation history and can easily exceed shell limits
+						sendPromptViaStdin,
+						sendPromptViaStdinRaw,
 					});
 				} catch (error) {
 					captureException(error, {

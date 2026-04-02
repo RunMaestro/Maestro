@@ -10,6 +10,7 @@
 
 import type { Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
+import { getStdinFlags } from './spawnHelpers';
 
 /**
  * Options for creating a session for a specific agent type.
@@ -78,6 +79,8 @@ export interface BuildSpawnConfigOptions {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Whether the prompt includes images (default: false) */
+	hasImages?: boolean;
 }
 
 /**
@@ -119,6 +122,7 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomModel,
 		sessionCustomContextWindow,
 		sessionSshRemoteConfig,
+		hasImages = false,
 	} = options;
 
 	// Fetch the agent configuration from main process
@@ -136,6 +140,15 @@ export async function buildSpawnConfigForAgent(
 
 	// Use the agent's path (resolved location) or command
 	const command = agentConfig.path || agentConfig.command;
+
+	// Determine whether to send the prompt via stdin on Windows to avoid
+	// exceeding the command line length limit (~8KB cmd.exe).
+	const isSshSession = Boolean(sessionSshRemoteConfig?.enabled);
+	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+		isSshSession,
+		supportsStreamJsonInput: agentConfig.capabilities?.supportsStreamJsonInput ?? false,
+		hasImages,
+	});
 
 	// Build the spawn config
 	// The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
@@ -160,6 +173,9 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomContextWindow,
 		// Per-session SSH remote config (takes precedence over agent-level SSH config)
 		sessionSshRemoteConfig,
+		// Windows stdin handling - send prompt via stdin to avoid command line length limits
+		sendPromptViaStdin,
+		sendPromptViaStdinRaw,
 	};
 
 	return spawnConfig;
