@@ -7,11 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-	useGroupChatStore,
-	getGroupChatState,
-	getGroupChatActions,
-} from '../../../renderer/stores/groupChatStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
 	GroupChatErrorState,
@@ -472,52 +468,6 @@ describe('groupChatStore', () => {
 			expect(after.setGroupChatStates).toBe(before.setGroupChatStates);
 			expect(after.clearGroupChatError).toBe(before.clearGroupChatError);
 			expect(after.resetGroupChatState).toBe(before.resetGroupChatState);
-		});
-	});
-
-	// ==========================================================================
-	// Non-React access
-	// ==========================================================================
-
-	describe('non-React access', () => {
-		it('getGroupChatState returns current state', () => {
-			useGroupChatStore.getState().setActiveGroupChatId('gc-99');
-			const state = getGroupChatState();
-			expect(state.activeGroupChatId).toBe('gc-99');
-		});
-
-		it('getGroupChatActions returns all actions', () => {
-			const actions = getGroupChatActions();
-			expect(typeof actions.setGroupChats).toBe('function');
-			expect(typeof actions.setActiveGroupChatId).toBe('function');
-			expect(typeof actions.setGroupChatMessages).toBe('function');
-			expect(typeof actions.setGroupChatState).toBe('function');
-			expect(typeof actions.setParticipantStates).toBe('function');
-			expect(typeof actions.setModeratorUsage).toBe('function');
-			expect(typeof actions.setGroupChatStates).toBe('function');
-			expect(typeof actions.setAllGroupChatParticipantStates).toBe('function');
-			expect(typeof actions.setGroupChatExecutionQueue).toBe('function');
-			expect(typeof actions.setGroupChatReadOnlyMode).toBe('function');
-			expect(typeof actions.setGroupChatRightTab).toBe('function');
-			expect(typeof actions.setGroupChatParticipantColors).toBe('function');
-			expect(typeof actions.setGroupChatStagedImages).toBe('function');
-			expect(typeof actions.setGroupChatError).toBe('function');
-			expect(typeof actions.clearGroupChatError).toBe('function');
-			expect(typeof actions.resetGroupChatState).toBe('function');
-		});
-
-		it('getGroupChatActions returns stable references', () => {
-			const actions1 = getGroupChatActions();
-			useGroupChatStore.getState().setGroupChatState('agent-working');
-			const actions2 = getGroupChatActions();
-			expect(actions1.setGroupChats).toBe(actions2.setGroupChats);
-			expect(actions1.clearGroupChatError).toBe(actions2.clearGroupChatError);
-		});
-
-		it('actions from getGroupChatActions mutate state correctly', () => {
-			const actions = getGroupChatActions();
-			actions.setActiveGroupChatId('gc-from-actions');
-			expect(useGroupChatStore.getState().activeGroupChatId).toBe('gc-from-actions');
 		});
 	});
 

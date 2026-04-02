@@ -11,7 +11,7 @@
  * 2. Error recovery actions — clearError, restart, retry, newSession, authenticate
  * 3. Agent lifecycle actions — kill, interrupt
  *
- * Can be used outside React via useAgentStore.getState() / getAgentActions().
+ * Can be used outside React via useAgentStore.getState().
  */
 
 import { create } from 'zustand';
@@ -556,44 +556,3 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		}
 	},
 }));
-
-// ============================================================================
-// Selectors
-// ============================================================================
-
-/** Select the list of available (detected) agents */
-export const selectAvailableAgents = (state: AgentStore): AgentConfig[] => state.availableAgents;
-
-/** Select whether agent detection has completed */
-export const selectAgentsDetected = (state: AgentStore): boolean => state.agentsDetected;
-
-// ============================================================================
-// Non-React Access
-// ============================================================================
-
-/**
- * Get the current agent store state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getAgentState() {
-	return useAgentStore.getState();
-}
-
-/**
- * Get stable agent action references outside React.
- */
-export function getAgentActions() {
-	const state = useAgentStore.getState();
-	return {
-		refreshAgents: state.refreshAgents,
-		getAgentConfig: state.getAgentConfig,
-		processQueuedItem: state.processQueuedItem,
-		clearAgentError: state.clearAgentError,
-		startNewSessionAfterError: state.startNewSessionAfterError,
-		retryAfterError: state.retryAfterError,
-		restartAgentAfterError: state.restartAgentAfterError,
-		authenticateAfterError: state.authenticateAfterError,
-		killAgent: state.killAgent,
-		interruptAgent: state.interruptAgent,
-	};
-}

@@ -7,11 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-	useFileExplorerStore,
-	getFileExplorerState,
-	getFileExplorerActions,
-} from '../../../renderer/stores/fileExplorerStore';
+import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import type { FlatTreeNode } from '../../../renderer/utils/fileExplorer';
 
 // ============================================================================
@@ -240,40 +236,6 @@ describe('fileExplorerStore', () => {
 			useFileExplorerStore.getState().openLastDocumentGraph();
 
 			expect(useFileExplorerStore.getState().graphFocusFilePath).toBe('b.ts');
-		});
-	});
-
-	describe('non-React access', () => {
-		it('getFileExplorerState returns current state', () => {
-			useFileExplorerStore.getState().setFileTreeFilter('search');
-			const state = getFileExplorerState();
-			expect(state.fileTreeFilter).toBe('search');
-		});
-
-		it('getFileExplorerActions returns action functions', () => {
-			const actions = getFileExplorerActions();
-			expect(typeof actions.setSelectedFileIndex).toBe('function');
-			expect(typeof actions.setFileTreeFilter).toBe('function');
-			expect(typeof actions.setFileTreeFilterOpen).toBe('function');
-			expect(typeof actions.setFilePreviewLoading).toBe('function');
-			expect(typeof actions.setFlatFileList).toBe('function');
-			expect(typeof actions.focusFileInGraph).toBe('function');
-			expect(typeof actions.openLastDocumentGraph).toBe('function');
-			expect(typeof actions.closeGraphView).toBe('function');
-			expect(typeof actions.setIsGraphViewOpen).toBe('function');
-		});
-
-		it('actions from getFileExplorerActions update state', () => {
-			const actions = getFileExplorerActions();
-			actions.setSelectedFileIndex(10);
-			actions.setFileTreeFilter('test');
-			actions.focusFileInGraph('via-actions.ts');
-
-			const state = getFileExplorerState();
-			expect(state.selectedFileIndex).toBe(10);
-			expect(state.fileTreeFilter).toBe('test');
-			expect(state.graphFocusFilePath).toBe('via-actions.ts');
-			expect(state.isGraphViewOpen).toBe(true);
 		});
 	});
 

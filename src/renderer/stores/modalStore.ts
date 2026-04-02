@@ -445,18 +445,6 @@ export const selectModalData =
 	(state: ModalStore): ModalDataFor<T> | undefined =>
 		state.modals.get(id)?.data as ModalDataFor<T> | undefined;
 
-/**
- * Create a selector for a specific modal's full entry (open + data).
- *
- * @example
- * const settings = useModalStore(selectModal('settings'));
- * if (settings?.open) { ... }
- */
-export const selectModal =
-	<T extends ModalId>(id: T) =>
-	(state: ModalStore): ModalEntry<ModalDataFor<T>> | undefined =>
-		state.modals.get(id) as ModalEntry<ModalDataFor<T>> | undefined;
-
 // ============================================================================
 // ModalContext Compatibility Layer
 // ============================================================================

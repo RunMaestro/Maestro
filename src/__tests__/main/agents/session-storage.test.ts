@@ -40,6 +40,24 @@ vi.mock('electron', () => ({
 	},
 }));
 
+// Mock remote-fs to prevent real SSH calls during tests.
+// Without this mock, tests that pass sshConfig will attempt real SSH connections
+// which time out after ~30s per retry with 3 retries each.
+vi.mock('../../../main/utils/remote-fs', () => ({
+	readDirRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	readFileRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	statRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	directorySizeRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	writeFileRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	existsRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	mkdirRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	renameRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	deleteRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	countItemsRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	incrementalScanRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+	listAllFilesRemote: vi.fn().mockResolvedValue({ success: false, error: 'mock: no remote' }),
+}));
+
 // Mock storage implementation for testing
 class MockSessionStorage implements AgentSessionStorage {
 	readonly agentId: ToolType;

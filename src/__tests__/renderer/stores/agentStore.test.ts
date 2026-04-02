@@ -7,13 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import {
-	useAgentStore,
-	selectAvailableAgents,
-	selectAgentsDetected,
-	getAgentState,
-	getAgentActions,
-} from '../../../renderer/stores/agentStore';
+import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
@@ -907,115 +901,6 @@ describe('agentStore', () => {
 
 			// Should not throw
 			await useAgentStore.getState().interruptAgent('session-1');
-		});
-	});
-
-	describe('selectors', () => {
-		it('selectAvailableAgents returns the agents list', () => {
-			const agents = [createMockAgentConfig({ id: 'claude-code' })];
-			useAgentStore.setState({ availableAgents: agents });
-
-			expect(selectAvailableAgents(useAgentStore.getState())).toEqual(agents);
-		});
-
-		it('selectAgentsDetected returns detection status', () => {
-			expect(selectAgentsDetected(useAgentStore.getState())).toBe(false);
-
-			useAgentStore.setState({ agentsDetected: true });
-
-			expect(selectAgentsDetected(useAgentStore.getState())).toBe(true);
-		});
-	});
-
-	describe('non-React access', () => {
-		it('getAgentState returns current snapshot', () => {
-			const agents = [createMockAgentConfig()];
-			useAgentStore.setState({ availableAgents: agents, agentsDetected: true });
-
-			const state = getAgentState();
-			expect(state.availableAgents).toEqual(agents);
-			expect(state.agentsDetected).toBe(true);
-		});
-
-		it('getAgentState reflects latest mutations', () => {
-			expect(getAgentState().agentsDetected).toBe(false);
-
-			useAgentStore.setState({ agentsDetected: true });
-
-			expect(getAgentState().agentsDetected).toBe(true);
-		});
-
-		it('getAgentActions returns all 10 action functions', () => {
-			const actions = getAgentActions();
-
-			expect(typeof actions.refreshAgents).toBe('function');
-			expect(typeof actions.getAgentConfig).toBe('function');
-			expect(typeof actions.processQueuedItem).toBe('function');
-			expect(typeof actions.clearAgentError).toBe('function');
-			expect(typeof actions.startNewSessionAfterError).toBe('function');
-			expect(typeof actions.retryAfterError).toBe('function');
-			expect(typeof actions.restartAgentAfterError).toBe('function');
-			expect(typeof actions.authenticateAfterError).toBe('function');
-			expect(typeof actions.killAgent).toBe('function');
-			expect(typeof actions.interruptAgent).toBe('function');
-
-			// Verify exactly 10 actions (no extras, no missing)
-			expect(Object.keys(actions)).toHaveLength(10);
-		});
-
-		it('getAgentActions clearAgentError works end-to-end', () => {
-			const session = createMockSession({
-				id: 'session-1',
-				state: 'error',
-				agentError: { type: 'agent_crashed', message: 'crash' } as any,
-			});
-			useSessionStore.getState().setSessions([session]);
-
-			const { clearAgentError } = getAgentActions();
-			clearAgentError('session-1');
-
-			expect(useSessionStore.getState().sessions[0].state).toBe('idle');
-			expect(mockClearError).toHaveBeenCalledWith('session-1');
-		});
-
-		it('getAgentActions killAgent works end-to-end', async () => {
-			const { killAgent } = getAgentActions();
-			await killAgent('session-1', 'terminal');
-
-			expect(mockKill).toHaveBeenCalledWith('session-1-terminal');
-		});
-	});
-
-	describe('React hook integration', () => {
-		it('useAgentStore with selector re-renders on agent detection', async () => {
-			const { result } = renderHook(() => useAgentStore(selectAgentsDetected));
-
-			expect(result.current).toBe(false);
-
-			const agents = [createMockAgentConfig()];
-			mockDetect.mockResolvedValueOnce(agents);
-
-			await act(async () => {
-				await useAgentStore.getState().refreshAgents();
-			});
-
-			expect(result.current).toBe(true);
-		});
-
-		it('useAgentStore with availableAgents selector updates on refresh', async () => {
-			const { result } = renderHook(() => useAgentStore(selectAvailableAgents));
-
-			expect(result.current).toEqual([]);
-
-			const agents = [createMockAgentConfig({ id: 'claude-code' })];
-			mockDetect.mockResolvedValueOnce(agents);
-
-			await act(async () => {
-				await useAgentStore.getState().refreshAgents();
-			});
-
-			expect(result.current).toHaveLength(1);
-			expect(result.current[0].id).toBe('claude-code');
 		});
 	});
 

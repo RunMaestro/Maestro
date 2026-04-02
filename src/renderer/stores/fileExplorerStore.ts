@@ -8,7 +8,7 @@
  * Per-session file tree DATA (fileTree, fileExplorerExpanded, etc.) stays
  * in sessionStore — deeply embedded in the Session type with 200+ call sites.
  *
- * Can be used outside React via getFileExplorerState() / getFileExplorerActions().
+ * Can be used outside React via useFileExplorerStore.getState().
  */
 
 import { create } from 'zustand';
@@ -134,34 +134,3 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 
 	setIsGraphViewOpen: (open) => set({ isGraphViewOpen: open }),
 }));
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current file explorer state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getFileExplorerState() {
-	return useFileExplorerStore.getState();
-}
-
-/**
- * Get stable file explorer action references outside React.
- */
-export function getFileExplorerActions() {
-	const state = useFileExplorerStore.getState();
-	return {
-		setSelectedFileIndex: state.setSelectedFileIndex,
-		setFileTreeFilter: state.setFileTreeFilter,
-		setFileTreeFilterOpen: state.setFileTreeFilterOpen,
-		setFilePreviewLoading: state.setFilePreviewLoading,
-		setFilteredFileTree: state.setFilteredFileTree,
-		setFlatFileList: state.setFlatFileList,
-		focusFileInGraph: state.focusFileInGraph,
-		openLastDocumentGraph: state.openLastDocumentGraph,
-		closeGraphView: state.closeGraphView,
-		setIsGraphViewOpen: state.setIsGraphViewOpen,
-	};
-}
