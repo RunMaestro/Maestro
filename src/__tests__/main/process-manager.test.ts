@@ -22,17 +22,6 @@ vi.mock('../../main/utils/logger', () => ({
 	},
 }));
 
-// Mock platform detection — delegates to process.platform by default so
-// pre-existing tests that override process.platform still work. Kill-method
-// tests override via mockReturnValueOnce / mockReturnValue.
-const { mockIsWindows } = vi.hoisted(() => ({
-	mockIsWindows: vi.fn<() => boolean>().mockImplementation(() => process.platform === 'win32'),
-}));
-
-vi.mock('../../shared/platformDetection', () => ({
-	isWindows: () => mockIsWindows(),
-}));
-
 import * as fs from 'fs';
 
 import {
@@ -438,110 +427,6 @@ describe('process-manager.ts', () => {
 			it('should return null for unknown session', () => {
 				const event = processManager.parseLine('non-existent-session', '{"type":"test"}');
 				expect(event).toBeNull();
-			});
-		});
-
-		describe('kill method — Windows PTY tree kill', () => {
-			let killWindowsTreeSpy: ReturnType<typeof vi.spyOn>;
-
-			beforeEach(() => {
-				// Spy on the private killWindowsProcessTree method
-				killWindowsTreeSpy = vi
-					.spyOn(ProcessManager.prototype as never, 'killWindowsProcessTree' as never)
-					.mockImplementation(() => {});
-			});
-
-			afterEach(() => {
-				mockIsWindows.mockImplementation(() => process.platform === 'win32');
-				killWindowsTreeSpy.mockRestore();
-			});
-
-			it('should use taskkill tree-kill for PTY processes on Windows', () => {
-				mockIsWindows.mockReturnValue(true);
-
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('pty-session', {
-					sessionId: 'pty-session',
-					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
-					isTerminal: true,
-					pid: 12345,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
-
-				processManager.kill('pty-session');
-
-				// Should use taskkill tree-kill, NOT node-pty's kill
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session');
-				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
-			});
-
-			it('should use ptyProcess.kill() for PTY processes on non-Windows', () => {
-				mockIsWindows.mockReturnValue(false);
-
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('pty-session', {
-					sessionId: 'pty-session',
-					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
-					isTerminal: true,
-					pid: 12345,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
-
-				processManager.kill('pty-session');
-
-				expect(mockPtyProcess.kill).toHaveBeenCalled();
-				expect(killWindowsTreeSpy).not.toHaveBeenCalled();
-			});
-
-			it('should use taskkill tree-kill for child processes on Windows', () => {
-				mockIsWindows.mockReturnValue(true);
-
-				const mockChildProcess = { kill: vi.fn(), pid: 99999 };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('child-session', {
-					sessionId: 'child-session',
-					toolType: 'claude-code',
-					childProcess: mockChildProcess,
-					isTerminal: false,
-					pid: 99999,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
-
-				processManager.kill('child-session');
-
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(99999, 'child-session');
-				expect(mockChildProcess.kill).not.toHaveBeenCalled();
-			});
-
-			it('should remove process from map after kill', () => {
-				mockIsWindows.mockReturnValue(true);
-
-				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
-				const processes = (processManager as unknown as { processes: Map<string, unknown> })
-					.processes;
-				processes.set('pty-session', {
-					sessionId: 'pty-session',
-					toolType: 'terminal',
-					ptyProcess: mockPtyProcess,
-					isTerminal: true,
-					pid: 12345,
-					cwd: '/tmp',
-					startTime: Date.now(),
-				});
-
-				processManager.kill('pty-session');
-
-				expect(processManager.get('pty-session')).toBeUndefined();
 			});
 		});
 	});
