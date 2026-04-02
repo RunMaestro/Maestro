@@ -13,6 +13,25 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
+## v0.16.x - Maestro Cue
+
+**Latest: v0.16.6-RC** | In Development
+
+### New Features
+
+- **Maestro Cue** — Event-driven automation engine that watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `.maestro/cue.yaml` per project. Gated as an Encore Feature
+- **Environment tab** — Dedicated Settings tab for managing global environment variables passed to all agents
+- **Static history graph with viewport indicator** — The activity graph in the History panel no longer shifts as you scroll; instead, bars outside the visible scroll range are dimmed, giving a clear positional indicator without losing the full-timeline overview
+- **Cloudflare tunnel auto-restart** — The web/mobile tunnel automatically restarts when the web server port changes
+- **Custom TTS notifications** — Synopsis text is now sent to custom notification commands for user-initiated tasks
+
+### Bug Fixes
+
+- **Auto Run document clarity** — Rewrote the Auto Run instructions in the system prompt for improved agent comprehension
+- **openExternal guard** — Prevented relative paths from being passed to `shell.openExternal`, suppressing RangeError noise
+
+---
+
 ## v0.15.x - Maestro Symphony
 
 **Latest: v0.15.3** | Released January 1, 1
