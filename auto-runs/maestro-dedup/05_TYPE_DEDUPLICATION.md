@@ -36,120 +36,80 @@ Types in `src/shared/` are importable by all three. The problem is that instead 
 
 ### Task 1: Inventory all duplicated interfaces
 
-For the top offenders, find every definition:
-
-```
-rtk grep "interface AgentCapabilities" src/ --glob="*.{ts,tsx}"
-rtk grep "interface UsageStats" src/ --glob="*.{ts,tsx}"
-rtk grep "interface SessionInfo" src/ --glob="*.{ts,tsx}"
-rtk grep "interface AgentConfig\b" src/ --glob="*.{ts,tsx}"
-rtk grep "interface AgentConfigsData" src/ --glob="*.{ts,tsx}"
-```
-
-For each, record: file, line number, field list.
+- [ ] Find AgentCapabilities definitions: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"`
+- [ ] Find UsageStats definitions: `rtk grep "interface UsageStats" src/ --glob "*.{ts,tsx}"`
+- [ ] Find SessionInfo definitions: `rtk grep "interface SessionInfo" src/ --glob "*.{ts,tsx}"`
+- [ ] Find AgentConfig definitions: `rtk grep "interface AgentConfig\b" src/ --glob "*.{ts,tsx}"`
+- [ ] Find AgentConfigsData definitions: `rtk grep "interface AgentConfigsData" src/ --glob "*.{ts,tsx}"`
+- [ ] For each, record: file path, line number, field list
 
 ### Task 2: Handle AgentCapabilities (6 defs, was addressed in Phase 02)
 
-If Phase 02 already resolved this, verify it's done:
-
-```
-rtk grep "interface AgentCapabilities" src/ --glob="*.{ts,tsx}" | wc -l
-```
-
-Should be 1 (canonical only). If not, finish the work from Phase 02.
+- [ ] Verify Phase 02 is done: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"` (expect exactly 1 result)
+- [ ] If more than 1, finish the Phase 02 consolidation work before continuing
 
 ### Task 3: Consolidate UsageStats (6 definitions)
 
-Canonical should be in `src/shared/stats-types.ts` or `src/shared/types.ts`.
-
-1. Find all 6 definitions
-2. Compare fields - create a superset
-3. Establish canonical in `shared/stats-types.ts`
-4. Replace all other definitions with imports
-5. Run `rtk npm run lint` after each file change
+- [ ] Read all 6 definitions and compare fields
+- [ ] Create a superset definition as canonical in `src/shared/stats-types.ts`
+- [ ] Replace definition in each non-canonical file with `import type { UsageStats } from '../../shared/stats-types';`
+- [ ] Run lint after each file: `rtk tsc -p tsconfig.lint.json --noEmit`
 
 ### Task 4: Consolidate SessionInfo (3 definitions)
 
-Down from 6 to 3 as of 2026-04-01.
-
-1. Find all 3 definitions
-2. Compare fields
-3. Keep canonical in `shared/types.ts`
-4. Replace others with imports
+- [ ] Read all 3 definitions and compare fields
+- [ ] Keep canonical definition in `src/shared/types.ts`
+- [ ] Replace other 2 definitions with imports from `shared/types.ts`
 
 ### Task 5: Consolidate AgentConfig (5 definitions)
 
-1. Find all 5 definitions
-2. Compare fields
-3. Keep canonical in `shared/types.ts` or `main/agents/definitions.ts`
-4. Replace others with imports
+- [ ] Read all 5 definitions and compare fields
+- [ ] Keep canonical in `src/shared/types.ts` or `src/main/agents/definitions.ts`
+- [ ] Replace other 4 definitions with imports
 
 ### Task 6: Consolidate AgentConfigsData (5 definitions)
 
-1. Find all 5 definitions
-2. This is typically `Record<string, AgentConfig>` or similar
-3. Keep one canonical definition alongside `AgentConfig`
-4. Replace others
+- [ ] Read all 5 definitions (typically `Record<string, AgentConfig>` or similar)
+- [ ] Keep one canonical definition alongside `AgentConfig`
+- [ ] Replace other 4 definitions with imports
 
 ### Task 7: Consolidate remaining 3+ definition interfaces
 
-For each of the 17 interfaces with 3 definitions (51 total):
+For each of the 17 interfaces with 3 definitions (51 total), from SCAN-TYPES.md:
 
-```
-rtk grep "interface SshRemoteConfig\b" src/
-rtk grep "interface ParsedOutput\b" src/
-rtk grep "interface AutoRunConfig\b" src/
-# ... etc for each duplicated interface from SCAN-TYPES.md
-```
-
-Work through them systematically:
-
-1. Find definitions
-2. Compare fields
-3. Pick canonical location
-4. Replace duplicates with imports
+- [ ] Read `docs/agent-guides/scans/SCAN-TYPES.md` for the full findings list
+- [ ] For each duplicated interface: find definitions, compare fields, pick canonical location
+- [ ] Replace duplicate definitions with imports from canonical source
+- [ ] Run `rtk tsc -p tsconfig.lint.json --noEmit` after each batch of changes
 
 ### Task 8: Fix the preload type-sharing mechanism
 
-The root cause is that `renderer/global.d.ts` declares ambient types that can't import. Fix this by:
-
-1. Moving type declarations from `global.d.ts` to importable `.ts` files
-2. Using `import type` in renderer files
-3. Keeping `global.d.ts` minimal - only for true ambient declarations (e.g., `window.maestro` shape)
-
-**This is the most impactful change** - it prevents the re-declaration pattern from recurring.
+- [ ] Move type declarations from `renderer/global.d.ts` to importable `.ts` files
+- [ ] Update renderer files to use `import type` instead of relying on ambient declarations
+- [ ] Keep `global.d.ts` minimal - only true ambient declarations (e.g., `window.maestro` shape)
+- [ ] This prevents the re-declaration pattern from recurring
 
 ### Task 9: Clean up renderer/types/index.ts
 
-This file likely re-exports or re-declares many shared types. Replace re-declarations with re-exports:
-
-```typescript
-// BEFORE (re-declaration)
-export interface AgentCapabilities { ... }
-
-// AFTER (re-export)
-export type { AgentCapabilities } from '../../shared/types';
-```
+- [ ] Read `src/renderer/types/index.ts` and identify all re-declared types
+- [ ] Replace each re-declaration with a re-export: `export type { TypeName } from '../../shared/types';`
+- [ ] Verify no local definitions remain that have canonical sources in shared/
 
 ### Task 10: Verify no duplicate definitions remain
 
-```
-# Count definitions for each top-offender interface
-for iface in AgentCapabilities UsageStats SessionInfo AgentConfig AgentConfigsData; do
-  echo "$iface: $(rtk grep "interface $iface\b" src/ --glob="*.{ts,tsx}" | wc -l)"
-done
-```
-
-Each should show 1.
+- [ ] Count AgentCapabilities: `rtk grep "interface AgentCapabilities\b" src/ --glob "*.{ts,tsx}"` (expect 1)
+- [ ] Count UsageStats: `rtk grep "interface UsageStats\b" src/ --glob "*.{ts,tsx}"` (expect 1)
+- [ ] Count SessionInfo: `rtk grep "interface SessionInfo\b" src/ --glob "*.{ts,tsx}"` (expect 1)
+- [ ] Count AgentConfig: `rtk grep "interface AgentConfig\b" src/ --glob "*.{ts,tsx}"` (expect 1)
+- [ ] Count AgentConfigsData: `rtk grep "interface AgentConfigsData\b" src/ --glob "*.{ts,tsx}"` (expect 1)
 
 ### Task 11: Full verification
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Run type checking: `rtk tsc -p tsconfig.main.json --noEmit && rtk tsc -p tsconfig.lint.json --noEmit`
+- [ ] Find related test files: `rtk grep "UsageStats\|SessionInfo\|AgentConfig" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run related tests: `rtk vitest run <related-test-files>`
+- [ ] Confirm zero new test failures
 
 ---
 

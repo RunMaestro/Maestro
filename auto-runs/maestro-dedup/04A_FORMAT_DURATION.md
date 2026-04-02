@@ -33,103 +33,68 @@ Most local definitions take **seconds** and return human-readable strings like "
 
 ### Task 1: Read and understand the canonical implementations
 
-Read:
-
-- `src/shared/formatters.ts` around line 144 - `formatElapsedTime`
-- `src/shared/performance-metrics.ts` around line 336 - `formatDuration`
-
-Document the exact signature and output format of each.
+- [ ] Read `src/shared/formatters.ts` around line 144 - document `formatElapsedTime` signature and output format
+- [ ] Read `src/shared/performance-metrics.ts` around line 336 - document `formatDuration` signature and output format
+- [ ] Note: `formatElapsedTime(seconds)` returns "Xm Ys"; `formatDuration(ms)` returns "X.Xs"
 
 ### Task 2: Inventory all 22 local definitions
 
-```
-rtk grep "function formatDuration\|const formatDuration\|function formatElapsed\|const formatElapsed\|function formatTime\b" src/ --include="*.ts" --include="*.tsx" | grep -v "shared/formatters" | grep -v "performance-metrics" | grep -v "__tests__"
-```
-
-For each definition, note:
-
-- Input type (seconds vs milliseconds)
-- Output format
-- Whether it exactly matches the canonical
+- [ ] Find all definitions: `rtk grep "function formatDuration\|const formatDuration\|function formatElapsed\|const formatElapsed\|function formatTime\b" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "performance-metrics" | rtk grep -v "__tests__"`
+- [ ] For each, note: input type (seconds vs ms), output format, whether it matches canonical
 
 ### Task 3: Consolidate UsageDashboard (9 copies - biggest win)
 
-These 9 files in `src/renderer/components/UsageDashboard/` all have identical `formatDuration`:
+For each of the 9 files in `src/renderer/components/UsageDashboard/`:
 
-1. Open each file
-2. Remove the local `formatDuration` function
-3. Add: `import { formatElapsedTime as formatDuration } from '../../../shared/formatters';`
-   (or use the direct name if signatures match)
-4. Verify the output format matches
-
-Run tests after: `rtk vitest run`
+- [ ] Remove the local `formatDuration` function
+- [ ] Add: `import { formatElapsedTime as formatDuration } from '../../../shared/formatters';` (or direct name if signatures match)
+- [ ] Verify output format matches the local definition it replaced
+- [ ] Run tests: `rtk vitest run src/__tests__/renderer/components/UsageDashboard/`
 
 ### Task 4: Consolidate renderer component files
 
-Replace local definitions in:
-
-- `AboutModal.tsx`
-- `FirstRunCelebration.tsx`
-- `SymphonyModal.tsx`
-- `Toast.tsx`
-
-For each:
-
-1. Read the local definition to confirm it matches canonical
-2. Remove local definition
-3. Add import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `AboutModal.tsx` with import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `FirstRunCelebration.tsx` with import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `SymphonyModal.tsx` with import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `Toast.tsx` with import from `shared/formatters`
 
 ### Task 5: Consolidate hook and utility files
 
-Replace local definitions in:
-
-- `AIOverviewTab.tsx`
-- `useContributorStats.ts`
+- [ ] Read and replace local `formatDuration` in `AIOverviewTab.tsx` with import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `useContributorStats.ts` with import from `shared/formatters`
 
 ### Task 6: Consolidate main process files
 
-Replace local definitions in:
-
-- `groupChatExport.ts`
-- `tabExport.ts`
-
-These are in the main process - they can import from `shared/formatters` (shared is accessible from both main and renderer).
+- [ ] Read and replace local `formatDuration` in `groupChatExport.ts` with import from `shared/formatters`
+- [ ] Read and replace local `formatDuration` in `tabExport.ts` with import from `shared/formatters`
 
 ### Task 7: Consolidate CLI files
 
-Replace local definitions in:
-
-- `cli/output/formatter.ts` (2 definitions)
+- [ ] Read and replace 2 local `formatDuration` definitions in `cli/output/formatter.ts` with import from `shared/formatters`
 
 ### Task 8: Handle CueModal/cueModalUtils.ts
 
-Replace the local `formatDuration` in `CueModal/cueModalUtils.ts:25`.
-
-**CAUTION:** Cue is under active development. Verify the function signature matches before replacing. If it takes milliseconds instead of seconds, use `formatDuration` from `performance-metrics.ts` instead.
+- [ ] Read local `formatDuration` in `CueModal/cueModalUtils.ts:25` to determine if it takes seconds or milliseconds
+- [ ] If seconds: replace with import of `formatElapsedTime` from `shared/formatters`
+- [ ] If milliseconds: replace with import of `formatDuration` from `performance-metrics.ts`
+- [ ] **CAUTION:** Cue is under active development - verify signature matches before replacing
 
 ### Task 9: Verify all replacements produce identical output
 
-For any definition where the input/output format differed from the canonical:
-
-- Create a thin wrapper that adapts the canonical function
-- Or add the variant to `shared/formatters.ts` as a named export
+- [ ] For any definition where input/output format differed from canonical, create a thin wrapper or add a variant to `shared/formatters.ts`
+- [ ] Ensure no call site has changed output behavior
 
 ### Task 10: Run full verification
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Find related test files: `rtk grep "formatDuration\|formatElapsed" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run related tests: `rtk vitest run <related-test-files>`
+- [ ] Confirm zero new test failures
 
 ### Task 11: Verify no orphaned definitions remain
 
-```
-rtk grep "function formatDuration\|const formatDuration" src/ --include="*.ts" --include="*.tsx" | grep -v "shared/formatters" | grep -v "performance-metrics" | grep -v "__tests__"
-```
-
-Should return 0 results.
+- [ ] Check: `rtk grep "function formatDuration\|const formatDuration" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "performance-metrics" | rtk grep -v "__tests__"`
+- [ ] Result should be 0
 
 ---
 

@@ -29,102 +29,64 @@ Consolidate the remaining formatter/utility duplications:
 
 Canonical: `src/shared/formatters.ts:41` - `formatNumber`
 
-Remove local definitions from:
-
-1. `symphony.ts:928`
-2. `AgentComparisonChart.tsx:93`
-3. `AutoRunStats.tsx:70`
-4. `LocationDistributionChart.tsx:40`
-5. `SourceDistributionChart.tsx:62`
-6. `SummaryCards.tsx:72`
-
-For each: remove local function, add `import { formatNumber } from '../../shared/formatters';`
+- [ ] Remove local `formatNumber` from `symphony.ts:928`, add import from `shared/formatters`
+- [ ] Remove local `formatNumber` from `AgentComparisonChart.tsx:93`, add import from `shared/formatters`
+- [ ] Remove local `formatNumber` from `AutoRunStats.tsx:70`, add import from `shared/formatters`
+- [ ] Remove local `formatNumber` from `LocationDistributionChart.tsx:40`, add import from `shared/formatters`
+- [ ] Remove local `formatNumber` from `SourceDistributionChart.tsx:62`, add import from `shared/formatters`
+- [ ] Remove local `formatNumber` from `SummaryCards.tsx:72`, add import from `shared/formatters`
+- [ ] Run related tests: `rtk vitest run src/__tests__/renderer/components/UsageDashboard/`
 
 ### Task 2: Consolidate formatFileSize (2 definitions)
 
 Canonical: `src/shared/formatters.ts:27` - `formatSize`
 
-Remove local definitions from:
-
-1. `FilePreview.tsx:265`
-2. `documentStats.ts:92`
-
-**NOTE:** The canonical name is `formatSize` but local definitions use `formatFileSize`. Either:
-
-- Add `export { formatSize as formatFileSize }` to `shared/formatters.ts`, OR
-- Rename call sites to use `formatSize`
-
-Prefer renaming call sites since there are only 2.
+- [ ] Read local `formatFileSize` in `FilePreview.tsx:265` and confirm it matches canonical `formatSize`
+- [ ] Read local `formatFileSize` in `documentStats.ts:92` and confirm it matches canonical `formatSize`
+- [ ] Rename call sites from `formatFileSize` to `formatSize` (preferred since only 2 sites)
+- [ ] Replace with import: `import { formatSize } from '../../shared/formatters';` (adjust path)
 
 ### Task 3: Consolidate estimateTokens (4 redundant + 2 canonical)
 
-Two canonical sources exist:
-
-- `shared/formatters.ts:176` - `estimateTokenCount`
-- `renderer/utils/tokenCounter.ts:55` - `estimateTokenCount`
-
-First, decide which is canonical. Prefer `shared/formatters.ts` since it's accessible from both main and renderer.
-
-Then remove local copies from:
-
-1. `MergeSessionModal.tsx` / `SendToAgentModal.tsx` (identical pair)
-2. `useMergeSession.ts` / `useSendToAgent.ts` (identical pair)
-
-Also reconcile the two canonical sources - if `renderer/utils/tokenCounter.ts` has extra logic, move it to `shared/formatters.ts` and re-export from the renderer location.
+- [ ] Decide canonical source: prefer `shared/formatters.ts:176` (accessible from both main and renderer)
+- [ ] Compare `renderer/utils/tokenCounter.ts:55` with `shared/formatters.ts:176` for extra logic
+- [ ] If tokenCounter has extra logic, move it to `shared/formatters.ts` and re-export from tokenCounter
+- [ ] Remove local copy from `MergeSessionModal.tsx`, add import from `shared/formatters`
+- [ ] Remove local copy from `SendToAgentModal.tsx`, add import from `shared/formatters`
+- [ ] Remove local copy from `useMergeSession.ts`, add import from `shared/formatters`
+- [ ] Remove local copy from `useSendToAgent.ts`, add import from `shared/formatters`
 
 ### Task 4: Consolidate stripAnsi (2 definitions)
 
-Two definitions:
+Canonical: `shared/stringUtils.ts:36` - `stripAnsiCodes`
 
-- `main/utils/stripAnsi.ts:47` - standalone file
-- `shared/stringUtils.ts:36` - `stripAnsiCodes`
-
-Keep `shared/stringUtils.ts:36` as canonical. Update all importers of `main/utils/stripAnsi.ts` to import from `shared/stringUtils.ts`:
-
-```
-rtk grep "stripAnsi" src/ --glob="*.{ts,tsx}" | rtk grep "import"
-```
-
-Then either:
-
-- Delete `main/utils/stripAnsi.ts` entirely, OR
-- Replace its content with a re-export: `export { stripAnsiCodes as stripAnsi } from '../../shared/stringUtils';`
+- [ ] Find all importers of `main/utils/stripAnsi.ts`: `rtk grep "stripAnsi" src/ --glob "*.{ts,tsx}" | rtk grep "import"`
+- [ ] Update each importer to use `import { stripAnsiCodes } from '../../shared/stringUtils';` (adjust path)
+- [ ] Either delete `main/utils/stripAnsi.ts` entirely, or replace with re-export: `export { stripAnsiCodes as stripAnsi } from '../../shared/stringUtils';`
 
 ### Task 5: Consolidate generateId/generateUUID (5 redundant)
 
-Canonical: `shared/uuid.ts:10` - `generateUUID`
-Also: `renderer/utils/ids.ts:2` - `generateId`
+Canonical: `shared/uuid.ts:10` (main process) and `renderer/utils/ids.ts:2` (renderer)
 
-Remove local copies from:
-
-1. `main/stats/utils.ts:29`
-2. `useBatchedSessionUpdates.ts:99`
-3. `useLayerStack.ts:35`
-4. `useCommandHistory.ts:67`
-5. `useOfflineQueue.ts:107`
-
-Replace with import from `shared/uuid.ts` for main process files, or `renderer/utils/ids.ts` for renderer files.
+- [ ] Remove local `generateId`/`generateUUID` from `main/stats/utils.ts:29`, import from `shared/uuid.ts`
+- [ ] Remove local from `useBatchedSessionUpdates.ts:99`, import from `renderer/utils/ids.ts`
+- [ ] Remove local from `useLayerStack.ts:35`, import from `renderer/utils/ids.ts`
+- [ ] Remove local from `useCommandHistory.ts:67`, import from `renderer/utils/ids.ts`
+- [ ] Remove local from `useOfflineQueue.ts:107`, import from `renderer/utils/ids.ts`
 
 ### Task 6: Verify
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Run related tests: `rtk vitest run src/__tests__/shared/ src/__tests__/renderer/`
+- [ ] Confirm zero new test failures
 
 ### Task 7: Final cleanup check
 
-```
-rtk grep "function formatNumber\b" src/ | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"
-rtk grep "function formatFileSize|function formatSize\b" src/ | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"
-rtk grep "function estimateToken" src/ | rtk grep -v "shared/formatters" | rtk grep -v "tokenCounter" | rtk grep -v "__tests__"
-rtk grep "function stripAnsi" src/ | rtk grep -v "shared/stringUtils" | rtk grep -v "__tests__"
-rtk grep "function generateId|function generateUUID" src/ | rtk grep -v "shared/uuid" | rtk grep -v "renderer/utils/ids" | rtk grep -v "__tests__"
-```
-
-All should return 0 results.
+- [ ] Check formatNumber: `rtk grep "function formatNumber\b" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"` (expect 0)
+- [ ] Check formatFileSize: `rtk grep "function formatFileSize\|function formatSize\b" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"` (expect 0)
+- [ ] Check estimateTokens: `rtk grep "function estimateToken" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "tokenCounter" | rtk grep -v "__tests__"` (expect 0)
+- [ ] Check stripAnsi: `rtk grep "function stripAnsi" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/stringUtils" | rtk grep -v "__tests__"` (expect 0)
+- [ ] Check generateId: `rtk grep "function generateId\|function generateUUID" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/uuid" | rtk grep -v "renderer/utils/ids" | rtk grep -v "__tests__"` (expect 0)
 
 ---
 

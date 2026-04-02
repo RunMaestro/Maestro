@@ -29,228 +29,92 @@ Remove 75 exported functions/constants/types from `src/main/` that have zero ext
 
 ### Task 1: Remove dead exports from main/constants.ts
 
-Remove:
-
-- `DEBUG_GROUP_CHAT`
-- `debugLogLazy`
+- [ ] Verify zero external refs: `rtk grep "DEBUG_GROUP_CHAT\|debugLogLazy" src/ --glob "*.{ts,tsx}" | rtk grep -v "main/constants"`
+- [ ] Remove export `DEBUG_GROUP_CHAT` from `src/main/constants.ts`
+- [ ] Remove export `debugLogLazy` from `src/main/constants.ts`
 
 ### Task 2: Remove dead exports from main/cue/ files
 
 **CAUTION: Cue is under active development. Triple-check each export.**
 
-From `main/cue/cue-db.ts`:
-
-- `isCueDbReady`
-- `getRecentCueEvents`
-- `clearGitHubSeenForSubscription`
-
-From `main/cue/cue-heartbeat.ts`:
-
-- `HEARTBEAT_INTERVAL_MS`
-- `SLEEP_THRESHOLD_MS`
-
-From `main/cue/cue-subscription-setup.ts`:
-
-- `DEFAULT_FILE_DEBOUNCE_MS`
-
-From `main/cue/cue-task-scanner.ts`:
-
-- `extractPendingTasks`
-
-From `main/cue/cue-types.ts`:
-
-- `CUE_YAML_FILENAME`
-- `LEGACY_CUE_YAML_FILENAME`
+- [ ] Verify and remove from `src/main/cue/cue-db.ts`: `isCueDbReady`, `getRecentCueEvents`, `clearGitHubSeenForSubscription`
+- [ ] Verify and remove from `src/main/cue/cue-heartbeat.ts`: `HEARTBEAT_INTERVAL_MS`, `SLEEP_THRESHOLD_MS`
+- [ ] Verify and remove from `src/main/cue/cue-subscription-setup.ts`: `DEFAULT_FILE_DEBOUNCE_MS`
+- [ ] Verify and remove from `src/main/cue/cue-task-scanner.ts`: `extractPendingTasks`
+- [ ] Verify and remove from `src/main/cue/cue-types.ts`: `CUE_YAML_FILENAME`, `LEGACY_CUE_YAML_FILENAME`
+- [ ] For each export, verify with: `rtk grep "EXPORT_NAME" src/ --glob "*.{ts,tsx}" | rtk grep -v "DEFINING_FILE" | rtk grep -v "__tests__"`
+- [ ] Skip any export that has external references (Cue is actively developed)
 
 ### Task 3: Remove dead export from main/debug-package/collectors/sanitize.ts
 
-Remove: `sanitizeText`
+- [ ] Verify zero external refs: `rtk grep "sanitizeText" src/ --glob "*.{ts,tsx}" | rtk grep -v "sanitize.ts"`
+- [ ] Remove export `sanitizeText` from `src/main/debug-package/collectors/sanitize.ts`
 
 ### Task 4: Remove dead exports from main/group-chat/ files
 
-From `main/group-chat/group-chat-agent.ts` (5 exports):
-
-- `getParticipantSystemPrompt`
-- `getParticipantSessionId`
-- `isParticipantActive`
-- `getActiveParticipants`
-- `clearAllParticipantSessionsGlobal`
-
-From `main/group-chat/group-chat-config.ts`:
-
-- `getCustomShellPath`
-
-From `main/group-chat/group-chat-log.ts` (2):
-
-- `escapeContent`
-- `unescapeContent`
-
-From `main/group-chat/group-chat-moderator.ts` (3):
-
-- `startSessionCleanup`
-- `stopSessionCleanup`
-- `clearAllModeratorSessions`
-
-From `main/group-chat/group-chat-router.ts` (5):
-
-- `setGroupChatReadOnlyState`
-- `getPendingParticipants`
-- `clearPendingParticipants`
-- `extractMentions`
-- `extractAllMentions`
-
-From `main/group-chat/group-chat-storage.ts`:
-
-- `getGroupChatsDir`
-
-From `main/group-chat/output-buffer.ts` (2):
-
-- `hasGroupChatBuffer`
-- `isGroupChatBufferTruncated`
-
-From `main/group-chat/output-parser.ts` (2):
-
-- `extractTextGeneric`
-- `extractTextFromAgentOutput`
-
-From `main/group-chat/session-recovery.ts`:
-
-- `detectSessionNotFoundError`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-agent.ts` (5): `getParticipantSystemPrompt`, `getParticipantSessionId`, `isParticipantActive`, `getActiveParticipants`, `clearAllParticipantSessionsGlobal`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-config.ts` (1): `getCustomShellPath`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-log.ts` (2): `escapeContent`, `unescapeContent`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-moderator.ts` (3): `startSessionCleanup`, `stopSessionCleanup`, `clearAllModeratorSessions`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-router.ts` (5): `setGroupChatReadOnlyState`, `getPendingParticipants`, `clearPendingParticipants`, `extractMentions`, `extractAllMentions`
+- [ ] Verify and remove from `src/main/group-chat/group-chat-storage.ts` (1): `getGroupChatsDir`
+- [ ] Verify and remove from `src/main/group-chat/output-buffer.ts` (2): `hasGroupChatBuffer`, `isGroupChatBufferTruncated`
+- [ ] Verify and remove from `src/main/group-chat/output-parser.ts` (2): `extractTextGeneric`, `extractTextFromAgentOutput`
+- [ ] Verify and remove from `src/main/group-chat/session-recovery.ts` (1): `detectSessionNotFoundError`
+- [ ] For each, verify with: `rtk grep "EXPORT_NAME" src/ --glob "*.{ts,tsx}" | rtk grep -v "DEFINING_FILE" | rtk grep -v "__tests__"`
 
 ### Task 5: Remove dead exports from main/ipc/handlers/
 
-From `main/ipc/handlers/autorun.ts`:
-
-- `getAutoRunWatcherCount`
-
-From `main/ipc/handlers/director-notes.ts`:
-
-- `sanitizeDisplayName`
-
-From `main/ipc/handlers/documentGraph.ts`:
-
-- `getDocumentGraphWatcherCount`
-
-From `main/ipc/handlers/index.ts`:
-
-- `registerAllHandlers`
-
-From `main/ipc/handlers/notifications.ts` (6):
-
-- `parseNotificationCommand`
-- `getNotificationQueueLength`
-- `getActiveNotificationCount`
-- `clearNotificationQueue`
-- `resetNotificationState`
-- `getNotificationMaxQueueSize`
+- [ ] Verify and remove from `src/main/ipc/handlers/autorun.ts`: `getAutoRunWatcherCount`
+- [ ] Verify and remove from `src/main/ipc/handlers/director-notes.ts`: `sanitizeDisplayName`
+- [ ] Verify and remove from `src/main/ipc/handlers/documentGraph.ts`: `getDocumentGraphWatcherCount`
+- [ ] Verify and remove from `src/main/ipc/handlers/index.ts`: `registerAllHandlers`
+- [ ] Verify and remove from `src/main/ipc/handlers/notifications.ts` (6): `parseNotificationCommand`, `getNotificationQueueLength`, `getActiveNotificationCount`, `clearNotificationQueue`, `resetNotificationState`, `getNotificationMaxQueueSize`
 
 ### Task 6: Remove dead exports from main/parsers/
 
-From `main/parsers/agent-output-parser.ts`:
-
-- `isValidToolType`
-
-From `main/parsers/index.ts`:
-
-- `initializeOutputParsers`
-- `ensureParsersInitialized`
+- [ ] Verify and remove from `src/main/parsers/agent-output-parser.ts`: `isValidToolType`
+- [ ] Verify and remove from `src/main/parsers/index.ts`: `initializeOutputParsers`, `ensureParsersInitialized`
 
 ### Task 7: Remove dead exports from other main/ files
 
-From `main/process-listeners/index.ts`:
-
-- `setupProcessListeners`
-
-From `main/stats/migrations.ts`:
-
-- `getMigrations`
-
-From `main/storage/index.ts`:
-
-- `initializeSessionStorages`
-
-From `main/stores/utils.ts`:
-
-- `findSshRemoteById`
+- [ ] Verify and remove from `src/main/process-listeners/index.ts`: `setupProcessListeners`
+- [ ] Verify and remove from `src/main/stats/migrations.ts`: `getMigrations`
+- [ ] Verify and remove from `src/main/storage/index.ts`: `initializeSessionStorages`
+- [ ] Verify and remove from `src/main/stores/utils.ts`: `findSshRemoteById`
 
 ### Task 8: Remove dead exports from main/utils/
 
-From `main/utils/cliDetection.ts` (5):
-
-- `clearCloudflaredCache`
-- `getGhPath`
-- `clearGhCache`
-- `getSshPath`
-- `clearSshCache`
-
-From `main/utils/execFile.ts`:
-
-- `needsWindowsShell`
-
-From `main/utils/ipcHandler.ts` (4):
-
-- `createHandler`
-- `createDataHandler`
-- `withErrorLogging`
-- `createIpcDataHandler`
-
-From `main/utils/sentry.ts`:
-
-- `stopMemoryMonitoring`
-
-From `main/utils/shell-escape.ts`:
-
-- `shellEscapeArgs`
-
-From `main/utils/shellDetector.ts`:
-
-- `getShellCommand`
-
-From `main/utils/ssh-command-builder.ts`:
-
-- `buildRemoteCommand`
-
-From `main/utils/ssh-config-parser.ts` (2):
-
-- `parseConfigContent`
-- `findSshConfigHost`
-
-From `main/utils/statsCache.ts` (2):
-
-- `getStatsCachePath`
-- `getGlobalStatsCachePath`
-
-From `main/utils/terminalFilter.ts` (2):
-
-- `isCommandEcho`
-- `extractCommand`
-
-From `main/utils/wslDetector.ts` (2):
-
-- `isWindowsMountPath`
-- `getWslWarningMessage`
+- [ ] Verify and remove from `src/main/utils/cliDetection.ts` (5): `clearCloudflaredCache`, `getGhPath`, `clearGhCache`, `getSshPath`, `clearSshCache`
+- [ ] Verify and remove from `src/main/utils/execFile.ts`: `needsWindowsShell`
+- [ ] Verify and remove from `src/main/utils/ipcHandler.ts` (4): `createHandler`, `createDataHandler`, `withErrorLogging`, `createIpcDataHandler`
+- [ ] Verify and remove from `src/main/utils/sentry.ts`: `stopMemoryMonitoring`
+- [ ] Verify and remove from `src/main/utils/shell-escape.ts`: `shellEscapeArgs`
+- [ ] Verify and remove from `src/main/utils/shellDetector.ts`: `getShellCommand`
+- [ ] Verify and remove from `src/main/utils/ssh-command-builder.ts`: `buildRemoteCommand`
+- [ ] Verify and remove from `src/main/utils/ssh-config-parser.ts` (2): `parseConfigContent`, `findSshConfigHost`
+- [ ] Verify and remove from `src/main/utils/statsCache.ts` (2): `getStatsCachePath`, `getGlobalStatsCachePath`
+- [ ] Verify and remove from `src/main/utils/terminalFilter.ts` (2): `isCommandEcho`, `extractCommand`
+- [ ] Verify and remove from `src/main/utils/wslDetector.ts` (2): `isWindowsMountPath`, `getWslWarningMessage`
 
 ### Task 9: Remove dead exports from main/wakatime-manager.ts
 
-Remove:
-
-- `detectLanguageFromPath`
-- `WRITE_TOOL_NAMES`
+- [ ] Verify zero external refs: `rtk grep "detectLanguageFromPath\|WRITE_TOOL_NAMES" src/ --glob "*.{ts,tsx}" | rtk grep -v "wakatime-manager"`
+- [ ] Remove export `detectLanguageFromPath` from `src/main/wakatime-manager.ts`
+- [ ] Remove export `WRITE_TOOL_NAMES` from `src/main/wakatime-manager.ts`
 
 ### Task 10: Clean up files that became empty
 
-If any file has zero remaining exports after removal, delete the file entirely.
+- [ ] Check each modified file for remaining exports
+- [ ] Delete any file that has zero remaining exports after removal
 
 ### Task 11: Verify - lint and tests pass
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
-
-If tests fail because test files imported these dead exports, update the test files to remove those imports.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Find related test files: `rtk grep "import.*from.*main/" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run targeted tests for modified main process files: `rtk vitest run src/__tests__/main/`
+- [ ] If tests fail because they imported dead exports, update those test files to remove the imports
+- [ ] Confirm zero new test failures from your changes
 
 ---
 

@@ -12,8 +12,8 @@ Remove 43 exported types/functions/constants from `src/shared/` that have zero e
 
 ## Pre-flight Checks
 
-- [ ] Phase 01-B (dead store selectors) is complete
-- [ ] `rtk npm run lint` passes
+- [x] Phase 01-B (dead store selectors) is complete
+- [x] `rtk npm run lint` passes
 
 ---
 
@@ -21,149 +21,123 @@ Remove 43 exported types/functions/constants from `src/shared/` that have zero e
 
 ### Task 1: Remove dead exports from shared/agentMetadata.ts
 
-Remove these 2 exports:
-
-- `AGENT_DISPLAY_NAMES`
-- `BETA_AGENTS`
-
-Verify: `rtk grep "AGENT_DISPLAY_NAMES\|BETA_AGENTS" src/ --include="*.ts" --include="*.tsx" | grep -v "agentMetadata"`
+- [ ] Verify zero external refs: `rtk grep "AGENT_DISPLAY_NAMES\|BETA_AGENTS" src/ --glob "*.{ts,tsx}" | rtk grep -v "agentMetadata"`
+- [ ] Remove export `AGENT_DISPLAY_NAMES` from `src/shared/agentMetadata.ts`
+- [ ] Remove export `BETA_AGENTS` from `src/shared/agentMetadata.ts`
 
 ### Task 2: Remove ALL of shared/cli-activity.ts (if all exports dead)
 
-This file has 5 dead exports - check if the file has ANY used exports:
+5 dead exports: `CliActivityStatus`, `CliActivityFile`, `readCliActivities`, `updateCliActivity`, `cleanupStaleActivities`
 
-- `CliActivityStatus`
-- `CliActivityFile`
-- `readCliActivities`
-- `updateCliActivity`
-- `cleanupStaleActivities`
-
-```
-rtk grep "cli-activity" src/ --include="*.ts" --include="*.tsx" | grep -v "cli-activity.ts" | grep -v "__tests__"
-```
-
-If zero results, delete the entire file. Otherwise, remove only the dead exports.
+- [ ] Check for ANY external usage: `rtk grep "cli-activity" src/ --glob "*.{ts,tsx}" | rtk grep -v "cli-activity.ts" | rtk grep -v "__tests__"`
+- [ ] If zero results, delete `src/shared/cli-activity.ts` entirely
+- [ ] If any results, remove only the 5 dead exports listed above
 
 ### Task 3: Remove dead export from shared/cli-server-discovery.ts
 
-Remove: `CliServerInfo`
+- [ ] Verify zero external refs: `rtk grep "CliServerInfo" src/ --glob "*.{ts,tsx}" | rtk grep -v "cli-server-discovery"`
+- [ ] Remove export `CliServerInfo` from `src/shared/cli-server-discovery.ts`
 
 ### Task 4: Remove dead exports from shared/cue-pipeline-types.ts
 
-Remove these 4 exports:
+**CAUTION:** Cue is under active development. Verify carefully before removing.
 
-- `DebateConfig`
-- `PipelineNodePosition`
-- `PipelineNodeType`
-- `PipelineViewport`
-
-**CAUTION:** This is in the cue domain which is under active development. Verify carefully before removing.
+- [ ] Verify zero external refs for each: `rtk grep "DebateConfig\|PipelineNodePosition\|PipelineNodeType\|PipelineViewport" src/ --glob "*.{ts,tsx}" | rtk grep -v "cue-pipeline-types"`
+- [ ] Remove export `DebateConfig` from `src/shared/cue-pipeline-types.ts`
+- [ ] Remove export `PipelineNodePosition` from `src/shared/cue-pipeline-types.ts`
+- [ ] Remove export `PipelineNodeType` from `src/shared/cue-pipeline-types.ts`
+- [ ] Remove export `PipelineViewport` from `src/shared/cue-pipeline-types.ts`
 
 ### Task 5: Remove dead export from shared/deep-link-urls.ts
 
-Remove: `buildFocusDeepLink`
-
-Check if the entire file can be deleted: `rtk grep "deep-link-urls" src/ | grep -v "deep-link-urls.ts" | grep -v "__tests__"`
+- [ ] Verify zero external refs: `rtk grep "buildFocusDeepLink" src/ --glob "*.{ts,tsx}" | rtk grep -v "deep-link-urls"`
+- [ ] Remove export `buildFocusDeepLink` from `src/shared/deep-link-urls.ts`
+- [ ] Check if entire file can be deleted: `rtk grep "deep-link-urls" src/ --glob "*.{ts,tsx}" | rtk grep -v "deep-link-urls.ts" | rtk grep -v "__tests__"`
+- [ ] If zero results, delete `src/shared/deep-link-urls.ts` entirely
 
 ### Task 6: Remove dead exports from shared/gitUtils.ts
 
-Remove these 6 exports:
-
-- `GitFileStatus`
-- `GitNumstatFile`
-- `GitBehindAhead`
-- `cleanBranchName`
-- `cleanGitPath`
-- `GIT_IMAGE_EXTENSIONS`
+- [ ] Verify zero external refs: `rtk grep "GitFileStatus\|GitNumstatFile\|GitBehindAhead\|cleanBranchName\|cleanGitPath\|GIT_IMAGE_EXTENSIONS" src/ --glob "*.{ts,tsx}" | rtk grep -v "gitUtils"`
+- [ ] Remove exports: `GitFileStatus`, `GitNumstatFile`, `GitBehindAhead`, `cleanBranchName`, `cleanGitPath`, `GIT_IMAGE_EXTENSIONS`
 
 ### Task 7: Remove dead export from shared/history.ts
 
-Remove: `DEFAULT_PAGINATION`
+**NOTE:** `ORPHANED_SESSION_ID` is USED in `main/ipc/handlers/history.ts:18`. Do NOT remove it.
 
-**NOTE:** `ORPHANED_SESSION_ID` was verified as USED in `main/ipc/handlers/history.ts:18`. Do NOT remove it.
+- [ ] Verify zero external refs: `rtk grep "DEFAULT_PAGINATION" src/ --glob "*.{ts,tsx}" | rtk grep -v "history.ts"`
+- [ ] Remove export `DEFAULT_PAGINATION` from `src/shared/history.ts`
 
 ### Task 8: Remove dead export from shared/logger-types.ts
 
-Remove: `shouldLogLevel`
+- [ ] Verify zero external refs: `rtk grep "shouldLogLevel" src/ --glob "*.{ts,tsx}" | rtk grep -v "logger-types"`
+- [ ] Remove export `shouldLogLevel` from `src/shared/logger-types.ts`
 
 ### Task 9: Remove dead exports from shared/maestro-paths.ts
 
-Remove these 6 exports:
-
-- `PLAYBOOKS_FOLDER_NAME`
-- `PLAYBOOKS_RUNS_DIR`
-- `PIPELINE_INPUT_PROMPT`
-- `PIPELINE_OUTPUT_PROMPT`
-- `LEGACY_PLAYBOOKS_RUNS_DIR`
-- `ALWAYS_VISIBLE_ENTRIES`
+- [ ] Verify zero external refs: `rtk grep "PLAYBOOKS_FOLDER_NAME\|PLAYBOOKS_RUNS_DIR\|PIPELINE_INPUT_PROMPT\|PIPELINE_OUTPUT_PROMPT\|LEGACY_PLAYBOOKS_RUNS_DIR\|ALWAYS_VISIBLE_ENTRIES" src/ --glob "*.{ts,tsx}" | rtk grep -v "maestro-paths"`
+- [ ] Remove exports: `PLAYBOOKS_FOLDER_NAME`, `PLAYBOOKS_RUNS_DIR`, `PIPELINE_INPUT_PROMPT`, `PIPELINE_OUTPUT_PROMPT`, `LEGACY_PLAYBOOKS_RUNS_DIR`, `ALWAYS_VISIBLE_ENTRIES`
 
 ### Task 10: Remove dead export from shared/marketplace-types.ts
 
-Remove: `PlaybookSource`
+- [ ] Verify zero external refs: `rtk grep "PlaybookSource" src/ --glob "*.{ts,tsx}" | rtk grep -v "marketplace-types"`
+- [ ] Remove export `PlaybookSource` from `src/shared/marketplace-types.ts`
 
 ### Task 11: Remove dead export from shared/pathUtils.ts
 
-Remove: `parseVersion`
+- [ ] Verify zero external refs: `rtk grep "parseVersion" src/ --glob "*.{ts,tsx}" | rtk grep -v "pathUtils"`
+- [ ] Remove export `parseVersion` from `src/shared/pathUtils.ts`
 
 ### Task 12: Remove dead exports from shared/performance-metrics.ts
 
-Remove these 2 exports:
-
-- `PerformanceLogger`
-- `createNoOpMetrics`
+- [ ] Verify zero external refs: `rtk grep "PerformanceLogger\|createNoOpMetrics" src/ --glob "*.{ts,tsx}" | rtk grep -v "performance-metrics"`
+- [ ] Remove export `PerformanceLogger` from `src/shared/performance-metrics.ts`
+- [ ] Remove export `createNoOpMetrics` from `src/shared/performance-metrics.ts`
 
 ### Task 13: Remove dead exports from shared/symphony-constants.ts
 
-Remove these 3 exports:
-
-- `DRAFT_PR_TITLE_TEMPLATE`
-- `DRAFT_PR_BODY_TEMPLATE`
-- `READY_PR_BODY_TEMPLATE`
+- [ ] Verify zero external refs: `rtk grep "DRAFT_PR_TITLE_TEMPLATE\|DRAFT_PR_BODY_TEMPLATE\|READY_PR_BODY_TEMPLATE" src/ --glob "*.{ts,tsx}" | rtk grep -v "symphony-constants"`
+- [ ] Remove exports: `DRAFT_PR_TITLE_TEMPLATE`, `DRAFT_PR_BODY_TEMPLATE`, `READY_PR_BODY_TEMPLATE`
 
 ### Task 14: Remove dead exports from shared/symphony-types.ts
 
-Remove these 2 exports:
-
-- `SymphonyLabel`
-- `SymphonyErrorType`
+- [ ] Verify zero external refs: `rtk grep "SymphonyLabel\|SymphonyErrorType" src/ --glob "*.{ts,tsx}" | rtk grep -v "symphony-types"`
+- [ ] Remove export `SymphonyLabel` from `src/shared/symphony-types.ts`
+- [ ] Remove export `SymphonyErrorType` from `src/shared/symphony-types.ts`
 
 ### Task 15: Remove dead exports from shared/synopsis.ts
 
-Remove these 2 exports:
-
-- `ParsedSynopsis`
-- `isNothingToReport`
+- [ ] Verify zero external refs: `rtk grep "ParsedSynopsis\|isNothingToReport" src/ --glob "*.{ts,tsx}" | rtk grep -v "synopsis"`
+- [ ] Remove export `ParsedSynopsis` from `src/shared/synopsis.ts`
+- [ ] Remove export `isNothingToReport` from `src/shared/synopsis.ts`
 
 ### Task 16: Remove dead export from shared/templateVariables.ts
 
-Remove: `TemplateSessionInfo`
+- [ ] Verify zero external refs: `rtk grep "TemplateSessionInfo" src/ --glob "*.{ts,tsx}" | rtk grep -v "templateVariables"`
+- [ ] Remove export `TemplateSessionInfo` from `src/shared/templateVariables.ts`
 
 ### Task 17: Remove dead exports from shared/treeUtils.ts
 
-Remove these 3 exports:
-
-- `WalkTreeOptions`
-- `walkTree`
-- `PartitionedPaths`
-
-Check if the entire file can be deleted.
+- [ ] Verify zero external refs: `rtk grep "WalkTreeOptions\|walkTree\|PartitionedPaths" src/ --glob "*.{ts,tsx}" | rtk grep -v "treeUtils"`
+- [ ] Remove exports: `WalkTreeOptions`, `walkTree`, `PartitionedPaths`
+- [ ] Check if entire file can be deleted: `rtk grep "treeUtils" src/ --glob "*.{ts,tsx}" | rtk grep -v "treeUtils.ts" | rtk grep -v "__tests__"`
+- [ ] If zero results, delete `src/shared/treeUtils.ts` entirely
 
 ### Task 18: Remove dead export from shared/types.ts
 
-Remove: `SshRemoteStatus`
+- [ ] Verify zero external refs: `rtk grep "SshRemoteStatus" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/types"`
+- [ ] Remove export `SshRemoteStatus` from `src/shared/types.ts`
 
 ### Task 19: Clean up any files that became empty
 
-If any file has zero remaining exports after removal, delete the entire file.
+- [ ] Check each modified file for remaining exports
+- [ ] Delete any file that has zero remaining exports after removal
 
 ### Task 20: Verify - lint and tests pass
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Find related test files: `rtk grep "import.*from.*shared/" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run targeted tests for modified shared files: `rtk vitest run src/__tests__/shared/`
+- [ ] Confirm zero new test failures from your changes
 
 ---
 

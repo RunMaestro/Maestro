@@ -18,6 +18,7 @@ Replace 66 separate `createMockSession` factory definitions across 66 test files
 **Completed 2026-04-02:** Consolidated 62 local `createMockSession` factory definitions into a single shared factory at `src/__tests__/helpers/mockSession.ts`. 3 definitions were correctly excluded (2 `SessionInfo` type in cue tests, 1 `SessionBroadcastData` type in broadcastService test).
 
 Factory approach:
+
 - Shared factory provides sensible defaults for ALL required Session fields
 - 45 files use the shared factory directly (standard `Partial<Session>` overrides)
 - 17 files use thin local wrappers that call the shared factory with test-specific defaults (e.g., pre-populated AI tabs, specific cwd paths)
@@ -25,6 +26,7 @@ Factory approach:
 - 1 file (useSendToAgent.test.ts) uses a renamed convenience helper `createTestSession` for positional-arg calls
 
 Files created:
+
 - `src/__tests__/helpers/mockSession.ts` - shared factory
 - `src/__tests__/helpers/index.ts` - barrel export
 
@@ -36,112 +38,66 @@ Verification: `tsc --noEmit` passes for tsconfig.lint.json. 14,730 tests pass ac
 
 ### Task 1: Create the helpers directory
 
-```
-mkdir -p src/__tests__/helpers/
-```
+- [ ] Create directory: `mkdir -p src/__tests__/helpers/`
 
 ### Task 2: Survey existing mock session factories
 
-Find all definitions:
-
-```
-rtk grep "createMockSession" src/__tests__/ --include="*.ts" --include="*.tsx" -l
-rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --include="*.ts" --include="*.tsx"
-```
-
-Read 5-6 representative definitions to understand the common pattern and any variations.
+- [ ] Find all files with definitions: `rtk grep "createMockSession" src/__tests__/ --glob "*.{ts,tsx}" -l`
+- [ ] Count total definitions: `rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --glob "*.{ts,tsx}"`
+- [ ] Read 5-6 representative definitions to understand common patterns and variations
 
 ### Task 3: Read the Session interface
 
-Read `src/shared/types.ts` (or wherever the `Session` interface lives) to understand all required fields.
-
-Also check `src/renderer/types/index.ts` for any renderer-specific session types.
+- [ ] Read the `Session` interface in `src/shared/types.ts`
+- [ ] Check `src/renderer/types/index.ts` for any renderer-specific session types
+- [ ] List all required fields the mock factory must provide
 
 ### Task 4: Create shared mockSession.ts
 
-Create `src/__tests__/helpers/mockSession.ts` with a flexible factory:
-
-```typescript
-import type { Session } from '../../shared/types';
-
-export function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'test-session-1',
-		name: 'Test Session',
-		agentType: 'claude-code',
-		status: 'ready',
-		aiTabs: [
-			{
-				id: 'tab-1',
-				name: 'Tab 1',
-				messages: [],
-				agentSessionId: null,
-				isLoading: false,
-			},
-		],
-		activeTabId: 'tab-1',
-		activeFileTabId: null,
-		filePreviewTabs: [],
-		unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
-		// ... fill in ALL required fields with sensible defaults
-		...overrides,
-	};
-}
-```
-
-**IMPORTANT:** Study the existing factories to determine the exact fields needed. The factory should satisfy TypeScript's type checker with zero overrides.
+- [ ] Create `src/__tests__/helpers/mockSession.ts`
+- [ ] Implement `createMockSession(overrides: Partial<Session> = {}): Session` with sensible defaults for ALL required Session fields
+- [ ] Verify the factory satisfies TypeScript with zero overrides: `rtk tsc -p tsconfig.lint.json --noEmit`
 
 ### Task 5: Create index.ts barrel export
 
-Create `src/__tests__/helpers/index.ts`:
-
-```typescript
-export { createMockSession } from './mockSession';
-```
+- [ ] Create `src/__tests__/helpers/index.ts` with: `export { createMockSession } from './mockSession';`
 
 ### Task 6: Migrate test files in batches of 10
 
-For each batch:
+For each batch, per file:
 
-1. Open the test file
-2. Find the local `createMockSession` definition
-3. Remove it
-4. Add import: `import { createMockSession } from '../helpers/mockSession';` (adjust path as needed)
-5. Verify any custom overrides still work with the new factory signature
-6. Run `rtk vitest run path/to/file.test.ts` to verify
+- [ ] Remove the local `createMockSession` definition
+- [ ] Add import: `import { createMockSession } from '../helpers/mockSession';` (adjust relative path)
+- [ ] Verify custom overrides still work with the new factory signature
+- [ ] Run file-level test: `rtk vitest run path/to/file.test.ts`
 
-Process all 66 files. Group by directory to minimize path confusion:
+Process all 66 files in directory order:
 
-- `src/__tests__/renderer/components/*.test.tsx` (largest group)
-- `src/__tests__/renderer/hooks/*.test.ts`
-- `src/__tests__/renderer/stores/*.test.ts`
-- `src/__tests__/main/*.test.ts`
-- `src/__tests__/shared/*.test.ts`
+- [ ] Batch 1: `src/__tests__/renderer/components/*.test.tsx` (files 1-10)
+- [ ] Batch 2: `src/__tests__/renderer/components/*.test.tsx` (files 11-20)
+- [ ] Batch 3: `src/__tests__/renderer/components/*.test.tsx` (files 21-30)
+- [ ] Batch 4: `src/__tests__/renderer/components/*.test.tsx` (remaining)
+- [ ] Batch 5: `src/__tests__/renderer/hooks/*.test.ts`
+- [ ] Batch 6: `src/__tests__/renderer/stores/*.test.ts`
+- [ ] Batch 7: `src/__tests__/main/*.test.ts` and `src/__tests__/shared/*.test.ts`
 
 ### Task 7: Handle edge cases
 
-Some factories may have extra features (e.g., auto-incrementing IDs, different agent types). If a test file's factory has unique behavior:
-
-1. Check if it can be handled via overrides
-2. If not, create a variant (e.g., `createMockBatchSession`, `createMockRemoteSession`)
+- [ ] Identify factories with unique behavior (auto-incrementing IDs, different agent types, etc.)
+- [ ] For each unique factory, determine if it can be handled via overrides to the shared factory
+- [ ] If not, create a thin local wrapper that calls the shared factory with test-specific defaults
+- [ ] If truly different types (e.g., `SessionInfo` instead of `Session`), keep the local definition
 
 ### Task 8: Verify all tests pass
 
-```
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
-
-All tests must pass. If any fail, check that the shared factory's defaults match what the individual test expected.
+- [ ] Run all tests: `rtk vitest run`
+- [ ] If any fail, check that the shared factory defaults match what the individual test expected
+- [ ] Fix failures by adjusting overrides or factory defaults
 
 ### Task 9: Clean up - verify no orphaned local factories remain
 
-```
-rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --include="*.ts" --include="*.tsx" | grep -v "helpers/mockSession"
-```
-
-Should return 0 results.
+- [ ] Check for orphans: `rtk grep "function createMockSession\|const createMockSession" src/__tests__/ --glob "*.{ts,tsx}" | rtk grep -v "helpers/mockSession"`
+- [ ] Result should be 0 (or only intentional thin wrappers calling the shared factory)
 
 ---
 

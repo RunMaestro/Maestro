@@ -21,101 +21,54 @@ Create a canonical `formatTimestamp` in `src/shared/formatters.ts` and replace 1
 
 ### Task 1: Inventory all 15 definitions
 
-```
-rtk grep "function formatTime\b|const formatTime\b|function formatTimestamp|const formatTimestamp" src/ --glob="*.{ts,tsx}" | rtk grep -v "__tests__"
-```
-
-Expected locations:
-
-1. `GroupChatHistoryPanel.tsx`
-2. `GroupChatMessages.tsx`
-3. `HistoryEntryItem.tsx`
-4. `HistoryDetailModal.tsx`
-5. `WizardMessageBubble.tsx`
-6. `ParticipantCard.tsx`
-7. `ThinkingStatusPill.tsx`
-8. `LongestAutoRunsTable.tsx`
-9. `ConversationScreen.tsx`
-10. `conductorBadges.ts`
-11. `groupChatExport.ts`
-12. `tabExport.ts`
-13. `MessageHistory.tsx`
-14. `MobileHistoryPanel.tsx`
-15. `ResponseViewer.tsx`
+- [ ] Find all definitions: `rtk grep "function formatTime\b\|const formatTime\b\|function formatTimestamp\|const formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "__tests__"`
+- [ ] Confirm expected locations: `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `WizardMessageBubble.tsx`, `ParticipantCard.tsx`, `ThinkingStatusPill.tsx`, `LongestAutoRunsTable.tsx`, `ConversationScreen.tsx`, `conductorBadges.ts`, `groupChatExport.ts`, `tabExport.ts`, `MessageHistory.tsx`, `MobileHistoryPanel.tsx`, `ResponseViewer.tsx`
 
 ### Task 2: Categorize by output format
 
-Read each definition and group them by output format:
-
-- **Format A:** `HH:MM:SS` (24-hour)
-- **Format B:** `h:mm AM/PM` (12-hour)
-- **Format C:** `MMM D, YYYY h:mm AM/PM` (date + time)
-- **Format D:** `relative` ("5 min ago")
-- **Other**
+- [ ] Read each of the 15 definitions
+- [ ] Group by output format: `HH:MM:SS` (24-hour), `h:mm AM/PM` (12-hour), `MMM D, YYYY h:mm AM/PM` (date+time), relative ("5 min ago"), other
+- [ ] Document which style each call site needs
 
 ### Task 3: Design canonical API
 
-Add to `src/shared/formatters.ts`:
-
-```typescript
-/**
- * Format a timestamp for display.
- * @param timestamp - Unix timestamp in milliseconds (Date.now() format)
- * @param style - 'time' for HH:MM, 'datetime' for full date+time, 'relative' for "5m ago"
- */
-export function formatTimestamp(
-	timestamp: number,
-	style: 'time' | 'datetime' | 'relative' = 'time'
-): string {
-	// Implementation covering all discovered patterns
-}
-```
-
-If there are truly different output formats, provide multiple style options rather than multiple functions.
+- [ ] Add `formatTimestamp(timestamp: number, style: 'time' | 'datetime' | 'relative' = 'time'): string` to `src/shared/formatters.ts`
+- [ ] If there are truly different output formats, provide multiple style options rather than multiple functions
 
 ### Task 4: Implement and test the canonical function
 
-Write the implementation in `shared/formatters.ts`. Add unit tests in `src/__tests__/shared/formatters.test.ts`:
-
-```typescript
-describe('formatTimestamp', () => {
-	it('formats time-only', () => { ... });
-	it('formats datetime', () => { ... });
-	it('handles edge cases (0, negative, future)', () => { ... });
-});
-```
+- [ ] Write the implementation in `src/shared/formatters.ts` covering all discovered output patterns
+- [ ] Add unit tests in `src/__tests__/shared/formatters.test.ts` for each style variant
+- [ ] Test edge cases: timestamp 0, negative values, future timestamps
+- [ ] Run tests: `rtk vitest run src/__tests__/shared/formatters.test.ts`
 
 ### Task 5: Migrate all 15 definitions
 
 For each file:
 
-1. Read the local definition to determine which `style` parameter to use
-2. Remove the local function
-3. Add import: `import { formatTimestamp } from '../../shared/formatters';`
-4. If the local function had a different name, either rename the call sites or use: `import { formatTimestamp as formatTime } from ...`
+- [ ] Read the local definition to determine which `style` parameter to use
+- [ ] Remove the local function
+- [ ] Add import: `import { formatTimestamp } from '../../shared/formatters';` (adjust path)
+- [ ] If local function was named `formatTime`, use: `import { formatTimestamp as formatTime } from ...`
+- [ ] Verify output matches the old local definition
 
 ### Task 6: Handle main process files separately
 
-`groupChatExport.ts` and `tabExport.ts` are in the main process. They can import from `shared/formatters` directly.
-
-`conductorBadges.ts` may also be main process - check and import accordingly.
+- [ ] Replace in `groupChatExport.ts` - import from `shared/formatters` directly
+- [ ] Replace in `tabExport.ts` - import from `shared/formatters` directly
+- [ ] Check if `conductorBadges.ts` is main process, import accordingly
 
 ### Task 7: Verify
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Run related tests: `rtk vitest run src/__tests__/shared/formatters.test.ts`
+- [ ] Find and run component tests that use formatTime/formatTimestamp: `rtk grep "formatTime\|formatTimestamp" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Confirm zero new test failures
 
 ### Task 8: Verify no orphaned definitions remain
 
-```
-rtk grep "function formatTime\b|function formatTimestamp" src/ --glob="*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"
-```
-
-Should return 0 results.
+- [ ] Check: `rtk grep "function formatTime\b\|function formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"`
+- [ ] Result should be 0
 
 ---
 

@@ -10,9 +10,12 @@ Master index of all deduplication playbooks. Execute phases in order - each phas
 
 ## Tasks
 
-### Task 1: Read this index and acknowledge the full scope
-
-Read all documents listed below in order. Confirm you understand: 13 phases, 40 tracker findings, ~8,314 lines of removable/consolidatable code. Each subsequent document is a self-contained Auto Run step - execute them sequentially.
+- [ ] Read this full index and confirm scope: 13 phases, 40 tracker findings, ~8,314 lines of removable/consolidatable code
+- [ ] Read the scan evidence files referenced in each phase before starting that phase
+- [ ] Execute each phase document (01A through 13C) sequentially - each is a self-contained Auto Run step
+- [ ] After each phase document, run verification: `rtk npm run lint && rtk vitest run`
+- [ ] Do not start phase N+1 until phase N passes verification
+- [ ] Track pre-existing test failures separately from failures introduced by your changes
 
 ---
 

@@ -19,6 +19,7 @@ Replace 35 `createMockTheme` functions and 119 inline `mockTheme` objects (154 t
 **Completed 2026-04-02:** Consolidated 113 local mockTheme/createMockTheme definitions into a single shared factory at `src/__tests__/helpers/mockTheme.ts`.
 
 Factory approach:
+
 - Shared `mockTheme` constant provides sensible defaults for all 13 required ThemeColors fields
 - Shared `mockThemeColors` constant exported for direct color reference in assertions
 - `createMockTheme(overrides)` accepts `Partial<Theme>` with deep merge of colors
@@ -29,6 +30,7 @@ Factory approach:
 - 2 pre-existing test failures (SessionList LIVE mode) are NOT caused by this migration
 
 Files created:
+
 - `src/__tests__/helpers/mockTheme.ts` - shared factory (mockTheme, mockThemeColors, createMockTheme)
 - Updated `src/__tests__/helpers/index.ts` - barrel export
 
@@ -38,117 +40,59 @@ Files created:
 
 ### Task 1: Survey existing theme mock patterns
 
-Find all definitions:
-
-```
-rtk grep "createMockTheme\|const mockTheme\|let mockTheme" src/__tests__/ --include="*.ts" --include="*.tsx" -l
-```
-
-Read 5-6 to understand the common pattern. Key things to capture:
-
-- Theme color properties (textMain, textSecondary, background, accent, etc.)
-- Theme metadata (name, id, isDark)
-- Any variant patterns (dark theme mock, light theme mock)
+- [ ] Find all files with definitions: `rtk grep "createMockTheme\|const mockTheme\|let mockTheme" src/__tests__/ --glob "*.{ts,tsx}" -l`
+- [ ] Read 5-6 representative definitions to capture: color properties, theme metadata (name, id, isDark), variant patterns (dark/light)
 
 ### Task 2: Read the Theme type definition
 
-```
-rtk grep "interface Theme\|type Theme " src/ --include="*.ts" --include="*.tsx" | grep -v "__tests__"
-```
-
-Read the canonical Theme type to ensure the mock covers all 13 required colors.
+- [ ] Find canonical type: `rtk grep "interface Theme\|type Theme " src/ --glob "*.{ts,tsx}" | rtk grep -v "__tests__"`
+- [ ] Read the canonical Theme type and list all 13 required color fields
 
 ### Task 3: Create shared mockTheme.ts
 
-Create `src/__tests__/helpers/mockTheme.ts`:
-
-```typescript
-import type { Theme } from '../../renderer/constants/themes';
-
-export const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	isDark: true,
-	colors: {
-		background: '#1a1a2e',
-		backgroundSecondary: '#16213e',
-		textMain: '#e0e0e0',
-		textSecondary: '#a0a0a0',
-		accent: '#4fc3f7',
-		accentHover: '#29b6f6',
-		border: '#333333',
-		success: '#4caf50',
-		warning: '#ff9800',
-		error: '#f44336',
-		info: '#2196f3',
-		buttonBg: '#333333',
-		buttonText: '#ffffff',
-	},
-};
-
-export function createMockTheme(overrides: Partial<Theme> = {}): Theme {
-	return {
-		...mockTheme,
-		...overrides,
-		colors: {
-			...mockTheme.colors,
-			...(overrides.colors || {}),
-		},
-	};
-}
-```
-
-**IMPORTANT:** Match the exact field names from the canonical Theme type. The colors listed above are examples - use the real field names.
+- [ ] Create `src/__tests__/helpers/mockTheme.ts`
+- [ ] Implement `mockTheme` constant with all required Theme fields using real field names from the canonical type
+- [ ] Implement `mockThemeColors` constant for direct color reference in assertions
+- [ ] Implement `createMockTheme(overrides: Partial<Theme> = {}): Theme` with deep merge of colors
+- [ ] Verify types: `rtk tsc -p tsconfig.lint.json --noEmit`
 
 ### Task 4: Export from helpers/index.ts
 
-Add to `src/__tests__/helpers/index.ts`:
-
-```typescript
-export { mockTheme, createMockTheme } from './mockTheme';
-```
+- [ ] Add to `src/__tests__/helpers/index.ts`: `export { mockTheme, mockThemeColors, createMockTheme } from './mockTheme';`
 
 ### Task 5: Migrate createMockTheme function definitions (35 files)
 
-For each file with a `createMockTheme` function:
+For each file with a local `createMockTheme` function:
 
-1. Remove the local function
-2. Add import: `import { createMockTheme } from '../helpers/mockTheme';`
-3. Verify any custom overrides still work
+- [ ] Remove the local function definition
+- [ ] Add import: `import { createMockTheme } from '../helpers/mockTheme';` (adjust relative path)
+- [ ] Verify custom overrides still work with the new factory signature
+- [ ] Run file-level test: `rtk vitest run path/to/file.test.ts`
 
 ### Task 6: Migrate inline mockTheme objects (119 instances)
 
-For each file with an inline `mockTheme` object:
+For each file with an inline `const mockTheme = { ... }`:
 
-1. Remove the local `const mockTheme = { ... }` declaration
-2. Add import: `import { mockTheme } from '../helpers/mockTheme';`
-3. If the test modifies `mockTheme` properties, switch to `createMockTheme({ ... })`
+- [ ] Remove the local `const mockTheme` declaration
+- [ ] Add import: `import { mockTheme } from '../helpers/mockTheme';`
+- [ ] If the test mutates `mockTheme` properties, switch to `createMockTheme({ ... })` instead
+- [ ] Update hardcoded color assertions to reference `mockTheme.colors.xxx` dynamically
 
-**Batch by directory:**
+Batch by directory:
 
-- `src/__tests__/renderer/components/` (largest group)
-- `src/__tests__/renderer/hooks/`
-- `src/__tests__/renderer/stores/`
+- [ ] Batch 1: `src/__tests__/renderer/components/` - run tests after: `rtk vitest run src/__tests__/renderer/components/`
+- [ ] Batch 2: `src/__tests__/renderer/hooks/` - run tests after: `rtk vitest run src/__tests__/renderer/hooks/`
+- [ ] Batch 3: `src/__tests__/renderer/stores/` - run tests after: `rtk vitest run src/__tests__/renderer/stores/`
 
-### Task 7: Run tests after each batch
+### Task 7: Run full test suite
 
-After migrating each directory, run:
-
-```
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
-
-Fix any failures before proceeding to the next batch.
+- [ ] Run all tests: `rtk vitest run`
+- [ ] Fix any failures before proceeding (check that shared mock defaults match individual test expectations)
 
 ### Task 8: Verify cleanup complete
 
-```
-rtk grep "createMockTheme\|const mockTheme.*=.*{" src/__tests__/ --include="*.ts" --include="*.tsx" | grep -v "helpers/mockTheme" | grep -v "import"
-```
-
-Should return 0 results (or only `let mockTheme` reassignments that use the imported factory).
+- [ ] Check for orphans: `rtk grep "createMockTheme\|const mockTheme.*=.*{" src/__tests__/ --glob "*.{ts,tsx}" | rtk grep -v "helpers/mockTheme" | rtk grep -v "import"`
+- [ ] Result should be 0 (or only `let mockTheme` reassignments using the imported factory)
 
 ---
 

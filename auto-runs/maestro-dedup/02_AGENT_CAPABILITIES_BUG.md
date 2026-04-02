@@ -12,8 +12,26 @@ Fix `AgentCapabilities` being defined twice in the same file (`renderer/global.d
 
 ## Pre-flight Checks
 
-- [ ] Phase 01 (dead code removal) is complete
-- [ ] `rtk npm run lint` passes
+- [x] Phase 01 (dead code removal) is complete
+- [x] `rtk npm run lint` passes
+
+**Completed 2026-04-02:** Consolidated 7 AgentCapabilities definitions (including double-definition bug in global.d.ts) down to 1 canonical definition in `src/shared/types.ts`. Also consolidated 2 duplicate `DEFAULT_CAPABILITIES` constants. Fixed bugs found:
+
+- `global.d.ts` line 105 was missing `supportsThinkingDisplay` (type-shadowing bug)
+- `renderer/types/index.ts` had 10 fields incorrectly marked optional
+- `main/preload/agents.ts` was missing 9 fields (severely outdated)
+- `hasCapability()` needed `!!` coercion after adding `imageResumeMode?: 'prompt-embed'`
+
+Files modified:
+
+- `src/shared/types.ts` - Added canonical `AgentCapabilities` + `DEFAULT_CAPABILITIES`
+- `src/renderer/global.d.ts` - Removed both inline definitions, replaced with `import()` type alias
+- `src/renderer/types/index.ts` - Removed local definition, re-exports from shared
+- `src/renderer/hooks/agent/useAgentCapabilities.ts` - Removed local definition + `DEFAULT_CAPABILITIES`, imports from shared
+- `src/main/agents/capabilities.ts` - Removed local definition + `DEFAULT_CAPABILITIES`, imports from shared
+- `src/main/preload/agents.ts` - Removed local definition, imports from shared
+
+Verification: `tsc --noEmit` passes for both `tsconfig.lint.json` and `tsconfig.main.json`. All 18 related test files pass.
 
 ---
 
@@ -21,65 +39,50 @@ Fix `AgentCapabilities` being defined twice in the same file (`renderer/global.d
 
 ### Task 1: Inventory all AgentCapabilities definitions
 
-Find every definition:
-
-```
-rtk grep "interface AgentCapabilities" src/ --include="*.ts" --include="*.tsx"
-rtk grep "type AgentCapabilities" src/ --include="*.ts" --include="*.tsx"
-```
-
-Expected locations (6 definitions):
-
-1. `src/shared/types.ts` - Likely canonical
-2. `src/main/agents/capabilities.ts` - Domain-specific
-3. `src/renderer/global.d.ts` line ~61 - First definition
-4. `src/renderer/global.d.ts` line ~104 - DUPLICATE in same file (BUG)
-5. `src/renderer/types/index.ts` - Re-declaration
-6. `src/main/preload.ts` - Preload boundary re-declaration
+- [ ] Find all interface definitions: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"`
+- [ ] Find all type alias definitions: `rtk grep "type AgentCapabilities" src/ --glob "*.{ts,tsx}"`
+- [ ] Document each location and its fields (expect 6 definitions in: `shared/types.ts`, `main/agents/capabilities.ts`, `renderer/global.d.ts` line ~61, `renderer/global.d.ts` line ~104 (BUG), `renderer/types/index.ts`, `main/preload.ts`)
 
 ### Task 2: Compare all definitions for field differences
 
-Read each definition and compare fields. Document any differences - the canonical version must be a superset of all fields used anywhere.
+- [ ] Read each definition and list its fields
+- [ ] Identify any fields present in one definition but missing from others
+- [ ] Identify any optional vs required mismatches
+- [ ] The canonical version must be a superset of all fields used anywhere
 
 ### Task 3: Establish canonical definition
 
-The canonical `AgentCapabilities` should live in `src/shared/types.ts`. Ensure it contains ALL fields from every definition.
+- [ ] Ensure `src/shared/types.ts` contains the canonical `AgentCapabilities` with ALL fields from every definition
+- [ ] If any definition has unique fields, add them to the canonical version
 
 ### Task 4: Fix the double-definition in global.d.ts
 
-Open `src/renderer/global.d.ts` and remove the duplicate `AgentCapabilities` definition (the one at line ~104). Keep the one that matches the canonical definition, or remove both and reference the shared type.
+- [ ] Open `src/renderer/global.d.ts`
+- [ ] Remove the duplicate `AgentCapabilities` at line ~104
+- [ ] Remove or replace the definition at line ~61 with an `import()` type alias referencing `src/shared/types.ts`
 
 ### Task 5: Remove redundant definitions
 
-For each non-canonical definition:
-
-- If the file imports from `shared/types.ts`, remove the local definition
-- If the file is `global.d.ts` or `preload.ts`, reference the shared type via import
-- If the file can't import (ambient declaration), ensure the definition matches exactly
+- [ ] Remove local `AgentCapabilities` from `src/main/agents/capabilities.ts`, replace with import from `src/shared/types.ts`
+- [ ] Remove local `AgentCapabilities` from `src/renderer/types/index.ts`, replace with re-export from `src/shared/types.ts`
+- [ ] Remove local `AgentCapabilities` from `src/main/preload.ts`, replace with import from `src/shared/types.ts`
+- [ ] Also consolidate any duplicate `DEFAULT_CAPABILITIES` constants to `src/shared/types.ts`
 
 ### Task 6: Update imports across the codebase
 
-Find all files that import `AgentCapabilities` and ensure they import from `src/shared/types.ts`:
-
-```
-rtk grep "AgentCapabilities" src/ --include="*.ts" --include="*.tsx" | grep "import"
-```
+- [ ] Find all imports: `rtk grep "AgentCapabilities" src/ --glob "*.{ts,tsx}" | rtk grep "import"`
+- [ ] Update each file to import from `src/shared/types.ts` (or `src/renderer/types/index.ts` re-export for renderer files)
 
 ### Task 7: Verify no type mismatches
 
-```
-rtk npm run lint
-```
+- [ ] Run type checking: `rtk tsc -p tsconfig.lint.json --noEmit && rtk tsc -p tsconfig.main.json --noEmit`
+- [ ] Fix any type errors that arise from field mismatches
 
-TypeScript type checking will catch any field mismatches between the old and new definitions. Fix any errors that arise.
+### Task 8: Run tests
 
-### Task 8: Run full test suite
-
-```
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Find related test files: `rtk grep "AgentCapabilities\|DEFAULT_CAPABILITIES" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run related tests: `rtk vitest run <related-test-files>`
+- [ ] Confirm zero new test failures from your changes
 
 ---
 

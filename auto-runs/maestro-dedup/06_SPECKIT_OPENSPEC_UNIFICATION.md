@@ -38,134 +38,73 @@ Also: `EditingCommand` interface has 3 definitions.
 
 ### Task 1: Diff each file pair to identify differences
 
-For each pair, create a diff to understand what actually varies:
-
-```
-diff src/main/speckit-manager.ts src/main/openspec-manager.ts
-diff src/renderer/components/SpecKitCommandsPanel.tsx src/renderer/components/OpenSpecCommandsPanel.tsx
-diff src/main/ipc/handlers/speckit.ts src/main/ipc/handlers/openspec.ts
-diff src/renderer/services/speckit.ts src/renderer/services/openspec.ts
-diff src/prompts/speckit/index.ts src/prompts/openspec/index.ts
-```
-
-Document what differs (likely: directory names, feature labels, prompt content).
+- [ ] Diff managers: `diff src/main/speckit-manager.ts src/main/openspec-manager.ts`
+- [ ] Diff UI panels: `diff src/renderer/components/SpecKitCommandsPanel.tsx src/renderer/components/OpenSpecCommandsPanel.tsx`
+- [ ] Diff IPC handlers: `diff src/main/ipc/handlers/speckit.ts src/main/ipc/handlers/openspec.ts`
+- [ ] Diff renderer services: `diff src/renderer/services/speckit.ts src/renderer/services/openspec.ts`
+- [ ] Diff prompt templates: `diff src/prompts/speckit/index.ts src/prompts/openspec/index.ts`
+- [ ] Document what actually differs (expected: directory names, feature labels, prompt content)
 
 ### Task 2: Design the shared base
 
-Based on the diffs, design a parameterized base:
-
-```typescript
-// src/main/spec-command-manager.ts (shared base)
-interface SpecCommandManagerConfig {
-	featureName: string;          // 'speckit' | 'openspec'
-	commandsDir: string;          // directory name for commands
-	promptsDir: string;           // directory for prompts
-	defaultCommands: SpecCommand[];
-}
-
-export class SpecCommandManager {
-	constructor(private config: SpecCommandManagerConfig) {}
-
-	async listCommands(): Promise<SpecCommand[]> { ... }
-	async getCommand(name: string): Promise<SpecCommand> { ... }
-	async saveCommand(command: SpecCommand): Promise<void> { ... }
-	async deleteCommand(name: string): Promise<void> { ... }
-	// ... shared logic
-}
-```
+- [ ] Define `SpecCommandManagerConfig` interface with parameterized differences: `featureName`, `commandsDir`, `promptsDir`, `defaultCommands`
+- [ ] Design `SpecCommandManager` class with shared methods: `listCommands`, `getCommand`, `saveCommand`, `deleteCommand`
+- [ ] Confirm the design covers all logic from both existing managers
 
 ### Task 3: Consolidate the EditingCommand interface
 
-Find all 3 definitions:
-
-```
-rtk grep "interface EditingCommand" src/ --glob="*.{ts,tsx}"
-```
-
-Create one canonical definition in `src/shared/types.ts` or alongside the shared base.
+- [ ] Find all definitions: `rtk grep "interface EditingCommand" src/ --glob "*.{ts,tsx}"`
+- [ ] Compare fields across all 3 definitions
+- [ ] Create one canonical definition in `src/shared/types.ts` or alongside the shared base
+- [ ] Replace other 2 definitions with imports
 
 ### Task 4: Implement shared manager (main process)
 
-Create `src/main/spec-command-manager.ts`:
-
-1. Extract all common logic from `speckit-manager.ts` and `openspec-manager.ts`
-2. Parameterize the differences
-3. Reduce each feature-specific file to thin wrappers:
-
-```typescript
-// src/main/speckit-manager.ts (after consolidation)
-import { SpecCommandManager } from './spec-command-manager';
-import { SPECKIT_DEFAULTS } from '../prompts/speckit';
-
-export const speckitManager = new SpecCommandManager({
-	featureName: 'speckit',
-	commandsDir: '.speckit',
-	promptsDir: 'speckit',
-	defaultCommands: SPECKIT_DEFAULTS,
-});
-```
+- [ ] Create `src/main/spec-command-manager.ts` with all common logic extracted from both managers
+- [ ] Reduce `src/main/speckit-manager.ts` to a thin wrapper (~10 lines) instantiating SpecCommandManager with speckit config
+- [ ] Reduce `src/main/openspec-manager.ts` to a thin wrapper (~10 lines) instantiating SpecCommandManager with openspec config
+- [ ] Run type checking: `rtk tsc -p tsconfig.main.json --noEmit`
 
 ### Task 5: Implement shared UI component (renderer)
 
-Create `src/renderer/components/SpecCommandsPanel.tsx` (shared):
-
-1. Extract common UI from both panels
-2. Parameterize: feature name, labels, color accents
-3. Reduce each feature-specific panel to thin wrappers:
-
-```typescript
-// src/renderer/components/SpecKitCommandsPanel.tsx (after)
-import { SpecCommandsPanel } from './SpecCommandsPanel';
-export const SpecKitCommandsPanel = () => (
-	<SpecCommandsPanel featureName="speckit" label="SpecKit" />
-);
-```
+- [ ] Create `src/renderer/components/SpecCommandsPanel.tsx` with parameterized props: `featureName`, `label`, color accents
+- [ ] Reduce `src/renderer/components/SpecKitCommandsPanel.tsx` to thin wrapper calling SpecCommandsPanel
+- [ ] Reduce `src/renderer/components/OpenSpecCommandsPanel.tsx` to thin wrapper calling SpecCommandsPanel
+- [ ] Run type checking: `rtk tsc -p tsconfig.lint.json --noEmit`
 
 ### Task 6: Consolidate IPC handlers
 
-Create `src/main/ipc/handlers/spec-commands.ts` (shared):
-
-1. Extract common handler logic
-2. Register both speckit and openspec handlers from the shared base
-3. Keep feature-specific files as thin registrations
+- [ ] Create `src/main/ipc/handlers/spec-commands.ts` with shared handler logic
+- [ ] Reduce `src/main/ipc/handlers/speckit.ts` to thin registration calling shared handlers
+- [ ] Reduce `src/main/ipc/handlers/openspec.ts` to thin registration calling shared handlers
 
 ### Task 7: Consolidate renderer services
 
-Create `src/renderer/services/specCommands.ts` (shared):
-
-1. Extract common service logic
-2. Feature-specific services become thin wrappers
+- [ ] Create `src/renderer/services/specCommands.ts` with shared service logic
+- [ ] Reduce `src/renderer/services/speckit.ts` to thin wrapper
+- [ ] Reduce `src/renderer/services/openspec.ts` to thin wrapper
 
 ### Task 8: Consolidate prompt templates
 
-If prompts differ significantly in content, keep them separate but share structure:
-
-```typescript
-// src/prompts/spec-commands/base.ts (shared structure)
-// src/prompts/speckit/index.ts (speckit-specific content, extending base)
-// src/prompts/openspec/index.ts (openspec-specific content, extending base)
-```
+- [ ] If prompts differ significantly in content, keep separate but share structure via a base in `src/prompts/spec-commands/base.ts`
+- [ ] If prompts are nearly identical, parameterize into a shared template
+- [ ] Update `src/prompts/speckit/index.ts` to extend shared base
+- [ ] Update `src/prompts/openspec/index.ts` to extend shared base
 
 ### Task 9: Update all imports
 
-Search for all imports of the old files and update:
-
-```
-rtk grep "speckit-manager|openspec-manager|SpecKitCommandsPanel|OpenSpecCommandsPanel" src/ --glob="*.{ts,tsx}"
-```
+- [ ] Find all imports to update: `rtk grep "speckit-manager\|openspec-manager\|SpecKitCommandsPanel\|OpenSpecCommandsPanel" src/ --glob "*.{ts,tsx}"`
+- [ ] Update each import to point to the correct (possibly unchanged) export locations
+- [ ] Ensure feature-specific thin wrappers still export the same names
 
 ### Task 10: Verify
 
-```
-rtk npm run lint
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run lint: `rtk npm run lint`
+- [ ] Find related test files: `rtk grep "speckit\|openspec\|SpecKit\|OpenSpec" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
+- [ ] Run related tests: `rtk vitest run <related-test-files>`
+- [ ] Confirm zero new test failures
 
 ### Task 11: Manual smoke test checklist
-
-Since these are user-facing features, verify:
 
 - [ ] SpecKit commands list loads
 - [ ] OpenSpec commands list loads

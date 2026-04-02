@@ -21,78 +21,44 @@ Replace 12 local `createMockTab`/`createMockAITab` factory definitions across te
 
 ### Task 1: Find all definitions
 
-```
-rtk grep "function createMockTab\|function createMockAITab\|const createMockTab\|const createMockAITab" src/__tests__/ --include="*.ts" --include="*.tsx"
-```
+- [ ] Find all tab factory definitions: `rtk grep "function createMockTab\|function createMockAITab\|const createMockTab\|const createMockAITab" src/__tests__/ --glob "*.{ts,tsx}"`
+- [ ] List all 12 files with local definitions
 
 ### Task 2: Read the AITab and Tab type definitions
 
-```
-rtk grep "interface AITab\|type AITab " src/ --include="*.ts" | grep -v "__tests__"
-rtk grep "interface FilePreviewTab\|type FilePreviewTab " src/ --include="*.ts" | grep -v "__tests__"
-```
+- [ ] Find AITab type: `rtk grep "interface AITab\|type AITab " src/ --glob "*.ts" | rtk grep -v "__tests__"`
+- [ ] Find FilePreviewTab type: `rtk grep "interface FilePreviewTab\|type FilePreviewTab " src/ --glob "*.ts" | rtk grep -v "__tests__"`
+- [ ] Read both type definitions and list all required fields
 
 ### Task 3: Create shared mockTab.ts
 
-Create `src/__tests__/helpers/mockTab.ts`:
-
-```typescript
-import type { AITab, FilePreviewTab, UnifiedTabRef } from '../../shared/types';
-
-export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: 'mock-tab-1',
-		name: 'Mock Tab',
-		messages: [],
-		agentSessionId: null,
-		isLoading: false,
-		// ... all required AITab fields
-		...overrides,
-	};
-}
-
-export function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): FilePreviewTab {
-	return {
-		id: 'mock-file-tab-1',
-		filePath: '/test/file.ts',
-		// ... all required fields
-		...overrides,
-	};
-}
-```
+- [ ] Create `src/__tests__/helpers/mockTab.ts`
+- [ ] Implement `createMockAITab(overrides: Partial<AITab> = {}): AITab` with sensible defaults for ALL required fields
+- [ ] Implement `createMockFileTab(overrides: Partial<FilePreviewTab> = {}): FilePreviewTab` with sensible defaults
+- [ ] Verify types: `rtk tsc -p tsconfig.lint.json --noEmit`
 
 ### Task 4: Export from helpers/index.ts
 
-Add to `src/__tests__/helpers/index.ts`:
-
-```typescript
-export { createMockAITab, createMockFileTab } from './mockTab';
-```
+- [ ] Add to `src/__tests__/helpers/index.ts`: `export { createMockAITab, createMockFileTab } from './mockTab';`
 
 ### Task 5: Migrate all 12 definitions
 
-For each file:
+For each of the 12 files:
 
-1. Remove local factory
-2. Import from `../helpers/mockTab`
-3. Adjust any unique override patterns
-4. Run file-level test: `rtk vitest run path/to/file.test.ts`
+- [ ] Remove the local factory function
+- [ ] Add import from `../helpers/mockTab` (adjust relative path)
+- [ ] Adjust any unique override patterns to work with the new signature
+- [ ] Run file-level test: `rtk vitest run path/to/file.test.ts`
 
 ### Task 6: Final verification
 
-```
-rtk vitest run
-```
-
-**MANDATORY: Do NOT skip verification.** Both lint and tests MUST pass on Windows before proceeding.
+- [ ] Run all tests: `rtk vitest run`
+- [ ] Confirm zero new test failures
 
 ### Task 7: Verify cleanup
 
-```
-rtk grep "function createMockTab\|function createMockAITab\|const createMockTab\|const createMockAITab" src/__tests__/ | grep -v "helpers/"
-```
-
-Should return 0 results.
+- [ ] Check for orphans: `rtk grep "function createMockTab\|function createMockAITab\|const createMockTab\|const createMockAITab" src/__tests__/ --glob "*.{ts,tsx}" | rtk grep -v "helpers/"`
+- [ ] Result should be 0
 
 ---
 
