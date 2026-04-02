@@ -313,7 +313,8 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 						</div>
 					) : availableTiles.length === 0 ? (
 						<div className="text-sm py-2" style={{ color: theme.colors.textDim }}>
-							No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.
+							No agents available. Please install Claude Code, OpenCode, Codex, Factory Droid, or
+							OpenClaw.
 						</div>
 					) : (
 						<div className="flex items-center gap-2">

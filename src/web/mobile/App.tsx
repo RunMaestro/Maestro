@@ -26,6 +26,7 @@ import { formatCost } from '../../shared/formatters';
 import { estimateContextUsage } from '../../renderer/utils/contextUsage';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { SessionPillBar } from './SessionPillBar';
 import { AllSessionsView } from './AllSessionsView';
 import { MobileHistoryPanel } from './MobileHistoryPanel';
@@ -1301,7 +1302,9 @@ export default function MobileApp() {
 						: activeSession?.inputMode === 'ai'
 							? isSmallScreen
 								? 'Ask AI...'
-								: `Ask ${activeSession?.toolType === 'claude-code' ? 'Claude' : activeSession?.toolType || 'AI'} about ${activeSession?.name || 'this session'}...`
+								: `Ask ${activeSession?.toolType ? getAgentDisplayName(activeSession.toolType) : 'AI'} about ${
+										activeSession?.name || 'this session'
+									}...`
 							: 'Run shell command...'
 				}
 				disabled={!activeSessionId}

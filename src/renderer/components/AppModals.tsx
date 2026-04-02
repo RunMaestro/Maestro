@@ -85,6 +85,7 @@ import { WorktreeConfigModal } from './WorktreeConfigModal';
 import { CreateWorktreeModal } from './CreateWorktreeModal';
 import { CreatePRModal, PRDetails } from './CreatePRModal';
 import { DeleteWorktreeModal } from './DeleteWorktreeModal';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 // Utility Modal Components
 import { QuickActionsModal } from './QuickActionsModal';
@@ -1691,13 +1692,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<AgentErrorModal
 					theme={theme}
 					error={effectiveAgentError}
-					agentName={
-						errorSession
-							? errorSession.toolType === 'claude-code'
-								? 'Claude Code'
-								: errorSession.toolType
-							: undefined
-					}
+					agentName={errorSession ? getAgentDisplayName(errorSession.toolType) : undefined}
 					sessionName={errorSession?.name}
 					recoveryActions={recoveryActions}
 					onDismiss={onDismissAgentError}
