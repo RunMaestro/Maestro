@@ -40,6 +40,7 @@ import {
 	type ClaudeSession,
 } from '../hooks';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
@@ -857,8 +858,7 @@ export function AgentSessionsBrowser({
 						<>
 							<List className="w-5 h-5" style={{ color: theme.colors.textDim }} />
 							<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-								{agentId === 'claude-code' ? 'Claude' : 'Agent'} Sessions for{' '}
-								{activeSession?.name || 'Agent'}
+								{getAgentDisplayName(agentId)} Sessions for {activeSession?.name || 'Agent'}
 							</span>
 							{activeAgentSessionId && (
 								<span
@@ -1474,7 +1474,7 @@ export function AgentSessionsBrowser({
 								/>
 								<p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
 									{sessions.length === 0
-										? `No ${agentId === 'claude-code' ? 'Claude' : 'agent'} sessions found for this project`
+										? `No ${getAgentDisplayName(agentId)} sessions found for this project`
 										: 'No sessions match your search'}
 								</p>
 							</div>
