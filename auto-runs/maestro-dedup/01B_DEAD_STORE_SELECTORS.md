@@ -23,84 +23,84 @@ Remove 53 exported store selectors/helpers that have zero external references. T
 ### Task 1: Remove dead exports from agentStore.ts
 
 - [x] Completed 2026-04-02. All 4 exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "selectAvailableAgents\|selectAgentsDetected\|getAgentState\|getAgentActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "agentStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `selectAvailableAgents`, `selectAgentsDetected`, `getAgentState`, `getAgentActions`
-- [ ] Update test file if it imports any of these exports
+- [x] Verify zero external refs: `rtk grep "selectAvailableAgents\|selectAgentsDetected\|getAgentState\|getAgentActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "agentStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `selectAvailableAgents`, `selectAgentsDetected`, `getAgentState`, `getAgentActions`
+- [x] Update test file if it imports any of these exports
 
 ### Task 2: Remove dead exports from batchStore.ts
 
 - [x] Completed 2026-04-02. All 3 exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "selectStoppingBatchSessionIds\|selectBatchRunState\|getBatchActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "batchStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `selectStoppingBatchSessionIds`, `selectBatchRunState`, `getBatchActions`
-- [ ] Update test file if it imports any of these exports
+- [x] Verify zero external refs: `rtk grep "selectStoppingBatchSessionIds\|selectBatchRunState\|getBatchActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "batchStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `selectStoppingBatchSessionIds`, `selectBatchRunState`, `getBatchActions`
+- [x] Update test file if it imports any of these exports
 
 ### Task 3: Remove dead exports from fileExplorerStore.ts
 
 - [x] Completed 2026-04-02. Both exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "getFileExplorerState\|getFileExplorerActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "fileExplorerStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `getFileExplorerState`, `getFileExplorerActions`
-- [ ] Update test file if it imports any of these exports
+- [x] Verify zero external refs: `rtk grep "getFileExplorerState\|getFileExplorerActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "fileExplorerStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `getFileExplorerState`, `getFileExplorerActions`
+- [x] Update test file if it imports any of these exports
 
 ### Task 4: Remove dead exports from groupChatStore.ts
 
 - [x] Completed 2026-04-02. Both exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "getGroupChatState\|getGroupChatActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "groupChatStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `getGroupChatState`, `getGroupChatActions`
-- [ ] Update test file if it imports any of these exports
+- [x] Verify zero external refs: `rtk grep "getGroupChatState\|getGroupChatActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "groupChatStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `getGroupChatState`, `getGroupChatActions`
+- [x] Update test file if it imports any of these exports
 
 ### Task 5: Remove dead exports from modalStore.ts
 
 - [x] Completed 2026-04-02. 1 of 2 removed (`selectModal`). `selectModalOpen` is actively used - do NOT remove.
-- [ ] Verify `selectModal` has zero external refs: `rtk grep "selectModal[^O]" src/ --glob "*.{ts,tsx}" | rtk grep -v "modalStore" | rtk grep -v "__tests__"`
-- [ ] Verify `selectModalOpen` IS used: `rtk grep "selectModalOpen" src/ --glob "*.{ts,tsx}" | rtk grep -v "modalStore"`
-- [ ] Remove `selectModal` only (keep `selectModalOpen`)
+- [x] Verify `selectModal` has zero external refs: `rtk grep "selectModal[^O]" src/ --glob "*.{ts,tsx}" | rtk grep -v "modalStore" | rtk grep -v "__tests__"`
+- [x] Verify `selectModalOpen` IS used: `rtk grep "selectModalOpen" src/ --glob "*.{ts,tsx}" | rtk grep -v "modalStore"`
+- [x] Remove `selectModal` only (keep `selectModalOpen`)
 
 ### Task 6: Remove dead exports from notificationStore.ts
 
 - [x] Completed 2026-04-02. All 6 exports removed. Test file updated.
-- [ ] Verify zero external refs for all 6: `rtk grep "selectToasts\|selectToastCount\|selectConfig\|resetToastIdCounter\|getNotificationState\|getNotificationActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "notificationStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `selectToasts`, `selectToastCount`, `selectConfig`, `resetToastIdCounter`, `getNotificationState`, `getNotificationActions`
-- [ ] Update test file (rewrite counter test to not depend on absolute counter values)
+- [x] Verify zero external refs for all 6: `rtk grep "selectToasts\|selectToastCount\|selectConfig\|resetToastIdCounter\|getNotificationState\|getNotificationActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "notificationStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `selectToasts`, `selectToastCount`, `selectConfig`, `resetToastIdCounter`, `getNotificationState`, `getNotificationActions`
+- [x] Update test file (rewrite counter test to not depend on absolute counter values)
 
 ### Task 7: Remove dead exports from operationStore.ts
 
 - [x] Completed 2026-04-02. All 3 exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "selectIsAnyOperationInProgress\|getOperationState\|getOperationActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "operationStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `selectIsAnyOperationInProgress`, `getOperationState`, `getOperationActions`
-- [ ] Update test file if it imports any of these exports
+- [x] Verify zero external refs: `rtk grep "selectIsAnyOperationInProgress\|getOperationState\|getOperationActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "operationStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `selectIsAnyOperationInProgress`, `getOperationState`, `getOperationActions`
+- [x] Update test file if it imports any of these exports
 
 ### Task 8: Remove dead exports from sessionStore.ts
 
 - [x] Completed 2026-04-02. All 9 exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "selectBookmarkedSessions\|selectSessionsByGroup\|selectUngroupedSessions\|selectGroupById\|selectSessionCount\|selectIsReady\|selectIsAnySessionBusy\|getSessionState\|getSessionActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "sessionStore" | rtk grep -v "__tests__"`
-- [ ] Remove exports: `selectBookmarkedSessions`, `selectSessionsByGroup`, `selectUngroupedSessions`, `selectGroupById`, `selectSessionCount`, `selectIsReady`, `selectIsAnySessionBusy`, `getSessionState`, `getSessionActions`
-- [ ] Update test file (rewrite initialization flow test to use store state directly)
+- [x] Verify zero external refs: `rtk grep "selectBookmarkedSessions\|selectSessionsByGroup\|selectUngroupedSessions\|selectGroupById\|selectSessionCount\|selectIsReady\|selectIsAnySessionBusy\|getSessionState\|getSessionActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "sessionStore" | rtk grep -v "__tests__"`
+- [x] Remove exports: `selectBookmarkedSessions`, `selectSessionsByGroup`, `selectUngroupedSessions`, `selectGroupById`, `selectSessionCount`, `selectIsReady`, `selectIsAnySessionBusy`, `getSessionState`, `getSessionActions`
+- [x] Update test file (rewrite initialization flow test to use store state directly)
 
 ### Task 9: Remove dead exports from settingsStore.ts
 
 - [x] Completed 2026-04-02. All 11 exports handled.
-- [ ] Remove `export` keyword from 8 `DEFAULT_*` constants (keep constants for internal use)
-- [ ] Remove `export` keyword from `getBadgeLevelForTime` (keep function for internal use)
-- [ ] Fully remove `getSettingsState` and `getSettingsActions`
-- [ ] Update `settingsStore.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
-- [ ] Update `useSettings.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
-- [ ] Update `fonts-and-sizing.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
-- [ ] Update `SessionList.test.tsx` - replace constant imports with `useSettingsStore.getState()` pattern
+- [x] Remove `export` keyword from 8 `DEFAULT_*` constants (keep constants for internal use)
+- [x] Remove `export` keyword from `getBadgeLevelForTime` (keep function for internal use)
+- [x] Fully remove `getSettingsState` and `getSettingsActions`
+- [x] Update `settingsStore.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
+- [x] Update `useSettings.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
+- [x] Update `fonts-and-sizing.test.ts` - replace constant imports with `useSettingsStore.getState()` pattern
+- [x] Update `SessionList.test.tsx` - replace constant imports with `useSettingsStore.getState()` pattern
 
 ### Task 10: Remove dead exports from tabStore.ts
 
 - [x] Completed 2026-04-02. All 12 exports removed. Test file updated.
-- [ ] Verify zero external refs: `rtk grep "selectActiveTab\|selectActiveFileTab\|selectUnifiedTabs\|selectTabById\|selectFileTabById\|selectTabCount\|selectAllTabs\|selectAllFileTabs\|selectActiveTerminalTab\|selectTerminalTabs\|getTabState\|getTabActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "tabStore" | rtk grep -v "__tests__"`
-- [ ] Remove all 12 exports from `tabStore.ts`
-- [ ] Clean up unused type imports (`UnifiedTab`, `TerminalTab`) and utility imports (`getActiveTab`, `buildUnifiedTabs`)
-- [ ] Update test file to remove references to deleted exports
+- [x] Verify zero external refs: `rtk grep "selectActiveTab\|selectActiveFileTab\|selectUnifiedTabs\|selectTabById\|selectFileTabById\|selectTabCount\|selectAllTabs\|selectAllFileTabs\|selectActiveTerminalTab\|selectTerminalTabs\|getTabState\|getTabActions" src/ --glob "*.{ts,tsx}" | rtk grep -v "tabStore" | rtk grep -v "__tests__"`
+- [x] Remove all 12 exports from `tabStore.ts`
+- [x] Clean up unused type imports (`UnifiedTab`, `TerminalTab`) and utility imports (`getActiveTab`, `buildUnifiedTabs`)
+- [x] Update test file to remove references to deleted exports
 
 ### Task 11: Verify - lint and tests pass
 
-- [x] Completed 2026-04-02. Lint passes. 139/139 store-related tests pass.
-- [ ] Run type checking: `rtk tsc -p tsconfig.lint.json --noEmit && rtk tsc -p tsconfig.main.json --noEmit`
-- [ ] Run store-related tests: `rtk vitest run src/__tests__/renderer/stores/`
-- [ ] Confirm zero new test failures (pre-existing failures in cue/path/message areas are acceptable)
+- [x] Completed 2026-04-02. Lint passes. 696/696 store tests pass, 402/402 settings component tests pass.
+- [x] Run type checking: lint passes clean
+- [x] Run store-related tests: 696 passed (11 test files)
+- [x] Zero new test failures. Most exports were already removed from prior session. Only change: removed `export` from `DEFAULT_LOCAL_IGNORE_PATTERNS` in settingsStore.ts, added local constant in DisplayTab.tsx.
 
 ---
 
