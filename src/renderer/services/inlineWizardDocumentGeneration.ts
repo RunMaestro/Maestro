@@ -80,6 +80,16 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 					textParts.push(msg.text);
 				}
 			}
+
+			// OpenClaw format: single JSON object at exit with payloads array
+			else if (agentType === 'openclaw') {
+				const payload = msg.payloads ?? msg.result?.payloads;
+				if (Array.isArray(payload)) {
+					for (const p of payload) {
+						if (p.text) textParts.push(p.text);
+					}
+				}
+			}
 		} catch {
 			// Ignore non-JSON lines or parse errors
 		}
@@ -578,6 +588,26 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 			if (textParts.length > 0) {
 				return textParts.join('');
+			}
+		}
+
+		// For OpenClaw: extract from { payloads, meta } or { status, result: { payloads, meta } }
+		if (agentType === 'openclaw') {
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					const payload = msg.payloads ?? msg.result?.payloads;
+					if (Array.isArray(payload)) {
+						const text = payload
+							.map((p: { text?: string }) => p.text)
+							.filter(Boolean)
+							.join('\n');
+						if (text) return text;
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
 			}
 		}
 
