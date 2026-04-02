@@ -411,7 +411,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInput: false, // Not supported via CLI currently
 		supportsImageInputOnResume: false, // Not supported
 		supportsSlashCommands: false, // Not applicable
-		supportsSessionStorage: false, // Phase 2: implement after GUI validation
+		supportsSessionStorage: true, // Phase 2: implement after GUI validation
 		supportsCostTracking: false, // Phase 2: OpenClaw doesn't expose cost per turn yet
 		supportsUsageStats: true, // meta.agentMeta.usage has input/output/cacheWrite/total
 		supportsBatchMode: true, // 'agent' subcommand
