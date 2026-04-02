@@ -205,7 +205,14 @@ export class ProcessManager extends EventEmitter {
 			this.bufferManager.flushDataBuffer(sessionId);
 
 			if (process.isTerminal && process.ptyProcess) {
-				process.ptyProcess.kill();
+				if (isWindows() && process.pid) {
+					// On Windows, node-pty's kill() only terminates the direct ConPTY
+					// child (the shell), not grandchild processes it spawned (e.g., dev
+					// servers, watchers). Use taskkill /t /f to kill the entire tree.
+					this.killWindowsProcessTree(process.pid, sessionId);
+				} else {
+					process.ptyProcess.kill();
+				}
 			} else if (process.childProcess) {
 				const pid = process.childProcess.pid;
 				if (isWindows() && pid) {
