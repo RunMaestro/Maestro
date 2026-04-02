@@ -674,6 +674,153 @@ const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// OpenClaw Error Patterns
+// ============================================================================
+
+const OPENCLAW_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /gateway.*auth.*failed|gateway.*token.*invalid/i,
+			message: 'Gateway authentication failed. Please check your OpenClaw token.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized|not\s+authenticated/i,
+			message: 'Not authenticated. Please run "openclaw configure" to set up credentials.',
+			recoverable: true,
+		},
+		{
+			pattern: /api.*key.*invalid|invalid.*api.*key/i,
+			message: 'Invalid API key on the underlying model provider. Check agent configuration.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication.*error/i,
+			message: 'Authentication error. Please verify your OpenClaw configuration.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*exceeded|context.*too\s+long/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /prompt.*too\s+long/i,
+			message: 'Prompt is too long. Try a shorter message or start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum.*tokens|token.*limit/i,
+			message: 'Maximum token limit reached. Start a new session.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate.*limit/i,
+			message: 'Rate limit exceeded. Please wait before trying again.',
+			recoverable: true,
+		},
+		{
+			pattern: /too many requests|\b429\b/i,
+			message: 'Too many requests. Please wait before sending more messages.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+		{
+			pattern: /cooldown|backoff/i,
+			message: 'Agent in cooldown. Please wait before retrying.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /gateway.*connection.*refused|gateway.*unreachable/i,
+			message: 'Cannot connect to OpenClaw Gateway. Ensure the gateway is running.',
+			recoverable: true,
+		},
+		{
+			pattern: /connection\s*(failed|refused|error|reset|closed)/i,
+			message: 'Connection failed. Check your network connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error. Check your connection to the Gateway.',
+			recoverable: true,
+		},
+		{
+			pattern: /request\s+timed?\s*out|timed?\s*out\s+waiting/i,
+			message: 'Request timed out. The agent may be overloaded.',
+			recoverable: true,
+		},
+		{
+			pattern: /wss?:\/\/.*failed|websocket.*error/i,
+			message: 'WebSocket connection to Gateway failed. Check Gateway status.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /SYSTEM_RUN_DENIED/i,
+			message: 'Execution denied by OpenClaw security policy.',
+			recoverable: false,
+		},
+		{
+			pattern: /permission denied|access denied/i,
+			message: 'Permission denied. Check OpenClaw exec-approvals configuration.',
+			recoverable: false,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in OpenClaw.',
+			recoverable: true,
+		},
+		{
+			pattern: /agent.*not\s+found|unknown\s+agent/i,
+			message: 'Agent not found. Check the agent ID in configuration.',
+			recoverable: true,
+		},
+		{
+			pattern: /node.*offline|worker.*unavailable/i,
+			message: 'The assigned worker node is offline. Check cluster status.',
+			recoverable: true,
+		},
+	],
+
+	session_not_found: [
+		{
+			pattern: /session.*not\s+found/i,
+			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /invalid.*session/i,
+			message: 'Invalid session. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /pass\s+--to.*--session-id.*--agent/i,
+			message: 'Session routing error. Please specify an agent or session.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // SSH Error Patterns
 // ============================================================================
 
@@ -864,6 +1011,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
+	['openclaw', OPENCLAW_ERROR_PATTERNS],
 ]);
 
 /**

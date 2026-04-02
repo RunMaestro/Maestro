@@ -22,6 +22,7 @@ export const AGENT_IDS = [
 	'opencode',
 	'factory-droid',
 	'aider',
+	'openclaw',
 ] as const;
 
 /**

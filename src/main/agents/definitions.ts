@@ -399,6 +399,78 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
 	},
+	{
+		id: 'openclaw',
+		name: 'OpenClaw',
+		binaryName: 'openclaw',
+		command: 'openclaw',
+		args: [],
+
+		// Batch mode: openclaw agent --json --message "prompt"
+		batchModePrefix: ['agent'],
+		batchModeArgs: [],
+
+		// JSON output
+		jsonOutputArgs: ['--json'],
+
+		// Session resume: --session-id <id>
+		resumeArgs: (sessionId: string) => ['--session-id', sessionId],
+
+		// Read-only mode (not supported at CLI level yet)
+		readOnlyArgs: [],
+		readOnlyCliEnforced: false,
+
+		// Prompt: --message <text> (not positional)
+		promptArgs: (prompt: string) => ['--message', prompt],
+		noPromptSeparator: true,
+
+		// Default env vars
+		defaultEnvVars: {},
+
+		// UI configuration options
+		configOptions: [
+			{
+				key: 'agentId',
+				type: 'text',
+				label: 'Agent ID',
+				description:
+					'OpenClaw agent to use (e.g., "main", "ops"). Leave empty for default routing.',
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--agent', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'thinking',
+				type: 'select',
+				label: 'Thinking Level',
+				description: 'How much the agent should reason before responding.',
+				options: ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--thinking', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens (for UI display). Depends on the underlying model.',
+				default: 200000,
+			},
+			{
+				key: 'localMode',
+				type: 'checkbox',
+				label: 'Local Mode',
+				description:
+					'Run the embedded agent locally instead of via Gateway (requires model provider API keys).',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--local'] : []),
+			},
+		],
+	},
 ];
 
 /**

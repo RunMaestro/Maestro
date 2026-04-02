@@ -385,6 +385,39 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
+
+	/**
+	 * OpenClaw - Miyabi Agent Orchestration Platform
+	 *
+	 * Initial integration: conservative capabilities.
+	 * OpenClaw routes to various AI backends (Claude, GPT, Gemini)
+	 * and provides multi-agent orchestration via Gateway.
+	 */
+	openclaw: {
+		supportsResume: true, // --session-id flag
+		supportsReadOnlyMode: false, // No CLI-level read-only mode yet
+		supportsJsonOutput: true, // --json flag → single JSON result object
+		supportsSessionId: true, // meta.agentMeta.sessionId in JSON output
+		supportsImageInput: false, // Not supported via CLI currently
+		supportsImageInputOnResume: false, // Not supported
+		supportsSlashCommands: false, // Not applicable
+		supportsSessionStorage: false, // Phase 2 (initial = false)
+		supportsCostTracking: false, // OpenClaw doesn't expose cost per turn yet
+		supportsUsageStats: true, // meta.agentMeta.usage has input/output/cacheWrite/total
+		supportsBatchMode: true, // 'agent' subcommand
+		requiresPromptToStart: true, // Requires --message with prompt
+		supportsStreaming: false, // --json outputs single JSON result (no stream)
+		supportsResultMessages: true, // payloads[].text in final result
+		supportsModelSelection: false, // Model is configured via OpenClaw agent config, not CLI flag
+		supportsStreamJsonInput: false, // Not supported
+		supportsThinkingDisplay: false, // --thinking is internal control only
+		supportsContextMerge: false, // Not yet investigated
+		supportsContextExport: false, // Not yet investigated
+		supportsWizard: false, // Not yet integrated
+		supportsGroupChatModeration: false, // Not yet verified
+		usesJsonLineOutput: false, // Single JSON object output (not JSONL)
+		usesCombinedContextWindow: false, // Depends on underlying model provider
+	},
 };
 
 /**
