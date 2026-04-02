@@ -353,13 +353,20 @@ describe('Sessions Preload API', () => {
 		});
 
 		describe('registerSessionOrigin', () => {
-			it('should invoke claude:registerSessionOrigin', async () => {
+			it('should invoke agentSessions:registerSessionOrigin', async () => {
 				mockInvoke.mockResolvedValue(true);
 
-				await api.registerSessionOrigin('/project', 'agent-session-123', 'user', 'My Session');
+				await api.registerSessionOrigin(
+					'openclaw',
+					'/project',
+					'agent-session-123',
+					'user',
+					'My Session'
+				);
 
 				expect(mockInvoke).toHaveBeenCalledWith(
-					'claude:registerSessionOrigin',
+					'agentSessions:registerSessionOrigin',
+					'openclaw',
 					'/project',
 					'agent-session-123',
 					'user',

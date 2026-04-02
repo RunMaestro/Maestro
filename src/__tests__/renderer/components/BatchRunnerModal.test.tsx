@@ -741,6 +741,9 @@ describe('BatchRunnerModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Save as Playbook' }));
 
+			const timeoutInput = screen.getByLabelText('Task Timeout');
+			fireEvent.change(timeoutInput, { target: { value: '45000' } });
+
 			// Find and click Save button in the playbook name modal
 			const modal = screen.getByTestId('playbook-name-modal');
 			fireEvent.click(within(modal).getByText('Save'));
@@ -748,6 +751,12 @@ describe('BatchRunnerModal', () => {
 			await waitFor(() => {
 				expect(mockCreate).toHaveBeenCalled();
 			});
+			expect(mockCreate).toHaveBeenCalledWith(
+				'session-123',
+				expect.objectContaining({
+					taskTimeoutMs: 45000,
+				})
+			);
 		});
 
 		it('shows Save Update button when playbook is modified', async () => {
@@ -902,6 +911,9 @@ describe('BatchRunnerModal', () => {
 				expect(screen.getByText('tasks')).toBeInTheDocument();
 			});
 
+			const timeoutInput = screen.getByLabelText('Task Timeout');
+			fireEvent.change(timeoutInput, { target: { value: '30000' } });
+
 			fireEvent.click(screen.getByRole('button', { name: /Go/ }));
 
 			expect(props.onGo).toHaveBeenCalledWith(
@@ -914,6 +926,7 @@ describe('BatchRunnerModal', () => {
 					]),
 					prompt: DEFAULT_BATCH_PROMPT,
 					loopEnabled: false,
+					taskTimeoutMs: 30000,
 				})
 			);
 			expect(props.onClose).toHaveBeenCalled();
@@ -1400,6 +1413,92 @@ describe('Loop Mode Additional Controls', () => {
 // but testing this requires complex async timing that causes timeouts in the test environment
 
 // NOTE: Worktree UI has moved to WorktreeConfigModal - these tests no longer apply to BatchRunnerModal
+
+describe('Agent Strategy', () => {
+	it('passes agentStrategy through to onGo config', async () => {
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		fireEvent.change(screen.getByLabelText('Agent Strategy'), {
+			target: { value: 'plan-execute-verify' },
+		});
+		fireEvent.change(screen.getByLabelText('Definition of Done'), {
+			target: { value: 'Relevant tests pass\nTask checkbox is updated' },
+		});
+		fireEvent.change(screen.getByLabelText('Verification Steps'), {
+			target: { value: 'Confirm the active task changed on disk' },
+		});
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Go/ })).toBeEnabled();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+
+		await waitFor(() => {
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agentStrategy: 'plan-execute-verify',
+					definitionOfDone: ['Relevant tests pass', 'Task checkbox is updated'],
+					verificationSteps: ['Confirm the active task changed on disk'],
+				})
+			);
+		});
+	});
+
+	it('loads and saves agentStrategy with playbooks', async () => {
+		const playbook = createMockPlaybook({
+			agentStrategy: 'plan-execute-verify',
+			definitionOfDone: ['Relevant tests pass'],
+			verificationSteps: ['Confirm the active task changed on disk'],
+		});
+
+		(window.maestro.playbooks.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			playbooks: [playbook],
+		});
+
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Load Playbook/ })).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Load Playbook/ }));
+		fireEvent.click(screen.getByText('Test Playbook'));
+
+		expect(screen.getByLabelText('Agent Strategy')).toHaveValue('plan-execute-verify');
+		expect(screen.getByLabelText('Definition of Done')).toHaveValue('Relevant tests pass');
+		expect(screen.getByLabelText('Verification Steps')).toHaveValue(
+			'Confirm the active task changed on disk'
+		);
+
+		fireEvent.change(screen.getByLabelText('Agent Strategy'), {
+			target: { value: 'single' },
+		});
+		fireEvent.change(screen.getByLabelText('Definition of Done'), {
+			target: { value: 'Verifier returns PASS' },
+		});
+		fireEvent.change(screen.getByLabelText('Verification Steps'), {
+			target: { value: 'Confirm the summary matches the document' },
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Save Update/ }));
+
+		await waitFor(() => {
+			expect(window.maestro.playbooks.update).toHaveBeenCalledWith(
+				'session-123',
+				'playbook-1',
+				expect.objectContaining({
+					agentStrategy: 'single',
+					definitionOfDone: ['Verifier returns PASS'],
+					verificationSteps: ['Confirm the summary matches the document'],
+				})
+			);
+		});
+	});
+});
 describe.skip('Playbook with Worktree Settings', () => {
 	beforeEach(() => {
 		(window.maestro.git as Record<string, unknown>).isRepo = vi.fn().mockResolvedValue(true);
@@ -1511,6 +1610,8 @@ describe('Playbook Update Functionality', () => {
 		// Modify the prompt
 		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
 		fireEvent.change(textarea, { target: { value: 'Updated prompt' } });
+		const timeoutInput = screen.getByLabelText('Task Timeout');
+		fireEvent.change(timeoutInput, { target: { value: '20000' } });
 
 		// Wait for Save Update button to appear
 		await waitFor(() => {
@@ -1526,6 +1627,7 @@ describe('Playbook Update Functionality', () => {
 				'playbook-1',
 				expect.objectContaining({
 					prompt: 'Updated prompt',
+					taskTimeoutMs: 20000,
 					updatedAt: expect.any(Number),
 				})
 			);

@@ -154,12 +154,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						: null,
 				});
+				// Session-level customModel is applied later via applyAgentConfigOverrides().
+				// Skip the generic modelId path in that case to avoid duplicate --model / -m flags.
+				const initialModelId = config.sessionCustomModel ? undefined : config.modelId;
 				let finalArgs = buildAgentArgs(agent, {
 					baseArgs: config.args,
 					prompt: config.prompt,
 					cwd: config.cwd,
 					readOnlyMode: config.readOnlyMode,
-					modelId: config.modelId,
+					modelId: initialModelId,
 					yoloMode: config.yoloMode,
 					agentSessionId: config.agentSessionId,
 				});
@@ -297,6 +300,38 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					agentConfigValues,
 					config.sessionCustomContextWindow
 				);
+
+				// Apply environment variables from configOptions (envBuilder)
+				if (agent?.configOptions) {
+					for (const option of agent.configOptions) {
+						if (option.envBuilder) {
+							const value = agentConfigValues[option.key] ?? option.default;
+							try {
+								const builtEnv = option.envBuilder(value);
+								if (builtEnv && typeof builtEnv === 'object') {
+									effectiveCustomEnvVars = {
+										...(effectiveCustomEnvVars || {}),
+										...builtEnv,
+									};
+									logger.debug(`Applied envBuilder for ${option.key}`, LOG_CONTEXT, {
+										builtEnvKeys: Object.keys(builtEnv),
+									});
+								}
+							} catch (e) {
+								logger.error(`Failed to run envBuilder for ${option.key}`, LOG_CONTEXT, {
+									error: e,
+								});
+							}
+						}
+					}
+				}
+
+				// Log final effective environment variables (keys only for security)
+				if (effectiveCustomEnvVars) {
+					logger.info(`Effective custom env vars for ${config.toolType}`, LOG_CONTEXT, {
+						keys: Object.keys(effectiveCustomEnvVars),
+					});
+				}
 
 				// ========================================================================
 				// Command Resolution: Apply session-level custom path override if set

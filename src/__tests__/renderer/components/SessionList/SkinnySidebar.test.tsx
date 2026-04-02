@@ -178,9 +178,9 @@ describe('SkinnySidebar', () => {
 		expect(screen.getByText('My Special Agent')).toBeTruthy();
 	});
 
-	it('uses hollow style for claude-code sessions without agentSessionId', () => {
+	it('uses hollow style for openclaw sessions without agentSessionId', () => {
 		const s1 = makeSession({
-			toolType: 'claude-code',
+			toolType: 'openclaw',
 			agentSessionId: undefined,
 		});
 		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);

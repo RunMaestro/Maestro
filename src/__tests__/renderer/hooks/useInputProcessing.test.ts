@@ -193,6 +193,142 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('spawn config', () => {
+		it('passes sessionCustomModel without adding modelId for normal codex sends', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				customModel: 'gpt-5.4',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Reply with exactly OK',
+			});
+
+			window.maestro = {
+				...window.maestro,
+				process: {
+					...window.maestro.process,
+					spawn: vi.fn().mockResolvedValue(undefined),
+				},
+				agents: {
+					...window.maestro.agents,
+					get: vi.fn().mockResolvedValue({
+						id: 'codex',
+						command: 'codex',
+						path: '/opt/homebrew/bin/codex',
+						args: [],
+						capabilities: {},
+					}),
+				},
+			} as typeof window.maestro;
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			const spawnConfig = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnConfig).toEqual(
+				expect.objectContaining({
+					toolType: 'codex',
+					sessionCustomModel: 'gpt-5.4',
+				})
+			);
+			expect(spawnConfig).not.toHaveProperty('modelId');
+		});
+	});
+
+	describe('batch-mode failure recovery', () => {
+		it('keeps the draft intact when batch preflight fails before spawn', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Reply with exactly OK',
+			});
+
+			window.maestro = {
+				...window.maestro,
+				agents: {
+					...window.maestro.agents,
+					get: vi.fn().mockResolvedValue(null),
+				},
+			} as typeof window.maestro;
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockSetInputValue).not.toHaveBeenCalledWith('');
+
+			const finalSetSessionsCall =
+				mockSetSessions.mock.calls[mockSetSessions.mock.calls.length - 1][0];
+			const updatedSessions = finalSetSessionsCall([session]);
+			expect(updatedSessions[0].state).toBe('idle');
+			expect(updatedSessions[0].aiTabs[0].state).toBe('idle');
+			expect(updatedSessions[0].aiTabs[0].awaitingSessionId).toBe(false);
+		});
+
+		it('restores the draft when batch spawn fails after clearing input', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Reply with exactly OK',
+				stagedImages: ['data:image/png;base64,abc'],
+			});
+
+			window.maestro = {
+				...window.maestro,
+				process: {
+					...window.maestro.process,
+					spawn: vi.fn().mockRejectedValue(new Error('spawn failed')),
+				},
+				agents: {
+					...window.maestro.agents,
+					get: vi.fn().mockResolvedValue({
+						id: 'codex',
+						command: 'codex',
+						path: '/opt/homebrew/bin/codex',
+						args: [],
+						capabilities: {},
+					}),
+				},
+			} as typeof window.maestro;
+
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(mockSetInputValue.mock.calls.map((call) => call[0])).toEqual(
+				expect.arrayContaining(['', 'Reply with exactly OK'])
+			);
+			expect(mockSetStagedImages.mock.calls.map((call) => call[0])).toEqual(
+				expect.arrayContaining([[], ['data:image/png;base64,abc']])
+			);
+
+			const finalSetSessionsCall =
+				mockSetSessions.mock.calls[mockSetSessions.mock.calls.length - 1][0];
+			const updatedSessions = finalSetSessionsCall([session]);
+			expect(updatedSessions[0].state).toBe('idle');
+			expect(updatedSessions[0].aiTabs[0].state).toBe('idle');
+			expect(updatedSessions[0].aiTabs[0].awaitingSessionId).toBe(false);
+		});
+	});
+
 	describe('built-in /history command', () => {
 		it('intercepts /history command and calls handler', async () => {
 			const deps = createDeps({ inputValue: '/history' });

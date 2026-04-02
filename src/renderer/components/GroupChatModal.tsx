@@ -53,6 +53,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	const { mode, theme, isOpen, onClose } = props;
 	const groupChat = mode === 'edit' ? props.groupChat : undefined;
 
+	const supportsModeratorRole = (agent: AgentConfig): boolean =>
+		agent.capabilities?.supportsGroupChatModeration ?? true;
+
 	const [name, setName] = useState('');
 	// Track if user has visited/modified the config panel (edit mode only)
 	const [configWasModified, setConfigWasModified] = useState(false);
@@ -99,16 +102,24 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		}
 
 		// If current selection is still valid, keep it
-		if (ac.selectedAgent && ac.detectedAgents.some((a) => a.id === ac.selectedAgent)) return;
+		if (
+			ac.selectedAgent &&
+			ac.detectedAgents.some((a) => a.id === ac.selectedAgent && supportsModeratorRole(a))
+		) {
+			return;
+		}
 
 		const firstSupported = AGENT_TILES.find((tile) => {
 			if (!tile.supported) return false;
-			return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
+			return ac.detectedAgents.some(
+				(a: AgentConfig) => a.id === tile.id && supportsModeratorRole(a)
+			);
 		});
 		if (firstSupported) {
 			ac.setSelectedAgent(firstSupported.id);
 		} else {
-			ac.setSelectedAgent(ac.detectedAgents[0].id);
+			const firstModerator = ac.detectedAgents.find((a: AgentConfig) => supportsModeratorRole(a));
+			ac.setSelectedAgent(firstModerator?.id ?? null);
 		}
 	}, [mode, ac.isDetecting, ac.detectedAgents, ac.selectedAgent, ac.setSelectedAgent]);
 
@@ -200,7 +211,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	// Filter AGENT_TILES to only show supported + detected agents
 	const availableTiles = AGENT_TILES.filter((tile) => {
 		if (!tile.supported) return false;
-		return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
+		return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id && supportsModeratorRole(a));
 	});
 
 	// Get selected agent info

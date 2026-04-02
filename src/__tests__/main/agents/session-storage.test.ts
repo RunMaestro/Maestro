@@ -382,6 +382,11 @@ describe('Storage Module Initialization', () => {
 		expect(CodexSessionStorage).toBeDefined();
 	});
 
+	it('should export OpenClawSessionStorage', async () => {
+		const { OpenClawSessionStorage } = await import('../../../main/storage/index');
+		expect(OpenClawSessionStorage).toBeDefined();
+	});
+
 	it('should allow creating ClaudeSessionStorage with external store', async () => {
 		// This tests that ClaudeSessionStorage can receive an external store
 		// This prevents the dual-store bug where IPC handlers and storage class
@@ -441,6 +446,20 @@ describe('Storage Module Initialization', () => {
 		expect(storage?.agentId).toBe('claude-code');
 
 		// Clean up
+		clearStorageRegistry();
+	});
+
+	it('should register OpenClaw session storage during initialization', async () => {
+		const { initializeSessionStorages } = await import('../../../main/storage/index');
+		const { getSessionStorage, clearStorageRegistry } = await import('../../../main/agents');
+
+		clearStorageRegistry();
+		initializeSessionStorages();
+
+		const storage = getSessionStorage('openclaw');
+		expect(storage).not.toBeNull();
+		expect(storage?.agentId).toBe('openclaw');
+
 		clearStorageRegistry();
 	});
 });

@@ -19,7 +19,7 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../../shared/t
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
-import { isBetaAgent } from '../../../../shared/agentMetadata';
+import { getAgentDisplayName, isBetaAgent } from '../../../../shared/agentMetadata';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -38,7 +38,7 @@ export interface AgentTile {
 
 /**
  * Define the agents to display in the grid
- * Supported agents: Claude Code, Codex, OpenCode (shown first)
+ * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, OpenClaw (shown first)
  * Unsupported agents: shown ghosted with "Coming soon" (at bottom)
  */
 export const AGENT_TILES: AgentTile[] = [
@@ -58,6 +58,13 @@ export const AGENT_TILES: AgentTile[] = [
 		brandColor: '#10A37F', // OpenAI green
 	},
 	{
+		id: 'cursor-agent',
+		name: getAgentDisplayName('cursor-agent'),
+		supported: true,
+		description: "Cursor's AI coding assistant",
+		brandColor: '#3B82F6', // Cursor blue
+	},
+	{
 		id: 'opencode',
 		name: 'OpenCode',
 		supported: true,
@@ -66,17 +73,31 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 	{
 		id: 'factory-droid',
-		name: 'Factory Droid',
+		name: getAgentDisplayName('factory-droid'),
 		supported: true,
 		description: "Factory's AI coding assistant",
 		brandColor: '#3B82F6', // Factory blue
+	},
+	{
+		id: 'openclaw',
+		name: getAgentDisplayName('openclaw'),
+		supported: true,
+		description: 'Distributed OpenClaw agent orchestration',
+		brandColor: '#8B5CF6', // Violet
+	},
+	{
+		id: 'zai',
+		name: getAgentDisplayName('zai'),
+		supported: false,
+		description: 'Z.ai GLM series models from BigModel',
+		brandColor: '#00D1FF', // Z.ai cyan
 	},
 	// Coming soon agents at the bottom
 	{
 		id: 'gemini-cli',
 		name: 'Gemini CLI',
-		supported: false,
-		description: 'Coming soon',
+		supported: true,
+		description: "Google's AI coding assistant",
 		brandColor: '#4285F4', // Google blue
 	},
 	{
@@ -88,9 +109,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 6 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
 
 /**
  * Get SVG logo for an agent with brand colors
@@ -98,7 +119,7 @@ const GRID_ROWS = 2;
 export function AgentLogo({
 	agentId,
 	supported,
-	detected,
+	detected: _detected,
 	brandColor,
 	theme,
 }: {
@@ -109,8 +130,8 @@ export function AgentLogo({
 	theme: Theme;
 }): JSX.Element {
 	// Use brand color for supported+detected, dimmed for others
-	const color = supported && detected ? brandColor || theme.colors.accent : theme.colors.textDim;
-	const opacity = supported ? 1 : 0.35;
+	const color = supported ? brandColor || theme.colors.accent : theme.colors.textDim;
+	const opacity = 1;
 
 	// Return appropriate icon based on agent ID
 	switch (agentId) {
@@ -163,6 +184,30 @@ export function AgentLogo({
 					<path
 						d="M24 4C24 4 24 20 24 24C24 28 4 24 4 24C4 24 20 24 24 24C28 24 24 44 24 44C24 44 24 28 24 24C24 20 44 24 44 24C44 24 28 24 24 24"
 						fill={color}
+					/>
+				</svg>
+			);
+
+		case 'cursor-agent':
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 6l15 8.5v19L24 42l-15-8.5v-19L24 6z"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinejoin="round"
+					/>
+					<path
+						d="M18 18h12M16 24h16M18 30h12"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinecap="round"
 					/>
 				</svg>
 			);
@@ -275,6 +320,60 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'openclaw':
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 11c-5.5 0-10 4.5-10 10v5c0 6.1 4.9 11 11 11h3c4.4 0 8-3.6 8-8v-8c0-5.5-4.5-10-10-10h-2z"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+					<path
+						d="M18 17V12M24 16V10M30 17V12"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinecap="round"
+					/>
+					<circle cx="21" cy="25" r="2" fill={color} />
+					<circle cx="29" cy="25" r="2" fill={color} />
+					<path
+						d="M21 31c1.6 1.2 4.4 1.2 6 0"
+						stroke={color}
+						strokeWidth="2.5"
+						strokeLinecap="round"
+					/>
+				</svg>
+			);
+
+		case 'zai':
+			// Z.ai - Stylish "Z" logo
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M10 14h28L10 34h28"
+						stroke={color}
+						strokeWidth="4"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+					<path d="M14 24h20" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.5" />
+				</svg>
+			);
+
 		default:
 			return (
 				<div className="w-12 h-12 rounded-full border-2" style={{ borderColor: color, opacity }} />
@@ -296,7 +395,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		setCustomEnvVars: setWizardCustomEnvVars,
 		setSessionSshRemoteConfig: setWizardSessionSshRemoteConfig,
 		nextStep,
-		canProceedToNext,
 	} = useWizard();
 
 	// Local state
@@ -388,6 +486,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				// Pass SSH remote ID if configured for remote agent detection
 				const sshRemoteId = sshRemoteConfig?.enabled ? sshRemoteConfig.remoteId : undefined;
 				const agents = await window.maestro.agents.detect(sshRemoteId ?? undefined);
+				console.log('[Wizard] Detected agents:', agents);
 				if (mounted) {
 					// Filter out hidden agents (like terminal)
 					const visibleAgents = agents.filter((a: AgentConfig) => !a.hidden);
@@ -561,6 +660,31 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		}
 	}, [isDetecting, state.selectedAgent, detectedAgents]);
 
+	// Check if an agent is available from detection
+	const isAgentAvailable = useCallback(
+		(agentId: string): boolean => {
+			const detected = detectedAgents.find((a) => a.id === agentId);
+			return detected?.available ?? false;
+		},
+		[detectedAgents]
+	);
+
+	const isAgentSelectable = useCallback(
+		(agentId: string): boolean => {
+			const tile = AGENT_TILES.find((candidate) => candidate.id === agentId);
+			return Boolean(tile?.supported) && isAgentAvailable(agentId);
+		},
+		[isAgentAvailable]
+	);
+
+	const canContinueSelection = useCallback(
+		(): boolean =>
+			Boolean(state.selectedAgent) &&
+			Boolean(state.agentName.trim()) &&
+			(state.selectedAgent ? isAgentSelectable(state.selectedAgent) : false),
+		[state.agentName, state.selectedAgent, isAgentSelectable]
+	);
+
 	/**
 	 * Handle keyboard navigation
 	 */
@@ -575,7 +699,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					const lastIndex = AGENT_TILES.length - 1;
 					setFocusedTileIndex(lastIndex);
 					tileRefs.current[lastIndex]?.focus();
-				} else if (e.key === 'Enter' && canProceedToNext()) {
+				} else if (e.key === 'Enter' && canContinueSelection()) {
 					e.preventDefault();
 					nextStep();
 				}
@@ -637,13 +761,14 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				case 'Enter':
 				case ' ': {
 					e.preventDefault();
-					// Select the focused tile if supported and detected
+					// Select the focused tile only when the agent is actually available.
 					const tile = AGENT_TILES[currentIndex];
-					const detected = detectedAgents.find((a) => a.id === tile.id);
-					if (tile.supported && detected?.available) {
+					if (isAgentSelectable(tile.id)) {
 						setSelectedAgent(tile.id as any);
-						// If Enter, also proceed to next step if valid
-						if (e.key === 'Enter' && canProceedToNext()) {
+						if (!state.agentName.trim()) {
+							setAgentName(`My ${tile.name}`);
+						}
+						if (e.key === 'Enter' && canContinueSelection()) {
 							nextStep();
 						}
 					}
@@ -654,47 +779,13 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		[
 			isNameFieldFocused,
 			focusedTileIndex,
-			detectedAgents,
+			canContinueSelection,
+			isAgentSelectable,
+			state.agentName,
 			setSelectedAgent,
+			setAgentName,
 			nextStep,
-			canProceedToNext,
 		]
-	);
-
-	/**
-	 * Handle tile click
-	 */
-	const handleTileClick = useCallback(
-		(tile: AgentTile, index: number) => {
-			const detected = detectedAgents.find((a) => a.id === tile.id);
-			// Only allow selection if agent is both supported by Maestro AND detected on system
-			if (tile.supported && detected?.available) {
-				setSelectedAgent(tile.id as any);
-				setFocusedTileIndex(index);
-				// Announce agent selection
-				setAnnouncement(`${tile.name} selected`);
-				setAnnouncementKey((prev) => prev + 1);
-			}
-		},
-		[detectedAgents, setSelectedAgent]
-	);
-
-	/**
-	 * Handle Continue button click
-	 */
-	const handleContinue = useCallback(() => {
-		if (canProceedToNext()) {
-			nextStep();
-		}
-	}, [canProceedToNext, nextStep]);
-
-	// Check if an agent is available from detection
-	const isAgentAvailable = useCallback(
-		(agentId: string): boolean => {
-			const detected = detectedAgents.find((a) => a.id === agentId);
-			return detected?.available ?? false;
-		},
-		[detectedAgents]
 	);
 
 	/**
@@ -703,6 +794,11 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	 */
 	const handleOpenConfig = useCallback(
 		async (agentId: string) => {
+			const tile = AGENT_TILES.find((candidate) => candidate.id === agentId);
+			if (!tile?.supported) {
+				return;
+			}
+
 			// Load agent config (model selection only - per-agent path/args/envVars are in wizard state)
 			const config = await window.maestro.agents.getConfig(agentId);
 			agentConfigRef.current = config || {};
@@ -737,12 +833,60 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			}, 150);
 
 			// Announce opening config panel
-			const tile = AGENT_TILES.find((t) => t.id === agentId);
 			setAnnouncement(`Configuring ${tile?.name || agentId}`);
 			setAnnouncementKey((prev) => prev + 1);
 		},
 		[detectedAgents, setSelectedAgent, sshRemoteConfig]
 	);
+
+	/**
+	 * Handle tile click
+	 */
+	const handleTileClick = useCallback(
+		async (tile: AgentTile, index: number) => {
+			try {
+				if (isAgentSelectable(tile.id)) {
+					console.log('[Wizard] Selecting agent:', tile.id);
+					setSelectedAgent(tile.id as any);
+					setFocusedTileIndex(index);
+
+					// Auto-fill agent name if empty to make it easier to proceed
+					if (!state.agentName.trim()) {
+						setAgentName(`My ${tile.name}`);
+					}
+
+					setAnnouncement(`${tile.name} selected`);
+					setAnnouncementKey((prev) => prev + 1);
+
+					// Automatically transition to configuration view
+					await handleOpenConfig(tile.id);
+				}
+			} catch (err) {
+				console.error('[Wizard] Selection failed:', err);
+			}
+		},
+		[isAgentSelectable, setSelectedAgent, state.agentName, setAgentName, handleOpenConfig]
+	);
+
+	/**
+	 * Handle Continue button click
+	 */
+	const handleContinue = useCallback(() => {
+		if (viewMode === 'grid' && state.selectedAgent && isAgentSelectable(state.selectedAgent)) {
+			// If an agent is selected but we're still in grid view, open the config
+			handleOpenConfig(state.selectedAgent);
+		} else if (canContinueSelection()) {
+			// If we're already in config view (or don't need it), go to next step
+			nextStep();
+		}
+	}, [
+		viewMode,
+		state.selectedAgent,
+		isAgentSelectable,
+		handleOpenConfig,
+		canContinueSelection,
+		nextStep,
+	]);
 
 	/**
 	 * Close the configuration panel and return to grid
@@ -1184,6 +1328,16 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			)}
 
 			{/* Section 3: Agent Grid or Connection Error */}
+			<div className="mb-2 h-6 flex items-center justify-center">
+				{state.selectedAgent && (
+					<span
+						className="text-sm font-medium px-3 py-1 rounded-full animate-in fade-in slide-in-from-bottom-2"
+						style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+					>
+						Selected: {AGENT_TILES.find((t) => t.id === state.selectedAgent)?.name}
+					</span>
+				)}
+			</div>
 			{sshConnectionError ? (
 				/* SSH Connection Error State */
 				<div className="flex flex-col items-center gap-4">
@@ -1234,7 +1388,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 										setFocusedTileIndex(index);
 										setIsNameFieldFocused(false);
 									}}
-									disabled={!canSelect}
 									className={`
                     relative flex flex-col items-center justify-center pt-6 px-6 pb-10 rounded-xl
                     border-2 transition-all duration-200 outline-none min-w-[160px]
@@ -1246,18 +1399,19 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 											: theme.colors.bgSidebar,
 										borderColor: isSelected
 											? tile.brandColor || theme.colors.accent
-											: isFocused && canSelect
+											: isFocused
 												? theme.colors.accent
 												: theme.colors.border,
-										opacity: isSupported ? 1 : 0.5,
+										opacity: canSelect ? 1 : isSupported ? 0.7 : 0.5,
 										boxShadow: isSelected
 											? `0 0 0 3px ${tile.brandColor || theme.colors.accent}30`
-											: isFocused && canSelect
+											: isFocused
 												? `0 0 0 2px ${theme.colors.accent}40`
 												: 'none',
 									}}
 									aria-label={`${tile.name}${canSelect ? '' : isSupported ? ' (not installed)' : ' (coming soon)'}`}
 									aria-pressed={isSelected}
+									aria-disabled={!canSelect}
 								>
 									{/* Selection indicator */}
 									{isSelected && (
@@ -1269,20 +1423,29 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 										</div>
 									)}
 
-									{/* Detection status indicator for supported agents */}
-									{isSupported && !isSelected && (
+									{/* Detection status indicator for supported agents - only show checkmark if detected */}
+									{isSupported && !isSelected && isAgentAvailable(tile.id) && (
 										<div
 											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
 											style={{
-												backgroundColor: isDetected ? '#22c55e20' : '#ef444420',
+												backgroundColor: '#22c55e20',
 											}}
-											title={isDetected ? 'Installed' : 'Not found'}
+											title="Detected"
 										>
-											{isDetected ? (
-												<Check className="w-3 h-3" style={{ color: '#22c55e' }} />
-											) : (
-												<X className="w-3 h-3" style={{ color: '#ef4444' }} />
-											)}
+											<Check className="w-3 h-3" style={{ color: '#22c55e' }} />
+										</div>
+									)}
+
+									{/* Status indicator for unsupported agents */}
+									{!isSupported && (
+										<div
+											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+											style={{
+												backgroundColor: '#ef444420',
+											}}
+											title="Coming soon"
+										>
+											<X className="w-3 h-3" style={{ color: '#ef4444' }} />
 										</div>
 									)}
 
@@ -1307,11 +1470,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 
 									{/* Description / Status */}
 									<p className="text-xs text-center" style={{ color: theme.colors.textDim }}>
-										{isSupported
-											? isDetected
-												? tile.description
-												: 'Not installed'
-											: 'Coming soon'}
+										{isSupported ? (isDetected ? tile.description : 'Not detected') : 'Coming soon'}
 									</p>
 
 									{/* "Soon" badge for unsupported agents */}
@@ -1375,18 +1534,18 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			<div className="flex flex-col items-center gap-4">
 				<button
 					onClick={handleContinue}
-					disabled={!canProceedToNext()}
+					disabled={!canContinueSelection()}
 					className="px-8 py-2.5 rounded-lg font-medium transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 whitespace-nowrap"
 					style={{
-						backgroundColor: canProceedToNext() ? theme.colors.accent : theme.colors.border,
-						color: canProceedToNext() ? theme.colors.accentForeground : theme.colors.textDim,
-						cursor: canProceedToNext() ? 'pointer' : 'not-allowed',
-						opacity: canProceedToNext() ? 1 : 0.6,
+						backgroundColor: canContinueSelection() ? theme.colors.accent : theme.colors.border,
+						color: canContinueSelection() ? theme.colors.accentForeground : theme.colors.textDim,
+						cursor: canContinueSelection() ? 'pointer' : 'not-allowed',
+						opacity: canContinueSelection() ? 1 : 0.6,
 						['--tw-ring-color' as any]: theme.colors.accent,
 						['--tw-ring-offset-color' as any]: theme.colors.bgMain,
 					}}
 				>
-					Continue
+					{viewMode === 'grid' ? 'Configure Agent' : 'Continue'}
 				</button>
 
 				{/* Keyboard hints */}

@@ -1,5 +1,6 @@
 import type { AgentConfig } from '../agents';
 import { logger } from './logger';
+import { parseOpenClawSessionId } from '../../shared/openclawSessionId';
 
 const LOG_CONTEXT = '[AgentArgs]';
 
@@ -40,6 +41,58 @@ function parseCustomArgs(customArgs?: string): string[] {
 		}
 		return arg;
 	});
+}
+
+function removeFlagWithValue(args: string[], flag: string): string[] {
+	const nextArgs: string[] = [];
+
+	for (let index = 0; index < args.length; index += 1) {
+		const currentArg = args[index];
+		if (currentArg === flag) {
+			index += 1;
+			continue;
+		}
+		nextArgs.push(currentArg);
+	}
+
+	return nextArgs;
+}
+
+function dedupeFlagAliasesWithValue(args: string[], aliases: string[]): string[] {
+	const aliasSet = new Set(aliases);
+	let lastAliasIndex = -1;
+
+	for (let index = 0; index < args.length; index += 1) {
+		if (aliasSet.has(args[index])) {
+			lastAliasIndex = index;
+		}
+	}
+
+	if (lastAliasIndex === -1) {
+		return args;
+	}
+
+	const nextArgs: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const currentArg = args[index];
+		if (!aliasSet.has(currentArg)) {
+			nextArgs.push(currentArg);
+			continue;
+		}
+
+		if (index !== lastAliasIndex) {
+			index += 1;
+			continue;
+		}
+
+		nextArgs.push(currentArg);
+		if (index + 1 < args.length) {
+			nextArgs.push(args[index + 1]);
+			index += 1;
+		}
+	}
+
+	return nextArgs;
 }
 
 export function buildAgentArgs(
@@ -95,7 +148,24 @@ export function buildAgentArgs(
 	}
 
 	if (options.agentSessionId && agent.resumeArgs) {
-		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
+		if (agent.id === 'openclaw') {
+			const parsedOpenClawSessionId = parseOpenClawSessionId(options.agentSessionId);
+			if (parsedOpenClawSessionId) {
+				finalArgs = removeFlagWithValue(finalArgs, '--agent');
+				finalArgs = removeFlagWithValue(finalArgs, '--session-id');
+				finalArgs = [
+					...finalArgs,
+					'--agent',
+					parsedOpenClawSessionId.agentName,
+					'--session-id',
+					parsedOpenClawSessionId.rawSessionId,
+				];
+			} else {
+				finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
+			}
+		} else {
+			finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
+		}
 	}
 
 	// Deduplicate repeated flag-style arguments while preserving order.
@@ -152,6 +222,13 @@ export function applyAgentConfigOverrides(
 			// Type assertion needed because AgentConfigOption is a discriminated union
 			// and we're handling all types generically here
 			const argBuilderFn = option.argBuilder as (value: unknown) => string[];
+			if (
+				agent.id === 'openclaw' &&
+				option.key === 'agentId' &&
+				finalArgs.includes('--session-id')
+			) {
+				continue;
+			}
 			finalArgs = [...finalArgs, ...argBuilderFn(value)];
 		}
 	}
@@ -169,6 +246,11 @@ export function applyAgentConfigOverrides(
 	} else {
 		customArgsSource = 'none';
 	}
+
+	// Keep only the last explicit model flag/value pair across all sources
+	// (base args, config option argBuilder, and custom args). This prevents
+	// layered config from producing duplicate model flags for CLIs like Codex.
+	finalArgs = dedupeFlagAliasesWithValue(finalArgs, ['-m', '--model']);
 
 	// Merge env vars: agent defaults (lowest) < agent config (medium) < session overrides (highest)
 	// User-configured vars override agent defaults; session vars override both

@@ -29,6 +29,32 @@ import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
 
+const getVerifierPill = (
+	verifierVerdict: HistoryEntry['verifierVerdict'],
+	theme: Theme
+): { label: string; title: string; bg: string; text: string; border: string } | null => {
+	switch (verifierVerdict) {
+		case 'WARN':
+			return {
+				label: 'VERIFY WARN',
+				title: 'Verification completed with warnings',
+				bg: theme.colors.warning + '20',
+				text: theme.colors.warning,
+				border: theme.colors.warning + '40',
+			};
+		case 'FAIL':
+			return {
+				label: 'VERIFY FAIL',
+				title: 'Verification failed',
+				bg: theme.colors.error + '20',
+				text: theme.colors.error,
+				border: theme.colors.error + '40',
+			};
+		default:
+			return null;
+	}
+};
+
 interface HistoryDetailModalProps {
 	theme: Theme;
 	entry: HistoryEntry;
@@ -183,6 +209,7 @@ export function HistoryDetailModal({
 
 	const colors = getPillColor();
 	const Icon = entry.type === 'AUTO' ? Bot : User;
+	const verifierPill = getVerifierPill(entry.verifierVerdict, theme);
 
 	// Access agentName from unified history entries (Director's Notes)
 	const agentName = (entry as HistoryEntry & { agentName?: string }).agentName;
@@ -296,6 +323,21 @@ export function HistoryDetailModal({
 								<Icon className="w-2.5 h-2.5" />
 								{entry.type}
 							</span>
+
+							{/* Verification verdict pill */}
+							{entry.type === 'AUTO' && verifierPill && (
+								<span
+									className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+									style={{
+										backgroundColor: verifierPill.bg,
+										color: verifierPill.text,
+										border: `1px solid ${verifierPill.border}`,
+									}}
+									title={verifierPill.title}
+								>
+									{verifierPill.label}
+								</span>
+							)}
 
 							{/* Agent Name Pill - shown inline when agentName exists but isn't already in the header */}
 							{agentName && !entry.sessionName && (

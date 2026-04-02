@@ -5,6 +5,7 @@ import { findPlaybookById } from '../services/playbooks';
 import { getSessionById } from '../services/storage';
 import { readDocAndGetTasks } from '../services/agent-spawner';
 import { formatPlaybookDetail, formatError } from '../output/formatter';
+import { normalizePersistedPlaybook } from '../../shared/playbookDag';
 
 interface ShowPlaybookOptions {
 	json?: boolean;
@@ -13,7 +14,8 @@ interface ShowPlaybookOptions {
 export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): void {
 	try {
 		// Find playbook across all agents
-		const { playbook, agentId } = findPlaybookById(playbookId);
+		const { playbook: rawPlaybook, agentId } = findPlaybookById(playbookId);
+		const playbook = normalizePersistedPlaybook(rawPlaybook);
 		const agent = getSessionById(agentId);
 
 		if (!agent) {
@@ -46,7 +48,17 @@ export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): 
 				folderPath,
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops,
+				taskTimeoutMs: playbook.taskTimeoutMs ?? null,
+				maxParallelism: playbook.maxParallelism ?? 1,
+				taskGraph: playbook.taskGraph,
 				prompt: playbook.prompt,
+				skills: playbook.skills ?? [],
+				definitionOfDone: playbook.definitionOfDone ?? [],
+				verificationSteps: playbook.verificationSteps ?? [],
+				promptProfile: playbook.promptProfile ?? 'compact-code',
+				documentContextMode: playbook.documentContextMode ?? 'active-task-only',
+				skillPromptMode: playbook.skillPromptMode ?? 'brief',
+				agentStrategy: playbook.agentStrategy ?? 'single',
 				documents: documentDetails,
 				totalTasks: documentDetails.reduce((sum, d) => sum + d.taskCount, 0),
 			};
@@ -61,7 +73,17 @@ export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): 
 					folderPath,
 					loopEnabled: playbook.loopEnabled,
 					maxLoops: playbook.maxLoops,
+					taskTimeoutMs: playbook.taskTimeoutMs ?? null,
+					maxParallelism: playbook.maxParallelism ?? 1,
+					taskGraph: playbook.taskGraph,
 					prompt: playbook.prompt,
+					skills: playbook.skills ?? [],
+					definitionOfDone: playbook.definitionOfDone ?? [],
+					verificationSteps: playbook.verificationSteps ?? [],
+					promptProfile: playbook.promptProfile ?? 'compact-code',
+					documentContextMode: playbook.documentContextMode ?? 'active-task-only',
+					skillPromptMode: playbook.skillPromptMode ?? 'brief',
+					agentStrategy: playbook.agentStrategy ?? 'single',
 					documents: documentDetails,
 				})
 			);

@@ -6,6 +6,7 @@ import type { Playbook, SessionInfo, UsageStats, HistoryEntry } from '../../shar
 import type { JsonlEvent } from '../output/jsonl';
 import {
 	spawnAgent,
+	type AgentResult,
 	readDocAndCountTasks,
 	readDocAndGetTasks,
 	uncheckAllTasks,
@@ -18,10 +19,271 @@ import { logger } from '../../main/utils/logger';
 import { autorunSynopsisPrompt, autorunDefaultPrompt } from '../../prompts';
 import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
-import { formatElapsedTime } from '../../shared/formatters';
+import { estimateTokenCount, formatElapsedTime } from '../../shared/formatters';
+import { revertNewlyCheckedTasks } from '../../shared/markdownTaskUtils';
+import { resolvePlaybookSkills, buildSkillPromptBlock } from './skill-resolver';
+import { validatePlaybookDag } from '../../shared/playbookDag';
+import type {
+	PlaybookAgentStrategy,
+	PlaybookDocumentContextMode,
+	PlaybookPromptProfile,
+	PlaybookSkillPromptMode,
+} from '../../shared/types';
 
 // Synopsis prompt for batch tasks
 const BATCH_SYNOPSIS_PROMPT = autorunSynopsisPrompt;
+const TASK_LINE_REGEX = /^[\s]*-\s*\[(?:\s|x|X)\]\s*.*$/;
+const UNCHECKED_TASK_LINE_REGEX = /^[\s]*-\s*\[\s*\]\s*.+$/;
+const DEFAULT_TASK_TIMEOUT_MS = 60000;
+const COMPACT_CODE_AUTORUN_PROMPT = `You are running in Maestro Auto Run for a coding task.
+
+Complete only the next active unchecked task.
+
+Rules:
+- Read files on disk as needed; do not rely only on the inlined context.
+- Make the smallest change that fully satisfies the task.
+- Run the lightest relevant verification after editing.
+- Update the Auto Run document by checking the completed task or adding a brief blocker note.
+- Stop after finishing the active task.`;
+
+const COMPACT_DOC_AUTORUN_PROMPT = `You are running in Maestro Auto Run for a documentation task.
+
+Complete only the next active unchecked task.
+
+Rules:
+- Keep the change scoped to the active task.
+- Preserve existing structure and terminology unless the task requires changes.
+- Update the Auto Run document by checking the completed task or adding a brief blocker note.
+- Stop after finishing the active task.`;
+
+const PLAN_STEP_INSTRUCTION = `You are the planning step for Maestro Auto Run.
+
+Rules:
+- Do not modify any files.
+- Inspect only what is necessary to understand the active task.
+- Produce a concise execution plan for the active task only.
+- Keep the output short and actionable.`;
+
+const EXECUTE_STEP_INSTRUCTION = `You are the execution step for Maestro Auto Run.
+
+Rules:
+- Execute the active task using the provided plan when helpful.
+- Modify files as needed, but keep the change set minimal.
+- Update the Auto Run document by checking the completed task or adding a brief blocker note.
+- Stop after the active task is done.`;
+
+const VERIFY_STEP_INSTRUCTION = `You are the verification step for Maestro Auto Run.
+
+Rules:
+- Do not modify any files.
+- Review the completed work for the active task only.
+- Reply with one of PASS, WARN, or FAIL on the first line, followed by a concise explanation.
+- Mention the most important remaining risk, if any.`;
+
+const AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION = `Before making any non-trivial code change, follow the repository's context-and-impact workflow:
+- use GitNexus/context to inspect the target symbol or file
+- use GitNexus/impact to check upstream blast radius
+- if GitNexus misses the symbol, state that and fall back to focused local code search before editing`;
+
+function buildDefinitionOfDoneSection(definitionOfDone: string[] = []): string {
+	if (definitionOfDone.length === 0) {
+		return '';
+	}
+
+	return `## Definition of Done\n${definitionOfDone.map((item) => `- ${item}`).join('\n')}`;
+}
+
+function buildVerificationStepsSection(verificationSteps: string[] = []): string {
+	if (verificationSteps.length === 0) {
+		return '';
+	}
+
+	return `## Verification Steps\n${verificationSteps.map((item) => `- ${item}`).join('\n')}`;
+}
+
+function getVerifierVerdict(response?: string): 'PASS' | 'WARN' | 'FAIL' | null {
+	const firstNonEmptyLine = response
+		?.split(/\r?\n/)
+		.map((line) => line.trim())
+		.find(Boolean)
+		?.toUpperCase();
+
+	if (
+		firstNonEmptyLine === 'PASS' ||
+		firstNonEmptyLine === 'WARN' ||
+		firstNonEmptyLine === 'FAIL'
+	) {
+		return firstNonEmptyLine;
+	}
+
+	return null;
+}
+
+function applyVerifierVerdictToSummary(
+	summary: string,
+	verdict: 'PASS' | 'WARN' | 'FAIL' | null
+): string {
+	if (!summary || !verdict || verdict === 'PASS') {
+		return summary;
+	}
+
+	return `[${verdict}] ${summary}`;
+}
+
+function getPromptProfileBasePrompt(
+	prompt: string,
+	profile: PlaybookPromptProfile = 'compact-code'
+): string {
+	if (prompt) {
+		return prompt;
+	}
+
+	switch (profile) {
+		case 'full':
+			return autorunDefaultPrompt;
+		case 'compact-doc':
+			return COMPACT_DOC_AUTORUN_PROMPT;
+		case 'compact-code':
+		default:
+			return COMPACT_CODE_AUTORUN_PROMPT;
+	}
+}
+
+function getDocumentPromptSection(
+	docFilePath: string,
+	content: string,
+	mode: PlaybookDocumentContextMode = 'active-task-only'
+): string {
+	const modeNote =
+		mode === 'full'
+			? 'The full document is inlined below.'
+			: 'Only the active unchecked task and minimal nearby context are inlined below; open the document on disk if you need anything else.';
+
+	return `---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n${modeNote}\n\n${content}`;
+}
+
+function buildStrategyPrompt(
+	stage: 'planner' | 'executor' | 'verifier',
+	basePrompt: string,
+	documentPrompt: string,
+	skillPromptBlock: string,
+	plannerSummary?: string,
+	definitionOfDone: string[] = [],
+	verificationSteps: string[] = []
+): string {
+	const sections: string[] = [];
+
+	if (stage === 'planner') {
+		sections.push(PLAN_STEP_INSTRUCTION);
+	} else if (stage === 'executor') {
+		sections.push(EXECUTE_STEP_INSTRUCTION);
+		if (plannerSummary) {
+			sections.push(`## Planner Output\n\n${plannerSummary}`);
+		}
+	} else {
+		sections.push(VERIFY_STEP_INSTRUCTION);
+	}
+
+	sections.push(AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION);
+	sections.push(basePrompt);
+	if (skillPromptBlock) {
+		sections.push(skillPromptBlock);
+	}
+	if (stage === 'verifier' && verificationSteps.length > 0) {
+		sections.push(buildVerificationStepsSection(verificationSteps));
+	}
+	if (stage === 'verifier' && definitionOfDone.length > 0) {
+		sections.push(buildDefinitionOfDoneSection(definitionOfDone));
+	}
+	sections.push(documentPrompt);
+	return sections.join('\n\n');
+}
+
+function mergeUsageStats(
+	current: UsageStats | undefined,
+	next: UsageStats | undefined
+): UsageStats | undefined {
+	if (!current) return next;
+	if (!next) return current;
+
+	const merged: UsageStats = {
+		inputTokens: current.inputTokens + next.inputTokens,
+		outputTokens: current.outputTokens + next.outputTokens,
+		cacheReadInputTokens: current.cacheReadInputTokens + next.cacheReadInputTokens,
+		cacheCreationInputTokens: current.cacheCreationInputTokens + next.cacheCreationInputTokens,
+		totalCostUsd: current.totalCostUsd + next.totalCostUsd,
+		contextWindow: Math.max(current.contextWindow, next.contextWindow),
+		reasoningTokens: (current.reasoningTokens || 0) + (next.reasoningTokens || 0),
+	};
+
+	if (!merged.reasoningTokens) {
+		delete merged.reasoningTokens;
+	}
+
+	return merged;
+}
+
+function buildVerifierNote(response?: string, error?: string): string | undefined {
+	const text = response?.trim() || error?.trim();
+	if (!text) return undefined;
+	return text;
+}
+
+function trimTrailingBlankLines(lines: string[]): string[] {
+	const trimmed = [...lines];
+	while (trimmed.length > 0 && trimmed[trimmed.length - 1]?.trim() === '') {
+		trimmed.pop();
+	}
+	return trimmed;
+}
+
+function collectTaskBlock(lines: string[], startIndex: number): string[] {
+	const block = [lines[startIndex]];
+
+	for (let index = startIndex + 1; index < lines.length; index++) {
+		const line = lines[index] ?? '';
+		if (TASK_LINE_REGEX.test(line) || /^#{1,6}\s/.test(line)) {
+			break;
+		}
+		block.push(line);
+	}
+
+	return trimTrailingBlankLines(block);
+}
+
+function buildActiveTaskDocumentContext(content: string): string {
+	if (!content) {
+		return '';
+	}
+
+	const lines = content.split(/\r?\n/);
+	const taskIndices = lines
+		.map((line, index) => (TASK_LINE_REGEX.test(line) ? index : -1))
+		.filter((index) => index >= 0);
+	const uncheckedTaskIndices = lines
+		.map((line, index) => (UNCHECKED_TASK_LINE_REGEX.test(line) ? index : -1))
+		.filter((index) => index >= 0);
+
+	if (taskIndices.length === 0 || uncheckedTaskIndices.length === 0) {
+		return content;
+	}
+
+	const [activeTaskIndex, nextTaskIndex] = uncheckedTaskIndices;
+	const compactLines: string[] = [];
+	const preambleLines = trimTrailingBlankLines(lines.slice(0, taskIndices[0]));
+
+	if (preambleLines.length > 0) {
+		compactLines.push(...preambleLines, '');
+	}
+
+	compactLines.push(...collectTaskBlock(lines, activeTaskIndex));
+
+	if (nextTaskIndex !== undefined) {
+		compactLines.push('', ...collectTaskBlock(lines, nextTaskIndex));
+	}
+
+	return trimTrailingBlankLines(compactLines).join('\n');
+}
 
 /**
  * Get the current git branch for a directory
@@ -71,6 +333,15 @@ export async function* runPlaybook(
 ): AsyncGenerator<JsonlEvent> {
 	const { dryRun = false, writeHistory = true, debug = false, verbose = false } = options;
 	const batchStartTime = Date.now();
+	const dagValidation = validatePlaybookDag(
+		playbook.documents,
+		playbook.taskGraph,
+		playbook.maxParallelism
+	);
+
+	if (!dagValidation.valid) {
+		throw new Error(`Playbook DAG validation failed: ${dagValidation.errors.join(' ')}`);
+	}
 
 	// Get git branch and group name for template variable substitution
 	const gitBranch = getGitBranch(session.cwd);
@@ -78,6 +349,18 @@ export async function* runPlaybook(
 	const groups = readGroups();
 	const sessionGroup = groups.find((g) => g.id === session.groupId);
 	const groupName = sessionGroup?.name;
+	const resolvedSkills = resolvePlaybookSkills(session.projectRoot, playbook.skills ?? []);
+	const promptProfile: PlaybookPromptProfile = playbook.promptProfile ?? 'compact-code';
+	const documentContextMode: PlaybookDocumentContextMode =
+		playbook.documentContextMode ?? 'active-task-only';
+	const skillPromptMode: PlaybookSkillPromptMode = playbook.skillPromptMode ?? 'brief';
+	const agentStrategy: PlaybookAgentStrategy = playbook.agentStrategy ?? 'single';
+	const definitionOfDone = playbook.definitionOfDone ?? [];
+	const taskTimeoutMs =
+		playbook.taskTimeoutMs === null || playbook.taskTimeoutMs === undefined
+			? DEFAULT_TASK_TIMEOUT_MS
+			: playbook.taskTimeoutMs;
+	const skillPromptBlock = buildSkillPromptBlock(resolvedSkills.resolved, skillPromptMode);
 
 	// Register CLI activity so desktop app knows this session is busy
 	registerCliActivity({
@@ -123,6 +406,28 @@ export async function* runPlaybook(
 			timestamp: Date.now(),
 			category: 'config',
 			message: `Folder path: ${folderPath}`,
+		};
+		if (resolvedSkills.resolved.length > 0) {
+			yield {
+				type: 'debug',
+				timestamp: Date.now(),
+				category: 'config',
+				message: `Resolved playbook skills: ${resolvedSkills.resolved.map((skill) => skill.name).join(', ')} (mode=${skillPromptMode})`,
+			};
+		}
+		if (resolvedSkills.missing.length > 0) {
+			yield {
+				type: 'debug',
+				timestamp: Date.now(),
+				category: 'config',
+				message: `Missing playbook skills: ${resolvedSkills.missing.join(', ')}`,
+			};
+		}
+		yield {
+			type: 'debug',
+			timestamp: Date.now(),
+			category: 'config',
+			message: `Prompt profile: ${promptProfile}, documentContextMode=${documentContextMode}, skillPromptMode=${skillPromptMode}, agentStrategy=${agentStrategy}`,
 		};
 	}
 
@@ -407,7 +712,7 @@ export async function* runPlaybook(
 				// Use default Auto Run prompt if playbook.prompt is empty/null
 				// Marketplace playbooks with prompt: null will use the default
 				const basePrompt = substituteTemplateVariables(
-					playbook.prompt || autorunDefaultPrompt,
+					getPromptProfileBasePrompt(playbook.prompt, promptProfile),
 					templateContext
 				);
 
@@ -416,6 +721,10 @@ export async function* runPlaybook(
 				const expandedDocContent = docContent
 					? substituteTemplateVariables(docContent, templateContext)
 					: '';
+				const promptDocContent =
+					documentContextMode === 'full'
+						? expandedDocContent
+						: buildActiveTaskDocumentContext(expandedDocContent);
 
 				// Write expanded content back to document (so agent edits have correct paths)
 				if (expandedDocContent && expandedDocContent !== docContent) {
@@ -424,7 +733,34 @@ export async function* runPlaybook(
 
 				// Combine prompt with document content - agent works on what it's given
 				// Include explicit file path so agent knows where to save changes
-				const finalPrompt = `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`;
+				const documentPromptSection = getDocumentPromptSection(
+					docFilePath,
+					promptDocContent,
+					documentContextMode
+				);
+				const finalPrompt = buildStrategyPrompt(
+					'executor',
+					basePrompt,
+					documentPromptSection,
+					skillPromptBlock
+				);
+				const estimatedPromptTokens = estimateTokenCount(finalPrompt);
+				const promptMetrics = {
+					basePromptChars: basePrompt.length,
+					skillPromptChars: skillPromptBlock.length,
+					documentChars: promptDocContent.length,
+					finalPromptChars: finalPrompt.length,
+					estimatedPromptTokens,
+				};
+
+				if (debug) {
+					yield {
+						type: 'debug',
+						timestamp: Date.now(),
+						category: 'budget',
+						message: `Prompt sizing for ${docEntry.filename}#${taskIndex}: base=${promptMetrics.basePromptChars} chars, skills=${promptMetrics.skillPromptChars} chars, document=${promptMetrics.documentChars} chars, final=${promptMetrics.finalPromptChars} chars (~${promptMetrics.estimatedPromptTokens} tokens)`,
+					};
+				}
 
 				// Emit verbose event with full prompt
 				if (verbose) {
@@ -435,26 +771,136 @@ export async function* runPlaybook(
 						document: docEntry.filename,
 						taskIndex,
 						prompt: finalPrompt,
+						...promptMetrics,
 					};
 				}
 
-				// Spawn agent with combined prompt + document
-				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt);
+				let result: AgentResult;
+				let plannerSummary: string | undefined;
+				let plannerSessionId: string | undefined;
+				let verifierNote: string | undefined;
+				let verifierVerdict: 'PASS' | 'WARN' | 'FAIL' | null = null;
+
+				if (agentStrategy === 'plan-execute-verify') {
+					const plannerPrompt = buildStrategyPrompt(
+						'planner',
+						basePrompt,
+						documentPromptSection,
+						skillPromptBlock
+					);
+					const plannerResult = await spawnAgent(
+						session.toolType,
+						session.cwd,
+						plannerPrompt,
+						undefined,
+						{
+							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+						}
+					);
+					plannerSummary = plannerResult.response?.trim();
+					plannerSessionId = plannerResult.agentSessionId;
+
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'strategy',
+							message: `Planner ${plannerResult.success ? 'completed' : 'failed'} for ${docEntry.filename}#${taskIndex}`,
+						};
+					}
+
+					const executorPrompt = buildStrategyPrompt(
+						'executor',
+						basePrompt,
+						documentPromptSection,
+						skillPromptBlock,
+						plannerSummary
+					);
+					result = await spawnAgent(
+						session.toolType,
+						session.cwd,
+						executorPrompt,
+						plannerSessionId,
+						{
+							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+						}
+					);
+					result.usageStats = mergeUsageStats(plannerResult.usageStats, result.usageStats);
+
+					const verifierPrompt = buildStrategyPrompt(
+						'verifier',
+						basePrompt,
+						documentPromptSection,
+						skillPromptBlock,
+						undefined,
+						definitionOfDone,
+						playbook.verificationSteps ?? []
+					);
+					const verifierResult = await spawnAgent(
+						session.toolType,
+						session.cwd,
+						verifierPrompt,
+						undefined,
+						{
+							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+						}
+					);
+					verifierNote = buildVerifierNote(verifierResult.response, verifierResult.error);
+					verifierVerdict = getVerifierVerdict(verifierResult.response);
+					if (!verifierResult.success || verifierVerdict === 'FAIL') {
+						result.success = false;
+						if (!result.error && verifierVerdict === 'FAIL') {
+							result.error = verifierNote || 'Verifier returned FAIL';
+						}
+					}
+					result.usageStats = mergeUsageStats(result.usageStats, verifierResult.usageStats);
+
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'strategy',
+							message: `Verifier ${verifierResult.success ? 'completed' : 'failed'} for ${docEntry.filename}#${taskIndex}`,
+						};
+					}
+				} else {
+					// Spawn agent with combined prompt + document
+					result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
+						timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+					});
+				}
 
 				const elapsedMs = Date.now() - taskStartTime;
 
 				// Re-read document to get new task count
-				const { taskCount: newRemainingTasks } = readDocAndCountTasks(
+				let { taskCount: newRemainingTasks, content: contentAfterTask } = readDocAndCountTasks(
 					folderPath,
 					docEntry.filename
 				);
-				const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
+				let tasksCompletedThisRun = remainingTasks - newRemainingTasks;
 
-				// Update counters
-				docTasksCompleted += tasksCompletedThisRun;
-				totalCompletedTasks += tasksCompletedThisRun;
-				loopTasksCompleted += tasksCompletedThisRun;
-				anyTasksProcessedThisIteration = true;
+				const completedAfterTimeout = Boolean(result.timedOut && tasksCompletedThisRun > 0);
+				const taskSucceeded = result.success || completedAfterTimeout;
+
+				if (!taskSucceeded && tasksCompletedThisRun > 0) {
+					const revertedContent = revertNewlyCheckedTasks(expandedDocContent, contentAfterTask);
+					if (revertedContent !== contentAfterTask) {
+						writeDoc(folderPath, `${docEntry.filename}.md`, revertedContent);
+						const revertedState = readDocAndCountTasks(folderPath, docEntry.filename);
+						newRemainingTasks = revertedState.taskCount;
+						contentAfterTask = revertedState.content;
+						tasksCompletedThisRun = remainingTasks - newRemainingTasks;
+					}
+				}
+				const countedCompletedTasks = taskSucceeded ? tasksCompletedThisRun : 0;
+
+				// Update counters only when the run actually completed verified work
+				docTasksCompleted += countedCompletedTasks;
+				totalCompletedTasks += countedCompletedTasks;
+				loopTasksCompleted += countedCompletedTasks;
+				if (countedCompletedTasks > 0) {
+					anyTasksProcessedThisIteration = true;
+				}
 
 				// Track usage
 				if (result.usageStats) {
@@ -470,13 +916,19 @@ export async function* runPlaybook(
 				let shortSummary = `[${docEntry.filename}] Task completed`;
 				let fullSynopsis = shortSummary;
 
-				if (result.success && result.agentSessionId) {
+				if (completedAfterTimeout) {
+					shortSummary = `[${docEntry.filename}] Task completed before timeout`;
+					fullSynopsis = result.response || result.error || shortSummary;
+				} else if (result.success && result.agentSessionId) {
 					// Request synopsis from the agent
 					const synopsisResult = await spawnAgent(
 						session.toolType,
 						session.cwd,
 						BATCH_SYNOPSIS_PROMPT,
-						result.agentSessionId
+						result.agentSessionId,
+						{
+							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+						}
 					);
 
 					if (synopsisResult.success && synopsisResult.response) {
@@ -484,9 +936,34 @@ export async function* runPlaybook(
 						shortSummary = parsed.shortSummary;
 						fullSynopsis = parsed.fullSynopsis;
 					}
-				} else if (!result.success) {
+				} else if (!taskSucceeded) {
 					shortSummary = `[${docEntry.filename}] Task failed`;
 					fullSynopsis = result.error || shortSummary;
+				}
+
+				if (plannerSummary && verbose) {
+					yield {
+						type: 'verbose',
+						timestamp: Date.now(),
+						category: 'strategy',
+						document: docEntry.filename,
+						taskIndex,
+						prompt: plannerSummary,
+					};
+				}
+
+				if (verifierNote) {
+					fullSynopsis = `${fullSynopsis}\n\nVerifier:\n${verifierNote}`;
+				}
+				shortSummary = applyVerifierVerdictToSummary(shortSummary, verifierVerdict);
+
+				if (result.timedOut && debug) {
+					yield {
+						type: 'debug',
+						timestamp: Date.now(),
+						category: 'timeout',
+						message: `Task ${docEntry.filename}#${taskIndex} timed out after ${taskTimeoutMs}ms`,
+					};
 				}
 
 				// Emit task complete event
@@ -495,12 +972,13 @@ export async function* runPlaybook(
 					timestamp: Date.now(),
 					document: docEntry.filename,
 					taskIndex,
-					success: result.success,
+					success: taskSucceeded,
 					summary: shortSummary,
 					fullResponse: fullSynopsis,
 					elapsedMs,
 					usageStats: result.usageStats,
 					agentSessionId: result.agentSessionId,
+					verifierVerdict: verifierVerdict ?? undefined,
 				};
 
 				// Add history entry if enabled
@@ -514,9 +992,10 @@ export async function* runPlaybook(
 						agentSessionId: result.agentSessionId,
 						projectPath: session.cwd,
 						sessionId: session.id,
-						success: result.success,
+						success: taskSucceeded,
 						usageStats: result.usageStats,
 						elapsedTimeMs: elapsedMs,
+						verifierVerdict: verifierVerdict ?? undefined,
 					};
 					addHistoryEntry(historyEntry);
 					if (debug) {
@@ -526,6 +1005,18 @@ export async function* runPlaybook(
 							entryId: historyEntry.id,
 						};
 					}
+				}
+
+				if (tasksCompletedThisRun === 0) {
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'task',
+							message: `Stopping ${docEntry.filename}: no task state changed for taskIndex=${taskIndex}`,
+						};
+					}
+					break;
 				}
 
 				remainingTasks = newRemainingTasks;

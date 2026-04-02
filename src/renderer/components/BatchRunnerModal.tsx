@@ -33,6 +33,7 @@ import {
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { buildImplicitTaskGraph } from '../../shared/playbookDag';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -142,10 +143,18 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// Loop mode state
 	const [loopEnabled, setLoopEnabled] = useState(false);
 	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
+	const [taskTimeoutMs, setTaskTimeoutMs] = useState<number | null>(null);
+	const [agentStrategy, setAgentStrategy] = useState<'single' | 'plan-execute-verify'>('single');
+	const [definitionOfDoneText, setDefinitionOfDoneText] = useState('');
+	const [verificationStepsText, setVerificationStepsText] = useState('');
 
 	// Track initial loop settings for dirty checking
 	const initialLoopEnabledRef = useRef(false);
 	const initialMaxLoopsRef = useRef<number | null>(null);
+	const initialTaskTimeoutMsRef = useRef<number | null>(null);
+	const initialAgentStrategyRef = useRef<'single' | 'plan-execute-verify'>('single');
+	const initialDefinitionOfDoneRef = useRef('');
+	const initialVerificationStepsRef = useRef('');
 
 	// Prompt state
 	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
@@ -169,13 +178,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 		// Check if loop settings have changed
 		const loopChanged =
-			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
+			loopEnabled !== initialLoopEnabledRef.current ||
+			maxLoops !== initialMaxLoopsRef.current ||
+			taskTimeoutMs !== initialTaskTimeoutMsRef.current ||
+			agentStrategy !== initialAgentStrategyRef.current ||
+			definitionOfDoneText !== initialDefinitionOfDoneRef.current ||
+			verificationStepsText !== initialVerificationStepsRef.current;
 
 		// Check if prompt has changed
 		const promptChanged = prompt !== initialPromptRef.current;
 
 		return documentsChanged || loopChanged || promptChanged;
-	}, [documents, loopEnabled, maxLoops, prompt]);
+	}, [
+		documents,
+		loopEnabled,
+		maxLoops,
+		taskTimeoutMs,
+		agentStrategy,
+		definitionOfDoneText,
+		verificationStepsText,
+		prompt,
+	]);
 
 	// Handler for closing with unsaved changes check
 	const handleCloseWithConfirmation = useCallback(() => {
@@ -197,11 +220,19 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			documents: BatchDocumentEntry[];
 			loopEnabled: boolean;
 			maxLoops: number | null;
+			taskTimeoutMs: number | null;
+			agentStrategy: 'single' | 'plan-execute-verify';
+			definitionOfDone: string[];
+			verificationSteps: string[];
 			prompt: string;
 		}) => {
 			setDocuments(data.documents);
 			setLoopEnabled(data.loopEnabled);
 			setMaxLoops(data.maxLoops);
+			setTaskTimeoutMs(data.taskTimeoutMs);
+			setAgentStrategy(data.agentStrategy);
+			setDefinitionOfDoneText(data.definitionOfDone.join('\n'));
+			setVerificationStepsText(data.verificationSteps.join('\n'));
 			setPrompt(data.prompt);
 		},
 		[]
@@ -238,6 +269,16 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			documents,
 			loopEnabled,
 			maxLoops,
+			taskTimeoutMs,
+			agentStrategy,
+			definitionOfDone: definitionOfDoneText
+				.split('\n')
+				.map((item) => item.trim())
+				.filter(Boolean),
+			verificationSteps: verificationStepsText
+				.split('\n')
+				.map((item) => item.trim())
+				.filter(Boolean),
 			prompt,
 		},
 		onApplyPlaybook: handleApplyPlaybook,
@@ -372,6 +413,18 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			taskTimeoutMs,
+			maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
+			taskGraph: loadedPlaybook?.taskGraph ?? buildImplicitTaskGraph(validDocuments),
+			agentStrategy,
+			definitionOfDone: definitionOfDoneText
+				.split('\n')
+				.map((item) => item.trim())
+				.filter(Boolean),
+			verificationSteps: verificationStepsText
+				.split('\n')
+				.map((item) => item.trim())
+				.filter(Boolean),
 			...(worktreeTarget && { worktreeTarget }),
 		};
 
@@ -629,6 +682,137 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						documentTree={documentTree as import('./DocumentsPanel').DocTreeNode[] | undefined}
 						onRefreshDocuments={onRefreshDocuments}
 					/>
+
+					<div className="mt-6 flex flex-col gap-2">
+						<label
+							htmlFor="autorun-task-timeout"
+							className="text-xs font-bold uppercase"
+							style={{ color: theme.colors.textDim }}
+						>
+							Task Timeout
+						</label>
+						<div className="flex items-center gap-3">
+							<input
+								id="autorun-task-timeout"
+								type="number"
+								min="1000"
+								step="1000"
+								value={taskTimeoutMs ?? ''}
+								onChange={(e) => {
+									const nextValue = e.target.value.trim();
+									if (!nextValue) {
+										setTaskTimeoutMs(null);
+										return;
+									}
+									const parsed = Number.parseInt(nextValue, 10);
+									setTaskTimeoutMs(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+								}}
+								placeholder="60000"
+								className="w-36 px-3 py-2 rounded-lg border text-sm bg-transparent"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+								}}
+							/>
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Empty uses the default 60000ms timeout.
+							</span>
+						</div>
+						<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							If a timed-out task already changed the document, Auto Run now treats it as completed
+							instead of leaving the agent busy forever.
+						</div>
+					</div>
+
+					<div className="mt-6 flex flex-col gap-2">
+						<label
+							htmlFor="autorun-agent-strategy"
+							className="text-xs font-bold uppercase"
+							style={{ color: theme.colors.textDim }}
+						>
+							Agent Strategy
+						</label>
+						<div className="flex items-center gap-3">
+							<select
+								id="autorun-agent-strategy"
+								value={agentStrategy}
+								onChange={(e) =>
+									setAgentStrategy(e.target.value as 'single' | 'plan-execute-verify')
+								}
+								className="w-64 px-3 py-2 rounded-lg border text-sm bg-transparent"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor: theme.colors.bgSidebar,
+								}}
+							>
+								<option value="single">single</option>
+								<option value="plan-execute-verify">plan-execute-verify</option>
+							</select>
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Use a single pass or a planner, executor, and verifier chain.
+							</span>
+						</div>
+						<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							`plan-execute-verify` currently runs the three steps in sequence for each task. DAG
+							execution is not enabled yet.
+						</div>
+					</div>
+
+					<div className="mt-6 flex flex-col gap-2">
+						<label
+							htmlFor="autorun-definition-of-done"
+							className="text-xs font-bold uppercase"
+							style={{ color: theme.colors.textDim }}
+						>
+							Definition of Done
+						</label>
+						<textarea
+							id="autorun-definition-of-done"
+							value={definitionOfDoneText}
+							onChange={(e) => setDefinitionOfDoneText(e.target.value)}
+							placeholder={
+								'One verifier check per line\nExample: Relevant tests pass\nExample: Active task is checked in the document'
+							}
+							rows={4}
+							className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent resize-y"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						/>
+						<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							Only used by the verifier step. A FAIL keeps the task from being counted as completed.
+						</div>
+					</div>
+
+					<div className="mt-6 flex flex-col gap-2">
+						<label
+							htmlFor="autorun-verification-steps"
+							className="text-xs font-bold uppercase"
+							style={{ color: theme.colors.textDim }}
+						>
+							Verification Steps
+						</label>
+						<textarea
+							id="autorun-verification-steps"
+							value={verificationStepsText}
+							onChange={(e) => setVerificationStepsText(e.target.value)}
+							placeholder={
+								'One verifier check per line\nExample: Confirm the touched code path is exercised\nExample: Confirm the document status reflects the active task'
+							}
+							rows={4}
+							className="w-full px-3 py-2 rounded-lg border text-sm bg-transparent resize-y"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+						/>
+						<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							Use this to force explicit review checks even when the definition of done stays high
+							level.
+						</div>
+					</div>
 
 					{/* Run in Worktree Section — hidden for non-git repos since worktrees require git */}
 					{activeSession?.isGitRepo && (

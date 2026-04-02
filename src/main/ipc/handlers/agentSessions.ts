@@ -670,6 +670,43 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 	);
 
 	ipcMain.handle(
+		'agentSessions:registerSessionOrigin',
+		withIpcErrorLogging(
+			handlerOpts('registerSessionOrigin'),
+			async (
+				agentId: string,
+				projectPath: string,
+				agentSessionId: string,
+				origin: 'user' | 'auto',
+				sessionName?: string
+			): Promise<boolean> => {
+				if (!originsStore) {
+					logger.warn('Origins store not available for registerSessionOrigin', LOG_CONTEXT);
+					return false;
+				}
+
+				const allOrigins = originsStore.get('origins', {});
+				if (!allOrigins[agentId]) allOrigins[agentId] = {};
+				if (!allOrigins[agentId][projectPath]) allOrigins[agentId][projectPath] = {};
+
+				allOrigins[agentId][projectPath][agentSessionId] = {
+					...(allOrigins[agentId][projectPath][agentSessionId] || {}),
+					origin,
+					...(sessionName ? { sessionName } : {}),
+				};
+
+				originsStore.set('origins', allOrigins);
+				logger.info(
+					`Registered session origin for ${agentId}: ${projectPath}/${agentSessionId}`,
+					LOG_CONTEXT,
+					{ sessionId: agentSessionId, origin, sessionName }
+				);
+				return true;
+			}
+		)
+	);
+
+	ipcMain.handle(
 		'agentSessions:setSessionName',
 		withIpcErrorLogging(
 			handlerOpts('setSessionName'),

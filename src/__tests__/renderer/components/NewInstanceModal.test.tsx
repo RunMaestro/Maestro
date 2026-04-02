@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Theme, Session } from '../../../renderer/types';
@@ -411,6 +411,30 @@ describe('NewInstanceModal', () => {
 			// Should still have claude-code selected
 			const claudeOption = screen.getByRole('option', { name: /Claude Code/i });
 			expect(claudeOption).toHaveAttribute('aria-selected', 'true');
+		});
+
+		it('should allow selecting openclaw when available', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'openclaw', name: 'OpenClaw', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('OpenClaw')).toBeInTheDocument();
+			});
+
+			const option = screen.getByRole('option', { name: /OpenClaw/i });
+			fireEvent.click(option);
+			expect(option).toHaveAttribute('aria-selected', 'true');
 		});
 	});
 
@@ -2138,6 +2162,38 @@ describe('NewInstanceModal', () => {
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh available models')).toBeInTheDocument();
 			});
+		});
+	});
+
+	describe('OpenClaw support', () => {
+		it('shows OpenClaw as a supported beta provider in the create flow', async () => {
+			const openClawAgent = createAgentConfig({
+				id: 'openclaw',
+				name: 'OpenClaw',
+				available: true,
+			});
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([openClawAgent]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('OpenClaw')).toBeInTheDocument();
+			});
+
+			const openClawRow = screen.getByText('OpenClaw').closest('[role="option"]');
+			expect(openClawRow).toBeTruthy();
+			expect(within(openClawRow as HTMLElement).getByText('Beta')).toBeInTheDocument();
+			expect(within(openClawRow as HTMLElement).getByText('Available')).toBeInTheDocument();
 		});
 	});
 

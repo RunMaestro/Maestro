@@ -7,6 +7,10 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import {
+	normalizeOpenClawSessionId,
+	extractOpenClawAgentNameFromJson,
+} from '../../../shared/openclawSessionId';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -455,8 +459,17 @@ export class StdoutHandler {
 		}
 
 		if (msgRecord.session_id && !managedProcess.sessionIdEmitted) {
+			const rawSessionId = String(msgRecord.session_id);
+			let normalizedSessionId = rawSessionId;
+
+			if (managedProcess.toolType === 'openclaw') {
+				const agentName = extractOpenClawAgentNameFromJson(msgRecord);
+				normalizedSessionId =
+					normalizeOpenClawSessionId(rawSessionId, { agentName }) || rawSessionId;
+			}
+
 			managedProcess.sessionIdEmitted = true;
-			this.emitter.emit('session-id', sessionId, msgRecord.session_id as string);
+			this.emitter.emit('session-id', sessionId, normalizedSessionId);
 		}
 
 		if (msgRecord.type === 'system' && msgRecord.subtype === 'init' && msgRecord.slash_commands) {

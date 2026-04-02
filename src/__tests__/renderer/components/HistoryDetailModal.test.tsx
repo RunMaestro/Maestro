@@ -97,6 +97,23 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText('Test summary')).toBeInTheDocument();
 		});
 
+		it('should show verification warning pill for AUTO entries with WARN verdict', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						success: true,
+						verifierVerdict: 'WARN',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Verification completed with warnings')).toBeInTheDocument();
+			expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+		});
+
 		it('should render Close button', () => {
 			render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />

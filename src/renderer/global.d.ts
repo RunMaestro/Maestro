@@ -54,6 +54,8 @@ interface AgentConfigOption {
 	description: string;
 	default: any;
 	options?: string[];
+	placeholder?: string;
+	suggestions?: string[];
 }
 
 interface AgentCapabilities {
@@ -889,6 +891,7 @@ interface MaestroAPI {
 			}>
 		>;
 		registerSessionOrigin: (
+			agentId: string,
 			projectPath: string,
 			agentSessionId: string,
 			origin: 'user' | 'auto',
@@ -1444,7 +1447,17 @@ interface MaestroAPI {
 				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
 				loopEnabled: boolean;
 				maxLoops?: number | null;
+				taskTimeoutMs?: number | null;
+				maxParallelism?: number | null;
+				taskGraph?: import('../shared/types').PlaybookTaskGraph;
 				prompt: string;
+				skills?: string[];
+				definitionOfDone?: string[];
+				verificationSteps?: string[];
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				documentContextMode?: 'full' | 'active-task-only';
+				skillPromptMode?: 'full' | 'brief';
+				agentStrategy?: 'single' | 'plan-execute-verify';
 				worktreeSettings?: {
 					branchNameTemplate: string;
 					createPROnCompletion: boolean;
@@ -1460,7 +1473,17 @@ interface MaestroAPI {
 				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
 				loopEnabled: boolean;
 				maxLoops?: number | null;
+				taskTimeoutMs?: number | null;
+				maxParallelism?: number | null;
+				taskGraph?: import('../shared/types').PlaybookTaskGraph;
 				prompt: string;
+				skills?: string[];
+				definitionOfDone?: string[];
+				verificationSteps?: string[];
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				documentContextMode?: 'full' | 'active-task-only';
+				skillPromptMode?: 'full' | 'brief';
+				agentStrategy?: 'single' | 'plan-execute-verify';
 				worktreeSettings?: {
 					branchNameTemplate: string;
 					createPROnCompletion: boolean;
@@ -1476,7 +1499,17 @@ interface MaestroAPI {
 				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
 				loopEnabled: boolean;
 				maxLoops?: number | null;
+				taskTimeoutMs?: number | null;
+				maxParallelism?: number | null;
+				taskGraph?: import('../shared/types').PlaybookTaskGraph;
 				prompt: string;
+				skills?: string[];
+				definitionOfDone?: string[];
+				verificationSteps?: string[];
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				documentContextMode?: 'full' | 'active-task-only';
+				skillPromptMode?: 'full' | 'brief';
+				agentStrategy?: 'single' | 'plan-execute-verify';
 				updatedAt: number;
 				worktreeSettings?: {
 					branchNameTemplate: string;

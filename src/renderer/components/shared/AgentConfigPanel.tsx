@@ -30,11 +30,16 @@ const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] =
 	},
 ];
 
-// Separate component for text input with optional model dropdown
-// This avoids the browser's native datalist styling issues
-interface ModelTextInputProps {
+// Separate component for text input with optional preset dropdown.
+// This avoids the browser's native datalist styling issues.
+interface SuggestionTextInputProps {
 	theme: Theme;
-	option: { key: string; default?: string };
+	option: {
+		key: string;
+		default?: string;
+		placeholder?: string;
+		suggestions?: string[];
+	};
 	value: string;
 	onChange: (value: string) => void;
 	onBlur: (committedValue: string) => void;
@@ -43,7 +48,7 @@ interface ModelTextInputProps {
 	onRefreshModels?: () => void;
 }
 
-function ModelTextInput({
+function SuggestionTextInput({
 	theme,
 	option,
 	value,
@@ -52,7 +57,7 @@ function ModelTextInput({
 	availableModels,
 	loadingModels,
 	onRefreshModels,
-}: ModelTextInputProps): JSX.Element {
+}: SuggestionTextInputProps): JSX.Element {
 	const [showDropdown, setShowDropdown] = useState(false);
 	const [filterText, setFilterText] = useState('');
 	// Track whether we're in filter mode (typing to filter dropdown vs direct input)
@@ -69,12 +74,19 @@ function ModelTextInput({
 		committedValueRef.current = value;
 	}, [value]);
 
-	// Filter models based on input
+	const dropdownOptions =
+		option.key === 'model' && availableModels.length > 0
+			? availableModels
+			: option.suggestions || [];
+	const hasDropdownOptions = dropdownOptions.length > 0;
+	const isModelField = option.key === 'model';
+
+	// Filter dropdown options based on input
 	const filteredModels = useMemo(() => {
-		if (!filterText) return availableModels;
+		if (!filterText) return dropdownOptions;
 		const lower = filterText.toLowerCase();
-		return availableModels.filter((m) => m.toLowerCase().includes(lower));
-	}, [availableModels, filterText]);
+		return dropdownOptions.filter((optionValue) => optionValue.toLowerCase().includes(lower));
+	}, [dropdownOptions, filterText]);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -94,9 +106,6 @@ function ModelTextInput({
 		}
 	}, [showDropdown, isFiltering]);
 
-	const isModelField = option.key === 'model';
-	const hasModels = availableModels.length > 0;
-
 	// Display value: when filtering, show filter text; otherwise show actual value
 	const displayValue = isFiltering ? filterText : value;
 
@@ -109,7 +118,7 @@ function ModelTextInput({
 						type="text"
 						value={displayValue}
 						onChange={(e) => {
-							if (isModelField && hasModels) {
+							if (hasDropdownOptions) {
 								// When typing with dropdown available, we're in filter mode
 								// Don't update the actual value until selection or explicit blur
 								setFilterText(e.target.value);
@@ -121,7 +130,7 @@ function ModelTextInput({
 							}
 						}}
 						onFocus={() => {
-							if (isModelField && hasModels) {
+							if (hasDropdownOptions) {
 								setFilterText(value);
 								setShowDropdown(true);
 							}
@@ -155,11 +164,11 @@ function ModelTextInput({
 							}, 150);
 						}}
 						onClick={(e) => e.stopPropagation()}
-						placeholder={option.default || ''}
+						placeholder={option.placeholder || option.default || ''}
 						className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono pr-8"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					/>
-					{isModelField && hasModels && (
+					{hasDropdownOptions && (
 						<button
 							type="button"
 							onClick={(e) => {
@@ -176,7 +185,7 @@ function ModelTextInput({
 						</button>
 					)}
 					{/* Custom dropdown */}
-					{isModelField && showDropdown && filteredModels.length > 0 && (
+					{showDropdown && filteredModels.length > 0 && (
 						<div
 							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded border shadow-lg"
 							style={{
@@ -229,9 +238,14 @@ function ModelTextInput({
 					Loading available models...
 				</p>
 			)}
-			{isModelField && !loadingModels && hasModels && (
+			{isModelField && !loadingModels && hasDropdownOptions && (
 				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 					{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available
+				</p>
+			)}
+			{!isModelField && hasDropdownOptions && (
+				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+					{dropdownOptions.length} preset value{dropdownOptions.length !== 1 ? 's' : ''} available
 				</p>
 			)}
 		</>
@@ -631,7 +645,7 @@ export function AgentConfigPanel({
 							/>
 						)}
 						{option.type === 'text' && (
-							<ModelTextInput
+							<SuggestionTextInput
 								theme={theme}
 								option={option}
 								value={agentConfig[option.key] ?? option.default}

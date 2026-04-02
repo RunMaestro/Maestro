@@ -157,9 +157,9 @@ describe('CollapsedSessionPill', () => {
 		expect(segment.className).toContain('animate-pulse');
 	});
 
-	it('applies hollow style for claude-code sessions without agentSessionId', () => {
+	it('applies hollow style for openclaw sessions without agentSessionId', () => {
 		const session = makeSession({
-			toolType: 'claude-code',
+			toolType: 'openclaw',
 			agentSessionId: undefined,
 		});
 		const props = createDefaultProps({ session });

@@ -5,6 +5,32 @@ import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck } from './historyConstants';
 
+const getVerifierPill = (
+	verifierVerdict: HistoryEntry['verifierVerdict'],
+	theme: Theme
+): { label: string; title: string; bg: string; text: string; border: string } | null => {
+	switch (verifierVerdict) {
+		case 'WARN':
+			return {
+				label: 'VERIFY WARN',
+				title: 'Verification completed with warnings',
+				bg: theme.colors.warning + '20',
+				text: theme.colors.warning,
+				border: theme.colors.warning + '40',
+			};
+		case 'FAIL':
+			return {
+				label: 'VERIFY FAIL',
+				title: 'Verification failed',
+				bg: theme.colors.error + '20',
+				text: theme.colors.error,
+				border: theme.colors.error + '40',
+			};
+		default:
+			return null;
+	}
+};
+
 // Get pill color based on entry type
 const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 	switch (type) {
@@ -82,6 +108,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 }: HistoryEntryItemProps) {
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
+	const verifierPill = getVerifierPill(entry.verifierVerdict, theme);
 
 	const agentName = showAgentName
 		? (entry as HistoryEntry & { agentName?: string }).agentName
@@ -184,6 +211,21 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						<Icon className="w-2.5 h-2.5" />
 						{entry.type}
 					</span>
+
+					{/* Verification verdict pill */}
+					{entry.type === 'AUTO' && verifierPill && (
+						<span
+							className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase flex-shrink-0"
+							style={{
+								backgroundColor: verifierPill.bg,
+								color: verifierPill.text,
+								border: `1px solid ${verifierPill.border}`,
+							}}
+							title={verifierPill.title}
+						>
+							{verifierPill.label}
+						</span>
+					)}
 				</div>
 
 				{/* Timestamp */}

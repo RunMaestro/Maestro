@@ -53,8 +53,10 @@ export {
 import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
 import { CodexOutputParser } from './codex-output-parser';
+import { CursorAgentOutputParser } from './cursor-agent-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import { OpenClawOutputParser } from './openclaw-output-parser';
+import { ZaiOutputParser } from './zai-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -66,8 +68,10 @@ import { logger } from '../utils/logger';
 export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
 export { CodexOutputParser } from './codex-output-parser';
+export { CursorAgentOutputParser } from './cursor-agent-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
 export { OpenClawOutputParser } from './openclaw-output-parser';
+export { ZaiOutputParser } from './zai-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -83,8 +87,10 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new ClaudeOutputParser());
 	registerOutputParser(new OpenCodeOutputParser());
 	registerOutputParser(new CodexOutputParser());
+	registerOutputParser(new CursorAgentOutputParser());
 	registerOutputParser(new FactoryDroidOutputParser());
 	registerOutputParser(new OpenClawOutputParser());
+	registerOutputParser(new ZaiOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);

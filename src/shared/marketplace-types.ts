@@ -6,6 +6,8 @@
  * and the local cache.
  */
 
+import type { Playbook, PlaybookBaselineMetadata, PlaybookTaskGraph } from './types';
+
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
 // ============================================================================
@@ -29,7 +31,7 @@ export type PlaybookSource = 'official' | 'local';
 /**
  * Individual playbook entry in the marketplace manifest.
  */
-export interface MarketplacePlaybook {
+export interface MarketplacePlaybook extends PlaybookBaselineMetadata {
 	/** Unique slug identifier (e.g., "development-security") */
 	id: string;
 	/** Display name for the playbook */
@@ -56,8 +58,12 @@ export interface MarketplacePlaybook {
 	loopEnabled: boolean;
 	/** Maximum number of loops (null for unlimited) */
 	maxLoops?: number | null;
+	/** Maximum number of graph nodes that may run in parallel once the scheduler is enabled */
+	maxParallelism?: number | null;
 	/** Custom prompt, or null to use Maestro's default Auto Run prompt */
 	prompt: string | null;
+	/** Optional explicit task graph for playbook execution */
+	taskGraph?: PlaybookTaskGraph;
 	/**
 	 * Optional list of asset files in the assets/ subfolder.
 	 * These are non-markdown files like config files, YAML, Dockerfiles, etc.
@@ -206,16 +212,7 @@ export interface GetReadmeResponse {
  */
 export interface ImportPlaybookResponse {
 	/** The created playbook entry */
-	playbook: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	};
+	playbook: Playbook;
 	/** List of imported document filenames */
 	importedDocs: string[];
 	/** List of imported asset filenames (from assets/ subfolder) */

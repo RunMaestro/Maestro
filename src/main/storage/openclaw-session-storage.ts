@@ -32,6 +32,7 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import { buildOpenClawSessionId, parseOpenClawSessionId } from '../../shared/openclawSessionId';
 
 const LOG_CONTEXT = '[OpenClawSessionStorage]';
 
@@ -110,23 +111,6 @@ function extractTextFromContent(content: OpenClawContentItem[] | string | unknow
 	}
 
 	return '';
-}
-
-function buildCompositeSessionId(agentName: string, sessionId: string): string {
-	return `${agentName}:${sessionId}`;
-}
-
-function parseCompositeSessionId(
-	compositeSessionId: string
-): { agentName: string; sessionId: string } | null {
-	const idx = compositeSessionId.indexOf(':');
-	if (idx <= 0 || idx >= compositeSessionId.length - 1) {
-		return null;
-	}
-	return {
-		agentName: compositeSessionId.slice(0, idx),
-		sessionId: compositeSessionId.slice(idx + 1),
-	};
 }
 
 /**
@@ -337,9 +321,18 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 
 		const rawSessionId =
 			init?.id || path.basename(sessionFilePath).replace(/\.jsonl$/i, '') || 'openclaw-session';
+		const canonicalSessionId = buildOpenClawSessionId(agentName, rawSessionId);
+		if (!canonicalSessionId) {
+			logger.warn('Failed to build canonical OpenClaw session ID', LOG_CONTEXT, {
+				agentName,
+				rawSessionId,
+				sessionFilePath,
+			});
+			return null;
+		}
 
 		return {
-			sessionId: buildCompositeSessionId(agentName, rawSessionId),
+			sessionId: canonicalSessionId,
 			projectPath: normalizeProjectPath(sessionProjectPath),
 			timestamp: firstTimestamp,
 			modifiedAt: lastTimestamp || new Date(stats.mtimeMs).toISOString(),
@@ -486,7 +479,7 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		const parsed = parseCompositeSessionId(sessionId);
+		const parsed = parseOpenClawSessionId(sessionId);
 		if (!parsed) {
 			logger.warn(`Invalid OpenClaw sessionId format: ${sessionId}`, LOG_CONTEXT);
 			return { messages: [], total: 0, hasMore: false };
@@ -495,10 +488,10 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 		let openclawMessages: OpenClawMessage[];
 
 		if (sshConfig) {
-			const sessionPath = this.getRemoteSessionFile(parsed.agentName, parsed.sessionId);
+			const sessionPath = this.getRemoteSessionFile(parsed.agentName, parsed.rawSessionId);
 			openclawMessages = await this.loadSessionMessagesRemote(sessionPath, sshConfig);
 		} else {
-			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.sessionId);
+			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.rawSessionId);
 			openclawMessages = await this.loadSessionMessages(sessionPath);
 		}
 
@@ -528,7 +521,7 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 		_projectPath: string,
 		sshConfig?: SshRemoteConfig
 	): Promise<SearchableMessage[]> {
-		const parsed = parseCompositeSessionId(sessionId);
+		const parsed = parseOpenClawSessionId(sessionId);
 		if (!parsed) {
 			return [];
 		}
@@ -536,10 +529,10 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 		let openclawMessages: OpenClawMessage[];
 
 		if (sshConfig) {
-			const sessionPath = this.getRemoteSessionFile(parsed.agentName, parsed.sessionId);
+			const sessionPath = this.getRemoteSessionFile(parsed.agentName, parsed.rawSessionId);
 			openclawMessages = await this.loadSessionMessagesRemote(sessionPath, sshConfig);
 		} else {
-			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.sessionId);
+			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.rawSessionId);
 			openclawMessages = await this.loadSessionMessages(sessionPath);
 		}
 
@@ -557,14 +550,14 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		sshConfig?: SshRemoteConfig
 	): string | null {
-		const parsed = parseCompositeSessionId(sessionId);
+		const parsed = parseOpenClawSessionId(sessionId);
 		if (!parsed) {
 			return null;
 		}
 		if (sshConfig) {
-			return this.getRemoteSessionFile(parsed.agentName, parsed.sessionId);
+			return this.getRemoteSessionFile(parsed.agentName, parsed.rawSessionId);
 		}
-		return this.getLocalSessionFile(parsed.agentName, parsed.sessionId);
+		return this.getLocalSessionFile(parsed.agentName, parsed.rawSessionId);
 	}
 
 	async deleteMessagePair(
@@ -584,13 +577,13 @@ export class OpenClawSessionStorage extends BaseSessionStorage {
 			return { success: false, error: 'Delete not supported for remote sessions' };
 		}
 
-		const parsed = parseCompositeSessionId(sessionId);
+		const parsed = parseOpenClawSessionId(sessionId);
 		if (!parsed) {
 			return { success: false, error: 'Invalid sessionId format' };
 		}
 
 		try {
-			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.sessionId);
+			const sessionPath = this.getLocalSessionFile(parsed.agentName, parsed.rawSessionId);
 			const content = await fs.readFile(sessionPath, 'utf-8');
 			const lines = content.trim().split('\n');
 			const newLines: string[] = [];

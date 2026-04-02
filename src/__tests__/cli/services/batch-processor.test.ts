@@ -54,6 +54,15 @@ vi.mock('../../../shared/cli-activity', () => ({
 	unregisterCliActivity: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/skill-resolver', () => ({
+	resolvePlaybookSkills: vi.fn(() => ({ resolved: [], missing: [] })),
+	buildSkillPromptBlock: vi.fn(() => ''),
+}));
+
+vi.mock('../../../cli/services/skill-bus', () => ({
+	recordSkillBusRun: vi.fn(),
+}));
+
 // Mock logger
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -77,6 +86,8 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
+import { resolvePlaybookSkills, buildSkillPromptBlock } from '../../../cli/services/skill-resolver';
+import { recordSkillBusRun } from '../../../cli/services/skill-bus';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -125,6 +136,9 @@ describe('batch-processor', () => {
 			response: 'Task completed',
 			agentSessionId: 'claude-session-123',
 		});
+		vi.mocked(recordSkillBusRun).mockResolvedValue({ success: true });
+		vi.mocked(resolvePlaybookSkills).mockReturnValue({ resolved: [], missing: [] });
+		vi.mocked(buildSkillPromptBlock).mockReturnValue('');
 		vi.mocked(uncheckAllTasks).mockImplementation((content) => content.replace(/\[x\]/gi, '[ ]'));
 	});
 
@@ -330,6 +344,39 @@ describe('batch-processor', () => {
 			expect(taskCompleteEvents[0]?.success).toBe(true);
 		});
 
+		it('should pass taskTimeoutMs to spawnAgent and treat timeout with document progress as success', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] Task', taskCount: 1 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				timedOut: true,
+				error: 'Timed out after 5000ms',
+			});
+
+			const session = mockSession({ toolType: 'codex' });
+			const playbook = mockPlaybook({ taskTimeoutMs: 5000 });
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			expect(spawnAgent).toHaveBeenCalledWith(
+				session.toolType,
+				session.cwd,
+				expect.any(String),
+				undefined,
+				{ timeoutMs: 5000 }
+			);
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent?.success).toBe(true);
+			expect(taskCompleteEvent?.summary).toContain('completed before timeout');
+		});
+
 		it('should call spawnAgent with combined prompt and document', async () => {
 			// readDocAndCountTasks is called multiple times:
 			// 1. Initial scan for task count
@@ -357,6 +404,232 @@ describe('batch-processor', () => {
 			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(promptArg).toContain('Custom prompt for processing');
 			expect(promptArg).toContain('My task');
+		});
+
+		it('should omit completed tasks from the compact document context', async () => {
+			const docContent = `# Phase 01
+
+## Goal
+
+Keep prompts small.
+
+## Tasks
+
+- [x] Completed task should be omitted
+- [ ] Active task stays in prompt
+- [ ] Neighbor task stays in prompt`;
+
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: docContent, taskCount: 2 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).not.toContain('Completed task should be omitted');
+			expect(promptArg).toContain('Active task stays in prompt');
+			expect(promptArg).toContain('Neighbor task stays in prompt');
+		});
+
+		it('should preserve the first unchecked task as the active task context', async () => {
+			const docContent = `# Phase 01
+
+## Tasks
+
+- [x] Finished setup
+- [ ] First unchecked task
+- [ ] Second unchecked task`;
+
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: docContent, taskCount: 2 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).toContain('- [ ] First unchecked task');
+			expect(promptArg.indexOf('First unchecked task')).toBeLessThan(
+				promptArg.indexOf('Second unchecked task')
+			);
+		});
+
+		it('should compose the prompt with compact document context and file path instructions', async () => {
+			const docContent = `# Phase 01
+
+## Goal
+
+Reduce context.
+
+## Tasks
+
+- [ ] Current task
+- [ ] Next task`;
+
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: docContent, taskCount: 2 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ prompt: 'Custom prompt for processing' });
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).toContain('Custom prompt for processing');
+			expect(promptArg).toContain('# Current Document: /playbooks/tasks.md');
+			expect(promptArg).toContain(
+				'Only the active unchecked task and minimal nearby context are inlined below'
+			);
+			expect(promptArg).toContain('## Goal');
+			expect(promptArg).toContain('- [ ] Current task');
+			expect(promptArg).toContain('- [ ] Next task');
+		});
+
+		it('should inject resolved skill instructions into the prompt', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] My task', taskCount: 1 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(resolvePlaybookSkills).mockReturnValue({
+				resolved: [
+					{
+						name: 'code-review',
+						source: 'project',
+						filePath: '/tmp/.claude/skills/code-review/skill.md',
+						description: 'Review code carefully',
+						instructions: 'Always inspect existing patterns first.',
+					},
+				],
+				missing: [],
+			});
+			vi.mocked(buildSkillPromptBlock).mockReturnValue(
+				'## Project Skills\n\n### code-review\n- Source: project\n- Guidance: Always inspect existing patterns first.'
+			);
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ skills: ['code-review'] });
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			expect(resolvePlaybookSkills).toHaveBeenCalledWith(session.projectRoot, ['code-review']);
+			expect(buildSkillPromptBlock).toHaveBeenCalledWith(expect.any(Array), 'brief');
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).toContain('## Project Skills');
+			expect(promptArg).toContain('code-review');
+			expect(promptArg).toContain('Always inspect existing patterns first.');
+		});
+
+		it('should use full document context when documentContextMode is full', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return {
+						content: [
+							'# Tasks',
+							'',
+							'- [x] Done task',
+							'',
+							'- [ ] Current task',
+							'',
+							'- [ ] Next task',
+						].join('\n'),
+						taskCount: 1,
+					};
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ documentContextMode: 'full' });
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
+			expect(promptArg).toContain('The full document is inlined below.');
+			expect(promptArg).toContain('- [x] Done task');
+			expect(promptArg).toContain('- [ ] Current task');
+			expect(promptArg).toContain('- [ ] Next task');
+		});
+
+		it('should emit prompt budget debug output', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] Current task', taskCount: 1 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { debug: true })
+			);
+
+			expect(
+				events.find(
+					(event) =>
+						event.type === 'debug' &&
+						event.category === 'budget' &&
+						event.message.includes('Prompt sizing')
+				)
+			).toBeDefined();
+		});
+
+		it('should include prompt metrics in verbose prompt output', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) {
+					return { content: '- [ ] Current task', taskCount: 1 };
+				}
+				return { content: '', taskCount: 0 };
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { verbose: true })
+			);
+
+			const verboseEvent = events.find(
+				(event) => event.type === 'verbose' && event.category === 'prompt'
+			);
+			expect(verboseEvent).toMatchObject({
+				basePromptChars: expect.any(Number),
+				skillPromptChars: expect.any(Number),
+				documentChars: expect.any(Number),
+				finalPromptChars: expect.any(Number),
+				estimatedPromptTokens: expect.any(Number),
+			});
+			expect((verboseEvent?.estimatedPromptTokens as number) > 0).toBe(true);
 		});
 
 		it('should track usage statistics', async () => {
@@ -394,6 +667,162 @@ describe('batch-processor', () => {
 			expect(completeEvent?.totalCost).toBe(0.05);
 		});
 
+		it('should run planner, executor, and verifier when agentStrategy is plan-execute-verify', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: '1. Inspect code\n2. Apply patch',
+					agentSessionId: 'planner-session',
+					usageStats: {
+						inputTokens: 100,
+						outputTokens: 50,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0.01,
+						contextWindow: 200000,
+					},
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task executed',
+					agentSessionId: 'executor-session',
+					usageStats: {
+						inputTokens: 200,
+						outputTokens: 80,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0.02,
+						contextWindow: 200000,
+					},
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'PASS\nLooks good.',
+					usageStats: {
+						inputTokens: 50,
+						outputTokens: 20,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0.005,
+						contextWindow: 200000,
+					},
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '**Summary:** Completed the task\n\n**Details:** Applied the requested change.',
+				});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				agentStrategy: 'plan-execute-verify',
+				definitionOfDone: ['Relevant tests pass'],
+			});
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			expect(spawnAgent).toHaveBeenCalledTimes(4);
+			expect(vi.mocked(spawnAgent).mock.calls[0][2]).toContain('You are the planning step');
+			expect(vi.mocked(spawnAgent).mock.calls[1][2]).toContain('## Planner Output');
+			expect(vi.mocked(spawnAgent).mock.calls[1][3]).toBe('planner-session');
+			expect(vi.mocked(spawnAgent).mock.calls[2][2]).toContain('You are the verification step');
+			expect(vi.mocked(spawnAgent).mock.calls[2][2]).toContain('## Definition of Done');
+			expect(vi.mocked(spawnAgent).mock.calls[2][2]).toContain('- Relevant tests pass');
+
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			expect(taskCompleteEvent?.success).toBe(true);
+			expect(taskCompleteEvent?.fullResponse).toContain('Verifier:\nPASS\nLooks good.');
+			expect(taskCompleteEvent?.usageStats?.inputTokens).toBe(350);
+			expect(taskCompleteEvent?.usageStats?.outputTokens).toBe(150);
+			expect(taskCompleteEvent?.usageStats?.totalCostUsd ?? 0).toBeCloseTo(0.035, 6);
+		});
+
+		it('should fail the task when verifier returns FAIL', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				if (callCount === 4) return { content: '- [x] Task', taskCount: 0 };
+				return { content: '- [ ] Task', taskCount: 1 };
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: '1. Inspect code\n2. Apply patch',
+					agentSessionId: 'planner-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task executed',
+					agentSessionId: 'executor-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'FAIL\nTests were not run.',
+				});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				agentStrategy: 'plan-execute-verify',
+				definitionOfDone: ['Relevant tests pass'],
+			});
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+			const completeEvent = events.find((e) => e.type === 'complete');
+
+			expect(taskCompleteEvent?.success).toBe(false);
+			expect(taskCompleteEvent?.fullResponse).toContain('Verifier:\nFAIL\nTests were not run.');
+			expect(completeEvent?.totalTasksCompleted).toBe(0);
+			expect(writeDoc).toHaveBeenCalledWith('/playbooks', 'tasks.md', '- [ ] Task');
+		});
+
+		it('should surface WARN verdict in summary and task event', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: '1. Inspect code\n2. Apply patch',
+					agentSessionId: 'planner-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task executed',
+					agentSessionId: 'executor-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'WARN\nImplementation looks correct but tests were skipped.',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: '**Summary:** Completed the task\n\n**Details:** Applied the requested change.',
+				});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ agentStrategy: 'plan-execute-verify' });
+
+			const events = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
+
+			expect(taskCompleteEvent?.success).toBe(true);
+			expect(taskCompleteEvent?.summary).toMatch(/^\[WARN\]/);
+			expect(taskCompleteEvent?.verifierVerdict).toBe('WARN');
+		});
+
 		it('should handle task failure', async () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
@@ -415,6 +844,35 @@ describe('batch-processor', () => {
 			const taskCompleteEvent = events.find((e) => e.type === 'task_complete');
 			expect(taskCompleteEvent?.success).toBe(false);
 			expect(taskCompleteEvent?.fullResponse).toContain('Agent error occurred');
+		});
+
+		it('should stop retrying when a task fails without changing document state', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Task',
+				taskCount: 1,
+			});
+
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				error: 'Immediate provider failure',
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook();
+
+			const events = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { debug: true })
+			);
+
+			expect(events.filter((e) => e.type === 'task_complete')).toHaveLength(1);
+			expect(
+				events.find(
+					(e) =>
+						e.type === 'debug' &&
+						e.category === 'task' &&
+						e.message.includes('no task state changed')
+				)
+			).toBeDefined();
 		});
 	});
 
@@ -656,6 +1114,37 @@ describe('batch-processor', () => {
 			const historyWriteEvent = events.find((e) => e.type === 'history_write');
 			expect(historyWriteEvent).toBeDefined();
 			expect(historyWriteEvent?.entryId).toBeDefined();
+		});
+
+		it('should report missing playbook skills only in debug output', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
+			vi.mocked(resolvePlaybookSkills).mockReturnValue({
+				resolved: [],
+				missing: ['missing-skill'],
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({ skills: ['missing-skill'] });
+
+			const nonDebugEvents = await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+			expect(
+				nonDebugEvents.find(
+					(event) =>
+						event.type === 'debug' &&
+						event.message?.includes('Missing playbook skills: missing-skill')
+				)
+			).toBeUndefined();
+
+			const debugEvents = await collectEvents(
+				runPlaybook(session, playbook, '/playbooks', { debug: true })
+			);
+			expect(
+				debugEvents.find(
+					(event) =>
+						event.type === 'debug' &&
+						event.message?.includes('Missing playbook skills: missing-skill')
+				)
+			).toBeDefined();
 		});
 	});
 
@@ -1043,6 +1532,39 @@ describe('batch-processor', () => {
 			// Should complete without infinite loop
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent).toBeDefined();
+		});
+	});
+
+	describe('skill bus integration', () => {
+		it('records task history entries to skill bus', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task completed',
+					agentSessionId: 'claude-session-123',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Short summary\n\nFull synopsis',
+					agentSessionId: 'claude-session-123',
+				});
+
+			await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { writeHistory: true })
+			);
+
+			expect(addHistoryEntry).toHaveBeenCalled();
+			expect(recordSkillBusRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					skillName: 'maestro-autorun',
+				})
+			);
 		});
 	});
 });

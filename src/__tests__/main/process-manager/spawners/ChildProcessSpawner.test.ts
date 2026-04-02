@@ -60,6 +60,15 @@ vi.mock('../../../../main/parsers', () => ({
 		isResultMessage: vi.fn(),
 		detectErrorFromLine: vi.fn(),
 	})),
+	OpenClawOutputParser: vi.fn(() => ({
+		agentId: 'openclaw',
+		parseJsonLine: vi.fn(),
+		extractUsage: vi.fn(),
+		extractSessionId: vi.fn(),
+		extractSlashCommands: vi.fn(),
+		isResultMessage: vi.fn(),
+		detectErrorFromLine: vi.fn(),
+	})),
 }));
 
 vi.mock('../../../../main/agents', () => ({

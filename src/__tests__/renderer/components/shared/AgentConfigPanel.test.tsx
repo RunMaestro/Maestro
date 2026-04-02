@@ -242,5 +242,30 @@ describe('AgentConfigPanel', () => {
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});
+
+		it('should show preset value helper text for text fields with suggestions', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: createMockAgent({
+							configOptions: [
+								{
+									key: 'agentId',
+									type: 'text',
+									label: 'Agent ID',
+									description: 'OpenClaw agent to use',
+									default: '',
+									placeholder: 'main',
+									suggestions: ['main', 'ops'],
+								},
+							],
+						}),
+					})}
+				/>
+			);
+
+			expect(screen.getByPlaceholderText('main')).toBeInTheDocument();
+			expect(screen.getByText('2 preset values available')).toBeInTheDocument();
+		});
 	});
 });

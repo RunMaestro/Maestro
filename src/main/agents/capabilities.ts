@@ -225,6 +225,40 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
+	 * Cursor Agent - Cursor's CLI coding agent
+	 * https://cursor.com/docs/en/cli
+	 *
+	 * Verified locally against `cursor-agent --help` (2026-04-03).
+	 * Uses `--print --output-format stream-json` for headless execution and
+	 * `--resume <chatId>` for conversation continuity.
+	 */
+	'cursor-agent': {
+		supportsResume: true, // --resume [chatId]
+		supportsReadOnlyMode: true, // --mode plan
+		supportsJsonOutput: true, // --output-format stream-json
+		supportsSessionId: true, // session/chat identifiers in stream-json events
+		supportsImageInput: false, // No documented image/file input flag
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: false,
+		supportsSessionStorage: false, // No stable local storage contract integrated yet
+		supportsCostTracking: false, // CLI help/docs do not expose USD cost in stream output
+		supportsUsageStats: false, // Usage schema not wired into Maestro yet
+		supportsBatchMode: true, // --print headless mode
+		requiresPromptToStart: true, // Headless runs are prompt-driven
+		supportsStreaming: true, // stream-json output
+		supportsResultMessages: true, // Final result/completion event expected in stream-json mode
+		supportsModelSelection: true, // --model
+		supportsStreamJsonInput: false, // No stream-json input mode documented for prompts/images
+		supportsThinkingDisplay: false, // Partial output is text deltas, not explicit reasoning blocks
+		supportsContextMerge: true, // Can receive merged context via prompt text
+		supportsContextExport: false, // No session export/storage integration yet
+		supportsWizard: false, // Not validated for Maestro wizard contract yet
+		supportsGroupChatModeration: false, // Not validated for moderator flows yet
+		usesJsonLineOutput: true, // stream-json emits line-delimited JSON events
+		usesCombinedContextWindow: false, // Underlying model varies; keep conservative
+	},
+
+	/**
 	 * Gemini CLI - Google's Gemini model CLI
 	 *
 	 * PLACEHOLDER: Most capabilities set to false until Gemini CLI is stable
@@ -427,6 +461,36 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: false, // Phase 2: evaluate nested orchestration via sessions_spawn
 		usesJsonLineOutput: false, // Single JSON object output (not JSONL)
 		usesCombinedContextWindow: false, // Depends on underlying model provider
+	},
+
+	/**
+	 * Z.ai (Zhipu AI) - GLM series models from BigModel
+	 * Based on zai-cli (similar to Codex/Grok CLI)
+	 */
+	zai: {
+		supportsResume: true, // --session-id flag
+		supportsReadOnlyMode: true, // --sandbox read-only
+		supportsJsonOutput: true, // --json flag
+		supportsSessionId: true, // thread_id in output
+		supportsImageInput: true, // -f flag
+		supportsImageInputOnResume: true, // -f flag works with --session-id
+		supportsSlashCommands: false,
+		supportsSessionStorage: false, // ~/.zai/sessions/
+		supportsCostTracking: false, // Token counts only
+		supportsUsageStats: true, // usage in output
+		supportsBatchMode: true, // exec subcommand
+		requiresPromptToStart: true, // Requires prompt argument for exec
+		supportsStreaming: true, // JSONL output
+		supportsResultMessages: true,
+		supportsModelSelection: true, // --model flag
+		supportsStreamJsonInput: true, // --input-format stream-json
+		supportsThinkingDisplay: true, // Emits thinking content
+		supportsContextMerge: true,
+		supportsContextExport: true,
+		supportsWizard: true,
+		supportsGroupChatModeration: true,
+		usesJsonLineOutput: true,
+		usesCombinedContextWindow: true,
 	},
 };
 

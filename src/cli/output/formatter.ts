@@ -191,7 +191,17 @@ export interface PlaybookDetailDisplay {
 	folderPath?: string;
 	loopEnabled?: boolean;
 	maxLoops?: number | null;
+	taskTimeoutMs?: number | null;
+	maxParallelism?: number | null;
+	taskGraph?: import('../../shared/types').PlaybookTaskGraph;
 	prompt: string;
+	skills?: string[];
+	definitionOfDone?: string[];
+	verificationSteps?: string[];
+	promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+	documentContextMode?: 'full' | 'active-task-only';
+	skillPromptMode?: 'full' | 'brief';
+	agentStrategy?: 'single' | 'plan-execute-verify';
 	documents: {
 		filename: string;
 		resetOnCompletion: boolean;
@@ -226,7 +236,52 @@ export function formatPlaybookDetail(playbook: PlaybookDetailDisplay): string {
 		lines.push(`  ${c('white', 'Loop:')}       ${dim('disabled')}`);
 	}
 
+	lines.push(`  ${c('white', 'Profile:')}    ${playbook.promptProfile ?? 'compact-code'}`);
+	lines.push(
+		`  ${c('white', 'Context:')}    ${playbook.documentContextMode ?? 'active-task-only'}`
+	);
+	lines.push(`  ${c('white', 'Skill mode:')} ${playbook.skillPromptMode ?? 'brief'}`);
+	lines.push(`  ${c('white', 'Strategy:')}   ${playbook.agentStrategy ?? 'single'}`);
+	lines.push(
+		`  ${c('white', 'Timeout:')}    ${
+			playbook.taskTimeoutMs && playbook.taskTimeoutMs > 0
+				? `${playbook.taskTimeoutMs}ms`
+				: dim('default')
+		}`
+	);
+	lines.push(`  ${c('white', 'Parallel:')}   ${playbook.maxParallelism ?? 1}`);
+
 	lines.push('');
+
+	if (playbook.skills && playbook.skills.length > 0) {
+		lines.push(`  ${c('white', 'Skills:')}     ${playbook.skills.join(', ')}`);
+		lines.push('');
+	}
+
+	if (playbook.definitionOfDone && playbook.definitionOfDone.length > 0) {
+		lines.push(`  ${c('white', 'DoD:')}`);
+		for (const item of playbook.definitionOfDone) {
+			lines.push(`    ${dim(`- ${item}`)}`);
+		}
+		lines.push('');
+	}
+
+	if (playbook.taskGraph?.nodes?.length) {
+		lines.push(`  ${c('white', 'Graph:')}`);
+		for (const node of playbook.taskGraph.nodes) {
+			const dependsOn = node.dependsOn?.length ? ` <- ${node.dependsOn.join(', ')}` : '';
+			lines.push(`    ${dim('•')} ${node.id} ${dim(`[doc ${node.documentIndex}]`)}${dependsOn}`);
+		}
+		lines.push('');
+	}
+
+	if (playbook.verificationSteps && playbook.verificationSteps.length > 0) {
+		lines.push(`  ${c('white', 'Verify:')}`);
+		for (const item of playbook.verificationSteps) {
+			lines.push(`    ${dim(`- ${item}`)}`);
+		}
+		lines.push('');
+	}
 
 	// Prompt
 	lines.push(`  ${c('white', 'Prompt:')}`);
@@ -403,6 +458,7 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 				scan: 'blue',
 				loop: 'magenta',
 				reset: 'yellow',
+				budget: 'yellow',
 			};
 			const categoryColor = categoryColors[category] || 'gray';
 			return `${timeStr} ${c('gray', '🔍')} ${c(categoryColor, `[${category}]`)} ${dim(message)}`;
@@ -413,8 +469,14 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			const doc = event.document as string;
 			const taskIndex = (event.taskIndex as number) + 1;
 			const prompt = event.prompt as string;
+			const promptChars = event.finalPromptChars as number | undefined;
+			const promptTokens = event.estimatedPromptTokens as number | undefined;
+			const metricSuffix =
+				typeof promptChars === 'number' && typeof promptTokens === 'number'
+					? ` ${dim(`(~${promptTokens} tok / ${promptChars} chars)`)}`
+					: '';
 			const separator = c('gray', '─'.repeat(80));
-			const header = `${timeStr} ${c('magenta', '📝')} ${c('magenta', `[${category}]`)} ${bold(doc)} Task ${taskIndex}`;
+			const header = `${timeStr} ${c('magenta', '📝')} ${c('magenta', `[${category}]`)} ${bold(doc)} Task ${taskIndex}${metricSuffix}`;
 			return `${separator}\n${header}\n${separator}\n${prompt}\n${separator}`;
 		}
 

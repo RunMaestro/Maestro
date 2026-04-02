@@ -109,6 +109,7 @@ export const SessionItem = memo(function SessionItem({
 		<div
 			key={`${variant}-${groupId || ''}-${session.id}`}
 			draggable
+			aria-current={isActive ? 'page' : undefined}
 			onDragStart={onDragStart}
 			onDragOver={onDragOver}
 			onDrop={onDrop}
@@ -118,10 +119,11 @@ export const SessionItem = memo(function SessionItem({
 			style={{
 				borderColor: isActive || isKeyboardSelected ? theme.colors.accent : 'transparent',
 				backgroundColor: isActive
-					? theme.colors.bgActivity
+					? theme.colors.accent + '18'
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				boxShadow: isActive ? `inset 2px 0 0 ${theme.colors.accent}` : 'none',
 			}}
 		>
 			{/* Left side: Session name and metadata */}

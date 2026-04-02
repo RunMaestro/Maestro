@@ -18,6 +18,7 @@ import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
 import { captureException } from '../../utils/sentry';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 /**
  * Auto Run session data shape from the API
@@ -67,17 +68,7 @@ function formatDuration(ms: number): string {
  * Format agent type to display name
  */
 function formatAgentName(agentType: string): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return names[agentType] || agentType;
+	return getAgentDisplayName(agentType);
 }
 
 /**

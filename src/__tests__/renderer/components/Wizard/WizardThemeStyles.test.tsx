@@ -350,18 +350,21 @@ describe('Wizard Theme Styles', () => {
 			renderWithProviders(<AgentSelectionScreen theme={theme} />);
 
 			await vi.waitFor(() => {
-				// Find the Continue button (there may be multiple elements with this text)
+				// Find the primary action button (grid mode shows "Configure Agent").
 				const buttons = screen.getAllByRole('button');
-				const continueButton = buttons.find((btn) => btn.textContent?.includes('Continue'));
-				expect(continueButton).toBeDefined();
+				const actionButton = buttons.find((btn) =>
+					/Configure Agent|Continue/.test(btn.textContent ?? '')
+				);
+				expect(actionButton).toBeDefined();
 			});
 
-			// The Continue button should use accent colors when enabled
+			// The primary action button should have inline theme styles applied.
 			const buttons = screen.getAllByRole('button');
-			const continueButton = buttons.find((btn) => btn.textContent?.includes('Continue'));
+			const actionButton = buttons.find((btn) =>
+				/Configure Agent|Continue/.test(btn.textContent ?? '')
+			);
 
-			// Check that the button has style applied
-			expect(continueButton).toHaveAttribute('style');
+			expect(actionButton).toHaveAttribute('style');
 		});
 	});
 

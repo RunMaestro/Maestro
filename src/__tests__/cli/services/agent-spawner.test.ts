@@ -22,6 +22,7 @@ import { EventEmitter } from 'events';
 // Create mock spawn function at module level
 const mockSpawn = vi.fn();
 const mockStdin = {
+	write: vi.fn(),
 	end: vi.fn(),
 };
 const mockStdout = new EventEmitter();
@@ -30,6 +31,7 @@ const mockChild = Object.assign(new EventEmitter(), {
 	stdin: mockStdin,
 	stdout: mockStdout,
 	stderr: mockStderr,
+	kill: vi.fn(),
 });
 
 // Mock child_process before imports
@@ -52,6 +54,7 @@ vi.mock('fs', async () => {
 		...actual,
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
+		copyFileSync: vi.fn(),
 		existsSync: vi.fn(() => false),
 		readdirSync: vi.fn(() => []),
 		mkdirSync: vi.fn(),
@@ -118,10 +121,20 @@ describe('agent-spawner', () => {
 		mockStderr.removeAllListeners();
 		(mockChild as EventEmitter).removeAllListeners();
 		mockGetAgentCustomPath.mockReturnValue(undefined);
+		delete process.env.CODEX_THREAD_ID;
+		delete process.env.MCP_SERVER_HOST;
+		delete process.env.MCP_SERVER_PORT;
+		delete process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+		delete process.env.CODEX_SHELL;
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		delete process.env.CODEX_THREAD_ID;
+		delete process.env.MCP_SERVER_HOST;
+		delete process.env.MCP_SERVER_PORT;
+		delete process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
+		delete process.env.CODEX_SHELL;
 	});
 
 	describe('readDocAndCountTasks', () => {
@@ -853,6 +866,144 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await resultPromise;
 			expect(result.success).toBe(true);
+		});
+
+		it('should spawn Codex with lean batch defaults for new tasks', async () => {
+			process.env.CODEX_THREAD_ID = 'thread-123';
+			process.env.MCP_SERVER_HOST = '127.0.0.1';
+			process.env.MCP_SERVER_PORT = '3000';
+			process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE = 'Codex Desktop';
+			process.env.CODEX_SHELL = '1';
+			vi.mocked(fs.existsSync).mockImplementation((filePath) =>
+				String(filePath).endsWith('/.codex/auth.json')
+			);
+
+			const resultPromise = spawnAgent('codex', '/project/path', 'Test prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(mockSpawn).toHaveBeenCalled();
+			const [cmd, args, options] = mockSpawn.mock.calls[0];
+
+			expect(cmd).toBeTruthy();
+			expect(args).toContain('exec');
+			expect(args).toContain('--json');
+			expect(args).toContain('--dangerously-bypass-approvals-and-sandbox');
+			expect(args).toContain('--skip-git-repo-check');
+			expect(args).toContain('--ephemeral');
+			expect(args).toContain('-c');
+			expect(args).toContain('web_search="disabled"');
+			expect(args).toContain('-C');
+			expect(args).toContain('/project/path');
+			expect(args).toContain('--');
+			expect(args).toContain('-');
+			expect(args).not.toContain('Test prompt');
+
+			expect(options.cwd).toBe('/project/path');
+			expect(options.env.CODEX_THREAD_ID).toBeUndefined();
+			expect(options.env.MCP_SERVER_HOST).toBeUndefined();
+			expect(options.env.MCP_SERVER_PORT).toBeUndefined();
+			expect(options.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE).toBeUndefined();
+			expect(options.env.CODEX_SHELL).toBeUndefined();
+			expect(options.env.CODEX_HOME).toBe('/tmp/maestro-codex-batch-home');
+			expect(fs.mkdirSync).toHaveBeenCalledWith('/tmp/maestro-codex-batch-home', {
+				recursive: true,
+			});
+			expect(fs.copyFileSync).toHaveBeenCalledWith(
+				expect.stringMatching(/\/\.codex\/auth\.json$/),
+				'/tmp/maestro-codex-batch-home/auth.json'
+			);
+			expect(fs.writeFileSync).toHaveBeenCalledWith(
+				'/tmp/maestro-codex-batch-home/config.toml',
+				expect.stringContaining('approval_policy = "never"')
+			);
+			expect(mockStdin.write).toHaveBeenCalledWith('Test prompt');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"thread.started","thread_id":"codex-thread"}\n')
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n')
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5,"cached_input_tokens":2}}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toContain('Done');
+			expect(result.agentSessionId).toBe('codex-thread');
+		});
+
+		it('should skip lean-only flags when Codex resumes an existing session', async () => {
+			const resultPromise = spawnAgent(
+				'codex',
+				'/project/path',
+				'Test prompt',
+				'existing-thread-id'
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			expect(args).toContain('resume');
+			expect(args).toContain('existing-thread-id');
+			expect(args).toContain('-');
+			expect(args).not.toContain('--ephemeral');
+			expect(args).not.toContain('web_search="disabled"');
+			expect(args).not.toContain('Test prompt');
+			expect(mockSpawn.mock.calls[0][2].env.CODEX_HOME).toBeUndefined();
+			expect(fs.copyFileSync).not.toHaveBeenCalled();
+			expect(mockStdin.write).toHaveBeenCalledWith('Test prompt');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"thread.started","thread_id":"existing-thread-id"}\n')
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"Done"}}\n')
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+		});
+
+		it('should time out and terminate Codex when batch execution does not exit', async () => {
+			vi.useFakeTimers();
+			try {
+				vi.mocked(fs.existsSync).mockImplementation((filePath) =>
+					String(filePath).endsWith('/.codex/auth.json')
+				);
+
+				const resultPromise = spawnAgent('codex', '/project/path', 'Test prompt', undefined, {
+					timeoutMs: 1000,
+				});
+
+				await Promise.resolve();
+				vi.advanceTimersByTime(1000);
+				await Promise.resolve();
+
+				expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+
+				mockChild.emit('close', null);
+
+				const result = await resultPromise;
+				expect(result.success).toBe(false);
+				expect(result.timedOut).toBe(true);
+				expect(result.error).toBe('Timed out after 1000ms');
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('should parse result from stdout', async () => {

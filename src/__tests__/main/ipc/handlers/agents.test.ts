@@ -81,6 +81,7 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 }));
 
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { logger } from '../../../../main/utils/logger';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
 
@@ -547,6 +548,28 @@ describe('agents IPC handlers', () => {
 				opencode: { model: 'ollama/qwen3' },
 				'claude-code': { customPath: '/custom' },
 			});
+		});
+
+		it('should redact sensitive config values in logs', async () => {
+			mockAgentConfigsStore.get.mockReturnValue({});
+
+			const handler = handlers.get('agents:setConfig');
+			await handler!({} as any, 'claude-code', {
+				apiKey: 'super-secret',
+				baseUrl: 'https://api.anthropic.com',
+			});
+
+			expect(logger.info).toHaveBeenLastCalledWith(
+				'Updated config for agent: claude-code',
+				'[AgentConfig]',
+				{
+					keys: ['apiKey', 'baseUrl'],
+					config: {
+						apiKey: '[REDACTED]',
+						baseUrl: 'https://api.anthropic.com',
+					},
+				}
+			);
 		});
 	});
 

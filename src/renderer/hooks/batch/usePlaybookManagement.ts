@@ -26,6 +26,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
 import type { Playbook, BatchDocumentEntry } from '../../types';
 import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import { buildImplicitTaskGraph, normalizePlaybookSkills } from '../../../shared/playbookDag';
 
 /**
  * Configuration passed to the hook for modification detection
@@ -35,7 +36,34 @@ export interface PlaybookConfigState {
 	documents: BatchDocumentEntry[];
 	loopEnabled: boolean;
 	maxLoops: number | null;
+	taskTimeoutMs: number | null;
+	agentStrategy: 'single' | 'plan-execute-verify';
+	definitionOfDone: string[];
+	verificationSteps: string[];
 	prompt: string;
+}
+
+function toStoredDocuments(documents: BatchDocumentEntry[]) {
+	return documents.map((d) => ({
+		filename: d.filename,
+		resetOnCompletion: d.resetOnCompletion,
+	}));
+}
+
+function documentsMatchLoadedPlaybook(
+	documents: BatchDocumentEntry[],
+	loadedPlaybook: Playbook | null
+): boolean {
+	if (!loadedPlaybook) return false;
+	const storedDocuments = toStoredDocuments(documents);
+	if (storedDocuments.length !== loadedPlaybook.documents.length) {
+		return false;
+	}
+	return storedDocuments.every(
+		(doc, index) =>
+			doc.filename === loadedPlaybook.documents[index]?.filename &&
+			doc.resetOnCompletion === loadedPlaybook.documents[index]?.resetOnCompletion
+	);
 }
 
 /**
@@ -134,7 +162,16 @@ export function usePlaybookManagement(
 	const isPlaybookModified = useMemo(() => {
 		if (!loadedPlaybook) return false;
 
-		const { documents, loopEnabled, maxLoops, prompt } = config;
+		const {
+			documents,
+			loopEnabled,
+			maxLoops,
+			taskTimeoutMs,
+			agentStrategy,
+			definitionOfDone,
+			verificationSteps,
+			prompt,
+		} = config;
 
 		// Compare documents
 		const currentDocs = documents.map((d) => ({
@@ -159,6 +196,30 @@ export function usePlaybookManagement(
 		// Compare maxLoops setting
 		const savedMaxLoops = loadedPlaybook.maxLoops ?? null;
 		if (maxLoops !== savedMaxLoops) return true;
+
+		// Compare task timeout setting
+		const savedTaskTimeoutMs = loadedPlaybook.taskTimeoutMs ?? null;
+		if (taskTimeoutMs !== savedTaskTimeoutMs) return true;
+
+		// Compare agent strategy
+		const savedAgentStrategy = loadedPlaybook.agentStrategy ?? 'single';
+		if (agentStrategy !== savedAgentStrategy) return true;
+
+		const savedDefinitionOfDone = loadedPlaybook.definitionOfDone ?? [];
+		if (definitionOfDone.length !== savedDefinitionOfDone.length) return true;
+		for (let i = 0; i < definitionOfDone.length; i++) {
+			if (definitionOfDone[i] !== savedDefinitionOfDone[i]) {
+				return true;
+			}
+		}
+
+		const savedVerificationSteps = loadedPlaybook.verificationSteps ?? [];
+		if (verificationSteps.length !== savedVerificationSteps.length) return true;
+		for (let i = 0; i < verificationSteps.length; i++) {
+			if (verificationSteps[i] !== savedVerificationSteps[i]) {
+				return true;
+			}
+		}
 
 		// Compare prompt
 		if (prompt !== loadedPlaybook.prompt) return true;
@@ -192,6 +253,10 @@ export function usePlaybookManagement(
 				documents: entries,
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops ?? null,
+				taskTimeoutMs: playbook.taskTimeoutMs ?? null,
+				agentStrategy: playbook.agentStrategy ?? 'single',
+				definitionOfDone: playbook.definitionOfDone ?? [],
+				verificationSteps: playbook.verificationSteps ?? [],
 				prompt: effectivePrompt,
 			});
 
@@ -274,19 +339,37 @@ export function usePlaybookManagement(
 
 			setSavingPlaybook(true);
 			try {
-				const { documents, loopEnabled, maxLoops, prompt } = config;
+				const {
+					documents,
+					loopEnabled,
+					maxLoops,
+					taskTimeoutMs,
+					agentStrategy,
+					definitionOfDone,
+					verificationSteps,
+					prompt,
+				} = config;
 
 				// Build playbook data
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
+				const storedDocuments = toStoredDocuments(documents);
+				const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
 				const playbookData: Parameters<typeof window.maestro.playbooks.create>[1] = {
 					name,
-					documents: documents.map((d) => ({
-						filename: d.filename,
-						resetOnCompletion: d.resetOnCompletion,
-					})),
+					documents: storedDocuments,
 					loopEnabled,
 					maxLoops,
+					taskTimeoutMs,
+					maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
+					taskGraph:
+						shouldPreserveGraph && loadedPlaybook?.taskGraph
+							? loadedPlaybook.taskGraph
+							: buildImplicitTaskGraph(storedDocuments),
 					prompt,
+					skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
+					definitionOfDone,
+					verificationSteps,
+					agentStrategy,
 				};
 
 				const result = await window.maestro.playbooks.create(sessionId, playbookData);
@@ -310,18 +393,36 @@ export function usePlaybookManagement(
 
 		setSavingPlaybook(true);
 		try {
-			const { documents, loopEnabled, maxLoops, prompt } = config;
+			const {
+				documents,
+				loopEnabled,
+				maxLoops,
+				taskTimeoutMs,
+				agentStrategy,
+				definitionOfDone,
+				verificationSteps,
+				prompt,
+			} = config;
 
 			// Build update data
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
+			const storedDocuments = toStoredDocuments(documents);
+			const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
 			const updateData: Parameters<typeof window.maestro.playbooks.update>[2] = {
-				documents: documents.map((d) => ({
-					filename: d.filename,
-					resetOnCompletion: d.resetOnCompletion,
-				})),
+				documents: storedDocuments,
 				loopEnabled,
 				maxLoops,
+				taskTimeoutMs,
+				maxParallelism: loadedPlaybook.maxParallelism ?? 1,
+				taskGraph:
+					shouldPreserveGraph && loadedPlaybook.taskGraph
+						? loadedPlaybook.taskGraph
+						: buildImplicitTaskGraph(storedDocuments),
 				prompt,
+				skills: normalizePlaybookSkills(loadedPlaybook.skills ?? []),
+				definitionOfDone,
+				verificationSteps,
+				agentStrategy,
 				updatedAt: Date.now(),
 			};
 

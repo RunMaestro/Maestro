@@ -10,6 +10,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../../../main/utils/agent-args';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -227,6 +228,42 @@ describe('buildAgentArgs', () => {
 		});
 		const result = buildAgentArgs(agent, { baseArgs: ['--print'] });
 		expect(result).toEqual(['--print']);
+	});
+
+	it('reconstructs canonical OpenClaw resume args from stored IDs', () => {
+		const openclaw = getAgentDefinition('openclaw') as AgentConfig;
+		const result = buildAgentArgs(openclaw, {
+			baseArgs: ['--json'],
+			agentSessionId: 'main:abc-123',
+		});
+		expect(result).toEqual(['--json', '--agent', 'main', '--session-id', 'abc-123']);
+	});
+
+	it('replaces conflicting OpenClaw agent and session flags when resuming', () => {
+		const openclaw = getAgentDefinition('openclaw') as AgentConfig;
+		const result = buildAgentArgs(openclaw, {
+			baseArgs: ['--json', '--agent', 'ops', '--session-id', 'stale-session'],
+			agentSessionId: 'main:abc-123',
+		});
+		expect(result).toEqual(['--json', '--agent', 'main', '--session-id', 'abc-123']);
+	});
+
+	it('trims whitespace before reconstructing canonical OpenClaw resume args', () => {
+		const openclaw = getAgentDefinition('openclaw') as AgentConfig;
+		const result = buildAgentArgs(openclaw, {
+			baseArgs: ['--json'],
+			agentSessionId: '  main:abc-123  ',
+		});
+		expect(result).toEqual(['--json', '--agent', 'main', '--session-id', 'abc-123']);
+	});
+
+	it('falls back to generic OpenClaw resume args for raw session IDs', () => {
+		const openclaw = getAgentDefinition('openclaw') as AgentConfig;
+		const result = buildAgentArgs(openclaw, {
+			baseArgs: ['--json'],
+			agentSessionId: 'abc-123',
+		});
+		expect(result).toEqual(['--json', '--session-id', 'abc-123']);
 	});
 
 	// -- combined --
@@ -464,6 +501,45 @@ describe('applyAgentConfigOverrides', () => {
 			agentConfigValues: { temperature: '0.9' },
 		});
 		expect(result.args).toEqual(['--temp', '0.9']);
+	});
+
+	it('does not append OpenClaw agentId override when resume args already specify the agent', () => {
+		const openclaw = getAgentDefinition('openclaw') as AgentConfig;
+		const result = applyAgentConfigOverrides(
+			openclaw,
+			['--agent', 'main', '--session-id', 'abc-123'],
+			{
+				agentConfigValues: { agentId: 'ops' },
+			}
+		);
+
+		expect(result.args).toEqual(['--agent', 'main', '--session-id', 'abc-123']);
+	});
+
+	it('keeps only the last model flag/value pair across layered sources', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model',
+					default: '',
+					argBuilder: (val: any) => (val ? ['-m', String(val)] : []),
+				},
+			],
+		});
+
+		const result = applyAgentConfigOverrides(agent, ['exec', '-m', 'base-model'], {
+			agentConfigValues: {
+				model: 'agent-model',
+				customArgs: '--model custom-model',
+			},
+			sessionCustomModel: 'session-model',
+		});
+
+		expect(result.args).toEqual(['exec', '--model', 'custom-model']);
+		expect(result.modelSource).toBe('session');
 	});
 
 	// -- custom args --

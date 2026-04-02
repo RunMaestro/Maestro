@@ -268,6 +268,58 @@ const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Cursor Agent Error Patterns
+// ============================================================================
+
+const CURSOR_AGENT_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not logged in|login required|please log in/i,
+			message: 'Cursor Agent is not logged in. Run "cursor-agent login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication failed|unauthorized|invalid api key/i,
+			message:
+				'Cursor Agent authentication failed. Re-run "cursor-agent login" or check CURSOR_API_KEY.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests|quota exceeded/i,
+			message: 'Cursor Agent rate limit reached. Wait a moment and try again.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection failed|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Cursor Agent network request failed. Check your connection and retry.',
+			recoverable: true,
+		},
+	],
+
+	permission_denied: [
+		{
+			pattern: /permission denied|sandbox/i,
+			message: 'Cursor Agent was blocked by permissions or sandbox policy.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /cursor-agent.*command not found|spawn .*cursor-agent.*ENOENT/i,
+			message: 'Cursor Agent CLI was not found. Install it or update the configured path.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // OpenCode Error Patterns
 // ============================================================================
 
@@ -821,6 +873,77 @@ const OPENCLAW_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Z.ai (Zhipu AI) Error Patterns
+// ============================================================================
+
+const ZAI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /invalid.*api.*key|api.*key.*invalid/i,
+			message: 'Invalid Z.ai API key. Please check your ZAI_API_KEY.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication.*failed/i,
+			message: 'Authentication failed. Please verify your Z.ai credentials.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*exceeded|context.*too\s+long/i,
+			message: 'Context limit exceeded. Start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /token.*limit/i,
+			message: 'Token limit reached. Consider starting a fresh conversation.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate.*limit/i,
+			message: 'Rate limit exceeded. Please wait before trying again.',
+			recoverable: true,
+		},
+		{
+			pattern: /too many requests/i,
+			message: 'Too many requests. Please wait before sending more messages.',
+			recoverable: true,
+		},
+		{
+			pattern: /quota.*exceeded/i,
+			message: 'API quota exceeded. Resume when quota resets.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /connection\s*(failed|refused|error|reset|closed)/i,
+			message: 'Connection failed. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND/i,
+			message: 'Network error. Check your connection to Z.ai.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /\b(fatal|unexpected|internal|unhandled)\s+error\b/i,
+			message: 'An unexpected error occurred in Z.ai.',
+			recoverable: true,
+		},
+	],
+};
+
+// ============================================================================
 // SSH Error Patterns
 // ============================================================================
 
@@ -1008,10 +1131,12 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 
 const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['claude-code', CLAUDE_ERROR_PATTERNS],
+	['cursor-agent', CURSOR_AGENT_ERROR_PATTERNS],
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
 	['openclaw', OPENCLAW_ERROR_PATTERNS],
+	['zai', ZAI_ERROR_PATTERNS],
 ]);
 
 /**

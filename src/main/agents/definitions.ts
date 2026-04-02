@@ -17,6 +17,9 @@ interface BaseConfigOption {
 	key: string; // Storage key
 	label: string; // UI label
 	description: string; // Help text
+	placeholder?: string; // Optional UI placeholder/example
+	suggestions?: string[]; // Optional preset values shown in dropdown
+	envBuilder?: (value: any) => Record<string, string>;
 }
 
 /**
@@ -139,6 +142,68 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+
+		// UI configuration options
+		configOptions: [
+			{
+				key: 'authMethod',
+				type: 'select',
+				label: 'Auth Method',
+				description:
+					'Select "OAuth (Logged-in)" to use your active browser/CLI login and subscription. Select "Static API Key" for third-party providers like Z.ai.',
+				options: ['OAuth (Logged-in)', 'Static API Key'],
+				default: 'OAuth (Logged-in)',
+			},
+			{
+				key: 'provider',
+				type: 'select',
+				label: 'Provider',
+				description:
+					'The AI provider to use. Select "Anthropic (Official)" for official models, or "Z.ai (Zhipu AI)" for GLM models.',
+				options: ['Anthropic (Official)', 'Z.ai (Zhipu AI)'],
+				default: 'Anthropic (Official)',
+				envBuilder: (value: string): Record<string, string> => {
+					if (value === 'Z.ai (Zhipu AI)') {
+						return {
+							ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+						};
+					}
+					return {};
+				},
+			},
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description: 'Only required for "Static API Key" method. Leave empty for OAuth.',
+				placeholder: 'Enter API key',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ANTHROPIC_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'baseUrl',
+				type: 'text',
+				label: 'Base URL',
+				description:
+					'Custom endpoint (e.g. for Z.ai). Only used with Static API Key or for local routing.',
+				placeholder: 'https://api.anthropic.com',
+				suggestions: ['https://api.anthropic.com', 'https://api.z.ai/api/anthropic'],
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ANTHROPIC_BASE_URL: value.trim() } : {},
+			},
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model Override',
+				description: 'The model to use (e.g., glm-5, glm-5-turbo, glm-4.7).',
+				placeholder: 'glm-5',
+				suggestions: ['glm-5', 'glm-5-turbo', 'glm-4.7'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+		],
 	},
 	{
 		id: 'codex',
@@ -170,6 +235,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Model',
 				description:
 					'Model override (e.g., gpt-5.3-codex, o3). Leave empty to use the default from ~/.codex/config.toml.',
+				placeholder: 'gpt-5.3-codex',
+				suggestions: ['gpt-5.4', 'gpt-5.3-codex', 'o3'],
 				default: '', // Empty = use Codex's default model from config.toml
 				argBuilder: (value: string) => {
 					if (value && value.trim()) {
@@ -185,6 +252,71 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				description:
 					'Maximum context window size in tokens. Required for context usage display. Common values: 400000 (GPT-5.2/5.3), 128000 (GPT-4o).',
 				default: 400000, // Default for GPT-5.2+ models
+			},
+		],
+	},
+	{
+		id: 'cursor-agent',
+		name: 'Cursor Agent',
+		binaryName: 'cursor-agent',
+		command: 'cursor-agent',
+		args: [],
+		requiresPty: false,
+
+		// Batch mode: cursor-agent --print --output-format stream-json [--resume <id>] [prompt]
+		batchModeArgs: [
+			'--print',
+			'--output-format',
+			'stream-json',
+			'--stream-partial-output',
+			'--force',
+			'--trust',
+		],
+
+		// Session resume
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+
+		// Read-only planning mode
+		readOnlyArgs: ['--mode', 'plan'],
+		readOnlyCliEnforced: true,
+
+		// Full-access mode for Maestro-managed runs
+		yoloModeArgs: ['--force', '--trust'],
+
+		// Working directory
+		workingDirArgs: (dir: string) => ['--workspace', dir],
+
+		// UI config options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model override for Cursor Agent (for example: sonnet-4, sonnet-4-thinking, gpt-5).',
+				placeholder: 'sonnet-4',
+				suggestions: ['sonnet-4', 'sonnet-4-thinking', 'gpt-5'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description:
+					'Optional Cursor API key. Leave empty to use your existing Cursor login/session.',
+				placeholder: 'Enter CURSOR_API_KEY',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { CURSOR_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens for UI display. Cursor Agent often uses 1M-context Claude models.',
+				default: 1000000,
 			},
 		],
 	},
@@ -210,8 +342,25 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		promptArgs: (prompt: string) => ['-p', prompt],
 		configOptions: [
 			{
+				key: 'authMethod',
+				type: 'select',
+				label: 'Auth Method',
+				description:
+					'Select "OAuth (Logged-in)" to use your Google Account login. Select "API Key" to use GEMINI_API_KEY.',
+				options: ['OAuth (Logged-in)', 'API Key'],
+				default: 'OAuth (Logged-in)',
+				envBuilder: (value: string): Record<string, string> => {
+					if (value === 'OAuth (Logged-in)') {
+						return {
+							GEMINI_API_KEY: '', // Unset to force OAuth flow
+						};
+					}
+					return {};
+				},
+			},
+			{
 				key: 'model',
-				type: 'select' as const,
+				type: 'select',
 				label: 'Model',
 				description:
 					'Model to use. Auto lets Gemini route between Pro and Flash based on task complexity.',
@@ -231,7 +380,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 			{
 				key: 'contextWindow',
-				type: 'number' as const,
+				type: 'number',
 				label: 'Context Window Size',
 				description:
 					'Maximum context window size in tokens. Common values: 1048576 (Gemini 2.5 Pro), 32767 (Gemini 2.5 Flash).',
@@ -288,6 +437,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Model',
 				description:
 					'Model to use (e.g., "ollama/qwen3:8b", "anthropic/claude-sonnet-4-20250514"). Leave empty for default.',
+				placeholder: 'ollama/qwen3:8b',
+				suggestions: ['ollama/qwen3:8b', 'anthropic/claude-sonnet-4-20250514', 'openai/gpt-5.4'],
 				default: '', // Empty string means use OpenCode's default model
 				argBuilder: (value: string) => {
 					// Only add --model arg if a model is specified
@@ -435,6 +586,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Agent ID',
 				description:
 					'OpenClaw agent to use (e.g., "main", "ops"). Leave empty for default routing.',
+				placeholder: 'main',
+				suggestions: ['main', 'ops'],
 				default: '',
 				argBuilder: (value: string) => {
 					if (value && value.trim()) {
@@ -468,6 +621,51 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 					'Run the embedded agent locally instead of via Gateway (requires model provider API keys).',
 				default: false,
 				argBuilder: (value: boolean) => (value ? ['--local'] : []),
+			},
+		],
+	},
+	{
+		id: 'zai',
+		name: 'Z.ai (GLM)',
+		binaryName: 'zai',
+		command: 'zai',
+		args: [],
+		batchModePrefix: ['exec'],
+		batchModeArgs: ['--json'],
+		resumeArgs: (sessionId: string) => ['--session-id', sessionId],
+		readOnlyArgs: ['--sandbox', 'read-only'],
+		readOnlyCliEnforced: true,
+		workingDirArgs: (dir: string) => ['-C', dir],
+		imageArgs: (imagePath: string) => ['-f', imagePath],
+		modelArgs: (modelId: string) => ['--model', modelId],
+		configOptions: [
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description: 'Optional Z.ai API key. Leave empty to use your existing login/session.',
+				placeholder: 'Enter ZAI_API_KEY',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ZAI_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description: 'Model override for Z.ai (for example: glm-5, glm-5-turbo, glm-4.7).',
+				placeholder: 'glm-5',
+				suggestions: ['glm-5', 'glm-5-turbo', 'glm-4.7'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens for UI display. Depends on the selected GLM model.',
+				default: 128000,
 			},
 		],
 	},

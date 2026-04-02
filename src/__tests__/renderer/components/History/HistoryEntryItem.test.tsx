@@ -138,6 +138,42 @@ describe('HistoryEntryItem', () => {
 		expect(screen.getByTitle('Task failed')).toBeInTheDocument();
 	});
 
+	it('shows verification warning pill for WARN verdicts', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({
+					type: 'AUTO',
+					success: true,
+					verifierVerdict: 'WARN',
+				})}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Verification completed with warnings')).toBeInTheDocument();
+		expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+	});
+
+	it('shows verification failure pill for FAIL verdicts', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({
+					type: 'AUTO',
+					success: false,
+					verifierVerdict: 'FAIL',
+				})}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Verification failed')).toBeInTheDocument();
+		expect(screen.getByText('VERIFY FAIL')).toBeInTheDocument();
+	});
+
 	it('does not show success/failure indicator for USER entries', () => {
 		render(
 			<HistoryEntryItem

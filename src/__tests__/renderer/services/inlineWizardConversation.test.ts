@@ -88,6 +88,51 @@ describe('inlineWizardConversation', () => {
 			await messagePromise;
 		});
 
+		it('should extract and normalize OpenClaw session_id from JSON output', async () => {
+			const mockAgent = {
+				id: 'openclaw',
+				available: true,
+				command: 'openclaw',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'openclaw',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Run wizard', []);
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+
+			const openClawOutput = JSON.stringify({
+				payloads: [{ text: 'openclaw result', mediaUrl: null }],
+				meta: {
+					durationMs: 100,
+					agentMeta: {
+						sessionId: 'runtime-session-id',
+						agentName: 'main',
+						provider: 'anthropic',
+						model: 'claude-sonnet',
+					},
+				},
+			});
+			dataCallback(session.sessionId, openClawOutput);
+			exitCallback(session.sessionId, 1);
+
+			const result = await messagePromise;
+
+			expect(result.success).toBe(false);
+			expect(result.agentSessionId).toBe('main:runtime-session-id');
+		});
+
 		it('should set up onThinkingChunk listener when callback is provided', async () => {
 			const mockAgent = {
 				id: 'claude-code',

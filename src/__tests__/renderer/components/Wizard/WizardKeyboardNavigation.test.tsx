@@ -363,6 +363,25 @@ describe('Wizard Keyboard Navigation', () => {
 			// Should still be selected
 			expect(claudeTile).toHaveAttribute('aria-pressed', 'true');
 		});
+
+		it('should not allow selecting an unavailable supported agent', async () => {
+			renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Detecting available agents...')).not.toBeInTheDocument();
+			});
+
+			const claudeTile = screen.getByRole('button', { name: /claude code/i });
+			const geminiTile = screen.getByRole('button', { name: /gemini cli \(not installed\)/i });
+
+			expect(geminiTile).toHaveAttribute('aria-disabled', 'true');
+
+			fireEvent.click(geminiTile);
+
+			expect(claudeTile).toHaveAttribute('aria-pressed', 'true');
+			expect(geminiTile).toHaveAttribute('aria-pressed', 'false');
+			expect(screen.getByRole('button', { name: 'Configure Agent' })).toBeDisabled();
+		});
 	});
 
 	describe('DirectorySelectionScreen', () => {

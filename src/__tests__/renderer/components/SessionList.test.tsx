@@ -2096,6 +2096,7 @@ describe('SessionList', () => {
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
 			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+			expect(activeSession).toHaveAttribute('aria-current', 'page');
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {

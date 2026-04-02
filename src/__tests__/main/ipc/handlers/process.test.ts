@@ -17,6 +17,7 @@ import {
 	registerProcessHandlers,
 	ProcessHandlerDependencies,
 } from '../../../../main/ipc/handlers/process';
+import { buildAgentArgs } from '../../../../main/utils/agent-args';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -392,6 +393,34 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		it('should not pass modelId into buildAgentArgs when sessionCustomModel is provided', async () => {
+			const mockAgent = {
+				id: 'codex',
+				requiresPty: false,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-custom-model',
+				toolType: 'codex',
+				cwd: '/test',
+				command: 'codex',
+				args: [],
+				modelId: 'gpt-5.4',
+				sessionCustomModel: 'gpt-5.4',
+			});
+
+			expect(vi.mocked(buildAgentArgs)).toHaveBeenCalledWith(
+				mockAgent,
+				expect.objectContaining({
+					modelId: undefined,
+				})
+			);
 		});
 
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {

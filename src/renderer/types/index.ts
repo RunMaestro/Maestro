@@ -17,6 +17,8 @@ export type {
 	UsageStats,
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
+	PlaybookTaskGraph,
+	PlaybookTaskGraphNode,
 	Playbook,
 	ThinkingMode,
 	WorktreeRunTarget,
@@ -29,9 +31,9 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
 // Import for extension in this file
 import type {
+	BatchRunConfig as SharedBatchRunConfig,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
-	BatchDocumentEntry,
 	UsageStats,
 	ToolType,
 	ThinkingMode,
@@ -270,11 +272,7 @@ export interface GhCliStatus {
 }
 
 // Configuration for starting a batch run
-export interface BatchRunConfig {
-	documents: BatchDocumentEntry[]; // Ordered list of docs to run
-	prompt: string;
-	loopEnabled: boolean; // Loop back to first doc when done
-	maxLoops?: number | null; // Max loop iterations (null/undefined = infinite)
+export interface BatchRunConfig extends Omit<SharedBatchRunConfig, 'worktree'> {
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
 }
@@ -715,6 +713,8 @@ export interface AgentConfigOption {
 	description: string;
 	default: any;
 	options?: string[];
+	placeholder?: string;
+	suggestions?: string[];
 	argBuilder?: (value: any) => string[];
 }
 

@@ -47,6 +47,14 @@ describe('OpenClawOutputParser', () => {
 	});
 
 	describe('parseJsonObject', () => {
+		it('should emit canonical composite session IDs when parser has agent context', () => {
+			const parserWithAgent = new OpenClawOutputParser({ agentName: 'main' });
+			const event = parserWithAgent.parseJsonObject(makeStandardResult());
+
+			expect(event).not.toBeNull();
+			expect(event!.sessionId).toBe('main:session-1');
+		});
+
 		it('should parse standard OpenClaw --json result', () => {
 			const event = parser.parseJsonObject(makeStandardResult());
 			expect(event).not.toBeNull();
@@ -287,6 +295,25 @@ describe('OpenClawOutputParser', () => {
 			expect(error!.type).toBe('agent_crashed');
 			expect(error!.message).toBe('Something went wrong');
 			expect(error!.recoverable).toBe(true);
+		});
+
+		it('should return agent_crashed for failed status envelope', () => {
+			const payload = {
+				status: 'error',
+				message: 'OpenClaw batch call failed',
+				runId: 'run-1',
+			};
+
+			const error = parser.detectErrorFromParsed(payload);
+			const event = parser.parseJsonObject(payload);
+
+			expect(error).not.toBeNull();
+			expect(error!.type).toBe('agent_crashed');
+			expect(error!.message).toBe('OpenClaw batch call failed');
+			expect(event).not.toBeNull();
+			expect(event!.type).toBe('error');
+			expect(event!.text).toBe('OpenClaw batch call failed');
+			expect(parser.isResultMessage(event!)).toBe(false);
 		});
 
 		it('should return null for non-error event', () => {

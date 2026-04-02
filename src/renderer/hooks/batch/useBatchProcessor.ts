@@ -8,6 +8,7 @@ import type {
 	Group,
 	AutoRunStats,
 	AgentError,
+	ToolType,
 } from '../../types';
 import {
 	getBadgeForTime,
@@ -66,7 +67,34 @@ interface UseBatchProcessorProps {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			resumeAgentSessionId?: string;
+		}
+	) => Promise<{
+		success: boolean;
+		response?: string;
+		agentSessionId?: string;
+		usageStats?: UsageStats;
+	}>;
+	onSpawnBackgroundSynopsis?: (
+		sessionId: string,
+		cwd: string,
+		resumeAgentSessionId: string,
+		prompt: string,
+		toolType?: ToolType,
+		sessionConfig?: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customContextWindow?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+		}
 	) => Promise<{
 		success: boolean;
 		response?: string;
@@ -216,6 +244,7 @@ export function useBatchProcessor({
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
+	onSpawnBackgroundSynopsis,
 	onAddHistoryEntry,
 	onComplete,
 	onPRResult,
@@ -644,7 +673,16 @@ export function useBatchProcessor({
 				return;
 			}
 
-			const { documents, prompt, loopEnabled, maxLoops, worktree } = config;
+			const {
+				documents,
+				prompt,
+				loopEnabled,
+				maxLoops,
+				worktree,
+				agentStrategy,
+				definitionOfDone,
+				verificationSteps,
+			} = config;
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -1068,6 +1106,9 @@ export function useBatchProcessor({
 									loopIteration: loopIteration + 1, // 1-indexed
 									effectiveCwd,
 									customPrompt: prompt,
+									agentStrategy,
+									definitionOfDone,
+									verificationSteps,
 									sshRemoteId,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
@@ -1076,6 +1117,7 @@ export function useBatchProcessor({
 								docContent,
 								{
 									onSpawnAgent,
+									onSpawnBackgroundSynopsis,
 								}
 							);
 
@@ -1100,6 +1142,7 @@ export function useBatchProcessor({
 								agentSessionId,
 								success,
 							} = taskResult;
+							const countedCompletedTasks = success ? tasksCompletedThisRun : 0;
 
 							// Detect stalling: if document content is unchanged and no tasks were checked off
 							if (!documentChanged && tasksCompletedThisRun === 0) {
@@ -1110,12 +1153,12 @@ export function useBatchProcessor({
 							}
 
 							// Update counters
-							docTasksCompleted += tasksCompletedThisRun;
-							totalCompletedTasks += tasksCompletedThisRun;
-							loopTasksCompleted += tasksCompletedThisRun;
+							docTasksCompleted += countedCompletedTasks;
+							totalCompletedTasks += countedCompletedTasks;
+							loopTasksCompleted += countedCompletedTasks;
 
 							// Record this task in stats database (if stats tracking is active)
-							if (statsAutoRunId && tasksCompletedThisRun > 0) {
+							if (statsAutoRunId && countedCompletedTasks > 0) {
 								try {
 									await window.maestro.stats.recordAutoTask({
 										autoRunSessionId: statsAutoRunId,
@@ -1227,6 +1270,7 @@ export function useBatchProcessor({
 								success,
 								usageStats,
 								elapsedTimeMs,
+								verifierVerdict: taskResult.verifierVerdict ?? undefined,
 							});
 
 							// Speak the synopsis via TTS if audio feedback is enabled

@@ -84,6 +84,8 @@ describe('useAgentSessionManagement', () => {
 			agentSessions: {
 				...window.maestro.agentSessions,
 				read: vi.fn().mockResolvedValue({ messages: [], total: 0, hasMore: false }),
+				list: vi.fn().mockResolvedValue([]),
+				getOrigins: vi.fn().mockResolvedValue({}),
 			} satisfies MaestroAgentSessionsApi,
 			claude: {
 				...window.maestro.claude,
@@ -372,6 +374,63 @@ describe('useAgentSessionManagement', () => {
 		]);
 		expect(updatedSession.activeFileTabId).toBeNull();
 		expect(updatedSession.inputMode).toBe('ai');
+	});
+
+	it('resolves canonical OpenClaw session IDs before reading resumed session', async () => {
+		const activeSession = createMockSession({
+			toolType: 'openclaw',
+			projectRoot: '/test/project',
+		});
+		const setSessions = vi.fn();
+		const setActiveAgentSessionId = vi.fn();
+
+		window.maestro.agentSessions.list = vi
+			.fn()
+			.mockResolvedValue([{ sessionId: 'main:abc-123', lastUpdated: '2024-01-01T00:00:00.000Z' }]);
+		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
+			messages: [
+				{
+					type: 'assistant',
+					content: 'Welcome back',
+					timestamp: '2024-01-01T00:00:00.000Z',
+					uuid: 'msg-1',
+				},
+			],
+			total: 1,
+			hasMore: false,
+		});
+		window.maestro.agentSessions.getOrigins = vi.fn().mockResolvedValue({
+			'main:abc-123': { sessionName: 'Saved Main Session', starred: false },
+		});
+
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				activeSession,
+				setSessions,
+				setActiveAgentSessionId,
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleResumeSession('abc-123');
+		});
+
+		expect(window.maestro.agentSessions.list).toHaveBeenCalledOnce();
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'openclaw',
+			'/test/project',
+			'main:abc-123',
+			{ offset: 0, limit: 100 }
+		);
+		expect(setActiveAgentSessionId).toHaveBeenCalledWith('main:abc-123');
+
+		const updateFn = setSessions.mock.calls[0][0];
+		const [updatedSession] = updateFn([activeSession]);
+		const resumedTab = updatedSession.aiTabs.find((tab) => tab.agentSessionId === 'main:abc-123');
+		expect(resumedTab).toBeTruthy();
 	});
 
 	it('skips message fetch when messages are already provided', async () => {

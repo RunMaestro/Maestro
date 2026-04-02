@@ -29,6 +29,7 @@ import {
 import type { Theme } from '../types';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
 import type { ClaudeSession } from '../hooks';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 /**
  * Search result info for content-based searches
@@ -236,7 +237,7 @@ export function SessionListItem({
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
-							title="Claude Code CLI session"
+							title={`${getAgentDisplayName('terminal')} CLI session`}
 						>
 							CLI
 						</span>

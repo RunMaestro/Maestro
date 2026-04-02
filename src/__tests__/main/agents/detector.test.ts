@@ -278,8 +278,8 @@ describe('agent-detector', () => {
 
 			const agents = await detector.detectAgents();
 
-			// Should have all 9 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider, openclaw)
-			expect(agents.length).toBe(9);
+			// Should have all 11 agents including newly supported Cursor Agent and Z.ai.
+			expect(agents.length).toBe(11);
 
 			const agentIds = agents.map((a) => a.id);
 			expect(agentIds).toContain('terminal');
@@ -288,8 +288,11 @@ describe('agent-detector', () => {
 			expect(agentIds).toContain('gemini-cli');
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('opencode');
+			expect(agentIds).toContain('cursor-agent');
 			expect(agentIds).toContain('factory-droid');
 			expect(agentIds).toContain('aider');
+			expect(agentIds).toContain('openclaw');
+			expect(agentIds).toContain('zai');
 		});
 
 		it('should mark agents as available when binary is found', async () => {
@@ -924,8 +927,8 @@ describe('agent-detector', () => {
 
 			const result = await detectPromise;
 			expect(result).toBeDefined();
-			// Should have all 9 agents (terminal, claude-code, codex, gemini-cli, qwen3-coder, opencode, factory-droid, aider, openclaw)
-			expect(result.length).toBe(9);
+			// Should have all 11 agents including newly supported Cursor Agent and Z.ai.
+			expect(result.length).toBe(11);
 		});
 
 		it('should handle very long PATH', async () => {

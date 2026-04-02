@@ -17,6 +17,7 @@ import path from 'path';
 import crypto from 'crypto';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
+import { normalizePersistedPlaybook } from '../../../shared/playbookDag';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import type {
@@ -947,7 +948,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				// Prefix document filenames with the target folder path so they can be found
 				// when the playbook is loaded (allDocuments contains relative paths from root)
 				const now = Date.now();
-				const newPlaybook = {
+				const newPlaybook = normalizePersistedPlaybook({
 					id: crypto.randomUUID(),
 					name: marketplacePlaybook.title,
 					createdAt: now,
@@ -959,10 +960,28 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					})),
 					loopEnabled: marketplacePlaybook.loopEnabled,
 					maxLoops: marketplacePlaybook.maxLoops,
+					taskTimeoutMs: marketplacePlaybook.taskTimeoutMs ?? null,
+					maxParallelism: marketplacePlaybook.maxParallelism,
+					taskGraph: marketplacePlaybook.taskGraph,
 					// Use empty string if prompt is null - BatchRunnerModal and batch processor
 					// will fall back to DEFAULT_BATCH_PROMPT when prompt is empty
 					prompt: marketplacePlaybook.prompt ?? '',
-				};
+					skills: marketplacePlaybook.skills ?? [],
+					definitionOfDone: Array.isArray(marketplacePlaybook.definitionOfDone)
+						? marketplacePlaybook.definitionOfDone.filter(
+								(item) => typeof item === 'string' && item.trim() !== ''
+							)
+						: [],
+					verificationSteps: Array.isArray(marketplacePlaybook.verificationSteps)
+						? marketplacePlaybook.verificationSteps.filter(
+								(item) => typeof item === 'string' && item.trim() !== ''
+							)
+						: [],
+					promptProfile: marketplacePlaybook.promptProfile ?? 'compact-code',
+					documentContextMode: marketplacePlaybook.documentContextMode ?? 'active-task-only',
+					skillPromptMode: marketplacePlaybook.skillPromptMode ?? 'brief',
+					agentStrategy: marketplacePlaybook.agentStrategy ?? 'single',
+				});
 
 				// Save the playbook to the session's playbooks storage
 				const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

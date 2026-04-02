@@ -72,6 +72,7 @@ export interface HistoryEntry {
 	success?: boolean;
 	elapsedTimeMs?: number;
 	validated?: boolean;
+	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
 }
 
 // Document entry within a playbook
@@ -80,8 +81,41 @@ export interface PlaybookDocumentEntry {
 	resetOnCompletion: boolean;
 }
 
+export interface PlaybookTaskGraphNode {
+	id: string;
+	documentIndex: number;
+	dependsOn?: string[];
+}
+
+export interface PlaybookTaskGraph {
+	nodes: PlaybookTaskGraphNode[];
+}
+
+export type PlaybookPromptProfile = 'full' | 'compact-code' | 'compact-doc';
+export type PlaybookDocumentContextMode = 'full' | 'active-task-only';
+export type PlaybookSkillPromptMode = 'full' | 'brief';
+export type PlaybookAgentStrategy = 'single' | 'plan-execute-verify';
+export interface PlaybookBaselineMetadata {
+	taskTimeoutMs?: number | null;
+	skills?: string[];
+	definitionOfDone?: string[];
+	verificationSteps?: string[];
+	promptProfile?: PlaybookPromptProfile;
+	documentContextMode?: PlaybookDocumentContextMode;
+	skillPromptMode?: PlaybookSkillPromptMode;
+	agentStrategy?: PlaybookAgentStrategy;
+	maxParallelism?: number | null;
+	taskGraph?: PlaybookTaskGraph;
+}
+
+export interface PlaybookWorktreeSettings {
+	branchNameTemplate: string;
+	createPROnCompletion: boolean;
+	prTargetBranch?: string;
+}
+
 // A saved Playbook configuration
-export interface Playbook {
+export interface Playbook extends PlaybookBaselineMetadata {
 	id: string;
 	name: string;
 	createdAt: number;
@@ -90,12 +124,11 @@ export interface Playbook {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	prompt: string;
-	worktreeSettings?: {
-		branchNameTemplate: string;
-		createPROnCompletion: boolean;
-		prTargetBranch?: string;
-	};
+	worktreeSettings?: PlaybookWorktreeSettings;
 }
+
+export type PlaybookDraft = Omit<Playbook, 'id' | 'createdAt' | 'updatedAt'>;
+export type PlaybookUpdate = Partial<PlaybookDraft & { updatedAt: number }>;
 
 // Document entry in the batch run queue (runtime version with IDs)
 export interface BatchDocumentEntry {
@@ -131,6 +164,12 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	taskTimeoutMs?: number | null;
+	agentStrategy?: PlaybookAgentStrategy;
+	definitionOfDone?: string[];
+	verificationSteps?: string[];
+	maxParallelism?: number | null;
+	taskGraph?: PlaybookTaskGraph;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
 }

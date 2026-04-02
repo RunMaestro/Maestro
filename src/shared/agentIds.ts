@@ -17,12 +17,14 @@ export const AGENT_IDS = [
 	'terminal',
 	'claude-code',
 	'codex',
+	'cursor-agent',
 	'gemini-cli',
 	'qwen3-coder',
 	'opencode',
 	'factory-droid',
 	'aider',
 	'openclaw',
+	'zai',
 ] as const;
 
 /**

@@ -290,6 +290,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Possible standalone in future
 			...localBin('codex'),
 		],
+		'cursor-agent': [
+			// Cursor Agent standalone installer
+			...localBin('cursor-agent'),
+			// npm/global wrapper fallback
+			...npmGlobal('cursor-agent'),
+		],
 		openclaw: [
 			// OpenClaw local installer / user-local installs
 			...localBin('openclaw'),
@@ -320,6 +326,12 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 		gemini: [
 			// npm global installation
 			...npmGlobal('gemini'),
+		],
+		zai: [
+			// npm global installation
+			...npmGlobal('zai'),
+			// possible standalone
+			...localBin('zai'),
 		],
 		aider: [
 			// pip installation
@@ -407,6 +419,16 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('codex'),
 		],
+		'cursor-agent': [
+			// Cursor Agent standalone installer wrapper
+			...localBin('cursor-agent'),
+			// Homebrew-style fallback if distributed later
+			...homebrew('cursor-agent'),
+			// npm/global fallback
+			...npmGlobal('cursor-agent'),
+			// Node version managers
+			...nodeVersionManagers('cursor-agent'),
+		],
 		openclaw: [
 			// User local / direct installs
 			...localBin('openclaw'),
@@ -436,6 +458,14 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...homebrew('gemini'),
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('gemini'),
+		],
+		zai: [
+			// npm global paths
+			...npmGlobal('zai'),
+			// Homebrew paths
+			...homebrew('zai'),
+			// Node version managers
+			...nodeVersionManagers('zai'),
 		],
 		aider: [
 			// pip installation

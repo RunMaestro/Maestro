@@ -21,6 +21,7 @@ import {
 } from '../../../../main/ipc/handlers/marketplace';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { DEFAULT_AUTORUN_SKILLS } from '../../../../shared/playbookDag';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -133,7 +134,19 @@ describe('marketplace IPC handlers', () => {
 				documents: [{ filename: 'security-check', resetOnCompletion: false }],
 				loopEnabled: true,
 				maxLoops: 3,
+				maxParallelism: 2,
 				prompt: 'Custom instructions here',
+				taskGraph: {
+					nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+				},
+				taskTimeoutMs: 45000,
+				skills: ['maestro-cli-playbooks'],
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the changed task is reflected in the document'],
+				promptProfile: 'compact-doc',
+				documentContextMode: 'full',
+				skillPromptMode: 'full',
+				agentStrategy: 'plan-execute-verify',
 			},
 			{
 				id: 'test-playbook-with-assets',
@@ -642,6 +655,14 @@ describe('marketplace IPC handlers', () => {
 			// Verify prompt is empty string (not null)
 			expect(result.playbook.prompt).toBe('');
 			expect(typeof result.playbook.prompt).toBe('string');
+			expect(result.playbook.taskTimeoutMs).toBeNull();
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS]);
+			expect(result.playbook.definitionOfDone).toEqual([]);
+			expect(result.playbook.promptProfile).toBe('compact-code');
+			expect(result.playbook.documentContextMode).toBe('active-task-only');
+			expect(result.playbook.skillPromptMode).toBe('brief');
+			expect(result.playbook.agentStrategy).toBe('single');
 		});
 
 		it('should preserve custom prompt when provided', async () => {
@@ -671,6 +692,20 @@ describe('marketplace IPC handlers', () => {
 			);
 
 			expect(result.playbook.prompt).toBe('Custom instructions here');
+			expect(result.playbook.taskTimeoutMs).toBe(45000);
+			expect(result.playbook.maxParallelism).toBe(2);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'maestro-cli-playbooks']);
+			expect(result.playbook.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(result.playbook.verificationSteps).toEqual([
+				'Confirm the changed task is reflected in the document',
+			]);
+			expect(result.playbook.promptProfile).toBe('compact-doc');
+			expect(result.playbook.documentContextMode).toBe('full');
+			expect(result.playbook.skillPromptMode).toBe('full');
+			expect(result.playbook.agentStrategy).toBe('plan-execute-verify');
 		});
 
 		it('should save playbook to session storage', async () => {
@@ -712,6 +747,23 @@ describe('marketplace IPC handlers', () => {
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(1);
 			expect(writtenData.playbooks[0].id).toBe('test-uuid-123');
+			expect(writtenData.playbooks[0].taskTimeoutMs).toBe(45000);
+			expect(writtenData.playbooks[0].maxParallelism).toBe(2);
+			expect(writtenData.playbooks[0].taskGraph).toEqual({
+				nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(writtenData.playbooks[0].skills).toEqual([
+				...DEFAULT_AUTORUN_SKILLS,
+				'maestro-cli-playbooks',
+			]);
+			expect(writtenData.playbooks[0].definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(writtenData.playbooks[0].verificationSteps).toEqual([
+				'Confirm the changed task is reflected in the document',
+			]);
+			expect(writtenData.playbooks[0].promptProfile).toBe('compact-doc');
+			expect(writtenData.playbooks[0].documentContextMode).toBe('full');
+			expect(writtenData.playbooks[0].skillPromptMode).toBe('full');
+			expect(writtenData.playbooks[0].agentStrategy).toBe('plan-execute-verify');
 		});
 
 		it('should append to existing playbooks', async () => {

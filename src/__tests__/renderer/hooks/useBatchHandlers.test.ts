@@ -120,11 +120,13 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 }
 
 const mockSpawnAgentForSession = vi.fn().mockResolvedValue({ success: true });
+const mockSpawnBackgroundSynopsis = vi.fn().mockResolvedValue({ success: true });
 const mockHandleClearAgentError = vi.fn();
 
 function createDeps(overrides: Partial<UseBatchHandlersDeps> = {}): UseBatchHandlersDeps {
 	return {
 		spawnAgentForSession: mockSpawnAgentForSession,
+		spawnBackgroundSynopsis: mockSpawnBackgroundSynopsis,
 		rightPanelRef: { current: null },
 		processQueuedItemRef: { current: null },
 		handleClearAgentError: mockHandleClearAgentError,
@@ -242,6 +244,13 @@ describe('useBatchHandlers', () => {
 
 			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
 			expect(callArgs.onSpawnAgent).toBe(mockSpawnAgentForSession);
+		});
+
+		it('passes spawnBackgroundSynopsis as onSpawnBackgroundSynopsis', () => {
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+			expect(callArgs.onSpawnBackgroundSynopsis).toBe(mockSpawnBackgroundSynopsis);
 		});
 
 		it('passes audio feedback settings from store', () => {

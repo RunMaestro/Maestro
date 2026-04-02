@@ -18,6 +18,8 @@ describe('OpenClaw Agent Definition', () => {
 	it('should have correct resumeArgs', () => {
 		const def = getAgentDefinition('openclaw');
 		expect(def?.resumeArgs?.('sess-1')).toEqual(['--session-id', 'sess-1']);
+		expect(def?.resumeArgs?.('main:sess-2')).toEqual(['--session-id', 'main:sess-2']);
+		expect(def?.resumeArgs?.('main:sub:sess-3')).toEqual(['--session-id', 'main:sub:sess-3']);
 	});
 
 	it('should have correct promptArgs', () => {

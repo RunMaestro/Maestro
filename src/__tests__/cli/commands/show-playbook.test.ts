@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionInfo, Playbook } from '../../../shared/types';
+import { DEFAULT_AUTORUN_SKILLS } from '../../../shared/playbookDag';
 
 // Mock the services
 vi.mock('../../../cli/services/playbooks', () => ({
@@ -210,6 +211,69 @@ describe('show-playbook command', () => {
 			const parsed = JSON.parse(output);
 
 			expect(parsed.prompt).toBe('Custom instructions for the agent');
+		});
+
+		it('should include skills in JSON output when present', () => {
+			vi.mocked(findPlaybookById).mockReturnValue({
+				playbook: mockPlaybook({ prompt: 'Use skills', skills: ['code-review', 'test-gen'] }),
+				agentId: 'agent-123',
+			});
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readDocAndGetTasks).mockReturnValue({ tasks: [] });
+
+			showPlaybook('playbook-123', { json: true });
+
+			const output = consoleSpy.mock.calls[0][0];
+			const parsed = JSON.parse(output);
+
+			expect(parsed.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'code-review', 'test-gen']);
+		});
+
+		it('should include prompt budget settings in JSON output', () => {
+			vi.mocked(findPlaybookById).mockReturnValue({
+				playbook: mockPlaybook({
+					taskTimeoutMs: 45000,
+					maxParallelism: 2,
+					taskGraph: {
+						nodes: [
+							{ id: 'phase-01', documentIndex: 0, dependsOn: [] },
+							{ id: 'phase-02', documentIndex: 1, dependsOn: ['phase-01'] },
+						],
+					},
+					definitionOfDone: ['Relevant tests pass', 'Task checkbox is updated'],
+					verificationSteps: ['Confirm the changed task is reflected in the document'],
+					promptProfile: 'compact-code',
+					documentContextMode: 'active-task-only',
+					skillPromptMode: 'brief',
+					agentStrategy: 'plan-execute-verify',
+				}),
+				agentId: 'agent-123',
+			});
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readDocAndGetTasks).mockReturnValue({ tasks: [] });
+
+			showPlaybook('playbook-123', { json: true });
+
+			const output = consoleSpy.mock.calls[0][0];
+			const parsed = JSON.parse(output);
+
+			expect(parsed.taskTimeoutMs).toBe(45000);
+			expect(parsed.maxParallelism).toBe(2);
+			expect(parsed.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-01', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-02', documentIndex: 1, dependsOn: ['phase-01'] },
+				],
+			});
+			expect(parsed.definitionOfDone).toEqual(['Relevant tests pass', 'Task checkbox is updated']);
+			expect(parsed.verificationSteps).toEqual([
+				'Confirm the changed task is reflected in the document',
+			]);
+			expect(parsed.promptProfile).toBe('compact-code');
+			expect(parsed.documentContextMode).toBe('active-task-only');
+			expect(parsed.skillPromptMode).toBe('brief');
+			expect(parsed.agentStrategy).toBe('plan-execute-verify');
+			expect(parsed.skills).toEqual(expect.arrayContaining(DEFAULT_AUTORUN_SKILLS));
 		});
 
 		it('should include null prompt when not set', () => {

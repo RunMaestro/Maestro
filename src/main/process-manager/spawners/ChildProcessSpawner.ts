@@ -5,13 +5,14 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
+import { getOutputParser, OpenClawOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
+import { extractOpenClawAgentNameFromArgs } from '../../../shared/openclawSessionId';
 import { buildChildProcessEnv } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
@@ -342,15 +343,33 @@ export class ChildProcessSpawner {
 			const hasStreamingJsonFlag = argsContain('stream-json');
 			const hasJsonBatchFlag =
 				argsContain('--json') || (argsContain('--format') && argsContain('json'));
+			const isOpenClawJsonBatch = toolType === 'openclaw' && hasJsonBatchFlag;
 			const isStreamJsonMode =
-				hasStreamingJsonFlag ||
-				(capabilities.supportsStreaming && hasJsonBatchFlag) ||
+				(!isOpenClawJsonBatch && hasStreamingJsonFlag) ||
+				(!isOpenClawJsonBatch && capabilities.supportsStreaming && hasJsonBatchFlag) ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
 				(!!config.sshStdinScript && capabilities.supportsStreaming);
 
 			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+			const fallbackOutputParser = getOutputParser(toolType) || undefined;
+			let outputParser = fallbackOutputParser;
+			if (toolType === 'openclaw' && typeof OpenClawOutputParser === 'function') {
+				const openClawAgentName = extractOpenClawAgentNameFromArgs(finalArgs);
+				try {
+					outputParser = new OpenClawOutputParser({ agentName: openClawAgentName || undefined });
+				} catch (error) {
+					logger.warn(
+						'[ProcessManager] Falling back to shared parser registry for OpenClaw parser construction failure',
+						'ProcessManager',
+						{
+							error: String(error),
+							sessionId,
+						}
+					);
+					outputParser = fallbackOutputParser;
+				}
+			}
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,

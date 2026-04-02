@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type {
 	SessionState,
+	Session,
 	LogEntry,
 	BatchRunState,
 	BatchRunConfig,
@@ -42,7 +43,30 @@ export interface UseBatchHandlersDeps {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			resumeAgentSessionId?: string;
+		}
+	) => Promise<AgentSpawnResult>;
+	/** Resume an agent session in the background */
+	spawnBackgroundSynopsis?: (
+		sessionId: string,
+		cwd: string,
+		resumeAgentSessionId: string,
+		prompt: string,
+		toolType?: Session['toolType'],
+		sessionConfig?: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customContextWindow?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+		}
 	) => Promise<AgentSpawnResult>;
 	/** Ref to RightPanel for refreshing history after batch tasks */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
@@ -118,7 +142,13 @@ const selectAutoRunStats = (s: ReturnType<typeof useSettingsStore.getState>) => 
 // ============================================================================
 
 export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersReturn {
-	const { spawnAgentForSession, rightPanelRef, processQueuedItemRef, handleClearAgentError } = deps;
+	const {
+		spawnAgentForSession,
+		spawnBackgroundSynopsis,
+		rightPanelRef,
+		processQueuedItemRef,
+		handleClearAgentError,
+	} = deps;
 
 	// --- Store subscriptions (reactive) ---
 	const sessions = useSessionStore(selectSessions);
@@ -165,6 +195,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
 		onSpawnAgent: spawnAgentForSession,
+		onSpawnBackgroundSynopsis: spawnBackgroundSynopsis,
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
 				...entry,

@@ -4,6 +4,10 @@ import { createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import {
+	normalizeOpenClawSessionId,
+	resolveCanonicalOpenClawSessionId,
+} from '../../../shared/openclawSessionId';
 
 /**
  * History entry for the addHistoryEntry function.
@@ -170,10 +174,50 @@ export function useAgentSessionManagement(
 			// Use projectRoot (not cwd) for consistent session storage access
 			if (!activeSession?.projectRoot) return;
 
+			const isOpenClaw = activeSession.toolType === 'openclaw';
+			let resolvedSessionId = isOpenClaw
+				? normalizeOpenClawSessionId(agentSessionId) || agentSessionId
+				: agentSessionId;
+
+			if (isOpenClaw) {
+				try {
+					const sessions = await window.maestro.agentSessions.list(
+						activeSession.toolType,
+						activeSession.projectRoot
+					);
+					const listedSessionIds = sessions.map((session) => session.sessionId);
+					const canonicalSessionId = resolveCanonicalOpenClawSessionId(
+						agentSessionId,
+						listedSessionIds
+					);
+					if (canonicalSessionId) {
+						resolvedSessionId = canonicalSessionId;
+					}
+				} catch (error) {
+					console.warn(
+						'[handleResumeSession] Failed to resolve canonical OpenClaw session ID:',
+						error
+					);
+				}
+			}
+
 			// Check if a tab with this agentSessionId already exists
-			const existingTab = activeSession.aiTabs?.find(
-				(tab) => tab.agentSessionId === agentSessionId
-			);
+			const existingTab = activeSession.aiTabs?.find((tab) => {
+				if (tab.agentSessionId === resolvedSessionId) {
+					return true;
+				}
+
+				if (!isOpenClaw) {
+					return false;
+				}
+
+				if (!tab.agentSessionId) {
+					return false;
+				}
+
+				const tabCanonicalSessionId = normalizeOpenClawSessionId(tab.agentSessionId);
+				return tabCanonicalSessionId !== null && tabCanonicalSessionId === resolvedSessionId;
+			});
 			if (existingTab) {
 				// Switch to the existing tab instead of creating a duplicate
 				setSessions((prev) =>
@@ -183,7 +227,7 @@ export function useAgentSessionManagement(
 							: s
 					)
 				);
-				setActiveAgentSessionId(agentSessionId);
+				setActiveAgentSessionId(resolvedSessionId);
 				return;
 			}
 
@@ -199,7 +243,7 @@ export function useAgentSessionManagement(
 					const result = await window.maestro.agentSessions.read(
 						agentId,
 						activeSession.projectRoot,
-						agentSessionId,
+						resolvedSessionId,
 						{ offset: 0, limit: 100 }
 					);
 
@@ -220,25 +264,36 @@ export function useAgentSessionManagement(
 				let storedContextUsage: number | undefined;
 				let finalUsageStats = usageStats;
 
-				// Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
-				if (activeSession.toolType === 'claude-code') {
+				// Always look up origins for Claude/OpenClaw sessions to get contextUsage (and name/starred if not provided)
+				if (activeSession.toolType === 'claude-code' || activeSession.toolType === 'openclaw') {
 					try {
 						// Look up session metadata from session origins (name, starred, contextUsage)
-						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
+						// Claude uses claude-specific storage APIs; OpenClaw uses generic origins storage
 						// Use projectRoot (not cwd) for consistent session storage access
-						const origins = await window.maestro.claude.getSessionOrigins(
-							activeSession.projectRoot
-						);
-						const originData = origins[agentSessionId];
+						const origins =
+							activeSession.toolType === 'openclaw'
+								? await window.maestro.agentSessions.getOrigins(
+										activeSession.toolType,
+										activeSession.projectRoot
+									)
+								: await window.maestro.claude.getSessionOrigins(activeSession.projectRoot);
+						const originData = origins[resolvedSessionId];
 						if (originData && typeof originData === 'object') {
-							if (sessionName === undefined && originData.sessionName) {
-								name = originData.sessionName;
+							const originWithUsage = originData as {
+								contextUsage?: number;
+								origin?: 'user' | 'auto';
+								sessionName?: string;
+								starred?: boolean;
+							};
+
+							if (sessionName === undefined && typeof originWithUsage.sessionName === 'string') {
+								name = originWithUsage.sessionName;
 							}
-							if (starred === undefined && originData.starred !== undefined) {
-								isStarred = originData.starred;
+							if (starred === undefined && originWithUsage.starred !== undefined) {
+								isStarred = originWithUsage.starred;
 							}
-							if (originData.contextUsage !== undefined) {
-								storedContextUsage = originData.contextUsage;
+							if (originWithUsage.contextUsage !== undefined) {
+								storedContextUsage = originWithUsage.contextUsage;
 							}
 						}
 					} catch (error) {
@@ -270,7 +325,7 @@ export function useAgentSessionManagement(
 
 						// Create tab from the CURRENT session state (not stale closure value)
 						const result = createTab(s, {
-							agentSessionId,
+							agentSessionId: resolvedSessionId,
 							logs: messages,
 							name,
 							starred: isStarred,
@@ -283,7 +338,7 @@ export function useAgentSessionManagement(
 						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
 					})
 				);
-				setActiveAgentSessionId(agentSessionId);
+				setActiveAgentSessionId(resolvedSessionId);
 			} catch (error) {
 				console.error('Failed to resume session:', error);
 			}

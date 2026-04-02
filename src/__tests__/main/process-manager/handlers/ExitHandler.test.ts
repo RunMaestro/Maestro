@@ -85,6 +85,7 @@ function createMockOutputParser(overrides: Partial<AgentOutputParser> = {}): Age
 		extractSlashCommands: vi.fn(() => null),
 		isResultMessage: vi.fn(() => false),
 		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
 		detectErrorFromExit: vi.fn(() => null),
 		...overrides,
 	} as unknown as AgentOutputParser;
@@ -318,6 +319,43 @@ describe('ExitHandler', () => {
 				contextWindow: 200000,
 				reasoningTokens: undefined,
 			});
+		});
+
+		it('should emit agent-error on OpenClaw failure envelope in batch JSON', () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'agent_crashed',
+					message: 'OpenClaw batch call failed',
+					recoverable: true,
+					agentId: 'openclaw',
+					timestamp: Date.now(),
+				})),
+			});
+
+			const proc = createMockProcess({
+				toolType: 'openclaw',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: JSON.stringify({
+					status: 'error',
+					message: 'OpenClaw batch call failed',
+				}),
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: string[] = [];
+			const dataEvents: string[] = [];
+			emitter.on('agent-error', (_sid: string, error: any) => {
+				agentErrors.push(error.message);
+			});
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(proc.errorEmitted).toBe(true);
+			expect(agentErrors).toEqual(['OpenClaw batch call failed']);
+			expect(dataEvents).toHaveLength(0);
 		});
 	});
 

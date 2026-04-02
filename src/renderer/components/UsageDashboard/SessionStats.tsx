@@ -15,6 +15,7 @@ import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -86,17 +87,7 @@ function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): s
  * Format agent type display name
  */
 function formatAgentName(toolType: ToolType): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return names[toolType] || toolType;
+	return getAgentDisplayName(toolType);
 }
 
 export const SessionStats = memo(function SessionStats({

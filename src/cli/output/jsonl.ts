@@ -43,6 +43,7 @@ export interface TaskCompleteEvent extends JsonlEvent {
 	taskIndex: number;
 	success: boolean;
 	summary: string;
+	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
 	fullResponse?: string;
 	elapsedMs: number;
 	usageStats?: UsageStats;
@@ -175,6 +176,7 @@ export function emitTaskComplete(
 		fullResponse?: string;
 		usageStats?: UsageStats;
 		agentSessionId?: string;
+		verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
 	}
 ): void {
 	emitJsonl({

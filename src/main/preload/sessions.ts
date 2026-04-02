@@ -299,13 +299,15 @@ export function createAgentSessionsApi() {
 		},
 
 		registerSessionOrigin: (
+			agentId: string,
 			projectPath: string,
 			agentSessionId: string,
 			origin: 'user' | 'auto',
 			sessionName?: string
 		) =>
 			ipcRenderer.invoke(
-				'claude:registerSessionOrigin',
+				'agentSessions:registerSessionOrigin',
+				agentId,
 				projectPath,
 				agentSessionId,
 				origin,

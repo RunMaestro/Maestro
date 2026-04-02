@@ -15,6 +15,7 @@ import {
 	RunEvent,
 } from '../output/formatter';
 import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
+import { validatePlaybookDag } from '../../shared/playbookDag';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -233,6 +234,21 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				emitError('Agent does not have an Auto Run folder configured', 'NO_AUTORUN_FOLDER');
 			} else {
 				console.error(formatError('Agent does not have an Auto Run folder configured'));
+			}
+			process.exit(1);
+		}
+
+		const dagValidation = validatePlaybookDag(
+			playbook.documents,
+			playbook.taskGraph,
+			playbook.maxParallelism
+		);
+		if (!dagValidation.valid) {
+			const message = `Playbook DAG validation failed: ${dagValidation.errors.join(' ')}`;
+			if (useJson) {
+				emitError(message, 'PLAYBOOK_DAG_INVALID');
+			} else {
+				console.error(formatError(message));
 			}
 			process.exit(1);
 		}

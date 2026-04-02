@@ -587,6 +587,7 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'agent-session-abc');
 
 			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
+				'claude-code',
 				'/test/project',
 				'agent-session-abc',
 				'user'

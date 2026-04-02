@@ -8,35 +8,27 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	PlaybookDocumentEntry as SharedPlaybookDocument,
+	PlaybookDraft as SharedPlaybook,
+	PlaybookUpdate as SharedPlaybookUpdate,
+	PlaybookWorktreeSettings as SharedWorktreeSettings,
+} from '../../shared/types';
 
 /**
  * Playbook document configuration
  */
-export interface PlaybookDocument {
-	filename: string;
-	resetOnCompletion: boolean;
-}
+export type PlaybookDocument = SharedPlaybookDocument;
 
 /**
  * Worktree settings for playbook
  */
-export interface WorktreeSettings {
-	branchNameTemplate: string;
-	createPROnCompletion: boolean;
-	prTargetBranch?: string;
-}
+export type WorktreeSettings = SharedWorktreeSettings;
 
 /**
  * Playbook definition
  */
-export interface Playbook {
-	name: string;
-	documents: PlaybookDocument[];
-	loopEnabled: boolean;
-	maxLoops?: number | null;
-	prompt: string;
-	worktreeSettings?: WorktreeSettings;
-}
+export type Playbook = SharedPlaybook;
 
 /**
  * Creates the Auto Run API object for preload exposure
@@ -133,11 +125,8 @@ export function createPlaybooksApi() {
 		create: (sessionId: string, playbook: Playbook) =>
 			ipcRenderer.invoke('playbooks:create', sessionId, playbook),
 
-		update: (
-			sessionId: string,
-			playbookId: string,
-			updates: Partial<Playbook & { updatedAt: number }>
-		) => ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
+		update: (sessionId: string, playbookId: string, updates: SharedPlaybookUpdate) =>
+			ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
 
 		delete: (sessionId: string, playbookId: string) =>
 			ipcRenderer.invoke('playbooks:delete', sessionId, playbookId),

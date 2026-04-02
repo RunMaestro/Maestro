@@ -20,17 +20,26 @@ This phase turns the partially integrated OpenClaw work into a self-running prot
   - Validation completed with `npm run lint` and targeted Vitest suites covering path probing, child-process mode detection, exit-time parsing, and OpenClaw parser behavior.
   - Local smoke verification completed with real CLI: `openclaw agent --agent main --message 'Reply with exactly: maestro smoke ok' --json` returned `maestro smoke ok` and a valid OpenClaw result envelope.
 
-- [ ] Enroll OpenClaw in the first visible UI surfaces needed for a prototype:
+- [x] Enroll OpenClaw in the first visible UI surfaces needed for a prototype:
   - Update hardcoded agent lists, icons, labels, beta badges, and creation flows so OpenClaw can be selected from the standard new-agent and new-instance entry points.
   - Preserve capability-gated behavior by following existing Codex/OpenCode patterns instead of adding bespoke OpenClaw-only UI branches.
   - Ensure the prototype can reach a visible response area in the main workspace after selection.
+  - Completed on 2026-04-02. Added OpenClaw to the supported provider list in `NewInstanceModal`, enrolled it in the wizard agent tile grid with a first-pass logo/brand color, and kept the existing beta badge + capability-gated selection behavior intact.
+  - Adjusted wizard tile navigation to compute grid rows from `AGENT_TILES.length`, so keyboard navigation stays correct after adding the seventh OpenClaw tile.
+  - Added renderer coverage proving OpenClaw appears in the create flow and in the wizard agent-selection screen.
 
-- [ ] Add prototype-focused automated coverage for the code touched in this phase:
+- [x] Add prototype-focused automated coverage for the code touched in this phase:
   - Extend or create targeted tests for agent definition consistency, capabilities, parser behavior, and bootstrap wiring.
   - Add one small renderer or integration test that proves OpenClaw appears in the creation flow and can participate in the prototype path.
   - Prefer adapting existing tests for other providers before introducing new fixtures.
+  - Completed on 2026-04-02. Extended existing suites instead of introducing new fixture-heavy files: added OpenClaw bootstrap assertions for parser lookup/export and session-storage initialization/export, plus a wizard integration test that drives OpenClaw into the prototype flow through Project Discovery.
+  - Validation completed with `npx vitest run src/__tests__/main/agents/session-storage.test.ts src/__tests__/main/parsers/index.test.ts src/__tests__/renderer/components/Wizard/WizardIntegration.test.tsx` and `npm run lint`.
 
-- [ ] Verify the prototype works and repair blockers immediately:
+- [x] Verify the prototype works and repair blockers immediately:
   - Run the smallest relevant validation commands first, including `npm run lint` and the targeted Vitest suites affected by this phase.
   - Launch a working smoke path that proves an OpenClaw-backed session can send a prompt and render a response in Maestro, using the real CLI when available and the deterministic fixture only when necessary.
   - Fix any failures found during the smoke run before marking the phase complete.
+  - Completed on 2026-04-02. Re-ran `npm run lint`, rebuilt Electron targets with `npm run build:main` and `npm run build:renderer`, and re-ran the targeted Vitest suites for path probing, parser registration, child-process spawning, exit parsing, wizard integration, and NewInstanceModal coverage.
+  - Real CLI validation still passes locally: `openclaw agent --agent main --message 'Reply with exactly: maestro smoke ok' --json` returned `maestro smoke ok` inside the wrapped OpenClaw result envelope.
+  - Electron smoke path completed with the real CLI using a clean temporary project directory: launched the built app, opened the New Agent Wizard, selected OpenClaw, entered an agent name, advanced through directory selection, sent `Reply with exactly: maestro ui smoke ok` in Project Discovery, and observed `maestro ui smoke ok` rendered in Maestro.
+  - Smoke-path blockers encountered were procedural rather than product regressions: the launch initially surfaced a wizard resume prompt from existing state, the first attempt left the required agent name blank, and using the repository root triggered the existing Auto Run Docs modal. Switching to a clean temporary project directory produced a successful end-to-end run without further code changes.
