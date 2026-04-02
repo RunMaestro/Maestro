@@ -27,6 +27,7 @@ import type {
 	UsageStats,
 } from '../../types';
 import { notifyToast } from '../../stores/notificationStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { HistoryEntryInput } from './useAgentSessionManagement';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
@@ -883,6 +884,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									tabName: synopsisData!.tabName,
 									skipCustomNotification: true,
 								});
+
+								// Speak synopsis via TTS if audio feedback is enabled
+								// (mirrors the batch processor pattern in useBatchProcessor.ts)
+								const { audioFeedbackEnabled, audioFeedbackCommand } = useSettingsStore.getState();
+								if (audioFeedbackEnabled && audioFeedbackCommand && parsed.shortSummary) {
+									window.maestro.notification
+										.speak(parsed.shortSummary, audioFeedbackCommand)
+										.catch((err) => {
+											console.error('[onProcessExit] Failed to speak synopsis:', err);
+										});
+								}
 
 								if (deps.rightPanelRef.current) {
 									deps.rightPanelRef.current.refreshHistoryPanel();
