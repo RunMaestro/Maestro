@@ -15,6 +15,7 @@ import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
 import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
  * Default prompt used when user sends only an image without text.
@@ -89,9 +90,9 @@ export type BatchState = BatchRunState;
  */
 export interface UseInputProcessingReturn {
 	/** Process the current input (send message or execute command) */
-	processInput: (overrideInputValue?: string) => Promise<void>;
+	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => Promise<void>;
 	/** Ref to processInput for use in callbacks that need latest version */
-	processInputRef: React.MutableRefObject<((overrideInputValue?: string) => Promise<void>) | null>;
+	processInputRef: React.MutableRefObject<((overrideInputValue?: string, options?: { forceParallel?: boolean }) => Promise<void>) | null>;
 }
 
 /**
@@ -137,13 +138,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	} = deps;
 
 	// Ref for the processInput function so external code can access the latest version
-	const processInputRef = useRef<((overrideInputValue?: string) => Promise<void>) | null>(null);
+	const processInputRef = useRef<((overrideInputValue?: string, options?: { forceParallel?: boolean }) => Promise<void>) | null>(null);
 
 	/**
 	 * Process user input - handles slash commands, queuing, and message sending.
 	 */
 	const processInput = useCallback(
-		async (overrideInputValue?: string) => {
+		async (overrideInputValue?: string, options?: { forceParallel?: boolean }) => {
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
@@ -415,14 +416,21 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// so we need to explicitly check the batch state to prevent write conflicts
 				const isAutoRunActive = getBatchState(activeSession.id).isRunning;
 
+				// Forced parallel: user explicitly chose to bypass queue via modifier shortcut
+				const forceParallel = options?.forceParallel === true
+					&& useSettingsStore.getState().forcedParallelExecution;
+
 				// Determine if we should queue this message
 				// Read-only tabs can run in parallel - only queue if this specific tab is busy
 				// Write mode tabs must wait for any busy tab to finish
 				// EXCEPTION: Write commands bypass queue when all running/queued items are read-only
 				// ALSO: Always queue write commands when AutoRun is active (to prevent file conflicts)
-				const shouldQueue = isReadOnlyMode
-					? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
-					: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
+				// EXCEPTION: Forced parallel bypasses all queue logic (user explicitly chose to send immediately)
+				const shouldQueue = forceParallel
+					? false
+					: isReadOnlyMode
+						? activeTab?.state === 'busy' // Read-only: only queue if THIS tab is busy
+						: (activeSession.state === 'busy' && !canWriteBypassQueue()) || isAutoRunActive; // Write mode: queue if busy OR AutoRun active
 
 				// Debug logging to diagnose queue issues
 				console.log('[processInput] Queue decision:', {
@@ -431,6 +439,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					tabState: activeTab?.state,
 					isReadOnlyMode,
 					isAutoRunActive,
+					forceParallel,
 					shouldQueue,
 					queueLength: activeSession.executionQueue.length,
 				});

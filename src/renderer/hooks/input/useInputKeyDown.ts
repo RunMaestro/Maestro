@@ -40,7 +40,7 @@ export interface InputKeyDownDeps {
 	/** Sync file tree to highlight the tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 	/** Process and send the current input */
-	processInput: () => void;
+	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (input: string) => TabCompletionSuggestion[];
 	/** Ref to the input textarea */
@@ -237,6 +237,31 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const enterToSendTerminal = settings.enterToSendTerminal;
 
 			if (e.key === 'Enter') {
+				// Check for forced parallel send shortcut (only in AI mode)
+				if (activeSession?.inputMode !== 'terminal') {
+					const shortcuts = settings.shortcuts;
+					const fpShortcut = shortcuts.forcedParallelSend;
+					if (fpShortcut) {
+						const fpKeys = fpShortcut.keys.map((k: string) => k.toLowerCase());
+						const fpNeedsMeta = fpKeys.includes('meta') || fpKeys.includes('ctrl') || fpKeys.includes('command');
+						const fpNeedsShift = fpKeys.includes('shift');
+						const fpNeedsAlt = fpKeys.includes('alt');
+						const fpMainKey = fpKeys[fpKeys.length - 1];
+						const metaPressed = e.metaKey || e.ctrlKey;
+
+						if (
+							metaPressed === fpNeedsMeta &&
+							e.shiftKey === fpNeedsShift &&
+							e.altKey === fpNeedsAlt &&
+							e.key.toLowerCase() === fpMainKey
+						) {
+							e.preventDefault();
+							processInput(undefined, { forceParallel: true });
+							return;
+						}
+					}
+				}
+
 				const currentEnterToSend =
 					activeSession?.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI;
 
