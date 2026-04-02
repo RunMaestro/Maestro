@@ -7,6 +7,7 @@ import {
 	validateAgentPromptHasTaskReference,
 } from '../../../renderer/components/BatchRunnerModal';
 import type { Theme, Playbook } from '../../../renderer/types';
+import { COMPACT_DOC_AUTORUN_PROMPT } from '../../../shared/playbookPromptUtils';
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-123');
@@ -1446,11 +1447,55 @@ describe('Agent Strategy', () => {
 		});
 	});
 
+	it('passes loaded baseline metadata through to onGo config', async () => {
+		const playbook = createMockPlaybook({
+			promptProfile: 'compact-doc',
+			documentContextMode: 'full',
+			skillPromptMode: 'full',
+			skills: ['maestro-cli-playbooks', 'debugging-troubleshooting'],
+		});
+
+		(window.maestro.playbooks.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			playbooks: [playbook],
+		});
+
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Load Playbook/ })).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Load Playbook/ }));
+		fireEvent.click(screen.getByText('Test Playbook'));
+		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+
+		await waitFor(() => {
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					promptProfile: 'compact-doc',
+					documentContextMode: 'full',
+					skillPromptMode: 'full',
+					skills: expect.arrayContaining([
+						'context-and-impact',
+						'gitnexus',
+						'maestro-cli-playbooks',
+						'debugging-troubleshooting',
+					]),
+				})
+			);
+		});
+	});
+
 	it('loads and saves agentStrategy with playbooks', async () => {
 		const playbook = createMockPlaybook({
 			agentStrategy: 'plan-execute-verify',
 			definitionOfDone: ['Relevant tests pass'],
 			verificationSteps: ['Confirm the active task changed on disk'],
+			promptProfile: 'compact-doc',
+			documentContextMode: 'full',
+			skillPromptMode: 'full',
 		});
 
 		(window.maestro.playbooks.list as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1494,6 +1539,57 @@ describe('Agent Strategy', () => {
 					agentStrategy: 'single',
 					definitionOfDone: ['Verifier returns PASS'],
 					verificationSteps: ['Confirm the summary matches the document'],
+					promptProfile: 'compact-doc',
+					documentContextMode: 'full',
+					skillPromptMode: 'full',
+				})
+			);
+		});
+	});
+
+	it('keeps compact-doc defaults stable after load and stores an empty prompt on update', async () => {
+		const playbook = createMockPlaybook({
+			prompt: '',
+			promptProfile: 'compact-doc',
+		});
+
+		(window.maestro.playbooks.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+			success: true,
+			playbooks: [playbook],
+		});
+
+		const props = createDefaultProps();
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Load Playbook/ })).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Load Playbook/ }));
+		fireEvent.click(screen.getByText('Test Playbook'));
+
+		const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+		expect(textarea).toHaveValue(COMPACT_DOC_AUTORUN_PROMPT);
+		expect(screen.queryByText('Save Update')).not.toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText('Task Timeout'), {
+			target: { value: '45000' },
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText('Save Update')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByText('Save Update'));
+
+		await waitFor(() => {
+			expect(window.maestro.playbooks.update).toHaveBeenCalledWith(
+				'session-123',
+				'playbook-1',
+				expect.objectContaining({
+					prompt: '',
+					promptProfile: 'compact-doc',
+					taskTimeoutMs: 45000,
 				})
 			);
 		});

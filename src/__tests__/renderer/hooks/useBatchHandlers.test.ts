@@ -184,6 +184,9 @@ beforeEach(() => {
 		history: {
 			add: vi.fn().mockResolvedValue(undefined),
 		},
+		skillBus: {
+			recordRun: vi.fn().mockResolvedValue({ success: true }),
+		},
 		leaderboard: {
 			submit: vi.fn().mockResolvedValue({ success: false }),
 		},
@@ -1576,6 +1579,33 @@ describe('useBatchHandlers', () => {
 			// IPC history.add should still be called
 			expect(window.maestro.history.add).toHaveBeenCalled();
 			// Should not throw — no crash from null ref
+		});
+
+		it('records Auto Run task entries to skill bus', async () => {
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			await act(async () => {
+				await callArgs.onAddHistoryEntry({
+					type: 'AUTO',
+					timestamp: Date.now(),
+					summary: '[Spec] Task completed',
+					fullResponse: 'Details',
+					projectPath: '/test',
+					sessionId: 'session-1',
+					sessionName: 'Test Agent',
+					success: true,
+				} as any);
+			});
+
+			expect(window.maestro.history.add).toHaveBeenCalled();
+			expect(window.maestro.skillBus.recordRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					skillName: 'maestro-autorun',
+					result: 'success',
+				})
+			);
 		});
 	});
 

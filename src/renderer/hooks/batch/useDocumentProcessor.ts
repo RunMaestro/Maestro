@@ -15,10 +15,22 @@
 import { useCallback } from 'react';
 import type { Session, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
-import { countUnfinishedTasks, countCheckedTasks } from './batchUtils';
+import {
+	countUnfinishedTasks,
+	countCheckedTasks,
+	getPlaybookPromptForExecution,
+} from './batchUtils';
 import { normalizeOpenClawSessionId } from '../../../shared/openclawSessionId';
-import { revertNewlyCheckedTasks } from '../../../shared/markdownTaskUtils';
+import {
+	buildActiveTaskDocumentContext,
+	revertNewlyCheckedTasks,
+} from '../../../shared/markdownTaskUtils';
 import type { ToolType } from '../../types';
+import type {
+	PlaybookDocumentContextMode,
+	PlaybookPromptProfile,
+	PlaybookSkillPromptMode,
+} from '../../../shared/types';
 
 const PLAN_STEP_INSTRUCTION = `You are the planning step for an Auto Run task.
 
@@ -52,6 +64,36 @@ function buildVerificationStepsSection(verificationSteps: string[] = []): string
 	}
 
 	return `## Verification Steps\n${verificationSteps.map((item) => `- ${item}`).join('\n')}`;
+}
+
+function getDocumentPromptSection(
+	docFilePath: string,
+	content: string,
+	mode: PlaybookDocumentContextMode = 'active-task-only'
+): string {
+	const modeNote =
+		mode === 'full'
+			? 'The full document is inlined below.'
+			: 'Only the active unchecked task and minimal nearby context are inlined below; open the document on disk if you need anything else.';
+
+	return `---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n${modeNote}\n\n${content}`;
+}
+
+function buildRequestedSkillsSection(
+	skills: string[] = [],
+	mode: PlaybookSkillPromptMode = 'brief'
+): string {
+	const normalizedSkills = skills.map((skill) => skill.trim()).filter(Boolean);
+	if (normalizedSkills.length === 0) {
+		return '';
+	}
+
+	const guidance =
+		mode === 'full'
+			? 'Load and apply these project or user skills if they are available in the workspace or user skill directories before editing.'
+			: 'Use these skills if they are available in the workspace or user skill directories.';
+
+	return `## Requested Skills\n${guidance}\n${normalizedSkills.map((skill) => `- ${skill}`).join('\n')}`;
 }
 
 function getVerifierVerdict(response?: string): 'PASS' | 'WARN' | 'FAIL' | null {
@@ -121,6 +163,10 @@ export interface DocumentProcessorConfig {
 	 * Custom prompt to use for task processing
 	 */
 	customPrompt: string;
+	promptProfile?: PlaybookPromptProfile;
+	documentContextMode?: PlaybookDocumentContextMode;
+	skillPromptMode?: PlaybookSkillPromptMode;
+	skills?: string[];
 
 	/**
 	 * Execution strategy for the task
@@ -418,6 +464,10 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				loopIteration,
 				effectiveCwd,
 				customPrompt,
+				promptProfile,
+				documentContextMode,
+				skillPromptMode,
+				skills,
 				agentStrategy,
 				definitionOfDone,
 				sshRemoteId,
@@ -461,8 +511,26 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				}
 			}
 
-			// Substitute template variables in the prompt
-			const finalPrompt = `${AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION}\n\n${substituteTemplateVariables(customPrompt, templateContext)}`;
+			const expandedDocContent =
+				docReadResult.success && docReadResult.content
+					? substituteTemplateVariables(docReadResult.content, templateContext)
+					: '';
+			const promptDocContent =
+				documentContextMode === 'full'
+					? expandedDocContent
+					: buildActiveTaskDocumentContext(expandedDocContent);
+			const basePrompt = substituteTemplateVariables(
+				getPlaybookPromptForExecution(customPrompt, promptProfile),
+				templateContext
+			);
+			const finalPrompt = [
+				AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION,
+				basePrompt,
+				buildRequestedSkillsSection(skills, skillPromptMode),
+				getDocumentPromptSection(docFilePath, promptDocContent, documentContextMode),
+			]
+				.filter(Boolean)
+				.join('\n\n');
 
 			// Capture start time for elapsed time tracking
 			const taskStartTime = Date.now();
@@ -479,14 +547,16 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				const executorPrompt = `${EXECUTE_STEP_INSTRUCTION}\n\n## Task Prompt\n${finalPrompt}${
 					plannerSummary ? `\n\n## Planner Output\n${plannerSummary}` : ''
 				}`;
+				const executorResumeAgentSessionId =
+					session.toolType === 'codex' ? undefined : plannerResult.agentSessionId;
 
 				const executorResult = await callbacks.onSpawnAgent(
 					session.id,
 					executorPrompt,
 					cwdOverride,
-					plannerResult.agentSessionId
+					executorResumeAgentSessionId
 						? {
-								resumeAgentSessionId: plannerResult.agentSessionId,
+								resumeAgentSessionId: executorResumeAgentSessionId,
 							}
 						: undefined
 				);

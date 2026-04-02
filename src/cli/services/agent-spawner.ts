@@ -479,17 +479,17 @@ async function spawnJsonLineAgent(
 		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
 
+		// Codex requires explicit working directory arg before any resume subcommand
+		if (toolType === 'codex' && def?.workingDirArgs) {
+			args.push(...def.workingDirArgs(cwd));
+		}
+
 		if (agentSessionId && def?.resumeArgs) {
 			args.push(...def.resumeArgs(agentSessionId));
 		}
 
 		if (toolType === 'codex' && !agentSessionId) {
 			args.push('--ephemeral', '-c', 'web_search="disabled"');
-		}
-
-		// Codex requires explicit working directory arg (other agents use process cwd)
-		if (toolType === 'codex' && def?.workingDirArgs) {
-			args.push(...def.workingDirArgs(cwd));
 		}
 
 		// Add prompt (with or without '--' separator depending on agent)

@@ -1385,6 +1385,26 @@ Some text with [x] in it that's not a checkbox
 		});
 	});
 
+	describe('Codex resume argument ordering', () => {
+		it('places -C before resume arguments for codex batch resume', async () => {
+			mockSpawn.mockReturnValue(mockChild);
+
+			const resultPromise = spawnAgent('codex', '/project', 'prompt', 'resume-session-123');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			const cwdIndex = args.indexOf('-C');
+			const resumeIndex = args.indexOf('resume');
+
+			expect(cwdIndex).toBeGreaterThan(-1);
+			expect(resumeIndex).toBeGreaterThan(-1);
+			expect(cwdIndex).toBeLessThan(resumeIndex);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+	});
+
 	describe('PATH expansion (via spawnAgent)', () => {
 		let originalPlatform: string;
 

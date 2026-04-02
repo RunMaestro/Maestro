@@ -25,7 +25,11 @@ import { generateId } from '../../utils/ids';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
 import type { Playbook, BatchDocumentEntry } from '../../types';
-import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import {
+	getPlaybookPromptForExecution,
+	inferPlaybookPromptProfile,
+	normalizePlaybookPromptForStorage,
+} from './batchUtils';
 import { buildImplicitTaskGraph, normalizePlaybookSkills } from '../../../shared/playbookDag';
 
 /**
@@ -222,7 +226,11 @@ export function usePlaybookManagement(
 		}
 
 		// Compare prompt
-		if (prompt !== loadedPlaybook.prompt) return true;
+		const savedPrompt = getPlaybookPromptForExecution(
+			loadedPlaybook.prompt,
+			loadedPlaybook.promptProfile
+		);
+		if (prompt !== savedPrompt) return true;
 
 		return false;
 	}, [config, loadedPlaybook]);
@@ -247,7 +255,10 @@ export function usePlaybookManagement(
 			// Apply configuration through callback
 			// Note: Worktree settings are no longer managed here - see WorktreeConfigModal
 			// Fall back to default prompt if playbook has no/empty agent prompt
-			const effectivePrompt = playbook.prompt?.trim() ? playbook.prompt : DEFAULT_BATCH_PROMPT;
+			const effectivePrompt = getPlaybookPromptForExecution(
+				playbook.prompt,
+				playbook.promptProfile
+			);
 
 			onApplyPlaybook({
 				documents: entries,
@@ -354,6 +365,8 @@ export function usePlaybookManagement(
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
 				const storedDocuments = toStoredDocuments(documents);
 				const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
+				const promptProfile =
+					loadedPlaybook?.promptProfile ?? inferPlaybookPromptProfile(prompt);
 				const playbookData: Parameters<typeof window.maestro.playbooks.create>[1] = {
 					name,
 					documents: storedDocuments,
@@ -365,10 +378,13 @@ export function usePlaybookManagement(
 						shouldPreserveGraph && loadedPlaybook?.taskGraph
 							? loadedPlaybook.taskGraph
 							: buildImplicitTaskGraph(storedDocuments),
-					prompt,
+					prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
 					skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
 					definitionOfDone,
 					verificationSteps,
+					promptProfile,
+					documentContextMode: loadedPlaybook?.documentContextMode ?? 'active-task-only',
+					skillPromptMode: loadedPlaybook?.skillPromptMode ?? 'brief',
 					agentStrategy,
 				};
 
@@ -408,6 +424,7 @@ export function usePlaybookManagement(
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
 			const storedDocuments = toStoredDocuments(documents);
 			const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
+			const promptProfile = loadedPlaybook.promptProfile ?? inferPlaybookPromptProfile(prompt);
 			const updateData: Parameters<typeof window.maestro.playbooks.update>[2] = {
 				documents: storedDocuments,
 				loopEnabled,
@@ -418,10 +435,13 @@ export function usePlaybookManagement(
 					shouldPreserveGraph && loadedPlaybook.taskGraph
 						? loadedPlaybook.taskGraph
 						: buildImplicitTaskGraph(storedDocuments),
-				prompt,
+				prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
 				skills: normalizePlaybookSkills(loadedPlaybook.skills ?? []),
 				definitionOfDone,
 				verificationSteps,
+				promptProfile,
+				documentContextMode: loadedPlaybook.documentContextMode ?? 'active-task-only',
+				skillPromptMode: loadedPlaybook.skillPromptMode ?? 'brief',
 				agentStrategy,
 				updatedAt: Date.now(),
 			};

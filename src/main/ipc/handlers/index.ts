@@ -48,6 +48,7 @@ import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './a
 import { registerWebHandlers, WebHandlerDependencies } from './web';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
+import { registerSkillBusHandlers } from './skillBus';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
@@ -90,6 +91,7 @@ export type { WebHandlerDependencies };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };
+export { registerSkillBusHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
@@ -261,6 +263,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register notification handlers (OS notifications and TTS)
 	registerNotificationsHandlers();
+	// Register skill-bus handlers (Auto Run skill execution telemetry)
+	registerSkillBusHandlers();
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,

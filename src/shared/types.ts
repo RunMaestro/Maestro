@@ -165,9 +165,13 @@ export interface BatchRunConfig {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	taskTimeoutMs?: number | null;
+	skills?: string[];
 	agentStrategy?: PlaybookAgentStrategy;
 	definitionOfDone?: string[];
 	verificationSteps?: string[];
+	promptProfile?: PlaybookPromptProfile;
+	documentContextMode?: PlaybookDocumentContextMode;
+	skillPromptMode?: PlaybookSkillPromptMode;
 	maxParallelism?: number | null;
 	taskGraph?: PlaybookTaskGraph;
 	worktree?: WorktreeConfig;

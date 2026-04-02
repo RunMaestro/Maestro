@@ -1567,4 +1567,50 @@ Reduce context.
 			);
 		});
 	});
+
+	describe('plan-execute-verify codex behavior', () => {
+		it('does not resume planner session for codex executor runs', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Plan the implementation',
+					agentSessionId: 'planner-session',
+					usageStats: undefined,
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Implemented the task',
+					agentSessionId: 'executor-session',
+					usageStats: undefined,
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'PASS\nLooks good.',
+					agentSessionId: 'verifier-session',
+					usageStats: undefined,
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Short summary\n\nFull synopsis',
+					agentSessionId: 'executor-session',
+					usageStats: undefined,
+				});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'codex' }),
+					mockPlaybook({ agentStrategy: 'plan-execute-verify' }),
+					'/playbooks'
+				)
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[1]?.[3]).toBeUndefined();
+		});
+	});
 });

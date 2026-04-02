@@ -8,6 +8,11 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	SkillBusRecordRunPayload,
+	SkillBusRecordRunResponse,
+	SkillBusStatusResponse,
+} from '../../shared/skillBus';
 
 /**
  * History entry
@@ -103,6 +108,18 @@ export function createCliApi() {
 	};
 }
 
+/**
+ * Creates the skill-bus API object for preload exposure
+ */
+export function createSkillBusApi() {
+	return {
+		status: (): Promise<SkillBusStatusResponse> => ipcRenderer.invoke('skillBus:status'),
+		recordRun: (payload: SkillBusRecordRunPayload): Promise<SkillBusRecordRunResponse> =>
+			ipcRenderer.invoke('skillBus:recordRun', payload),
+	};
+}
+
 export type TempfileApi = ReturnType<typeof createTempfileApi>;
 export type HistoryApi = ReturnType<typeof createHistoryApi>;
 export type CliApi = ReturnType<typeof createCliApi>;
+export type SkillBusApi = ReturnType<typeof createSkillBusApi>;

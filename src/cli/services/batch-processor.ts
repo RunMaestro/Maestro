@@ -16,13 +16,19 @@ import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
-import { autorunSynopsisPrompt, autorunDefaultPrompt } from '../../prompts';
+import { autorunSynopsisPrompt } from '../../prompts';
 import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { estimateTokenCount, formatElapsedTime } from '../../shared/formatters';
-import { revertNewlyCheckedTasks } from '../../shared/markdownTaskUtils';
+import {
+	buildActiveTaskDocumentContext,
+	revertNewlyCheckedTasks,
+} from '../../shared/markdownTaskUtils';
+import { getPlaybookPromptForExecution } from '../../shared/playbookPromptUtils';
 import { resolvePlaybookSkills, buildSkillPromptBlock } from './skill-resolver';
+import { recordSkillBusRun } from './skill-bus';
 import { validatePlaybookDag } from '../../shared/playbookDag';
+import { buildAutoRunSkillBusPayload } from '../../shared/skillBus';
 import type {
 	PlaybookAgentStrategy,
 	PlaybookDocumentContextMode,
@@ -32,29 +38,7 @@ import type {
 
 // Synopsis prompt for batch tasks
 const BATCH_SYNOPSIS_PROMPT = autorunSynopsisPrompt;
-const TASK_LINE_REGEX = /^[\s]*-\s*\[(?:\s|x|X)\]\s*.*$/;
-const UNCHECKED_TASK_LINE_REGEX = /^[\s]*-\s*\[\s*\]\s*.+$/;
 const DEFAULT_TASK_TIMEOUT_MS = 60000;
-const COMPACT_CODE_AUTORUN_PROMPT = `You are running in Maestro Auto Run for a coding task.
-
-Complete only the next active unchecked task.
-
-Rules:
-- Read files on disk as needed; do not rely only on the inlined context.
-- Make the smallest change that fully satisfies the task.
-- Run the lightest relevant verification after editing.
-- Update the Auto Run document by checking the completed task or adding a brief blocker note.
-- Stop after finishing the active task.`;
-
-const COMPACT_DOC_AUTORUN_PROMPT = `You are running in Maestro Auto Run for a documentation task.
-
-Complete only the next active unchecked task.
-
-Rules:
-- Keep the change scoped to the active task.
-- Preserve existing structure and terminology unless the task requires changes.
-- Update the Auto Run document by checking the completed task or adding a brief blocker note.
-- Stop after finishing the active task.`;
 
 const PLAN_STEP_INSTRUCTION = `You are the planning step for Maestro Auto Run.
 
@@ -128,25 +112,6 @@ function applyVerifierVerdictToSummary(
 	}
 
 	return `[${verdict}] ${summary}`;
-}
-
-function getPromptProfileBasePrompt(
-	prompt: string,
-	profile: PlaybookPromptProfile = 'compact-code'
-): string {
-	if (prompt) {
-		return prompt;
-	}
-
-	switch (profile) {
-		case 'full':
-			return autorunDefaultPrompt;
-		case 'compact-doc':
-			return COMPACT_DOC_AUTORUN_PROMPT;
-		case 'compact-code':
-		default:
-			return COMPACT_CODE_AUTORUN_PROMPT;
-	}
 }
 
 function getDocumentPromptSection(
@@ -227,62 +192,6 @@ function buildVerifierNote(response?: string, error?: string): string | undefine
 	const text = response?.trim() || error?.trim();
 	if (!text) return undefined;
 	return text;
-}
-
-function trimTrailingBlankLines(lines: string[]): string[] {
-	const trimmed = [...lines];
-	while (trimmed.length > 0 && trimmed[trimmed.length - 1]?.trim() === '') {
-		trimmed.pop();
-	}
-	return trimmed;
-}
-
-function collectTaskBlock(lines: string[], startIndex: number): string[] {
-	const block = [lines[startIndex]];
-
-	for (let index = startIndex + 1; index < lines.length; index++) {
-		const line = lines[index] ?? '';
-		if (TASK_LINE_REGEX.test(line) || /^#{1,6}\s/.test(line)) {
-			break;
-		}
-		block.push(line);
-	}
-
-	return trimTrailingBlankLines(block);
-}
-
-function buildActiveTaskDocumentContext(content: string): string {
-	if (!content) {
-		return '';
-	}
-
-	const lines = content.split(/\r?\n/);
-	const taskIndices = lines
-		.map((line, index) => (TASK_LINE_REGEX.test(line) ? index : -1))
-		.filter((index) => index >= 0);
-	const uncheckedTaskIndices = lines
-		.map((line, index) => (UNCHECKED_TASK_LINE_REGEX.test(line) ? index : -1))
-		.filter((index) => index >= 0);
-
-	if (taskIndices.length === 0 || uncheckedTaskIndices.length === 0) {
-		return content;
-	}
-
-	const [activeTaskIndex, nextTaskIndex] = uncheckedTaskIndices;
-	const compactLines: string[] = [];
-	const preambleLines = trimTrailingBlankLines(lines.slice(0, taskIndices[0]));
-
-	if (preambleLines.length > 0) {
-		compactLines.push(...preambleLines, '');
-	}
-
-	compactLines.push(...collectTaskBlock(lines, activeTaskIndex));
-
-	if (nextTaskIndex !== undefined) {
-		compactLines.push('', ...collectTaskBlock(lines, nextTaskIndex));
-	}
-
-	return trimTrailingBlankLines(compactLines).join('\n');
 }
 
 /**
@@ -712,7 +621,7 @@ export async function* runPlaybook(
 				// Use default Auto Run prompt if playbook.prompt is empty/null
 				// Marketplace playbooks with prompt: null will use the default
 				const basePrompt = substituteTemplateVariables(
-					getPromptProfileBasePrompt(playbook.prompt, promptProfile),
+					getPlaybookPromptForExecution(playbook.prompt, promptProfile),
 					templateContext
 				);
 
@@ -816,11 +725,13 @@ export async function* runPlaybook(
 						skillPromptBlock,
 						plannerSummary
 					);
+					const executorResumeSessionId =
+						session.toolType === 'codex' ? undefined : plannerSessionId;
 					result = await spawnAgent(
 						session.toolType,
 						session.cwd,
 						executorPrompt,
-						plannerSessionId,
+						executorResumeSessionId,
 						{
 							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
 						}
@@ -998,6 +909,10 @@ export async function* runPlaybook(
 						verifierVerdict: verifierVerdict ?? undefined,
 					};
 					addHistoryEntry(historyEntry);
+					const skillBusPayload = buildAutoRunSkillBusPayload(historyEntry, 'cli');
+					if (skillBusPayload) {
+						await recordSkillBusRun(skillBusPayload);
+					}
 					if (debug) {
 						yield {
 							type: 'history_write',

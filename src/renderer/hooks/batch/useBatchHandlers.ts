@@ -27,6 +27,7 @@ import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/se
 import { useModalStore, getModalActions } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
+import { buildAutoRunSkillBusPayload } from '../../../shared/skillBus';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useBatchProcessor } from './useBatchProcessor';
@@ -201,6 +202,10 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				...entry,
 				id: generateId(),
 			});
+			const skillBusPayload = buildAutoRunSkillBusPayload(entry, 'desktop');
+			if (skillBusPayload) {
+				await window.maestro.skillBus.recordRun(skillBusPayload);
+			}
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
 		},

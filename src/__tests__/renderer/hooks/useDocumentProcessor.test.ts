@@ -142,6 +142,50 @@ describe('useDocumentProcessor', () => {
 		);
 	});
 
+	it('does not resume planner session for codex plan-execute-verify', async () => {
+		const plannerSpawn = vi
+			.fn()
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'Plan the implementation',
+				agentSessionId: 'planner-session',
+				usageStats: makeUsage(),
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'Implemented the task and updated the document.',
+				agentSessionId: 'executor-session',
+				usageStats: makeUsage(),
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'PASS\nLooks good.',
+				agentSessionId: 'verifier-session',
+				usageStats: makeUsage(),
+			});
+
+		const { result } = renderHook(() => useDocumentProcessor());
+		await result.current.processTask(
+			{
+				folderPath: '/repo/Auto Run Docs',
+				session: createSession({ toolType: 'codex' }),
+				loopIteration: 1,
+				effectiveCwd: '/repo',
+				customPrompt: 'Complete the first unchecked task in {{DOCUMENT_PATH}}.',
+				agentStrategy: 'plan-execute-verify',
+			},
+			'phase-1',
+			0,
+			1,
+			'# Tasks\n- [ ] Task 1',
+			{
+				onSpawnAgent: plannerSpawn,
+			}
+		);
+
+		expect(plannerSpawn.mock.calls[1][3]).toBeUndefined();
+	});
+
 	it('marks the task failed when verifier returns FAIL', async () => {
 		const plannerSpawn = vi
 			.fn()
@@ -194,6 +238,101 @@ describe('useDocumentProcessor', () => {
 			'# Tasks\n- [ ] Task 1',
 			undefined
 		);
+	});
+
+	it('uses active-task-only document context and requested skills in the task prompt', async () => {
+		const readDoc = window.maestro.autorun.readDoc as ReturnType<typeof vi.fn>;
+		readDoc
+			.mockReset()
+			.mockResolvedValueOnce({
+				success: true,
+				content: '# Tasks\n\n- [x] Done task\n\n- [ ] Current task\n\n- [ ] Next task',
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				content: '# Tasks\n\n- [x] Done task\n\n- [x] Current task\n\n- [ ] Next task',
+			});
+		const singleSpawn = vi.fn().mockResolvedValue({
+			success: true,
+			response: 'Updated the task.',
+			agentSessionId: 'executor-session',
+			usageStats: makeUsage(),
+		});
+
+		const { result } = renderHook(() => useDocumentProcessor());
+		await result.current.processTask(
+			{
+				folderPath: '/repo/Auto Run Docs',
+				session: createSession(),
+				loopIteration: 1,
+				effectiveCwd: '/repo',
+				customPrompt: 'Complete the first unchecked task in {{DOCUMENT_PATH}}.',
+				documentContextMode: 'active-task-only',
+				skills: ['context-and-impact', 'gitnexus'],
+				skillPromptMode: 'full',
+			},
+			'phase-1',
+			1,
+			2,
+			'# Tasks\n\n- [x] Done task\n\n- [ ] Current task\n\n- [ ] Next task',
+			{
+				onSpawnAgent: singleSpawn,
+			}
+		);
+
+		const prompt = singleSpawn.mock.calls[0][1];
+		expect(prompt).toContain('## Requested Skills');
+		expect(prompt).toContain('- context-and-impact');
+		expect(prompt).toContain('- gitnexus');
+		expect(prompt).toContain('Only the active unchecked task and minimal nearby context');
+		expect(prompt).toContain('- [ ] Current task');
+		expect(prompt).toContain('- [ ] Next task');
+		expect(prompt).not.toContain('- [x] Done task');
+	});
+
+	it('uses full document context when requested', async () => {
+		const readDoc = window.maestro.autorun.readDoc as ReturnType<typeof vi.fn>;
+		readDoc
+			.mockReset()
+			.mockResolvedValueOnce({
+				success: true,
+				content: '# Tasks\n\n- [x] Done task\n\n- [ ] Current task\n\n- [ ] Next task',
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				content: '# Tasks\n\n- [x] Done task\n\n- [x] Current task\n\n- [ ] Next task',
+			});
+		const singleSpawn = vi.fn().mockResolvedValue({
+			success: true,
+			response: 'Updated the task.',
+			agentSessionId: 'executor-session',
+			usageStats: makeUsage(),
+		});
+
+		const { result } = renderHook(() => useDocumentProcessor());
+		await result.current.processTask(
+			{
+				folderPath: '/repo/Auto Run Docs',
+				session: createSession(),
+				loopIteration: 1,
+				effectiveCwd: '/repo',
+				customPrompt: 'Complete the first unchecked task in {{DOCUMENT_PATH}}.',
+				documentContextMode: 'full',
+			},
+			'phase-1',
+			1,
+			2,
+			'# Tasks\n\n- [x] Done task\n\n- [ ] Current task\n\n- [ ] Next task',
+			{
+				onSpawnAgent: singleSpawn,
+			}
+		);
+
+		const prompt = singleSpawn.mock.calls[0][1];
+		expect(prompt).toContain('The full document is inlined below.');
+		expect(prompt).toContain('- [x] Done task');
+		expect(prompt).toContain('- [ ] Current task');
+		expect(prompt).toContain('- [ ] Next task');
 	});
 
 	it('prefixes the summary when verifier returns WARN', async () => {

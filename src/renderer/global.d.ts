@@ -2744,6 +2744,14 @@ interface MaestroAPI {
 		}>;
 	};
 
+	// Skill Bus API (skill execution telemetry)
+	skillBus: {
+		status: () => Promise<import('../shared/skillBus').SkillBusStatusResponse>;
+		recordRun: (
+			payload: import('../shared/skillBus').SkillBusRecordRunPayload
+		) => Promise<import('../shared/skillBus').SkillBusRecordRunResponse>;
+	};
+
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;

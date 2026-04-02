@@ -3,10 +3,12 @@
  * Extracted from useBatchProcessor.ts for reusability.
  */
 
-import { autorunDefaultPrompt } from '../../../prompts';
-
-// Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
-export const DEFAULT_BATCH_PROMPT = autorunDefaultPrompt;
+export {
+	FULL_AUTORUN_PROMPT as DEFAULT_BATCH_PROMPT,
+	getPlaybookPromptForExecution,
+	inferPlaybookPromptProfile,
+	normalizePlaybookPromptForStorage,
+} from '../../../shared/playbookPromptUtils';
 
 // Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ])
 const UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s*\]\s*.+$/gm;

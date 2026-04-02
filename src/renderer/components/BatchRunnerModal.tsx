@@ -29,11 +29,12 @@ import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
 	DEFAULT_BATCH_PROMPT,
+	inferPlaybookPromptProfile,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
-import { buildImplicitTaskGraph } from '../../shared/playbookDag';
+import { buildImplicitTaskGraph, normalizePlaybookSkills } from '../../shared/playbookDag';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -406,6 +407,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 		// Filter out missing documents before starting batch run
 		const validDocuments = documents.filter((doc) => !doc.isMissing);
+		const promptProfile = loadedPlaybook?.promptProfile ?? inferPlaybookPromptProfile(prompt);
 
 		// Build config (worktree configuration is now managed separately via WorktreeConfigModal)
 		const config: BatchRunConfig = {
@@ -414,6 +416,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
 			taskTimeoutMs,
+			skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
+			promptProfile,
+			documentContextMode: loadedPlaybook?.documentContextMode ?? 'active-task-only',
+			skillPromptMode: loadedPlaybook?.skillPromptMode ?? 'brief',
 			maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
 			taskGraph: loadedPlaybook?.taskGraph ?? buildImplicitTaskGraph(validDocuments),
 			agentStrategy,
