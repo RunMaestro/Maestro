@@ -664,7 +664,7 @@ function SessionListInner(props: SessionListProps) {
 		<div
 			ref={sidebarContainerRef}
 			tabIndex={0}
-			className={`border-r flex flex-col shrink-0 h-full overflow-hidden ${sidebarTransitionClass} outline-none relative z-20 ${activeFocus === 'sidebar' && !activeGroupChatId ? 'ring-1 ring-inset' : ''}`}
+			className={`border-r flex flex-col shrink-0 overflow-hidden ${sidebarTransitionClass} outline-none relative z-20 ${activeFocus === 'sidebar' && !activeGroupChatId ? 'ring-1 ring-inset' : ''}`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -855,221 +855,87 @@ function SessionListInner(props: SessionListProps) {
 
 			{/* SIDEBAR CONTENT: EXPANDED */}
 			{leftSidebarOpen ? (
-				<div
-					className="flex-1 min-h-0 overflow-y-auto py-2 select-none scrollbar-thin flex flex-col"
-					data-tour="session-list"
-				>
-					{/* Session Filter */}
-					{sessionFilterOpen && (
-						<div className="mx-3 mb-3">
-							<input
-								autoFocus
-								type="text"
-								placeholder="Filter agents..."
-								value={sessionFilter}
-								onChange={(e) => setSessionFilter(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Escape') {
-										setSessionFilterOpen(false);
-										setSessionFilter('');
-									}
-								}}
-								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
-							/>
-						</div>
-					)}
-
-					{/* Empty state for unread agents filter */}
-					{showUnreadAgentsOnly && sortedFilteredSessions.length === 0 && (
-						<div
-							className="flex-1 flex flex-col items-center justify-center gap-3 px-4"
-							style={{ color: theme.colors.textDim }}
-						>
-							<Bot className="w-8 h-8 opacity-30" />
-							<span className="text-xs italic">No unread or working agents</span>
-						</div>
-					)}
-
-					{/* BOOKMARKS SECTION - hidden when filtering by unread agents */}
-					{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && (
-						<div className="mb-1">
-							<button
-								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
-								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
-								aria-expanded={!bookmarksCollapsed}
-							>
-								<div
-									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-									style={{ color: theme.colors.accent }}
-								>
-									{bookmarksCollapsed ? (
-										<ChevronRight className="w-3 h-3" />
-									) : (
-										<ChevronDown className="w-3 h-3" />
-									)}
-									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
-									<span>Bookmarks</span>
-								</div>
-							</button>
-
-							{!bookmarksCollapsed ? (
-								<div
-									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.accent }}
-								>
-									{sortedBookmarkedSessions.map((session) => {
-										const group = groups.find((g) => g.id === session.groupId);
-										return renderSessionWithWorktrees(session, 'bookmark', {
-											keyPrefix: 'bookmark',
-											group,
-										});
-									})}
-								</div>
-							) : (
-								/* Collapsed Bookmarks Palette - uses subdivided pills for worktrees */
-								<div
-									className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-									onClick={() => setBookmarksCollapsed(false)}
-								>
-									{sortedBookmarkedParentSessions.map((s) => (
-										<CollapsedSessionPill
-											key={`bookmark-collapsed-${s.id}`}
-											session={s}
-											keyPrefix="bookmark-collapsed"
-											theme={theme}
-											activeBatchSessionIds={activeBatchSessionIds}
-											leftSidebarWidth={leftSidebarWidthState}
-											contextWarningYellowThreshold={contextWarningYellowThreshold}
-											contextWarningRedThreshold={contextWarningRedThreshold}
-											getFileCount={getFileCount}
-											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
-										/>
-									))}
-								</div>
-							)}
-						</div>
-					)}
-
-					{/* GROUPS */}
-					{sortedGroups.map((group) => {
-						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
-						// Hide empty groups when filtering by unread agents
-						if (showUnreadAgentsOnly && groupSessions.length === 0) return null;
-						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
-						return (
-							<div key={group.id} className="mb-1">
-								<div
-									role="button"
-									tabIndex={0}
-									aria-expanded={!group.collapsed}
+				<div className="flex-1 min-h-0 relative" data-tour="session-list">
+					<div className="absolute inset-0 overflow-y-auto py-2 select-none scrollbar-thin">
+						{/* Session Filter */}
+						{sessionFilterOpen && (
+							<div className="mx-3 mb-3">
+								<input
+									autoFocus
+									type="text"
+									placeholder="Filter agents..."
+									value={sessionFilter}
+									onChange={(e) => setSessionFilter(e.target.value)}
 									onKeyDown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											toggleGroup(group.id);
+										if (e.key === 'Escape') {
+											setSessionFilterOpen(false);
+											setSessionFilter('');
 										}
 									}}
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
-									onClick={() => toggleGroup(group.id)}
-									onDragOver={handleDragOver}
-									onDrop={() => handleDropOnGroup(group.id)}
+									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+									style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+								/>
+							</div>
+						)}
+
+						{/* Empty state for unread agents filter */}
+						{showUnreadAgentsOnly && sortedFilteredSessions.length === 0 && (
+							<div
+								className="flex-1 flex flex-col items-center justify-center gap-3 px-4"
+								style={{ color: theme.colors.textDim }}
+							>
+								<Bot className="w-8 h-8 opacity-30" />
+								<span className="text-xs italic">No unread or working agents</span>
+							</div>
+						)}
+
+						{/* BOOKMARKS SECTION - hidden when filtering by unread agents */}
+						{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && (
+							<div className="mb-1">
+								<button
+									type="button"
+									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
+									aria-expanded={!bookmarksCollapsed}
 								>
 									<div
 										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-										style={{ color: theme.colors.textDim }}
+										style={{ color: theme.colors.accent }}
 									>
-										{group.collapsed && !showUnreadAgentsOnly ? (
+										{bookmarksCollapsed ? (
 											<ChevronRight className="w-3 h-3" />
 										) : (
 											<ChevronDown className="w-3 h-3" />
 										)}
-										<span className="text-sm">{group.emoji}</span>
-										{editingGroupId === group.id ? (
-											<input
-												autoFocus
-												className="bg-transparent outline-none w-full border-b border-indigo-500"
-												defaultValue={group.name}
-												onClick={(e) => e.stopPropagation()}
-												onBlur={(e) => {
-													if (ignoreNextBlurRef.current) {
-														ignoreNextBlurRef.current = false;
-														return;
-													}
-													finishRenamingGroup(group.id, e.target.value);
-												}}
-												onKeyDown={(e) => {
-													e.stopPropagation();
-													if (e.key === 'Enter') {
-														ignoreNextBlurRef.current = true;
-														finishRenamingGroup(group.id, e.currentTarget.value);
-													}
-												}}
-											/>
-										) : (
-											<span onDoubleClick={() => startRenamingGroup(group.id)}>{group.name}</span>
-										)}
+										<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
+										<span>Bookmarks</span>
 									</div>
-									{/* Delete button for empty groups */}
-									{groupSessions.length === 0 && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												showConfirmation(
-													`Are you sure you want to delete the group "${group.name}"?`,
-													() => {
-														setGroups((prev) => prev.filter((g) => g.id !== group.id));
-													}
-												);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Delete empty group"
-										>
-											<X className="w-3 h-3" />
-										</button>
-									)}
-									{/* Delete button for worktree groups with agents */}
-									{group.emoji === '🌳' && groupSessions.length > 0 && onDeleteWorktreeGroup && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												onDeleteWorktreeGroup(group.id);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Remove group and all agents"
-										>
-											<Trash2 className="w-3 h-3" />
-										</button>
-									)}
-								</div>
+								</button>
 
-								{!group.collapsed || showUnreadAgentsOnly ? (
+								{!bookmarksCollapsed ? (
 									<div
 										className="flex flex-col border-l ml-4"
-										style={{ borderColor: theme.colors.border }}
+										style={{ borderColor: theme.colors.accent }}
 									>
-										{groupSessions.map((session) =>
-											renderSessionWithWorktrees(session, 'group', {
-												keyPrefix: `group-${group.id}`,
-												groupId: group.id,
-												onDrop: () => handleDropOnGroup(group.id),
-											})
-										)}
+										{sortedBookmarkedSessions.map((session) => {
+											const group = groups.find((g) => g.id === session.groupId);
+											return renderSessionWithWorktrees(session, 'bookmark', {
+												keyPrefix: 'bookmark',
+												group,
+											});
+										})}
 									</div>
-								) : groupCollapsedPills.length > 0 ? (
-									/* Collapsed Group Palette - uses subdivided pills for worktrees */
+								) : (
+									/* Collapsed Bookmarks Palette - uses subdivided pills for worktrees */
 									<div
 										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-										onClick={() => toggleGroup(group.id)}
+										onClick={() => setBookmarksCollapsed(false)}
 									>
-										{groupCollapsedPills.map((s) => (
+										{sortedBookmarkedParentSessions.map((s) => (
 											<CollapsedSessionPill
-												key={`group-collapsed-${group.id}-${s.id}`}
+												key={`bookmark-collapsed-${s.id}`}
 												session={s}
-												keyPrefix={`group-collapsed-${group.id}`}
+												keyPrefix="bookmark-collapsed"
 												theme={theme}
 												activeBatchSessionIds={activeBatchSessionIds}
 												leftSidebarWidth={leftSidebarWidthState}
@@ -1081,172 +947,307 @@ function SessionListInner(props: SessionListProps) {
 											/>
 										))}
 									</div>
-								) : null}
-							</div>
-						);
-					})}
-
-					{/* SESSIONS - Flat list when no groups exist, otherwise show Ungrouped folder */}
-					{sessions.length > 0 && groups.length === 0 ? (
-						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
-						<>
-							<div className="flex flex-col">
-								{sortedFilteredSessions.map((session) =>
-									renderSessionWithWorktrees(session, 'flat', { keyPrefix: 'flat' })
 								)}
 							</div>
-							{!showUnreadAgentsOnly && (
-								<div className="mt-4 px-3">
-									<button
-										onClick={createNewGroup}
-										className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
-										style={{
-											backgroundColor: theme.colors.accent + '20',
-											color: theme.colors.accent,
-											border: `1px solid ${theme.colors.accent}40`,
+						)}
+
+						{/* GROUPS */}
+						{sortedGroups.map((group) => {
+							const groupSessions = sortedGroupSessionsById.get(group.id) || [];
+							// Hide empty groups when filtering by unread agents
+							if (showUnreadAgentsOnly && groupSessions.length === 0) return null;
+							const groupCollapsedPills = groupSessions.filter(
+								(session) => !session.parentSessionId
+							);
+							return (
+								<div key={group.id} className="mb-1">
+									<div
+										role="button"
+										tabIndex={0}
+										aria-expanded={!group.collapsed}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												toggleGroup(group.id);
+											}
 										}}
-										title="Create new group"
+										className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										onClick={() => toggleGroup(group.id)}
+										onDragOver={handleDragOver}
+										onDrop={() => handleDropOnGroup(group.id)}
 									>
-										<Plus className="w-3 h-3" />
-										<span>New Group</span>
-									</button>
+										<div
+											className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+											style={{ color: theme.colors.textDim }}
+										>
+											{group.collapsed && !showUnreadAgentsOnly ? (
+												<ChevronRight className="w-3 h-3" />
+											) : (
+												<ChevronDown className="w-3 h-3" />
+											)}
+											<span className="text-sm">{group.emoji}</span>
+											{editingGroupId === group.id ? (
+												<input
+													autoFocus
+													className="bg-transparent outline-none w-full border-b border-indigo-500"
+													defaultValue={group.name}
+													onClick={(e) => e.stopPropagation()}
+													onBlur={(e) => {
+														if (ignoreNextBlurRef.current) {
+															ignoreNextBlurRef.current = false;
+															return;
+														}
+														finishRenamingGroup(group.id, e.target.value);
+													}}
+													onKeyDown={(e) => {
+														e.stopPropagation();
+														if (e.key === 'Enter') {
+															ignoreNextBlurRef.current = true;
+															finishRenamingGroup(group.id, e.currentTarget.value);
+														}
+													}}
+												/>
+											) : (
+												<span onDoubleClick={() => startRenamingGroup(group.id)}>{group.name}</span>
+											)}
+										</div>
+										{/* Delete button for empty groups */}
+										{groupSessions.length === 0 && (
+											<button
+												onClick={(e) => {
+													e.stopPropagation();
+													showConfirmation(
+														`Are you sure you want to delete the group "${group.name}"?`,
+														() => {
+															setGroups((prev) => prev.filter((g) => g.id !== group.id));
+														}
+													);
+												}}
+												className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
+												style={{ color: theme.colors.error }}
+												title="Delete empty group"
+											>
+												<X className="w-3 h-3" />
+											</button>
+										)}
+										{/* Delete button for worktree groups with agents */}
+										{group.emoji === '🌳' && groupSessions.length > 0 && onDeleteWorktreeGroup && (
+											<button
+												onClick={(e) => {
+													e.stopPropagation();
+													onDeleteWorktreeGroup(group.id);
+												}}
+												className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
+												style={{ color: theme.colors.error }}
+												title="Remove group and all agents"
+											>
+												<Trash2 className="w-3 h-3" />
+											</button>
+										)}
+									</div>
+
+									{!group.collapsed || showUnreadAgentsOnly ? (
+										<div
+											className="flex flex-col border-l ml-4"
+											style={{ borderColor: theme.colors.border }}
+										>
+											{groupSessions.map((session) =>
+												renderSessionWithWorktrees(session, 'group', {
+													keyPrefix: `group-${group.id}`,
+													groupId: group.id,
+													onDrop: () => handleDropOnGroup(group.id),
+												})
+											)}
+										</div>
+									) : groupCollapsedPills.length > 0 ? (
+										/* Collapsed Group Palette - uses subdivided pills for worktrees */
+										<div
+											className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
+											onClick={() => toggleGroup(group.id)}
+										>
+											{groupCollapsedPills.map((s) => (
+												<CollapsedSessionPill
+													key={`group-collapsed-${group.id}-${s.id}`}
+													session={s}
+													keyPrefix={`group-collapsed-${group.id}`}
+													theme={theme}
+													activeBatchSessionIds={activeBatchSessionIds}
+													leftSidebarWidth={leftSidebarWidthState}
+													contextWarningYellowThreshold={contextWarningYellowThreshold}
+													contextWarningRedThreshold={contextWarningRedThreshold}
+													getFileCount={getFileCount}
+													getWorktreeChildren={getWorktreeChildren}
+													setActiveSessionId={setActiveSessionId}
+												/>
+											))}
+										</div>
+									) : null}
 								</div>
-							)}
-						</>
-					) : groups.length > 0 && ungroupedSessions.length > 0 ? (
-						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
-						<div className="mb-1 mt-4">
-							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
-								onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
-								onDragOver={handleDragOver}
-								onDrop={handleDropOnUngrouped}
-							>
-								<div
-									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-									style={{ color: theme.colors.textDim }}
-								>
-									{ungroupedCollapsed ? (
-										<ChevronRight className="w-3 h-3" />
-									) : (
-										<ChevronDown className="w-3 h-3" />
+							);
+						})}
+
+						{/* SESSIONS - Flat list when no groups exist, otherwise show Ungrouped folder */}
+						{sessions.length > 0 && groups.length === 0 ? (
+							/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
+							<>
+								<div className="flex flex-col">
+									{sortedFilteredSessions.map((session) =>
+										renderSessionWithWorktrees(session, 'flat', { keyPrefix: 'flat' })
 									)}
-									<Folder className="w-3.5 h-3.5" />
-									<span>Ungrouped Agents</span>
 								</div>
 								{!showUnreadAgentsOnly && (
-									<button
-										onClick={(e) => {
-											e.stopPropagation();
-											createNewGroup();
-										}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
-										style={{
-											backgroundColor: theme.colors.accent + '20',
-											color: theme.colors.accent,
-											border: `1px solid ${theme.colors.accent}40`,
-										}}
-										title="Create new group"
-									>
-										<Plus className="w-3 h-3" />
-										<span>New Group</span>
-									</button>
+									<div className="mt-4 px-3">
+										<button
+											onClick={createNewGroup}
+											className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+												border: `1px solid ${theme.colors.accent}40`,
+											}}
+											title="Create new group"
+										>
+											<Plus className="w-3 h-3" />
+											<span>New Group</span>
+										</button>
+									</div>
 								)}
-							</div>
-
-							{!ungroupedCollapsed ? (
+							</>
+						) : groups.length > 0 && ungroupedSessions.length > 0 ? (
+							/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
+							<div className="mb-1 mt-4">
 								<div
-									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.border }}
+									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
+									onDragOver={handleDragOver}
+									onDrop={handleDropOnUngrouped}
 								>
-									{sortedUngroupedSessions.map((session) =>
-										renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
+									<div
+										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+										style={{ color: theme.colors.textDim }}
+									>
+										{ungroupedCollapsed ? (
+											<ChevronRight className="w-3 h-3" />
+										) : (
+											<ChevronDown className="w-3 h-3" />
+										)}
+										<Folder className="w-3.5 h-3.5" />
+										<span>Ungrouped Agents</span>
+									</div>
+									{!showUnreadAgentsOnly && (
+										<button
+											onClick={(e) => {
+												e.stopPropagation();
+												createNewGroup();
+											}}
+											className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+												border: `1px solid ${theme.colors.accent}40`,
+											}}
+											title="Create new group"
+										>
+											<Plus className="w-3 h-3" />
+											<span>New Group</span>
+										</button>
 									)}
 								</div>
-							) : (
-								/* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
-								<div
-									className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-									onClick={() => setUngroupedCollapsed(false)}
-								>
-									{sortedUngroupedParentSessions.map((s) => (
-										<CollapsedSessionPill
-											key={`ungrouped-collapsed-${s.id}`}
-											session={s}
-											keyPrefix="ungrouped-collapsed"
-											theme={theme}
-											activeBatchSessionIds={activeBatchSessionIds}
-											leftSidebarWidth={leftSidebarWidthState}
-											contextWarningYellowThreshold={contextWarningYellowThreshold}
-											contextWarningRedThreshold={contextWarningRedThreshold}
-											getFileCount={getFileCount}
-											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
-										/>
-									))}
-								</div>
-							)}
-						</div>
-					) : groups.length > 0 && !showUnreadAgentsOnly ? (
-						/* NO UNGROUPED AGENTS - Show drop zone for ungrouping + New Group button */
-						<div className="mt-4 px-3" onDragOver={handleDragOver} onDrop={handleDropOnUngrouped}>
-							{/* Drop zone indicator when dragging */}
-							{draggingSessionId && (
-								<div
-									className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs"
+
+								{!ungroupedCollapsed ? (
+									<div
+										className="flex flex-col border-l ml-4"
+										style={{ borderColor: theme.colors.border }}
+									>
+										{sortedUngroupedSessions.map((session) =>
+											renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
+										)}
+									</div>
+								) : (
+									/* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
+									<div
+										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
+										onClick={() => setUngroupedCollapsed(false)}
+									>
+										{sortedUngroupedParentSessions.map((s) => (
+											<CollapsedSessionPill
+												key={`ungrouped-collapsed-${s.id}`}
+												session={s}
+												keyPrefix="ungrouped-collapsed"
+												theme={theme}
+												activeBatchSessionIds={activeBatchSessionIds}
+												leftSidebarWidth={leftSidebarWidthState}
+												contextWarningYellowThreshold={contextWarningYellowThreshold}
+												contextWarningRedThreshold={contextWarningRedThreshold}
+												getFileCount={getFileCount}
+												getWorktreeChildren={getWorktreeChildren}
+												setActiveSessionId={setActiveSessionId}
+											/>
+										))}
+									</div>
+								)}
+							</div>
+						) : groups.length > 0 && !showUnreadAgentsOnly ? (
+							/* NO UNGROUPED AGENTS - Show drop zone for ungrouping + New Group button */
+							<div className="mt-4 px-3" onDragOver={handleDragOver} onDrop={handleDropOnUngrouped}>
+								{/* Drop zone indicator when dragging */}
+								{draggingSessionId && (
+									<div
+										className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs"
+										style={{
+											borderColor: theme.colors.accent,
+											color: theme.colors.textDim,
+											backgroundColor: theme.colors.accent + '10',
+										}}
+									>
+										Drop here to ungroup
+									</div>
+								)}
+								<button
+									onClick={createNewGroup}
+									className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 									style={{
-										borderColor: theme.colors.accent,
-										color: theme.colors.textDim,
-										backgroundColor: theme.colors.accent + '10',
+										backgroundColor: theme.colors.accent + '20',
+										color: theme.colors.accent,
+										border: `1px solid ${theme.colors.accent}40`,
 									}}
+									title="Create new group"
 								>
-									Drop here to ungroup
-								</div>
+									<Plus className="w-3 h-3" />
+									<span>New Group</span>
+								</button>
+							</div>
+						) : null}
+
+						{/* Flexible spacer to push group chats to bottom */}
+						<div className="flex-grow min-h-4" />
+
+						{/* GROUP CHATS SECTION - Only show when at least 2 AI agents exist */}
+						{onNewGroupChat &&
+							onOpenGroupChat &&
+							onEditGroupChat &&
+							onRenameGroupChat &&
+							onDeleteGroupChat &&
+							sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
+								<GroupChatList
+									theme={theme}
+									groupChats={groupChats}
+									activeGroupChatId={activeGroupChatId}
+									onOpenGroupChat={onOpenGroupChat}
+									onNewGroupChat={onNewGroupChat}
+									onEditGroupChat={onEditGroupChat}
+									onRenameGroupChat={onRenameGroupChat}
+									onDeleteGroupChat={onDeleteGroupChat}
+									onArchiveGroupChat={onArchiveGroupChat}
+									isExpanded={groupChatsExpanded}
+									onExpandedChange={setGroupChatsExpanded}
+									groupChatState={groupChatState}
+									participantStates={participantStates}
+									groupChatStates={groupChatStates}
+									allGroupChatParticipantStates={allGroupChatParticipantStates}
+								/>
 							)}
-							<button
-								onClick={createNewGroup}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
-								style={{
-									backgroundColor: theme.colors.accent + '20',
-									color: theme.colors.accent,
-									border: `1px solid ${theme.colors.accent}40`,
-								}}
-								title="Create new group"
-							>
-								<Plus className="w-3 h-3" />
-								<span>New Group</span>
-							</button>
-						</div>
-					) : null}
-
-					{/* Flexible spacer to push group chats to bottom */}
-					<div className="flex-grow min-h-4" />
-
-					{/* GROUP CHATS SECTION - Only show when at least 2 AI agents exist */}
-					{onNewGroupChat &&
-						onOpenGroupChat &&
-						onEditGroupChat &&
-						onRenameGroupChat &&
-						onDeleteGroupChat &&
-						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
-							<GroupChatList
-								theme={theme}
-								groupChats={groupChats}
-								activeGroupChatId={activeGroupChatId}
-								onOpenGroupChat={onOpenGroupChat}
-								onNewGroupChat={onNewGroupChat}
-								onEditGroupChat={onEditGroupChat}
-								onRenameGroupChat={onRenameGroupChat}
-								onDeleteGroupChat={onDeleteGroupChat}
-								onArchiveGroupChat={onArchiveGroupChat}
-								isExpanded={groupChatsExpanded}
-								onExpandedChange={setGroupChatsExpanded}
-								groupChatState={groupChatState}
-								participantStates={participantStates}
-								groupChatStates={groupChatStates}
-								allGroupChatParticipantStates={allGroupChatParticipantStates}
-							/>
-						)}
+					</div>
 				</div>
 			) : (
 				/* SIDEBAR CONTENT: SKINNY MODE */
