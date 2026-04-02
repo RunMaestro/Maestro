@@ -798,10 +798,17 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: false,
 		},
 		{
-			// Agent command not found for codex
+			// Codex via OMX launch transport missing
+			pattern:
+				/bash:.*omx.*command not found|sh:.*omx.*command not found|zsh:.*command not found:.*omx/i,
+			message: 'OMX command not found. Ensure OhMyCodex is installed.',
+			recoverable: false,
+		},
+		{
+			// Underlying Codex provider missing while launching via OMX
 			pattern:
 				/bash:.*codex.*command not found|sh:.*codex.*command not found|zsh:.*command not found:.*codex/i,
-			message: 'Codex command not found. Ensure Codex is installed.',
+			message: 'Codex provider command not found. Ensure both omx and codex are installed.',
 			recoverable: false,
 		},
 		{
@@ -809,7 +816,7 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 			// More specific pattern: requires path-like structure before the binary name
 			// Matches: "/usr/local/bin/claude: No such file or directory"
 			// Does NOT match: "claude: error: File 'foo.txt': No such file or directory" (normal file errors)
-			pattern: /\/[^\s:]*\/(claude|opencode|codex):\s*No such file or directory/i,
+			pattern: /\/[^\s:]*\/(claude|opencode|codex|omx):\s*No such file or directory/i,
 			message: 'Agent binary not found at the specified path. Ensure the agent is installed.',
 			recoverable: false,
 		},

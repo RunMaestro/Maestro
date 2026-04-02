@@ -15,6 +15,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
+import { resolveCodexLaunchCommand, withCodexHomeEnv } from './codexTransport';
 import type { AgentDetector } from '../agents';
 
 const LOG_CONTEXT = '[ContextGroomer]';
@@ -211,8 +212,16 @@ export async function groomContext(
 		sessionCustomEnvVars,
 	});
 	const resolvedArgs = configResolution.args;
-	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
-	const resolvedCommand = sessionCustomPath || agent.command;
+	const resolvedEnvVars = withCodexHomeEnv(
+		agentType,
+		configResolution.effectiveCustomEnvVars,
+		'local'
+	);
+	const resolvedCommand = resolveCodexLaunchCommand(
+		agentType,
+		agent.command,
+		sessionCustomPath
+	).command;
 
 	// Create a promise that collects the response
 	return new Promise<GroomContextResult>((resolve, reject) => {

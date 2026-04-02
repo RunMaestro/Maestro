@@ -1139,7 +1139,7 @@ export function ConversationScreen({
 								: state.selectedAgent === 'opencode'
 									? 'OpenCode'
 									: state.selectedAgent === 'codex'
-										? 'Codex'
+										? 'Codex via OMX'
 										: state.selectedAgent || undefined
 						}
 					/>

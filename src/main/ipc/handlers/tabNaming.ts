@@ -19,6 +19,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
+import { resolveCodexLaunchCommand, withCodexHomeEnv } from '../../utils/codexTransport';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { tabNamingPrompt } from '../../../prompts';
@@ -138,10 +139,16 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					finalArgs = configResolution.args;
 
 					// Determine command and working directory
-					let command = agent.path || agent.command;
+					let command = resolveCodexLaunchCommand(
+						config.agentType,
+						agent.path || agent.command
+					).command;
 					let cwd = config.cwd;
-					const customEnvVars: Record<string, string> | undefined =
-						configResolution.effectiveCustomEnvVars;
+					const customEnvVars: Record<string, string> | undefined = withCodexHomeEnv(
+						config.agentType,
+						configResolution.effectiveCustomEnvVars,
+						'local'
+					);
 
 					// Handle SSH remote execution if configured
 					// IMPORTANT: For SSH, we must send the prompt via stdin to avoid shell escaping issues.
@@ -157,7 +164,10 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						if (sshResult.config) {
 							// Use the agent's command (not path) for remote execution
 							// since the path is local and remote host has its own binary location
-							const remoteCommand = agent.command;
+							const remoteCommand = resolveCodexLaunchCommand(
+								config.agentType,
+								agent.command
+							).command;
 							const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
 
 							// For agents that support stream-json input, use stdin for the prompt
@@ -186,7 +196,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 								command: remoteCommand,
 								args: finalArgs,
 								cwd: remoteCwd,
-								env: customEnvVars,
+								env: withCodexHomeEnv(config.agentType, customEnvVars, 'remote'),
 								useStdin: shouldSendPromptViaStdin,
 							});
 							command = sshCommand.command;

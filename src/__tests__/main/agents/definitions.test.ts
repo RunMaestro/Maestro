@@ -57,9 +57,13 @@ describe('agent-definitions', () => {
 		it('should have codex with batch mode configuration', () => {
 			const codex = AGENT_DEFINITIONS.find((def) => def.id === 'codex');
 			expect(codex).toBeDefined();
+			expect(codex?.command).toBe('omx');
+			expect(codex?.binaryName).toBe('omx');
 			expect(codex?.batchModePrefix).toEqual(['exec']);
-			expect(codex?.batchModeArgs).toContain('--dangerously-bypass-approvals-and-sandbox');
+			expect(codex?.batchModeArgs).toContain('--skip-git-repo-check');
 			expect(codex?.jsonOutputArgs).toEqual(['--json']);
+			expect(codex?.yoloModeArgs).toEqual([]);
+			expect(codex?.requiredBinaries).toContain('codex');
 		});
 
 		it('should have opencode with batch mode configuration', () => {

@@ -65,6 +65,8 @@ vi.mock('lucide-react', () => ({
 	Globe: () => <span data-testid="icon-globe" />,
 	BookOpen: () => <span data-testid="icon-book-open" />,
 	BarChart3: () => <span data-testid="icon-bar-chart" />,
+	Briefcase: () => <span data-testid="icon-briefcase" />,
+	Coffee: () => <span data-testid="icon-coffee" />,
 	Server: () => <span data-testid="icon-server" />,
 	Music: () => <span data-testid="icon-music" />,
 	Command: () => <span data-testid="icon-command" />,
@@ -2548,7 +2550,7 @@ describe('SessionList', () => {
 			// Tooltip content should be present
 			expect(screen.getByText('Detailed Session')).toBeInTheDocument();
 			expect(screen.getByText('75%')).toBeInTheDocument();
-			expect(screen.getByText(/idle.*claude-code/i)).toBeInTheDocument();
+			expect(screen.getByText(/idle.*claude code/i)).toBeInTheDocument();
 		});
 
 		it('shows usage stats in skinny mode tooltip', () => {

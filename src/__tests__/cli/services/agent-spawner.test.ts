@@ -710,7 +710,7 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('should detect agent with custom path from settings', async () => {
-			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/codex');
+			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/omx');
 			vi.mocked(fs.promises.stat).mockResolvedValue({
 				isFile: () => true,
 			} as fs.Stats);
@@ -720,26 +720,43 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await freshDetectAgent('codex');
 			expect(result.available).toBe(true);
-			expect(result.path).toBe('/custom/path/to/codex');
+			expect(result.path).toBe('/custom/path/to/omx');
 			expect(result.source).toBe('settings');
 		});
 
 		it('should fall back to PATH detection when custom path is invalid', async () => {
-			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
+			mockGetAgentCustomPath.mockReturnValue('/invalid/path/to/omx');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-			mockSpawn.mockReturnValue(mockChild);
+
+			const child1Stdout = new EventEmitter();
+			const child1 = Object.assign(new EventEmitter(), {
+				stdin: mockStdin,
+				stdout: child1Stdout,
+				stderr: mockStderr,
+			});
+			const child2Stdout = new EventEmitter();
+			const child2 = Object.assign(new EventEmitter(), {
+				stdin: mockStdin,
+				stdout: child2Stdout,
+				stderr: mockStderr,
+			});
+			mockSpawn.mockReturnValueOnce(child1).mockReturnValueOnce(child2);
 
 			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
 
 			const resultPromise = freshDetectAgent('codex');
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('/usr/local/bin/codex\n'));
+			child1Stdout.emit('data', Buffer.from('/usr/local/bin/omx\n'));
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
+			child1.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			child2Stdout.emit('data', Buffer.from('/usr/local/bin/codex\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			child2.emit('close', 0);
 
 			const result = await resultPromise;
 			expect(result.available).toBe(true);
-			expect(result.path).toBe('/usr/local/bin/codex');
+			expect(result.path).toBe('/usr/local/bin/omx');
 			expect(result.source).toBe('path');
 		});
 

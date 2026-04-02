@@ -1331,8 +1331,8 @@ describe('process IPC handlers', () => {
 			// This allows users to specify the exact binary location on the remote host
 			const mockAgent = {
 				id: 'codex',
-				name: 'Codex',
-				binaryName: 'codex',
+				name: 'Codex via OMX',
+				binaryName: 'omx',
 				path: '/opt/homebrew/bin/codex', // Local path
 				requiresPty: false,
 				capabilities: {
@@ -1352,9 +1352,9 @@ describe('process IPC handlers', () => {
 				sessionId: 'session-1',
 				toolType: 'codex',
 				cwd: '/home/devuser/project',
-				command: '/opt/homebrew/bin/codex',
+				command: '/opt/homebrew/bin/omx',
 				args: ['exec', '--json'],
-				sessionCustomPath: '/usr/local/bin/codex', // User's custom path for the remote
+				sessionCustomPath: '/usr/local/bin/omx', // User's custom OMX path for the remote
 				sessionSshRemoteConfig: {
 					enabled: true,
 					remoteId: 'remote-1',
@@ -1365,8 +1365,8 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.command).toBe('ssh');
 
 			// Should use the custom path in the stdin script, not binaryName or local path
-			expect(spawnCall.sshStdinScript).toContain('/usr/local/bin/codex');
-			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
+			expect(spawnCall.sshStdinScript).toContain('/usr/local/bin/omx');
+			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/omx');
 		});
 
 		it('should pass images via stream-json stdin for SSH with stream-json agents (regression: images dropped over SSH)', async () => {

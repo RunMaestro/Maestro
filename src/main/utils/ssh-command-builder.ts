@@ -175,6 +175,14 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
 	LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
 };
 
+function buildRemoteEnvAssignment(key: string, value: string): string {
+	if (value.startsWith('$HOME/')) {
+		return `${key}="${value}"`;
+	}
+
+	return `${key}=${shellEscape(value)}`;
+}
+
 /**
  * Build the remote shell command string from command, args, cwd, and env.
  *
@@ -215,7 +223,7 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
 			// Environment variable names are validated (alphanumeric + underscore)
 			// but we still escape the value to be safe
 			if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-				envExports.push(`${key}=${shellEscape(value)}`);
+				envExports.push(buildRemoteEnvAssignment(key, value));
 			}
 		}
 	}
@@ -362,7 +370,7 @@ export async function buildSshCommandWithStdin(
 	// Export environment variables
 	for (const [key, value] of Object.entries(mergedEnv)) {
 		if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-			scriptLines.push(`export ${key}=${shellEscape(value)}`);
+			scriptLines.push(`export ${buildRemoteEnvAssignment(key, value)}`);
 		}
 	}
 

@@ -40,6 +40,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
+import { resolveCodexLaunchCommand, withCodexHomeEnv } from '../utils/codexTransport';
 import { groupChatParticipantRequestPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
@@ -61,6 +62,7 @@ export interface SessionInfo {
 	name: string;
 	toolType: string;
 	cwd: string;
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -406,7 +408,11 @@ export async function routeUserMessage(
 			}
 
 			// Use custom path from moderator config if set, otherwise use resolved path
-			const command = chat.moderatorConfig?.customPath || agent.path || agent.command;
+			const command = resolveCodexLaunchCommand(
+				chat.moderatorAgentId,
+				agent.path || agent.command,
+				chat.moderatorConfig?.customPath
+			).command;
 			console.log(`[GroupChat:Debug] Command to execute: ${command}`);
 
 			// Build participant context
@@ -506,9 +512,12 @@ ${message}`;
 				let spawnArgs = finalArgs;
 				let spawnCwd = os.homedir();
 				let spawnPrompt: string | undefined = fullPrompt;
-				let spawnEnvVars =
+				let spawnEnvVars = withCodexHomeEnv(
+					chat.moderatorAgentId,
 					configResolution.effectiveCustomEnvVars ??
-					getCustomEnvVarsCallback?.(chat.moderatorAgentId);
+						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+					'local'
+				);
 				let spawnShell: string | undefined;
 				let spawnRunInShell = false;
 
@@ -521,9 +530,12 @@ ${message}`;
 							args: finalArgs,
 							cwd: os.homedir(),
 							prompt: fullPrompt,
-							customEnvVars:
+							customEnvVars: withCodexHomeEnv(
+								chat.moderatorAgentId,
 								configResolution.effectiveCustomEnvVars ??
-								getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+									getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+								'remote'
+							),
 							promptArgs: agent.promptArgs,
 							noPromptSeparator: agent.noPromptSeparator,
 							agentBinaryName: agent.binaryName,
@@ -872,7 +884,11 @@ export async function routeModeratorResponse(
 				console.log(`[GroupChat:Debug] Emitted participant state: working`);
 
 				// Log spawn details for debugging
-				const spawnCommand = agent.path || agent.command;
+				const spawnCommand = resolveCodexLaunchCommand(
+					participant.agentId,
+					agent.path || agent.command,
+					matchingSession?.customPath
+				).command;
 				const spawnArgs = configResolution.args;
 				console.log(`[GroupChat:Debug] Spawn command: ${spawnCommand}`);
 				console.log(`[GroupChat:Debug] Spawn args: ${JSON.stringify(spawnArgs)}`);
@@ -892,9 +908,12 @@ export async function routeModeratorResponse(
 				let finalSpawnArgs = spawnArgs;
 				let finalSpawnCwd = cwd;
 				let finalSpawnPrompt: string | undefined = participantPrompt;
-				let finalSpawnEnvVars =
+				let finalSpawnEnvVars = withCodexHomeEnv(
+					participant.agentId,
 					configResolution.effectiveCustomEnvVars ??
-					getCustomEnvVarsCallback?.(participant.agentId);
+						getCustomEnvVarsCallback?.(participant.agentId),
+					'local'
+				);
 				let finalSpawnShell: string | undefined;
 				let finalSpawnRunInShell = false;
 
@@ -909,9 +928,12 @@ export async function routeModeratorResponse(
 							args: spawnArgs,
 							cwd,
 							prompt: participantPrompt,
-							customEnvVars:
+							customEnvVars: withCodexHomeEnv(
+								participant.agentId,
 								configResolution.effectiveCustomEnvVars ??
-								getCustomEnvVarsCallback?.(participant.agentId),
+									getCustomEnvVarsCallback?.(participant.agentId),
+								'remote'
+							),
 							promptArgs: agent.promptArgs,
 							noPromptSeparator: agent.noPromptSeparator,
 							agentBinaryName: agent.binaryName,
@@ -1199,7 +1221,11 @@ export async function spawnModeratorSynthesis(
 	}
 
 	// Use custom path from moderator config if set
-	const command = chat.moderatorConfig?.customPath || agent.path || agent.command;
+	const command = resolveCodexLaunchCommand(
+		chat.moderatorAgentId,
+		agent.path || agent.command,
+		chat.moderatorConfig?.customPath
+	).command;
 	console.log(`[GroupChat:Debug] Command: ${command}`);
 
 	const args = [...agent.args];
@@ -1285,9 +1311,12 @@ Review the agent responses above. Either:
 			readOnlyMode: true,
 			prompt: synthesisPrompt,
 			contextWindow: getContextWindowValue(agent, agentConfigValues),
-			customEnvVars:
+			customEnvVars: withCodexHomeEnv(
+				chat.moderatorAgentId,
 				configResolution.effectiveCustomEnvVars ??
-				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+					getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+				'local'
+			),
 			promptArgs: agent.promptArgs,
 			noPromptSeparator: agent.noPromptSeparator,
 			shell: winConfig.shell,
@@ -1427,12 +1456,19 @@ export async function respawnParticipantWithRecovery(
 	groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'working');
 
 	// Spawn the recovery process — with SSH wrapping if configured
-	let finalSpawnCommand = agent.path || agent.command;
+	let finalSpawnCommand = resolveCodexLaunchCommand(
+		participant.agentId,
+		agent.path || agent.command,
+		matchingSession?.customPath
+	).command;
 	let finalSpawnArgs = configResolution.args;
 	let finalSpawnCwd = cwd;
 	let finalSpawnPrompt: string | undefined = fullPrompt;
-	let finalSpawnEnvVars =
-		configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId);
+	let finalSpawnEnvVars = withCodexHomeEnv(
+		participant.agentId,
+		configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
+		'local'
+	);
 	let finalSpawnShell: string | undefined;
 	let finalSpawnRunInShell = false;
 
@@ -1448,7 +1484,7 @@ export async function respawnParticipantWithRecovery(
 				args: finalSpawnArgs,
 				cwd,
 				prompt: fullPrompt,
-				customEnvVars: finalSpawnEnvVars,
+				customEnvVars: withCodexHomeEnv(participant.agentId, finalSpawnEnvVars, 'remote'),
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				agentBinaryName: agent.binaryName,

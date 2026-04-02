@@ -52,9 +52,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 	{
 		id: 'codex',
-		name: 'Codex',
+		name: 'Codex via OMX',
 		supported: true,
-		description: "OpenAI's AI coding assistant",
+		description: "OpenAI's AI coding assistant launched through OMX",
 		brandColor: '#10A37F', // OpenAI green
 	},
 	{

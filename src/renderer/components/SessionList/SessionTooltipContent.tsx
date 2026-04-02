@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Folder, GitBranch, Bot, Clock, Server } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import { getContextColor, formatActiveTime } from '../../utils/theme';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 interface SessionTooltipContentProps {
 	session: Session;
@@ -118,7 +119,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				)}
 			</div>
 			<div className="text-[10px] capitalize mb-2" style={{ color: theme.colors.textDim }}>
-				{session.state} • {session.toolType}
+				{session.state} • {getAgentDisplayName(session.toolType)}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
 

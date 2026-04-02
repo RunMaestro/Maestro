@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -174,7 +175,7 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
+						<Activity className="w-3 h-3" /> {getAgentDisplayName(session.toolType)}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}
 						{variant === 'bookmark' && group && (

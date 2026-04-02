@@ -42,6 +42,7 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
+import { LOCAL_CODEX_HOME } from '../../utils/codexTransport';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -245,8 +246,7 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
-	const homeDir = os.homedir();
-	const codexSessionsDir = path.join(homeDir, '.codex', 'sessions');
+	const codexSessionsDir = path.join(LOCAL_CODEX_HOME, 'sessions');
 	const files: SessionFileInfo[] = [];
 
 	try {

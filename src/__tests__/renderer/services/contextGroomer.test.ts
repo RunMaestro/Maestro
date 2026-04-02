@@ -548,7 +548,7 @@ describe('getAgentDisplayName', () => {
 	it('should return correct display names for all agents', () => {
 		expect(getAgentDisplayName('claude-code')).toBe('Claude Code');
 		expect(getAgentDisplayName('opencode')).toBe('OpenCode');
-		expect(getAgentDisplayName('codex')).toBe('Codex');
+		expect(getAgentDisplayName('codex')).toBe('Codex via OMX');
 		expect(getAgentDisplayName('factory-droid')).toBe('Factory Droid');
 		expect(getAgentDisplayName('terminal')).toBe('Terminal');
 	});

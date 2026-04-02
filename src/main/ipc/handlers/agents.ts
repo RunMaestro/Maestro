@@ -14,6 +14,7 @@ import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-b
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
+import { getCodexCustomPathError, isCodexAgentId, isOmxLikeCommand } from '../../utils/codexTransport';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -151,8 +152,27 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 
 			// Strip ANSI/OSC escape sequences from output (shell integration sequences from interactive shells)
 			const cleanedOutput = stripAnsi(result.stdout);
-			const available = result.exitCode === 0 && cleanedOutput.trim().length > 0;
+			let available = result.exitCode === 0 && cleanedOutput.trim().length > 0;
 			const path = available ? cleanedOutput.trim().split('\n')[0] : undefined;
+
+			if (available && agentDef.requiredBinaries?.length) {
+				for (const binary of agentDef.requiredBinaries) {
+					const depCommand = await buildSshCommand(sshRemote, {
+						command: 'which',
+						args: [binary],
+					});
+					const depResult = await execFileNoThrow(depCommand.command, depCommand.args);
+					const depOutput = stripAnsi(depResult.stdout).trim();
+					if (depResult.exitCode !== 0 || !depOutput) {
+						available = false;
+						logger.warn(
+							`Agent "${agentDef.name}" launcher found on remote, but required binary "${binary}" is missing`,
+							LOG_CONTEXT
+						);
+						break;
+					}
+				}
+			}
 
 			if (available) {
 				logger.info(`Agent "${agentDef.name}" found on remote at: ${path}`, LOG_CONTEXT);
@@ -644,6 +664,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				if (customPath) {
+					if (isCodexAgentId(agentId) && !isOmxLikeCommand(customPath)) {
+						logger.warn(getCodexCustomPathError(customPath), CONFIG_LOG_CONTEXT);
+						return false;
+					}
 					allConfigs[agentId].customPath = customPath;
 					logger.info(`Set custom path for agent ${agentId}: ${customPath}`, CONFIG_LOG_CONTEXT);
 				} else {

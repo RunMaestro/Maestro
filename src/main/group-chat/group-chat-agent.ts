@@ -25,6 +25,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
+import { resolveCodexLaunchCommand, withCodexHomeEnv } from '../utils/codexTransport';
 import { groupChatParticipantPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
@@ -147,7 +148,7 @@ export async function addParticipant(
 			console.log(`[GroupChat:Debug] ERROR: Agent not available!`);
 			throw new Error(`Agent '${agentId}' is not available`);
 		}
-		command = agentConfig.path || agentConfig.command;
+		command = resolveCodexLaunchCommand(agentId, agentConfig.path || agentConfig.command).command;
 		args = [...agentConfig.args];
 	}
 
@@ -181,7 +182,11 @@ export async function addParticipant(
 	let spawnArgs = configResolution.args;
 	let spawnCwd = cwd;
 	let spawnPrompt: string | undefined = prompt;
-	let spawnEnvVars = configResolution.effectiveCustomEnvVars ?? effectiveEnvVars;
+	let spawnEnvVars = withCodexHomeEnv(
+		agentId,
+		configResolution.effectiveCustomEnvVars ?? effectiveEnvVars,
+		'local'
+	);
 	let spawnShell: string | undefined;
 	let spawnRunInShell = false;
 
@@ -194,7 +199,11 @@ export async function addParticipant(
 				args: configResolution.args,
 				cwd,
 				prompt,
-				customEnvVars: configResolution.effectiveCustomEnvVars ?? effectiveEnvVars,
+				customEnvVars: withCodexHomeEnv(
+					agentId,
+					configResolution.effectiveCustomEnvVars ?? effectiveEnvVars,
+					'remote'
+				),
 				promptArgs: agentConfig?.promptArgs,
 				noPromptSeparator: agentConfig?.noPromptSeparator,
 				agentBinaryName: agentConfig?.binaryName,

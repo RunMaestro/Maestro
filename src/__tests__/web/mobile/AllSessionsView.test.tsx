@@ -193,11 +193,11 @@ describe('AllSessionsView', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 
-			it('shows "Codex" for codex', () => {
+			it('shows "Codex via OMX" for codex', () => {
 				const sessions = [createMockSession({ toolType: 'codex' })];
 				render(<AllSessionsView {...createDefaultProps({ sessions })} />);
 
-				expect(screen.getByText('Codex')).toBeInTheDocument();
+				expect(screen.getByText('Codex via OMX')).toBeInTheDocument();
 			});
 
 			it('shows "Gemini CLI" for gemini-cli', () => {

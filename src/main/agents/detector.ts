@@ -21,6 +21,7 @@ import { getAgentCapabilities } from './capabilities';
 import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { isWindows } from '../../shared/platformDetection';
+import { getCodexCustomPathError, isCodexAgentId, isOmxLikeCommand } from '../utils/codexTransport';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -97,17 +98,26 @@ export class AgentDetector {
 		for (const agentDef of AGENT_DEFINITIONS) {
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
+			let effectiveCustomPath: string | undefined = customPath;
+
+			if (isCodexAgentId(agentDef.id) && customPath && !isOmxLikeCommand(customPath)) {
+				logger.warn(getCodexCustomPathError(customPath), LOG_CONTEXT);
+				effectiveCustomPath = undefined;
+			}
 
 			// If user has specified a custom path, check that first
-			if (customPath) {
-				detection = await checkCustomPath(customPath);
+			if (effectiveCustomPath) {
+				detection = await checkCustomPath(effectiveCustomPath);
 				if (detection.exists) {
 					logger.info(
 						`Agent "${agentDef.name}" found at custom path: ${detection.path}`,
 						LOG_CONTEXT
 					);
 				} else {
-					logger.warn(`Agent "${agentDef.name}" custom path not valid: ${customPath}`, LOG_CONTEXT);
+					logger.warn(
+						`Agent "${agentDef.name}" custom path not valid: ${effectiveCustomPath}`,
+						LOG_CONTEXT
+					);
 					// Fall back to PATH detection
 					detection = await checkBinaryExists(agentDef.binaryName);
 					if (detection.exists) {
@@ -132,11 +142,26 @@ export class AgentDetector {
 				}
 			}
 
+			let requiredBinariesAvailable = true;
+			if (detection.exists && agentDef.requiredBinaries?.length) {
+				for (const binary of agentDef.requiredBinaries) {
+					const required = await checkBinaryExists(binary);
+					if (!required.exists) {
+						requiredBinariesAvailable = false;
+						logger.warn(
+							`Agent "${agentDef.name}" launch transport found but required binary "${binary}" is missing`,
+							LOG_CONTEXT
+						);
+						break;
+					}
+				}
+			}
+
 			agents.push({
 				...agentDef,
-				available: detection.exists,
+				available: detection.exists && requiredBinariesAvailable,
 				path: detection.path,
-				customPath: customPath || undefined,
+				customPath: effectiveCustomPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
 		}

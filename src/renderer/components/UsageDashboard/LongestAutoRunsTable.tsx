@@ -71,7 +71,7 @@ function formatAgentName(agentType: string): string {
 		'claude-code': 'Claude Code',
 		opencode: 'OpenCode',
 		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
+		codex: 'Codex via OMX',
 		'gemini-cli': 'Gemini CLI',
 		'qwen3-coder': 'Qwen3 Coder',
 		'factory-droid': 'Factory Droid',

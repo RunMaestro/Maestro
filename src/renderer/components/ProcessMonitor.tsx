@@ -18,6 +18,7 @@ import {
 import type { Session, Group, Theme, GroupChat } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 interface ProcessMonitorProps {
 	theme: Theme;
@@ -1045,7 +1046,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						{/* For group chat and wizard processes, show tool type */}
 						{(isGroupChatProcess || isWizardProcess) && node.toolType && (
 							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-								{node.toolType}
+								{getAgentDisplayName(node.toolType)}
 							</span>
 						)}
 						<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>

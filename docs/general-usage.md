@@ -10,7 +10,7 @@ Maestro features a three-panel layout:
 
 - **Left Panel** - Agent list with grouping, filtering, search, bookmarks, and drag-and-drop organization
 - **Main Panel** - Center workspace with two modes per agent:
-  - **AI Terminal** - Converse with your AI provider (Claude Code, Codex, or OpenCode). Supports multiple tabs (each tab is a session), `@` file mentions, image attachments, slash commands, and draft auto-save.
+  - **AI Terminal** - Converse with your AI provider transport (Claude Code, Codex via OMX, or OpenCode). Supports multiple tabs (each tab is a session), `@` file mentions, image attachments, slash commands, and draft auto-save.
   - **Command Terminal** - PTY shell with tab completion for files, branches, tags, and command history.
   - **Views**: Session Explorer, File Preview, Git Diffs, Git Logs
 - **Right Panel** - Three tabs: File Explorer, History Viewer, and Auto Run
@@ -251,7 +251,7 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 **To create a new agent:**
 
 1. Press `Cmd+N` / `Ctrl+N`, or click the **+** button in the left panel
-2. Select an available AI provider (Claude Code, Codex, or OpenCode)
+2. Select an available AI provider (Claude Code, Codex via OMX, or OpenCode)
 3. Choose a working directory for the agent
 4. Optionally name the agent and configure advanced options
 

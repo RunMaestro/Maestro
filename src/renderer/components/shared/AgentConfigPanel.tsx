@@ -317,6 +317,29 @@ export function AgentConfigPanel({
 	};
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
+	const usesOmxTransport = agent.id === 'codex';
+	const pathLabel = usesOmxTransport
+		? isSshEnabled
+			? 'Remote OMX Command'
+			: 'OMX Path'
+		: isSshEnabled
+			? 'Remote Command'
+			: 'Path';
+	const pathPlaceholder = usesOmxTransport ? '/path/to/omx' : `/path/to/${agent.binaryName}`;
+	const pathHelpText = usesOmxTransport
+		? isSshEnabled
+			? 'Remote omx command/binary used to launch Codex. Leave empty to use the default omx transport. Maestro requires both omx and codex to be installed.'
+			: 'Path to the omx executable used to launch Codex. Raw codex paths are no longer used by Maestro. Maestro requires both omx and codex to be installed.'
+		: isSshEnabled
+			? `Remote command/binary for ${agent.binaryName}. Leave empty to use default.`
+			: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`;
+	const pathResetTitle = usesOmxTransport
+		? isSshEnabled
+			? 'Reset to default remote omx command'
+			: 'Reset to detected omx path'
+		: isSshEnabled
+			? 'Reset to remote binary name'
+			: 'Reset to detected path';
 	// Track which built-in env var tooltip is showing
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
@@ -386,7 +409,7 @@ export function AgentConfigPanel({
 					className="block text-xs font-medium mb-2 flex items-center justify-between"
 					style={{ color: theme.colors.textDim }}
 				>
-					<span>{isSshEnabled ? 'Remote Command' : 'Path'}</span>
+					<span>{pathLabel}</span>
 					{onRefreshAgent && !isSshEnabled && (
 						<button
 							onClick={onRefreshAgent}
@@ -399,14 +422,14 @@ export function AgentConfigPanel({
 						</button>
 					)}
 				</label>
-				<div className="flex gap-2">
+					<div className="flex gap-2">
 					<input
 						type="text"
 						value={customPath || (isSshEnabled ? agent.binaryName : agent.path) || ''}
 						onChange={(e) => onCustomPathChange(e.target.value)}
 						onBlur={onCustomPathBlur}
 						onClick={(e) => e.stopPropagation()}
-						placeholder={`/path/to/${agent.binaryName}`}
+						placeholder={pathPlaceholder}
 						// When showing default SSH binary name, make field read-only to prevent accidental modification
 						readOnly={isSshEnabled && !customPath}
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
@@ -425,18 +448,14 @@ export function AgentConfigPanel({
 							}}
 							className="px-2 py-1.5 rounded text-xs"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							title={isSshEnabled ? 'Reset to remote binary name' : 'Reset to detected path'}
+							title={pathResetTitle}
 						>
 							Reset
 						</button>
 					)}
 				</div>
-				<p className="text-xs opacity-50 mt-2">
-					{isSshEnabled
-						? `Remote command/binary for ${agent.binaryName}. Leave empty to use default.`
-						: `Path to the ${agent.binaryName} binary. Edit to override the auto-detected path.`}
-				</p>
-			</div>
+				<p className="text-xs opacity-50 mt-2">{pathHelpText}</p>
+				</div>
 
 			{/* Custom CLI arguments input */}
 			<div

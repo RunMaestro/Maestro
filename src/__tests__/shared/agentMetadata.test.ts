@@ -24,7 +24,7 @@ describe('agentMetadata', () => {
 
 		it('should return correct names for known agents', () => {
 			expect(AGENT_DISPLAY_NAMES['claude-code']).toBe('Claude Code');
-			expect(AGENT_DISPLAY_NAMES['codex']).toBe('Codex');
+			expect(AGENT_DISPLAY_NAMES['codex']).toBe('Codex via OMX');
 			expect(AGENT_DISPLAY_NAMES['opencode']).toBe('OpenCode');
 			expect(AGENT_DISPLAY_NAMES['factory-droid']).toBe('Factory Droid');
 			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
@@ -42,7 +42,7 @@ describe('agentMetadata', () => {
 	describe('getAgentDisplayName', () => {
 		it('should return display name for valid agent IDs', () => {
 			expect(getAgentDisplayName('claude-code')).toBe('Claude Code');
-			expect(getAgentDisplayName('codex')).toBe('Codex');
+			expect(getAgentDisplayName('codex')).toBe('Codex via OMX');
 			expect(getAgentDisplayName('opencode')).toBe('OpenCode');
 			expect(getAgentDisplayName('factory-droid')).toBe('Factory Droid');
 			expect(getAgentDisplayName('terminal')).toBe('Terminal');

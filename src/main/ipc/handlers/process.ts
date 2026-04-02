@@ -26,6 +26,11 @@ import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import {
+	getCodexCustomPathError,
+	resolveCodexLaunchCommand,
+	withCodexHomeEnv,
+} from '../../utils/codexTransport';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -193,7 +198,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// In read-only mode, apply agent-specific env var overrides to strip
 				// blanket permission grants (e.g., OpenCode's "*":"allow" YOLO config)
-				let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
+				let effectiveCustomEnvVars = withCodexHomeEnv(
+					config.toolType,
+					configResolution.effectiveCustomEnvVars,
+					'local'
+				);
 				if (config.readOnlyMode && agent?.readOnlyEnvOverrides) {
 					effectiveCustomEnvVars = {
 						...(effectiveCustomEnvVars || {}),
@@ -306,14 +315,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// so PATH and other environment variables are available. This ensures cross-platform
 				// compatibility and correct agent behavior.
 				// ========================================================================
-				let commandToSpawn = config.sessionCustomPath || config.command;
+				const commandResolution = resolveCodexLaunchCommand(
+					config.toolType,
+					config.command,
+					config.sessionCustomPath
+				);
+				let commandToSpawn = commandResolution.command;
 				let argsToSpawn = finalArgs;
 				let useShell = false;
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 				let sshStdinScript: string | undefined;
 
-				if (config.sessionCustomPath) {
+				if (commandResolution.ignoredCustomPath) {
+					logger.warn(getCodexCustomPathError(commandResolution.ignoredCustomPath), LOG_CONTEXT);
+				} else if (config.sessionCustomPath) {
 					logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
 						customPath: config.sessionCustomPath,
 						originalCommand: config.command,
@@ -386,7 +402,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						sshRemoteUsed = sshResult.config;
 
 						// Determine the command to run on the remote host
-						const remoteCommand = config.sessionCustomPath || agent?.binaryName || config.command;
+						const remoteCommandResolution = resolveCodexLaunchCommand(
+							config.toolType,
+							agent?.binaryName || config.command,
+							config.sessionCustomPath
+						);
+						const remoteCommand = remoteCommandResolution.command;
 
 						// Build the SSH command with stdin script
 						// The script contains PATH setup, cd, env vars, and the actual command
@@ -434,7 +455,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Merge global environment variables with session custom env vars
 						// Session vars take precedence over global vars
-						const mergedSshEnvVars = { ...globalShellEnvVars, ...(effectiveCustomEnvVars || {}) };
+						const mergedSshEnvVars = withCodexHomeEnv(
+							config.toolType,
+							{ ...globalShellEnvVars, ...(effectiveCustomEnvVars || {}) },
+							'remote'
+						);
 
 						const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 							command: remoteCommand,

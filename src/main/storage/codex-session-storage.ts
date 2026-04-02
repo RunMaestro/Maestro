@@ -22,10 +22,10 @@
 
 import { app } from 'electron';
 import path from 'path';
-import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { LOCAL_CODEX_HOME } from '../utils/codexTransport';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionInfo,
@@ -46,8 +46,7 @@ const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
  * - Windows: %USERPROFILE%\.codex\sessions (Codex uses dotfile convention on all platforms)
  */
 function getCodexSessionsDir(): string {
-	// Codex CLI uses ~/.codex on all platforms (including Windows)
-	return path.join(os.homedir(), '.codex', 'sessions');
+	return path.join(LOCAL_CODEX_HOME, 'sessions');
 }
 
 const CODEX_SESSIONS_DIR = getCodexSessionsDir();

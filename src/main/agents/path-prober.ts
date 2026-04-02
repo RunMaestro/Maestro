@@ -284,12 +284,18 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// WindowsApps (Microsoft Store style)
 			path.join(localAppData, 'Microsoft', 'WindowsApps', 'claude.exe'),
 		],
-		codex: [
-			// npm global installation (primary method for Codex)
-			...npmGlobal('codex'),
-			// Possible standalone in future
-			...localBin('codex'),
-		],
+			codex: [
+				// npm global installation (primary method for Codex)
+				...npmGlobal('codex'),
+				// Possible standalone in future
+				...localBin('codex'),
+			],
+			omx: [
+				// npm global installation (primary method for OhMyCodex)
+				...npmGlobal('omx'),
+				// Possible standalone/local install
+				...localBin('omx'),
+			],
 		opencode: [
 			// Scoop installation (recommended for OpenCode)
 			path.join(home, 'scoop', 'shims', 'opencode.exe'),
@@ -388,16 +394,26 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('claude'),
 		],
-		codex: [
-			// User local bin
-			...localBin('codex'),
-			// Homebrew paths
-			...homebrew('codex'),
+			codex: [
+				// User local bin
+				...localBin('codex'),
+				// Homebrew paths
+				...homebrew('codex'),
 			// npm global
 			...npmGlobal('codex'),
-			// Node version managers (nvm, fnm, volta, etc.)
-			...nodeVersionManagers('codex'),
-		],
+				// Node version managers (nvm, fnm, volta, etc.)
+				...nodeVersionManagers('codex'),
+			],
+			omx: [
+				// User local bin
+				...localBin('omx'),
+				// Homebrew paths
+				...homebrew('omx'),
+				// npm global
+				...npmGlobal('omx'),
+				// Node version managers (nvm, fnm, volta, etc.)
+				...nodeVersionManagers('omx'),
+			],
 		opencode: [
 			// OpenCode installer default location
 			path.join(home, '.opencode', 'bin', 'opencode'),

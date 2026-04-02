@@ -15,7 +15,7 @@ import type { AgentId } from './agentIds';
 export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	terminal: 'Terminal',
 	'claude-code': 'Claude Code',
-	codex: 'Codex',
+	codex: 'Codex via OMX',
 	'gemini-cli': 'Gemini CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',

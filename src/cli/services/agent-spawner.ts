@@ -15,6 +15,12 @@ import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import {
+	getCodexCustomPathError,
+	isCodexAgentId,
+	isOmxLikeCommand,
+	withCodexHomeEnv,
+} from '../../main/utils/codexTransport';
 
 // Claude Code arguments for batch mode (stream-json format)
 const CLAUDE_ARGS = [
@@ -118,18 +124,32 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
-		if (await isExecutable(customPath)) {
+		if (isCodexAgentId(toolType) && !isOmxLikeCommand(customPath)) {
+			console.error(`Warning: ${getCodexCustomPathError(customPath)}`);
+		} else if (await isExecutable(customPath)) {
 			cachedPaths.set(toolType, customPath);
 			return { available: true, path: customPath, source: 'settings' };
+		} else {
+			console.error(
+				`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
+			);
 		}
-		console.error(
-			`Warning: Custom ${def?.name || toolType} path "${customPath}" is not executable, falling back to PATH detection`
-		);
 	}
 
 	// 2. Fall back to PATH detection
 	const pathResult = await findCommandInPath(defaultCommand);
 	if (pathResult) {
+		if (def?.requiredBinaries?.length) {
+			for (const binary of def.requiredBinaries) {
+				const requiredPath = await findCommandInPath(binary);
+				if (!requiredPath) {
+					console.error(
+						`Warning: ${def.name} launcher found, but required binary "${binary}" is missing`
+					);
+					return { available: false };
+				}
+			}
+		}
 		cachedPaths.set(toolType, pathResult);
 		return { available: true, path: pathResult, source: 'path' };
 	}
@@ -345,7 +365,7 @@ async function spawnJsonLineAgent(
 	agentSessionId?: string
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
-		const env = buildExpandedEnv();
+		const env = withCodexHomeEnv(toolType, buildExpandedEnv(), 'local') || buildExpandedEnv();
 		const def = getAgentDefinition(toolType);
 
 		// Apply default env vars from agent definition
@@ -358,6 +378,7 @@ async function spawnJsonLineAgent(
 		// Build args from agent definition
 		const args: string[] = [];
 		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
+		if (toolType === 'codex') args.push('--high', '--madmax');
 		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
 

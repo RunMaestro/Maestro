@@ -7,6 +7,7 @@
 
 import type { AgentCapabilities } from './capabilities';
 import { isWindows } from '../../shared/platformDetection';
+import { CODEX_OMX_BINARY, CODEX_PROVIDER_BINARY, LOCAL_CODEX_HOME } from '../utils/codexTransport';
 
 // ============ Configuration Types ============
 
@@ -99,6 +100,7 @@ export interface AgentConfig {
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
+	requiredBinaries?: string[]; // Additional binaries that must exist for the agent to be usable
 }
 
 /**
@@ -142,26 +144,30 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 	},
 	{
 		id: 'codex',
-		name: 'Codex',
-		binaryName: 'codex',
-		command: 'codex',
+		name: 'Codex via OMX',
+		binaryName: CODEX_OMX_BINARY,
+		command: CODEX_OMX_BINARY,
 		// Base args for interactive mode (no flags that are exec-only)
 		args: [],
-		// Codex CLI argument builders
-		// Batch mode: codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [--sandbox read-only] [-C dir] [resume <id>] -- "prompt"
+		// Codex-via-OMX CLI argument builders
+		// Batch mode: omx exec --high --madmax --json --skip-git-repo-check [--sandbox read-only] [-C dir] [resume <id>] -- "prompt"
 		// Sandbox modes:
-		//   - Default (YOLO): --dangerously-bypass-approvals-and-sandbox (full system access, required by Maestro)
+		//   - Default (YOLO): --madmax (translated by OMX to the appropriate Codex bypass flag)
 		//   - Read-only: --sandbox read-only (can only read files, overrides YOLO)
-		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
-		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
+		batchModePrefix: ['exec'], // OMX proxies Codex batch mode through the exec subcommand
+		batchModeArgs: ['--skip-git-repo-check'], // Writable/default batch flags (transport flags injected separately)
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
 		readOnlyArgs: ['--sandbox', 'read-only'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
-		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
+		yoloModeArgs: [], // Full access mode is injected separately for Codex-via-OMX
 		workingDirArgs: (dir: string) => ['-C', dir], // Set working directory
 		imageArgs: (imagePath: string) => ['-i', imagePath], // Image attachment: codex exec -i /path/to/image.png
 		modelArgs: (modelId: string) => ['-m', modelId], // Model selection: codex exec -m gpt-5.3-codex
+		defaultEnvVars: {
+			CODEX_HOME: LOCAL_CODEX_HOME,
+		},
+		requiredBinaries: [CODEX_PROVIDER_BINARY],
 		// Agent-specific configuration options shown in UI
 		configOptions: [
 			{
@@ -169,7 +175,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				type: 'text',
 				label: 'Model',
 				description:
-					'Model override (e.g., gpt-5.3-codex, o3). Leave empty to use the default from ~/.codex/config.toml.',
+					'Model override (e.g., gpt-5.3-codex, o3). Leave empty to use the default from ~/.codex/config.toml. Codex is launched through omx.',
 				default: '', // Empty = use Codex's default model from config.toml
 				argBuilder: (value: string) => {
 					if (value && value.trim()) {

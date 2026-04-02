@@ -78,6 +78,7 @@ import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
+import { isCodexAgentId, isOmxLikeCommand } from './utils/codexTransport';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
 import {
@@ -324,9 +325,19 @@ app.whenReady().then(async () => {
 	const customPaths: Record<string, string> = {};
 	for (const [agentId, config] of Object.entries(allAgentConfigs)) {
 		if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-			customPaths[agentId] = config.customPath as string;
+			const customPath = config.customPath as string;
+			if (isCodexAgentId(agentId) && !isOmxLikeCommand(customPath)) {
+				delete (config as Record<string, unknown>).customPath;
+				logger.warn(
+					`Cleared legacy Codex custom path because Codex now launches through OMX: ${customPath}`,
+					'Startup'
+				);
+				continue;
+			}
+			customPaths[agentId] = customPath;
 		}
 	}
+	agentConfigsStore.set('configs', allAgentConfigs);
 	if (Object.keys(customPaths).length > 0) {
 		agentDetector.setCustomPaths(customPaths);
 		logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');

@@ -1,5 +1,6 @@
 import type { AgentConfig } from '../agents';
 import { logger } from './logger';
+import { isCodexAgentId } from './codexTransport';
 
 const LOG_CONTEXT = '[AgentArgs]';
 
@@ -54,6 +55,15 @@ export function buildAgentArgs(
 
 	if (agent.batchModePrefix && options.prompt) {
 		finalArgs = [...agent.batchModePrefix, ...finalArgs];
+	}
+
+	// Codex is launched through OMX. High reasoning is always on for Codex batch-mode
+	// runs, while madmax is only enabled for writable flows.
+	if (isCodexAgentId(agent.id) && options.prompt) {
+		finalArgs = ['--high', ...finalArgs];
+		if (!options.readOnlyMode) {
+			finalArgs = ['--madmax', ...finalArgs];
+		}
 	}
 
 	if (agent.batchModeArgs && options.prompt) {

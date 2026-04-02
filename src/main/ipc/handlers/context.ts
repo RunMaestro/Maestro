@@ -22,6 +22,7 @@ import {
 } from '../../utils/ipcHandler';
 import { getSessionStorage, type SessionMessagesResult } from '../../agents';
 import { groomContext, cancelAllGroomingSessions } from '../../utils/context-groomer';
+import { resolveCodexLaunchCommand, withCodexHomeEnv } from '../../utils/codexTransport';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
@@ -233,8 +234,9 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					sessionId: groomerSessionId,
 					toolType: agentType,
 					cwd: projectRoot,
-					command: agent.command,
+					command: resolveCodexLaunchCommand(agentType, agent.command).command,
 					args: baseArgs,
+					customEnvVars: withCodexHomeEnv(agentType, undefined, 'local'),
 				});
 
 				if (!spawnResult || spawnResult.pid <= 0) {

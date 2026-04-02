@@ -8,11 +8,11 @@ icon: life-ring
 
 **Do my MCP tools, skills, and permissions work in Maestro?**
 
-Yes. Maestro is a pass-through—it calls your provider (Claude Code, Codex, OpenCode) in batch mode rather than interactive mode. Whatever works when you run the provider directly will work in Maestro. Your MCP servers, custom skills, authentication, and tool permissions all carry over automatically.
+Yes. Maestro is a pass-through—it calls your provider transport (Claude Code, Codex via OMX, OpenCode) in batch mode rather than interactive mode. Whatever works when you run the provider directly will work in Maestro. Your MCP servers, custom skills, authentication, and tool permissions all carry over automatically.
 
 **What's the difference between running the provider directly vs. through Maestro?**
 
-The only difference is execution mode. When you run Claude Code directly, it's interactive—you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else—your tools, permissions, context—remains identical.
+The only difference is execution mode. When you run Claude Code directly, it's interactive—you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider transport processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else—your tools, permissions, context—remains identical.
 
 ---
 
