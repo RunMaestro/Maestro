@@ -26,7 +26,9 @@
 
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { AgentErrorPatterns } from './error-patterns';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[OpenClawParser]';
@@ -66,16 +68,10 @@ interface OpenClawJsonResult {
 
 export class OpenClawOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'openclaw';
+	private readonly errorPatterns: AgentErrorPatterns = getErrorPatterns('openclaw');
 
-	/**
-	 * Parse a single line of output from OpenClaw.
-	 *
-	 * OpenClaw outputs a single JSON object on completion (not JSONL).
-	 * Lines that are incomplete JSON or stderr debug logs are skipped.
-	 */
 	parseJsonLine(line: string): ParsedEvent | null {
-		// Strip ANSI escape codes and trim
-		const stripped = line.replace(/\x1b\[[0-9;]*m/g, '').trim();
+		const stripped = stripAnsiCodes(line).trim();
 		if (!stripped) {
 			return null;
 		}
@@ -167,14 +163,13 @@ export class OpenClawOutputParser implements AgentOutputParser {
 	}
 
 	detectErrorFromLine(line: string): AgentError | null {
-		const patterns = getErrorPatterns('openclaw');
-		const match = matchErrorPattern(patterns, line);
+		const match = matchErrorPattern(this.errorPatterns, line);
 		if (match) {
 			return {
 				type: match.type,
 				message: match.message,
 				recoverable: match.recoverable,
-				agentId: 'openclaw',
+				agentId: this.agentId,
 				timestamp: Date.now(),
 			};
 		}
@@ -193,7 +188,7 @@ export class OpenClawOutputParser implements AgentOutputParser {
 				type: 'agent_crashed',
 				message: errorMessage,
 				recoverable: true,
-				agentId: 'openclaw',
+				agentId: this.agentId,
 				timestamp: Date.now(),
 			};
 		}
@@ -204,17 +199,15 @@ export class OpenClawOutputParser implements AgentOutputParser {
 	detectErrorFromExit(exitCode: number, stderr: string, _stdout: string): AgentError | null {
 		if (exitCode === 0) return null;
 
-		// Check stderr for known patterns (strip ANSI codes first)
 		if (stderr) {
-			const cleanStderr = stderr.replace(/\x1b\[[0-9;]*m/g, '');
-			const patterns = getErrorPatterns('openclaw');
-			const match = matchErrorPattern(patterns, cleanStderr);
+			const cleanStderr = stripAnsiCodes(stderr);
+			const match = matchErrorPattern(this.errorPatterns, cleanStderr);
 			if (match) {
 				return {
 					type: match.type,
 					message: match.message,
 					recoverable: match.recoverable,
-					agentId: 'openclaw',
+					agentId: this.agentId,
 					timestamp: Date.now(),
 				};
 			}
@@ -224,7 +217,7 @@ export class OpenClawOutputParser implements AgentOutputParser {
 			type: 'agent_crashed',
 			message: `OpenClaw process exited with code ${exitCode}`,
 			recoverable: exitCode === 1,
-			agentId: 'openclaw',
+			agentId: this.agentId,
 			timestamp: Date.now(),
 		};
 	}
