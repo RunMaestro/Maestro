@@ -115,6 +115,11 @@ export interface DeleteAgentModalData {
 	session: Session;
 }
 
+/** Director's Notes modal data */
+export interface DirectorNotesData {
+	initialTab?: 'overview' | 'history' | 'ai-overview';
+}
+
 /** Cue YAML editor data */
 export interface CueYamlEditorData {
 	sessionId: string;
@@ -262,6 +267,7 @@ export interface ModalDataMap {
 	firstRunCelebration: FirstRunCelebrationData;
 	keyboardMastery: KeyboardMasteryData;
 	lightbox: LightboxData;
+	directorNotes: DirectorNotesData;
 	cueYamlEditor: CueYamlEditorData;
 }
 

@@ -63,16 +63,19 @@ const ToastItem = memo(function ToastItem({
 		setTimeout(() => onRemove(toast.id), 300);
 	};
 
-	// Handle click on toast to navigate to session
+	// Handle click on toast to navigate to session or trigger custom action
 	const handleToastClick = () => {
-		if (toast.sessionId && onSessionClick) {
+		if (toast.onClick) {
+			toast.onClick();
+			handleClose();
+		} else if (toast.sessionId && onSessionClick) {
 			onSessionClick(toast.sessionId, toast.tabId);
 			handleClose();
 		}
 	};
 
-	// Check if toast is clickable (has session navigation)
-	const isClickable = toast.sessionId && onSessionClick;
+	// Check if toast is clickable (has session navigation or custom action)
+	const isClickable = toast.onClick || (toast.sessionId && onSessionClick);
 
 	// Icon based on type
 	const getIcon = () => {

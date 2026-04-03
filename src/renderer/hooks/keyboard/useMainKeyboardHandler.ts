@@ -893,14 +893,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
-			// Cmd+F contextual shortcuts - track based on current focus/context
+			// Cmd+F contextual shortcuts - prioritize explicit focus over input mode
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-				if (ctx.activeSession?.inputMode === 'terminal') {
-					// In terminal mode, Cmd+F opens the terminal search overlay (Phase 10 renders the UI)
-					e.preventDefault();
-					ctx.mainPanelRef?.current?.openTerminalSearch();
-					trackShortcut('searchTerminal');
-				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
+				if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
 					e.preventDefault();
 					ctx.setFileTreeFilterOpen(true);
 					trackShortcut('filterFiles');
@@ -910,6 +905,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
 					// History filter - handled by HistoryPanel component, just track here
 					trackShortcut('filterHistory');
+				} else if (ctx.activeSession?.inputMode === 'terminal') {
+					// Terminal search - only when main panel has focus
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.openTerminalSearch();
+					trackShortcut('searchTerminal');
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');

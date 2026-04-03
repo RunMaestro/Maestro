@@ -38,6 +38,8 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
+	// Generic click handler — if set, clicking the toast invokes this callback
+	onClick?: () => void;
 }
 
 export interface NotificationConfig {

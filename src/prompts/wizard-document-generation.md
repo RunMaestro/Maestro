@@ -55,6 +55,54 @@ Each Auto Run document MUST follow this exact format:
 - [ ] Continue with more tasks...
 ```
 
+## CRITICAL: Every Implementation Step Must Be a Checkbox Task
+
+The Auto Run engine ONLY executes `- [ ]` checkbox items. Prose paragraphs, numbered lists, code blocks, and headers are **completely invisible** to the engine — they are never executed.
+
+**The most common failure mode** is writing detailed implementation steps as prose (headers, paragraphs, code snippets) and only using `- [ ]` for a validation checklist at the end. This produces documents where ZERO implementation work gets done — the engine skips straight to validation checks that all fail because nothing was built.
+
+### Anti-Pattern (WRONG — engine only sees the 3 validation checkboxes, ignores all prose):
+
+```markdown
+# Feature: Add Dark Mode
+
+## Implementation Steps
+
+### Step 1: Create ThemeContext
+
+Create a new file `src/contexts/ThemeContext.tsx` with...
+
+### Step 2: Update App.tsx
+
+Import the ThemeContext and wrap the app...
+
+### Step 3: Add Toggle Button
+
+In the header component, add a toggle...
+
+## Validation Checklist
+
+- [ ] Dark mode toggle appears in header
+- [ ] Theme persists across page reloads
+- [ ] No TypeScript errors
+```
+
+### Correct Pattern (RIGHT — engine executes all 4 tasks):
+
+```markdown
+# Feature: Add Dark Mode
+
+- [ ] Create `src/contexts/ThemeContext.tsx` with a React context that provides `theme` (light/dark) and `toggleTheme`. Use localStorage to persist the preference. Wrap the app in `<ThemeProvider>` in `src/App.tsx`.
+
+- [ ] Update all color references in `src/components/Header.tsx`, `src/components/Sidebar.tsx`, and `src/components/MainContent.tsx` to use CSS variables. Define the variable sets in `src/styles/themes.css` for both light and dark modes.
+
+- [ ] Add a dark mode toggle button in `src/components/Header.tsx` using the `useTheme` hook from ThemeContext. Style it with a sun/moon icon that reflects the current mode.
+
+- [ ] Verify dark mode works: toggle switches themes, preference persists after reload, no TypeScript errors (`npm run lint`), all components respond to theme changes.
+```
+
+**Rule: If the engine should do it, it MUST be a `- [ ]` checkbox. No exceptions.**
+
 ## Task Writing Guidelines
 
 ### Token Efficiency is Critical

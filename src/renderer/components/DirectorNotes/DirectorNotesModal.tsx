@@ -7,6 +7,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
+import { useModalStore, selectModalData } from '../../stores/modalStore';
 
 // Lazy load tab components
 const UnifiedHistoryTab = lazy(() =>
@@ -42,8 +43,9 @@ export function DirectorNotesModal({
 	onFileClick,
 }: DirectorNotesModalProps) {
 	const { directorNotesSettings: _directorNotesSettings, shortcuts } = useSettings();
+	const directorNotesData = useModalStore(selectModalData('directorNotes'));
 	const cached = hasCachedSynopsis();
-	const [activeTab, setActiveTab] = useState<TabId>('history');
+	const [activeTab, setActiveTab] = useState<TabId>(directorNotesData?.initialTab ?? 'history');
 	const [overviewReady, setOverviewReady] = useState(cached);
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
 	const [overviewProgress, setOverviewProgress] = useState(0);

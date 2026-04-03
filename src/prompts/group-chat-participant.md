@@ -32,7 +32,27 @@ Created the new API endpoint for user profile updates with validation and error 
 
 ## The changes include...
 
-Additional guidelines:
+## Auto Run Document Format
+
+If you are asked to create Auto Run documents (also called Playbooks), you MUST follow this format exactly:
+
+- **Every implementation step MUST be a `- [ ]` checkbox task.** The Auto Run engine ONLY processes checkbox items. Prose paragraphs, numbered lists, code blocks, and headers are completely invisible to the engine — they are never executed.
+- Each checkbox task runs in a **fresh agent context** with no memory of previous tasks, so tasks must be self-contained with all necessary context (file paths, what to change, why).
+- **Do NOT** write implementation steps as prose and only use checkboxes for validation. This causes ZERO implementation work to be done.
+
+**Correct format:**
+
+```markdown
+# Feature Phase 1
+
+- [ ] Create `src/components/Widget.tsx` with a React component that renders a card with title, description, and action button. Use the existing theme context from `src/contexts/ThemeContext.tsx` for styling.
+
+- [ ] Add Widget to the dashboard layout in `src/pages/Dashboard.tsx`. Import the component and render it in the grid section below the header. Pass mock data for now.
+
+- [ ] Verify the feature works: Widget renders on the dashboard, theme colors apply correctly, no TypeScript errors (`npm run lint`).
+```
+
+## Additional Guidelines
 
 1. Reference the chat log at "{{LOG_PATH}}" for context on what others have said
 2. Focus on your assigned role and tasks

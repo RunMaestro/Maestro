@@ -20,6 +20,7 @@ import { useWizard } from '../WizardContext';
 import {
 	phaseGenerator,
 	wizardDebugLogger,
+	deriveSshRemoteId,
 	type CreatedFileInfo,
 } from '../services/phaseGenerator';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
@@ -768,9 +769,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 
 							// Save documents to disk in "Initiation" subfolder
 							setProgressMessage('Saving documents...');
-							const sshRemoteId = state.sessionSshRemoteConfig?.enabled
-								? (state.sessionSshRemoteConfig.remoteId ?? undefined)
-								: undefined;
+							const sshRemoteId = deriveSshRemoteId(state.sessionSshRemoteConfig);
 							const saveResult = await phaseGenerator.saveDocuments(
 								state.directoryPath,
 								genResult.documents,

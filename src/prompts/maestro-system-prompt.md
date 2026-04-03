@@ -61,7 +61,9 @@ Use the format `PREFIX-XX.md` where `XX` is a zero-padded phase number:
 
 ### Task Format (MANDATORY)
 
-**Every task MUST use `- [ ]` checkbox syntax.** This is non-negotiable — the Auto Run engine only processes checkbox items. Plain bullet points (`-`) are ignored by the engine.
+**Every task MUST use `- [ ]` checkbox syntax.** This is non-negotiable — the Auto Run engine only processes checkbox items. Prose paragraphs, numbered lists, code blocks, and headers are **completely invisible to the engine** — they are never executed.
+
+**Common failure mode:** Writing detailed implementation steps as prose (headers, paragraphs, code snippets) and only using `- [ ]` for a validation checklist at the end. This produces documents where ZERO implementation work gets done — the engine skips to validation checks that all fail because nothing was built. **If the engine should do it, it MUST be a `- [ ]` checkbox.**
 
 Each checkbox task runs in a **fresh agent context** with no memory of previous tasks. Tasks must be:
 
