@@ -125,9 +125,7 @@ describe('ForcedParallelWarningModal', () => {
 				/>
 			);
 
-			expect(
-				screen.getByRole('button', { name: 'I understand, enable it' })
-			).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'I understand, enable it' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 		});
 	});

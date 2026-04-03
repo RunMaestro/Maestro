@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -19,10 +19,6 @@ export function ForcedParallelWarningModal({
 }: ForcedParallelWarningModalProps) {
 	const confirmButtonRef = useRef<HTMLButtonElement>(null);
 
-	const handleConfirm = useCallback(() => {
-		onConfirm();
-	}, [onConfirm]);
-
 	if (!isOpen) return null;
 
 	return (
@@ -37,7 +33,7 @@ export function ForcedParallelWarningModal({
 				<ModalFooter
 					theme={theme}
 					onCancel={onCancel}
-					onConfirm={handleConfirm}
+					onConfirm={onConfirm}
 					confirmLabel="I understand, enable it"
 					confirmButtonRef={confirmButtonRef}
 				/>
@@ -53,13 +49,12 @@ export function ForcedParallelWarningModal({
 				<div>
 					<p className="text-sm leading-relaxed mb-3" style={{ color: theme.colors.textMain }}>
 						This sends messages immediately, even when the agent is already working. If two
-						operations modify the same files simultaneously, one may overwrite the other's
-						changes.
+						operations modify the same files simultaneously, one may overwrite the other's changes.
 					</p>
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
-						This is intended for advanced users who understand the risks. Use the assigned
-						shortcut key to force-send while the agent is busy. Regular send keys will
-						continue to queue normally.
+						This is intended for advanced users who understand the risks. Use the assigned shortcut
+						key to force-send while the agent is busy. Regular send keys will continue to queue
+						normally.
 					</p>
 				</div>
 			</div>

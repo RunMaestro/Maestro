@@ -628,10 +628,7 @@ describe('settingsStore', () => {
 			it('setForcedParallelExecution updates state and persists', () => {
 				useSettingsStore.getState().setForcedParallelExecution(true);
 				expect(useSettingsStore.getState().forcedParallelExecution).toBe(true);
-				expect(window.maestro.settings.set).toHaveBeenCalledWith(
-					'forcedParallelExecution',
-					true
-				);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('forcedParallelExecution', true);
 			});
 
 			it('setForcedParallelAcknowledged updates state and persists', () => {

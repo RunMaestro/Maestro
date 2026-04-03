@@ -102,7 +102,9 @@ export interface UseInputHandlersReturn {
 	/** Process and send the current input */
 	processInput: (text?: string, options?: { forceParallel?: boolean }) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
-	processInputRef: React.MutableRefObject<(text?: string, options?: { forceParallel?: boolean }) => void>;
+	processInputRef: React.MutableRefObject<
+		(text?: string, options?: { forceParallel?: boolean }) => void
+	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
 	/** Handler for input blur (persists input to session state) */
@@ -421,7 +423,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<(text?: string, options?: { forceParallel?: boolean }) => void>(() => {});
+	const processInputRef = useRef<(text?: string, options?: { forceParallel?: boolean }) => void>(
+		() => {}
+	);
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);

@@ -900,6 +900,7 @@ describe('Forced parallel send shortcut', () => {
 	it('Cmd+Shift+Enter calls processInput with forceParallel in AI mode', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({
+			forcedParallelExecution: true,
 			shortcuts: {
 				...useSettingsStore.getState().shortcuts,
 				forcedParallelSend: {
@@ -924,6 +925,7 @@ describe('Forced parallel send shortcut', () => {
 	it('Ctrl+Shift+Enter calls processInput with forceParallel in AI mode', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({
+			forcedParallelExecution: true,
 			shortcuts: {
 				...useSettingsStore.getState().shortcuts,
 				forcedParallelSend: {
@@ -948,6 +950,7 @@ describe('Forced parallel send shortcut', () => {
 	it('does NOT trigger forced parallel in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
 		useSettingsStore.setState({
+			forcedParallelExecution: true,
 			shortcuts: {
 				...useSettingsStore.getState().shortcuts,
 				forcedParallelSend: {
@@ -965,13 +968,39 @@ describe('Forced parallel send shortcut', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		// Should NOT call processInput with forceParallel
+		// Should NOT call processInput at all in terminal mode
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('does NOT trigger forced parallel when feature is disabled', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			forcedParallelExecution: false,
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				forcedParallelSend: {
+					id: 'forcedParallelSend',
+					label: 'Forced Parallel Send',
+					keys: ['Meta', 'Shift', 'Enter'],
+				},
+			},
+		} as any);
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', { metaKey: true, shiftKey: true });
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		// Should NOT call processInput with forceParallel when feature is disabled
 		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { forceParallel: true });
 	});
 
 	it('respects custom shortcut configuration', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({
+			forcedParallelExecution: true,
 			shortcuts: {
 				...useSettingsStore.getState().shortcuts,
 				forcedParallelSend: {

@@ -237,13 +237,16 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const enterToSendTerminal = settings.enterToSendTerminal;
 
 			if (e.key === 'Enter') {
-				// Check for forced parallel send shortcut (only in AI mode)
-				if (activeSession?.inputMode !== 'terminal') {
+				// Check for forced parallel send shortcut (only in AI mode, only when feature enabled)
+				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
+				// main key must be Enter. Non-Enter shortcuts are not supported by design.
+				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
 					const shortcuts = settings.shortcuts;
 					const fpShortcut = shortcuts.forcedParallelSend;
 					if (fpShortcut) {
 						const fpKeys = fpShortcut.keys.map((k: string) => k.toLowerCase());
-						const fpNeedsMeta = fpKeys.includes('meta') || fpKeys.includes('ctrl') || fpKeys.includes('command');
+						const fpNeedsMeta =
+							fpKeys.includes('meta') || fpKeys.includes('ctrl') || fpKeys.includes('command');
 						const fpNeedsShift = fpKeys.includes('shift');
 						const fpNeedsAlt = fpKeys.includes('alt');
 						const fpMainKey = fpKeys[fpKeys.length - 1];
