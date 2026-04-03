@@ -27,6 +27,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
 	getActiveTab,
 	createTab,
@@ -2323,7 +2324,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('unread-tab');
 		});
 
-		it('includes file tabs in showUnreadOnly mode', () => {
+		it('includes file tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: true });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const fileTab = createMockFileTab({ id: 'file-1' });
 			const session = createMockSession({
@@ -2341,6 +2343,31 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('file');
 			expect(result!.id).toBe('file-1');
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+		});
+
+		it('skips file tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+			const unreadTab = createMockTab({ id: 'unread-tab', hasUnread: true, inputValue: '' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab, unreadTab],
+				filePreviewTabs: [fileTab],
+				activeTabId: 'read-tab',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'read-tab' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'unread-tab' },
+				],
+			});
+
+			const result = navigateToNextUnifiedTab(session, true);
+
+			// Should skip the file tab and land on the unread AI tab
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('unread-tab');
 		});
 
 		it('navigates to first tab when current tab not found in unified order', () => {
@@ -2549,7 +2576,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('unread-tab');
 		});
 
-		it('includes file tabs in showUnreadOnly mode', () => {
+		it('includes file tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: true });
 			const fileTab = createMockFileTab({ id: 'file-1' });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const session = createMockSession({
@@ -2567,6 +2595,31 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('file');
 			expect(result!.id).toBe('file-1');
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+		});
+
+		it('skips file tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showFilePreviewsInUnreadFilter: false });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const unreadTab = createMockTab({ id: 'unread-tab', hasUnread: true, inputValue: '' });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab, unreadTab],
+				filePreviewTabs: [fileTab],
+				activeTabId: 'read-tab',
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'unread-tab' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'read-tab' },
+				],
+			});
+
+			const result = navigateToPrevUnifiedTab(session, true);
+
+			// Should skip the file tab and land on the unread AI tab
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('unread-tab');
 		});
 
 		it('navigates to last tab when current tab not found in unified order', () => {

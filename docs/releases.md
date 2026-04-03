@@ -21,7 +21,8 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 - **Maestro Cue** — Event-driven automation engine that watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `.maestro/cue.yaml` per project. Gated as an Encore Feature
 - **Environment tab** — Dedicated Settings tab for managing global environment variables passed to all agents
-- **Static history graph with viewport indicator** — The activity graph in the History panel no longer shifts as you scroll; instead, bars outside the visible scroll range are dimmed, giving a clear positional indicator without losing the full-timeline overview
+- **Static history graph with viewport indicator** — The activity graph in the History panel no longer shifts as you scroll; instead, a sliding indicator line with a timestamp label shows your current position in the timeline
+- **File preview tab filtering** — New setting to control whether file preview tabs remain visible when the unread filter is active, with a redesigned Tab Filtering section in Display settings
 - **Cloudflare tunnel auto-restart** — The web/mobile tunnel automatically restarts when the web server port changes
 - **Custom TTS notifications** — Synopsis text is now sent to custom notification commands for user-initiated tasks
 

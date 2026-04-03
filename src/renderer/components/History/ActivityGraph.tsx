@@ -160,21 +160,32 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		}
 	}, [contextMenu]);
 
-	// Compute which bucket indices fall within the viewport range
-	const viewportBucketRange = useMemo(() => {
+	// Compute viewport indicator position as a percentage (0% = left/oldest, 100% = right/now)
+	// Uses the newest visible entry's timestamp to position the indicator
+	const viewportIndicatorPercent = useMemo(() => {
 		if (!viewportRange) return null;
-		const startIdx = Math.max(0, Math.floor((viewportRange.end - startTime) / msPerBucket));
-		const endIdx = Math.min(
-			bucketCount - 1,
-			Math.floor((viewportRange.start - startTime) / msPerBucket)
-		);
-		// Entries are newest-first, so viewportRange.start > viewportRange.end
-		// But timestamps: start is the older entry, end is the newer one
-		// Let's normalize: lower bucket index = older, higher = newer
-		const lo = Math.max(0, Math.min(startIdx, endIdx));
-		const hi = Math.min(bucketCount - 1, Math.max(startIdx, endIdx));
-		return { lo, hi };
-	}, [viewportRange, startTime, msPerBucket, bucketCount]);
+		const totalMs = endTime - startTime;
+		if (totalMs <= 0) return null;
+		const percent = ((viewportRange.end - startTime) / totalMs) * 100;
+		return Math.max(0, Math.min(100, percent));
+	}, [viewportRange, startTime, endTime]);
+
+	// Format the viewport indicator timestamp for display in the axis row
+	const viewportIndicatorLabel = useMemo(() => {
+		if (!viewportRange) return null;
+		const ts = viewportRange.end;
+		const date = new Date(ts);
+		if (lookbackHours !== null && lookbackHours <= 24) {
+			// Short lookback: show time of day
+			const hour = date.getHours();
+			const min = date.getMinutes();
+			const ampm = hour >= 12 ? 'PM' : 'AM';
+			const hour12 = hour % 12 || 12;
+			return `${hour12}:${min.toString().padStart(2, '0')}${ampm}`;
+		}
+		// Longer lookback or all-time: show date
+		return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+	}, [viewportRange, lookbackHours]);
 
 	// Generate labels for the x-axis
 	const getAxisLabels = () => {
@@ -312,9 +323,21 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 
 			{/* Graph container with border */}
 			<div
-				className="flex items-end gap-px h-6 rounded border px-1 pt-1"
+				className="flex items-end gap-px h-6 rounded border px-1 pt-1 relative"
 				style={{ borderColor: theme.colors.border }}
 			>
+				{/* Viewport position indicator — shows where you are in the history */}
+				{viewportIndicatorPercent !== null && (
+					<div
+						className="absolute top-0 bottom-0 pointer-events-none z-20"
+						style={{
+							left: `${viewportIndicatorPercent}%`,
+							width: '2px',
+							backgroundColor: theme.colors.error,
+							transition: 'left 0.15s ease-out',
+						}}
+					/>
+				)}
 				{bucketData.map((bucket, index) => {
 					const total = bucket.auto + bucket.user + bucket.cue;
 					const heightPercent = total > 0 ? (total / maxValue) * 100 : 0;
@@ -322,9 +345,6 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 					const cuePercent = total > 0 ? (bucket.cue / total) * 100 : 0;
 					const userPercent = total > 0 ? (bucket.user / total) * 100 : 0;
 					const isHovered = hoveredIndex === index;
-					const inViewport =
-						!viewportBucketRange ||
-						(index >= viewportBucketRange.lo && index <= viewportBucketRange.hi);
 
 					return (
 						<div
@@ -332,10 +352,10 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 							className="flex-1 min-w-0 flex flex-col justify-end rounded-t-sm overflow-visible cursor-pointer"
 							style={{
 								height: '100%',
-								opacity: total > 0 ? (inViewport ? 1 : 0.3) : 0.15,
+								opacity: total > 0 ? 1 : 0.15,
 								transform: isHovered ? 'scaleX(1.5)' : 'scaleX(1)',
 								zIndex: isHovered ? 10 : 1,
-								transition: 'transform 0.1s ease-out, opacity 0.15s ease-out',
+								transition: 'transform 0.1s ease-out',
 								cursor: total > 0 ? 'pointer' : 'default',
 							}}
 							onMouseEnter={() => setHoveredIndex(index)}
@@ -414,6 +434,24 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 						{label}
 					</span>
 				))}
+				{/* Viewport indicator label — hidden near edges to avoid overlapping axis labels */}
+				{viewportIndicatorPercent !== null &&
+					viewportIndicatorLabel &&
+					viewportIndicatorPercent > 12 &&
+					viewportIndicatorPercent < 88 && (
+						<span
+							className="absolute text-[8px] font-mono"
+							data-testid="viewport-indicator-label"
+							style={{
+								color: theme.colors.error,
+								left: `${viewportIndicatorPercent}%`,
+								transform: 'translateX(-50%)',
+								transition: 'left 0.15s ease-out',
+							}}
+						>
+							{viewportIndicatorLabel}
+						</span>
+					)}
 			</div>
 		</div>
 	);

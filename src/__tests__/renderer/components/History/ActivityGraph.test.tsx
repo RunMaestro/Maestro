@@ -484,37 +484,7 @@ describe('ActivityGraph', () => {
 		expect(barInner.style.height).toBe('100%');
 	});
 
-	it('dims bars outside the viewport range', () => {
-		// Create entries spread across a 24h period
-		const entries = [
-			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }), // 1h ago
-			createMockEntry({ type: 'AUTO', timestamp: NOW - 12 * 60 * 60 * 1000 }), // 12h ago
-			createMockEntry({ type: 'AUTO', timestamp: NOW - 23 * 60 * 60 * 1000 }), // 23h ago
-		];
-
-		const { container } = render(
-			<ActivityGraph
-				entries={entries}
-				theme={mockTheme}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-				viewportRange={{
-					start: NOW - 2 * 60 * 60 * 1000, // viewing entries from 1-2h ago
-					end: NOW - 1 * 60 * 60 * 1000,
-				}}
-			/>
-		);
-
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		// Bars outside viewport should have lower opacity (0.3)
-		// Bars inside viewport should have full opacity (1)
-		const opacities = Array.from(bars).map((bar) => (bar as HTMLElement).style.opacity);
-		// At least one bar should be dimmed (0.3) and at least one should be full (1)
-		expect(opacities.some((o) => o === '0.3')).toBe(true);
-		expect(opacities.some((o) => o === '1')).toBe(true);
-	});
-
-	it('shows all bars at full opacity when no viewport range', () => {
+	it('shows viewport indicator line when viewportRange is provided', () => {
 		const entries = [
 			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
 			createMockEntry({ type: 'AUTO', timestamp: NOW - 12 * 60 * 60 * 1000 }),
@@ -526,12 +496,83 @@ describe('ActivityGraph', () => {
 				theme={mockTheme}
 				lookbackHours={24}
 				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 13 * 60 * 60 * 1000,
+					end: NOW - 12 * 60 * 60 * 1000,
+				}}
 			/>
 		);
 
-		const bars = container.querySelectorAll('.flex-1.min-w-0.flex.flex-col.justify-end');
-		const filledBars = Array.from(bars).filter((bar) => (bar as HTMLElement).style.opacity === '1');
-		// All bars with entries should be at full opacity
-		expect(filledBars.length).toBeGreaterThanOrEqual(2);
+		// The indicator line should be rendered
+		const indicator = container.querySelector('.pointer-events-none.z-20');
+		expect(indicator).toBeInTheDocument();
+		// Should be positioned roughly at 50% (12h into a 24h window)
+		const left = parseFloat((indicator as HTMLElement).style.left);
+		expect(left).toBeGreaterThan(40);
+		expect(left).toBeLessThan(60);
+	});
+
+	it('does not show viewport indicator when no viewportRange', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 })];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+			/>
+		);
+
+		const indicator = container.querySelector('.pointer-events-none.z-20');
+		expect(indicator).not.toBeInTheDocument();
+	});
+
+	it('shows a time label following the viewport indicator', () => {
+		const entries = [
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 }),
+			createMockEntry({ type: 'AUTO', timestamp: NOW - 12 * 60 * 60 * 1000 }),
+		];
+
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 13 * 60 * 60 * 1000,
+					end: NOW - 12 * 60 * 60 * 1000,
+				}}
+			/>
+		);
+
+		// Should render the indicator label in the axis row
+		const label = container.querySelector('[data-testid="viewport-indicator-label"]');
+		expect(label).toBeInTheDocument();
+		// For 24h lookback, label should show a time (contains AM or PM)
+		expect(label!.textContent).toMatch(/AM|PM/);
+	});
+
+	it('hides indicator label when too close to edges', () => {
+		const entries = [createMockEntry({ type: 'AUTO', timestamp: NOW - 1 * 60 * 60 * 1000 })];
+
+		// Position the indicator at ~96% (very close to "Now" edge)
+		const { container } = render(
+			<ActivityGraph
+				entries={entries}
+				theme={mockTheme}
+				lookbackHours={24}
+				onLookbackChange={vi.fn()}
+				viewportRange={{
+					start: NOW - 2 * 60 * 60 * 1000,
+					end: NOW - 1 * 60 * 60 * 1000,
+				}}
+			/>
+		);
+
+		// Label should be hidden since the indicator is near the right edge (>88%)
+		const label = container.querySelector('[data-testid="viewport-indicator-label"]');
+		expect(label).not.toBeInTheDocument();
 	});
 });

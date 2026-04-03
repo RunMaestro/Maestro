@@ -235,6 +235,7 @@ export interface SettingsStoreState {
 	keyboardMasteryStats: KeyboardMasteryStats;
 	colorBlindMode: boolean;
 	showStarredInUnreadFilter: boolean;
+	showFilePreviewsInUnreadFilter: boolean;
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
@@ -311,6 +312,7 @@ export interface SettingsStoreActions {
 	setWebInterfaceCustomPort: (value: number) => void;
 	setColorBlindMode: (value: boolean) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
+	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
@@ -465,6 +467,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
 		colorBlindMode: false,
 		showStarredInUnreadFilter: false,
+		showFilePreviewsInUnreadFilter: false,
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
@@ -788,6 +791,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setShowStarredInUnreadFilter: (value) => {
 			set({ showStarredInUnreadFilter: value });
 			window.maestro.settings.set('showStarredInUnreadFilter', value);
+		},
+
+		setShowFilePreviewsInUnreadFilter: (value) => {
+			set({ showFilePreviewsInUnreadFilter: value });
+			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
 		},
 
 		setDocumentGraphShowExternalLinks: (value) => {
@@ -1716,6 +1724,11 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['showStarredInUnreadFilter'] !== undefined)
 			patch.showStarredInUnreadFilter = allSettings['showStarredInUnreadFilter'] as boolean;
 
+		if (allSettings['showFilePreviewsInUnreadFilter'] !== undefined)
+			patch.showFilePreviewsInUnreadFilter = allSettings[
+				'showFilePreviewsInUnreadFilter'
+			] as boolean;
+
 		// Document Graph settings (with validation)
 		if (allSettings['documentGraphShowExternalLinks'] !== undefined)
 			patch.documentGraphShowExternalLinks = allSettings[
@@ -1937,6 +1950,7 @@ export function getSettingsActions() {
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
 		setShowStarredInUnreadFilter: state.setShowStarredInUnreadFilter,
+		setShowFilePreviewsInUnreadFilter: state.setShowFilePreviewsInUnreadFilter,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,

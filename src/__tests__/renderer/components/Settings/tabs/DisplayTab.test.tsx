@@ -10,7 +10,7 @@
  * - User message alignment toggle
  * - Native title bar toggle
  * - Auto-hide menu bar toggle
- * - Tab filtering (starred tabs in unread filter)
+ * - Tab filtering (starred tabs in unread filter, file preview tabs in unread filter)
  * - Document Graph settings (external links, max nodes)
  * - Context window warnings (enable/disable, threshold sliders)
  * - Local ignore patterns (add/remove, honor gitignore)
@@ -39,6 +39,7 @@ const mockUpdateContextManagementSettings = vi.fn();
 const mockSetLocalIgnorePatterns = vi.fn();
 const mockSetLocalHonorGitignore = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
+const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
 
 // Per-test overrides (merged into useSettings return)
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -82,6 +83,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setLocalHonorGitignore: mockSetLocalHonorGitignore,
 		showStarredInUnreadFilter: false,
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
+		showFilePreviewsInUnreadFilter: false,
+		setShowFilePreviewsInUnreadFilter: mockSetShowFilePreviewsInUnreadFilter,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -1002,6 +1005,64 @@ describe('DisplayTab', () => {
 			});
 
 			const label = screen.getByText('Show starred tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+
+			expect(toggle.getAttribute('aria-checked')).toBe('true');
+		});
+
+		it('should render file preview tabs in unread filter toggle', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(
+				screen.getByText('Show file preview tabs when filtering by unread')
+			).toBeInTheDocument();
+		});
+
+		it('should toggle file previews in unread filter on when clicked (currently off)', async () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowFilePreviewsInUnreadFilter).toHaveBeenCalledWith(true);
+		});
+
+		it('should toggle file previews in unread filter off when clicked (currently on)', async () => {
+			mockUseSettingsOverrides = { showFilePreviewsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
+			const section = label.closest('.flex.items-center.justify-between')!;
+			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
+			fireEvent.click(toggle);
+
+			expect(mockSetShowFilePreviewsInUnreadFilter).toHaveBeenCalledWith(false);
+		});
+
+		it('should show aria-checked=true when file previews in unread filter is enabled', async () => {
+			mockUseSettingsOverrides = { showFilePreviewsInUnreadFilter: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const label = screen.getByText('Show file preview tabs when filtering by unread');
 			const section = label.closest('.flex.items-center.justify-between')!;
 			const toggle = section.querySelector('[role="switch"]') as HTMLElement;
 

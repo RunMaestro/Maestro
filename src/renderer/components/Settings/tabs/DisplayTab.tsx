@@ -7,7 +7,7 @@
  */
 
 import { useState } from 'react';
-import { Sparkles, AlertTriangle, AppWindow } from 'lucide-react';
+import { Sparkles, AlertTriangle, AppWindow, ListFilter } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
@@ -35,6 +35,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setFileExplorerIconTheme,
 		showStarredInUnreadFilter,
 		setShowStarredInUnreadFilter,
+		showFilePreviewsInUnreadFilter,
+		setShowFilePreviewsInUnreadFilter,
 		useNativeTitleBar,
 		setUseNativeTitleBar,
 		autoHideMenuBar,
@@ -207,40 +209,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</p>
 			</div>
 
-			{/* Starred Tabs in Unread Filter */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Tab Filtering</div>
-				<div className="flex items-center justify-between">
-					<div>
-						<p className="text-sm" style={{ color: theme.colors.textMain }}>
-							Show starred tabs when filtering by unread
-						</p>
-						<p className="text-xs opacity-50 mt-0.5">
-							When the unread filter is active, starred tabs remain visible even if they have no
-							unread messages.
-						</p>
-					</div>
-					<button
-						onClick={() => setShowStarredInUnreadFilter(!showStarredInUnreadFilter)}
-						className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-						tabIndex={0}
-						style={{
-							backgroundColor: showStarredInUnreadFilter
-								? theme.colors.accent
-								: theme.colors.bgActivity,
-						}}
-						role="switch"
-						aria-checked={showStarredInUnreadFilter}
-					>
-						<span
-							className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-								showStarredInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
-							}`}
-						/>
-					</button>
-				</div>
-			</div>
-
 			{/* Window Chrome Settings */}
 			<div>
 				<label
@@ -313,6 +281,88 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 							<span
 								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 									autoHideMenuBar ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* Starred Tabs in Unread Filter */}
+			<div>
+				<label
+					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
+					style={{ color: theme.colors.textDim }}
+				>
+					<ListFilter className="w-3 h-3" />
+					Tab Filtering
+				</label>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+					}}
+				>
+					<div className="flex items-center justify-between">
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show starred tabs when filtering by unread
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When the unread filter is active, starred tabs remain visible even if they have no
+								unread messages.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowStarredInUnreadFilter(!showStarredInUnreadFilter)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showStarredInUnreadFilter
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showStarredInUnreadFilter}
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showStarredInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Show File Preview Tabs in Unread Filter */}
+					<div
+						className="flex items-center justify-between pt-3 border-t"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div>
+							<p className="text-sm" style={{ color: theme.colors.textMain }}>
+								Show file preview tabs when filtering by unread
+							</p>
+							<p className="text-xs opacity-50 mt-0.5">
+								When the unread filter is active, file preview tabs remain visible instead of being
+								hidden.
+							</p>
+						</div>
+						<button
+							onClick={() => setShowFilePreviewsInUnreadFilter(!showFilePreviewsInUnreadFilter)}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+							tabIndex={0}
+							style={{
+								backgroundColor: showFilePreviewsInUnreadFilter
+									? theme.colors.accent
+									: theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={showFilePreviewsInUnreadFilter}
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									showFilePreviewsInUnreadFilter ? 'translate-x-5' : 'translate-x-0.5'
 								}`}
 							/>
 						</button>

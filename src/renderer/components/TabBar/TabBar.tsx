@@ -80,6 +80,7 @@ function TabBarInner({
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	const showStarredInUnreadFilter = useSettingsStore((s) => s.showStarredInUnreadFilter);
+	const showFilePreviewsInUnreadFilter = useSettingsStore((s) => s.showFilePreviewsInUnreadFilter);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const stickyLeftRef = useRef<HTMLDivElement>(null);
@@ -150,7 +151,11 @@ function TabBarInner({
 					(showStarredInUnreadFilter && ut.data.starred)
 				);
 			}
-			// File and terminal tabs are always visible
+			// File preview tabs: hidden by default in unread filter, shown if setting enabled
+			if (ut.type === 'file') {
+				return showFilePreviewsInUnreadFilter;
+			}
+			// Terminal tabs are always visible
 			return true;
 		});
 	}, [
@@ -161,6 +166,7 @@ function TabBarInner({
 		activeTerminalTabId,
 		inputMode,
 		showStarredInUnreadFilter,
+		showFilePreviewsInUnreadFilter,
 	]);
 
 	// Drag handlers
