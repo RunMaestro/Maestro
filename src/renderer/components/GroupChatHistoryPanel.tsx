@@ -15,6 +15,7 @@ import type {
 	GroupChatHistoryEntryType,
 } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
+import { formatTimestamp } from '../../shared/formatters';
 import { useUIStore } from '../stores/uiStore';
 
 // Lookback period options for the activity graph
@@ -568,23 +569,6 @@ export function GroupChatHistoryPanel({
 		}
 	};
 
-	// Format timestamp
-	const formatTime = (timestamp: number) => {
-		const date = new Date(timestamp);
-		const now = new Date();
-		const isToday = date.toDateString() === now.toDateString();
-
-		if (isToday) {
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-		} else {
-			return (
-				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-				' ' +
-				date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			);
-		}
-	};
-
 	return (
 		<div
 			className="flex-1 flex flex-col overflow-hidden p-3"
@@ -708,7 +692,7 @@ export function GroupChatHistoryPanel({
 									</span>
 									{/* Timestamp */}
 									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
-										{formatTime(entry.timestamp)}
+										{formatTimestamp(entry.timestamp)}
 									</span>
 								</div>
 

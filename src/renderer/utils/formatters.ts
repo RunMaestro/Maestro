@@ -8,6 +8,7 @@ export {
 	formatNumber,
 	formatTokens,
 	formatTokensCompact,
+	formatTimestamp,
 	formatRelativeTime,
 	formatActiveTime,
 	formatElapsedTime,

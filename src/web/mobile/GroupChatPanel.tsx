@@ -9,6 +9,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { ArrowLeft, Square, Send } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
+import { formatTimestamp } from '../../shared/formatters';
 import type { GroupChatState, GroupChatMessage } from '../hooks/useWebSocket';
 
 export interface GroupChatPanelProps {
@@ -20,24 +21,6 @@ export interface GroupChatPanelProps {
 	onStop: () => void;
 	/** Navigate back */
 	onBack: () => void;
-}
-
-/**
- * Format timestamp for display
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	}
-	return (
-		date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-		' ' +
-		date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-	);
 }
 
 /**
@@ -442,7 +425,9 @@ function MessageBubble({
 				<span style={{ fontSize: 11, color: colors.textDim, fontWeight: 500 }}>
 					{message.participantName}
 				</span>
-				<span style={{ fontSize: 10, color: colors.textDim }}>{formatTime(message.timestamp)}</span>
+				<span style={{ fontSize: 10, color: colors.textDim }}>
+					{formatTimestamp(message.timestamp)}
+				</span>
 			</div>
 
 			{/* Message content */}

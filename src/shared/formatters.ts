@@ -7,6 +7,7 @@
  * - formatNumber: Large numbers with k/M/B suffixes
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
+ * - formatTimestamp: Timestamp display with multiple styles (time, datetime, smart, full)
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
  * - formatActiveTime: Duration display (1D, 2H 30M, <1M)
  * - formatElapsedTime: Precise elapsed time (1h 10m, 30s, 500ms)
@@ -76,6 +77,55 @@ export function formatTokensCompact(tokens: number): string {
 	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
 	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
 	return tokens.toString();
+}
+
+/**
+ * Format a timestamp for display using one of several styles.
+ *
+ * Styles:
+ * - 'time': Time only (e.g., "03:45 PM")
+ * - 'datetime': Always date + time (e.g., "Jan 5, 03:45 PM")
+ * - 'smart': Time if today, date + time otherwise (default)
+ * - 'full': Full locale string (e.g., "1/5/2025, 3:45:00 PM")
+ *
+ * @param timestamp - Unix timestamp in milliseconds, or ISO date string
+ * @param style - Display style (default: 'smart')
+ * @returns Formatted timestamp string
+ */
+export function formatTimestamp(
+	timestamp: number | string,
+	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
+): string {
+	const date = new Date(timestamp);
+
+	switch (style) {
+		case 'time':
+			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+		case 'datetime':
+			return date.toLocaleString([], {
+				month: 'short',
+				day: 'numeric',
+				hour: '2-digit',
+				minute: '2-digit',
+			});
+
+		case 'smart': {
+			const now = new Date();
+			const isToday = date.toDateString() === now.toDateString();
+			if (isToday) {
+				return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			}
+			return (
+				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+				' ' +
+				date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			);
+		}
+
+		case 'full':
+			return date.toLocaleString();
+	}
 }
 
 /**

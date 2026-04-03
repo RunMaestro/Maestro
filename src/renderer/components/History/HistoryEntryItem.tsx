@@ -1,26 +1,9 @@
 import { memo } from 'react';
 import { ExternalLink, Check, X, Clock, Award, Cloud, Server } from 'lucide-react';
 import type { Theme, HistoryEntry } from '../../types';
-import { formatElapsedTime } from '../../utils/formatters';
+import { formatElapsedTime, formatTimestamp } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
-
-// Format timestamp
-const formatTime = (timestamp: number) => {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-};
 
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
@@ -152,7 +135,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 
 				{/* Timestamp */}
 				<span className="text-[10px] flex-shrink-0" style={{ color: theme.colors.textDim }}>
-					{formatTime(entry.timestamp)}
+					{formatTimestamp(entry.timestamp)}
 				</span>
 			</div>
 

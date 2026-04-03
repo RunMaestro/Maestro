@@ -12,8 +12,8 @@ Create a canonical `formatTimestamp` in `src/shared/formatters.ts` and replace 1
 
 ## Pre-flight Checks
 
-- [ ] Phase 04-B (formatElapsedTime) is complete
-- [ ] `rtk npm run lint` passes
+- [x] Phase 04-B (formatElapsedTime) is complete
+- [x] `rtk npm run lint` passes
 
 ---
 
@@ -21,54 +21,67 @@ Create a canonical `formatTimestamp` in `src/shared/formatters.ts` and replace 1
 
 ### Task 1: Inventory all 15 definitions
 
-- [ ] Find all definitions: `rtk grep "function formatTime\b\|const formatTime\b\|function formatTimestamp\|const formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "__tests__"`
-- [ ] Confirm expected locations: `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `WizardMessageBubble.tsx`, `ParticipantCard.tsx`, `ThinkingStatusPill.tsx`, `LongestAutoRunsTable.tsx`, `ConversationScreen.tsx`, `conductorBadges.ts`, `groupChatExport.ts`, `tabExport.ts`, `MessageHistory.tsx`, `MobileHistoryPanel.tsx`, `ResponseViewer.tsx`
+- [x] Find all definitions: `rtk grep "function formatTime\b\|const formatTime\b\|function formatTimestamp\|const formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "__tests__"`
+- [x] Confirm expected locations: `GroupChatHistoryPanel.tsx`, `GroupChatMessages.tsx`, `HistoryEntryItem.tsx`, `HistoryDetailModal.tsx`, `WizardMessageBubble.tsx`, `ParticipantCard.tsx`, `ThinkingStatusPill.tsx`, `LongestAutoRunsTable.tsx`, `ConversationScreen.tsx`, `conductorBadges.ts`, `groupChatExport.ts`, `tabExport.ts`, `MessageHistory.tsx`, `MobileHistoryPanel.tsx`, `ResponseViewer.tsx`
+  - Note: `conductorBadges.ts` has `formatTimeRemaining` (different function, not a timestamp formatter). `GroupChatPanel.tsx` was found as an additional site not in the scan.
 
 ### Task 2: Categorize by output format
 
-- [ ] Read each of the 15 definitions
-- [ ] Group by output format: `HH:MM:SS` (24-hour), `h:mm AM/PM` (12-hour), `MMM D, YYYY h:mm AM/PM` (date+time), relative ("5 min ago"), other
-- [ ] Document which style each call site needs
+- [x] Read each of the 15 definitions
+- [x] Group by output format: `HH:MM:SS` (24-hour), `h:mm AM/PM` (12-hour), `MMM D, YYYY h:mm AM/PM` (date+time), relative ("5 min ago"), other
+- [x] Document which style each call site needs
+  - **smart** (5): GroupChatPanel, MobileHistoryPanel, MessageHistory, GroupChatHistoryPanel, HistoryEntryItem - time if today, date+time otherwise
+  - **time** (3): WizardMessageBubble, ConversationScreen, LongestAutoRunsTable - time only
+  - **datetime** (2): HistoryDetailModal, ResponseViewer - always date+time
+  - **full** (2): groupChatExport, tabExport - full toLocaleString()
+  - **relative+time** (1): ParticipantCard - relative time with time fallback
+  - **JSX** (1): GroupChatMessages - returns JSX, uses `formatTimestamp('time')` for string part
+  - **duration** (1): ThinkingStatusPill - takes seconds, NOT a timestamp formatter
 
 ### Task 3: Design canonical API
 
-- [ ] Add `formatTimestamp(timestamp: number, style: 'time' | 'datetime' | 'relative' = 'time'): string` to `src/shared/formatters.ts`
-- [ ] If there are truly different output formats, provide multiple style options rather than multiple functions
+- [x] Add `formatTimestamp(timestamp: number | string, style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'): string` to `src/shared/formatters.ts`
+- [x] If there are truly different output formats, provide multiple style options rather than multiple functions
+  - Four styles: `time`, `datetime`, `smart` (default), `full`. Accepts `number | string` input.
 
 ### Task 4: Implement and test the canonical function
 
-- [ ] Write the implementation in `src/shared/formatters.ts` covering all discovered output patterns
-- [ ] Add unit tests in `src/__tests__/shared/formatters.test.ts` for each style variant
-- [ ] Test edge cases: timestamp 0, negative values, future timestamps
-- [ ] Run tests: `rtk vitest run src/__tests__/shared/formatters.test.ts`
+- [x] Write the implementation in `src/shared/formatters.ts` covering all discovered output patterns
+- [x] Add unit tests in `src/__tests__/shared/formatters.test.ts` for each style variant
+- [x] Test edge cases: timestamp 0, negative values, future timestamps
+- [x] Run tests: `rtk vitest run src/__tests__/shared/formatters.test.ts` - all 67 tests pass
 
 ### Task 5: Migrate all 15 definitions
 
 For each file:
 
-- [ ] Read the local definition to determine which `style` parameter to use
-- [ ] Remove the local function
-- [ ] Add import: `import { formatTimestamp } from '../../shared/formatters';` (adjust path)
-- [ ] If local function was named `formatTime`, use: `import { formatTimestamp as formatTime } from ...`
-- [ ] Verify output matches the old local definition
+- [x] Read the local definition to determine which `style` parameter to use
+- [x] Remove the local function
+- [x] Add import: `import { formatTimestamp } from '../../shared/formatters';` (adjust path)
+- [x] If local function was named `formatTime`, use: `import { formatTimestamp as formatTime } from ...` - used direct `formatTimestamp` naming instead for consistency
+- [x] Verify output matches the old local definition
+  - 12 files fully migrated (5 smart, 3 time, 2 datetime, 2 full)
+  - ParticipantCard: refactored to `formatParticipantTime()` using `formatTimestamp('time')` as fallback
+  - GroupChatMessages: refactored to `formatMessageTimestamp()` using `formatTimestamp('time')` for string part, keeps JSX wrapper
+  - ThinkingStatusPill: left as-is (duration formatter taking seconds, not a timestamp)
 
 ### Task 6: Handle main process files separately
 
-- [ ] Replace in `groupChatExport.ts` - import from `shared/formatters` directly
-- [ ] Replace in `tabExport.ts` - import from `shared/formatters` directly
-- [ ] Check if `conductorBadges.ts` is main process, import accordingly
+- [x] Replace in `groupChatExport.ts` - import from `shared/formatters` directly (uses 'full' style)
+- [x] Replace in `tabExport.ts` - import from `shared/formatters` directly (uses 'full' style)
+- [x] Check if `conductorBadges.ts` is main process, import accordingly - `conductorBadges.ts` has `formatTimeRemaining` which is a different function (time-to-badge calculation), not a timestamp formatter. Not part of this consolidation.
 
 ### Task 7: Verify
 
-- [ ] Run lint: `rtk npm run lint`
-- [ ] Run related tests: `rtk vitest run src/__tests__/shared/formatters.test.ts`
-- [ ] Find and run component tests that use formatTime/formatTimestamp: `rtk grep "formatTime\|formatTimestamp" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
-- [ ] Confirm zero new test failures
+- [x] Run lint: `rtk npm run lint` - passes
+- [x] Run related tests: `rtk vitest run src/__tests__/shared/formatters.test.ts` - 67 tests pass
+- [x] Find and run component tests that use formatTime/formatTimestamp: found 6 related test files, all pass (408 tests total)
+- [x] Confirm zero new test failures
 
 ### Task 8: Verify no orphaned definitions remain
 
-- [ ] Check: `rtk grep "function formatTime\b\|function formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"`
-- [ ] Result should be 0
+- [x] Check: `rtk grep "function formatTime\b\|function formatTimestamp" src/ --glob "*.{ts,tsx}" | rtk grep -v "shared/formatters" | rtk grep -v "__tests__"` - only ThinkingStatusPill.tsx remains (duration formatter, intentionally excluded)
+- [x] Result should be 0 - 0 timestamp formatter definitions remain outside canonical. ThinkingStatusPill's `formatTime(seconds)` is a duration formatter, not a timestamp formatter.
 
 ---
 

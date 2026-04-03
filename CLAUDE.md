@@ -46,6 +46,7 @@ Common functions that already exist (do NOT reimplement):
 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Format duration:** `formatDuration()` in `src/shared/formatters.ts`
+- **Format timestamp:** `formatTimestamp()` in `src/shared/formatters.ts` (styles: `time`, `datetime`, `smart`, `full`)
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Estimate tokens:** `estimateTokenCount()` in `src/shared/formatters.ts`
 - **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`

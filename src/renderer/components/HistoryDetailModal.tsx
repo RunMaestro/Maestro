@@ -22,7 +22,7 @@ import type { Theme, HistoryEntry } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { formatElapsedTime } from '../utils/formatters';
+import { formatElapsedTime, formatTimestamp } from '../utils/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -155,17 +155,6 @@ export function HistoryDetailModal({
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, [goToPrev, goToNext, showDeleteConfirm]);
-
-	// Format timestamp
-	const formatTime = (timestamp: number) => {
-		const date = new Date(timestamp);
-		return date.toLocaleString([], {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	};
 
 	// Get pill color based on type
 	const getPillColor = () => {
@@ -400,7 +389,7 @@ export function HistoryDetailModal({
 
 							{/* Timestamp */}
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{formatTime(entry.timestamp)}
+								{formatTimestamp(entry.timestamp, 'datetime')}
 							</span>
 
 							{/* CUE metadata */}

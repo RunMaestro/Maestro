@@ -9,7 +9,7 @@
 
 import { marked } from 'marked';
 import type { AITab, LogEntry, Theme, UsageStats } from '../types';
-import { formatDurationCompact } from '../../shared/formatters';
+import { formatDurationCompact, formatTimestamp } from '../../shared/formatters';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -27,14 +27,6 @@ function escapeHtml(text: string): string {
 		.replace(/>/g, '&gt;')
 		.replace(/"/g, '&quot;')
 		.replace(/'/g, '&#039;');
-}
-
-/**
- * Format a timestamp for display
- */
-function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleString();
 }
 
 /**
@@ -157,7 +149,7 @@ export function generateTabExportHtml(
       <div class="message ${isUser ? 'message-user' : 'message-agent'}">
         <div class="message-header">
           <span class="message-from" style="color: ${color}">${escapeHtml(label)}</span>
-          <span class="message-time">${formatTimestamp(log.timestamp)}</span>
+          <span class="message-time">${formatTimestamp(log.timestamp, 'full')}</span>
           ${log.readOnly ? '<span class="read-only-badge">read-only</span>' : ''}
         </div>
         <div class="message-content">${formattedContent}</div>
@@ -675,7 +667,7 @@ export function generateTabExportHtml(
 
     <header class="header">
       <h1>${escapeHtml(tabName)}</h1>
-      <p class="subtitle">Tab Export - ${formatTimestamp(tab.createdAt)}</p>
+      <p class="subtitle">Tab Export - ${formatTimestamp(tab.createdAt, 'full')}</p>
     </header>
 
     <div class="stats-grid">
@@ -715,7 +707,7 @@ export function generateTabExportHtml(
         <span class="info-label">Working Directory</span>
         <span class="info-value">${escapeHtml(session.cwd)}</span>
         <span class="info-label">Created</span>
-        <span class="info-value">${formatTimestamp(tab.createdAt)}</span>
+        <span class="info-value">${formatTimestamp(tab.createdAt, 'full')}</span>
         <span class="info-label">Usage</span>
         <span class="info-value">${formatUsageStats(tab.usageStats)}</span>
       </div>
@@ -729,7 +721,7 @@ export function generateTabExportHtml(
     </section>
 
     <footer class="footer">
-      <p>Exported from <a href="https://runmaestro.ai" target="_blank">Maestro</a> on ${formatTimestamp(Date.now())}</p>
+      <p>Exported from <a href="https://runmaestro.ai" target="_blank">Maestro</a> on ${formatTimestamp(Date.now(), 'full')}</p>
       <p class="footer-theme">Theme: ${escapeHtml(theme.name)}</p>
     </footer>
   </div>

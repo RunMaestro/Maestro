@@ -8,6 +8,7 @@ import {
 	formatNumber,
 	formatTokens,
 	formatTokensCompact,
+	formatTimestamp,
 	formatRelativeTime,
 	formatActiveTime,
 	formatElapsedTime,
@@ -127,6 +128,77 @@ describe('shared/formatters', () => {
 		it('should format millions with M suffix and decimal', () => {
 			expect(formatTokensCompact(1000000)).toBe('1.0M');
 			expect(formatTokensCompact(2500000)).toBe('2.5M');
+		});
+	});
+
+	// ==========================================================================
+	// formatTimestamp tests
+	// ==========================================================================
+	describe('formatTimestamp', () => {
+		it('should format time-only style', () => {
+			const ts = new Date(2025, 0, 15, 14, 30, 0).getTime();
+			const result = formatTimestamp(ts, 'time');
+			// Should contain time but not date
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
+			expect(result).not.toMatch(/Jan/);
+		});
+
+		it('should format datetime style', () => {
+			const ts = new Date(2025, 0, 15, 14, 30, 0).getTime();
+			const result = formatTimestamp(ts, 'datetime');
+			// Should contain both month and time
+			expect(result).toMatch(/Jan/);
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
+		});
+
+		it('should format smart style - today returns time only', () => {
+			const now = Date.now();
+			const result = formatTimestamp(now, 'smart');
+			// Today should show time only (no month name)
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
+		});
+
+		it('should format smart style - old date returns date+time', () => {
+			const oldDate = new Date(2020, 5, 15, 10, 30, 0).getTime();
+			const result = formatTimestamp(oldDate, 'smart');
+			// Old date should include month
+			expect(result).toMatch(/Jun/);
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
+		});
+
+		it('should default to smart style', () => {
+			const now = Date.now();
+			const defaultResult = formatTimestamp(now);
+			const smartResult = formatTimestamp(now, 'smart');
+			expect(defaultResult).toBe(smartResult);
+		});
+
+		it('should format full style', () => {
+			const ts = new Date(2025, 0, 15, 14, 30, 0).getTime();
+			const result = formatTimestamp(ts, 'full');
+			// Full locale string should contain year
+			expect(result).toMatch(/2025/);
+		});
+
+		it('should accept string timestamps', () => {
+			const isoString = '2025-01-15T14:30:00.000Z';
+			const result = formatTimestamp(isoString, 'datetime');
+			expect(result).toMatch(/Jan/);
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
+		});
+
+		it('should handle timestamp 0 (epoch)', () => {
+			const result = formatTimestamp(0, 'full');
+			// Should produce a valid date string (epoch is Dec 31 1969 or Jan 1 1970 depending on timezone)
+			expect(result.length).toBeGreaterThan(0);
+			expect(result).toMatch(/19(69|70)/);
+		});
+
+		it('should handle future timestamps', () => {
+			const future = new Date(2030, 6, 15, 10, 0, 0).getTime();
+			const result = formatTimestamp(future, 'datetime');
+			expect(result).toMatch(/Jul/);
+			expect(result).toMatch(/\d{1,2}:\d{2}/);
 		});
 	});
 

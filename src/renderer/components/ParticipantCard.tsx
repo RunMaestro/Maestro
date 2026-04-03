@@ -10,7 +10,19 @@ import { useState, useCallback } from 'react';
 import type { Theme, GroupChatParticipant, SessionState } from '../types';
 import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
+import { formatTimestamp } from '../../shared/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
+
+/**
+ * Format participant last activity as relative time with time fallback.
+ * Shows "just now" / "Xm ago" for recent activity, falls back to time display.
+ */
+function formatParticipantTime(timestamp: number): string {
+	const diff = Date.now() - timestamp;
+	if (diff < 60000) return 'just now';
+	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+	return formatTimestamp(timestamp, 'time');
+}
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -19,17 +31,6 @@ interface ParticipantCardProps {
 	color?: string;
 	groupChatId?: string;
 	onContextReset?: (participantName: string) => void;
-}
-
-/**
- * Format time as relative or absolute.
- */
-function formatTime(timestamp: number): string {
-	const now = Date.now();
-	const diff = now - timestamp;
-	if (diff < 60000) return 'just now';
-	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export function ParticipantCard({
@@ -163,7 +164,7 @@ export function ParticipantCard({
 						</span>
 					)}
 					{participant.lastActivity && (
-						<span title="Last activity">{formatTime(participant.lastActivity)}</span>
+						<span title="Last activity">{formatParticipantTime(participant.lastActivity)}</span>
 					)}
 				</div>
 				<span>{participant.agentId}</span>
