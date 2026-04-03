@@ -714,7 +714,7 @@ Reduce context.
 						totalCostUsd: 0.005,
 						contextWindow: 200000,
 					},
-				})
+				});
 			const session = mockSession();
 			const playbook = mockPlaybook({
 				agentStrategy: 'plan-execute-verify',
@@ -737,6 +737,83 @@ Reduce context.
 			expect(taskCompleteEvent?.usageStats?.inputTokens).toBe(350);
 			expect(taskCompleteEvent?.usageStats?.outputTokens).toBe(150);
 			expect(taskCompleteEvent?.usageStats?.totalCostUsd ?? 0).toBeCloseTo(0.035, 6);
+		});
+
+		it('should extend the codex planner and executor timeouts for default plan-execute-verify runs', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: '1. Inspect code\n2. Apply patch',
+					agentSessionId: 'planner-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task executed',
+					agentSessionId: 'executor-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'PASS\nLooks good.',
+				});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'codex' }),
+					mockPlaybook({ agentStrategy: 'plan-execute-verify' }),
+					'/playbooks'
+				)
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0]?.[4]).toEqual({ timeoutMs: 600000 });
+			expect(vi.mocked(spawnAgent).mock.calls[1]?.[4]).toEqual({ timeoutMs: 600000 });
+			expect(vi.mocked(spawnAgent).mock.calls[2]?.[4]).toEqual({ timeoutMs: 300000 });
+		});
+
+		it('should respect explicit codex timeout overrides for all plan-execute-verify stages', async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({
+					success: true,
+					response: '1. Inspect code\n2. Apply patch',
+					agentSessionId: 'planner-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'Task executed',
+					agentSessionId: 'executor-session',
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					response: 'PASS\nLooks good.',
+				});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'codex' }),
+					mockPlaybook({
+						agentStrategy: 'plan-execute-verify',
+						taskTimeoutMs: 120000,
+					}),
+					'/playbooks'
+				)
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0]?.[4]).toEqual({ timeoutMs: 120000 });
+			expect(vi.mocked(spawnAgent).mock.calls[1]?.[4]).toEqual({ timeoutMs: 120000 });
+			expect(vi.mocked(spawnAgent).mock.calls[2]?.[4]).toEqual({ timeoutMs: 120000 });
 		});
 
 		it('should only inject shared skill guidance into the planner prompt for plan-execute-verify', async () => {
@@ -861,7 +938,7 @@ Reduce context.
 				.mockResolvedValueOnce({
 					success: true,
 					response: 'WARN\nImplementation looks correct but tests were skipped.',
-				})
+				});
 			const session = mockSession();
 			const playbook = mockPlaybook({ agentStrategy: 'plan-execute-verify' });
 
@@ -905,7 +982,7 @@ Reduce context.
 					response:
 						'WARN\nOpenClaw output rendered correctly, but this smoke path uses deterministic fixtures.',
 					agentSessionId: 'verifier-openclaw-session',
-				})
+				});
 			const session = createOpenClawSessionInfo({
 				id: 'session-openclaw-smoke',
 				name: 'OpenClaw Smoke Session',

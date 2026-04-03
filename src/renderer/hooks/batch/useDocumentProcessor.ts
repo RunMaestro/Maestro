@@ -25,8 +25,18 @@ import {
 	buildActiveTaskDocumentContext,
 	revertNewlyCheckedTasks,
 } from '../../../shared/markdownTaskUtils';
+import {
+	applyVerifierVerdictToSummary,
+	buildDefinitionOfDoneSection,
+	buildVerificationStepsSection,
+	getVerifierVerdict,
+	mergeUsageStats,
+	pickContextDisplayUsageStats,
+	shouldIncludeSharedSkillGuidance,
+} from '../../../shared/autorunExecutionModel';
 import type { ToolType } from '../../types';
 import type {
+	HistoryUsageBreakdown,
 	PlaybookDocumentContextMode,
 	PlaybookPromptProfile,
 	PlaybookSkillPromptMode,
@@ -50,20 +60,51 @@ const AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION = `Before making any non-trivial co
 - use GitNexus/impact to check upstream blast radius
 - if GitNexus misses the symbol, say so and fall back to focused local code search before editing`;
 
-function buildDefinitionOfDoneSection(definitionOfDone: string[] = []): string {
-	if (definitionOfDone.length === 0) {
-		return '';
+function buildStageTaskPrompt(
+	stage: 'single' | 'planner' | 'executor' | 'verifier',
+	basePrompt: string,
+	documentPrompt: string,
+	skillSection: string,
+	plannerSummary?: string,
+	executorOutput?: string,
+	definitionOfDone: string[] = [],
+	verificationSteps: string[] = []
+): string {
+	const sections: string[] = [];
+	const includeSharedSkillGuidance = shouldIncludeSharedSkillGuidance(
+		stage,
+		stage === 'single' ? 'single' : 'plan-execute-verify'
+	);
+
+	if (stage === 'planner') {
+		sections.push(PLAN_STEP_INSTRUCTION);
+	} else if (stage === 'executor') {
+		sections.push(EXECUTE_STEP_INSTRUCTION);
+		if (plannerSummary) {
+			sections.push(`## Planner Output\n${plannerSummary}`);
+		}
+	} else if (stage === 'verifier') {
+		sections.push(VERIFY_STEP_INSTRUCTION);
 	}
 
-	return `## Definition of Done\n${definitionOfDone.map((item) => `- ${item}`).join('\n')}`;
-}
-
-function buildVerificationStepsSection(verificationSteps: string[] = []): string {
-	if (verificationSteps.length === 0) {
-		return '';
+	if (includeSharedSkillGuidance) {
+		sections.push(AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION);
 	}
-
-	return `## Verification Steps\n${verificationSteps.map((item) => `- ${item}`).join('\n')}`;
+	sections.push(basePrompt);
+	if (includeSharedSkillGuidance && skillSection) {
+		sections.push(skillSection);
+	}
+	if (stage === 'verifier' && verificationSteps.length > 0) {
+		sections.push(buildVerificationStepsSection(verificationSteps));
+	}
+	if (stage === 'verifier' && definitionOfDone.length > 0) {
+		sections.push(buildDefinitionOfDoneSection(definitionOfDone));
+	}
+	if (stage === 'verifier' && executorOutput) {
+		sections.push(`## Executor Output\n${executorOutput}`);
+	}
+	sections.push(documentPrompt);
+	return sections.filter(Boolean).join('\n\n');
 }
 
 function getDocumentPromptSection(
@@ -94,35 +135,6 @@ function buildRequestedSkillsSection(
 			: 'Use these skills if they are available in the workspace or user skill directories.';
 
 	return `## Requested Skills\n${guidance}\n${normalizedSkills.map((skill) => `- ${skill}`).join('\n')}`;
-}
-
-function getVerifierVerdict(response?: string): 'PASS' | 'WARN' | 'FAIL' | null {
-	const firstNonEmptyLine = response
-		?.split(/\r?\n/)
-		.map((line) => line.trim())
-		.find(Boolean)
-		?.toUpperCase();
-
-	if (
-		firstNonEmptyLine === 'PASS' ||
-		firstNonEmptyLine === 'WARN' ||
-		firstNonEmptyLine === 'FAIL'
-	) {
-		return firstNonEmptyLine;
-	}
-
-	return null;
-}
-
-function applyVerifierVerdictToSummary(
-	summary: string,
-	verdict: 'PASS' | 'WARN' | 'FAIL' | null
-): string {
-	if (!summary || !verdict || verdict === 'PASS') {
-		return summary;
-	}
-
-	return `[${verdict}] ${summary}`;
 }
 
 /**
@@ -207,6 +219,10 @@ export interface TaskResult {
 	 * Token usage statistics from the agent run
 	 */
 	usageStats?: UsageStats;
+
+	contextDisplayUsageStats?: UsageStats;
+
+	usageBreakdown?: HistoryUsageBreakdown;
 
 	/**
 	 * Time elapsed processing this task (ms)
@@ -395,27 +411,6 @@ export interface UseDocumentProcessorReturn {
  * ```
  */
 export function useDocumentProcessor(): UseDocumentProcessorReturn {
-	const mergeUsageStats = useCallback(
-		(current: UsageStats | undefined, next: UsageStats | undefined): UsageStats | undefined => {
-			if (!next) return current;
-			if (!current) return next;
-			return {
-				...next,
-				inputTokens: current.inputTokens + next.inputTokens,
-				outputTokens: current.outputTokens + next.outputTokens,
-				cacheReadInputTokens: current.cacheReadInputTokens + next.cacheReadInputTokens,
-				cacheCreationInputTokens: current.cacheCreationInputTokens + next.cacheCreationInputTokens,
-				totalCostUsd: current.totalCostUsd + next.totalCostUsd,
-				contextWindow: Math.max(current.contextWindow, next.contextWindow),
-				reasoningTokens:
-					current.reasoningTokens || next.reasoningTokens
-						? (current.reasoningTokens || 0) + (next.reasoningTokens || 0)
-						: undefined,
-			};
-		},
-		[]
-	);
-
 	/**
 	 * Read a document and count its tasks
 	 */
@@ -523,14 +518,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				getPlaybookPromptForExecution(customPrompt, promptProfile),
 				templateContext
 			);
-			const finalPrompt = [
-				AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION,
-				basePrompt,
-				buildRequestedSkillsSection(skills, skillPromptMode),
-				getDocumentPromptSection(docFilePath, promptDocContent, documentContextMode),
-			]
-				.filter(Boolean)
-				.join('\n\n');
+			const skillSection = buildRequestedSkillsSection(skills, skillPromptMode);
+			const documentPrompt = getDocumentPromptSection(
+				docFilePath,
+				promptDocContent,
+				documentContextMode
+			);
+			const finalPrompt = buildStageTaskPrompt('single', basePrompt, documentPrompt, skillSection);
 
 			// Capture start time for elapsed time tracking
 			const taskStartTime = Date.now();
@@ -538,15 +532,26 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const cwdOverride = effectiveCwd !== session.cwd ? effectiveCwd : undefined;
 			let result;
 			let verifierVerdict: 'PASS' | 'WARN' | 'FAIL' | null = null;
+			const usageBreakdown: HistoryUsageBreakdown = {};
 			if (agentStrategy === 'plan-execute-verify') {
-				const plannerPrompt = `${PLAN_STEP_INSTRUCTION}\n\n## Task Prompt\n${finalPrompt}`;
+				const plannerPrompt = buildStageTaskPrompt(
+					'planner',
+					basePrompt,
+					documentPrompt,
+					skillSection
+				);
 				const plannerResult = await callbacks.onSpawnAgent(session.id, plannerPrompt, cwdOverride);
 				let mergedUsageStats = mergeUsageStats(undefined, plannerResult.usageStats);
+				usageBreakdown.planner = plannerResult.usageStats;
 				const plannerSummary = plannerResult.response?.trim() || '';
 
-				const executorPrompt = `${EXECUTE_STEP_INSTRUCTION}\n\n## Task Prompt\n${finalPrompt}${
-					plannerSummary ? `\n\n## Planner Output\n${plannerSummary}` : ''
-				}`;
+				const executorPrompt = buildStageTaskPrompt(
+					'executor',
+					basePrompt,
+					documentPrompt,
+					skillSection,
+					plannerSummary
+				);
 				const executorResumeAgentSessionId =
 					session.toolType === 'codex' ? undefined : plannerResult.agentSessionId;
 
@@ -562,24 +567,25 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				);
 
 				mergedUsageStats = mergeUsageStats(mergedUsageStats, executorResult.usageStats);
+				usageBreakdown.executor = executorResult.usageStats;
 
-				const verifierPrompt = `${VERIFY_STEP_INSTRUCTION}\n\n## Task Prompt\n${finalPrompt}${
-					plannerSummary ? `\n\n## Planner Output\n${plannerSummary}` : ''
-				}${
-					executorResult.response?.trim()
-						? `\n\n## Executor Output\n${executorResult.response.trim()}`
-						: ''
-				}${config.verificationSteps && config.verificationSteps.length > 0 ? `\n\n${buildVerificationStepsSection(config.verificationSteps)}` : ''}${
-					definitionOfDone && definitionOfDone.length > 0
-						? `\n\n${buildDefinitionOfDoneSection(definitionOfDone)}`
-						: ''
-				}`;
+				const verifierPrompt = buildStageTaskPrompt(
+					'verifier',
+					basePrompt,
+					documentPrompt,
+					skillSection,
+					plannerSummary,
+					executorResult.response?.trim(),
+					definitionOfDone,
+					config.verificationSteps
+				);
 				const verifierResult = await callbacks.onSpawnAgent(
 					session.id,
 					verifierPrompt,
 					cwdOverride
 				);
 				mergedUsageStats = mergeUsageStats(mergedUsageStats, verifierResult.usageStats);
+				usageBreakdown.verifier = verifierResult.usageStats;
 				verifierVerdict = getVerifierVerdict(verifierResult.response);
 
 				result = {
@@ -596,6 +602,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			} else {
 				// Spawn agent with the prompt, using effective cwd (may be worktree path)
 				result = await callbacks.onSpawnAgent(session.id, finalPrompt, cwdOverride);
+				usageBreakdown.executor = result.usageStats;
 			}
 
 			// Capture elapsed time
@@ -704,11 +711,18 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			}
 
 			shortSummary = applyVerifierVerdictToSummary(shortSummary, verifierVerdict);
+			const contextDisplayUsageStats = pickContextDisplayUsageStats(
+				session.toolType,
+				usageBreakdown,
+				result.usageStats
+			);
 
 			return {
 				success: result.success,
 				agentSessionId: result.agentSessionId,
 				usageStats: result.usageStats,
+				contextDisplayUsageStats,
+				usageBreakdown,
 				elapsedTimeMs,
 				tasksCompletedThisRun,
 				newRemainingTasks,
@@ -722,7 +736,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				totalTasksChange,
 			};
 		},
-		[mergeUsageStats, readDocAndCountTasks]
+		[readDocAndCountTasks]
 	);
 
 	return {

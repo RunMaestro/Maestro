@@ -35,6 +35,15 @@ import { resolvePlaybookSkills, buildSkillPromptBlock } from './skill-resolver';
 import { recordSkillBusRun } from './skill-bus';
 import { validatePlaybookDag } from '../../shared/playbookDag';
 import { buildAutoRunSkillBusPayload } from '../../shared/skillBus';
+import {
+	applyVerifierVerdictToSummary,
+	buildDefinitionOfDoneSection,
+	buildVerificationStepsSection,
+	getVerifierVerdict,
+	mergeUsageStats,
+	pickContextDisplayUsageStats,
+	shouldIncludeSharedSkillGuidance,
+} from '../../shared/autorunExecutionModel';
 import type {
 	PlaybookAgentStrategy,
 	PlaybookDocumentContextMode,
@@ -43,6 +52,8 @@ import type {
 } from '../../shared/types';
 
 const DEFAULT_TASK_TIMEOUT_MS = 60000;
+const DEFAULT_CODEX_TASK_TIMEOUT_MS = 300000;
+const DEFAULT_CODEX_HEAVY_STAGE_TIMEOUT_MS = 600000;
 
 const PLAN_STEP_INSTRUCTION = `You are the planning step for Maestro Auto Run.
 
@@ -73,94 +84,47 @@ const AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION = `Before making any non-trivial co
 - use GitNexus/impact to check upstream blast radius
 - if GitNexus misses the symbol, state that and fall back to focused local code search before editing`;
 
-function calculateUsageContextTokens(stats: UsageStats, toolType: ToolType): number {
-	const combinedContextAgents: ToolType[] = ['codex', 'zai'];
-	if (combinedContextAgents.includes(toolType)) {
-		return (
-			(stats.inputTokens || 0) +
-			(stats.outputTokens || 0) +
-			(stats.cacheCreationInputTokens || 0)
-		);
-	}
-
-	return (
-		(stats.inputTokens || 0) +
-		(stats.cacheReadInputTokens || 0) +
-		(stats.cacheCreationInputTokens || 0)
-	);
-}
-
-function pickContextDisplayUsageStats(
-	toolType: ToolType,
-	usageBreakdown: HistoryUsageBreakdown | undefined,
-	fallback: UsageStats | undefined
-): UsageStats | undefined {
-	const candidates = [
-		usageBreakdown?.planner,
-		usageBreakdown?.executor,
-		usageBreakdown?.verifier,
-		usageBreakdown?.synopsis,
-	].filter((stats): stats is UsageStats => Boolean(stats));
-
-	if (candidates.length === 0) {
-		return fallback;
-	}
-
-	return candidates.reduce((peak, current) =>
-		calculateUsageContextTokens(current, toolType) > calculateUsageContextTokens(peak, toolType)
-			? current
-			: peak
-	);
-}
-
 function formatUsageDebug(usage: UsageStats | undefined): string {
 	if (!usage) return 'none';
 	return `in=${usage.inputTokens || 0}, out=${usage.outputTokens || 0}, cacheRead=${usage.cacheReadInputTokens || 0}, context=${usage.contextWindow || 0}, reasoning=${usage.reasoningTokens || 0}, cost=${usage.totalCostUsd || 0}`;
 }
 
-function buildDefinitionOfDoneSection(definitionOfDone: string[] = []): string {
-	if (definitionOfDone.length === 0) {
-		return '';
+function resolveEffectiveTaskTimeoutMs(
+	toolType: ToolType,
+	configuredTimeoutMs: number | null | undefined
+): number {
+	if (configuredTimeoutMs === null || configuredTimeoutMs === undefined) {
+		return toolType === 'codex' ? DEFAULT_CODEX_TASK_TIMEOUT_MS : DEFAULT_TASK_TIMEOUT_MS;
 	}
 
-	return `## Definition of Done\n${definitionOfDone.map((item) => `- ${item}`).join('\n')}`;
-}
-
-function buildVerificationStepsSection(verificationSteps: string[] = []): string {
-	if (verificationSteps.length === 0) {
-		return '';
+	if (toolType === 'codex' && configuredTimeoutMs === DEFAULT_TASK_TIMEOUT_MS) {
+		return DEFAULT_CODEX_TASK_TIMEOUT_MS;
 	}
 
-	return `## Verification Steps\n${verificationSteps.map((item) => `- ${item}`).join('\n')}`;
+	return configuredTimeoutMs;
 }
 
-function getVerifierVerdict(response?: string): 'PASS' | 'WARN' | 'FAIL' | null {
-	const firstNonEmptyLine = response
-		?.split(/\r?\n/)
-		.map((line) => line.trim())
-		.find(Boolean)
-		?.toUpperCase();
+function resolveEffectiveStageTimeoutMs(
+	toolType: ToolType,
+	configuredTimeoutMs: number | null | undefined,
+	stage: 'single' | 'planner' | 'executor' | 'verifier',
+	agentStrategy: PlaybookAgentStrategy
+): number {
+	const baseTimeoutMs = resolveEffectiveTaskTimeoutMs(toolType, configuredTimeoutMs);
 
 	if (
-		firstNonEmptyLine === 'PASS' ||
-		firstNonEmptyLine === 'WARN' ||
-		firstNonEmptyLine === 'FAIL'
+		toolType === 'codex' &&
+		agentStrategy === 'plan-execute-verify' &&
+		(stage === 'planner' || stage === 'executor') &&
+		(configuredTimeoutMs === null ||
+			configuredTimeoutMs === undefined ||
+			configuredTimeoutMs === DEFAULT_TASK_TIMEOUT_MS ||
+			configuredTimeoutMs === DEFAULT_CODEX_TASK_TIMEOUT_MS)
 	) {
-		return firstNonEmptyLine;
+		return DEFAULT_CODEX_HEAVY_STAGE_TIMEOUT_MS;
 	}
 
-	return null;
-}
-
-function applyVerifierVerdictToSummary(
-	summary: string,
-	verdict: 'PASS' | 'WARN' | 'FAIL' | null
-): string {
-	if (!summary || !verdict || verdict === 'PASS') {
-		return summary;
-	}
-
-	return `[${verdict}] ${summary}`;
+	return baseTimeoutMs;
 }
 
 function getDocumentPromptSection(
@@ -187,8 +151,7 @@ function buildStrategyPrompt(
 	verificationSteps: string[] = []
 ): string {
 	const sections: string[] = [];
-	const includeSharedSkillGuidance =
-		agentStrategy === 'single' || stage === 'planner';
+	const includeSharedSkillGuidance = shouldIncludeSharedSkillGuidance(stage, agentStrategy);
 
 	if (stage === 'planner') {
 		sections.push(PLAN_STEP_INSTRUCTION);
@@ -216,30 +179,6 @@ function buildStrategyPrompt(
 	}
 	sections.push(documentPrompt);
 	return sections.join('\n\n');
-}
-
-function mergeUsageStats(
-	current: UsageStats | undefined,
-	next: UsageStats | undefined
-): UsageStats | undefined {
-	if (!current) return next;
-	if (!next) return current;
-
-	const merged: UsageStats = {
-		inputTokens: current.inputTokens + next.inputTokens,
-		outputTokens: current.outputTokens + next.outputTokens,
-		cacheReadInputTokens: current.cacheReadInputTokens + next.cacheReadInputTokens,
-		cacheCreationInputTokens: current.cacheCreationInputTokens + next.cacheCreationInputTokens,
-		totalCostUsd: current.totalCostUsd + next.totalCostUsd,
-		contextWindow: Math.max(current.contextWindow, next.contextWindow),
-		reasoningTokens: (current.reasoningTokens || 0) + (next.reasoningTokens || 0),
-	};
-
-	if (!merged.reasoningTokens) {
-		delete merged.reasoningTokens;
-	}
-
-	return merged;
 }
 
 function buildSynopsisFromTaskResponse(
@@ -344,10 +283,7 @@ export async function* runPlaybook(
 	const skillPromptMode: PlaybookSkillPromptMode = playbook.skillPromptMode ?? 'brief';
 	const agentStrategy: PlaybookAgentStrategy = playbook.agentStrategy ?? 'single';
 	const definitionOfDone = playbook.definitionOfDone ?? [];
-	const taskTimeoutMs =
-		playbook.taskTimeoutMs === null || playbook.taskTimeoutMs === undefined
-			? DEFAULT_TASK_TIMEOUT_MS
-			: playbook.taskTimeoutMs;
+	const taskTimeoutMs = resolveEffectiveTaskTimeoutMs(session.toolType, playbook.taskTimeoutMs);
 	const skillPromptBlock = buildSkillPromptBlock(resolvedSkills.resolved, skillPromptMode);
 
 	// Register CLI activity so desktop app knows this session is busy
@@ -772,6 +708,12 @@ export async function* runPlaybook(
 				const usageBreakdown: HistoryUsageBreakdown = {};
 
 				if (agentStrategy === 'plan-execute-verify') {
+					const plannerTimeoutMs = resolveEffectiveStageTimeoutMs(
+						session.toolType,
+						playbook.taskTimeoutMs,
+						'planner',
+						agentStrategy
+					);
 					const plannerPrompt = buildStrategyPrompt(
 						'planner',
 						agentStrategy,
@@ -785,7 +727,7 @@ export async function* runPlaybook(
 						plannerPrompt,
 						undefined,
 						{
-							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+							timeoutMs: plannerTimeoutMs > 0 ? plannerTimeoutMs : undefined,
 						}
 					);
 					usageBreakdown.planner = plannerResult.usageStats;
@@ -817,13 +759,19 @@ export async function* runPlaybook(
 					);
 					const executorResumeSessionId =
 						session.toolType === 'codex' ? undefined : plannerSessionId;
+					const executorTimeoutMs = resolveEffectiveStageTimeoutMs(
+						session.toolType,
+						playbook.taskTimeoutMs,
+						'executor',
+						agentStrategy
+					);
 					result = await spawnAgent(
 						session.toolType,
 						session.cwd,
 						executorPrompt,
 						executorResumeSessionId,
 						{
-							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+							timeoutMs: executorTimeoutMs > 0 ? executorTimeoutMs : undefined,
 						}
 					);
 					usageBreakdown.executor = result.usageStats;
@@ -848,13 +796,19 @@ export async function* runPlaybook(
 						definitionOfDone,
 						playbook.verificationSteps ?? []
 					);
+					const verifierTimeoutMs = resolveEffectiveStageTimeoutMs(
+						session.toolType,
+						playbook.taskTimeoutMs,
+						'verifier',
+						agentStrategy
+					);
 					const verifierResult = await spawnAgent(
 						session.toolType,
 						session.cwd,
 						verifierPrompt,
 						undefined,
 						{
-							timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+							timeoutMs: verifierTimeoutMs > 0 ? verifierTimeoutMs : undefined,
 						}
 					);
 					usageBreakdown.verifier = verifierResult.usageStats;
@@ -884,8 +838,14 @@ export async function* runPlaybook(
 					}
 				} else {
 					// Spawn agent with combined prompt + document
+					const singleStageTimeoutMs = resolveEffectiveStageTimeoutMs(
+						session.toolType,
+						playbook.taskTimeoutMs,
+						'single',
+						agentStrategy
+					);
 					result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
-						timeoutMs: taskTimeoutMs > 0 ? taskTimeoutMs : undefined,
+						timeoutMs: singleStageTimeoutMs > 0 ? singleStageTimeoutMs : undefined,
 					});
 					usageBreakdown.executor = result.usageStats;
 				}

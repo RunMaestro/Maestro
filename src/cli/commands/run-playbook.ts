@@ -15,7 +15,7 @@ import {
 	RunEvent,
 } from '../output/formatter';
 import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
-import { validatePlaybookDag } from '../../shared/playbookDag';
+import { normalizePersistedPlaybook, validatePlaybookDag } from '../../shared/playbookDag';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -135,7 +135,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 		// Find playbook across all agents
 		try {
 			const result = findPlaybookById(playbookId);
-			playbook = result.playbook;
+			playbook = normalizePersistedPlaybook(result.playbook);
 			agentId = result.agentId;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Unknown error';

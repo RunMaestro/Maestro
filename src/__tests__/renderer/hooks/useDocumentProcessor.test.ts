@@ -142,6 +142,57 @@ describe('useDocumentProcessor', () => {
 		);
 	});
 
+	it('only injects shared skill guidance into the planner stage for plan-execute-verify', async () => {
+		const plannerSpawn = vi
+			.fn()
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'Plan the implementation',
+				agentSessionId: 'planner-session',
+				usageStats: makeUsage(),
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'Implemented the task and updated the document.',
+				agentSessionId: 'executor-session',
+				usageStats: makeUsage(),
+			})
+			.mockResolvedValueOnce({
+				success: true,
+				response: 'PASS\nLooks good.',
+				agentSessionId: 'verifier-session',
+				usageStats: makeUsage(),
+			});
+
+		const { result } = renderHook(() => useDocumentProcessor());
+		await result.current.processTask(
+			{
+				folderPath: '/repo/Auto Run Docs',
+				session: createSession(),
+				loopIteration: 1,
+				effectiveCwd: '/repo',
+				customPrompt: 'Complete the first unchecked task in {{DOCUMENT_PATH}}.',
+				agentStrategy: 'plan-execute-verify',
+				skills: ['context-and-impact', 'gitnexus'],
+				skillPromptMode: 'full',
+			},
+			'phase-1',
+			0,
+			1,
+			'# Tasks\n- [ ] Task 1',
+			{
+				onSpawnAgent: plannerSpawn,
+			}
+		);
+
+		expect(plannerSpawn.mock.calls[0][1]).toContain('## Requested Skills');
+		expect(plannerSpawn.mock.calls[0][1]).toContain('context-and-impact workflow');
+		expect(plannerSpawn.mock.calls[1][1]).not.toContain('## Requested Skills');
+		expect(plannerSpawn.mock.calls[1][1]).not.toContain('context-and-impact workflow');
+		expect(plannerSpawn.mock.calls[2][1]).not.toContain('## Requested Skills');
+		expect(plannerSpawn.mock.calls[2][1]).not.toContain('context-and-impact workflow');
+	});
+
 	it('does not resume planner session for codex plan-execute-verify', async () => {
 		const plannerSpawn = vi
 			.fn()
