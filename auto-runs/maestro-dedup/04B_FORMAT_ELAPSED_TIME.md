@@ -12,8 +12,8 @@ Replace 5 redundant `formatElapsedTime` definitions with the canonical version i
 
 ## Pre-flight Checks
 
-- [ ] Phase 04-A (formatDuration) is complete
-- [ ] `rtk npm run lint` passes
+- [x] Phase 04-A (formatDuration) is complete
+- [x] `rtk npm run lint` passes
 
 ---
 
@@ -21,29 +21,29 @@ Replace 5 redundant `formatElapsedTime` definitions with the canonical version i
 
 ### Task 1: Verify all 5 are identical to canonical
 
-- [ ] Read canonical: `src/shared/formatters.ts:144` - note signature and output format
-- [ ] Compare `MergeProgressModal.tsx:58` (skip if deleted in Phase 01)
-- [ ] Compare `MergeProgressOverlay.tsx:53`
-- [ ] Compare `SummarizeProgressModal.tsx:57` (skip if deleted in Phase 01)
-- [ ] Compare `SummarizeProgressOverlay.tsx:51`
-- [ ] Compare `TransferProgressModal.tsx:79`
-- [ ] Confirm all remaining definitions are identical to canonical
+- [x] Read canonical: `src/shared/formatters.ts:144` - note signature and output format
+- [x] Compare `MergeProgressModal.tsx:58` (skip if deleted in Phase 01) - SKIPPED: file deleted in Phase 01
+- [x] Compare `MergeProgressOverlay.tsx:53` - already imports from shared/formatters (consolidated in Phase 04-A)
+- [x] Compare `SummarizeProgressModal.tsx:57` (skip if deleted in Phase 01) - SKIPPED: file deleted in Phase 01
+- [x] Compare `SummarizeProgressOverlay.tsx:51` - already imports from shared/formatters (consolidated in Phase 04-A)
+- [x] Compare `TransferProgressModal.tsx:79` - already imports from shared/formatters (consolidated in Phase 04-A)
+- [x] Confirm all remaining definitions are identical to canonical - no local definitions remain
 
 ### Task 2: Remove local definitions and add imports
 
 For each file that still exists (some may have been deleted in Phase 01):
 
-- [ ] Remove local `formatElapsedTime` from `MergeProgressOverlay.tsx`, add import from `shared/formatters`
-- [ ] Remove local `formatElapsedTime` from `SummarizeProgressOverlay.tsx`, add import from `shared/formatters`
-- [ ] Remove local `formatElapsedTime` from `TransferProgressModal.tsx`, add import from `shared/formatters`
-- [ ] Skip `MergeProgressModal.tsx` and `SummarizeProgressModal.tsx` if already deleted in Phase 01
+- [x] Remove local `formatElapsedTime` from `MergeProgressOverlay.tsx`, add import from `shared/formatters` - already done in Phase 04-A
+- [x] Remove local `formatElapsedTime` from `SummarizeProgressOverlay.tsx`, add import from `shared/formatters` - already done in Phase 04-A
+- [x] Remove local `formatElapsedTime` from `TransferProgressModal.tsx`, add import from `shared/formatters` - already done in Phase 04-A
+- [x] Skip `MergeProgressModal.tsx` and `SummarizeProgressModal.tsx` if already deleted in Phase 01 - confirmed deleted
 
 ### Task 3: Verify
 
-- [ ] Run lint: `rtk npm run lint`
-- [ ] Find related tests: `rtk grep "MergeProgress\|SummarizeProgress\|TransferProgress" src/__tests__/ --glob "*.test.{ts,tsx}" -l`
-- [ ] Run related tests: `rtk vitest run <related-test-files>`
-- [ ] Confirm zero new test failures
+- [x] Run lint: `rtk npm run lint` - passes
+- [x] Find related tests - found TransferProgressModal.test.tsx and formatters.test.ts
+- [x] Run related tests: TransferProgressModal.test.tsx and formatters.test.ts - all pass
+- [x] Confirm zero new test failures - confirmed
 
 ---
 
