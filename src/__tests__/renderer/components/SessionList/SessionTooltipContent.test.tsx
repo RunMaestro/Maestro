@@ -59,4 +59,5 @@ describe('SessionTooltipContent', () => {
 		expect(screen.getByTitle('Remote SSH')).toBeInTheDocument();
 		expect(screen.getByText('GIT')).toBeInTheDocument();
 		expect(screen.getByText('ready • OpenClaw (SSH)')).toBeInTheDocument();
+	});
 });
