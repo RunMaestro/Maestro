@@ -17,6 +17,7 @@ import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
+import { formatElapsedTime as formatDuration } from '../../../shared/formatters';
 
 // Metric display mode
 type MetricMode = 'count' | 'duration';
@@ -36,24 +37,6 @@ interface SourceDistributionChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
 }
 
 /**

@@ -8,6 +8,7 @@
 
 import { marked } from 'marked';
 import type { GroupChat, GroupChatMessage, GroupChatHistoryEntry, Theme } from '../types';
+import { formatDurationCompact } from '../../shared/formatters';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -36,18 +37,14 @@ function formatTimestamp(timestamp: string | number): string {
 }
 
 /**
- * Format duration from milliseconds
+ * Compute and format chat duration from message timestamps
  */
 function formatDuration(messages: GroupChatMessage[]): string {
 	if (messages.length < 2) return '0m';
 
 	const firstTimestamp = new Date(messages[0].timestamp).getTime();
 	const lastTimestamp = new Date(messages[messages.length - 1].timestamp).getTime();
-	const durationMs = lastTimestamp - firstTimestamp;
-	const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-	const durationMins = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-
-	return durationHours > 0 ? `${durationHours}h ${durationMins}m` : `${durationMins}m`;
+	return formatDurationCompact(lastTimestamp - firstTimestamp);
 }
 
 /**

@@ -9,6 +9,7 @@
 
 import { marked } from 'marked';
 import type { AITab, LogEntry, Theme, UsageStats } from '../types';
+import { formatDurationCompact } from '../../shared/formatters';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -37,18 +38,14 @@ function formatTimestamp(timestamp: number): string {
 }
 
 /**
- * Format duration from milliseconds
+ * Compute and format conversation duration from log timestamps
  */
 function formatDuration(logs: LogEntry[]): string {
 	if (logs.length < 2) return '0m';
 
 	const firstTimestamp = logs[0].timestamp;
 	const lastTimestamp = logs[logs.length - 1].timestamp;
-	const durationMs = lastTimestamp - firstTimestamp;
-	const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-	const durationMins = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-
-	return durationHours > 0 ? `${durationHours}h ${durationMins}m` : `${durationMins}m`;
+	return formatDurationCompact(lastTimestamp - firstTimestamp);
 }
 
 /**

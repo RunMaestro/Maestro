@@ -32,6 +32,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { formatElapsedTime } from '../../shared/formatters';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -274,20 +275,7 @@ export const RightPanel = memo(
 			});
 		}, []);
 
-		// Format elapsed time from milliseconds
-		const formatElapsed = useCallback((ms: number) => {
-			const seconds = Math.floor(ms / 1000);
-			const minutes = Math.floor(seconds / 60);
-			const hours = Math.floor(minutes / 60);
-
-			if (hours > 0) {
-				return `${hours}h ${minutes % 60}m`;
-			} else if (minutes > 0) {
-				return `${minutes}m ${seconds % 60}s`;
-			} else {
-				return `${seconds}s`;
-			}
-		}, []);
+		const formatElapsed = formatElapsedTime;
 
 		// Update elapsed time display using wall clock time from startTime
 		// Uses an interval to update every second while running

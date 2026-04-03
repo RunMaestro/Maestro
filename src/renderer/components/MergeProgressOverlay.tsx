@@ -17,6 +17,7 @@ import { useState, useEffect, memo, useCallback } from 'react';
 import { X, Check, Loader2, AlertTriangle, GitMerge } from 'lucide-react';
 import type { Theme } from '../types';
 import type { GroomingProgress, MergeResult } from '../types/contextMerge';
+import { formatElapsedTime } from '../../shared/formatters';
 
 /**
  * Progress stage definition for display
@@ -45,20 +46,6 @@ export interface MergeProgressOverlayProps {
 	targetName?: string;
 	onCancel: () => void;
 	startTime: number;
-}
-
-/**
- * Format milliseconds as a readable time string
- */
-function formatElapsedTime(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-
-	if (minutes > 0) {
-		return `${minutes}m ${remainingSeconds}s`;
-	}
-	return `${remainingSeconds}s`;
 }
 
 /**

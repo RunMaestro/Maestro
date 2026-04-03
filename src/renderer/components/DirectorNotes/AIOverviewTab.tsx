@@ -6,6 +6,7 @@ import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { formatElapsedTime } from '../../../shared/formatters';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -59,13 +60,7 @@ export function AIOverviewTab({ theme, onSynopsisReady, onProgressChange }: AIOv
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
 
 	// Format generation duration for display
-	const formatDurationMs = (ms: number): string => {
-		const totalSeconds = Math.floor(ms / 1000);
-		const minutes = Math.floor(totalSeconds / 60);
-		const seconds = totalSeconds % 60;
-		if (minutes > 0) return `${minutes}m ${seconds}s`;
-		return `${seconds}s`;
-	};
+	const formatDurationMs = formatElapsedTime;
 
 	// Format the generation timestamp
 	const formatGeneratedAt = (timestamp: number): string => {
