@@ -17,6 +17,9 @@ interface BaseConfigOption {
 	key: string; // Storage key
 	label: string; // UI label
 	description: string; // Help text
+	placeholder?: string; // Optional UI placeholder/example
+	suggestions?: string[]; // Optional preset values shown in dropdown
+	envBuilder?: (value: any) => Record<string, string>;
 }
 
 /**
@@ -89,6 +92,7 @@ export interface AgentConfig {
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
+	resumeArgTokens?: string[]; // Tokens that indicate resume mode and are followed by a session ID
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
 	yoloModeArgs?: string[]; // Args for YOLO/full-access mode (e.g., ['--dangerously-bypass-approvals-and-sandbox'])
@@ -137,8 +141,71 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			'--dangerously-skip-permissions',
 		],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
+		resumeArgTokens: ['--resume'],
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+
+		// UI configuration options
+		configOptions: [
+			{
+				key: 'authMethod',
+				type: 'select',
+				label: 'Auth Method',
+				description:
+					'Select "OAuth (Logged-in)" to use your active browser/CLI login and subscription. Select "Static API Key" for third-party providers like Z.ai.',
+				options: ['OAuth (Logged-in)', 'Static API Key'],
+				default: 'OAuth (Logged-in)',
+			},
+			{
+				key: 'provider',
+				type: 'select',
+				label: 'Provider',
+				description:
+					'The AI provider to use. Select "Anthropic (Official)" for official models, or "Z.ai (Zhipu AI)" for GLM models.',
+				options: ['Anthropic (Official)', 'Z.ai (Zhipu AI)'],
+				default: 'Anthropic (Official)',
+				envBuilder: (value: string): Record<string, string> => {
+					if (value === 'Z.ai (Zhipu AI)') {
+						return {
+							ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+						};
+					}
+					return {};
+				},
+			},
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description: 'Only required for "Static API Key" method. Leave empty for OAuth.',
+				placeholder: 'Enter API key',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ANTHROPIC_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'baseUrl',
+				type: 'text',
+				label: 'Base URL',
+				description:
+					'Custom endpoint (e.g. for Z.ai). Only used with Static API Key or for local routing.',
+				placeholder: 'https://api.anthropic.com',
+				suggestions: ['https://api.anthropic.com', 'https://api.z.ai/api/anthropic'],
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ANTHROPIC_BASE_URL: value.trim() } : {},
+			},
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model Override',
+				description: 'The model to use (e.g., glm-5, glm-5-turbo, glm-4.7).',
+				placeholder: 'glm-5',
+				suggestions: ['glm-5', 'glm-5-turbo', 'glm-4.7'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+		],
 	},
 	{
 		id: 'codex',
@@ -156,6 +223,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
+		resumeArgTokens: ['resume'],
 		readOnlyArgs: ['--sandbox', 'read-only'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
 		yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'], // Full access mode
@@ -170,6 +238,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Model',
 				description:
 					'Model override (e.g., gpt-5.3-codex, o3). Leave empty to use the default from ~/.codex/config.toml.',
+				placeholder: 'gpt-5.3-codex',
+				suggestions: ['gpt-5.4', 'gpt-5.3-codex', 'o3'],
 				default: '', // Empty = use Codex's default model from config.toml
 				argBuilder: (value: string) => {
 					if (value && value.trim()) {
@@ -189,6 +259,72 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
+		id: 'cursor-agent',
+		name: 'Cursor Agent',
+		binaryName: 'cursor-agent',
+		command: 'cursor-agent',
+		args: [],
+		requiresPty: false,
+
+		// Batch mode: cursor-agent --print --output-format stream-json [--resume <id>] [prompt]
+		batchModeArgs: [
+			'--print',
+			'--output-format',
+			'stream-json',
+			'--stream-partial-output',
+			'--force',
+			'--trust',
+		],
+
+		// Session resume
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		resumeArgTokens: ['--resume'],
+
+		// Read-only planning mode
+		readOnlyArgs: ['--mode', 'plan'],
+		readOnlyCliEnforced: true,
+
+		// Full-access mode for Maestro-managed runs
+		yoloModeArgs: ['--force', '--trust'],
+
+		// Working directory
+		workingDirArgs: (dir: string) => ['--workspace', dir],
+
+		// UI config options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model override for Cursor Agent (for example: sonnet-4, sonnet-4-thinking, gpt-5).',
+				placeholder: 'sonnet-4',
+				suggestions: ['sonnet-4', 'sonnet-4-thinking', 'gpt-5'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description:
+					'Optional Cursor API key. Leave empty to use your existing Cursor login/session.',
+				placeholder: 'Enter CURSOR_API_KEY',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { CURSOR_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens for UI display. Cursor Agent often uses 1M-context Claude models.',
+				default: 1000000,
+			},
+		],
+	},
+	{
 		id: 'gemini-cli',
 		name: 'Gemini CLI',
 		binaryName: 'gemini',
@@ -198,6 +334,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		batchModeArgs: ['-y'],
 		jsonOutputArgs: ['--output-format', 'stream-json'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		resumeArgTokens: ['--resume'],
 		// Note: --approval-mode plan requires experimental.plan to be enabled in Gemini CLI config.
 		// Until that feature is generally available, readOnlyArgs is empty and read-only
 		// behavior is enforced via system prompt instructions instead.
@@ -210,8 +347,25 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		promptArgs: (prompt: string) => ['-p', prompt],
 		configOptions: [
 			{
+				key: 'authMethod',
+				type: 'select',
+				label: 'Auth Method',
+				description:
+					'Select "OAuth (Logged-in)" to use your Google Account login. Select "API Key" to use GEMINI_API_KEY.',
+				options: ['OAuth (Logged-in)', 'API Key'],
+				default: 'OAuth (Logged-in)',
+				envBuilder: (value: string): Record<string, string> => {
+					if (value === 'OAuth (Logged-in)') {
+						return {
+							GEMINI_API_KEY: '', // Unset to force OAuth flow
+						};
+					}
+					return {};
+				},
+			},
+			{
 				key: 'model',
-				type: 'select' as const,
+				type: 'select',
 				label: 'Model',
 				description:
 					'Model to use. Auto lets Gemini route between Pro and Flash based on task complexity.',
@@ -231,7 +385,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 			},
 			{
 				key: 'contextWindow',
-				type: 'number' as const,
+				type: 'number',
 				label: 'Context Window Size',
 				description:
 					'Maximum context window size in tokens. Common values: 1048576 (Gemini 2.5 Pro), 32767 (Gemini 2.5 Flash).',
@@ -259,6 +413,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		batchModePrefix: ['run'], // OpenCode uses 'run' subcommand for batch mode
 		jsonOutputArgs: ['--format', 'json'], // JSON output format
 		resumeArgs: (sessionId: string) => ['--session', sessionId], // Resume with session ID
+		resumeArgTokens: ['--session'],
 		readOnlyArgs: ['--agent', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --agent plan
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection (e.g., 'ollama/qwen3:8b')
@@ -288,6 +443,8 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Model',
 				description:
 					'Model to use (e.g., "ollama/qwen3:8b", "anthropic/claude-sonnet-4-20250514"). Leave empty for default.',
+				placeholder: 'ollama/qwen3:8b',
+				suggestions: ['ollama/qwen3:8b', 'anthropic/claude-sonnet-4-20250514', 'openai/gpt-5.4'],
 				default: '', // Empty string means use OpenCode's default model
 				argBuilder: (value: string) => {
 					// Only add --model arg if a model is specified
@@ -326,6 +483,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 
 		// Session resume: -s <id> (requires a prompt)
 		resumeArgs: (sessionId: string) => ['-s', sessionId],
+		resumeArgTokens: ['-s'],
 
 		// Read-only mode is DEFAULT in droid exec (no flag needed)
 		readOnlyArgs: [],
@@ -398,6 +556,127 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		binaryName: 'aider',
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
+	},
+	{
+		id: 'openclaw',
+		name: 'OpenClaw',
+		binaryName: 'openclaw',
+		command: 'openclaw',
+		args: [],
+
+		// Batch mode: openclaw agent --json --message "prompt"
+		batchModePrefix: ['agent'],
+		batchModeArgs: [],
+
+		// JSON output
+		jsonOutputArgs: ['--json'],
+
+		// Session resume: --session-id <id>
+		resumeArgs: (sessionId: string) => ['--session-id', sessionId],
+		resumeArgTokens: ['--session-id'],
+
+		// Read-only mode (not supported at CLI level yet)
+		readOnlyArgs: [],
+		readOnlyCliEnforced: false,
+
+		// Prompt: --message <text> (not positional)
+		promptArgs: (prompt: string) => ['--message', prompt],
+		noPromptSeparator: true,
+
+		// Default env vars
+		defaultEnvVars: {},
+
+		// UI configuration options
+		configOptions: [
+			{
+				key: 'agentId',
+				type: 'text',
+				label: 'Agent ID',
+				description:
+					'OpenClaw agent to use (e.g., "main", "ops"). Leave empty for default routing.',
+				placeholder: 'main',
+				suggestions: ['main', 'ops'],
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--agent', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'thinking',
+				type: 'select',
+				label: 'Thinking Level',
+				description: 'How much the agent should reason before responding.',
+				options: ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--thinking', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens (for UI display). Depends on the underlying model.',
+				default: 200000,
+			},
+			{
+				key: 'localMode',
+				type: 'checkbox',
+				label: 'Local Mode',
+				description:
+					'Run the embedded agent locally instead of via Gateway (requires model provider API keys).',
+				default: false,
+				argBuilder: (value: boolean) => (value ? ['--local'] : []),
+			},
+		],
+	},
+	{
+		id: 'zai',
+		name: 'Z.ai (GLM)',
+		binaryName: 'zai',
+		command: 'zai',
+		args: [],
+		batchModePrefix: ['exec'],
+		batchModeArgs: ['--json'],
+		resumeArgs: (sessionId: string) => ['--session-id', sessionId],
+		resumeArgTokens: ['--session-id'],
+		readOnlyArgs: ['--sandbox', 'read-only'],
+		readOnlyCliEnforced: true,
+		workingDirArgs: (dir: string) => ['-C', dir],
+		imageArgs: (imagePath: string) => ['-f', imagePath],
+		modelArgs: (modelId: string) => ['--model', modelId],
+		configOptions: [
+			{
+				key: 'apiKey',
+				type: 'text',
+				label: 'API Key',
+				description: 'Optional Z.ai API key. Leave empty to use your existing login/session.',
+				placeholder: 'Enter ZAI_API_KEY',
+				default: '',
+				envBuilder: (value: string): Record<string, string> =>
+					value && value.trim() ? { ZAI_API_KEY: value.trim() } : {},
+			},
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description: 'Model override for Z.ai (for example: glm-5, glm-5-turbo, glm-4.7).',
+				placeholder: 'glm-5',
+				suggestions: ['glm-5', 'glm-5-turbo', 'glm-4.7'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens for UI display. Depends on the selected GLM model.',
+				default: 128000,
+			},
+		],
 	},
 ];
 

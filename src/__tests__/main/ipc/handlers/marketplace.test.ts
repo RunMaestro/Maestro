@@ -21,6 +21,7 @@ import {
 } from '../../../../main/ipc/handlers/marketplace';
 import type { MarketplaceManifest, MarketplaceCache } from '../../../../shared/marketplace-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { DEFAULT_AUTORUN_SKILLS } from '../../../../shared/playbookDag';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -133,7 +134,19 @@ describe('marketplace IPC handlers', () => {
 				documents: [{ filename: 'security-check', resetOnCompletion: false }],
 				loopEnabled: true,
 				maxLoops: 3,
+				maxParallelism: 2,
 				prompt: 'Custom instructions here',
+				taskGraph: {
+					nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+				},
+				taskTimeoutMs: 45000,
+				skills: ['maestro-cli-playbooks'],
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the changed task is reflected in the document'],
+				promptProfile: 'compact-doc',
+				documentContextMode: 'full',
+				skillPromptMode: 'full',
+				agentStrategy: 'plan-execute-verify',
 			},
 			{
 				id: 'test-playbook-with-assets',
@@ -246,13 +259,61 @@ describe('marketplace IPC handlers', () => {
 			const writtenCache = JSON.parse(writeCall[1] as string) as MarketplaceCache;
 			expect(writtenCache.fetchedAt).toBeDefined();
 			expect(typeof writtenCache.fetchedAt).toBe('number');
-			expect(writtenCache.manifest).toEqual(sampleManifest);
+			expect(writtenCache.manifest.playbooks).toHaveLength(sampleManifest.playbooks.length);
+			expect(writtenCache.manifest.playbooks[0]).toMatchObject({
+				id: 'test-playbook-1',
+				maxParallelism: 1,
+				skills: [...DEFAULT_AUTORUN_SKILLS],
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+						{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+					],
+				},
+			});
 
 			// Verify response indicates not from cache
 			expect(result.fromCache).toBe(false);
 			// Merged manifest includes source field for each playbook
 			expect(result.manifest.playbooks.length).toBe(sampleManifest.playbooks.length);
 			expect(result.manifest.playbooks.every((p: any) => p.source === 'official')).toBe(true);
+		});
+
+		it('should normalize canonical DAG fields in fetched and cached marketplace manifests', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(sampleManifest),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			const legacyPlaybook = result.manifest.playbooks.find(
+				(playbook: any) => playbook.id === 'test-playbook-1'
+			);
+			expect(legacyPlaybook.maxParallelism).toBe(1);
+			expect(legacyPlaybook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
+
+			const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
+			const writtenCache = JSON.parse(writeCall[1] as string) as MarketplaceCache;
+			const cachedLegacyPlaybook = writtenCache.manifest.playbooks.find(
+				(playbook) => playbook.id === 'test-playbook-1'
+			);
+			expect(cachedLegacyPlaybook?.maxParallelism).toBe(1);
+			expect(cachedLegacyPlaybook?.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
 		});
 
 		it('should use cache when within TTL', async () => {
@@ -642,6 +703,20 @@ describe('marketplace IPC handlers', () => {
 			// Verify prompt is empty string (not null)
 			expect(result.playbook.prompt).toBe('');
 			expect(typeof result.playbook.prompt).toBe('string');
+			expect(result.playbook.taskTimeoutMs).toBeNull();
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS]);
+			expect(result.playbook.definitionOfDone).toEqual([]);
+			expect(result.playbook.promptProfile).toBe('compact-code');
+			expect(result.playbook.documentContextMode).toBe('active-task-only');
+			expect(result.playbook.skillPromptMode).toBe('brief');
+			expect(result.playbook.agentStrategy).toBe('single');
 		});
 
 		it('should preserve custom prompt when provided', async () => {
@@ -671,6 +746,20 @@ describe('marketplace IPC handlers', () => {
 			);
 
 			expect(result.playbook.prompt).toBe('Custom instructions here');
+			expect(result.playbook.taskTimeoutMs).toBe(45000);
+			expect(result.playbook.maxParallelism).toBe(2);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'maestro-cli-playbooks']);
+			expect(result.playbook.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(result.playbook.verificationSteps).toEqual([
+				'Confirm the changed task is reflected in the document',
+			]);
+			expect(result.playbook.promptProfile).toBe('compact-doc');
+			expect(result.playbook.documentContextMode).toBe('full');
+			expect(result.playbook.skillPromptMode).toBe('full');
+			expect(result.playbook.agentStrategy).toBe('plan-execute-verify');
 		});
 
 		it('should save playbook to session storage', async () => {
@@ -712,6 +801,23 @@ describe('marketplace IPC handlers', () => {
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(1);
 			expect(writtenData.playbooks[0].id).toBe('test-uuid-123');
+			expect(writtenData.playbooks[0].taskTimeoutMs).toBe(45000);
+			expect(writtenData.playbooks[0].maxParallelism).toBe(2);
+			expect(writtenData.playbooks[0].taskGraph).toEqual({
+				nodes: [{ id: 'security-check', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(writtenData.playbooks[0].skills).toEqual([
+				...DEFAULT_AUTORUN_SKILLS,
+				'maestro-cli-playbooks',
+			]);
+			expect(writtenData.playbooks[0].definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(writtenData.playbooks[0].verificationSteps).toEqual([
+				'Confirm the changed task is reflected in the document',
+			]);
+			expect(writtenData.playbooks[0].promptProfile).toBe('compact-doc');
+			expect(writtenData.playbooks[0].documentContextMode).toBe('full');
+			expect(writtenData.playbooks[0].skillPromptMode).toBe('full');
+			expect(writtenData.playbooks[0].agentStrategy).toBe('plan-execute-verify');
 		});
 
 		it('should append to existing playbooks', async () => {
@@ -745,6 +851,58 @@ describe('marketplace IPC handlers', () => {
 				.mock.calls.find((call) => (call[0] as string).includes('session-123.json'));
 			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
 			expect(writtenData.playbooks).toHaveLength(2);
+		});
+
+		it('should normalize existing session playbooks before appending imported playbooks', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'existing-1',
+					name: 'Existing',
+					documents: [{ filename: 'legacy-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					prompt: 'Legacy prompt',
+				},
+			];
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockRejectedValueOnce({ code: 'ENOENT' })
+				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks }));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				text: () => Promise.resolve('# Content'),
+			});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			await handler!({} as any, 'test-playbook-2', 'Normalized', '/autorun', 'session-123');
+
+			const playbooksWriteCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('session-123.json'));
+			const writtenData = JSON.parse(playbooksWriteCall![1] as string);
+
+			expect(writtenData.playbooks[0]).toMatchObject({
+				id: 'existing-1',
+				name: 'Existing',
+				maxParallelism: 1,
+				skills: [...DEFAULT_AUTORUN_SKILLS],
+				definitionOfDone: [],
+				verificationSteps: [],
+				promptProfile: 'compact-code',
+				documentContextMode: 'active-task-only',
+				skillPromptMode: 'brief',
+				agentStrategy: 'single',
+				taskGraph: {
+					nodes: [{ id: 'legacy-doc', documentIndex: 0, dependsOn: [] }],
+				},
+			});
 		});
 
 		it('should return error for non-existent playbook', async () => {

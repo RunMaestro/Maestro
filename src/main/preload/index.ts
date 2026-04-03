@@ -33,7 +33,7 @@ import {
 import { createSshRemoteApi } from './sshRemote';
 import { createLoggerApi } from './logger';
 import { createClaudeApi, createAgentSessionsApi } from './sessions';
-import { createTempfileApi, createHistoryApi, createCliApi } from './files';
+import { createTempfileApi, createHistoryApi, createCliApi, createSkillBusApi } from './files';
 import { createSpeckitApi, createOpenspecApi } from './commands';
 import { createAutorunApi, createPlaybooksApi, createMarketplaceApi } from './autorun';
 import { createDebugApi, createDocumentGraphApi } from './debug';
@@ -138,6 +138,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// CLI activity API
 	cli: createCliApi(),
 
+	// Skill Bus API
+	skillBus: createSkillBusApi(),
+
 	// Spec Kit API
 	speckit: createSpeckitApi(),
 
@@ -228,6 +231,7 @@ export {
 	createTempfileApi,
 	createHistoryApi,
 	createCliApi,
+	createSkillBusApi,
 	// Commands
 	createSpeckitApi,
 	createOpenspecApi,
@@ -326,6 +330,7 @@ export type {
 	TempfileApi,
 	HistoryApi,
 	CliApi,
+	SkillBusApi,
 	HistoryEntry,
 } from './files';
 export type {

@@ -511,15 +511,56 @@ describe('WizardContext', () => {
 				expect(result.current.canProceedToNext()).toBe(false);
 			});
 
-			it('returns true when agent is selected and name is provided', () => {
+			it('returns true when available agent is selected and name is provided', () => {
 				const { result } = renderHook(() => useWizard(), { wrapper });
 
 				act(() => {
+					result.current.setAvailableAgents([
+						{
+							id: 'claude-code',
+							name: 'Claude Code',
+							command: 'claude',
+							args: [],
+							available: true,
+						} as any,
+					]);
 					result.current.setSelectedAgent('claude-code');
 					result.current.setAgentName('My Agent');
 				});
 
 				expect(result.current.canProceedToNext()).toBe(true);
+			});
+
+			it('returns false when selected agent is not available', () => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+
+				act(() => {
+					result.current.setAvailableAgents([
+						{
+							id: 'gemini-cli',
+							name: 'Gemini CLI',
+							command: 'gemini',
+							args: [],
+							available: false,
+						} as any,
+					]);
+					result.current.setSelectedAgent('gemini-cli' as any);
+					result.current.setAgentName('My Agent');
+				});
+
+				expect(result.current.canProceedToNext()).toBe(false);
+			});
+
+			it('returns false when selected agent is missing from detected agents', () => {
+				const { result } = renderHook(() => useWizard(), { wrapper });
+
+				act(() => {
+					result.current.setAvailableAgents([]);
+					result.current.setSelectedAgent('claude-code');
+					result.current.setAgentName('My Agent');
+				});
+
+				expect(result.current.canProceedToNext()).toBe(false);
 			});
 		});
 

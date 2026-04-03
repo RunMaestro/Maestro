@@ -15,7 +15,127 @@
 import { useCallback } from 'react';
 import type { Session, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
-import { countUnfinishedTasks, countCheckedTasks } from './batchUtils';
+import {
+	countUnfinishedTasks,
+	countCheckedTasks,
+	getPlaybookPromptForExecution,
+} from './batchUtils';
+import { normalizeOpenClawSessionId } from '../../../shared/openclawSessionId';
+import {
+	buildActiveTaskDocumentContext,
+	revertNewlyCheckedTasks,
+} from '../../../shared/markdownTaskUtils';
+import {
+	applyVerifierVerdictToSummary,
+	buildDefinitionOfDoneSection,
+	buildVerificationStepsSection,
+	getVerifierVerdict,
+	mergeUsageStats,
+	pickContextDisplayUsageStats,
+	shouldIncludeSharedSkillGuidance,
+} from '../../../shared/autorunExecutionModel';
+import type { ToolType } from '../../types';
+import type {
+	HistoryUsageBreakdown,
+	PlaybookDocumentContextMode,
+	PlaybookPromptProfile,
+	PlaybookSkillPromptMode,
+} from '../../../shared/types';
+
+const PLAN_STEP_INSTRUCTION = `You are the planning step for an Auto Run task.
+
+Produce a short implementation plan for the first unchecked task only.
+Do not claim the task is complete. Do not describe unrelated follow-up work.`;
+
+const EXECUTE_STEP_INSTRUCTION = `You are the execution step for an Auto Run task.
+
+Use the planner output to complete the first unchecked task in the document.`;
+
+const VERIFY_STEP_INSTRUCTION = `You are the verification step for an Auto Run task.
+
+Review the task outcome, call out any gap against the task, and state PASS or FAIL first.`;
+
+const AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION = `Before making any non-trivial code change, follow the repository's context-and-impact workflow:
+- use GitNexus/context to inspect the target symbol or file
+- use GitNexus/impact to check upstream blast radius
+- if GitNexus misses the symbol, say so and fall back to focused local code search before editing`;
+
+function buildStageTaskPrompt(
+	stage: 'single' | 'planner' | 'executor' | 'verifier',
+	basePrompt: string,
+	documentPrompt: string,
+	skillSection: string,
+	plannerSummary?: string,
+	executorOutput?: string,
+	definitionOfDone: string[] = [],
+	verificationSteps: string[] = []
+): string {
+	const sections: string[] = [];
+	const includeSharedSkillGuidance = shouldIncludeSharedSkillGuidance(
+		stage,
+		stage === 'single' ? 'single' : 'plan-execute-verify'
+	);
+
+	if (stage === 'planner') {
+		sections.push(PLAN_STEP_INSTRUCTION);
+	} else if (stage === 'executor') {
+		sections.push(EXECUTE_STEP_INSTRUCTION);
+		if (plannerSummary) {
+			sections.push(`## Planner Output\n${plannerSummary}`);
+		}
+	} else if (stage === 'verifier') {
+		sections.push(VERIFY_STEP_INSTRUCTION);
+	}
+
+	if (includeSharedSkillGuidance) {
+		sections.push(AUTORUN_CONTEXT_AND_IMPACT_INSTRUCTION);
+	}
+	sections.push(basePrompt);
+	if (includeSharedSkillGuidance && skillSection) {
+		sections.push(skillSection);
+	}
+	if (stage === 'verifier' && verificationSteps.length > 0) {
+		sections.push(buildVerificationStepsSection(verificationSteps));
+	}
+	if (stage === 'verifier' && definitionOfDone.length > 0) {
+		sections.push(buildDefinitionOfDoneSection(definitionOfDone));
+	}
+	if (stage === 'verifier' && executorOutput) {
+		sections.push(`## Executor Output\n${executorOutput}`);
+	}
+	sections.push(documentPrompt);
+	return sections.filter(Boolean).join('\n\n');
+}
+
+function getDocumentPromptSection(
+	docFilePath: string,
+	content: string,
+	mode: PlaybookDocumentContextMode = 'active-task-only'
+): string {
+	const modeNote =
+		mode === 'full'
+			? 'The full document is inlined below.'
+			: 'Only the active unchecked task and minimal nearby context are inlined below; open the document on disk if you need anything else.';
+
+	return `---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n${modeNote}\n\n${content}`;
+}
+
+function buildRequestedSkillsSection(
+	skills: string[] = [],
+	mode: PlaybookSkillPromptMode = 'brief'
+): string {
+	const normalizedSkills = skills.map((skill) => skill.trim()).filter(Boolean);
+	if (normalizedSkills.length === 0) {
+		return '';
+	}
+
+	const guidance =
+		mode === 'full'
+			? 'Load and apply these project or user skills if they are available in the workspace or user skill directories before editing.'
+			: 'Use these skills if they are available in the workspace or user skill directories.';
+
+	return `## Requested Skills\n${guidance}\n${normalizedSkills.map((skill) => `- ${skill}`).join('\n')}`;
+}
 
 /**
  * Configuration for document processing
@@ -55,6 +175,25 @@ export interface DocumentProcessorConfig {
 	 * Custom prompt to use for task processing
 	 */
 	customPrompt: string;
+	promptProfile?: PlaybookPromptProfile;
+	documentContextMode?: PlaybookDocumentContextMode;
+	skillPromptMode?: PlaybookSkillPromptMode;
+	skills?: string[];
+
+	/**
+	 * Execution strategy for the task
+	 */
+	agentStrategy?: 'single' | 'plan-execute-verify';
+
+	/**
+	 * Completion criteria used by the verifier step
+	 */
+	definitionOfDone?: string[];
+
+	/**
+	 * Explicit checks the verifier should always perform
+	 */
+	verificationSteps?: string[];
 
 	/**
 	 * SSH remote ID for remote file operations (when session is SSH-enabled)
@@ -81,6 +220,10 @@ export interface TaskResult {
 	 */
 	usageStats?: UsageStats;
 
+	contextDisplayUsageStats?: UsageStats;
+
+	usageBreakdown?: HistoryUsageBreakdown;
+
 	/**
 	 * Time elapsed processing this task (ms)
 	 */
@@ -105,6 +248,11 @@ export interface TaskResult {
 	 * Full synopsis of work done (for history entry)
 	 */
 	fullSynopsis: string;
+
+	/**
+	 * Verifier verdict for plan-execute-verify runs
+	 */
+	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL' | null;
 
 	/**
 	 * Whether the document content changed during processing
@@ -164,7 +312,38 @@ export interface DocumentProcessorCallbacks {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			resumeAgentSessionId?: string;
+		}
+	) => Promise<{
+		success: boolean;
+		response?: string;
+		agentSessionId?: string;
+		usageStats?: UsageStats;
+	}>;
+
+	/**
+	 * Resume an existing provider session in the background
+	 */
+	onSpawnBackgroundSynopsis?: (
+		sessionId: string,
+		cwd: string,
+		resumeAgentSessionId: string,
+		prompt: string,
+		toolType?: ToolType,
+		sessionConfig?: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customContextWindow?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+		}
 	) => Promise<{
 		success: boolean;
 		response?: string;
@@ -280,6 +459,12 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				loopIteration,
 				effectiveCwd,
 				customPrompt,
+				promptProfile,
+				documentContextMode,
+				skillPromptMode,
+				skills,
+				agentStrategy,
+				definitionOfDone,
 				sshRemoteId,
 			} = config;
 
@@ -321,35 +506,126 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				}
 			}
 
-			// Substitute template variables in the prompt
-			const finalPrompt = substituteTemplateVariables(customPrompt, templateContext);
+			const expandedDocContent =
+				docReadResult.success && docReadResult.content
+					? substituteTemplateVariables(docReadResult.content, templateContext)
+					: '';
+			const promptDocContent =
+				documentContextMode === 'full'
+					? expandedDocContent
+					: buildActiveTaskDocumentContext(expandedDocContent);
+			const basePrompt = substituteTemplateVariables(
+				getPlaybookPromptForExecution(customPrompt, promptProfile),
+				templateContext
+			);
+			const skillSection = buildRequestedSkillsSection(skills, skillPromptMode);
+			const documentPrompt = getDocumentPromptSection(
+				docFilePath,
+				promptDocContent,
+				documentContextMode
+			);
+			const finalPrompt = buildStageTaskPrompt('single', basePrompt, documentPrompt, skillSection);
 
 			// Capture start time for elapsed time tracking
 			const taskStartTime = Date.now();
 
-			// Spawn agent with the prompt, using effective cwd (may be worktree path)
-			const result = await callbacks.onSpawnAgent(
-				session.id,
-				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined
-			);
+			const cwdOverride = effectiveCwd !== session.cwd ? effectiveCwd : undefined;
+			let result;
+			let verifierVerdict: 'PASS' | 'WARN' | 'FAIL' | null = null;
+			const usageBreakdown: HistoryUsageBreakdown = {};
+			if (agentStrategy === 'plan-execute-verify') {
+				const plannerPrompt = buildStageTaskPrompt(
+					'planner',
+					basePrompt,
+					documentPrompt,
+					skillSection
+				);
+				const plannerResult = await callbacks.onSpawnAgent(session.id, plannerPrompt, cwdOverride);
+				let mergedUsageStats = mergeUsageStats(undefined, plannerResult.usageStats);
+				usageBreakdown.planner = plannerResult.usageStats;
+				const plannerSummary = plannerResult.response?.trim() || '';
+
+				const executorPrompt = buildStageTaskPrompt(
+					'executor',
+					basePrompt,
+					documentPrompt,
+					skillSection,
+					plannerSummary
+				);
+				const executorResumeAgentSessionId =
+					session.toolType === 'codex' ? undefined : plannerResult.agentSessionId;
+
+				const executorResult = await callbacks.onSpawnAgent(
+					session.id,
+					executorPrompt,
+					cwdOverride,
+					executorResumeAgentSessionId
+						? {
+								resumeAgentSessionId: executorResumeAgentSessionId,
+							}
+						: undefined
+				);
+
+				mergedUsageStats = mergeUsageStats(mergedUsageStats, executorResult.usageStats);
+				usageBreakdown.executor = executorResult.usageStats;
+
+				const verifierPrompt = buildStageTaskPrompt(
+					'verifier',
+					basePrompt,
+					documentPrompt,
+					skillSection,
+					plannerSummary,
+					executorResult.response?.trim(),
+					definitionOfDone,
+					config.verificationSteps
+				);
+				const verifierResult = await callbacks.onSpawnAgent(
+					session.id,
+					verifierPrompt,
+					cwdOverride
+				);
+				mergedUsageStats = mergeUsageStats(mergedUsageStats, verifierResult.usageStats);
+				usageBreakdown.verifier = verifierResult.usageStats;
+				verifierVerdict = getVerifierVerdict(verifierResult.response);
+
+				result = {
+					...executorResult,
+					success:
+						executorResult.success &&
+						verifierResult.success !== false &&
+						verifierVerdict !== 'FAIL',
+					usageStats: mergedUsageStats,
+					response: verifierResult.response?.trim()
+						? `${executorResult.response || ''}\n\nVerifier:\n${verifierResult.response.trim()}`
+						: executorResult.response,
+				};
+			} else {
+				// Spawn agent with the prompt, using effective cwd (may be worktree path)
+				result = await callbacks.onSpawnAgent(session.id, finalPrompt, cwdOverride);
+				usageBreakdown.executor = result.usageStats;
+			}
 
 			// Capture elapsed time
 			const elapsedTimeMs = Date.now() - taskStartTime;
 
 			// Register agent session origin for Auto Run tracking
 			if (result.agentSessionId) {
+				const normalizedAgentSessionId =
+					session.toolType === 'openclaw'
+						? normalizeOpenClawSessionId(result.agentSessionId) || result.agentSessionId
+						: result.agentSessionId;
+
 				// Use effectiveCwd (worktree path when active) so session can be found later
 				window.maestro.agentSessions
-					.registerSessionOrigin(effectiveCwd, result.agentSessionId, 'auto')
+					.registerSessionOrigin(session.toolType, effectiveCwd, normalizedAgentSessionId, 'auto')
 					.catch((err) =>
 						console.error('[DocumentProcessor] Failed to register session origin:', err)
 					);
 			}
 
 			// Re-read document to get updated task count and content
-			const afterResult = await readDocAndCountTasks(folderPath, filename, sshRemoteId);
-			const {
+			let afterResult = await readDocAndCountTasks(folderPath, filename, sshRemoteId);
+			let {
 				content: contentAfterTask,
 				taskCount: newRemainingTasks,
 				checkedCount: newCheckedCount,
@@ -357,7 +633,28 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 
 			// Calculate tasks completed based on newly checked tasks
 			// This remains accurate even if new unchecked tasks are added
-			const tasksCompletedThisRun = Math.max(0, newCheckedCount - previousCheckedCount);
+			let tasksCompletedThisRun = Math.max(0, newCheckedCount - previousCheckedCount);
+
+			if (!result.success && tasksCompletedThisRun > 0) {
+				const revertedContent = revertNewlyCheckedTasks(contentBeforeTask, contentAfterTask);
+				if (revertedContent !== contentAfterTask) {
+					await window.maestro.autorun.writeDoc(
+						folderPath,
+						filename + '.md',
+						revertedContent,
+						sshRemoteId
+					);
+					afterResult = {
+						content: revertedContent,
+						taskCount: countUnfinishedTasks(revertedContent),
+						checkedCount: countCheckedTasks(revertedContent),
+					};
+					contentAfterTask = afterResult.content;
+					newRemainingTasks = afterResult.taskCount;
+					newCheckedCount = afterResult.checkedCount;
+					tasksCompletedThisRun = Math.max(0, newCheckedCount - previousCheckedCount);
+				}
+			}
 
 			// Calculate the actual change in total tasks (checked + unchecked)
 			// This correctly handles cases where tasks are both completed and added
@@ -413,15 +710,25 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				fullSynopsis = result.response || shortSummary;
 			}
 
+			shortSummary = applyVerifierVerdictToSummary(shortSummary, verifierVerdict);
+			const contextDisplayUsageStats = pickContextDisplayUsageStats(
+				session.toolType,
+				usageBreakdown,
+				result.usageStats
+			);
+
 			return {
 				success: result.success,
 				agentSessionId: result.agentSessionId,
 				usageStats: result.usageStats,
+				contextDisplayUsageStats,
+				usageBreakdown,
 				elapsedTimeMs,
 				tasksCompletedThisRun,
 				newRemainingTasks,
 				shortSummary,
 				fullSynopsis,
+				verifierVerdict,
 				documentChanged,
 				contentAfterTask,
 				newCheckedCount,

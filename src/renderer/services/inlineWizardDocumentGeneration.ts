@@ -15,6 +15,7 @@ import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { wizardDocumentGenerationPrompt, wizardInlineIterateGenerationPrompt } from '../../prompts';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+import { DEFAULT_AUTORUN_SKILLS } from '../../shared/playbookDag';
 
 /**
  * Auto Run folder name constant.
@@ -78,6 +79,16 @@ export function extractDisplayTextFromChunk(chunk: string, agentType: ToolType):
 				}
 				if (msg.type === 'message' && msg.text) {
 					textParts.push(msg.text);
+				}
+			}
+
+			// OpenClaw format: single JSON object at exit with payloads array
+			else if (agentType === 'openclaw') {
+				const payload = msg.payloads ?? msg.result?.payloads;
+				if (Array.isArray(payload)) {
+					for (const p of payload) {
+						if (p.text) textParts.push(p.text);
+					}
 				}
 			}
 		} catch {
@@ -578,6 +589,26 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 			if (textParts.length > 0) {
 				return textParts.join('');
+			}
+		}
+
+		// For OpenClaw: extract from { payloads, meta } or { status, result: { payloads, meta } }
+		if (agentType === 'openclaw') {
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					const payload = msg.payloads ?? msg.result?.payloads;
+					if (Array.isArray(payload)) {
+						const text = payload
+							.map((p: { text?: string }) => p.text)
+							.filter(Boolean)
+							.join('\n');
+						if (text) return text;
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
 			}
 		}
 
@@ -1171,19 +1202,6 @@ export async function generateInlineDocuments(
 }
 
 /**
- * Default prompt for wizard-generated playbooks.
- * This provides sensible defaults that can be customized by the user later.
- */
-const DEFAULT_PLAYBOOK_PROMPT = `Complete the tasks in this document thoroughly and carefully.
-
-Guidelines:
-- Work through tasks in order from top to bottom
-- Check off each task as you complete it (mark [ ] as [x])
-- If a task requires clarification, make a reasonable decision and proceed
-- Focus on quality over speed
-- Test your changes when appropriate`;
-
-/**
  * Create a playbook configuration for the generated documents.
  *
  * This creates a fully-featured playbook that the user can customize:
@@ -1217,7 +1235,15 @@ async function createPlaybookForDocuments(
 		name: projectName,
 		documents: documentEntries,
 		loopEnabled: false,
-		prompt: DEFAULT_PLAYBOOK_PROMPT,
+		taskTimeoutMs: 60000,
+		prompt: '',
+		skills: [...DEFAULT_AUTORUN_SKILLS],
+		definitionOfDone: [],
+		verificationSteps: [],
+		promptProfile: 'compact-code',
+		documentContextMode: 'active-task-only',
+		skillPromptMode: 'brief',
+		agentStrategy: 'single',
 	});
 
 	if (!result.success || !result.playbook) {

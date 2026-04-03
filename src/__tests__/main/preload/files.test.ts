@@ -6,6 +6,7 @@
  * - createHistoryApi: getAll, getAllPaginated, add, clear, delete, update, updateSessionName,
  *   getFilePath, listSessions, onExternalChange, reload
  * - createCliApi: getActivity, onActivityChange
+ * - createSkillBusApi: status, recordRun
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,7 +24,12 @@ vi.mock('electron', () => ({
 	},
 }));
 
-import { createTempfileApi, createHistoryApi, createCliApi } from '../../../main/preload/files';
+import {
+	createTempfileApi,
+	createHistoryApi,
+	createCliApi,
+	createSkillBusApi,
+} from '../../../main/preload/files';
 
 describe('Files Preload API', () => {
 	beforeEach(() => {
@@ -356,6 +362,38 @@ describe('Files Preload API', () => {
 
 				expect(mockRemoveListener).toHaveBeenCalledWith('cli:activityChange', registeredHandler!);
 			});
+		});
+	});
+
+	describe('createSkillBusApi', () => {
+		let api: ReturnType<typeof createSkillBusApi>;
+
+		beforeEach(() => {
+			api = createSkillBusApi();
+		});
+
+		it('should invoke skillBus:status', async () => {
+			mockInvoke.mockResolvedValue({ available: true, scriptPath: '/tmp/skill-bus-record.sh' });
+
+			const result = await api.status();
+
+			expect(mockInvoke).toHaveBeenCalledWith('skillBus:status');
+			expect(result).toEqual({ available: true, scriptPath: '/tmp/skill-bus-record.sh' });
+		});
+
+		it('should invoke skillBus:recordRun with payload', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+			const payload = {
+				skillName: 'maestro-autorun',
+				result: 'success' as const,
+				score: 1,
+				task: 'Desktop Auto Run: [Session] Task completed',
+			};
+
+			const result = await api.recordRun(payload);
+
+			expect(mockInvoke).toHaveBeenCalledWith('skillBus:recordRun', payload);
+			expect(result).toEqual({ success: true });
 		});
 	});
 });

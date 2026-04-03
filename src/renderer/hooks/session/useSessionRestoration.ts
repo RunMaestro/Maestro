@@ -145,6 +145,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
 			}
 
+			// Migration: legacy persisted sessions may use inputMode='agent'
+			// Normalize to the current renderer contract ('ai' | 'terminal') on load.
+			if ((session.inputMode as string) === 'agent') {
+				console.warn(`[restoreSession] Session has legacy inputMode='agent', migrating to 'ai'`);
+				session = { ...session, inputMode: 'ai' };
+			}
+
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
 			// Create a default tab to prevent crashes when code calls .find() on aiTabs
 			if (!session.aiTabs || session.aiTabs.length === 0) {

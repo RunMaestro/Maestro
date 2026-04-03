@@ -16,6 +16,7 @@ import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 interface AgentEfficiencyChartProps {
 	/** Aggregated stats data from the API */
@@ -50,17 +51,7 @@ function formatDuration(ms: number): string {
  * Format agent type display name
  */
 function formatAgentName(agent: string): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		terminal: 'Terminal',
-	};
-	return names[agent] || agent;
+	return getAgentDisplayName(agent);
 }
 
 /**

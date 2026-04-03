@@ -509,4 +509,47 @@ describe('useAgentExecution', () => {
 		// Should not have called kill
 		expect(mockKill).not.toHaveBeenCalled();
 	});
+
+	it('times out lingering synopsis sessions and resolves as failure', async () => {
+		vi.useFakeTimers();
+		const mockKill = vi.fn().mockResolvedValue(true);
+		window.maestro.process.kill = mockKill;
+
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+
+		await act(async () => {
+			vi.advanceTimersByTime(20000);
+			await Promise.resolve();
+		});
+
+		await expect(spawnPromise).resolves.toEqual({ success: false });
+		expect(mockKill).toHaveBeenCalledTimes(1);
+		expect(mockKill.mock.calls[0][0]).toMatch(new RegExp(`^${session.id}-synopsis-\\d+$`));
+	});
 });

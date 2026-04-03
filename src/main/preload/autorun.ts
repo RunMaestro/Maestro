@@ -8,35 +8,39 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	PlaybookDocumentEntry as SharedPlaybookDocument,
+	Playbook as SharedSavedPlaybook,
+	PlaybookDraft as SharedPlaybookDraft,
+	PlaybookUpdate as SharedPlaybookUpdate,
+	PlaybookWorktreeSettings as SharedWorktreeSettings,
+} from '../../shared/types';
+import type {
+	GetDocumentResponse,
+	GetManifestResponse,
+	GetReadmeResponse,
+	ImportPlaybookResponse,
+} from '../../shared/marketplace-types';
 
 /**
  * Playbook document configuration
  */
-export interface PlaybookDocument {
-	filename: string;
-	resetOnCompletion: boolean;
-}
+export type PlaybookDocument = SharedPlaybookDocument;
 
 /**
  * Worktree settings for playbook
  */
-export interface WorktreeSettings {
-	branchNameTemplate: string;
-	createPROnCompletion: boolean;
-	prTargetBranch?: string;
-}
+export type WorktreeSettings = SharedWorktreeSettings;
 
 /**
- * Playbook definition
+ * Persisted playbook definition
  */
-export interface Playbook {
-	name: string;
-	documents: PlaybookDocument[];
-	loopEnabled: boolean;
-	maxLoops?: number | null;
-	prompt: string;
-	worktreeSettings?: WorktreeSettings;
-}
+export type Playbook = SharedSavedPlaybook;
+export type PlaybookDraft = SharedPlaybookDraft;
+
+type IpcInvokeResult<T extends object> = Promise<
+	(T & { success: true }) | { success: false; error: string }
+>;
 
 /**
  * Creates the Auto Run API object for preload exposure
@@ -128,26 +132,36 @@ export function createAutorunApi() {
  */
 export function createPlaybooksApi() {
 	return {
-		list: (sessionId: string) => ipcRenderer.invoke('playbooks:list', sessionId),
+		list: (sessionId: string): IpcInvokeResult<{ playbooks: Playbook[] }> =>
+			ipcRenderer.invoke('playbooks:list', sessionId),
 
-		create: (sessionId: string, playbook: Playbook) =>
+		create: (sessionId: string, playbook: PlaybookDraft): IpcInvokeResult<{ playbook: Playbook }> =>
 			ipcRenderer.invoke('playbooks:create', sessionId, playbook),
 
 		update: (
 			sessionId: string,
 			playbookId: string,
-			updates: Partial<Playbook & { updatedAt: number }>
-		) => ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
+			updates: SharedPlaybookUpdate
+		): IpcInvokeResult<{ playbook: Playbook }> =>
+			ipcRenderer.invoke('playbooks:update', sessionId, playbookId, updates),
 
-		delete: (sessionId: string, playbookId: string) =>
+		delete: (sessionId: string, playbookId: string): IpcInvokeResult<Record<string, never>> =>
 			ipcRenderer.invoke('playbooks:delete', sessionId, playbookId),
 
-		deleteAll: (sessionId: string) => ipcRenderer.invoke('playbooks:deleteAll', sessionId),
+		deleteAll: (sessionId: string): IpcInvokeResult<Record<string, never>> =>
+			ipcRenderer.invoke('playbooks:deleteAll', sessionId),
 
-		export: (sessionId: string, playbookId: string, autoRunFolderPath: string) =>
+		export: (
+			sessionId: string,
+			playbookId: string,
+			autoRunFolderPath: string
+		): IpcInvokeResult<{ filePath: string }> =>
 			ipcRenderer.invoke('playbooks:export', sessionId, playbookId, autoRunFolderPath),
 
-		import: (sessionId: string, autoRunFolderPath: string) =>
+		import: (
+			sessionId: string,
+			autoRunFolderPath: string
+		): IpcInvokeResult<ImportPlaybookResponse> =>
 			ipcRenderer.invoke('playbooks:import', sessionId, autoRunFolderPath),
 	};
 }
@@ -157,14 +171,17 @@ export function createPlaybooksApi() {
  */
 export function createMarketplaceApi() {
 	return {
-		getManifest: () => ipcRenderer.invoke('marketplace:getManifest'),
+		getManifest: (): IpcInvokeResult<GetManifestResponse> =>
+			ipcRenderer.invoke('marketplace:getManifest'),
 
-		refreshManifest: () => ipcRenderer.invoke('marketplace:refreshManifest'),
+		refreshManifest: (): IpcInvokeResult<Omit<GetManifestResponse, 'cacheAge'>> =>
+			ipcRenderer.invoke('marketplace:refreshManifest'),
 
-		getDocument: (playbookPath: string, filename: string) =>
+		getDocument: (playbookPath: string, filename: string): IpcInvokeResult<GetDocumentResponse> =>
 			ipcRenderer.invoke('marketplace:getDocument', playbookPath, filename),
 
-		getReadme: (playbookPath: string) => ipcRenderer.invoke('marketplace:getReadme', playbookPath),
+		getReadme: (playbookPath: string): IpcInvokeResult<GetReadmeResponse> =>
+			ipcRenderer.invoke('marketplace:getReadme', playbookPath),
 
 		importPlaybook: (
 			playbookId: string,
@@ -172,7 +189,7 @@ export function createMarketplaceApi() {
 			autoRunFolderPath: string,
 			sessionId: string,
 			sshRemoteId?: string
-		) =>
+		): IpcInvokeResult<ImportPlaybookResponse> =>
 			ipcRenderer.invoke(
 				'marketplace:importPlaybook',
 				playbookId,

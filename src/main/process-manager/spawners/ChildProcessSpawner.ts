@@ -5,18 +5,21 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
-import { getAgentCapabilities } from '../../agents';
+import { getOutputParser, OpenClawOutputParser } from '../../parsers';
+import { getAgentCapabilities, getAgentDefinition } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
+import { extractOpenClawAgentNameFromArgs } from '../../../shared/openclawSessionId';
 import { buildChildProcessEnv } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { hasResumeSessionArgs } from '../../utils/agent-args';
+import type { ToolType } from '../../../shared/types';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -207,8 +210,8 @@ export class ChildProcessSpawner {
 		});
 
 		try {
-			// Build environment
-			const isResuming = finalArgs.includes('--resume') || finalArgs.includes('--session');
+			const agentDefinition = getAgentDefinition(toolType as ToolType);
+			const isResuming = hasResumeSessionArgs(agentDefinition, finalArgs);
 			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
 
 			// Log environment variable application for troubleshooting
@@ -330,23 +333,45 @@ export class ChildProcessSpawner {
 				exitCode: childProcess.exitCode,
 			});
 
-			const isBatchMode = !!prompt;
-			// Detect JSON streaming mode from args or config flag
-			// IMPORTANT: SSH stdin script mode (sshStdinScript) MUST enable stream-json parsing
-			// because the SSH command wraps the actual agent command. Without this, the output
-			// parser won't process JSON output from remote agents, causing raw JSON to display.
-			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
+			const isBatchMode = !!prompt || (toolType === 'openclaw' && !!config.sshStdinScript);
+			// Detect whether stdout should be processed incrementally as streaming JSON.
+			// OpenClaw is the notable exception: it uses `--json`, but emits one final JSON
+			// object instead of line-delimited streaming output, so it must stay in buffered
+			// batch mode for exit-time parsing.
+			//
+			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set
+			// isStreamJsonMode.
 			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			const hasStreamingJsonFlag = argsContain('stream-json');
+			const hasJsonBatchFlag =
+				argsContain('--json') || (argsContain('--format') && argsContain('json'));
+			const isOpenClawJsonBatch = toolType === 'openclaw' && hasJsonBatchFlag;
 			const isStreamJsonMode =
-				argsContain('stream-json') ||
-				argsContain('--json') ||
-				(argsContain('--format') && argsContain('json')) ||
+				(!isOpenClawJsonBatch && hasStreamingJsonFlag) ||
+				(!isOpenClawJsonBatch && capabilities.supportsStreaming && hasJsonBatchFlag) ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
-				!!config.sshStdinScript;
+				(!!config.sshStdinScript && capabilities.supportsStreaming);
 
 			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+			const fallbackOutputParser = getOutputParser(toolType) || undefined;
+			let outputParser = fallbackOutputParser;
+			if (toolType === 'openclaw' && typeof OpenClawOutputParser === 'function') {
+				const openClawAgentName = extractOpenClawAgentNameFromArgs(finalArgs);
+				try {
+					outputParser = new OpenClawOutputParser({ agentName: openClawAgentName || undefined });
+				} catch (error) {
+					logger.warn(
+						'[ProcessManager] Falling back to shared parser registry for OpenClaw parser construction failure',
+						'ProcessManager',
+						{
+							error: String(error),
+							sessionId,
+						}
+					);
+					outputParser = fallbackOutputParser;
+				}
+			}
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,

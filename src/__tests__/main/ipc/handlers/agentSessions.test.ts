@@ -374,7 +374,7 @@ describe('agentSessions IPC handlers', () => {
 			const handler = handlers.get('agentSessions:getPath');
 			const result = await handler!({} as any, 'claude-code', '/test', 'session-1');
 
-			expect(mockStorage.getSessionPath).toHaveBeenCalledWith('/test', 'session-1');
+			expect(mockStorage.getSessionPath).toHaveBeenCalledWith('/test', 'session-1', undefined);
 			expect(result).toBe('/path/to/session.jsonl');
 		});
 
@@ -385,6 +385,48 @@ describe('agentSessions IPC handlers', () => {
 			const result = await handler!({} as any, 'unknown-agent', '/test', 'session-1');
 
 			expect(result).toBe(null);
+		});
+
+		it('passes resolved ssh config to getSessionPath when provided', async () => {
+			const mockStorage = {
+				agentId: 'openclaw',
+				getSessionPath: vi.fn().mockReturnValue('/remote/session.jsonl'),
+			};
+
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			registerAgentSessionsHandlers({
+				settingsStore: {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'ssh-remote-1',
+							enabled: true,
+							host: 'openclaw-host',
+						},
+					]),
+				} as any,
+			});
+
+			const handler = handlers.get('agentSessions:getPath');
+			const result = await handler!(
+				{} as any,
+				'openclaw',
+				'/remote/project',
+				'main:session-1',
+				'ssh-remote-1'
+			);
+
+			expect(mockStorage.getSessionPath).toHaveBeenCalledWith(
+				'/remote/project',
+				'main:session-1',
+				expect.objectContaining({
+					id: 'ssh-remote-1',
+					host: 'openclaw-host',
+				})
+			);
+			expect(result).toBe('/remote/session.jsonl');
 		});
 	});
 
@@ -413,9 +455,56 @@ describe('agentSessions IPC handlers', () => {
 				'/test',
 				'session-1',
 				'uuid-123',
-				'fallback content'
+				'fallback content',
+				undefined
 			);
 			expect(result).toEqual({ success: true, linesRemoved: 3 });
+		});
+
+		it('passes resolved ssh config to deleteMessagePair when provided', async () => {
+			const mockStorage = {
+				agentId: 'openclaw',
+				deleteMessagePair: vi.fn().mockResolvedValue({ success: true, linesRemoved: 2 }),
+			};
+
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			registerAgentSessionsHandlers({
+				settingsStore: {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'ssh-remote-1',
+							enabled: true,
+							host: 'openclaw-host',
+						},
+					]),
+				} as any,
+			});
+
+			const handler = handlers.get('agentSessions:deleteMessagePair');
+			const result = await handler!(
+				{} as any,
+				'openclaw',
+				'/remote/project',
+				'main:session-1',
+				'uuid-remote-1',
+				undefined,
+				'ssh-remote-1'
+			);
+
+			expect(mockStorage.deleteMessagePair).toHaveBeenCalledWith(
+				'/remote/project',
+				'main:session-1',
+				'uuid-remote-1',
+				undefined,
+				expect.objectContaining({
+					id: 'ssh-remote-1',
+					host: 'openclaw-host',
+				})
+			);
+			expect(result).toEqual({ success: true, linesRemoved: 2 });
 		});
 
 		it('should return error when no storage available', async () => {

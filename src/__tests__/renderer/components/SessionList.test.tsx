@@ -2096,6 +2096,7 @@ describe('SessionList', () => {
 			// Active session should have accent border color
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
 			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+			expect(activeSession).toHaveAttribute('aria-current', 'page');
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {
@@ -2455,7 +2456,7 @@ describe('SessionList', () => {
 			const { container } = render(<SessionList {...props} />);
 
 			// Should have hollow indicator (border instead of solid background)
-			const indicator = container.querySelector('[title="No active Claude session"]');
+			const indicator = container.querySelector('[title="No active Claude Code session"]');
 			expect(indicator).toBeInTheDocument();
 		});
 
@@ -2476,7 +2477,7 @@ describe('SessionList', () => {
 			const { container } = render(<SessionList {...props} />);
 
 			// Should NOT have hollow indicator
-			const indicator = container.querySelector('[title="No active Claude session"]');
+			const indicator = container.querySelector('[title="No active Claude Code session"]');
 			expect(indicator).not.toBeInTheDocument();
 		});
 
@@ -2497,7 +2498,7 @@ describe('SessionList', () => {
 			const { container } = render(<SessionList {...props} />);
 
 			// Should have hollow indicator in skinny mode
-			const indicator = container.querySelector('[title="No active Claude session"]');
+			const indicator = container.querySelector('[title="No active Claude Code session"]');
 			expect(indicator).toBeInTheDocument();
 		});
 	});
@@ -2548,7 +2549,7 @@ describe('SessionList', () => {
 			// Tooltip content should be present
 			expect(screen.getByText('Detailed Session')).toBeInTheDocument();
 			expect(screen.getByText('75%')).toBeInTheDocument();
-			expect(screen.getByText(/idle.*claude-code/i)).toBeInTheDocument();
+			expect(screen.getByText(/idle.*Claude Code/)).toBeInTheDocument();
 		});
 
 		it('shows usage stats in skinny mode tooltip', () => {

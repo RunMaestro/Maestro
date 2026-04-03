@@ -27,6 +27,29 @@ const handlerOpts = (
 	operation,
 });
 
+function redactSensitiveConfigValue(key: string, value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((item) => redactSensitiveConfigValue(key, item));
+	}
+
+	if (value && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+				childKey,
+				redactSensitiveConfigValue(childKey, childValue),
+			])
+		);
+	}
+
+	return /key|secret|token|password/i.test(key) ? '[REDACTED]' : value;
+}
+
+function sanitizeConfigForLogging(config: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(config).map(([key, value]) => [key, redactSensitiveConfigValue(key, value)])
+	);
+}
+
 /**
  * Interface for agent configuration store data
  */
@@ -91,7 +114,7 @@ function stripAgentFunctions(agent: any) {
 	return {
 		...serializableAgent,
 		configOptions: agent.configOptions?.map((opt: any) => {
-			const { argBuilder: _argBuilder, ...serializableOpt } = opt;
+			const { argBuilder: _argBuilder, envBuilder: _envBuilder, ...serializableOpt } = opt;
 			return serializableOpt;
 		}),
 	};
@@ -583,7 +606,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				allConfigs[agentId] = config;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.info(`Updated config for agent: ${agentId}`, CONFIG_LOG_CONTEXT, config);
+				logger.info(`Updated config for agent: ${agentId}`, CONFIG_LOG_CONTEXT, {
+					keys: Object.keys(config),
+					config: sanitizeConfigForLogging(config),
+				});
 				return true;
 			}
 		)

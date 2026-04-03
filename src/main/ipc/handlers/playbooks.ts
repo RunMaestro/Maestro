@@ -7,6 +7,12 @@ import archiver from 'archiver';
 import AdmZip from 'adm-zip';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	normalizePersistedPlaybook,
+	normalizePlaybookDraft,
+	normalizePlaybookUpdate,
+} from '../../../shared/playbookDag';
+import type { Playbook, PlaybookDraft, PlaybookUpdate } from '../../../shared/types';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -16,6 +22,11 @@ const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions
 	operation,
 	logSuccess,
 });
+
+type PlaybookArchiveManifest = PlaybookDraft & {
+	version: number;
+	exportedAt: number;
+};
 
 /**
  * Dependencies required for playbooks handler registration
@@ -37,12 +48,14 @@ function getPlaybooksFilePath(app: App, sessionId: string): string {
 /**
  * Read playbooks from file
  */
-async function readPlaybooks(app: App, sessionId: string): Promise<any[]> {
+async function readPlaybooks(app: App, sessionId: string): Promise<Playbook[]> {
 	const filePath = getPlaybooksFilePath(app, sessionId);
 	try {
 		const content = await fs.readFile(filePath, 'utf-8');
-		const data = JSON.parse(content);
-		return Array.isArray(data.playbooks) ? data.playbooks : [];
+		const data = JSON.parse(content) as { playbooks?: unknown[] };
+		return Array.isArray(data.playbooks)
+			? data.playbooks.map((playbook) => normalizePersistedPlaybook(playbook as Playbook))
+			: [];
 	} catch {
 		// File doesn't exist or is invalid, return empty array
 		return [];
@@ -52,7 +65,7 @@ async function readPlaybooks(app: App, sessionId: string): Promise<any[]> {
 /**
  * Write playbooks to file
  */
-async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Promise<void> {
+async function writePlaybooks(app: App, sessionId: string, playbooks: Playbook[]): Promise<void> {
 	const filePath = getPlaybooksFilePath(app, sessionId);
 	const dir = path.dirname(filePath);
 
@@ -61,6 +74,29 @@ async function writePlaybooks(app: App, sessionId: string, playbooks: any[]): Pr
 
 	// Write the playbooks file
 	await fs.writeFile(filePath, JSON.stringify({ playbooks }, null, 2), 'utf-8');
+}
+
+function createPlaybookArchiveManifest(playbook: Playbook): PlaybookArchiveManifest {
+	const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...draft } = playbook;
+	const normalizedDraft = normalizePlaybookDraft(draft);
+
+	return {
+		...normalizedDraft,
+		version: 1,
+		exportedAt: Date.now(),
+	};
+}
+
+function createImportedPlaybook(manifest: PlaybookArchiveManifest): Playbook {
+	const { version: _version, exportedAt: _exportedAt, ...draft } = manifest;
+	const now = Date.now();
+
+	return normalizePersistedPlaybook({
+		id: crypto.randomUUID(),
+		createdAt: now,
+		updatedAt: now,
+		...draft,
+	});
 }
 
 /**
@@ -90,62 +126,53 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 	// Create a new playbook
 	ipcMain.handle(
 		'playbooks:create',
-		createIpcHandler(
-			handlerOpts('create'),
-			async (
-				sessionId: string,
-				playbook: {
-					name: string;
-					documents: any[];
-					loopEnabled: boolean;
-					prompt: string;
-					worktreeSettings?: {
-						branchNameTemplate: string;
-						createPROnCompletion: boolean;
-						prTargetBranch?: string;
-					};
-				}
-			) => {
-				const playbooks = await readPlaybooks(app, sessionId);
+		createIpcHandler(handlerOpts('create'), async (sessionId: string, playbook: PlaybookDraft) => {
+			const playbooks = await readPlaybooks(app, sessionId);
+			const normalizedDraft = normalizePlaybookDraft(playbook);
 
-				// Create new playbook with generated ID and timestamps
-				const now = Date.now();
-				const newPlaybook: {
-					id: string;
-					name: string;
-					createdAt: number;
-					updatedAt: number;
-					documents: any[];
-					loopEnabled: boolean;
-					prompt: string;
-					worktreeSettings?: {
-						branchNameTemplate: string;
-						createPROnCompletion: boolean;
-						prTargetBranch?: string;
-					};
-				} = {
-					id: crypto.randomUUID(),
-					name: playbook.name,
-					createdAt: now,
-					updatedAt: now,
-					documents: playbook.documents,
-					loopEnabled: playbook.loopEnabled,
-					prompt: playbook.prompt,
-				};
+			// Create new playbook with generated ID and timestamps
+			const now = Date.now();
+			const newPlaybook: Playbook = {
+				id: crypto.randomUUID(),
+				name: normalizedDraft.name,
+				createdAt: now,
+				updatedAt: now,
+				documents: normalizedDraft.documents,
+				loopEnabled: normalizedDraft.loopEnabled,
+				maxLoops: normalizedDraft.maxLoops ?? null,
+				taskTimeoutMs: normalizedDraft.taskTimeoutMs ?? null,
+				prompt: normalizedDraft.prompt,
+				skills: normalizedDraft.skills,
+				definitionOfDone: Array.isArray(normalizedDraft.definitionOfDone)
+					? normalizedDraft.definitionOfDone.filter(
+							(item) => typeof item === 'string' && item.trim() !== ''
+						)
+					: [],
+				verificationSteps: Array.isArray(normalizedDraft.verificationSteps)
+					? normalizedDraft.verificationSteps.filter(
+							(item) => typeof item === 'string' && item.trim() !== ''
+						)
+					: [],
+				promptProfile: normalizedDraft.promptProfile,
+				documentContextMode: normalizedDraft.documentContextMode,
+				skillPromptMode: normalizedDraft.skillPromptMode,
+				agentStrategy: normalizedDraft.agentStrategy ?? 'single',
+				maxParallelism: normalizedDraft.maxParallelism,
+				taskGraph: normalizedDraft.taskGraph,
+			};
 
-				// Include worktree settings if provided
-				if (playbook.worktreeSettings) {
-					newPlaybook.worktreeSettings = playbook.worktreeSettings;
-				}
-
-				// Add to list and save
-				playbooks.push(newPlaybook);
-				await writePlaybooks(app, sessionId, playbooks);
-
-				logger.info(`Created playbook "${playbook.name}" for session ${sessionId}`, LOG_CONTEXT);
-				return { playbook: newPlaybook };
+			// Include worktree settings if provided
+			if (normalizedDraft.worktreeSettings) {
+				newPlaybook.worktreeSettings = normalizedDraft.worktreeSettings;
 			}
-		)
+
+			// Add to list and save
+			playbooks.push(newPlaybook);
+			await writePlaybooks(app, sessionId, playbooks);
+
+			logger.info(`Created playbook "${playbook.name}" for session ${sessionId}`, LOG_CONTEXT);
+			return { playbook: newPlaybook };
+		})
 	);
 
 	// Update an existing playbook
@@ -153,22 +180,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 		'playbooks:update',
 		createIpcHandler(
 			handlerOpts('update'),
-			async (
-				sessionId: string,
-				playbookId: string,
-				updates: Partial<{
-					name: string;
-					documents: any[];
-					loopEnabled: boolean;
-					prompt: string;
-					updatedAt: number;
-					worktreeSettings?: {
-						branchNameTemplate: string;
-						createPROnCompletion: boolean;
-						prTargetBranch?: string;
-					};
-				}>
-			) => {
+			async (sessionId: string, playbookId: string, updates: PlaybookUpdate) => {
 				const playbooks = await readPlaybooks(app, sessionId);
 
 				// Find the playbook to update
@@ -178,11 +190,21 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				}
 
 				// Update the playbook
-				const updatedPlaybook = {
-					...playbooks[index],
+				const nextDocuments = Array.isArray(updates.documents)
+					? updates.documents
+					: playbooks[index].documents;
+				const normalizedUpdates = normalizePlaybookUpdate(nextDocuments, {
 					...updates,
+					maxParallelism: updates.maxParallelism ?? playbooks[index].maxParallelism,
+					taskGraph: updates.taskGraph ?? playbooks[index].taskGraph,
+					skills: updates.skills ?? playbooks[index].skills,
+				});
+
+				const updatedPlaybook: Playbook = normalizePersistedPlaybook({
+					...playbooks[index],
+					...normalizedUpdates,
 					updatedAt: Date.now(),
-				};
+				});
 				playbooks[index] = updatedPlaybook;
 
 				await writePlaybooks(app, sessionId, playbooks);
@@ -284,16 +306,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				archive.pipe(output);
 
 				// Create manifest JSON (playbook settings without the id - will be regenerated on import)
-				const manifest = {
-					version: 1,
-					name: playbook.name,
-					documents: playbook.documents,
-					loopEnabled: playbook.loopEnabled,
-					maxLoops: playbook.maxLoops,
-					prompt: playbook.prompt,
-					worktreeSettings: playbook.worktreeSettings,
-					exportedAt: Date.now(),
-				};
+				const manifest = createPlaybookArchiveManifest(playbook);
 
 				// Add manifest to archive
 				archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
@@ -381,7 +394,9 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 					throw new Error('Invalid playbook file: missing manifest.json');
 				}
 
-				const manifest = JSON.parse(manifestEntry.getData().toString('utf-8'));
+				const manifest = JSON.parse(
+					manifestEntry.getData().toString('utf-8')
+				) as Partial<PlaybookArchiveManifest>;
 
 				// Validate manifest
 				if (!manifest.name || !Array.isArray(manifest.documents)) {
@@ -424,19 +439,34 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				// Create new playbook entry
 				const playbooks = await readPlaybooks(app, sessionId);
-				const now = Date.now();
-
-				const newPlaybook = {
-					id: crypto.randomUUID(),
+				const newPlaybook = createImportedPlaybook({
 					name: manifest.name,
-					createdAt: now,
-					updatedAt: now,
 					documents: manifest.documents,
 					loopEnabled: manifest.loopEnabled ?? false,
 					maxLoops: manifest.maxLoops,
+					taskTimeoutMs: manifest.taskTimeoutMs ?? null,
+					maxParallelism: manifest.maxParallelism,
+					taskGraph: manifest.taskGraph,
 					prompt: manifest.prompt || '',
+					skills: Array.isArray(manifest.skills) ? manifest.skills : [],
+					definitionOfDone: Array.isArray(manifest.definitionOfDone)
+						? manifest.definitionOfDone.filter(
+								(item: unknown) => typeof item === 'string' && item.trim() !== ''
+							)
+						: [],
+					verificationSteps: Array.isArray(manifest.verificationSteps)
+						? manifest.verificationSteps.filter(
+								(item: unknown) => typeof item === 'string' && item.trim() !== ''
+							)
+						: [],
+					promptProfile: manifest.promptProfile,
+					documentContextMode: manifest.documentContextMode,
+					skillPromptMode: manifest.skillPromptMode,
+					agentStrategy: manifest.agentStrategy ?? 'single',
 					worktreeSettings: manifest.worktreeSettings,
-				};
+					version: typeof manifest.version === 'number' ? manifest.version : 1,
+					exportedAt: typeof manifest.exportedAt === 'number' ? manifest.exportedAt : 0,
+				});
 
 				// Add to list and save
 				playbooks.push(newPlaybook);

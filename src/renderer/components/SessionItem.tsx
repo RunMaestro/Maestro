@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -84,6 +85,8 @@ export const SessionItem = memo(function SessionItem({
 	onStartRename,
 	onToggleBookmark,
 }: SessionItemProps) {
+	const hasMissingAgentSession = session.toolType !== 'terminal' && !session.agentSessionId;
+	const missingSessionTooltip = `No active ${getAgentDisplayName(session.toolType)} session`;
 	// Determine if we show the GIT/LOCAL badge (not shown in bookmark variant, terminal sessions, or worktree variant)
 	const showGitLocalBadge =
 		variant !== 'bookmark' && variant !== 'worktree' && session.toolType !== 'terminal';
@@ -106,6 +109,7 @@ export const SessionItem = memo(function SessionItem({
 		<div
 			key={`${variant}-${groupId || ''}-${session.id}`}
 			draggable
+			aria-current={isActive ? 'page' : undefined}
 			onDragStart={onDragStart}
 			onDragOver={onDragOver}
 			onDrop={onDrop}
@@ -115,10 +119,11 @@ export const SessionItem = memo(function SessionItem({
 			style={{
 				borderColor: isActive || isKeyboardSelected ? theme.colors.accent : 'transparent',
 				backgroundColor: isActive
-					? theme.colors.bgActivity
+					? theme.colors.accent + '18'
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				boxShadow: isActive ? `inset 2px 0 0 ${theme.colors.accent}` : 'none',
 			}}
 		>
 			{/* Left side: Session name and metadata */}
@@ -318,7 +323,7 @@ export const SessionItem = memo(function SessionItem({
 					<div
 						className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
 						style={
-							session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+							hasMissingAgentSession && !isInBatch
 								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: {
 										backgroundColor: isInBatch
@@ -327,8 +332,8 @@ export const SessionItem = memo(function SessionItem({
 									}
 						}
 						title={
-							session.toolType === 'claude-code' && !session.agentSessionId
-								? 'No active Claude session'
+							hasMissingAgentSession
+								? missingSessionTooltip
 								: session.state === 'idle'
 									? 'Ready and waiting'
 									: session.state === 'busy'

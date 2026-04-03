@@ -10,6 +10,9 @@ import type {
 import { getActiveTab } from '../../utils/tabHelpers';
 import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
+import { normalizeOpenClawSessionId } from '../../../shared/openclawSessionId';
+
+const BACKGROUND_SYNOPSIS_TIMEOUT_MS = 20000;
 
 /**
  * Result from agent spawn operations.
@@ -49,7 +52,10 @@ export interface UseAgentExecutionReturn {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			resumeAgentSessionId?: string;
+		}
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -167,7 +173,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
 	 */
 	const spawnAgentForSession = useCallback(
-		async (sessionId: string, prompt: string, cwdOverride?: string): Promise<AgentSpawnResult> => {
+		async (
+			sessionId: string,
+			prompt: string,
+			cwdOverride?: string,
+			options?: {
+				resumeAgentSessionId?: string;
+			}
+		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return { success: false };
@@ -218,7 +231,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
-								agentSessionId = capturedId;
+								agentSessionId =
+									session.toolType === 'openclaw'
+										? normalizeOpenClawSessionId(capturedId) || capturedId
+										: capturedId;
 							}
 						})
 					);
@@ -413,6 +429,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							command: commandToUse,
 							args: agent.args || [],
 							prompt,
+							agentSessionId: options?.resumeAgentSessionId,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
@@ -500,6 +517,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let agentSessionId: string | undefined;
 					let responseText = '';
 					let synopsisUsageStats: UsageStats | undefined;
+					let settled = false;
+					let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
@@ -508,6 +527,18 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						cleanupFns.forEach((fn) => fn());
 						// Remove from tracking
 						activeSynopsisSessionsRef.current.get(sessionId)?.delete(targetSessionId);
+						if (timeoutId !== null) {
+							clearTimeout(timeoutId);
+						}
+					};
+
+					const settle = (result: AgentSpawnResult) => {
+						if (settled) {
+							return;
+						}
+						settled = true;
+						cleanup();
+						resolve(result);
 					};
 
 					cleanupFns.push(
@@ -521,7 +552,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onSessionId((sid: string, capturedId: string) => {
 							if (sid === targetSessionId) {
-								agentSessionId = capturedId;
+								agentSessionId =
+									toolType === 'openclaw'
+										? normalizeOpenClawSessionId(capturedId) || capturedId
+										: capturedId;
 							}
 						})
 					);
@@ -539,8 +573,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onExit((sid: string) => {
 							if (sid === targetSessionId) {
-								cleanup();
-								resolve({
+								settle({
 									success: true,
 									response: responseText,
 									agentSessionId,
@@ -586,9 +619,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
-							cleanup();
-							resolve({ success: false });
+							settle({ success: false });
 						});
+
+					timeoutId = setTimeout(() => {
+						console.warn(
+							`[spawnBackgroundSynopsis] Synopsis timed out after ${BACKGROUND_SYNOPSIS_TIMEOUT_MS}ms`,
+							{
+								maestroSessionId: sessionId,
+								synopsisSessionId: targetSessionId,
+								toolType,
+							}
+						);
+						window.maestro.process.kill(targetSessionId).catch((error) => {
+							console.warn(
+								'[spawnBackgroundSynopsis] Failed to kill timed out synopsis session:',
+								targetSessionId,
+								error
+							);
+						});
+						settle({ success: false });
+					}, BACKGROUND_SYNOPSIS_TIMEOUT_MS);
 				});
 			} catch (error) {
 				console.error('Error spawning background synopsis:', error);

@@ -16,11 +16,14 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	terminal: 'Terminal',
 	'claude-code': 'Claude Code',
 	codex: 'Codex',
+	'cursor-agent': 'Cursor Agent',
 	'gemini-cli': 'Gemini CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
 	aider: 'Aider',
+	openclaw: 'OpenClaw',
+	zai: 'Z.ai (GLM)',
 };
 
 /**
@@ -40,8 +43,11 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'codex',
+	'cursor-agent',
 	'opencode',
 	'factory-droid',
+	'openclaw',
+	'zai',
 ]);
 
 /**

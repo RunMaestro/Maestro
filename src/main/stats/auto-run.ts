@@ -23,8 +23,11 @@ const stmtCache = new StatementCache();
 // ============================================================================
 
 const INSERT_SESSION_SQL = `
-  INSERT INTO auto_run_sessions (id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO auto_run_sessions (
+    id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path,
+    playbook_id, playbook_name, prompt_profile, agent_strategy, worktree_mode, scheduler_mode, max_parallelism
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -46,7 +49,14 @@ export function insertAutoRunSession(
 		session.duration,
 		session.tasksTotal ?? null,
 		session.tasksCompleted ?? null,
-		normalizePath(session.projectPath)
+		normalizePath(session.projectPath),
+		session.playbookId ?? null,
+		session.playbookName ?? null,
+		session.promptProfile ?? null,
+		session.agentStrategy ?? null,
+		session.worktreeMode ?? null,
+		session.schedulerMode ?? null,
+		session.maxParallelism ?? null
 	);
 
 	logger.debug(`Inserted Auto Run session ${id}`, LOG_CONTEXT);
@@ -117,8 +127,11 @@ export function getAutoRunSessions(db: Database.Database, range: StatsTimeRange)
 // ============================================================================
 
 const INSERT_TASK_SQL = `
-  INSERT INTO auto_run_tasks (id, auto_run_session_id, session_id, agent_type, task_index, task_content, start_time, duration, success)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO auto_run_tasks (
+    id, auto_run_session_id, session_id, agent_type, task_index, task_content, start_time, duration, success,
+    document_path, verifier_verdict, prompt_profile, agent_strategy, worktree_mode, scheduler_outcome, queue_wait_ms, retry_count, timed_out
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -137,7 +150,16 @@ export function insertAutoRunTask(db: Database.Database, task: Omit<AutoRunTask,
 		task.taskContent ?? null,
 		task.startTime,
 		task.duration,
-		task.success ? 1 : 0
+		task.success ? 1 : 0,
+		normalizePath(task.documentPath),
+		task.verifierVerdict ?? null,
+		task.promptProfile ?? null,
+		task.agentStrategy ?? null,
+		task.worktreeMode ?? null,
+		task.schedulerOutcome ?? null,
+		task.queueWaitMs ?? null,
+		task.retryCount ?? null,
+		task.timedOut === undefined ? null : task.timedOut ? 1 : 0
 	);
 
 	logger.debug(`Inserted Auto Run task ${id}`, LOG_CONTEXT);

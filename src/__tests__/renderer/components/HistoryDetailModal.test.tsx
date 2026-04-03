@@ -97,6 +97,48 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText('Test summary')).toBeInTheDocument();
 		});
 
+		it('should show verification warning pill for AUTO entries with WARN verdict', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						success: true,
+						verifierVerdict: 'WARN',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Verification completed with warnings')).toBeInTheDocument();
+			expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+		});
+
+		it('should render Auto Run metadata when present', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						playbookName: 'Regression Sweep',
+						promptProfile: 'compact-code',
+						agentStrategy: 'plan-execute-verify',
+						worktreeMode: 'create-new',
+						schedulerMode: 'dag',
+						schedulerOutcome: 'completed',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByText('Auto Run Metadata')).toBeInTheDocument();
+			expect(screen.getByText('Regression Sweep')).toBeInTheDocument();
+			expect(screen.getByText('Compact Code')).toBeInTheDocument();
+			expect(screen.getByText('Plan / Execute / Verify')).toBeInTheDocument();
+			expect(screen.getByText('Create New Worktree')).toBeInTheDocument();
+			expect(screen.getByText('DAG')).toBeInTheDocument();
+		});
+
 		it('should render Close button', () => {
 			render(
 				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
@@ -232,6 +274,33 @@ describe('HistoryDetailModal', () => {
 			);
 
 			expect(screen.getByText('Full response content')).toBeInTheDocument();
+		});
+
+		it('should render deterministic OpenClaw Auto Run details with verifier output', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						success: true,
+						verifierVerdict: 'WARN',
+						agentSessionId: 'main:openclaw-session',
+						fullResponse:
+							'Rendered OpenClaw baseline smoke path\n\nVerifier:\nWARN\nOpenClaw output rendered correctly, but this smoke path uses deterministic fixtures.',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByText('Rendered OpenClaw baseline smoke path')).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					/Verifier:\s+WARN\s+OpenClaw output rendered correctly, but this smoke path uses deterministic fixtures\./
+				)
+			).toBeInTheDocument();
+			expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+			expect(screen.getByTitle('Copy session ID: main:openclaw-session')).toBeInTheDocument();
+			expect(screen.getByText('MAIN:OPENCLAW')).toBeInTheDocument();
 		});
 
 		it('should strip ANSI codes from response', () => {
@@ -508,6 +577,36 @@ describe('HistoryDetailModal', () => {
 
 			expect(screen.getByText('1,234')).toBeInTheDocument();
 			expect(screen.getByText('567')).toBeInTheDocument();
+		});
+
+		it('should use contextDisplayUsageStats for the context gauge when present', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						usageStats: {
+							inputTokens: 500000,
+							outputTokens: 200000,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							contextWindow: 200000,
+							totalCostUsd: 0.5,
+						},
+						contextDisplayUsageStats: {
+							inputTokens: 10000,
+							outputTokens: 1000,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							contextWindow: 200000,
+							totalCostUsd: 0.1,
+						},
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByText('5%')).toBeInTheDocument();
+			expect(screen.getByText(/10\.0k \/ 200k tokens/)).toBeInTheDocument();
 		});
 
 		it('should display cost when totalCostUsd > 0', () => {
@@ -1351,6 +1450,61 @@ describe('HistoryDetailModal', () => {
 
 			expect(screen.getByTitle('Previous entry (←)')).toBeInTheDocument();
 			expect(screen.getByTitle('Next entry (→)')).toBeInTheDocument();
+		});
+	});
+
+	describe('Usage Breakdown', () => {
+		it('should render stage usage breakdown when usageBreakdown is available', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'AUTO',
+						usageStats: {
+							inputTokens: 1200,
+							outputTokens: 300,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 200000,
+						},
+						usageBreakdown: {
+							planner: {
+								inputTokens: 100,
+								outputTokens: 20,
+								cacheReadInputTokens: 0,
+								cacheCreationInputTokens: 0,
+								totalCostUsd: 0,
+								contextWindow: 200000,
+							},
+							executor: {
+								inputTokens: 900,
+								outputTokens: 250,
+								cacheReadInputTokens: 0,
+								cacheCreationInputTokens: 0,
+								totalCostUsd: 0,
+								contextWindow: 200000,
+							},
+							verifier: {
+								inputTokens: 200,
+								outputTokens: 30,
+								cacheReadInputTokens: 0,
+								cacheCreationInputTokens: 0,
+								totalCostUsd: 0,
+								contextWindow: 200000,
+							},
+						},
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByText('Stages')).toBeInTheDocument();
+			expect(screen.getByText('Planner')).toBeInTheDocument();
+			expect(screen.getByText('Executor')).toBeInTheDocument();
+			expect(screen.getByText('Verifier')).toBeInTheDocument();
+			expect(screen.getByText('In 100')).toBeInTheDocument();
+			expect(screen.getByText('Out 250')).toBeInTheDocument();
 		});
 	});
 

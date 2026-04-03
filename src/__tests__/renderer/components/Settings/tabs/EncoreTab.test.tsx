@@ -83,6 +83,7 @@ vi.mock('../../../../../renderer/components/Wizard/screens/AgentSelectionScreen'
 		{ id: 'codex', name: 'Codex', supported: true },
 		{ id: 'opencode', name: 'OpenCode', supported: true },
 		{ id: 'factory-droid', name: 'Factory Droid', supported: true },
+		{ id: 'openclaw', name: 'OpenClaw', supported: true },
 		{ id: 'gemini-cli', name: 'Gemini CLI', supported: false },
 	],
 }));
@@ -143,6 +144,14 @@ const mockAvailableAgents: AgentConfig[] = [
 		available: true,
 		path: '/usr/local/bin/codex',
 		binaryName: 'codex',
+		hidden: false,
+	},
+	{
+		id: 'openclaw',
+		name: 'OpenClaw',
+		available: true,
+		path: '/usr/local/bin/openclaw',
+		binaryName: 'openclaw',
 		hidden: false,
 	},
 ];
@@ -304,12 +313,16 @@ describe('EncoreTab', () => {
 			expect(select).toBeInTheDocument();
 
 			const options = select.querySelectorAll('option');
-			// Only supported and available agents: claude-code, codex
-			expect(options.length).toBe(2);
-			expect(options[0]).toHaveValue('claude-code');
-			expect(options[0]).toHaveTextContent('Claude Code');
-			expect(options[1]).toHaveValue('codex');
-			expect(options[1]).toHaveTextContent('Codex (Beta)');
+			// Supported and available agents: claude-code, codex, openclaw
+			expect(options.length).toBe(3);
+			const values = Array.from(options).map((option) => option.getAttribute('value'));
+			const labels = Array.from(options).map((option) => option.textContent);
+			expect(values).toContain('claude-code');
+			expect(labels).toContain('Claude Code');
+			expect(values).toContain('codex');
+			expect(labels).toContain('Codex (Beta)');
+			expect(values).toContain('openclaw');
+			expect(labels).toContain('OpenClaw (Beta)');
 		});
 
 		it('should call setDirectorNotesSettings on provider change', async () => {
@@ -324,6 +337,25 @@ describe('EncoreTab', () => {
 
 			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
 				provider: 'codex',
+				defaultLookbackDays: 7,
+				customPath: undefined,
+				customArgs: undefined,
+				customEnvVars: undefined,
+			});
+		});
+
+		it('should call setDirectorNotesSettings when selecting openclaw', async () => {
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const select = screen.getByLabelText('Select synopsis provider agent');
+			fireEvent.change(select, { target: { value: 'openclaw' } });
+
+			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
+				provider: 'openclaw',
 				defaultLookbackDays: 7,
 				customPath: undefined,
 				customArgs: undefined,
@@ -403,14 +435,15 @@ describe('EncoreTab', () => {
 			const options = select.querySelectorAll('option');
 
 			// mockAllAgents has: claude-code (available, visible), codex (available, visible),
-			// opencode (not available), hidden-agent (hidden)
-			// AGENT_TILES supported: claude-code, codex, opencode, factory-droid
-			// Intersection: claude-code, codex (opencode not available, factory-droid not detected)
-			expect(options.length).toBe(2);
+			// openclaw (available, visible), opencode (not available), hidden-agent (hidden)
+			// AGENT_TILES supported: claude-code, codex, opencode, factory-droid, openclaw
+			// Intersection: claude-code, codex, openclaw (opencode not available, factory-droid not detected)
+			expect(options.length).toBe(3);
 
 			const values = Array.from(options).map((o) => o.getAttribute('value'));
 			expect(values).toContain('claude-code');
 			expect(values).toContain('codex');
+			expect(values).toContain('openclaw');
 			expect(values).not.toContain('opencode');
 			expect(values).not.toContain('hidden-agent');
 		});
@@ -1153,6 +1186,31 @@ describe('EncoreTab', () => {
 
 			// Default mockAvailableAgents have no capabilities.supportsModelSelection
 			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+		});
+
+		it('should not load models when openclaw is selected and does not support model selection', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: true },
+				directorNotesSettings: {
+					provider: 'openclaw',
+					defaultLookbackDays: 7,
+				},
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByTitle('Customize provider settings'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+			expect(screen.getByTestId('agent-config-agent-id')).toHaveTextContent('openclaw');
 		});
 	});
 

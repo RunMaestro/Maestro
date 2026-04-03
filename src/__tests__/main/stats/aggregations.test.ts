@@ -103,10 +103,66 @@ import type {
 	StatsAggregation,
 } from '../../../shared/stats-types';
 
+function installAggregationQueryMocks(options: {
+	totals?: { count: number; total_duration: number };
+	byAgent?: Array<{ agent_type: string; count: number; duration: number }>;
+	bySource?: Array<{ source: 'user' | 'auto'; count: number }>;
+	byLocation?: Array<{ is_remote: number | null; count: number }>;
+	byDay?: Array<{ date: string; count: number; duration: number }>;
+	byAgentByDay?: Array<{ agent_type: string; date: string; count: number; duration: number }>;
+	byHour?: Array<{ hour: number; count: number; duration: number }>;
+	sessionsByAgent?: Array<{ agent_type: string; count: number }>;
+	sessionsByDay?: Array<{ date: string; count: number }>;
+	bySessionByDay?: Array<{ session_id: string; date: string; count: number; duration: number }>;
+}): void {
+	mockDb.prepare.mockImplementation((sql: string) => {
+		if (sql.includes('COALESCE(SUM(duration), 0) as total_duration')) {
+			return {
+				...mockStatement,
+				get: vi.fn(() => options.totals ?? { count: 0, total_duration: 0 }),
+			};
+		}
+		if (sql.includes('COUNT(DISTINCT session_id) as count')) {
+			return { ...mockStatement, get: vi.fn(() => ({ count: 0 })) };
+		}
+		if (sql.includes('AVG(duration) as avg_duration')) {
+			return { ...mockStatement, get: vi.fn(() => ({ avg_duration: 0 })) };
+		}
+		if (sql.includes("strftime('%H'")) {
+			return { ...mockStatement, all: vi.fn(() => options.byHour ?? []) };
+		}
+		if (sql.includes('GROUP BY session_id, date(')) {
+			return { ...mockStatement, all: vi.fn(() => options.bySessionByDay ?? []) };
+		}
+		if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY agent_type')) {
+			return { ...mockStatement, all: vi.fn(() => options.sessionsByAgent ?? []) };
+		}
+		if (sql.includes('FROM session_lifecycle') && sql.includes('GROUP BY date(')) {
+			return { ...mockStatement, all: vi.fn(() => options.sessionsByDay ?? []) };
+		}
+		if (sql.includes('GROUP BY agent_type, date(')) {
+			return { ...mockStatement, all: vi.fn(() => options.byAgentByDay ?? []) };
+		}
+		if (sql.includes('GROUP BY is_remote')) {
+			return { ...mockStatement, all: vi.fn(() => options.byLocation ?? []) };
+		}
+		if (sql.includes('GROUP BY source')) {
+			return { ...mockStatement, all: vi.fn(() => options.bySource ?? []) };
+		}
+		if (sql.includes('GROUP BY agent_type')) {
+			return { ...mockStatement, all: vi.fn(() => options.byAgent ?? []) };
+		}
+		if (sql.includes('GROUP BY date(start_time / 1000')) {
+			return { ...mockStatement, all: vi.fn(() => options.byDay ?? []) };
+		}
+		return mockStatement;
+	});
+}
+
 describe('Time-range filtering works correctly for all ranges', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockDb.pragma.mockReturnValue([{ user_version: 1 }]);
+		mockDb.pragma.mockReturnValue([{ user_version: 5 }]);
 		mockDb.prepare.mockReturnValue(mockStatement);
 		mockStatement.run.mockReturnValue({ changes: 1 });
 		mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
@@ -858,18 +914,18 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should return correct breakdown for multiple agent types', async () => {
-			mockStatement.get.mockReturnValue({ count: 150, total_duration: 750000 });
-			mockStatement.all
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 150, total_duration: 750000 },
+				byAgent: [
 					{ agent_type: 'claude-code', count: 100, duration: 500000 },
 					{ agent_type: 'opencode', count: 30, duration: 150000 },
 					{ agent_type: 'gemini-cli', count: 20, duration: 100000 },
-				])
-				.mockReturnValueOnce([
+				],
+				bySource: [
 					{ source: 'user', count: 120 },
 					{ source: 'auto', count: 30 },
-				])
-				.mockReturnValueOnce([]);
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -908,14 +964,14 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should maintain correct duration per agent when durations vary', async () => {
-			mockStatement.get.mockReturnValue({ count: 4, total_duration: 35000 });
-			mockStatement.all
-				.mockReturnValueOnce([
-					{ agent_type: 'claude-code', count: 3, duration: 30000 }, // Avg 10000
-					{ agent_type: 'opencode', count: 1, duration: 5000 }, // Avg 5000
-				])
-				.mockReturnValueOnce([{ source: 'user', count: 4 }])
-				.mockReturnValueOnce([]);
+			installAggregationQueryMocks({
+				totals: { count: 4, total_duration: 35000 },
+				byAgent: [
+					{ agent_type: 'claude-code', count: 3, duration: 30000 },
+					{ agent_type: 'opencode', count: 1, duration: 5000 },
+				],
+				bySource: [{ source: 'user', count: 4 }],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -938,14 +994,14 @@ describe('Aggregation queries return correct calculations', () => {
 
 	describe('bySource breakdown calculations', () => {
 		it('should return correct user vs auto counts', async () => {
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 100, duration: 500000 }])
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 100, total_duration: 500000 },
+				byAgent: [{ agent_type: 'claude-code', count: 100, duration: 500000 }],
+				bySource: [
 					{ source: 'user', count: 70 },
 					{ source: 'auto', count: 30 },
-				])
-				.mockReturnValueOnce([]);
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -958,11 +1014,11 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should handle all queries from user source', async () => {
-			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 50, duration: 250000 }])
-				.mockReturnValueOnce([{ source: 'user', count: 50 }])
-				.mockReturnValueOnce([]);
+			installAggregationQueryMocks({
+				totals: { count: 50, total_duration: 250000 },
+				byAgent: [{ agent_type: 'claude-code', count: 50, duration: 250000 }],
+				bySource: [{ source: 'user', count: 50 }],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -975,11 +1031,11 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should handle all queries from auto source', async () => {
-			mockStatement.get.mockReturnValue({ count: 200, total_duration: 1000000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 200, duration: 1000000 }])
-				.mockReturnValueOnce([{ source: 'auto', count: 200 }])
-				.mockReturnValueOnce([]);
+			installAggregationQueryMocks({
+				totals: { count: 200, total_duration: 1000000 },
+				byAgent: [{ agent_type: 'claude-code', count: 200, duration: 1000000 }],
+				bySource: [{ source: 'auto', count: 200 }],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1005,14 +1061,14 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should sum correctly across source types', async () => {
-			mockStatement.get.mockReturnValue({ count: 1000, total_duration: 5000000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 1000, duration: 5000000 }])
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 1000, total_duration: 5000000 },
+				byAgent: [{ agent_type: 'claude-code', count: 1000, duration: 5000000 }],
+				bySource: [
 					{ source: 'user', count: 650 },
 					{ source: 'auto', count: 350 },
-				])
-				.mockReturnValueOnce([]);
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1027,16 +1083,17 @@ describe('Aggregation queries return correct calculations', () => {
 
 	describe('byDay breakdown calculations', () => {
 		it('should return daily breakdown with correct structure', async () => {
-			mockStatement.get.mockReturnValue({ count: 30, total_duration: 150000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 30, duration: 150000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 30 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 30 }]) // byLocation
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 30, total_duration: 150000 },
+				byAgent: [{ agent_type: 'claude-code', count: 30, duration: 150000 }],
+				bySource: [{ source: 'user', count: 30 }],
+				byLocation: [{ is_remote: 0, count: 30 }],
+				byDay: [
 					{ date: '2024-01-01', count: 10, duration: 50000 },
 					{ date: '2024-01-02', count: 12, duration: 60000 },
 					{ date: '2024-01-03', count: 8, duration: 40000 },
-				]); // byDay
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1065,12 +1122,13 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should handle single day of data', async () => {
-			mockStatement.get.mockReturnValue({ count: 5, total_duration: 25000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 5, duration: 25000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 5 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 5 }]) // byLocation
-				.mockReturnValueOnce([{ date: '2024-06-15', count: 5, duration: 25000 }]); // byDay
+			installAggregationQueryMocks({
+				totals: { count: 5, total_duration: 25000 },
+				byAgent: [{ agent_type: 'claude-code', count: 5, duration: 25000 }],
+				bySource: [{ source: 'user', count: 5 }],
+				byLocation: [{ is_remote: 0, count: 5 }],
+				byDay: [{ date: '2024-06-15', count: 5, duration: 25000 }],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1085,16 +1143,17 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should order daily data chronologically (ASC)', async () => {
-			mockStatement.get.mockReturnValue({ count: 15, total_duration: 75000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 15, duration: 75000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 15 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 15 }]) // byLocation
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 15, total_duration: 75000 },
+				byAgent: [{ agent_type: 'claude-code', count: 15, duration: 75000 }],
+				bySource: [{ source: 'user', count: 15 }],
+				byLocation: [{ is_remote: 0, count: 15 }],
+				byDay: [
 					{ date: '2024-03-01', count: 3, duration: 15000 },
 					{ date: '2024-03-02', count: 5, duration: 25000 },
 					{ date: '2024-03-03', count: 7, duration: 35000 },
-				]); // byDay
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1109,16 +1168,17 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should sum daily counts equal to totalQueries', async () => {
-			mockStatement.get.mockReturnValue({ count: 25, total_duration: 125000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 25, duration: 125000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 25 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 25 }]) // byLocation
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 25, total_duration: 125000 },
+				byAgent: [{ agent_type: 'claude-code', count: 25, duration: 125000 }],
+				bySource: [{ source: 'user', count: 25 }],
+				byLocation: [{ is_remote: 0, count: 25 }],
+				byDay: [
 					{ date: '2024-02-01', count: 8, duration: 40000 },
 					{ date: '2024-02-02', count: 10, duration: 50000 },
 					{ date: '2024-02-03', count: 7, duration: 35000 },
-				]); // byDay
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1132,16 +1192,17 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should sum daily durations equal to totalDuration', async () => {
-			mockStatement.get.mockReturnValue({ count: 20, total_duration: 100000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'opencode', count: 20, duration: 100000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'auto', count: 20 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 20 }]) // byLocation
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 20, total_duration: 100000 },
+				byAgent: [{ agent_type: 'opencode', count: 20, duration: 100000 }],
+				bySource: [{ source: 'auto', count: 20 }],
+				byLocation: [{ is_remote: 0, count: 20 }],
+				byDay: [
 					{ date: '2024-04-10', count: 5, duration: 25000 },
 					{ date: '2024-04-11', count: 8, duration: 40000 },
 					{ date: '2024-04-12', count: 7, duration: 35000 },
-				]); // byDay
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1327,14 +1388,14 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should handle mixed zero and non-zero durations in agents', async () => {
-			mockStatement.get.mockReturnValue({ count: 3, total_duration: 5000 });
-			mockStatement.all
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 3, total_duration: 5000 },
+				byAgent: [
 					{ agent_type: 'claude-code', count: 2, duration: 5000 },
-					{ agent_type: 'opencode', count: 1, duration: 0 }, // Zero duration
-				])
-				.mockReturnValueOnce([{ source: 'user', count: 3 }])
-				.mockReturnValueOnce([]);
+					{ agent_type: 'opencode', count: 1, duration: 0 },
+				],
+				bySource: [{ source: 'user', count: 3 }],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -1347,15 +1408,16 @@ describe('Aggregation queries return correct calculations', () => {
 		});
 
 		it('should handle dates spanning year boundaries', async () => {
-			mockStatement.get.mockReturnValue({ count: 2, total_duration: 10000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 2, duration: 10000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 2 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 2 }]) // byLocation
-				.mockReturnValueOnce([
+			installAggregationQueryMocks({
+				totals: { count: 2, total_duration: 10000 },
+				byAgent: [{ agent_type: 'claude-code', count: 2, duration: 10000 }],
+				bySource: [{ source: 'user', count: 2 }],
+				byLocation: [{ is_remote: 0, count: 2 }],
+				byDay: [
 					{ date: '2023-12-31', count: 1, duration: 5000 },
 					{ date: '2024-01-01', count: 1, duration: 5000 },
-				]); // byDay
+				],
+			});
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();

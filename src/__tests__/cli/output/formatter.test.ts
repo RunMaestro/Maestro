@@ -540,6 +540,64 @@ describe('formatter', () => {
 
 			expect(result).toContain('0 tasks');
 		});
+
+		it('should format baseline metadata sections when present', () => {
+			const playbook: PlaybookDetailDisplay = {
+				...basePlaybook,
+				taskTimeoutMs: 45000,
+				maxParallelism: 2,
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+						{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+					],
+				},
+				skills: ['context-and-impact', 'gitnexus', 'code-review'],
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the task changed on disk'],
+				promptProfile: 'compact-doc',
+				documentContextMode: 'full',
+				skillPromptMode: 'full',
+				agentStrategy: 'plan-execute-verify',
+				documents: [
+					{
+						filename: 'phase-1.md',
+						resetOnCompletion: false,
+						taskCount: 1,
+						tasks: ['Task 1'],
+					},
+					{
+						filename: 'phase-2.md',
+						resetOnCompletion: false,
+						taskCount: 0,
+						tasks: [],
+					},
+				],
+			};
+
+			const result = formatPlaybookDetail(playbook);
+
+			expect(result).toContain('Profile:');
+			expect(result).toContain('compact-doc');
+			expect(result).toContain('Context:');
+			expect(result).toContain('full');
+			expect(result).toContain('Skill mode:');
+			expect(result).toContain('Strategy:');
+			expect(result).toContain('plan-execute-verify');
+			expect(result).toContain('Timeout:');
+			expect(result).toContain('45000ms');
+			expect(result).toContain('Parallel:');
+			expect(result).toContain('2');
+			expect(result).toContain('Skills:');
+			expect(result).toContain('code-review');
+			expect(result).toContain('DoD:');
+			expect(result).toContain('Relevant tests pass');
+			expect(result).toContain('Graph:');
+			expect(result).toContain('phase-2');
+			expect(result).toContain('phase-1');
+			expect(result).toContain('Verify:');
+			expect(result).toContain('Confirm the task changed on disk');
+		});
 	});
 
 	// ============================================================================

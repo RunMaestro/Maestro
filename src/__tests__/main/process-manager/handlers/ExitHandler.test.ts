@@ -85,6 +85,7 @@ function createMockOutputParser(overrides: Partial<AgentOutputParser> = {}): Age
 		extractSlashCommands: vi.fn(() => null),
 		isResultMessage: vi.fn(() => false),
 		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
 		detectErrorFromExit: vi.fn(() => null),
 		...overrides,
 	} as unknown as AgentOutputParser;
@@ -263,6 +264,144 @@ describe('ExitHandler', () => {
 			exitHandler.handleExit('test-session', 0);
 
 			expect(exitEvents).toEqual([{ sessionId: 'test-session', code: 0 }]);
+		});
+	});
+
+	describe('buffered JSON batch parsing', () => {
+		it('should use the output parser for single-object batch JSON responses', () => {
+			const mockParser = createMockOutputParser({
+				parseJsonObject: vi.fn(() => ({
+					type: 'result',
+					text: 'OpenClaw hello',
+					sessionId: 'openclaw-session',
+					usage: {
+						inputTokens: 12,
+						outputTokens: 34,
+						cacheReadTokens: 5,
+						cacheCreationTokens: 6,
+					},
+				})) as unknown as AgentOutputParser['parseJsonObject'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn((event: ParsedEvent) => event.sessionId ?? null),
+				extractUsage: vi.fn((event: ParsedEvent) => event.usage ?? null),
+			});
+
+			const proc = createMockProcess({
+				toolType: 'openclaw',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: JSON.stringify({ payloads: [{ text: 'OpenClaw hello' }], meta: {} }),
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const sessionIds: string[] = [];
+			const usageEvents: any[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('session-id', (_sid: string, value: string) => sessionIds.push(value));
+			emitter.on('usage', (_sid: string, stats: any) => usageEvents.push(stats));
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.parseJsonObject).toHaveBeenCalledWith({
+				payloads: [{ text: 'OpenClaw hello' }],
+				meta: {},
+			});
+			expect(dataEvents).toContain('OpenClaw hello');
+			expect(sessionIds).toContain('openclaw-session');
+			expect(usageEvents).toContainEqual({
+				inputTokens: 12,
+				outputTokens: 34,
+				cacheReadInputTokens: 5,
+				cacheCreationInputTokens: 6,
+				totalCostUsd: 0,
+				contextWindow: 200000,
+				reasoningTokens: undefined,
+			});
+		});
+
+		it('should emit agent-error on OpenClaw failure envelope in batch JSON', () => {
+			const mockParser = createMockOutputParser({
+				parseJsonObject: vi.fn(() => ({
+					type: 'error',
+					text: 'OpenClaw batch call failed',
+					sessionId: 'main:openclaw-session',
+				})) as unknown as AgentOutputParser['parseJsonObject'],
+				extractSessionId: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'agent_crashed',
+					message: 'OpenClaw batch call failed',
+					recoverable: true,
+					agentId: 'openclaw',
+					timestamp: Date.now(),
+				})),
+			});
+
+			const proc = createMockProcess({
+				toolType: 'openclaw',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: JSON.stringify({
+					status: 'error',
+					message: 'OpenClaw batch call failed',
+				}),
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: string[] = [];
+			const dataEvents: string[] = [];
+			const sessionIds: string[] = [];
+			emitter.on('agent-error', (_sid: string, error: any) => {
+				agentErrors.push(error.message);
+			});
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('session-id', (_sid: string, value: string) => sessionIds.push(value));
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(proc.errorEmitted).toBe(true);
+			expect(agentErrors).toEqual(['OpenClaw batch call failed']);
+			expect(dataEvents).toHaveLength(0);
+			expect(sessionIds).toEqual(['main:openclaw-session']);
+		});
+
+		it('should emit agent-error when batch JSON parsing fails but stdout matches an error pattern', () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'auth_expired',
+					message: 'Gateway authentication failed. Please check your OpenClaw token.',
+					recoverable: true,
+					agentId: 'openclaw',
+					timestamp: Date.now(),
+				})),
+			});
+
+			const proc = createMockProcess({
+				toolType: 'openclaw',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: 'gateway token invalid',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: string[] = [];
+			const dataEvents: string[] = [];
+			emitter.on('agent-error', (_sid: string, error: any) => {
+				agentErrors.push(error.message);
+			});
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			exitHandler.handleExit('test-session', 1);
+
+			expect(mockParser.detectErrorFromExit).toHaveBeenCalledWith(1, '', 'gateway token invalid');
+			expect(proc.errorEmitted).toBe(true);
+			expect(agentErrors).toEqual([
+				'Gateway authentication failed. Please check your OpenClaw token.',
+			]);
+			expect(dataEvents).toHaveLength(0);
 		});
 	});
 

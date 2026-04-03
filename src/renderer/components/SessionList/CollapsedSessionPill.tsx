@@ -54,7 +54,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						aria-label={`Switch to ${s.name}`}
 						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
 						style={{
-							...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
+							...(s.toolType !== 'terminal' && !s.agentSessionId && !isInBatch
 								? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 								: {
 										backgroundColor: isInBatch

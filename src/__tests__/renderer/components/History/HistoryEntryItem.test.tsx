@@ -138,6 +138,65 @@ describe('HistoryEntryItem', () => {
 		expect(screen.getByTitle('Task failed')).toBeInTheDocument();
 	});
 
+	it('shows verification warning pill for WARN verdicts', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({
+					type: 'AUTO',
+					success: true,
+					verifierVerdict: 'WARN',
+				})}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Verification completed with warnings')).toBeInTheDocument();
+		expect(screen.getByText('VERIFY WARN')).toBeInTheDocument();
+	});
+
+	it('shows verification failure pill for FAIL verdicts', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({
+					type: 'AUTO',
+					success: false,
+					verifierVerdict: 'FAIL',
+				})}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Verification failed')).toBeInTheDocument();
+		expect(screen.getByText('VERIFY FAIL')).toBeInTheDocument();
+	});
+
+	it('shows Auto Run analytics pills when metadata is present', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({
+					type: 'AUTO',
+					playbookName: 'Regression Sweep',
+					promptProfile: 'compact-code',
+					agentStrategy: 'plan-execute-verify',
+					worktreeMode: 'create-new',
+				})}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('Regression Sweep')).toBeInTheDocument();
+		expect(screen.getByText('PROFILE CODE')).toBeInTheDocument();
+		expect(screen.getByText('STRATEGY PEV')).toBeInTheDocument();
+		expect(screen.getByText('WT NEW')).toBeInTheDocument();
+	});
+
 	it('does not show success/failure indicator for USER entries', () => {
 		render(
 			<HistoryEntryItem

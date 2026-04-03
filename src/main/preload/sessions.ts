@@ -272,7 +272,8 @@ export function createAgentSessionsApi() {
 			projectPath: string,
 			sessionId: string,
 			userMessageUuid: string,
-			fallbackContent?: string
+			fallbackContent?: string,
+			sshRemoteId?: string
 		) =>
 			ipcRenderer.invoke(
 				'agentSessions:deleteMessagePair',
@@ -280,7 +281,8 @@ export function createAgentSessionsApi() {
 				projectPath,
 				sessionId,
 				userMessageUuid,
-				fallbackContent
+				fallbackContent,
+				sshRemoteId
 			),
 
 		hasStorage: (agentId: string) => ipcRenderer.invoke('agentSessions:hasStorage', agentId),
@@ -299,13 +301,15 @@ export function createAgentSessionsApi() {
 		},
 
 		registerSessionOrigin: (
+			agentId: string,
 			projectPath: string,
 			agentSessionId: string,
 			origin: 'user' | 'auto',
 			sessionName?: string
 		) =>
 			ipcRenderer.invoke(
-				'claude:registerSessionOrigin',
+				'agentSessions:registerSessionOrigin',
+				agentId,
 				projectPath,
 				agentSessionId,
 				origin,

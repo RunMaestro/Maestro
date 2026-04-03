@@ -692,6 +692,47 @@ describe('jsonl output', () => {
 			expect(parsed.documents[0]).toBe('doc0.md');
 			expect(parsed.documents[99]).toBe('doc99.md');
 		});
+
+		it('should emit baseline metadata fields when provided', () => {
+			const playbook = {
+				id: 'pb-meta',
+				name: 'Metadata Playbook',
+				sessionId: 'sess-meta',
+				documents: ['phase-1.md'],
+				loopEnabled: true,
+				maxLoops: 2,
+				taskTimeoutMs: 45000,
+				maxParallelism: 3,
+				taskGraph: {
+					nodes: [{ id: 'phase-1', documentIndex: 0, dependsOn: [] }],
+				},
+				skills: ['context-and-impact', 'gitnexus', 'code-review'],
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the task changed on disk'],
+				promptProfile: 'compact-doc' as const,
+				documentContextMode: 'full' as const,
+				skillPromptMode: 'full' as const,
+				agentStrategy: 'plan-execute-verify' as const,
+			};
+
+			emitPlaybook(playbook);
+
+			const output = consoleSpy.mock.calls[0][0];
+			const parsed = JSON.parse(output);
+
+			expect(parsed.taskTimeoutMs).toBe(45000);
+			expect(parsed.maxParallelism).toBe(3);
+			expect(parsed.taskGraph).toEqual({
+				nodes: [{ id: 'phase-1', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(parsed.skills).toEqual(['context-and-impact', 'gitnexus', 'code-review']);
+			expect(parsed.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(parsed.verificationSteps).toEqual(['Confirm the task changed on disk']);
+			expect(parsed.promptProfile).toBe('compact-doc');
+			expect(parsed.documentContextMode).toBe('full');
+			expect(parsed.skillPromptMode).toBe('full');
+			expect(parsed.agentStrategy).toBe('plan-execute-verify');
+		});
 	});
 
 	describe('JSON output format', () => {

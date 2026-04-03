@@ -5,6 +5,10 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import {
+	extractOpenClawAgentNameFromJson,
+	normalizeOpenClawSessionId,
+} from '../../../shared/openclawSessionId';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -69,7 +73,7 @@ export class ExitHandler {
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
-			this.handleBatchModeExit(sessionId, managedProcess);
+			this.handleBatchModeExit(sessionId, code, managedProcess);
 		}
 
 		// Handle stream-json mode: process any remaining jsonBuffer content
@@ -234,23 +238,95 @@ export class ExitHandler {
 	/**
 	 * Handle batch mode exit - parse accumulated JSON
 	 */
-	private handleBatchModeExit(sessionId: string, managedProcess: ManagedProcess): void {
+	private handleBatchModeExit(
+		sessionId: string,
+		exitCode: number,
+		managedProcess: ManagedProcess
+	): void {
 		try {
 			const jsonResponse = JSON.parse(managedProcess.jsonBuffer!);
+			const outputParser = managedProcess.outputParser;
+			const parserEvent = outputParser?.parseJsonObject(jsonResponse);
 
-			// Emit the result text (only once per process)
+			if (parserEvent && outputParser) {
+				const parsedSessionId = parserEvent.sessionId || outputParser.extractSessionId(parserEvent);
+				if (parsedSessionId && !managedProcess.sessionIdEmitted) {
+					managedProcess.sessionIdEmitted = true;
+					const normalizedSessionId =
+						managedProcess.toolType === 'openclaw'
+							? normalizeOpenClawSessionId(parsedSessionId, {
+									agentName: extractOpenClawAgentNameFromJson(jsonResponse),
+								}) || parsedSessionId
+							: parsedSessionId;
+					this.emitter.emit('session-id', sessionId, normalizedSessionId);
+				}
+			}
+
+			// Check for parser-level errors from the full JSON payload before result handling.
+			if (outputParser && !managedProcess.errorEmitted) {
+				const parserError = outputParser.detectErrorFromParsed(jsonResponse);
+				if (parserError) {
+					managedProcess.errorEmitted = true;
+					parserError.sessionId = sessionId;
+					logger.debug(
+						'[ProcessManager] Error detected from batch JSON payload',
+						'ProcessManager',
+						{
+							sessionId,
+							errorType: parserError.type,
+							errorMessage: parserError.message,
+						}
+					);
+					this.emitter.emit('agent-error', sessionId, parserError);
+					return;
+				}
+			}
+
+			if (parserEvent && outputParser) {
+				const resultText = parserEvent.text || managedProcess.streamedText || '';
+				if (
+					outputParser.isResultMessage(parserEvent) &&
+					resultText &&
+					!managedProcess.resultEmitted
+				) {
+					managedProcess.resultEmitted = true;
+					this.emitter.emit('data', sessionId, resultText);
+				}
+
+				const parsedUsage = outputParser.extractUsage(parserEvent);
+				if (parsedUsage) {
+					this.emitter.emit('usage', sessionId, {
+						inputTokens: parsedUsage.inputTokens ?? 0,
+						outputTokens: parsedUsage.outputTokens ?? 0,
+						cacheReadInputTokens: parsedUsage.cacheReadTokens ?? 0,
+						cacheCreationInputTokens: parsedUsage.cacheCreationTokens ?? 0,
+						totalCostUsd: parsedUsage.costUsd ?? 0,
+						contextWindow: managedProcess.contextWindow ?? 0,
+						reasoningTokens: parsedUsage.reasoningTokens,
+					});
+				}
+
+				return;
+			}
+
+			// Legacy generic JSON response handling for agents without a structured parser.
 			if (jsonResponse.result && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
 				this.emitter.emit('data', sessionId, jsonResponse.result);
 			}
 
-			// Emit session_id if present (only once per process)
 			if (jsonResponse.session_id && !managedProcess.sessionIdEmitted) {
 				managedProcess.sessionIdEmitted = true;
-				this.emitter.emit('session-id', sessionId, jsonResponse.session_id);
+				const rawSessionId = jsonResponse.session_id as string;
+				const normalizedSessionId =
+					managedProcess.toolType === 'openclaw'
+						? normalizeOpenClawSessionId(rawSessionId, {
+								agentName: extractOpenClawAgentNameFromJson(jsonResponse),
+							}) || rawSessionId
+						: rawSessionId;
+				this.emitter.emit('session-id', sessionId, normalizedSessionId);
 			}
 
-			// Extract and emit usage statistics
 			if (
 				jsonResponse.modelUsage ||
 				jsonResponse.usage ||
@@ -268,6 +344,19 @@ export class ExitHandler {
 				sessionId,
 				error: String(error),
 			});
+
+			const parserError = managedProcess.outputParser?.detectErrorFromExit(
+				exitCode,
+				managedProcess.stderrBuffer || '',
+				managedProcess.jsonBuffer || managedProcess.stdoutBuffer || ''
+			);
+			if (parserError && !managedProcess.errorEmitted) {
+				managedProcess.errorEmitted = true;
+				parserError.sessionId = sessionId;
+				this.emitter.emit('agent-error', sessionId, parserError);
+				return;
+			}
+
 			// Emit raw buffer as fallback
 			this.emitter.emit('data', sessionId, managedProcess.jsonBuffer!);
 		}

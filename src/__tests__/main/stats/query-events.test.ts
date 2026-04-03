@@ -103,10 +103,38 @@ import type {
 	StatsAggregation,
 } from '../../../shared/stats-types';
 
+function installAggregationQueryMocks(options: {
+	totals?: { count: number; total_duration: number };
+	byAgent?: Array<{ agent_type: string; count: number; duration: number }>;
+	bySource?: Array<{ source: 'user' | 'auto'; count: number }>;
+}): void {
+	mockDb.prepare.mockImplementation((sql: string) => {
+		if (sql.includes('COALESCE(SUM(duration), 0) as total_duration')) {
+			return {
+				...mockStatement,
+				get: vi.fn(() => options.totals ?? { count: 0, total_duration: 0 }),
+			};
+		}
+		if (sql.includes('GROUP BY source')) {
+			return { ...mockStatement, all: vi.fn(() => options.bySource ?? []) };
+		}
+		if (sql.includes('GROUP BY agent_type')) {
+			return { ...mockStatement, all: vi.fn(() => options.byAgent ?? []) };
+		}
+		if (sql.includes('COUNT(DISTINCT session_id) as count')) {
+			return { ...mockStatement, get: vi.fn(() => ({ count: 0 })) };
+		}
+		if (sql.includes('AVG(duration) as avg_duration')) {
+			return { ...mockStatement, get: vi.fn(() => ({ avg_duration: 0 })) };
+		}
+		return mockStatement;
+	});
+}
+
 describe('Stats aggregation and filtering', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockDb.pragma.mockReturnValue([{ user_version: 0 }]);
+		mockDb.pragma.mockReturnValue([{ user_version: 5 }]);
 		mockDb.prepare.mockReturnValue(mockStatement);
 		mockStatement.run.mockReturnValue({ changes: 1 });
 		mockFsExistsSync.mockReturnValue(true);
@@ -593,23 +621,10 @@ describe('Query events recorded for interactive sessions', () => {
 
 	describe('aggregation includes interactive session data', () => {
 		it('should include interactive sessions in aggregated stats', async () => {
-			mockStatement.get.mockReturnValue({ count: 10, total_duration: 50000 });
-
-			// The aggregation calls mockStatement.all multiple times for different queries
-			// We return based on the call sequence: byAgent, bySource, byDay
-			let callCount = 0;
-			mockStatement.all.mockImplementation(() => {
-				callCount++;
-				if (callCount === 1) {
-					// byAgent breakdown
-					return [{ agent_type: 'claude-code', count: 10, duration: 50000 }];
-				}
-				if (callCount === 2) {
-					// bySource breakdown
-					return [{ source: 'user', count: 10 }];
-				}
-				// byDay breakdown
-				return [{ date: '2024-12-28', count: 10, duration: 50000 }];
+			installAggregationQueryMocks({
+				totals: { count: 10, total_duration: 50000 },
+				byAgent: [{ agent_type: 'claude-code', count: 10, duration: 50000 }],
+				bySource: [{ source: 'user', count: 10 }],
 			});
 
 			const { StatsDB } = await import('../../../main/stats');
@@ -626,20 +641,13 @@ describe('Query events recorded for interactive sessions', () => {
 		});
 
 		it('should correctly separate user vs auto queries in bySource', async () => {
-			mockStatement.get.mockReturnValue({ count: 15, total_duration: 75000 });
-
-			// Return by-source breakdown with both user and auto on second call
-			let callCount = 0;
-			mockStatement.all.mockImplementation(() => {
-				callCount++;
-				if (callCount === 2) {
-					// bySource breakdown
-					return [
-						{ source: 'user', count: 10 },
-						{ source: 'auto', count: 5 },
-					];
-				}
-				return [];
+			installAggregationQueryMocks({
+				totals: { count: 15, total_duration: 75000 },
+				byAgent: [{ agent_type: 'claude-code', count: 15, duration: 75000 }],
+				bySource: [
+					{ source: 'user', count: 10 },
+					{ source: 'auto', count: 5 },
+				],
 			});
 
 			const { StatsDB } = await import('../../../main/stats');

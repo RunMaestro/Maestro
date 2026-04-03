@@ -1,0 +1,361 @@
+/**
+ * OpenClaw Output Parser
+ *
+ * Parses OpenClaw's JSON output into Maestro's normalized ParsedEvent format.
+ *
+ * OpenClaw's --json output is a single JSON object (not JSONL stream),
+ * emitted when the process completes. stderr contains ANSI-colored debug logs.
+ *
+ * Output structure:
+ * {
+ *   payloads: [{ text: string, mediaUrl: string | null }],
+ *   meta: {
+ *     durationMs: number,
+ *     agentMeta: {
+ *       sessionId: string,
+ *       provider: string,
+ *       model: string,
+ *       usage: { input, output, cacheWrite, total },
+ *       lastCallUsage: { input, output, cacheRead, cacheWrite }
+ *     }
+ *   }
+ * }
+ *
+ * CLI: openclaw agent --json --agent <id> --message "prompt"
+ */
+
+import type { ToolType, AgentError } from '../../shared/types';
+import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { AgentErrorPatterns } from './error-patterns';
+import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { stripAnsiCodes } from '../../shared/stringUtils';
+import {
+	normalizeOpenClawSessionId,
+	extractOpenClawAgentNameFromJson,
+	extractOpenClawSessionIdFromJson,
+} from '../../shared/openclawSessionId';
+import { logger } from '../utils/logger';
+
+const LOG_CONTEXT = '[OpenClawParser]';
+
+/** OpenClaw payloads array element */
+interface OpenClawPayload {
+	text: string;
+	mediaUrl: string | null;
+}
+
+/** OpenClaw usage structure */
+interface OpenClawUsage {
+	input: number;
+	output: number;
+	cacheWrite?: number;
+	cacheRead?: number;
+	total?: number;
+}
+
+/** OpenClaw agentMeta structure */
+interface OpenClawAgentMeta {
+	sessionId: string;
+	provider: string;
+	model: string;
+	usage: OpenClawUsage;
+	lastCallUsage?: OpenClawUsage;
+}
+
+/** OpenClaw --json output root structure */
+interface OpenClawJsonResult {
+	payloads: OpenClawPayload[];
+	meta: {
+		durationMs: number;
+		agentMeta: OpenClawAgentMeta;
+	};
+}
+
+interface OpenClawWrappedResult {
+	runId?: string;
+	status?: string;
+	summary?: string;
+	result?: OpenClawJsonResult;
+}
+
+export class OpenClawOutputParser implements AgentOutputParser {
+	readonly agentId: ToolType = 'openclaw';
+	private readonly errorPatterns: AgentErrorPatterns = getErrorPatterns('openclaw');
+	private readonly openclawAgentName?: string;
+	private pendingJsonBuffer = '';
+
+	constructor(options?: { agentName?: string }) {
+		this.openclawAgentName = options?.agentName;
+	}
+
+	parseJsonLine(line: string): ParsedEvent | null {
+		const stripped = stripAnsiCodes(line).trim();
+		if (!stripped) {
+			return null;
+		}
+
+		const shouldAccumulate =
+			!!this.pendingJsonBuffer || stripped.startsWith('{') || stripped.startsWith('[');
+		if (!shouldAccumulate) {
+			return null;
+		}
+
+		this.pendingJsonBuffer = this.pendingJsonBuffer
+			? `${this.pendingJsonBuffer}\n${stripped}`
+			: stripped;
+
+		try {
+			const parsed = JSON.parse(this.pendingJsonBuffer);
+			this.pendingJsonBuffer = '';
+			return this.parseJsonObject(parsed);
+		} catch {
+			// OpenClaw may pretty-print a single JSON document across multiple lines.
+			// Keep buffering until the payload is complete, but ignore unrelated plain-text lines.
+			return null;
+		}
+	}
+
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') return null;
+		const msg = parsed as Record<string, unknown>;
+
+		if (this.isFailureEnvelope(msg)) {
+			return {
+				type: 'error',
+				text: this.extractFailureMessage(msg),
+				sessionId:
+					extractOpenClawSessionIdFromJson(parsed, {
+						agentName: this.openclawAgentName,
+					}) || undefined,
+				raw: msg,
+			};
+		}
+
+		// Detect OpenClaw standard --json output: { payloads: [...], meta: { ... } }
+		if (Array.isArray(msg.payloads) && msg.meta) {
+			return this.parseOpenClawResult(msg as unknown as OpenClawJsonResult, parsed, msg);
+		}
+
+		// Actual CLI output may wrap the payload under { status, result: { payloads, meta } }.
+		if (msg.result && typeof msg.result === 'object') {
+			const wrapped = parsed as OpenClawWrappedResult;
+			const nested = wrapped.result;
+			if (nested && Array.isArray(nested.payloads) && nested.meta) {
+				return this.parseOpenClawResult(nested, parsed, nested);
+			}
+		}
+
+		// Fallback: future JSONL streaming support
+		const eventType = (msg.type as string) || '';
+
+		if (eventType === 'error') {
+			return {
+				type: 'error',
+				text: (msg.message as string) || (msg.error as string) || 'Unknown OpenClaw error',
+				sessionId:
+					extractOpenClawSessionIdFromJson(parsed, {
+						agentName: this.openclawAgentName,
+					}) || undefined,
+				raw: msg,
+			};
+		}
+
+		// Unrecognized structure
+		logger.debug(`${LOG_CONTEXT} Unrecognized JSON structure`, LOG_CONTEXT, {
+			keys: Object.keys(msg),
+		});
+		return null;
+	}
+
+	/**
+	 * Convert OpenClaw completion JSON response to ParsedEvent
+	 */
+	private parseOpenClawResult(
+		result: OpenClawJsonResult,
+		raw: unknown = result,
+		normalizationInput: unknown = result
+	): ParsedEvent {
+		const agentMeta = result.meta?.agentMeta;
+		const resolvedAgentName =
+			this.openclawAgentName ??
+			extractOpenClawAgentNameFromJson(normalizationInput) ??
+			extractOpenClawAgentNameFromJson(result);
+
+		// Concatenate payload texts (usually one element)
+		const text = result.payloads
+			.map((p) => p.text)
+			.filter(Boolean)
+			.join('\n');
+
+		// Extract usage stats
+		let usage: ParsedEvent['usage'] | undefined;
+		if (agentMeta?.usage) {
+			const u = agentMeta.usage;
+			usage = {
+				inputTokens: u.input || 0,
+				outputTokens: u.output || 0,
+				cacheCreationTokens: u.cacheWrite || agentMeta.lastCallUsage?.cacheWrite || undefined,
+				cacheReadTokens: agentMeta.lastCallUsage?.cacheRead || u.cacheRead || undefined,
+			};
+		}
+
+		return {
+			type: 'result',
+			sessionId:
+				extractOpenClawSessionIdFromJson(normalizationInput, {
+					agentName: resolvedAgentName,
+				}) ||
+				normalizeOpenClawSessionId(agentMeta?.sessionId, {
+					agentName: resolvedAgentName,
+				}) ||
+				undefined,
+			text,
+			usage,
+			raw,
+		};
+	}
+
+	isResultMessage(event: ParsedEvent): boolean {
+		return event.type === 'result';
+	}
+
+	extractSessionId(event: ParsedEvent): string | null {
+		return event.sessionId ?? null;
+	}
+
+	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
+		return event.usage ?? null;
+	}
+
+	extractSlashCommands(_event: ParsedEvent): string[] | null {
+		// OpenClaw does not support slash commands
+		return null;
+	}
+
+	detectErrorFromLine(line: string): AgentError | null {
+		const match = matchErrorPattern(this.errorPatterns, line);
+		if (match) {
+			return {
+				type: match.type,
+				message: match.message,
+				recoverable: match.recoverable,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+			};
+		}
+		return null;
+	}
+
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') return null;
+		const msg = parsed as Record<string, unknown>;
+
+		if (this.isFailureEnvelope(msg)) {
+			return {
+				type: 'agent_crashed',
+				message: this.extractFailureMessage(msg),
+				recoverable: true,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+			};
+		}
+
+		return null;
+	}
+
+	private isFailureEnvelope(msg: Record<string, unknown>): boolean {
+		const status = typeof msg.status === 'string' ? msg.status.toLowerCase() : null;
+
+		if (msg.type === 'error') {
+			return true;
+		}
+
+		if (status && ['error', 'failed', 'failure'].includes(status)) {
+			return true;
+		}
+
+		if (msg.ok === false || msg.success === false) {
+			return true;
+		}
+
+		return false;
+	}
+
+	private extractFailureMessage(msg: Record<string, unknown>): string {
+		const nestedResult =
+			msg.result && typeof msg.result === 'object'
+				? (msg.result as Record<string, unknown>)
+				: undefined;
+
+		if (typeof msg.message === 'string' && msg.message.trim()) {
+			return msg.message;
+		}
+
+		if (typeof msg.summary === 'string' && msg.summary.trim()) {
+			return msg.summary;
+		}
+
+		if (typeof msg.error === 'string' && msg.error.trim()) {
+			return msg.error;
+		}
+
+		if (typeof msg.error === 'object' && msg.error !== null) {
+			const nestedError = msg.error as Record<string, unknown>;
+			if (typeof nestedError.message === 'string' && nestedError.message.trim()) {
+				return nestedError.message;
+			}
+		}
+
+		if (nestedResult) {
+			for (const candidate of [nestedResult.message, nestedResult.summary, nestedResult.error]) {
+				if (typeof candidate === 'string' && candidate.trim()) {
+					return candidate;
+				}
+			}
+		}
+
+		return 'Unknown OpenClaw error';
+	}
+
+	detectErrorFromExit(exitCode: number, stderr: string, _stdout: string): AgentError | null {
+		if (exitCode === 0) return null;
+
+		const matchOutput = (output: string): AgentError | null => {
+			if (!output) {
+				return null;
+			}
+
+			const cleanOutput = stripAnsiCodes(output);
+			const match = matchErrorPattern(this.errorPatterns, cleanOutput);
+			if (!match) {
+				return null;
+			}
+
+			return {
+				type: match.type,
+				message: match.message,
+				recoverable: match.recoverable,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+			};
+		};
+
+		const stderrError = matchOutput(stderr);
+		if (stderrError) {
+			return stderrError;
+		}
+
+		const stdoutError = matchOutput(_stdout);
+		if (stdoutError) {
+			return stdoutError;
+		}
+
+		return {
+			type: 'agent_crashed',
+			message: `OpenClaw process exited with code ${exitCode}`,
+			recoverable: exitCode === 1,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+		};
+	}
+}

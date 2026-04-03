@@ -30,6 +30,7 @@ export const AGENT_ICONS: Record<string, string> = {
 	// OpenAI family
 	'openai-codex': '◇',
 	codex: '◇',
+	'cursor-agent': '⬢',
 
 	// Google family
 	'gemini-cli': '🔷',
@@ -41,6 +42,7 @@ export const AGENT_ICONS: Record<string, string> = {
 
 	// Open-source alternatives
 	opencode: '📟',
+	openclaw: '🕸️',
 
 	// Enterprise
 	'factory-droid': '🏭',

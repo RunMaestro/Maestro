@@ -206,6 +206,18 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.toolType).toBe('claude-code');
 	});
 
+	it('migrates legacy inputMode agent to ai', async () => {
+		const session = createMockSession({ inputMode: 'agent' as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.inputMode).toBe('ai');
+	});
+
 	it('adds warning log when migrating from terminal toolType', async () => {
 		const session = createMockSession({ toolType: 'terminal' as any });
 		const { result } = renderHook(() => useSessionRestoration());

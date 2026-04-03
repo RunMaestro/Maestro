@@ -46,6 +46,10 @@ import {
 import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from '../../constants/app';
 import { getActiveTab, getWriteModeTab } from '../../utils/tabHelpers';
 import { formatRelativeTime } from '../../../shared/formatters';
+import {
+	normalizeOpenClawSessionId,
+	resolveCanonicalOpenClawSessionId,
+} from '../../../shared/openclawSessionId';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { RightPanelHandle } from '../../components/RightPanel';
@@ -900,7 +904,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		);
 
 		// ================================================================
-		// onSessionId — Handle Claude session ID capture
+		// onSessionId — Handle agent session ID capture
 		// ================================================================
 		const unsubscribeSessionId = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {
@@ -915,9 +919,27 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				setSessions((prev) => {
 					const session = prev.find((s) => s.id === actualSessionId);
 					if (!session) return prev;
+					const normalizedAgentSessionId =
+						session.toolType === 'openclaw'
+							? (() => {
+									const normalized = normalizeOpenClawSessionId(agentSessionId) || agentSessionId;
+									const knownSessionIds = [
+										session.agentSessionId,
+										...session.aiTabs.map((tab) => tab.agentSessionId),
+									].filter((candidate): candidate is string => typeof candidate === 'string');
+									return (
+										resolveCanonicalOpenClawSessionId(normalized, knownSessionIds) || normalized
+									);
+								})()
+							: agentSessionId;
 
 					window.maestro.agentSessions
-						.registerSessionOrigin(session.projectRoot, agentSessionId, 'user')
+						.registerSessionOrigin(
+							session.toolType,
+							session.projectRoot,
+							normalizedAgentSessionId,
+							'user'
+						)
 						.catch((err) => console.error('[onSessionId] Failed to register session origin:', err));
 
 					return prev.map((s) => {
@@ -939,10 +961,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							console.error(
 								'[onSessionId] No target tab found - session has no aiTabs, storing at session level only'
 							);
-							return { ...s, agentSessionId };
+							return { ...s, agentSessionId: normalizedAgentSessionId };
 						}
 
-						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
+						if (targetTab.agentSessionId && targetTab.agentSessionId !== normalizedAgentSessionId) {
 							return s;
 						}
 
@@ -951,7 +973,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							const newName = tab.name && tab.name !== 'New Session' ? tab.name : null;
 							return {
 								...tab,
-								agentSessionId,
+								agentSessionId: normalizedAgentSessionId,
 								awaitingSessionId: false,
 								name: newName,
 							};
@@ -960,7 +982,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						return {
 							...s,
 							aiTabs: updatedAiTabs,
-							agentSessionId,
+							agentSessionId: normalizedAgentSessionId,
 						};
 					});
 				});

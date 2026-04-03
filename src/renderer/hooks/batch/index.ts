@@ -11,6 +11,9 @@ export {
 	countCheckedTasks,
 	uncheckAllTasks,
 	DEFAULT_BATCH_PROMPT,
+	getPlaybookPromptForExecution,
+	inferPlaybookPromptProfile,
+	normalizePlaybookPromptForStorage,
 	validateAgentPromptHasTaskReference,
 } from './batchUtils';
 

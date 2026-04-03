@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { WizardProvider, useWizard } from '../../../../renderer/components/Wizard/WizardContext';
 import { MaestroWizard } from '../../../../renderer/components/Wizard/MaestroWizard';
 import { AgentSelectionScreen } from '../../../../renderer/components/Wizard/screens/AgentSelectionScreen';
@@ -136,6 +136,8 @@ const mockMaestro = {
 	agents: {
 		detect: vi.fn(),
 		get: vi.fn(),
+		getConfig: vi.fn(),
+		getModels: vi.fn(),
 	},
 	git: {
 		isRepo: vi.fn(),
@@ -238,6 +240,8 @@ describe('Wizard Keyboard Navigation', () => {
 		// Setup default mock responses
 		mockMaestro.agents.detect.mockResolvedValue(mockAgents);
 		mockMaestro.agents.get.mockResolvedValue(mockAgents[0]);
+		mockMaestro.agents.getConfig.mockResolvedValue({});
+		mockMaestro.agents.getModels.mockResolvedValue([]);
 		mockMaestro.git.isRepo.mockResolvedValue(true);
 		mockMaestro.settings.get.mockResolvedValue(undefined);
 		mockMaestro.settings.set.mockResolvedValue(undefined);
@@ -362,6 +366,43 @@ describe('Wizard Keyboard Navigation', () => {
 
 			// Should still be selected
 			expect(claudeTile).toHaveAttribute('aria-pressed', 'true');
+		});
+
+		it('should not allow selecting an unavailable supported agent', async () => {
+			renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Detecting available agents...')).not.toBeInTheDocument();
+			});
+
+			const claudeTile = screen.getByRole('button', { name: /claude code/i });
+			const geminiTile = screen.getByRole('button', { name: /gemini cli \(not installed\)/i });
+
+			expect(geminiTile).toHaveAttribute('aria-disabled', 'true');
+
+			fireEvent.click(geminiTile);
+
+			expect(claudeTile).toHaveAttribute('aria-pressed', 'true');
+			expect(geminiTile).toHaveAttribute('aria-pressed', 'false');
+			expect(screen.getByRole('button', { name: 'Configure Agent' })).toBeDisabled();
+		});
+
+		it('should not auto-select an unavailable agent from Customize', async () => {
+			renderWithProviders(<AgentSelectionScreen theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.queryByText('Detecting available agents...')).not.toBeInTheDocument();
+			});
+
+			const claudeTile = screen.getByRole('button', { name: /claude code/i });
+			const geminiTile = screen.getByRole('button', { name: /gemini cli \(not installed\)/i });
+			const customizeButton = within(geminiTile).getByRole('button', { name: /customize/i });
+
+			fireEvent.click(customizeButton);
+
+			expect(claudeTile).toHaveAttribute('aria-pressed', 'true');
+			expect(geminiTile).toHaveAttribute('aria-pressed', 'false');
+			expect(screen.queryByText('Selected: Gemini CLI')).not.toBeInTheDocument();
 		});
 	});
 

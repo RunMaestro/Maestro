@@ -282,6 +282,9 @@ const mockMaestro = {
 		write: vi.fn(),
 		kill: vi.fn(),
 	},
+	sessions: {
+		getAll: vi.fn().mockResolvedValue([]),
+	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
 	},
@@ -1232,11 +1235,17 @@ describe('Wizard Integration Tests', () => {
 
 				React.useEffect(() => {
 					if (!state.isOpen) {
+						openWizard();
+						return;
+					}
+
+					if (
+						state.availableAgents.some((agent) => agent.id === 'claude-code' && agent.available)
+					) {
 						setSelectedAgent('claude-code');
 						setAgentName('My Agent');
-						openWizard();
 					}
-				}, [openWizard, state.isOpen, setSelectedAgent, setAgentName]);
+				}, [openWizard, state.isOpen, state.availableAgents, setSelectedAgent, setAgentName]);
 
 				const canProceed = canProceedToNext();
 
@@ -2100,6 +2109,13 @@ describe('Wizard Integration Tests', () => {
 					hidden: false,
 					capabilities: {},
 				},
+				{
+					id: 'openclaw',
+					name: 'OpenClaw',
+					available: true,
+					hidden: false,
+					capabilities: {},
+				},
 			];
 			mockMaestro.agents.detect.mockResolvedValue(multipleAgents);
 
@@ -2137,6 +2153,7 @@ describe('Wizard Integration Tests', () => {
 			await waitFor(() => {
 				expect(screen.getByRole('button', { name: /claude code/i })).toBeInTheDocument();
 				expect(screen.getByRole('button', { name: /codex/i })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /openclaw/i })).toBeInTheDocument();
 			});
 
 			// Record the call count after initial detection
@@ -2161,6 +2178,68 @@ describe('Wizard Integration Tests', () => {
 
 			// Detection should NOT have been called again
 			expect(mockMaestro.agents.detect.mock.calls.length).toBe(initialCallCount);
+		});
+
+		it('should let OpenClaw continue into the prototype wizard path', async () => {
+			mockMaestro.agents.detect.mockClear();
+			mockMaestro.agents.detect.mockResolvedValue([
+				{
+					id: 'openclaw',
+					name: 'OpenClaw',
+					available: true,
+					hidden: false,
+					capabilities: {},
+				},
+			]);
+
+			function TestWrapper() {
+				const { openWizard, state, setSelectedAgent, setDirectoryPath, nextStep } = useWizard();
+
+				React.useEffect(() => {
+					if (!state.isOpen) {
+						openWizard();
+					}
+				}, [openWizard, state.isOpen]);
+
+				const enterPrototypePath = () => {
+					setSelectedAgent('openclaw');
+					setDirectoryPath('/test/project/path');
+					setTimeout(() => {
+						nextStep();
+						setTimeout(() => nextStep(), 50);
+					}, 50);
+				};
+
+				return (
+					<>
+						<button data-testid="openclaw-prototype-path" onClick={enterPrototypePath}>
+							OpenClaw Prototype Path
+						</button>
+						{state.isOpen ? <MaestroWizard theme={mockTheme} /> : null}
+					</>
+				);
+			}
+
+			renderWithProviders(<TestWrapper />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Create a Maestro Agent')).toBeInTheDocument();
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('OpenClaw')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('openclaw-prototype-path'));
+
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('Project Discovery')).toBeInTheDocument();
+				expect(screen.getByText('Step 3 of 5')).toBeInTheDocument();
+			});
 		});
 	});
 });

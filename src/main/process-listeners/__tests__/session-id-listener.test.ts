@@ -98,6 +98,19 @@ describe('Session ID Listener', () => {
 				'agent-session-abc'
 			);
 		});
+
+		it('should forward canonical OpenClaw agent session IDs to renderer unchanged', () => {
+			setupListener();
+			const handler = eventHandlers.get('session-id');
+
+			handler?.('regular-session-openclaw', 'main:1234-uuid');
+
+			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+				'process:session-id',
+				'regular-session-openclaw',
+				'main:1234-uuid'
+			);
+		});
 	});
 
 	describe('Participant Session ID Storage', () => {

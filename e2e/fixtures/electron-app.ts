@@ -8,6 +8,7 @@
 import {
 	test as base,
 	_electron as electron,
+	expect,
 	type ElectronApplication,
 	type Page,
 } from '@playwright/test';
@@ -21,6 +22,10 @@ interface ElectronTestFixtures {
 	window: Page;
 	appPath: string;
 	testDataDir: string;
+}
+
+interface ElectronTestOptions {
+	launchEnv: Record<string, string>;
 }
 
 /**
@@ -54,7 +59,9 @@ function createTestDataDir(): string {
  * });
  * ```
  */
-export const test = base.extend<ElectronTestFixtures>({
+export const test = base.extend<ElectronTestFixtures & ElectronTestOptions>({
+	launchEnv: [{}, { option: true }],
+
 	// Test data directory for isolation
 	// eslint-disable-next-line no-empty-pattern
 	testDataDir: async ({}, use) => {
@@ -85,12 +92,13 @@ export const test = base.extend<ElectronTestFixtures>({
 	},
 
 	// Launch Electron application
-	electronApp: async ({ appPath, testDataDir }, use) => {
+	electronApp: async ({ appPath, testDataDir, launchEnv }, use) => {
 		// Launch the Electron app
 		const app = await electron.launch({
 			args: [appPath],
 			env: {
 				...process.env,
+				...launchEnv,
 				// Use isolated data directory for tests
 				MAESTRO_DATA_DIR: testDataDir,
 				// Disable hardware acceleration for CI
@@ -147,6 +155,69 @@ export const helpers = {
 		// Cmd+Shift+N opens the wizard
 		await window.keyboard.press('Meta+Shift+N');
 		await helpers.waitForWizard(window);
+	},
+
+	/**
+	 * Open the Create New Agent modal from the sidebar/empty state.
+	 */
+	async openNewAgentModal(window: Page): Promise<void> {
+		const newAgentButton = window.getByRole('button', { name: /^new agent$/i }).first();
+		await expect(newAgentButton).toBeVisible({ timeout: 10000 });
+		await newAgentButton.click();
+		await expect(window.getByRole('dialog', { name: 'Create New Agent' })).toBeVisible({
+			timeout: 10000,
+		});
+	},
+
+	/**
+	 * Create a new agent session from the standard modal.
+	 */
+	async createAgent(
+		window: Page,
+		options: {
+			name: string;
+			provider: string;
+			workingDir: string;
+			customPath?: string;
+		}
+	): Promise<void> {
+		await helpers.openNewAgentModal(window);
+
+		const dialog = window.getByRole('dialog', { name: 'Create New Agent' });
+		await dialog.getByLabel('Agent Name').fill(options.name);
+		await dialog.getByRole('option', { name: new RegExp(options.provider, 'i') }).click();
+		if (options.customPath) {
+			await dialog.locator(`input[placeholder*="/path/to/"]`).first().fill(options.customPath);
+		}
+		await dialog.getByLabel('Working Directory').fill(options.workingDir);
+		await dialog.getByRole('button', { name: 'Create Agent' }).click();
+
+		await expect(dialog).not.toBeVisible({ timeout: 10000 });
+	},
+
+	/**
+	 * Send a prompt to the active agent session.
+	 */
+	async sendAgentMessage(window: Page, message: string): Promise<void> {
+		const input = window.locator('textarea[placeholder*="Talking to"]').first();
+		await expect(input).toBeVisible({ timeout: 10000 });
+		await input.fill(message);
+		await window.locator('button[title="Send message"]').click();
+	},
+
+	/**
+	 * Open the Agent Sessions modal from the active session header.
+	 */
+	async openAgentSessions(window: Page): Promise<void> {
+		const button = window
+			.locator('[data-tour="agent-sessions-button"]')
+			.or(window.locator('button[title*="Agent Sessions"]'))
+			.first();
+		await expect(button).toBeVisible({ timeout: 10000 });
+		await button.click();
+		await expect(window.getByText(/sessions for/i).first()).toBeVisible({
+			timeout: 10000,
+		});
 	},
 
 	/**

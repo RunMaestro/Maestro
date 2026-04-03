@@ -18,6 +18,7 @@ import {
 	registerPlaybooksHandlers,
 	PlaybooksHandlerDependencies,
 } from '../../../../main/ipc/handlers/playbooks';
+import { DEFAULT_AUTORUN_SKILLS } from '../../../../shared/playbookDag';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -165,7 +166,15 @@ describe('playbooks IPC handlers', () => {
 				path.join('/mock/userData', 'playbooks', 'session-123.json'),
 				'utf-8'
 			);
-			expect(result).toEqual({ success: true, playbooks: mockPlaybooks });
+			expect(result.success).toBe(true);
+			expect(result.playbooks).toHaveLength(2);
+			expect(result.playbooks[0]).toMatchObject({
+				id: 'pb-1',
+				name: 'Test Playbook 1',
+				maxParallelism: 1,
+				skills: [...DEFAULT_AUTORUN_SKILLS],
+			});
+			expect(result.playbooks[0].taskGraph.nodes).toEqual([]);
 		});
 
 		it('should return empty array when file does not exist', async () => {
@@ -218,8 +227,56 @@ describe('playbooks IPC handlers', () => {
 				loopEnabled: true,
 				prompt: 'Test prompt',
 			});
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS]);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+			});
 			expect(result.playbook.createdAt).toBeDefined();
 			expect(result.playbook.updatedAt).toBeDefined();
+		});
+
+		it('should preserve an explicit DAG when creating and saving a playbook', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:create');
+			const result = await handler!({} as any, 'session-123', {
+				name: 'DAG Playbook',
+				documents: [
+					{ filename: 'phase-1', resetOnCompletion: false },
+					{ filename: 'phase-2', resetOnCompletion: false },
+				],
+				loopEnabled: false,
+				prompt: 'Use the graph as-is',
+				maxParallelism: 2,
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+						{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					],
+				},
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.maxParallelism).toBe(2);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+				],
+			});
+
+			const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
+			const written = JSON.parse(writeCall[1] as string);
+			expect(written.playbooks[0].maxParallelism).toBe(2);
+			expect(written.playbooks[0].taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+				],
+			});
 		});
 
 		it('should create a playbook with worktree settings', async () => {
@@ -246,6 +303,60 @@ describe('playbooks IPC handlers', () => {
 				createPROnCompletion: true,
 				prTargetBranch: 'main',
 			});
+		});
+
+		it('should persist playbook skills when provided', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:create');
+			const result = await handler!({} as any, 'session-123', {
+				name: 'Skill Playbook',
+				documents: [],
+				loopEnabled: false,
+				prompt: 'Use project skills',
+				skills: ['code-review', 'test-gen'],
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.skills).toEqual([
+				...DEFAULT_AUTORUN_SKILLS,
+				'code-review',
+				'test-gen',
+			]);
+		});
+
+		it('should persist prompt budget settings when provided', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:create');
+			const result = await handler!({} as any, 'session-123', {
+				name: 'Lean Playbook',
+				documents: [],
+				loopEnabled: false,
+				prompt: '',
+				taskTimeoutMs: 45000,
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the task changed on disk'],
+				promptProfile: 'compact-code',
+				documentContextMode: 'active-task-only',
+				skillPromptMode: 'brief',
+				agentStrategy: 'plan-execute-verify',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.taskTimeoutMs).toBe(45000);
+			expect(result.playbook.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(result.playbook.verificationSteps).toEqual(['Confirm the task changed on disk']);
+			expect(result.playbook.promptProfile).toBe('compact-code');
+			expect(result.playbook.documentContextMode).toBe('active-task-only');
+			expect(result.playbook.skillPromptMode).toBe('brief');
+			expect(result.playbook.agentStrategy).toBe('plan-execute-verify');
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.taskGraph.nodes).toEqual([]);
 		});
 
 		it('should add to existing playbooks list', async () => {
@@ -325,7 +436,18 @@ describe('playbooks IPC handlers', () => {
 					name: 'Original',
 					prompt: 'keep this',
 					loopEnabled: true,
-					documents: [{ filename: 'doc1' }],
+					documents: [
+						{ filename: 'phase-1', resetOnCompletion: false },
+						{ filename: 'phase-2', resetOnCompletion: true },
+					],
+					maxParallelism: 2,
+					taskGraph: {
+						nodes: [
+							{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+							{ id: 'phase-1', documentIndex: 0, dependsOn: ['phase-2'] },
+						],
+					},
+					skills: ['code-review'],
 				},
 			];
 			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ playbooks: existingPlaybooks }));
@@ -341,6 +463,81 @@ describe('playbooks IPC handlers', () => {
 			expect(result.playbook.name).toBe('Updated Name');
 			expect(result.playbook.prompt).toBe('keep this');
 			expect(result.playbook.loopEnabled).toBe(true);
+			expect(result.playbook.maxParallelism).toBe(2);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+					{ id: 'phase-1', documentIndex: 0, dependsOn: ['phase-2'] },
+				],
+			});
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'code-review']);
+		});
+
+		it('should update skills when provided', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'pb-1',
+					name: 'Original',
+					prompt: 'keep this',
+					skills: ['old-skill'],
+				},
+			];
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ playbooks: existingPlaybooks }));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:update');
+			const result = await handler!({} as any, 'session-123', 'pb-1', {
+				skills: ['code-review', 'test-gen'],
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.skills).toEqual([
+				...DEFAULT_AUTORUN_SKILLS,
+				'code-review',
+				'test-gen',
+			]);
+		});
+
+		it('should update prompt budget settings when provided', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'pb-1',
+					name: 'Original',
+					prompt: 'keep this',
+					promptProfile: 'full',
+					documentContextMode: 'full',
+					skillPromptMode: 'full',
+					agentStrategy: 'single',
+				},
+			];
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ playbooks: existingPlaybooks }));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:update');
+			const result = await handler!({} as any, 'session-123', 'pb-1', {
+				taskTimeoutMs: 30000,
+				definitionOfDone: ['Verifier returns PASS'],
+				verificationSteps: ['Confirm the summary matches the document'],
+				promptProfile: 'compact-code',
+				documentContextMode: 'active-task-only',
+				skillPromptMode: 'brief',
+				agentStrategy: 'plan-execute-verify',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.taskTimeoutMs).toBe(30000);
+			expect(result.playbook.definitionOfDone).toEqual(['Verifier returns PASS']);
+			expect(result.playbook.verificationSteps).toEqual([
+				'Confirm the summary matches the document',
+			]);
+			expect(result.playbook.promptProfile).toBe('compact-code');
+			expect(result.playbook.documentContextMode).toBe('active-task-only');
+			expect(result.playbook.skillPromptMode).toBe('brief');
+			expect(result.playbook.agentStrategy).toBe('plan-execute-verify');
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.taskGraph.nodes).toEqual([]);
 		});
 	});
 
@@ -538,6 +735,124 @@ describe('playbooks IPC handlers', () => {
 			expect(result.success).toBe(true);
 			// The export should still succeed, just skip the missing document
 		});
+
+		it('should include prompt profile settings in the exported manifest', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'pb-1',
+					name: 'Export Me',
+					documents: [{ filename: 'doc1', order: 0 }],
+					loopEnabled: true,
+					taskTimeoutMs: 45000,
+					maxParallelism: 2,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+					definitionOfDone: ['Relevant tests pass'],
+					verificationSteps: ['Confirm the task changed on disk'],
+					prompt: '',
+					skills: ['code-review'],
+					promptProfile: 'compact-code',
+					documentContextMode: 'active-task-only',
+					skillPromptMode: 'brief',
+					agentStrategy: 'plan-execute-verify',
+				},
+			];
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks }))
+				.mockResolvedValueOnce('# Document content');
+
+			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+				canceled: false,
+				filePath: '/export/path/Export_Me.maestro-playbook.zip',
+			});
+
+			const mockArchive = {
+				pipe: vi.fn(),
+				append: vi.fn(),
+				finalize: vi.fn().mockResolvedValue(undefined),
+				on: vi.fn(),
+			};
+			vi.mocked(archiver).mockReturnValue(mockArchive as any);
+
+			const mockStream = new PassThrough();
+			vi.mocked(createWriteStream).mockReturnValue(mockStream as any);
+
+			setTimeout(() => mockStream.emit('close'), 10);
+
+			const handler = handlers.get('playbooks:export');
+			await handler!({} as any, 'session-123', 'pb-1', '/autorun/path');
+
+			const manifestCall = mockArchive.append.mock.calls.find(
+				([_content, options]) => options?.name === 'manifest.json'
+			);
+			expect(manifestCall).toBeDefined();
+			const manifest = JSON.parse(manifestCall?.[0] as string);
+			expect(manifest.taskTimeoutMs).toBe(45000);
+			expect(manifest.maxParallelism).toBe(2);
+			expect(manifest.taskGraph).toEqual({
+				nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(manifest.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(manifest.verificationSteps).toEqual(['Confirm the task changed on disk']);
+			expect(manifest.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'code-review']);
+			expect(manifest.promptProfile).toBe('compact-code');
+			expect(manifest.documentContextMode).toBe('active-task-only');
+			expect(manifest.skillPromptMode).toBe('brief');
+			expect(manifest.agentStrategy).toBe('plan-execute-verify');
+		});
+
+		it('should normalize legacy sequential playbooks in the exported manifest', async () => {
+			const existingPlaybooks = [
+				{
+					id: 'pb-1',
+					name: 'Legacy Export',
+					documents: [
+						{ filename: 'phase-1', resetOnCompletion: false },
+						{ filename: 'phase-2', resetOnCompletion: true },
+					],
+					loopEnabled: false,
+					prompt: '',
+				},
+			];
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks }))
+				.mockResolvedValueOnce('# Phase 1')
+				.mockResolvedValueOnce('# Phase 2');
+
+			vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+				canceled: false,
+				filePath: '/export/path/Legacy_Export.maestro-playbook.zip',
+			});
+
+			const mockArchive = {
+				pipe: vi.fn(),
+				append: vi.fn(),
+				finalize: vi.fn().mockResolvedValue(undefined),
+				on: vi.fn(),
+			};
+			vi.mocked(archiver).mockReturnValue(mockArchive as any);
+
+			const mockStream = new PassThrough();
+			vi.mocked(createWriteStream).mockReturnValue(mockStream as any);
+
+			setTimeout(() => mockStream.emit('close'), 10);
+
+			const handler = handlers.get('playbooks:export');
+			await handler!({} as any, 'session-123', 'pb-1', '/autorun/path');
+
+			const manifestCall = mockArchive.append.mock.calls.find(
+				([_content, options]) => options?.name === 'manifest.json'
+			);
+			const manifest = JSON.parse(manifestCall?.[0] as string);
+			expect(manifest.maxParallelism).toBe(1);
+			expect(manifest.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
+		});
 	});
 
 	describe('playbooks:import', () => {
@@ -552,6 +867,10 @@ describe('playbooks IPC handlers', () => {
 				name: 'Imported Playbook',
 				documents: [{ filename: 'doc1', order: 0 }],
 				loopEnabled: true,
+				maxParallelism: 2,
+				taskGraph: {
+					nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+				},
 				prompt: 'Test prompt',
 			};
 
@@ -582,7 +901,65 @@ describe('playbooks IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.playbook.name).toBe('Imported Playbook');
 			expect(result.playbook.id).toBe('test-uuid-123');
+			expect(result.playbook.maxParallelism).toBe(2);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+			});
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS]);
 			expect(result.importedDocs).toEqual(['doc1']);
+		});
+
+		it('should normalize legacy sequential manifests on import', async () => {
+			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+				canceled: false,
+				filePaths: ['/import/path/legacy-playbook.zip'],
+			});
+
+			const mockManifest = {
+				name: 'Legacy Imported Playbook',
+				documents: [
+					{ filename: 'phase-1', resetOnCompletion: false },
+					{ filename: 'phase-2', resetOnCompletion: true },
+				],
+				loopEnabled: false,
+				prompt: '',
+			};
+
+			const mockEntries = [
+				{
+					entryName: 'manifest.json',
+					getData: () => Buffer.from(JSON.stringify(mockManifest)),
+				},
+				{
+					entryName: 'documents/phase-1.md',
+					getData: () => Buffer.from('# Phase 1'),
+				},
+				{
+					entryName: 'documents/phase-2.md',
+					getData: () => Buffer.from('# Phase 2'),
+				},
+			];
+
+			vi.mocked(AdmZip).mockImplementation(function (this: any) {
+				this.getEntries = () => mockEntries;
+				return this;
+			} as any);
+
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:import');
+			const result = await handler!({} as any, 'session-123', '/autorun/path');
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
 		});
 
 		it('should return error when main window not available', async () => {
@@ -728,6 +1105,57 @@ describe('playbooks IPC handlers', () => {
 			await handler!({} as any, 'session-123', '/autorun/path');
 
 			expect(fs.mkdir).toHaveBeenCalledWith('/autorun/path', { recursive: true });
+		});
+
+		it('should restore prompt profile settings from the imported manifest', async () => {
+			vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+				canceled: false,
+				filePaths: ['/import/path/playbook.zip'],
+			});
+
+			const mockManifest = {
+				name: 'Imported Playbook',
+				documents: [{ filename: 'doc1', order: 0 }],
+				loopEnabled: false,
+				taskTimeoutMs: 30000,
+				prompt: '',
+				skills: ['code-review'],
+				definitionOfDone: ['Relevant tests pass'],
+				verificationSteps: ['Confirm the task changed on disk'],
+				promptProfile: 'compact-code',
+				documentContextMode: 'active-task-only',
+				skillPromptMode: 'brief',
+				agentStrategy: 'plan-execute-verify',
+			};
+
+			const mockEntries = [
+				{
+					entryName: 'manifest.json',
+					getData: () => Buffer.from(JSON.stringify(mockManifest)),
+				},
+			];
+
+			vi.mocked(AdmZip).mockImplementation(function (this: any) {
+				this.getEntries = () => mockEntries;
+				return this;
+			} as any);
+
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('playbooks:import');
+			const result = await handler!({} as any, 'session-123', '/autorun/path');
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.taskTimeoutMs).toBe(30000);
+			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS, 'code-review']);
+			expect(result.playbook.definitionOfDone).toEqual(['Relevant tests pass']);
+			expect(result.playbook.verificationSteps).toEqual(['Confirm the task changed on disk']);
+			expect(result.playbook.promptProfile).toBe('compact-code');
+			expect(result.playbook.documentContextMode).toBe('active-task-only');
+			expect(result.playbook.skillPromptMode).toBe('brief');
+			expect(result.playbook.agentStrategy).toBe('plan-execute-verify');
 		});
 	});
 });

@@ -19,6 +19,10 @@ import {
 	parseStructuredOutput,
 	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
+import {
+	extractOpenClawAgentNameFromJson,
+	normalizeOpenClawSessionId,
+} from '../../shared/openclawSessionId';
 
 /**
  * Extended ExistingDocument interface that includes loaded content.
@@ -380,6 +384,18 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 				if (msg.session_id) {
 					return msg.session_id;
 				}
+
+				const openclawSessionId =
+					msg?.result?.meta?.agentMeta?.sessionId || msg?.meta?.agentMeta?.sessionId;
+				if (typeof openclawSessionId === 'string' && openclawSessionId) {
+					const openclawAgentName =
+						extractOpenClawAgentNameFromJson(msg) || extractOpenClawAgentNameFromJson(msg?.result);
+					return (
+						normalizeOpenClawSessionId(openclawSessionId, {
+							agentName: openclawAgentName,
+						}) || openclawSessionId
+					);
+				}
 			} catch {
 				// Ignore non-JSON lines
 			}
@@ -440,6 +456,26 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 			if (textParts.length > 0) {
 				return textParts.join('');
+			}
+		}
+
+		// For OpenClaw: extract from { payloads, meta } or { status, result: { payloads, meta } }
+		if (agentType === 'openclaw') {
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					const payload = msg.payloads ?? msg.result?.payloads;
+					if (Array.isArray(payload)) {
+						const text = payload
+							.map((p: { text?: string }) => p.text)
+							.filter(Boolean)
+							.join('\n');
+						if (text) return text;
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
 			}
 		}
 

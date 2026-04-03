@@ -3,11 +3,16 @@
 
 import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { ToolType, UsageStats } from '../../shared/types';
 import type { AgentOutputParser } from '../../main/parsers/agent-output-parser';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
+import { CursorAgentOutputParser } from '../../main/parsers/cursor-agent-output-parser';
 import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
+import { OpenClawOutputParser } from '../../main/parsers/openclaw-output-parser';
+import { ZaiOutputParser } from '../../main/parsers/zai-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
@@ -24,6 +29,28 @@ const CLAUDE_ARGS = [
 	'stream-json',
 	'--dangerously-skip-permissions',
 ];
+const CODEX_BATCH_STRIP_ENV_KEYS = [
+	'CODEX_THREAD_ID',
+	'MCP_SERVER_HOST',
+	'MCP_SERVER_PORT',
+	'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
+	'CODEX_SHELL',
+];
+const CODEX_BATCH_HOME_DIRNAME = 'maestro-codex-batch-home';
+const CODEX_BATCH_CONFIG = [
+	'model = "gpt-5.4"',
+	'model_reasoning_effort = "high"',
+	'approval_policy = "never"',
+	'sandbox_mode = "danger-full-access"',
+	'web_search = "disabled"',
+	'personality = "none"',
+	'project_doc_max_bytes = 1',
+	'tool_output_token_limit = 4000',
+	'[features]',
+	'apps = false',
+	'multi_agent = false',
+	'personality = false',
+].join('\n');
 
 // Cached paths per agent type (resolved once at startup)
 const cachedPaths: Map<string, string> = new Map();
@@ -35,6 +62,11 @@ export interface AgentResult {
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	error?: string;
+	timedOut?: boolean;
+}
+
+export interface SpawnAgentOptions {
+	timeoutMs?: number;
 }
 
 // Detection result
@@ -49,6 +81,30 @@ export interface DetectResult {
  */
 function getExpandedPath(): string {
 	return buildExpandedPath();
+}
+
+function ensureCodexBatchHome(env: NodeJS.ProcessEnv): string | undefined {
+	const homeDir = env.HOME || os.homedir();
+	const authSource = path.join(homeDir, '.codex', 'auth.json');
+
+	if (!fs.existsSync(authSource)) {
+		return undefined;
+	}
+
+	const codexHome = path.join(os.tmpdir(), CODEX_BATCH_HOME_DIRNAME);
+	try {
+		fs.mkdirSync(codexHome, { recursive: true });
+		fs.copyFileSync(authSource, path.join(codexHome, 'auth.json'));
+		fs.writeFileSync(path.join(codexHome, 'config.toml'), CODEX_BATCH_CONFIG);
+		return codexHome;
+	} catch (error) {
+		console.warn(
+			`Failed to prepare isolated Codex batch home: ${
+				error instanceof Error ? error.message : String(error)
+			}`
+		);
+		return undefined;
+	}
 }
 
 /**
@@ -160,6 +216,27 @@ export const getCodexCommand = () => getAgentCommand('codex');
 export const getOpenCodeCommand = () => getAgentCommand('opencode');
 export const getDroidCommand = () => getAgentCommand('factory-droid');
 
+function buildJsonLineAgentEnv(toolType: ToolType, agentSessionId?: string): NodeJS.ProcessEnv {
+	const env = buildExpandedEnv();
+
+	if (toolType !== 'codex') {
+		return env;
+	}
+
+	for (const key of CODEX_BATCH_STRIP_ENV_KEYS) {
+		delete env[key];
+	}
+
+	if (!agentSessionId) {
+		const codexHome = ensureCodexBatchHome(env);
+		if (codexHome) {
+			env.CODEX_HOME = codexHome;
+		}
+	}
+
+	return env;
+}
+
 /**
  * Spawn Claude Code with a prompt and return the result.
  *
@@ -174,7 +251,8 @@ export const getDroidCommand = () => getAgentCommand('factory-droid');
 async function spawnClaudeAgent(
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	spawnOptionsInput: SpawnAgentOptions = {}
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv();
@@ -194,14 +272,15 @@ async function spawnClaudeAgent(
 		// Add prompt as positional argument
 		args.push('--', prompt);
 
-		const options: SpawnOptions = {
+		const spawnOptions: SpawnOptions = {
 			cwd,
 			env,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
 		const claudeCommand = getAgentCommand('claude-code');
-		const child = spawn(claudeCommand, args, options);
+		const child = spawn(claudeCommand, args, spawnOptions);
+		const timeoutMs = spawnOptionsInput.timeoutMs;
 
 		let jsonBuffer = '';
 		let result: string | undefined;
@@ -209,6 +288,22 @@ async function spawnClaudeAgent(
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
+		let timedOut = false;
+		let settled = false;
+		let forceKillTimer: NodeJS.Timeout | undefined;
+		let timeoutHandle: NodeJS.Timeout | undefined;
+
+		const clearTimers = (): void => {
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (forceKillTimer) clearTimeout(forceKillTimer);
+		};
+
+		const finalize = (payload: AgentResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimers();
+			resolve(payload);
+		};
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
@@ -259,27 +354,43 @@ async function spawnClaudeAgent(
 		// Close stdin immediately
 		child.stdin?.end();
 
+		if (timeoutMs && timeoutMs > 0) {
+			timeoutHandle = setTimeout(() => {
+				timedOut = true;
+				child.kill('SIGTERM');
+				forceKillTimer = setTimeout(() => {
+					if (!settled) {
+						child.kill('SIGKILL');
+					}
+				}, 2000);
+			}, timeoutMs);
+		}
+
 		// Handle completion
 		child.on('close', (code) => {
 			if (code === 0 && result) {
-				resolve({
+				finalize({
 					success: true,
 					response: result,
 					agentSessionId: sessionId,
 					usageStats,
 				});
 			} else {
-				resolve({
+				finalize({
 					success: false,
-					error: stderr || `Process exited with code ${code}`,
+					error:
+						timedOut && timeoutMs
+							? `Timed out after ${timeoutMs}ms`
+							: stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
+					timedOut,
 				});
 			}
 		});
 
 		child.on('error', (error) => {
-			resolve({
+			finalize({
 				success: false,
 				error: `Failed to spawn Claude: ${error.message}`,
 			});
@@ -322,10 +433,16 @@ function createParser(toolType: ToolType): AgentOutputParser {
 	switch (toolType) {
 		case 'codex':
 			return new CodexOutputParser();
+		case 'cursor-agent':
+			return new CursorAgentOutputParser();
 		case 'opencode':
 			return new OpenCodeOutputParser();
 		case 'factory-droid':
 			return new FactoryDroidOutputParser();
+		case 'openclaw':
+			return new OpenClawOutputParser();
+		case 'zai':
+			return new ZaiOutputParser();
 		default:
 			throw new Error(`No parser available for agent type: ${toolType}`);
 	}
@@ -342,10 +459,11 @@ async function spawnJsonLineAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	spawnOptionsInput: SpawnAgentOptions = {}
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
-		const env = buildExpandedEnv();
+		const env = buildJsonLineAgentEnv(toolType, agentSessionId);
 		const def = getAgentDefinition(toolType);
 
 		// Apply default env vars from agent definition
@@ -361,29 +479,38 @@ async function spawnJsonLineAgent(
 		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
 		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
 
+		// Codex requires explicit working directory arg before any resume subcommand
+		if (toolType === 'codex' && def?.workingDirArgs) {
+			args.push(...def.workingDirArgs(cwd));
+		}
+
 		if (agentSessionId && def?.resumeArgs) {
 			args.push(...def.resumeArgs(agentSessionId));
 		}
 
-		// Codex requires explicit working directory arg (other agents use process cwd)
-		if (toolType === 'codex' && def?.workingDirArgs) {
-			args.push(...def.workingDirArgs(cwd));
+		if (toolType === 'codex' && !agentSessionId) {
+			args.push('--ephemeral', '-c', 'web_search="disabled"');
 		}
 
 		// Add prompt (with or without '--' separator depending on agent)
 		if (!def?.noPromptSeparator) {
 			args.push('--');
 		}
-		args.push(prompt);
+		if (toolType === 'codex') {
+			args.push('-');
+		} else {
+			args.push(prompt);
+		}
 
-		const options: SpawnOptions = {
+		const spawnOptions: SpawnOptions = {
 			cwd,
 			env,
 			stdio: ['pipe', 'pipe', 'pipe'],
 		};
 
 		const agentCommand = getAgentCommand(toolType);
-		const child = spawn(agentCommand, args, options);
+		const child = spawn(agentCommand, args, spawnOptions);
+		const timeoutMs = spawnOptionsInput.timeoutMs;
 
 		const parser = createParser(toolType);
 		let jsonBuffer = '';
@@ -392,6 +519,59 @@ async function spawnJsonLineAgent(
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
 		let errorText: string | undefined;
+		let timedOut = false;
+		let settled = false;
+		let forceKillTimer: NodeJS.Timeout | undefined;
+		let timeoutHandle: NodeJS.Timeout | undefined;
+
+		const clearTimers = (): void => {
+			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (forceKillTimer) clearTimeout(forceKillTimer);
+		};
+
+		const processLine = (line: string): void => {
+			if (!line.trim()) return;
+			const event = parser.parseJsonLine(line);
+			if (!event) return;
+
+			if (event.type === 'init' && event.sessionId && !sessionId) {
+				sessionId = event.sessionId;
+			}
+
+			if (event.type === 'result' && event.text) {
+				result = result ? `${result}\n${event.text}` : event.text;
+			}
+
+			if (event.type === 'error' && event.text && !errorText) {
+				errorText = event.text;
+			}
+
+			const usage = parser.extractUsage(event);
+			if (usage) {
+				usageStats = mergeUsageStats(usageStats, {
+					inputTokens: usage.inputTokens || 0,
+					outputTokens: usage.outputTokens || 0,
+					cacheReadTokens: usage.cacheReadTokens || 0,
+					cacheCreationTokens: usage.cacheCreationTokens || 0,
+					costUsd: usage.costUsd || 0,
+					contextWindow: usage.contextWindow || 0,
+					reasoningTokens: usage.reasoningTokens || 0,
+				});
+			}
+		};
+
+		const flushJsonBuffer = (): void => {
+			if (!jsonBuffer.trim()) return;
+			processLine(jsonBuffer);
+			jsonBuffer = '';
+		};
+
+		const finalize = (payload: AgentResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimers();
+			resolve(payload);
+		};
 
 		child.stdout?.on('data', (data: Buffer) => {
 			jsonBuffer += data.toString();
@@ -399,34 +579,7 @@ async function spawnJsonLineAgent(
 			jsonBuffer = lines.pop() || '';
 
 			for (const line of lines) {
-				if (!line.trim()) continue;
-				const event = parser.parseJsonLine(line);
-				if (!event) continue;
-
-				if (event.type === 'init' && event.sessionId && !sessionId) {
-					sessionId = event.sessionId;
-				}
-
-				if (event.type === 'result' && event.text) {
-					result = result ? `${result}\n${event.text}` : event.text;
-				}
-
-				if (event.type === 'error' && event.text && !errorText) {
-					errorText = event.text;
-				}
-
-				const usage = parser.extractUsage(event);
-				if (usage) {
-					usageStats = mergeUsageStats(usageStats, {
-						inputTokens: usage.inputTokens || 0,
-						outputTokens: usage.outputTokens || 0,
-						cacheReadTokens: usage.cacheReadTokens || 0,
-						cacheCreationTokens: usage.cacheCreationTokens || 0,
-						costUsd: usage.costUsd || 0,
-						contextWindow: usage.contextWindow || 0,
-						reasoningTokens: usage.reasoningTokens || 0,
-					});
-				}
+				processLine(line);
 			}
 		});
 
@@ -434,24 +587,57 @@ async function spawnJsonLineAgent(
 			stderr += data.toString();
 		});
 
+		if (toolType === 'codex') {
+			child.stdin?.write(prompt);
+		}
 		child.stdin?.end();
+
+		if (timeoutMs && timeoutMs > 0) {
+			timeoutHandle = setTimeout(() => {
+				timedOut = true;
+				child.kill('SIGTERM');
+				forceKillTimer = setTimeout(() => {
+					if (!settled) {
+						child.kill('SIGKILL');
+					}
+				}, 2000);
+			}, timeoutMs);
+		}
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code) => {
-			if (code === 0 && !errorText) {
-				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
-			} else {
-				resolve({
+			flushJsonBuffer();
+			if (timedOut && timeoutMs) {
+				finalize({
 					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
+					error: `Timed out after ${timeoutMs}ms`,
 					agentSessionId: sessionId,
 					usageStats,
+					timedOut: true,
+				});
+			} else if (code === 0 && !errorText) {
+				finalize({
+					success: true,
+					response: result,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			} else {
+				finalize({
+					success: false,
+					error:
+						timedOut && timeoutMs
+							? `Timed out after ${timeoutMs}ms`
+							: errorText || stderr || `Process exited with code ${code}`,
+					agentSessionId: sessionId,
+					usageStats,
+					timedOut,
 				});
 			}
 		});
 
 		child.on('error', (error) => {
-			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
+			finalize({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});
 }
@@ -463,14 +649,19 @@ export async function spawnAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	options: SpawnAgentOptions = {}
 ): Promise<AgentResult> {
 	if (toolType === 'claude-code') {
-		return spawnClaudeAgent(cwd, prompt, agentSessionId);
+		return spawnClaudeAgent(cwd, prompt, agentSessionId, options);
 	}
 
-	if (hasCapability(toolType, 'usesJsonLineOutput')) {
-		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId);
+	if (
+		hasCapability(toolType, 'usesJsonLineOutput') ||
+		toolType === 'openclaw' ||
+		toolType === 'zai'
+	) {
+		return spawnJsonLineAgent(toolType, cwd, prompt, agentSessionId, options);
 	}
 
 	return {

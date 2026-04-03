@@ -132,11 +132,23 @@ describe('Auto Run session and task recording', () => {
 				tasksTotal: 5,
 				tasksCompleted: 0,
 				projectPath: '/project',
+				playbookId: 'pb-1',
+				playbookName: 'Regression Sweep',
+				promptProfile: 'compact-code',
+				agentStrategy: 'plan-execute-verify',
+				worktreeMode: 'create-new',
+				schedulerMode: 'dag',
+				maxParallelism: 2,
 			});
 
 			expect(sessionId).toBeDefined();
 			expect(typeof sessionId).toBe('string');
 			expect(mockStatement.run).toHaveBeenCalled();
+			const runCall = mockStatement.run.mock.calls[mockStatement.run.mock.calls.length - 1];
+			expect(runCall[9]).toBe('pb-1');
+			expect(runCall[10]).toBe('Regression Sweep');
+			expect(runCall[11]).toBe('compact-code');
+			expect(runCall[12]).toBe('plan-execute-verify');
 		});
 
 		it('should update Auto Run session on completion', async () => {
@@ -167,6 +179,12 @@ describe('Auto Run session and task recording', () => {
 					tasks_total: 5,
 					tasks_completed: 5,
 					project_path: '/project',
+					playbook_name: 'Regression Sweep',
+					prompt_profile: 'compact-code',
+					agent_strategy: 'plan-execute-verify',
+					worktree_mode: 'create-new',
+					scheduler_mode: 'dag',
+					max_parallelism: 3,
 				},
 			]);
 
@@ -179,6 +197,8 @@ describe('Auto Run session and task recording', () => {
 			expect(sessions).toHaveLength(1);
 			expect(sessions[0].sessionId).toBe('session-1');
 			expect(sessions[0].tasksTotal).toBe(5);
+			expect(sessions[0].playbookName).toBe('Regression Sweep');
+			expect(sessions[0].schedulerMode).toBe('dag');
 		});
 	});
 
@@ -197,6 +217,15 @@ describe('Auto Run session and task recording', () => {
 				startTime: Date.now(),
 				duration: 10000,
 				success: true,
+				documentPath: '/docs/TASK-1.md',
+				verifierVerdict: 'WARN',
+				promptProfile: 'compact-code',
+				agentStrategy: 'plan-execute-verify',
+				worktreeMode: 'create-new',
+				schedulerOutcome: 'completed',
+				queueWaitMs: 0,
+				retryCount: 0,
+				timedOut: false,
 			});
 
 			expect(taskId).toBeDefined();
@@ -204,6 +233,8 @@ describe('Auto Run session and task recording', () => {
 			// Verify success was converted to 1 for SQLite
 			const runCall = mockStatement.run.mock.calls[mockStatement.run.mock.calls.length - 1];
 			expect(runCall[8]).toBe(1); // success parameter (last one)
+			expect(runCall[9]).toBe('/docs/TASK-1.md');
+			expect(runCall[10]).toBe('WARN');
 		});
 
 		it('should insert Auto Run task with success=false', async () => {

@@ -229,6 +229,20 @@ describe('Sessions Preload API', () => {
 				);
 				expect(result).toBe('/path/to/session.json');
 			});
+
+			it('should pass sshRemoteId to agentSessions:getPath', async () => {
+				mockInvoke.mockResolvedValue('/remote/path/to/session.json');
+
+				await api.getPath('openclaw', '/remote/project', 'main:session-123', 'ssh-remote-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'agentSessions:getPath',
+					'openclaw',
+					'/remote/project',
+					'main:session-123',
+					'ssh-remote-1'
+				);
+			});
 		});
 
 		describe('deleteMessagePair', () => {
@@ -243,7 +257,31 @@ describe('Sessions Preload API', () => {
 					'/project',
 					'session-123',
 					'uuid-456',
+					undefined,
 					undefined
+				);
+			});
+
+			it('should pass sshRemoteId to agentSessions:deleteMessagePair', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.deleteMessagePair(
+					'openclaw',
+					'/remote/project',
+					'main:session-123',
+					'uuid-456',
+					undefined,
+					'ssh-remote-1'
+				);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'agentSessions:deleteMessagePair',
+					'openclaw',
+					'/remote/project',
+					'main:session-123',
+					'uuid-456',
+					undefined,
+					'ssh-remote-1'
 				);
 			});
 		});
@@ -353,13 +391,20 @@ describe('Sessions Preload API', () => {
 		});
 
 		describe('registerSessionOrigin', () => {
-			it('should invoke claude:registerSessionOrigin', async () => {
+			it('should invoke agentSessions:registerSessionOrigin', async () => {
 				mockInvoke.mockResolvedValue(true);
 
-				await api.registerSessionOrigin('/project', 'agent-session-123', 'user', 'My Session');
+				await api.registerSessionOrigin(
+					'openclaw',
+					'/project',
+					'agent-session-123',
+					'user',
+					'My Session'
+				);
 
 				expect(mockInvoke).toHaveBeenCalledWith(
-					'claude:registerSessionOrigin',
+					'agentSessions:registerSessionOrigin',
+					'openclaw',
 					'/project',
 					'agent-session-123',
 					'user',

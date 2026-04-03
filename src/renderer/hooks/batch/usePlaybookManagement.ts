@@ -25,7 +25,12 @@ import { generateId } from '../../utils/ids';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
 import type { Playbook, BatchDocumentEntry } from '../../types';
-import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import {
+	getPlaybookPromptForExecution,
+	inferPlaybookPromptProfile,
+	normalizePlaybookPromptForStorage,
+} from './batchUtils';
+import { normalizePlaybookSkills, resolvePlaybookTaskGraph } from '../../../shared/playbookDag';
 
 /**
  * Configuration passed to the hook for modification detection
@@ -35,7 +40,34 @@ export interface PlaybookConfigState {
 	documents: BatchDocumentEntry[];
 	loopEnabled: boolean;
 	maxLoops: number | null;
+	taskTimeoutMs: number | null;
+	agentStrategy: 'single' | 'plan-execute-verify';
+	definitionOfDone: string[];
+	verificationSteps: string[];
 	prompt: string;
+}
+
+function toStoredDocuments(documents: BatchDocumentEntry[]) {
+	return documents.map((d) => ({
+		filename: d.filename,
+		resetOnCompletion: d.resetOnCompletion,
+	}));
+}
+
+function documentsMatchLoadedPlaybook(
+	documents: BatchDocumentEntry[],
+	loadedPlaybook: Playbook | null
+): boolean {
+	if (!loadedPlaybook) return false;
+	const storedDocuments = toStoredDocuments(documents);
+	if (storedDocuments.length !== loadedPlaybook.documents.length) {
+		return false;
+	}
+	return storedDocuments.every(
+		(doc, index) =>
+			doc.filename === loadedPlaybook.documents[index]?.filename &&
+			doc.resetOnCompletion === loadedPlaybook.documents[index]?.resetOnCompletion
+	);
 }
 
 /**
@@ -134,7 +166,16 @@ export function usePlaybookManagement(
 	const isPlaybookModified = useMemo(() => {
 		if (!loadedPlaybook) return false;
 
-		const { documents, loopEnabled, maxLoops, prompt } = config;
+		const {
+			documents,
+			loopEnabled,
+			maxLoops,
+			taskTimeoutMs,
+			agentStrategy,
+			definitionOfDone,
+			verificationSteps,
+			prompt,
+		} = config;
 
 		// Compare documents
 		const currentDocs = documents.map((d) => ({
@@ -160,8 +201,36 @@ export function usePlaybookManagement(
 		const savedMaxLoops = loadedPlaybook.maxLoops ?? null;
 		if (maxLoops !== savedMaxLoops) return true;
 
+		// Compare task timeout setting
+		const savedTaskTimeoutMs = loadedPlaybook.taskTimeoutMs ?? null;
+		if (taskTimeoutMs !== savedTaskTimeoutMs) return true;
+
+		// Compare agent strategy
+		const savedAgentStrategy = loadedPlaybook.agentStrategy ?? 'single';
+		if (agentStrategy !== savedAgentStrategy) return true;
+
+		const savedDefinitionOfDone = loadedPlaybook.definitionOfDone ?? [];
+		if (definitionOfDone.length !== savedDefinitionOfDone.length) return true;
+		for (let i = 0; i < definitionOfDone.length; i++) {
+			if (definitionOfDone[i] !== savedDefinitionOfDone[i]) {
+				return true;
+			}
+		}
+
+		const savedVerificationSteps = loadedPlaybook.verificationSteps ?? [];
+		if (verificationSteps.length !== savedVerificationSteps.length) return true;
+		for (let i = 0; i < verificationSteps.length; i++) {
+			if (verificationSteps[i] !== savedVerificationSteps[i]) {
+				return true;
+			}
+		}
+
 		// Compare prompt
-		if (prompt !== loadedPlaybook.prompt) return true;
+		const savedPrompt = getPlaybookPromptForExecution(
+			loadedPlaybook.prompt,
+			loadedPlaybook.promptProfile
+		);
+		if (prompt !== savedPrompt) return true;
 
 		return false;
 	}, [config, loadedPlaybook]);
@@ -186,12 +255,19 @@ export function usePlaybookManagement(
 			// Apply configuration through callback
 			// Note: Worktree settings are no longer managed here - see WorktreeConfigModal
 			// Fall back to default prompt if playbook has no/empty agent prompt
-			const effectivePrompt = playbook.prompt?.trim() ? playbook.prompt : DEFAULT_BATCH_PROMPT;
+			const effectivePrompt = getPlaybookPromptForExecution(
+				playbook.prompt,
+				playbook.promptProfile
+			);
 
 			onApplyPlaybook({
 				documents: entries,
 				loopEnabled: playbook.loopEnabled,
 				maxLoops: playbook.maxLoops ?? null,
+				taskTimeoutMs: playbook.taskTimeoutMs ?? null,
+				agentStrategy: playbook.agentStrategy ?? 'single',
+				definitionOfDone: playbook.definitionOfDone ?? [],
+				verificationSteps: playbook.verificationSteps ?? [],
 				prompt: effectivePrompt,
 			});
 
@@ -254,11 +330,12 @@ export function usePlaybookManagement(
 	const handleImportPlaybook = useCallback(async () => {
 		try {
 			const result = await window.maestro.playbooks.import(sessionId, folderPath);
-			if (result.success && result.playbook) {
+			const importedPlaybook = result.success ? result.playbook : undefined;
+			if (importedPlaybook) {
 				// Add to local playbooks list
-				setPlaybooks((prev) => [...prev, result.playbook]);
+				setPlaybooks((prev) => [...prev, importedPlaybook]);
 				// Load the imported playbook
-				handleLoadPlaybook(result.playbook);
+				handleLoadPlaybook(importedPlaybook);
 			} else if (result.error && result.error !== 'Import cancelled') {
 				console.error('Failed to import playbook:', result.error);
 			}
@@ -274,26 +351,50 @@ export function usePlaybookManagement(
 
 			setSavingPlaybook(true);
 			try {
-				const { documents, loopEnabled, maxLoops, prompt } = config;
+				const {
+					documents,
+					loopEnabled,
+					maxLoops,
+					taskTimeoutMs,
+					agentStrategy,
+					definitionOfDone,
+					verificationSteps,
+					prompt,
+				} = config;
 
 				// Build playbook data
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
+				const storedDocuments = toStoredDocuments(documents);
+				const promptProfile = loadedPlaybook?.promptProfile ?? inferPlaybookPromptProfile(prompt);
 				const playbookData: Parameters<typeof window.maestro.playbooks.create>[1] = {
 					name,
-					documents: documents.map((d) => ({
-						filename: d.filename,
-						resetOnCompletion: d.resetOnCompletion,
-					})),
+					documents: storedDocuments,
 					loopEnabled,
 					maxLoops,
-					prompt,
+					taskTimeoutMs,
+					maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
+					taskGraph: resolvePlaybookTaskGraph(
+						storedDocuments,
+						documentsMatchLoadedPlaybook(documents, loadedPlaybook)
+							? loadedPlaybook?.taskGraph
+							: null
+					),
+					prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
+					skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
+					definitionOfDone,
+					verificationSteps,
+					promptProfile,
+					documentContextMode: loadedPlaybook?.documentContextMode ?? 'active-task-only',
+					skillPromptMode: loadedPlaybook?.skillPromptMode ?? 'brief',
+					agentStrategy,
 				};
 
 				const result = await window.maestro.playbooks.create(sessionId, playbookData);
+				const createdPlaybook = result.success ? result.playbook : undefined;
 
-				if (result.success) {
-					setPlaybooks((prev) => [...prev, result.playbook]);
-					setLoadedPlaybook(result.playbook);
+				if (createdPlaybook) {
+					setPlaybooks((prev) => [...prev, createdPlaybook]);
+					setLoadedPlaybook(createdPlaybook);
 					setShowSavePlaybookModal(false);
 				}
 			} catch (error) {
@@ -310,18 +411,39 @@ export function usePlaybookManagement(
 
 		setSavingPlaybook(true);
 		try {
-			const { documents, loopEnabled, maxLoops, prompt } = config;
+			const {
+				documents,
+				loopEnabled,
+				maxLoops,
+				taskTimeoutMs,
+				agentStrategy,
+				definitionOfDone,
+				verificationSteps,
+				prompt,
+			} = config;
 
 			// Build update data
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
+			const storedDocuments = toStoredDocuments(documents);
+			const promptProfile = loadedPlaybook.promptProfile ?? inferPlaybookPromptProfile(prompt);
 			const updateData: Parameters<typeof window.maestro.playbooks.update>[2] = {
-				documents: documents.map((d) => ({
-					filename: d.filename,
-					resetOnCompletion: d.resetOnCompletion,
-				})),
+				documents: storedDocuments,
 				loopEnabled,
 				maxLoops,
-				prompt,
+				taskTimeoutMs,
+				maxParallelism: loadedPlaybook.maxParallelism ?? 1,
+				taskGraph: resolvePlaybookTaskGraph(
+					storedDocuments,
+					documentsMatchLoadedPlaybook(documents, loadedPlaybook) ? loadedPlaybook.taskGraph : null
+				),
+				prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
+				skills: normalizePlaybookSkills(loadedPlaybook.skills ?? []),
+				definitionOfDone,
+				verificationSteps,
+				promptProfile,
+				documentContextMode: loadedPlaybook.documentContextMode ?? 'active-task-only',
+				skillPromptMode: loadedPlaybook.skillPromptMode ?? 'brief',
+				agentStrategy,
 				updatedAt: Date.now(),
 			};
 
@@ -330,11 +452,12 @@ export function usePlaybookManagement(
 				loadedPlaybook.id,
 				updateData
 			);
+			const updatedPlaybook = result.success ? result.playbook : undefined;
 
-			if (result.success) {
-				setLoadedPlaybook(result.playbook);
+			if (updatedPlaybook) {
+				setLoadedPlaybook(updatedPlaybook);
 				setPlaybooks((prev) =>
-					prev.map((p) => (p.id === result.playbook.id ? result.playbook : p))
+					prev.map((p) => (p.id === updatedPlaybook.id ? updatedPlaybook : p))
 				);
 			}
 		} catch (error) {

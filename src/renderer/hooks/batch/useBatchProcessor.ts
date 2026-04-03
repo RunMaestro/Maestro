@@ -8,6 +8,7 @@ import type {
 	Group,
 	AutoRunStats,
 	AgentError,
+	ToolType,
 } from '../../types';
 import {
 	getBadgeForTime,
@@ -15,6 +16,7 @@ import {
 	formatTimeRemaining,
 } from '../../constants/conductorBadges';
 import { formatElapsedTime } from '../../../shared/formatters';
+import type { AutoRunSchedulerMode, AutoRunWorktreeMode } from '../../../shared/types';
 import { gitService } from '../../services/git';
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
@@ -66,7 +68,34 @@ interface UseBatchProcessorProps {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			resumeAgentSessionId?: string;
+		}
+	) => Promise<{
+		success: boolean;
+		response?: string;
+		agentSessionId?: string;
+		usageStats?: UsageStats;
+	}>;
+	onSpawnBackgroundSynopsis?: (
+		sessionId: string,
+		cwd: string,
+		resumeAgentSessionId: string,
+		prompt: string,
+		toolType?: ToolType,
+		sessionConfig?: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customContextWindow?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+		}
 	) => Promise<{
 		success: boolean;
 		response?: string;
@@ -198,6 +227,40 @@ function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryEntry, '
 	};
 }
 
+function resolveWorktreeMode(
+	worktreeTarget: BatchRunConfig['worktreeTarget'],
+	worktreeActive: boolean
+): AutoRunWorktreeMode {
+	if (worktreeTarget?.mode) {
+		return worktreeTarget.mode;
+	}
+
+	return worktreeActive ? 'managed' : 'disabled';
+}
+
+function resolveSchedulerMode(config: BatchRunConfig): AutoRunSchedulerMode {
+	if ((config.maxParallelism ?? 1) > 1) {
+		return 'dag';
+	}
+
+	const nodes = config.taskGraph?.nodes ?? [];
+	for (const [index, node] of nodes.entries()) {
+		const previousNode = index > 0 ? nodes[index - 1] : undefined;
+		const expectedDependsOn = previousNode ? [previousNode.id] : [];
+		const actualDependsOn = Array.isArray(node.dependsOn) ? node.dependsOn : [];
+		if (
+			actualDependsOn.length !== expectedDependsOn.length ||
+			actualDependsOn.some(
+				(dependency, dependencyIndex) => dependency !== expectedDependsOn[dependencyIndex]
+			)
+		) {
+			return 'dag';
+		}
+	}
+
+	return 'sequential';
+}
+
 // Re-export utility functions for backwards compatibility
 // (countUnfinishedTasks and uncheckAllTasks are imported from ./batch/batchUtils)
 export { countUnfinishedTasks, uncheckAllTasks };
@@ -216,6 +279,7 @@ export function useBatchProcessor({
 	groups,
 	onUpdateSession,
 	onSpawnAgent,
+	onSpawnBackgroundSynopsis,
 	onAddHistoryEntry,
 	onComplete,
 	onPRResult,
@@ -644,7 +708,22 @@ export function useBatchProcessor({
 				return;
 			}
 
-			const { documents, prompt, loopEnabled, maxLoops, worktree } = config;
+			const {
+				documents,
+				prompt,
+				loopEnabled,
+				maxLoops,
+				playbookId,
+				playbookName,
+				worktree,
+				skills,
+				promptProfile,
+				documentContextMode,
+				skillPromptMode,
+				agentStrategy,
+				definitionOfDone,
+				verificationSteps,
+			} = config;
 
 			if (documents.length === 0) {
 				window.maestro.logger.log(
@@ -703,6 +782,9 @@ export function useBatchProcessor({
 				worktreePath = worktreeResult.worktreePath;
 				worktreeBranch = worktreeResult.worktreeBranch;
 			}
+
+			const worktreeMode = resolveWorktreeMode(config.worktreeTarget, worktreeActive);
+			const schedulerMode = resolveSchedulerMode(config);
 
 			// Get git branch for template variable substitution
 			let gitBranch: string | undefined;
@@ -851,7 +933,14 @@ export function useBatchProcessor({
 					documentPath: documents.map((d) => d.filename).join(', '),
 					startTime: batchStartTime,
 					tasksTotal: initialTotalTasks,
-					projectPath: session.cwd,
+					projectPath: effectiveCwd,
+					playbookId,
+					playbookName,
+					promptProfile,
+					agentStrategy,
+					worktreeMode,
+					schedulerMode,
+					maxParallelism: config.maxParallelism ?? undefined,
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
@@ -861,6 +950,7 @@ export function useBatchProcessor({
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
+			let totalTaskAttempts = 0;
 			let loopIteration = 0;
 
 			// Per-loop tracking for loop summary
@@ -1068,6 +1158,13 @@ export function useBatchProcessor({
 									loopIteration: loopIteration + 1, // 1-indexed
 									effectiveCwd,
 									customPrompt: prompt,
+									skills,
+									promptProfile,
+									documentContextMode,
+									skillPromptMode,
+									agentStrategy,
+									definitionOfDone,
+									verificationSteps,
 									sshRemoteId,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
@@ -1076,6 +1173,7 @@ export function useBatchProcessor({
 								docContent,
 								{
 									onSpawnAgent,
+									onSpawnBackgroundSynopsis,
 								}
 							);
 
@@ -1100,6 +1198,7 @@ export function useBatchProcessor({
 								agentSessionId,
 								success,
 							} = taskResult;
+							const countedCompletedTasks = success ? tasksCompletedThisRun : 0;
 
 							// Detect stalling: if document content is unchanged and no tasks were checked off
 							if (!documentChanged && tasksCompletedThisRun === 0) {
@@ -1110,22 +1209,32 @@ export function useBatchProcessor({
 							}
 
 							// Update counters
-							docTasksCompleted += tasksCompletedThisRun;
-							totalCompletedTasks += tasksCompletedThisRun;
-							loopTasksCompleted += tasksCompletedThisRun;
+							docTasksCompleted += countedCompletedTasks;
+							totalCompletedTasks += countedCompletedTasks;
+							loopTasksCompleted += countedCompletedTasks;
 
-							// Record this task in stats database (if stats tracking is active)
-							if (statsAutoRunId && tasksCompletedThisRun > 0) {
+							// Record this task attempt in stats database (if stats tracking is active)
+							totalTaskAttempts++;
+							if (statsAutoRunId) {
 								try {
 									await window.maestro.stats.recordAutoTask({
 										autoRunSessionId: statsAutoRunId,
 										sessionId: sessionId,
 										agentType: session.toolType,
-										taskIndex: totalCompletedTasks - 1, // 0-indexed
+										taskIndex: totalTaskAttempts - 1,
 										taskContent: shortSummary || undefined,
+										documentPath: `${folderPath}/${docEntry.filename}.md`,
 										startTime: Date.now() - elapsedTimeMs,
 										duration: elapsedTimeMs,
 										success: success,
+										verifierVerdict: taskResult.verifierVerdict ?? undefined,
+										promptProfile,
+										agentStrategy,
+										worktreeMode,
+										schedulerOutcome: success ? 'completed' : 'failed',
+										queueWaitMs: 0,
+										retryCount: 0,
+										timedOut: false,
 									});
 								} catch (statsError) {
 									// Don't fail the batch if stats tracking fails
@@ -1226,7 +1335,17 @@ export function useBatchProcessor({
 								sessionId: sessionId,
 								success,
 								usageStats,
+								contextDisplayUsageStats: taskResult.contextDisplayUsageStats,
+								usageBreakdown: taskResult.usageBreakdown,
 								elapsedTimeMs,
+								verifierVerdict: taskResult.verifierVerdict ?? undefined,
+								playbookId,
+								playbookName,
+								promptProfile,
+								agentStrategy,
+								worktreeMode,
+								schedulerMode,
+								schedulerOutcome: success ? 'completed' : 'failed',
 							});
 
 							// Speak the synopsis via TTS if audio feedback is enabled

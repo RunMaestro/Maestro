@@ -33,6 +33,13 @@ export interface AutoRunSession {
 	startTime: number;
 	tasksTotal?: number;
 	projectPath?: string;
+	playbookId?: string;
+	playbookName?: string;
+	promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+	agentStrategy?: 'single' | 'plan-execute-verify';
+	worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+	schedulerMode?: 'sequential' | 'dag';
+	maxParallelism?: number;
 }
 
 /**
@@ -47,6 +54,15 @@ export interface AutoRunTask {
 	startTime: number;
 	duration: number;
 	success: boolean;
+	documentPath?: string;
+	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+	promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+	agentStrategy?: 'single' | 'plan-execute-verify';
+	worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+	schedulerOutcome?: 'completed' | 'failed' | 'timed_out';
+	queueWaitMs?: number;
+	retryCount?: number;
+	timedOut?: boolean;
 }
 
 /**
@@ -129,6 +145,13 @@ export function createStatsApi() {
 				tasksTotal?: number;
 				tasksCompleted?: number;
 				projectPath?: string;
+				playbookId?: string;
+				playbookName?: string;
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				agentStrategy?: 'single' | 'plan-execute-verify';
+				worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+				schedulerMode?: 'sequential' | 'dag';
+				maxParallelism?: number;
 			}>
 		> => ipcRenderer.invoke('stats:get-autorun-sessions', range),
 
@@ -146,6 +169,15 @@ export function createStatsApi() {
 				startTime: number;
 				duration: number;
 				success: boolean;
+				documentPath?: string;
+				verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				agentStrategy?: 'single' | 'plan-execute-verify';
+				worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+				schedulerOutcome?: 'completed' | 'failed' | 'timed_out';
+				queueWaitMs?: number;
+				retryCount?: number;
+				timedOut?: boolean;
 			}>
 		> => ipcRenderer.invoke('stats:get-autorun-tasks', autoRunSessionId),
 

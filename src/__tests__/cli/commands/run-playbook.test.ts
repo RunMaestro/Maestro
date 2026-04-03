@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import type { Playbook, SessionInfo } from '../../../shared/types';
+import { DEFAULT_AUTORUN_SKILLS } from '../../../shared/playbookDag';
 
 // Mock fs and path first
 vi.mock('fs', () => ({
@@ -180,12 +181,25 @@ describe('run-playbook command', () => {
 
 			expect(findPlaybookById).toHaveBeenCalledWith('pb-123');
 			expect(getSessionById).toHaveBeenCalledWith('agent-1');
-			expect(executePlaybook).toHaveBeenCalledWith(agent, playbook, '/path/to/playbooks', {
-				dryRun: undefined,
-				writeHistory: true,
-				debug: undefined,
-				verbose: undefined,
-			});
+			expect(executePlaybook).toHaveBeenCalledWith(
+				agent,
+				expect.objectContaining({
+					id: playbook.id,
+					name: playbook.name,
+					maxParallelism: 1,
+					skills: DEFAULT_AUTORUN_SKILLS,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+				}),
+				'/path/to/playbooks',
+				{
+					dryRun: undefined,
+					writeHistory: true,
+					debug: undefined,
+					verbose: undefined,
+				}
+			);
 			expect(formatInfo).toHaveBeenCalledWith('Running playbook: Test Playbook');
 			expect(formatInfo).toHaveBeenCalledWith('Agent: Test Agent');
 			expect(formatRunEvent).toHaveBeenCalled();
@@ -234,12 +248,23 @@ describe('run-playbook command', () => {
 
 			await runPlaybook('pb-123', { dryRun: true });
 
-			expect(executePlaybook).toHaveBeenCalledWith(agent, playbook, '/path/to/playbooks', {
-				dryRun: true,
-				writeHistory: true,
-				debug: undefined,
-				verbose: undefined,
-			});
+			expect(executePlaybook).toHaveBeenCalledWith(
+				agent,
+				expect.objectContaining({
+					id: playbook.id,
+					maxParallelism: 1,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+				}),
+				'/path/to/playbooks',
+				{
+					dryRun: true,
+					writeHistory: true,
+					debug: undefined,
+					verbose: undefined,
+				}
+			);
 			expect(formatInfo).toHaveBeenCalledWith('Dry run mode - no changes will be made');
 		});
 
@@ -255,7 +280,12 @@ describe('run-playbook command', () => {
 
 			expect(executePlaybook).toHaveBeenCalledWith(
 				agent,
-				playbook,
+				expect.objectContaining({
+					id: playbook.id,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+				}),
 				'/path/to/playbooks',
 				expect.objectContaining({
 					writeHistory: false,
@@ -275,7 +305,12 @@ describe('run-playbook command', () => {
 
 			expect(executePlaybook).toHaveBeenCalledWith(
 				agent,
-				playbook,
+				expect.objectContaining({
+					id: playbook.id,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+				}),
 				'/path/to/playbooks',
 				expect.objectContaining({
 					debug: true,
@@ -295,7 +330,12 @@ describe('run-playbook command', () => {
 
 			expect(executePlaybook).toHaveBeenCalledWith(
 				agent,
-				playbook,
+				expect.objectContaining({
+					id: playbook.id,
+					taskGraph: {
+						nodes: [{ id: 'doc1', documentIndex: 0, dependsOn: [] }],
+					},
+				}),
 				'/path/to/playbooks',
 				expect.objectContaining({
 					verbose: true,
@@ -606,6 +646,61 @@ describe('run-playbook command', () => {
 			expect(emitError).toHaveBeenCalledWith(
 				'Agent does not have an Auto Run folder configured',
 				'NO_AUTORUN_FOLDER'
+			);
+		});
+	});
+
+	describe('DAG validation', () => {
+		it('should report invalid DAGs through the human-readable error path before execution', async () => {
+			const playbook = mockPlaybook({
+				documents: [
+					{ filename: 'phase-1.md', resetOnCompletion: false },
+					{ filename: 'phase-2.md', resetOnCompletion: false },
+				],
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-1', documentIndex: 0, dependsOn: ['phase-2'] },
+						{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+					],
+				},
+			});
+			const agent = mockSession();
+
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+			vi.mocked(getSessionById).mockReturnValue(agent);
+
+			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
+
+			expect(executePlaybook).not.toHaveBeenCalled();
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('Playbook DAG validation failed:')
+			);
+		});
+
+		it('should report invalid DAGs through the JSON error path before execution', async () => {
+			const playbook = mockPlaybook({
+				documents: [
+					{ filename: 'phase-1.md', resetOnCompletion: false },
+					{ filename: 'phase-2.md', resetOnCompletion: false },
+				],
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-1', documentIndex: 0, dependsOn: ['phase-2'] },
+						{ id: 'phase-2', documentIndex: 1, dependsOn: [] },
+					],
+				},
+			});
+			const agent = mockSession();
+
+			vi.mocked(findPlaybookById).mockReturnValue({ playbook, agentId: 'agent-1' });
+			vi.mocked(getSessionById).mockReturnValue(agent);
+
+			await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow('process.exit(1)');
+
+			expect(executePlaybook).not.toHaveBeenCalled();
+			expect(emitError).toHaveBeenCalledWith(
+				expect.stringContaining('Playbook DAG validation failed:'),
+				'PLAYBOOK_DAG_INVALID'
 			);
 		});
 	});

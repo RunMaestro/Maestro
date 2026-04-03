@@ -60,6 +60,12 @@ export function getMigrations(): Migration[] {
 			description: 'Add compound indexes on query_events for dashboard query performance',
 			up: (db) => migrateV4(db),
 		},
+		{
+			version: 5,
+			description:
+				'Add Auto Run analytics metadata columns for dashboard filtering and history context',
+			up: (db) => migrateV5(db),
+		},
 	];
 }
 
@@ -217,6 +223,45 @@ function migrateV1(db: Database.Database): void {
 	runStatements(db, CREATE_AUTO_RUN_TASKS_INDEXES_SQL);
 
 	logger.debug('Created stats database tables and indexes', LOG_CONTEXT);
+}
+
+function addColumnIfMissing(
+	db: Database.Database,
+	tableName: string,
+	columnName: string,
+	columnSql: string
+): void {
+	const existingColumns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+		name: string;
+	}>;
+
+	if (existingColumns.some((column) => column.name === columnName)) {
+		return;
+	}
+
+	db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnSql}`).run();
+}
+
+function migrateV5(db: Database.Database): void {
+	addColumnIfMissing(db, 'auto_run_sessions', 'playbook_id', 'playbook_id TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'playbook_name', 'playbook_name TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'prompt_profile', 'prompt_profile TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'agent_strategy', 'agent_strategy TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'worktree_mode', 'worktree_mode TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'scheduler_mode', 'scheduler_mode TEXT');
+	addColumnIfMissing(db, 'auto_run_sessions', 'max_parallelism', 'max_parallelism INTEGER');
+
+	addColumnIfMissing(db, 'auto_run_tasks', 'document_path', 'document_path TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'verifier_verdict', 'verifier_verdict TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'prompt_profile', 'prompt_profile TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'agent_strategy', 'agent_strategy TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'worktree_mode', 'worktree_mode TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'scheduler_outcome', 'scheduler_outcome TEXT');
+	addColumnIfMissing(db, 'auto_run_tasks', 'queue_wait_ms', 'queue_wait_ms INTEGER');
+	addColumnIfMissing(db, 'auto_run_tasks', 'retry_count', 'retry_count INTEGER');
+	addColumnIfMissing(db, 'auto_run_tasks', 'timed_out', 'timed_out INTEGER');
+
+	logger.debug('Added Auto Run analytics metadata columns', LOG_CONTEXT);
 }
 
 /**

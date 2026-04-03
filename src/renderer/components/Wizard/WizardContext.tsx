@@ -584,8 +584,12 @@ export function WizardProvider({ children }: WizardProviderProps) {
 	const canProceedToNext = useCallback((): boolean => {
 		switch (state.currentStep) {
 			case 'agent-selection':
-				// Must have selected an agent and provided a name
-				return state.selectedAgent !== null && state.agentName.trim() !== '';
+				// Must have selected an available agent and provided a name
+				return (
+					state.selectedAgent !== null &&
+					state.agentName.trim() !== '' &&
+					state.availableAgents.some((agent) => agent.id === state.selectedAgent && agent.available)
+				);
 
 			case 'directory-selection':
 				// Must have a valid directory path

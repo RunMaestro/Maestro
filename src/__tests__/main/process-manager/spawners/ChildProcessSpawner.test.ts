@@ -60,12 +60,31 @@ vi.mock('../../../../main/parsers', () => ({
 		isResultMessage: vi.fn(),
 		detectErrorFromLine: vi.fn(),
 	})),
+	OpenClawOutputParser: vi.fn(() => ({
+		agentId: 'openclaw',
+		parseJsonLine: vi.fn(),
+		extractUsage: vi.fn(),
+		extractSessionId: vi.fn(),
+		extractSlashCommands: vi.fn(),
+		isResultMessage: vi.fn(),
+		detectErrorFromLine: vi.fn(),
+	})),
 }));
 
 vi.mock('../../../../main/agents', () => ({
 	getAgentCapabilities: vi.fn(() => ({
 		supportsStreamJsonInput: true,
+		supportsStreaming: true,
 	})),
+	getAgentDefinition: vi.fn((agentId: string) => {
+		if (agentId === 'openclaw') {
+			return { resumeArgTokens: ['--session-id'] };
+		}
+		if (agentId === 'codex') {
+			return { resumeArgTokens: ['resume'] };
+		}
+		return { resumeArgTokens: ['--resume', '--session'] };
+	}),
 }));
 
 vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
@@ -99,6 +118,7 @@ import {
 	saveImageToTempFile,
 	buildImagePromptPrefix,
 } from '../../../../main/process-manager/utils/imageUtils';
+import { buildChildProcessEnv } from '../../../../main/process-manager/utils/envBuilder';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -163,6 +183,27 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.isStreamJsonMode).toBe(true);
+		});
+
+		it('should keep OpenClaw buffered when args contain "--json"', () => {
+			const { processes, spawner } = createTestContext();
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				supportsStreaming: false,
+			} as any);
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'openclaw',
+					command: 'openclaw',
+					args: ['agent', '--json'],
+					prompt: 'hello',
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.isStreamJsonMode).toBe(false);
+			expect(proc?.isBatchMode).toBe(true);
 		});
 
 		it('should enable stream-json mode when args contain "--format" and "json"', () => {
@@ -280,6 +321,46 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.isBatchMode).toBe(false);
+		});
+
+		it('keeps OpenClaw SSH launches in batch mode so exit parsing still buffers the final JSON', () => {
+			const { processes, spawner } = createTestContext();
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				supportsStreaming: false,
+			} as any);
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'openclaw',
+					command: 'ssh',
+					args: ['dev@host', '/bin/bash'],
+					prompt: undefined,
+					sshStdinScript:
+						"exec openclaw agent --json --agent 'main' --session-id 'abc-123'\nhello from ssh",
+				})
+			);
+
+			const proc = processes.get('test-session');
+			expect(proc?.isBatchMode).toBe(true);
+			expect(proc?.isStreamJsonMode).toBe(false);
+		});
+	});
+
+	describe('resume environment detection', () => {
+		it('treats OpenClaw --session-id as a resumed session for env construction', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'openclaw',
+					command: 'openclaw',
+					args: ['agent', '--json', '--agent', 'main', '--session-id', 'abc-123'],
+					prompt: 'continue',
+				})
+			);
+
+			expect(buildChildProcessEnv).toHaveBeenCalledWith(undefined, true, undefined);
 		});
 	});
 

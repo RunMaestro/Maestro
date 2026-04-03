@@ -29,6 +29,84 @@ import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
 
+const getVerifierPill = (
+	verifierVerdict: HistoryEntry['verifierVerdict'],
+	theme: Theme
+): { label: string; title: string; bg: string; text: string; border: string } | null => {
+	switch (verifierVerdict) {
+		case 'WARN':
+			return {
+				label: 'VERIFY WARN',
+				title: 'Verification completed with warnings',
+				bg: theme.colors.warning + '20',
+				text: theme.colors.warning,
+				border: theme.colors.warning + '40',
+			};
+		case 'FAIL':
+			return {
+				label: 'VERIFY FAIL',
+				title: 'Verification failed',
+				bg: theme.colors.error + '20',
+				text: theme.colors.error,
+				border: theme.colors.error + '40',
+			};
+		default:
+			return null;
+	}
+};
+
+function formatPromptProfile(promptProfile: HistoryEntry['promptProfile']): string | null {
+	switch (promptProfile) {
+		case 'compact-code':
+			return 'Compact Code';
+		case 'compact-doc':
+			return 'Compact Doc';
+		case 'full':
+			return 'Full';
+		default:
+			return null;
+	}
+}
+
+function formatAgentStrategy(agentStrategy: HistoryEntry['agentStrategy']): string | null {
+	switch (agentStrategy) {
+		case 'plan-execute-verify':
+			return 'Plan / Execute / Verify';
+		case 'single':
+			return 'Single Pass';
+		default:
+			return null;
+	}
+}
+
+function formatWorktreeMode(worktreeMode: HistoryEntry['worktreeMode']): string | null {
+	switch (worktreeMode) {
+		case 'disabled':
+			return 'Disabled';
+		case 'managed':
+			return 'Managed Worktree';
+		case 'existing-open':
+			return 'Existing Open Worktree';
+		case 'existing-closed':
+			return 'Existing Closed Worktree';
+		case 'create-new':
+			return 'Create New Worktree';
+		default:
+			return null;
+	}
+}
+
+function formatSchedulerMode(schedulerMode: HistoryEntry['schedulerMode']): string | null {
+	switch (schedulerMode) {
+		case 'dag':
+			return 'DAG';
+		case 'sequential':
+			return 'Sequential';
+		default:
+			return null;
+	}
+}
+
 interface HistoryDetailModalProps {
 	theme: Theme;
 	entry: HistoryEntry;
@@ -183,6 +261,20 @@ export function HistoryDetailModal({
 
 	const colors = getPillColor();
 	const Icon = entry.type === 'AUTO' ? Bot : User;
+	const verifierPill = getVerifierPill(entry.verifierVerdict, theme);
+	const usageBreakdownStages = [
+		{ key: 'planner', label: 'Planner', stats: entry.usageBreakdown?.planner },
+		{ key: 'executor', label: 'Executor', stats: entry.usageBreakdown?.executor },
+		{ key: 'verifier', label: 'Verifier', stats: entry.usageBreakdown?.verifier },
+		{ key: 'synopsis', label: 'Synopsis', stats: entry.usageBreakdown?.synopsis },
+	].filter(
+		(stage) =>
+			stage.stats &&
+			(stage.stats.inputTokens > 0 ||
+				stage.stats.outputTokens > 0 ||
+				stage.stats.cacheCreationInputTokens > 0 ||
+				stage.stats.cacheReadInputTokens > 0)
+	);
 
 	// Access agentName from unified history entries (Director's Notes)
 	const agentName = (entry as HistoryEntry & { agentName?: string }).agentName;
@@ -195,6 +287,22 @@ export function HistoryDetailModal({
 	//   - fullResponse = may contain more context
 	const rawResponse = entry.fullResponse || entry.summary || '';
 	const cleanResponse = stripAnsiCodes(rawResponse);
+	const autoRunMetadata = [
+		entry.playbookName ? { label: 'Playbook', value: entry.playbookName } : null,
+		formatPromptProfile(entry.promptProfile)
+			? { label: 'Prompt Profile', value: formatPromptProfile(entry.promptProfile)! }
+			: null,
+		formatAgentStrategy(entry.agentStrategy)
+			? { label: 'Agent Strategy', value: formatAgentStrategy(entry.agentStrategy)! }
+			: null,
+		formatWorktreeMode(entry.worktreeMode)
+			? { label: 'Worktree Mode', value: formatWorktreeMode(entry.worktreeMode)! }
+			: null,
+		formatSchedulerMode(entry.schedulerMode)
+			? { label: 'Scheduler', value: formatSchedulerMode(entry.schedulerMode)! }
+			: null,
+		entry.schedulerOutcome ? { label: 'Outcome', value: entry.schedulerOutcome } : null,
+	].filter((item): item is { label: string; value: string } => Boolean(item));
 
 	return (
 		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
@@ -296,6 +404,21 @@ export function HistoryDetailModal({
 								<Icon className="w-2.5 h-2.5" />
 								{entry.type}
 							</span>
+
+							{/* Verification verdict pill */}
+							{entry.type === 'AUTO' && verifierPill && (
+								<span
+									className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+									style={{
+										backgroundColor: verifierPill.bg,
+										color: verifierPill.text,
+										border: `1px solid ${verifierPill.border}`,
+									}}
+									title={verifierPill.title}
+								>
+									{verifierPill.label}
+								</span>
+							)}
 
 							{/* Agent Name Pill - shown inline when agentName exists but isn't already in the header */}
 							{agentName && !entry.sessionName && (
@@ -401,64 +524,66 @@ export function HistoryDetailModal({
 					>
 						<div className="flex items-center gap-6 flex-wrap">
 							{/* Context Window Widget - calculated from usageStats */}
-							{entry.usageStats && entry.usageStats.contextWindow > 0 && (
-								<div className="flex items-center gap-3">
-									<div className="flex items-center gap-1.5">
-										<Cpu className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-										<span
-											className="text-[10px] font-bold uppercase"
-											style={{ color: theme.colors.textDim }}
-										>
-											Context
-										</span>
-									</div>
-									{(() => {
-										const { tokens: contextTokens, percentage: contextUsage } =
-											calculateContextDisplay(
-												{
-													inputTokens: entry.usageStats!.inputTokens,
-													outputTokens: entry.usageStats!.outputTokens,
-													cacheCreationInputTokens: entry.usageStats!.cacheCreationInputTokens ?? 0,
-													cacheReadInputTokens: entry.usageStats!.cacheReadInputTokens ?? 0,
-												},
-												entry.usageStats!.contextWindow,
-												undefined,
-												entry.contextUsage
-											);
-										return (
-											<div className="flex flex-col gap-1">
-												<div className="flex items-center gap-2">
-													<div
-														className="w-24 h-2 rounded-full overflow-hidden"
-														style={{ backgroundColor: theme.colors.border }}
-													>
+							{(entry.contextDisplayUsageStats || entry.usageStats) &&
+								(entry.contextDisplayUsageStats || entry.usageStats)!.contextWindow > 0 && (
+									<div className="flex items-center gap-3">
+										<div className="flex items-center gap-1.5">
+											<Cpu className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+											<span
+												className="text-[10px] font-bold uppercase"
+												style={{ color: theme.colors.textDim }}
+											>
+												Context
+											</span>
+										</div>
+										{(() => {
+											const contextStats = entry.contextDisplayUsageStats || entry.usageStats!;
+											const { tokens: contextTokens, percentage: contextUsage } =
+												calculateContextDisplay(
+													{
+														inputTokens: contextStats.inputTokens,
+														outputTokens: contextStats.outputTokens,
+														cacheCreationInputTokens: contextStats.cacheCreationInputTokens ?? 0,
+														cacheReadInputTokens: contextStats.cacheReadInputTokens ?? 0,
+													},
+													contextStats.contextWindow,
+													undefined,
+													entry.contextUsage
+												);
+											return (
+												<div className="flex flex-col gap-1">
+													<div className="flex items-center gap-2">
 														<div
-															className="h-full transition-all duration-500 ease-out"
-															style={{
-																width: `${contextUsage}%`,
-																backgroundColor: getContextColor(contextUsage, theme),
-															}}
-														/>
+															className="w-24 h-2 rounded-full overflow-hidden"
+															style={{ backgroundColor: theme.colors.border }}
+														>
+															<div
+																className="h-full transition-all duration-500 ease-out"
+																style={{
+																	width: `${contextUsage}%`,
+																	backgroundColor: getContextColor(contextUsage, theme),
+																}}
+															/>
+														</div>
+														<span
+															className="text-xs font-mono font-bold"
+															style={{ color: getContextColor(contextUsage, theme) }}
+														>
+															{contextUsage}%
+														</span>
 													</div>
 													<span
-														className="text-xs font-mono font-bold"
-														style={{ color: getContextColor(contextUsage, theme) }}
+														className="text-[10px] font-mono"
+														style={{ color: theme.colors.textDim }}
 													>
-														{contextUsage}%
+														{(contextTokens / 1000).toFixed(1)}k /{' '}
+														{(contextStats.contextWindow / 1000).toFixed(0)}k tokens
 													</span>
 												</div>
-												<span
-													className="text-[10px] font-mono"
-													style={{ color: theme.colors.textDim }}
-												>
-													{(contextTokens / 1000).toFixed(1)}k /{' '}
-													{(entry.usageStats!.contextWindow / 1000).toFixed(0)}k tokens
-												</span>
-											</div>
-										);
-									})()}
-								</div>
-							)}
+											);
+										})()}
+									</div>
+								)}
 
 							{/* Token Breakdown - hidden on small screens for responsive design */}
 							{entry.usageStats && (
@@ -485,6 +610,49 @@ export function HistoryDetailModal({
 								</div>
 							)}
 
+							{/* Stage Breakdown - only shown for batch runs with per-stage usage */}
+							{usageBreakdownStages.length > 0 && (
+								<div className="flex items-center gap-3 flex-wrap">
+									<div className="flex items-center gap-1.5">
+										<Bot className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+										<span
+											className="text-[10px] font-bold uppercase"
+											style={{ color: theme.colors.textDim }}
+										>
+											Stages
+										</span>
+									</div>
+									<div className="flex items-center gap-2 flex-wrap">
+										{usageBreakdownStages.map((stage) => (
+											<div
+												key={stage.key}
+												className="px-2.5 py-1 rounded-md border"
+												style={{
+													backgroundColor: theme.colors.bgActivity,
+													borderColor: theme.colors.border,
+												}}
+												title={`${stage.label}: ${(stage.stats!.inputTokens ?? 0).toLocaleString('en-US')} in / ${(stage.stats!.outputTokens ?? 0).toLocaleString('en-US')} out`}
+											>
+												<div
+													className="text-[10px] font-bold uppercase"
+													style={{ color: theme.colors.textDim }}
+												>
+													{stage.label}
+												</div>
+												<div className="flex items-center gap-2 text-[11px] font-mono">
+													<span style={{ color: theme.colors.accent }}>
+														In {(stage.stats!.inputTokens ?? 0).toLocaleString('en-US')}
+													</span>
+													<span style={{ color: theme.colors.success }}>
+														Out {(stage.stats!.outputTokens ?? 0).toLocaleString('en-US')}
+													</span>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
+
 							{/* Elapsed Time */}
 							{entry.elapsedTimeMs !== undefined && (
 								<div className="flex items-center gap-2">
@@ -504,6 +672,45 @@ export function HistoryDetailModal({
 									${entry.usageStats.totalCostUsd.toFixed(2)}
 								</span>
 							)}
+						</div>
+					</div>
+				)}
+
+				{entry.type === 'AUTO' && autoRunMetadata.length > 0 && (
+					<div
+						className="px-6 py-4 border-b shrink-0"
+						style={{
+							borderColor: theme.colors.border,
+							backgroundColor: theme.colors.bgMain + '20',
+						}}
+					>
+						<div className="flex items-center gap-2 mb-3">
+							<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+							<h3 className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+								Auto Run Metadata
+							</h3>
+						</div>
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+							{autoRunMetadata.map((item) => (
+								<div
+									key={item.label}
+									className="px-3 py-2 rounded border"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+									}}
+								>
+									<div
+										className="text-[10px] font-bold uppercase"
+										style={{ color: theme.colors.textDim }}
+									>
+										{item.label}
+									</div>
+									<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+										{item.value}
+									</div>
+								</div>
+							))}
 						</div>
 					</div>
 				)}

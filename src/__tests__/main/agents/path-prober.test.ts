@@ -246,6 +246,14 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+
+		it('should probe known paths for openclaw binary', async () => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+
+			const result = await probeUnixPaths('openclaw');
+			expect(result).toBeNull();
+			expect(accessMock).toHaveBeenCalled();
+		});
 	});
 
 	describe('probeUnixPaths', () => {

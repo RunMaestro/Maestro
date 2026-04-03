@@ -4,7 +4,8 @@
 import { findPlaybookById } from '../services/playbooks';
 import { getSessionById } from '../services/storage';
 import { readDocAndGetTasks } from '../services/agent-spawner';
-import { formatPlaybookDetail, formatError } from '../output/formatter';
+import { formatPlaybookDetail, formatError, type PlaybookDetailDisplay } from '../output/formatter';
+import { normalizePersistedPlaybook } from '../../shared/playbookDag';
 
 interface ShowPlaybookOptions {
 	json?: boolean;
@@ -13,7 +14,8 @@ interface ShowPlaybookOptions {
 export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): void {
 	try {
 		// Find playbook across all agents
-		const { playbook, agentId } = findPlaybookById(playbookId);
+		const { playbook: rawPlaybook, agentId } = findPlaybookById(playbookId);
+		const playbook = normalizePersistedPlaybook(rawPlaybook);
 		const agent = getSessionById(agentId);
 
 		if (!agent) {
@@ -37,34 +39,37 @@ export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): 
 			};
 		});
 
+		const detail: PlaybookDetailDisplay = {
+			id: playbook.id,
+			name: playbook.name,
+			agentId,
+			agentName: agent.name,
+			folderPath,
+			loopEnabled: playbook.loopEnabled,
+			maxLoops: playbook.maxLoops,
+			taskTimeoutMs: playbook.taskTimeoutMs ?? null,
+			maxParallelism: playbook.maxParallelism ?? 1,
+			taskGraph: playbook.taskGraph ?? { nodes: [] },
+			prompt: playbook.prompt,
+			skills: playbook.skills ?? [],
+			definitionOfDone: playbook.definitionOfDone ?? [],
+			verificationSteps: playbook.verificationSteps ?? [],
+			promptProfile: playbook.promptProfile ?? 'compact-code',
+			documentContextMode: playbook.documentContextMode ?? 'active-task-only',
+			skillPromptMode: playbook.skillPromptMode ?? 'brief',
+			agentStrategy: playbook.agentStrategy ?? 'single',
+			documents: documentDetails,
+		};
+		const totalTasks = documentDetails.reduce((sum, document) => sum + document.taskCount, 0);
+
 		if (options.json) {
 			const output = {
-				id: playbook.id,
-				name: playbook.name,
-				agentId,
-				agentName: agent.name,
-				folderPath,
-				loopEnabled: playbook.loopEnabled,
-				maxLoops: playbook.maxLoops,
-				prompt: playbook.prompt,
-				documents: documentDetails,
-				totalTasks: documentDetails.reduce((sum, d) => sum + d.taskCount, 0),
+				...detail,
+				totalTasks,
 			};
 			console.log(JSON.stringify(output, null, 2));
 		} else {
-			console.log(
-				formatPlaybookDetail({
-					id: playbook.id,
-					name: playbook.name,
-					agentId,
-					agentName: agent.name,
-					folderPath,
-					loopEnabled: playbook.loopEnabled,
-					maxLoops: playbook.maxLoops,
-					prompt: playbook.prompt,
-					documents: documentDetails,
-				})
-			);
+			console.log(formatPlaybookDetail(detail));
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

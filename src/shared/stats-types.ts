@@ -4,6 +4,14 @@
  * These types are shared between main process (stats/) and renderer (dashboard).
  */
 
+import type {
+	AutoRunSchedulerMode,
+	AutoRunSchedulerOutcome,
+	AutoRunWorktreeMode,
+	PlaybookAgentStrategy,
+	PlaybookPromptProfile,
+} from './types';
+
 /**
  * A single AI query event - represents one user/auto message -> AI response cycle
  */
@@ -33,6 +41,13 @@ export interface AutoRunSession {
 	tasksTotal?: number;
 	tasksCompleted?: number;
 	projectPath?: string;
+	playbookId?: string;
+	playbookName?: string;
+	promptProfile?: PlaybookPromptProfile;
+	agentStrategy?: PlaybookAgentStrategy;
+	worktreeMode?: AutoRunWorktreeMode;
+	schedulerMode?: AutoRunSchedulerMode;
+	maxParallelism?: number;
 }
 
 /**
@@ -48,6 +63,15 @@ export interface AutoRunTask {
 	startTime: number;
 	duration: number;
 	success: boolean;
+	documentPath?: string;
+	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+	promptProfile?: PlaybookPromptProfile;
+	agentStrategy?: PlaybookAgentStrategy;
+	worktreeMode?: AutoRunWorktreeMode;
+	schedulerOutcome?: AutoRunSchedulerOutcome;
+	queueWaitMs?: number;
+	retryCount?: number;
+	timedOut?: boolean;
 }
 
 /**
@@ -112,4 +136,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 4;
+export const STATS_DB_VERSION = 5;

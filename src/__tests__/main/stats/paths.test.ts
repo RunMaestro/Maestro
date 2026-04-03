@@ -821,7 +821,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 			expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('project_path = ?'));
 
 			// The filter should be normalized to forward slashes for matching
-			const prepareCallArgs = mockStatement.all.mock.calls[0];
+			const prepareCallArgs = mockStatement.all.mock.calls.at(-1) ?? [];
 			expect(prepareCallArgs).toContain('C:/Users/TestUser/Projects/MyApp');
 		});
 
@@ -836,7 +836,7 @@ describe('File path normalization in database (forward slashes consistently)', (
 				projectPath: '/Users/testuser/Projects/MyApp',
 			});
 
-			const prepareCallArgs = mockStatement.all.mock.calls[0];
+			const prepareCallArgs = mockStatement.all.mock.calls.at(-1) ?? [];
 			expect(prepareCallArgs).toContain('/Users/testuser/Projects/MyApp');
 		});
 	});
@@ -858,17 +858,25 @@ describe('File path normalization in database (forward slashes consistently)', (
 				projectPath: 'C:\\Users\\TestUser\\Projects\\MyApp',
 			});
 
-			expect(mockStatement.run).toHaveBeenCalledWith(
+			const lastCall = mockStatement.run.mock.calls.at(-1);
+			expect(lastCall).toEqual([
 				expect.any(String),
 				'session-1',
 				'claude-code',
-				'C:/Users/TestUser/Docs/task.md', // normalized documentPath
+				'C:/Users/TestUser/Docs/task.md',
 				expect.any(Number),
 				60000,
 				5,
 				3,
-				'C:/Users/TestUser/Projects/MyApp' // normalized projectPath
-			);
+				'C:/Users/TestUser/Projects/MyApp',
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+			]);
 		});
 
 		it('should handle null paths correctly', async () => {
@@ -884,17 +892,25 @@ describe('File path normalization in database (forward slashes consistently)', (
 				// documentPath and projectPath are undefined
 			});
 
-			expect(mockStatement.run).toHaveBeenCalledWith(
+			const lastCall = mockStatement.run.mock.calls.at(-1);
+			expect(lastCall).toEqual([
 				expect.any(String),
 				'session-1',
 				'claude-code',
-				null, // undefined documentPath becomes null
+				null,
 				expect.any(Number),
 				60000,
 				null,
 				null,
-				null // undefined projectPath becomes null
-			);
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+			]);
 		});
 	});
 

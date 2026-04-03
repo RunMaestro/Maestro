@@ -1,5 +1,5 @@
 /**
- * SessionListItem - Renders an individual Claude session row in the AgentSessionsBrowser
+ * SessionListItem - Renders an individual agent session row in the AgentSessionsBrowser
  *
  * This component displays a session with:
  * - Star button for favorites
@@ -28,7 +28,9 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
-import type { ClaudeSession } from '../hooks';
+import type { AgentSession } from '../hooks/agent/useSessionViewer';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { parseOpenClawSessionId } from '../../shared/openclawSessionId';
 
 /**
  * Search result info for content-based searches
@@ -42,15 +44,17 @@ export interface SearchResultInfo {
  * Props for the SessionListItem component
  */
 export interface SessionListItemProps {
-	/** The Claude session data */
-	session: ClaudeSession;
+	/** The agent session data */
+	session: AgentSession;
+	/** Agent whose storage is being browsed */
+	agentId: string;
 	/** Zero-based index in the list */
 	index: number;
 	/** Currently selected index for keyboard navigation */
 	selectedIndex: number;
 	/** Whether this session is starred */
 	isStarred: boolean;
-	/** Currently active Claude session ID (if any) */
+	/** Currently active agent session ID (if any) */
 	activeAgentSessionId: string | null;
 	/** ID of session currently being renamed (if any) */
 	renamingSessionId: string | null;
@@ -67,13 +71,13 @@ export interface SessionListItemProps {
 	/** Ref for rename input */
 	renameInputRef: React.RefObject<HTMLInputElement>;
 	/** Handler for clicking a session row */
-	onSessionClick: (session: ClaudeSession) => void;
+	onSessionClick: (session: AgentSession) => void;
 	/** Handler for toggling star status */
 	onToggleStar: (sessionId: string, e: React.MouseEvent) => void;
 	/** Handler for quick resume (without viewing details) */
-	onQuickResume: (session: ClaudeSession, e: React.MouseEvent) => void;
+	onQuickResume: (session: AgentSession, e: React.MouseEvent) => void;
 	/** Handler for starting rename */
-	onStartRename: (session: ClaudeSession, e: React.MouseEvent) => void;
+	onStartRename: (session: AgentSession, e: React.MouseEvent) => void;
 	/** Handler for rename input change */
 	onRenameChange: (value: string) => void;
 	/** Handler for submitting rename */
@@ -87,6 +91,7 @@ export interface SessionListItemProps {
  */
 export function SessionListItem({
 	session,
+	agentId,
 	index,
 	selectedIndex,
 	isStarred,
@@ -109,6 +114,20 @@ export function SessionListItem({
 	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
+	const sessionIdPillLabel = (() => {
+		if (session.sessionId.startsWith('agent-')) {
+			return `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`;
+		}
+
+		if (agentId === 'openclaw') {
+			const parsedOpenClawSessionId = parseOpenClawSessionId(session.sessionId);
+			if (parsedOpenClawSessionId) {
+				return parsedOpenClawSessionId.agentName.toUpperCase();
+			}
+		}
+
+		return session.sessionId.split('-')[0].toUpperCase();
+	})();
 
 	return (
 		<div
@@ -236,7 +255,7 @@ export function SessionListItem({
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
 							style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
-							title="Claude Code CLI session"
+							title={`${getAgentDisplayName(agentId)} CLI session`}
 						>
 							CLI
 						</span>
@@ -247,9 +266,7 @@ export function SessionListItem({
 						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
 						style={{ backgroundColor: theme.colors.border + '60', color: theme.colors.textDim }}
 					>
-						{session.sessionId.startsWith('agent-')
-							? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
-							: session.sessionId.split('-')[0].toUpperCase()}
+						{sessionIdPillLabel}
 					</span>
 
 					{/* Stats */}

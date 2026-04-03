@@ -10,6 +10,7 @@ import {
 	clearRecentlyCreatedWorktreePath,
 } from '../../utils/worktreeDedup';
 import { captureException } from '../../utils/sentry';
+import { validatePlaybookDag } from '../../../shared/playbookDag';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -317,6 +318,23 @@ export function useAutoRunHandlers(
 					'handleStartBatchRun early return - missing session or folder',
 					'AutoRunHandlers'
 				);
+				return;
+			}
+
+			const dagValidation = validatePlaybookDag(
+				config.documents,
+				config.taskGraph,
+				config.maxParallelism
+			);
+			if (!dagValidation.valid) {
+				window.maestro.logger.log('warn', 'Auto Run DAG validation failed', 'AutoRunHandlers', {
+					errors: dagValidation.errors,
+				});
+				notifyToast({
+					type: 'error',
+					title: 'Invalid Auto Run DAG',
+					message: dagValidation.errors[0] || 'Playbook graph validation failed.',
+				});
 				return;
 			}
 

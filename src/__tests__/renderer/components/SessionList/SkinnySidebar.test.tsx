@@ -178,9 +178,9 @@ describe('SkinnySidebar', () => {
 		expect(screen.getByText('My Special Agent')).toBeTruthy();
 	});
 
-	it('uses hollow style for claude-code sessions without agentSessionId', () => {
+	it('uses hollow style for openclaw sessions without agentSessionId', () => {
 		const s1 = makeSession({
-			toolType: 'claude-code',
+			toolType: 'openclaw',
 			agentSessionId: undefined,
 		});
 		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
@@ -188,5 +188,16 @@ describe('SkinnySidebar', () => {
 		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
 		expect(dot.style.backgroundColor).toBe('transparent');
 		expect(dot.style.border).toContain('1.5px solid');
+	});
+
+	it('shows SSH tooltip state when only sshRemoteId is populated', () => {
+		const s1 = makeSession({
+			sshRemoteId: 'remote-1',
+			sessionSshRemoteConfig: undefined,
+		});
+		render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
+
+		expect(screen.getByText('REMOTE')).toBeTruthy();
+		expect(screen.getByText(/idle • Claude Code \(SSH\)/i)).toBeTruthy();
 	});
 });

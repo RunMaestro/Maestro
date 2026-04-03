@@ -74,7 +74,14 @@ export const CREATE_AUTO_RUN_SESSIONS_SQL = `
     duration INTEGER NOT NULL,
     tasks_total INTEGER,
     tasks_completed INTEGER,
-    project_path TEXT
+    project_path TEXT,
+    playbook_id TEXT,
+    playbook_name TEXT,
+    prompt_profile TEXT,
+    agent_strategy TEXT,
+    worktree_mode TEXT,
+    scheduler_mode TEXT,
+    max_parallelism INTEGER
   )
 `;
 
@@ -96,7 +103,16 @@ export const CREATE_AUTO_RUN_TASKS_SQL = `
     task_content TEXT,
     start_time INTEGER NOT NULL,
     duration INTEGER NOT NULL,
-    success INTEGER NOT NULL CHECK(success IN (0, 1))
+    success INTEGER NOT NULL CHECK(success IN (0, 1)),
+    document_path TEXT,
+    verifier_verdict TEXT,
+    prompt_profile TEXT,
+    agent_strategy TEXT,
+    worktree_mode TEXT,
+    scheduler_outcome TEXT,
+    queue_wait_ms INTEGER,
+    retry_count INTEGER,
+    timed_out INTEGER
   )
 `;
 

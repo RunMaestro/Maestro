@@ -821,22 +821,244 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					: effectiveInputValue;
 			const capturedImages = [...stagedImages];
 
+			const clearComposerState = () => {
+				setInputValue('');
+				setStagedImages([]);
+
+				// Sync empty value to session state (prevents stale input restoration on blur)
+				if (isAiMode) {
+					syncAiInputToSession('');
+				} else {
+					syncTerminalInputToSession('');
+				}
+
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+			};
+
+			const restoreComposerState = () => {
+				setInputValue(effectiveInputValue);
+				setStagedImages(capturedImages);
+
+				if (isAiMode) {
+					syncAiInputToSession(effectiveInputValue);
+				} else {
+					syncTerminalInputToSession(effectiveInputValue);
+				}
+			};
+
+			// Check if this is an AI agent in batch mode
+			// Batch mode agents spawn a new process per message rather than writing to stdin
+			const isBatchModeAgent =
+				currentMode === 'ai' && hasCapabilityCached(activeSession.toolType, 'supportsBatchMode');
+
+			if (isBatchModeAgent) {
+				let composerCleared = false;
+
+				try {
+					// Get agent configuration before clearing the input.
+					// If this preflight fails, keep the user's draft intact.
+					const agent = await window.maestro.agents.get(activeSession.toolType);
+					if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
+
+					// IMPORTANT: Get fresh session state from ref to avoid stale closure bug
+					// If user switches tabs quickly, activeSession from closure may have wrong activeTabId
+					const freshSession = sessionsRef.current.find((s) => s.id === activeSessionId);
+					if (!freshSession) throw new Error('Session not found');
+
+					// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
+					const freshActiveTab = getActiveTab(freshSession);
+					if (!freshActiveTab) throw new Error('Active AI tab not found');
+
+					const targetSessionId = `${freshSession.id}-ai-${freshActiveTab.id}`;
+
+					// Broadcast user input to web clients so they stay in sync
+					// Use effectiveInputValue (without nudge) since nudge should be hidden from UI
+					window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
+
+					clearComposerState();
+					composerCleared = true;
+
+					// Check CURRENT session's Auto Run state (not any session's) and respect worktree bypass
+					const currentSessionBatchState = getBatchState(activeSessionId);
+					const isAutoRunReadOnly =
+						currentSessionBatchState.isRunning && !currentSessionBatchState.worktreeActive;
+					const isReadOnly = isAutoRunReadOnly || freshActiveTab.readOnlyMode;
+
+					// For read-only mode, filter out any YOLO/skip-permissions flags from base args
+					// (they would override the read-only mode we're requesting)
+					const baseArgs = agent.args ?? [];
+					const spawnArgs = isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs];
+
+					// Use agent.path (full path) if available, otherwise fall back to agent.command
+					const commandToUse = agent.path || agent.command;
+
+					// If user sends only an image without text, inject the default image-only prompt
+					const hasImages = capturedImages.length > 0;
+					const hasNoText = !capturedInputValue.trim();
+					let effectivePrompt =
+						hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
+
+					// For read-only mode, append instruction to return plan in response instead of writing files
+					if (isReadOnly) {
+						effectivePrompt +=
+							'\n\n---\n\nIMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.';
+					}
+
+					// Check for pending merged context that needs to be injected
+					// This happens when a user merged context from another tab/session
+					const pendingMergedContext = freshActiveTab.pendingMergedContext;
+					if (pendingMergedContext) {
+						// Prepend the merged context to the user's message
+						effectivePrompt = `${pendingMergedContext}\n\n---\n\n${effectivePrompt}`;
+
+						// Clear the pending merged context from the tab
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== activeSessionId) return s;
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === freshActiveTab.id ? { ...tab, pendingMergedContext: undefined } : tab
+									),
+								};
+							})
+						);
+
+						console.log('[InputProcessing] Injected merged context into message:', {
+							contextLength: pendingMergedContext.length,
+							promptLength: effectivePrompt.length,
+						});
+					}
+
+					// For NEW sessions (no agentSessionId), prepend Maestro system prompt
+					// This introduces Maestro and sets directory restrictions for the agent
+					const isNewSession = !freshActiveTab.agentSessionId;
+					if (isNewSession && maestroSystemPrompt) {
+						// Get git branch for template substitution
+						let gitBranch: string | undefined;
+						if (freshSession.isGitRepo) {
+							try {
+								const status = await gitService.getStatus(freshSession.cwd);
+								gitBranch = status.branch;
+							} catch {
+								// Ignore git errors
+							}
+						}
+
+						// Get history file path for task recall
+						// Skip for SSH sessions — the local path is unreachable from the remote host
+						let historyFilePath: string | undefined;
+						const isSSH = freshSession.sshRemoteId || freshSession.sessionSshRemoteConfig?.enabled;
+						if (!isSSH) {
+							try {
+								historyFilePath =
+									(await window.maestro.history.getFilePath(freshSession.id)) || undefined;
+							} catch {
+								// Ignore history errors
+							}
+						}
+
+						// Substitute template variables in the system prompt
+						console.log('[useInputProcessing] Template substitution context:', {
+							sessionId: freshSession.id,
+							sessionName: freshSession.name,
+							autoRunFolderPath: freshSession.autoRunFolderPath,
+							fullPath: freshSession.fullPath,
+							cwd: freshSession.cwd,
+							parentSessionId: freshSession.parentSessionId,
+							historyFilePath,
+						});
+						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							session: freshSession,
+							gitBranch,
+							historyFilePath,
+							conductorProfile,
+						});
+
+						// Prepend system prompt to user's message
+						effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
+					}
+
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession:
+							!!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					});
+
+					// Spawn agent with generic config - the main process will use agent-specific
+					// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
+					await window.maestro.process.spawn({
+						sessionId: targetSessionId,
+						toolType: freshSession.toolType,
+						cwd: freshSession.cwd,
+						command: commandToUse,
+						args: spawnArgs,
+						prompt: effectivePrompt,
+						images: hasImages ? capturedImages : undefined,
+						// Generic spawn options - main process builds agent-specific args
+						agentSessionId: freshActiveTab.agentSessionId ?? undefined,
+						readOnlyMode: isReadOnly,
+						// Per-session config overrides (if set)
+						sessionCustomPath: freshSession.customPath,
+						sessionCustomArgs: freshSession.customArgs,
+						sessionCustomEnvVars: freshSession.customEnvVars,
+						sessionCustomModel: freshSession.customModel,
+						sessionCustomContextWindow: freshSession.customContextWindow,
+						// Per-session SSH remote config (takes precedence over agent-level SSH config)
+						sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
+						// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
+						// For stream-json agents (Claude Code, Codex): use JSON format via stdin
+						// For other agents (OpenCode, etc.): use raw text via stdin
+						sendPromptViaStdin,
+						sendPromptViaStdinRaw,
+					});
+				} catch (error) {
+					console.error('Failed to spawn agent batch process:', error);
+					if (composerCleared) {
+						restoreComposerState();
+					}
+					const errorLog: LogEntry = {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'system',
+						text: `Error: Failed to spawn agent process - ${(error as Error).message}`,
+					};
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== activeSessionId) return s;
+							// Reset active tab's state to 'idle' and add error log
+							const updatedAiTabs =
+								s.aiTabs?.length > 0
+									? s.aiTabs.map((tab) =>
+											tab.id === s.activeTabId
+												? {
+														...tab,
+														state: 'idle' as const,
+														thinkingStartTime: undefined,
+														awaitingSessionId: false,
+														logs: [...tab.logs, errorLog],
+													}
+												: tab
+										)
+									: s.aiTabs;
+							return {
+								...s,
+								state: 'idle',
+								busySource: undefined,
+								thinkingStartTime: undefined,
+								aiTabs: updatedAiTabs,
+							};
+						})
+					);
+				}
+				return;
+			}
+
 			// Broadcast user input to web clients so they stay in sync
 			// Use effectiveInputValue (without nudge) since nudge should be hidden from UI
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
-			setInputValue('');
-			setStagedImages([]);
-
-			// Sync empty value to session state (prevents stale input restoration on blur)
-			if (isAiMode) {
-				syncAiInputToSession('');
-			} else {
-				syncTerminalInputToSession('');
-			}
-
-			// Reset height
-			if (inputRef.current) inputRef.current.style.height = 'auto';
+			clearComposerState();
 
 			// Write to the appropriate process based on inputMode
 			// Each session has TWO processes: AI agent and terminal
@@ -849,201 +1071,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
 					: `${activeSession.id}-terminal`;
 
-			// Check if this is an AI agent in batch mode
-			// Batch mode agents spawn a new process per message rather than writing to stdin
-			const isBatchModeAgent =
-				currentMode === 'ai' && hasCapabilityCached(activeSession.toolType, 'supportsBatchMode');
-
-			if (isBatchModeAgent) {
-				// Batch mode: Spawn new agent process with prompt
-				(async () => {
-					try {
-						// Get agent configuration
-						const agent = await window.maestro.agents.get(activeSession.toolType);
-						if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
-
-						// IMPORTANT: Get fresh session state from ref to avoid stale closure bug
-						// If user switches tabs quickly, activeSession from closure may have wrong activeTabId
-						const freshSession = sessionsRef.current.find((s) => s.id === activeSessionId);
-						if (!freshSession) throw new Error('Session not found');
-
-						// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
-						const freshActiveTab = getActiveTab(freshSession);
-						const tabAgentSessionId = freshActiveTab?.agentSessionId;
-						// Check CURRENT session's Auto Run state (not any session's) and respect worktree bypass
-						const currentSessionBatchState = getBatchState(activeSessionId);
-						const isAutoRunReadOnly =
-							currentSessionBatchState.isRunning && !currentSessionBatchState.worktreeActive;
-						const isReadOnly = isAutoRunReadOnly || freshActiveTab?.readOnlyMode;
-
-						// For read-only mode, filter out any YOLO/skip-permissions flags from base args
-						// (they would override the read-only mode we're requesting)
-						const baseArgs = agent.args ?? [];
-						const spawnArgs = isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs];
-
-						// Use agent.path (full path) if available, otherwise fall back to agent.command
-						const commandToUse = agent.path || agent.command;
-
-						// If user sends only an image without text, inject the default image-only prompt
-						const hasImages = capturedImages.length > 0;
-						const hasNoText = !capturedInputValue.trim();
-						let effectivePrompt =
-							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
-
-						// For read-only mode, append instruction to return plan in response instead of writing files
-						if (isReadOnly) {
-							effectivePrompt +=
-								'\n\n---\n\nIMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.';
-						}
-
-						// Check for pending merged context that needs to be injected
-						// This happens when a user merged context from another tab/session
-						const pendingMergedContext = freshActiveTab?.pendingMergedContext;
-						if (pendingMergedContext) {
-							// Prepend the merged context to the user's message
-							effectivePrompt = `${pendingMergedContext}\n\n---\n\n${effectivePrompt}`;
-
-							// Clear the pending merged context from the tab
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
-									return {
-										...s,
-										aiTabs: s.aiTabs.map((tab) =>
-											tab.id === freshActiveTab.id
-												? { ...tab, pendingMergedContext: undefined }
-												: tab
-										),
-									};
-								})
-							);
-
-							console.log('[InputProcessing] Injected merged context into message:', {
-								contextLength: pendingMergedContext.length,
-								promptLength: effectivePrompt.length,
-							});
-						}
-
-						// For NEW sessions (no agentSessionId), prepend Maestro system prompt
-						// This introduces Maestro and sets directory restrictions for the agent
-						const isNewSession = !tabAgentSessionId;
-						if (isNewSession && maestroSystemPrompt) {
-							// Get git branch for template substitution
-							let gitBranch: string | undefined;
-							if (freshSession.isGitRepo) {
-								try {
-									const status = await gitService.getStatus(freshSession.cwd);
-									gitBranch = status.branch;
-								} catch {
-									// Ignore git errors
-								}
-							}
-
-							// Get history file path for task recall
-							// Skip for SSH sessions — the local path is unreachable from the remote host
-							let historyFilePath: string | undefined;
-							const isSSH =
-								freshSession.sshRemoteId || freshSession.sessionSshRemoteConfig?.enabled;
-							if (!isSSH) {
-								try {
-									historyFilePath =
-										(await window.maestro.history.getFilePath(freshSession.id)) || undefined;
-								} catch {
-									// Ignore history errors
-								}
-							}
-
-							// Substitute template variables in the system prompt
-							console.log('[useInputProcessing] Template substitution context:', {
-								sessionId: freshSession.id,
-								sessionName: freshSession.name,
-								autoRunFolderPath: freshSession.autoRunFolderPath,
-								fullPath: freshSession.fullPath,
-								cwd: freshSession.cwd,
-								parentSessionId: freshSession.parentSessionId,
-								historyFilePath,
-							});
-							const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-								session: freshSession,
-								gitBranch,
-								historyFilePath,
-								conductorProfile,
-							});
-
-							// Prepend system prompt to user's message
-							effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
-						}
-
-						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-							isSshSession:
-								!!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
-							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
-						});
-
-						// Spawn agent with generic config - the main process will use agent-specific
-						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
-						await window.maestro.process.spawn({
-							sessionId: targetSessionId,
-							toolType: freshSession.toolType,
-							cwd: freshSession.cwd,
-							command: commandToUse,
-							args: spawnArgs,
-							prompt: effectivePrompt,
-							images: hasImages ? capturedImages : undefined,
-							// Generic spawn options - main process builds agent-specific args
-							agentSessionId: tabAgentSessionId ?? undefined,
-							readOnlyMode: isReadOnly,
-							// Per-session config overrides (if set)
-							sessionCustomPath: freshSession.customPath,
-							sessionCustomArgs: freshSession.customArgs,
-							sessionCustomEnvVars: freshSession.customEnvVars,
-							sessionCustomModel: freshSession.customModel,
-							sessionCustomContextWindow: freshSession.customContextWindow,
-							// Per-session SSH remote config (takes precedence over agent-level SSH config)
-							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
-							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
-							// For stream-json agents (Claude Code, Codex): use JSON format via stdin
-							// For other agents (OpenCode, etc.): use raw text via stdin
-							sendPromptViaStdin,
-							sendPromptViaStdinRaw,
-						});
-					} catch (error) {
-						console.error('Failed to spawn agent batch process:', error);
-						const errorLog: LogEntry = {
-							id: generateId(),
-							timestamp: Date.now(),
-							source: 'system',
-							text: `Error: Failed to spawn agent process - ${(error as Error).message}`,
-						};
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
-								// Reset active tab's state to 'idle' and add error log
-								const updatedAiTabs =
-									s.aiTabs?.length > 0
-										? s.aiTabs.map((tab) =>
-												tab.id === s.activeTabId
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-															logs: [...tab.logs, errorLog],
-														}
-													: tab
-											)
-										: s.aiTabs;
-								return {
-									...s,
-									state: 'idle',
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									aiTabs: updatedAiTabs,
-								};
-							})
-						);
-					}
-				})();
-			} else if (currentMode === 'terminal') {
+			if (currentMode === 'terminal') {
 				// Intercept "clear" command to clear shell logs instead of sending to shell
 				const trimmedCommand = capturedInputValue.trim();
 				if (trimmedCommand === 'clear') {

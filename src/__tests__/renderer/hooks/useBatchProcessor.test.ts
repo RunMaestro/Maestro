@@ -3163,11 +3163,13 @@ describe('useBatchProcessor hook', () => {
 
 			// Should have registered session origins
 			expect(mockRegisterSessionOrigin).toHaveBeenCalledWith(
+				'claude-code',
 				'/test/path',
 				'claude-session-1',
 				'auto'
 			);
 			expect(mockRegisterSessionOrigin).toHaveBeenCalledWith(
+				'claude-code',
 				'/test/path',
 				'claude-session-2',
 				'auto'
@@ -3453,8 +3455,12 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/custom/worktree');
+			// Should have called spawn with cwd override while preserving the user prompt.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.stringContaining('Test'),
+				'/custom/worktree'
+			);
 		});
 	});
 
@@ -3739,8 +3745,12 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/test/worktree');
+			// Should have spawned agent with worktree path while preserving the user prompt.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.stringContaining('Test'),
+				'/test/worktree'
+			);
 		});
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {
@@ -4875,6 +4885,7 @@ describe('useBatchProcessor hook', () => {
 
 			// Should have registered the Claude session as auto-initiated
 			expect(mockRegisterSessionOrigin).toHaveBeenCalledWith(
+				'claude-code',
 				'/test/path', // session.cwd
 				'new-claude-session-123',
 				'auto'

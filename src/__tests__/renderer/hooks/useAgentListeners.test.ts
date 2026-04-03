@@ -587,6 +587,7 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'agent-session-abc');
 
 			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
+				'claude-code',
 				'/test/project',
 				'agent-session-abc',
 				'user'
@@ -600,6 +601,41 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-batch-0-ai', 'agent-session-abc');
 
 			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
+		});
+
+		it('keeps canonical OpenClaw composite IDs when a raw session UUID arrives', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: null,
+				awaitingSessionId: true,
+			});
+			const session = createMockSession({
+				id: 'sess-openclaw',
+				toolType: 'openclaw',
+				projectRoot: '/openclaw/project',
+				agentSessionId: 'main:abc-123',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-openclaw',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onSessionIdHandler?.('sess-openclaw-ai-tab-1', 'abc-123');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-openclaw');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			expect(updatedTab?.agentSessionId).toBe('main:abc-123');
+			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
+				'openclaw',
+				'/openclaw/project',
+				'main:abc-123',
+				'user'
+			);
 		});
 	});
 

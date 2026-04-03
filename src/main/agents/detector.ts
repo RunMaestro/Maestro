@@ -251,6 +251,34 @@ export class AgentDetector {
 		try {
 			// Agent-specific model discovery commands
 			switch (agentId) {
+				case 'cursor-agent': {
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+
+					const models = result.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter(
+							(line) =>
+								line.length > 0 &&
+								!line.toLowerCase().startsWith('loading') &&
+								!line.toLowerCase().includes('no models available')
+						);
+
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
+						models,
+					});
+					return models;
+				}
+
 				case 'opencode': {
 					// OpenCode: `opencode models` returns one model per line
 					const result = await execFileNoThrow(command, ['models'], undefined, env);

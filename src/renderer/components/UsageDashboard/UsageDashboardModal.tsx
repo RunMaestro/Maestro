@@ -32,6 +32,7 @@ import { LongestAutoRunsTable } from './LongestAutoRunsTable';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
+import { DEFAULT_AUTORUN_ANALYTICS_FILTERS, type AutoRunAnalyticsFilters } from './autoRunFilters';
 import type { Theme, Session } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -160,6 +161,9 @@ export function UsageDashboardModal({
 	const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
 	const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
+	const [autoRunFilters, setAutoRunFilters] = useState<AutoRunAnalyticsFilters>(
+		DEFAULT_AUTORUN_ANALYTICS_FILTERS
+	);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -175,6 +179,7 @@ export function UsageDashboardModal({
 	useEffect(() => {
 		if (isOpen) {
 			setTimeRange(defaultTimeRange);
+			setAutoRunFilters(DEFAULT_AUTORUN_ANALYTICS_FILTERS);
 		}
 	}, [isOpen, defaultTimeRange]);
 
@@ -1146,6 +1151,8 @@ export function UsageDashboardModal({
 												timeRange={timeRange}
 												theme={theme}
 												columns={layout.autoRunStatsCols}
+												filters={autoRunFilters}
+												onFiltersChange={setAutoRunFilters}
 											/>
 										</ChartErrorBoundary>
 									</div>
@@ -1190,7 +1197,12 @@ export function UsageDashboardModal({
 										data-testid="section-longest-autoruns"
 									>
 										<ChartErrorBoundary theme={theme} chartName="Longest Auto Runs">
-											<LongestAutoRunsTable timeRange={timeRange} theme={theme} />
+											<LongestAutoRunsTable
+												timeRange={timeRange}
+												theme={theme}
+												filters={autoRunFilters}
+												onFiltersChange={setAutoRunFilters}
+											/>
 										</ChartErrorBoundary>
 									</div>
 								</>

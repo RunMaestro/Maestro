@@ -77,6 +77,14 @@ interface PlaybookDetailViewProps {
 	onImport: () => void;
 }
 
+function formatTimeoutLabel(taskTimeoutMs?: number | null): string {
+	if (taskTimeoutMs === null || taskTimeoutMs === undefined || taskTimeoutMs <= 0) {
+		return 'Default';
+	}
+
+	return `${taskTimeoutMs}ms`;
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -222,7 +230,7 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
 // PlaybookDetailView Sub-component
 // ============================================================================
 
-function PlaybookDetailView({
+export function PlaybookDetailView({
 	theme,
 	playbook,
 	readmeContent,
@@ -510,6 +518,25 @@ function PlaybookDetailView({
 									? `Yes (max ${playbook.maxLoops})`
 									: 'Yes (unlimited)'
 								: 'No'}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Timeout: {formatTimeoutLabel(playbook.taskTimeoutMs)}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Profile: {playbook.promptProfile ?? 'compact-code'}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Context: {playbook.documentContextMode ?? 'active-task-only'}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Skill mode: {playbook.skillPromptMode ?? 'brief'}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Strategy: {playbook.agentStrategy ?? 'single'}
+						</p>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+							Skills:{' '}
+							{playbook.skills && playbook.skills.length > 0 ? playbook.skills.join(', ') : 'None'}
 						</p>
 					</div>
 

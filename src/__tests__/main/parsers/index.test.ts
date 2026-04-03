@@ -9,7 +9,20 @@ import {
 	ClaudeOutputParser,
 	OpenCodeOutputParser,
 	CodexOutputParser,
+	CursorAgentOutputParser,
+	OpenClawOutputParser,
+	ZaiOutputParser,
 } from '../../../main/parsers';
+
+const EXPECTED_PARSER_IDS = [
+	'claude-code',
+	'opencode',
+	'codex',
+	'cursor-agent',
+	'factory-droid',
+	'openclaw',
+	'zai',
+] as const;
 
 describe('parsers/index', () => {
 	beforeEach(() => {
@@ -49,21 +62,46 @@ describe('parsers/index', () => {
 			expect(hasOutputParser('factory-droid')).toBe(true);
 		});
 
-		it('should register exactly 4 parsers', () => {
+		it('should register OpenClaw parser', () => {
+			expect(hasOutputParser('openclaw')).toBe(false);
+
 			initializeOutputParsers();
 
-			const parsers = getAllOutputParsers();
-			expect(parsers.length).toBe(4); // Claude, OpenCode, Codex, Factory Droid
+			expect(hasOutputParser('openclaw')).toBe(true);
+		});
+
+		it('should register Cursor Agent parser', () => {
+			expect(hasOutputParser('cursor-agent')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('cursor-agent')).toBe(true);
+		});
+
+		it('should register Z.ai parser', () => {
+			expect(hasOutputParser('zai')).toBe(false);
+
+			initializeOutputParsers();
+
+			expect(hasOutputParser('zai')).toBe(true);
+		});
+
+		it('should register every expected parser exactly once', () => {
+			initializeOutputParsers();
+
+			const parserIds = getAllOutputParsers().map((parser) => parser.agentId);
+			expect(parserIds).toHaveLength(EXPECTED_PARSER_IDS.length);
+			expect(parserIds).toEqual(EXPECTED_PARSER_IDS);
 		});
 
 		it('should clear existing parsers before registering', () => {
 			// First initialization
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers()).toHaveLength(EXPECTED_PARSER_IDS.length);
 
-			// Second initialization should still have exactly 4
+			// Second initialization should still have the same exact set
 			initializeOutputParsers();
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers()).toHaveLength(EXPECTED_PARSER_IDS.length);
 		});
 	});
 
@@ -73,7 +111,7 @@ describe('parsers/index', () => {
 
 			ensureParsersInitialized();
 
-			expect(getAllOutputParsers().length).toBe(4);
+			expect(getAllOutputParsers()).toHaveLength(EXPECTED_PARSER_IDS.length);
 		});
 
 		it('should be idempotent after first call', () => {
@@ -110,6 +148,24 @@ describe('parsers/index', () => {
 			expect(parser).toBeInstanceOf(CodexOutputParser);
 		});
 
+		it('should return OpenClawOutputParser for openclaw', () => {
+			const parser = getOutputParser('openclaw');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(OpenClawOutputParser);
+		});
+
+		it('should return CursorAgentOutputParser for cursor-agent', () => {
+			const parser = getOutputParser('cursor-agent');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(CursorAgentOutputParser);
+		});
+
+		it('should return ZaiOutputParser for zai', () => {
+			const parser = getOutputParser('zai');
+			expect(parser).not.toBeNull();
+			expect(parser).toBeInstanceOf(ZaiOutputParser);
+		});
+
 		it('should return null for terminal', () => {
 			const parser = getOutputParser('terminal');
 			expect(parser).toBeNull();
@@ -135,6 +191,21 @@ describe('parsers/index', () => {
 		it('should export CodexOutputParser class', () => {
 			const parser = new CodexOutputParser();
 			expect(parser.agentId).toBe('codex');
+		});
+
+		it('should export OpenClawOutputParser class', () => {
+			const parser = new OpenClawOutputParser();
+			expect(parser.agentId).toBe('openclaw');
+		});
+
+		it('should export CursorAgentOutputParser class', () => {
+			const parser = new CursorAgentOutputParser();
+			expect(parser.agentId).toBe('cursor-agent');
+		});
+
+		it('should export ZaiOutputParser class', () => {
+			const parser = new ZaiOutputParser();
+			expect(parser.agentId).toBe('zai');
 		});
 	});
 
@@ -176,6 +247,53 @@ describe('parsers/index', () => {
 
 			expect(event?.type).toBe('init');
 			expect(event?.sessionId).toBe('cdx-456');
+		});
+
+		it('should correctly parse OpenClaw output after initialization', () => {
+			initializeOutputParsers();
+
+			const parser = getOutputParser('openclaw');
+			expect(parser).toBeInstanceOf(OpenClawOutputParser);
+
+			const event = parser?.parseJsonLine(
+				JSON.stringify({
+					payloads: [{ text: 'Hello from OpenClaw', mediaUrl: null }],
+					meta: {
+						durationMs: 1234,
+						agentMeta: {
+							sessionId: 'oc-789',
+							provider: 'anthropic',
+							model: 'claude-sonnet-4-6',
+							usage: { input: 10, output: 20, cacheWrite: 100, total: 130 },
+						},
+					},
+				})
+			);
+
+			expect(event?.type).toBe('result');
+			expect(event?.text).toBe('Hello from OpenClaw');
+			expect(event?.sessionId).toBe('oc-789');
+			expect(event?.usage?.inputTokens).toBe(10);
+			expect(event?.usage?.outputTokens).toBe(20);
+		});
+
+		it('should correctly parse Cursor Agent output after initialization', () => {
+			initializeOutputParsers();
+
+			const parser = getOutputParser('cursor-agent');
+			expect(parser).toBeInstanceOf(CursorAgentOutputParser);
+
+			const event = parser?.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					chatId: 'cursor-123',
+					result: 'Hello from Cursor Agent',
+				})
+			);
+
+			expect(event?.type).toBe('result');
+			expect(event?.text).toBe('Hello from Cursor Agent');
+			expect(event?.sessionId).toBe('cursor-123');
 		});
 	});
 });
