@@ -121,9 +121,18 @@ import { WakaTimeManager } from './wakatime-manager';
 // ============================================================================
 // Store type definitions are imported from ./stores/types.ts
 const isDevelopment = process.env.NODE_ENV === 'development';
+const explicitDataPath = process.env.MAESTRO_DATA_DIR;
 
-// Capture the production data path before any modification
-// Used for stores that should be shared between dev and prod (e.g., agent configs)
+// Tests can force a fully isolated data directory. This must happen before we
+// capture productionDataPath so agent configs are isolated alongside sessions.
+if (explicitDataPath) {
+	app.setPath('userData', explicitDataPath);
+	console.log(`[TEST MODE] Using explicit data directory: ${explicitDataPath}`);
+}
+
+// Capture the production data path after any explicit override.
+// In normal development, this still points at the real production directory so
+// agent configs remain shared. In tests, it points at the isolated fixture dir.
 const productionDataPath = app.getPath('userData');
 
 // Demo mode: use a separate data directory for fresh demos
