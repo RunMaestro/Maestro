@@ -292,6 +292,28 @@ describe('show-playbook command', () => {
 			expect(parsed.skills).toEqual(expect.arrayContaining(DEFAULT_AUTORUN_SKILLS));
 		});
 
+		it('should include normalized DAG defaults in JSON output for legacy playbooks', () => {
+			vi.mocked(findPlaybookById).mockReturnValue({
+				playbook: mockPlaybook({ maxParallelism: undefined, taskGraph: undefined }),
+				agentId: 'agent-123',
+			});
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readDocAndGetTasks).mockReturnValue({ tasks: [] });
+
+			showPlaybook('playbook-123', { json: true });
+
+			const output = consoleSpy.mock.calls[0][0];
+			const parsed = JSON.parse(output);
+
+			expect(parsed.maxParallelism).toBe(1);
+			expect(parsed.taskGraph).toEqual({
+				nodes: [
+					{ id: 'doc1', documentIndex: 0, dependsOn: [] },
+					{ id: 'doc2', documentIndex: 1, dependsOn: ['doc1'] },
+				],
+			});
+		});
+
 		it('should include null prompt when not set', () => {
 			vi.mocked(findPlaybookById).mockReturnValue({
 				playbook: mockPlaybook({ prompt: null }),

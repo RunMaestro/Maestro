@@ -1439,85 +1439,26 @@ interface MaestroAPI {
 	playbooks: {
 		list: (sessionId: string) => Promise<{
 			success: boolean;
-			playbooks: Array<{
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				taskTimeoutMs?: number | null;
-				maxParallelism?: number | null;
-				taskGraph?: import('../shared/types').PlaybookTaskGraph;
-				prompt: string;
-				skills?: string[];
-				definitionOfDone?: string[];
-				verificationSteps?: string[];
-				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
-				documentContextMode?: 'full' | 'active-task-only';
-				skillPromptMode?: 'full' | 'brief';
-				agentStrategy?: 'single' | 'plan-execute-verify';
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>;
+			playbooks: import('../shared/types').Playbook[];
 			error?: string;
 		}>;
 		create: (
 			sessionId: string,
-			playbook: {
-				name: string;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				taskTimeoutMs?: number | null;
-				maxParallelism?: number | null;
-				taskGraph?: import('../shared/types').PlaybookTaskGraph;
-				prompt: string;
-				skills?: string[];
-				definitionOfDone?: string[];
-				verificationSteps?: string[];
-				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
-				documentContextMode?: 'full' | 'active-task-only';
-				skillPromptMode?: 'full' | 'brief';
-				agentStrategy?: 'single' | 'plan-execute-verify';
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}
-		) => Promise<{ success: boolean; playbook?: any; error?: string }>;
+			playbook: import('../shared/types').PlaybookDraft
+		) => Promise<{
+			success: boolean;
+			playbook?: import('../shared/types').Playbook;
+			error?: string;
+		}>;
 		update: (
 			sessionId: string,
 			playbookId: string,
-			updates: Partial<{
-				name: string;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				taskTimeoutMs?: number | null;
-				maxParallelism?: number | null;
-				taskGraph?: import('../shared/types').PlaybookTaskGraph;
-				prompt: string;
-				skills?: string[];
-				definitionOfDone?: string[];
-				verificationSteps?: string[];
-				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
-				documentContextMode?: 'full' | 'active-task-only';
-				skillPromptMode?: 'full' | 'brief';
-				agentStrategy?: 'single' | 'plan-execute-verify';
-				updatedAt: number;
-				worktreeSettings?: {
-					branchNameTemplate: string;
-					createPROnCompletion: boolean;
-					prTargetBranch?: string;
-				};
-			}>
-		) => Promise<{ success: boolean; playbook?: any; error?: string }>;
+			updates: import('../shared/types').PlaybookUpdate
+		) => Promise<{
+			success: boolean;
+			playbook?: import('../shared/types').Playbook;
+			error?: string;
+		}>;
 		delete: (
 			sessionId: string,
 			playbookId: string
@@ -1531,64 +1472,26 @@ interface MaestroAPI {
 		import: (
 			sessionId: string,
 			autoRunFolderPath: string
-		) => Promise<{ success: boolean; playbook?: any; importedDocs?: string[]; error?: string }>;
+		) => Promise<{
+			success: boolean;
+			playbook?: import('../shared/types').Playbook;
+			importedDocs?: string[];
+			importedAssets?: string[];
+			error?: string;
+		}>;
 	};
 	// Marketplace API (browse and import playbooks from GitHub)
 	marketplace: {
 		getManifest: () => Promise<{
 			success: boolean;
-			manifest?: {
-				lastUpdated: string;
-				playbooks: Array<{
-					id: string;
-					title: string;
-					description: string;
-					category: string;
-					subcategory?: string;
-					author: string;
-					authorLink?: string;
-					tags?: string[];
-					lastUpdated: string;
-					path: string;
-					documents: Array<{
-						filename: string;
-						resetOnCompletion: boolean;
-					}>;
-					loopEnabled: boolean;
-					maxLoops?: number | null;
-					prompt: string | null;
-					source?: 'official' | 'local';
-				}>;
-			};
+			manifest?: import('../shared/marketplace-types').MarketplaceManifest;
 			fromCache?: boolean;
 			cacheAge?: number;
 			error?: string;
 		}>;
 		refreshManifest: () => Promise<{
 			success: boolean;
-			manifest?: {
-				lastUpdated: string;
-				playbooks: Array<{
-					id: string;
-					title: string;
-					description: string;
-					category: string;
-					subcategory?: string;
-					author: string;
-					authorLink?: string;
-					tags?: string[];
-					lastUpdated: string;
-					path: string;
-					documents: Array<{
-						filename: string;
-						resetOnCompletion: boolean;
-					}>;
-					loopEnabled: boolean;
-					maxLoops?: number | null;
-					prompt: string | null;
-					source?: 'official' | 'local';
-				}>;
-			};
+			manifest?: import('../shared/marketplace-types').MarketplaceManifest;
 			fromCache?: boolean;
 			error?: string;
 		}>;
@@ -1613,17 +1516,9 @@ interface MaestroAPI {
 			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
-			playbook?: {
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-			};
+			playbook?: import('../shared/types').Playbook;
 			importedDocs?: string[];
+			importedAssets?: string[];
 			error?: string;
 		}>;
 		onManifestChanged: (handler: () => void) => () => void;
@@ -2174,6 +2069,13 @@ interface MaestroAPI {
 			startTime: number;
 			tasksTotal?: number;
 			projectPath?: string;
+			playbookId?: string;
+			playbookName?: string;
+			promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+			agentStrategy?: 'single' | 'plan-execute-verify';
+			worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+			schedulerMode?: 'sequential' | 'dag';
+			maxParallelism?: number;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
 		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
@@ -2187,6 +2089,15 @@ interface MaestroAPI {
 			startTime: number;
 			duration: number;
 			success: boolean;
+			documentPath?: string;
+			verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+			promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+			agentStrategy?: 'single' | 'plan-execute-verify';
+			worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+			schedulerOutcome?: 'completed' | 'failed' | 'timed_out';
+			queueWaitMs?: number;
+			retryCount?: number;
+			timedOut?: boolean;
 		}) => Promise<string>;
 		// Get query events with time range and optional filters
 		getStats: (
@@ -2221,6 +2132,13 @@ interface MaestroAPI {
 				tasksTotal?: number;
 				tasksCompleted?: number;
 				projectPath?: string;
+				playbookId?: string;
+				playbookName?: string;
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				agentStrategy?: 'single' | 'plan-execute-verify';
+				worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+				schedulerMode?: 'sequential' | 'dag';
+				maxParallelism?: number;
 			}>
 		>;
 		// Get tasks for a specific Auto Run session
@@ -2235,6 +2153,15 @@ interface MaestroAPI {
 				startTime: number;
 				duration: number;
 				success: boolean;
+				documentPath?: string;
+				verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+				promptProfile?: 'full' | 'compact-code' | 'compact-doc';
+				agentStrategy?: 'single' | 'plan-execute-verify';
+				worktreeMode?: 'disabled' | 'managed' | 'existing-open' | 'existing-closed' | 'create-new';
+				schedulerOutcome?: 'completed' | 'failed' | 'timed_out';
+				queueWaitMs?: number;
+				retryCount?: number;
+				timedOut?: boolean;
 			}>
 		>;
 		// Get aggregated stats for dashboard display

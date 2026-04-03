@@ -185,7 +185,10 @@ export function formatPlaybooks(
 }
 
 // Playbook detail formatting
-export interface PlaybookDetailDisplay extends PlaybookBaselineMetadata {
+export interface PlaybookDetailDisplay extends Omit<
+	PlaybookBaselineMetadata,
+	'maxParallelism' | 'taskGraph'
+> {
 	id: string;
 	name: string;
 	agentId: string;
@@ -194,6 +197,7 @@ export interface PlaybookDetailDisplay extends PlaybookBaselineMetadata {
 	loopEnabled?: boolean;
 	maxLoops?: number | null;
 	prompt: string;
+	maxParallelism?: number | null;
 	taskGraph?: PlaybookTaskGraph;
 	documents: {
 		filename: string;

@@ -4,11 +4,7 @@
 import { findPlaybookById } from '../services/playbooks';
 import { getSessionById } from '../services/storage';
 import { readDocAndGetTasks } from '../services/agent-spawner';
-import {
-	formatPlaybookDetail,
-	formatError,
-	type PlaybookDetailDisplay,
-} from '../output/formatter';
+import { formatPlaybookDetail, formatError, type PlaybookDetailDisplay } from '../output/formatter';
 import { normalizePersistedPlaybook } from '../../shared/playbookDag';
 
 interface ShowPlaybookOptions {
@@ -53,7 +49,7 @@ export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): 
 			maxLoops: playbook.maxLoops,
 			taskTimeoutMs: playbook.taskTimeoutMs ?? null,
 			maxParallelism: playbook.maxParallelism ?? 1,
-			taskGraph: playbook.taskGraph,
+			taskGraph: playbook.taskGraph ?? { nodes: [] },
 			prompt: playbook.prompt,
 			skills: playbook.skills ?? [],
 			definitionOfDone: playbook.definitionOfDone ?? [],

@@ -8,7 +8,6 @@ import AdmZip from 'adm-zip';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
-	buildImplicitTaskGraph,
 	normalizePersistedPlaybook,
 	normalizePlaybookDraft,
 	normalizePlaybookUpdate,
@@ -79,9 +78,10 @@ async function writePlaybooks(app: App, sessionId: string, playbooks: Playbook[]
 
 function createPlaybookArchiveManifest(playbook: Playbook): PlaybookArchiveManifest {
 	const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...draft } = playbook;
+	const normalizedDraft = normalizePlaybookDraft(draft);
 
 	return {
-		...draft,
+		...normalizedDraft,
 		version: 1,
 		exportedAt: Date.now(),
 	};
@@ -193,7 +193,12 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				const nextDocuments = Array.isArray(updates.documents)
 					? updates.documents
 					: playbooks[index].documents;
-				const normalizedUpdates = normalizePlaybookUpdate(nextDocuments, updates);
+				const normalizedUpdates = normalizePlaybookUpdate(nextDocuments, {
+					...updates,
+					maxParallelism: updates.maxParallelism ?? playbooks[index].maxParallelism,
+					taskGraph: updates.taskGraph ?? playbooks[index].taskGraph,
+					skills: updates.skills ?? playbooks[index].skills,
+				});
 
 				const updatedPlaybook: Playbook = normalizePersistedPlaybook({
 					...playbooks[index],
@@ -301,11 +306,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 				archive.pipe(output);
 
 				// Create manifest JSON (playbook settings without the id - will be regenerated on import)
-				const manifest = createPlaybookArchiveManifest({
-					...playbook,
-					maxParallelism: playbook.maxParallelism ?? 1,
-					taskGraph: playbook.taskGraph ?? buildImplicitTaskGraph(playbook.documents),
-				});
+				const manifest = createPlaybookArchiveManifest(playbook);
 
 				// Add manifest to archive
 				archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });

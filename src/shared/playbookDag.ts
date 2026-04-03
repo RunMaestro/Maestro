@@ -49,6 +49,16 @@ export function normalizePlaybookSkills(skills: string[] = []): string[] {
 	return normalized;
 }
 
+function cloneTaskGraph(taskGraph: PlaybookTaskGraph): PlaybookTaskGraph {
+	return {
+		nodes: taskGraph.nodes.map((node) => ({
+			id: node.id,
+			documentIndex: node.documentIndex,
+			dependsOn: Array.isArray(node.dependsOn) ? [...node.dependsOn] : [],
+		})),
+	};
+}
+
 export function buildImplicitTaskGraph(documents: DocumentLike[]): PlaybookTaskGraph {
 	const occurrenceCounts = new Map<string, number>();
 	const nodes: PlaybookTaskGraphNode[] = [];
@@ -84,13 +94,49 @@ export function normalizePlaybookTaskGraph(
 		return buildImplicitTaskGraph(documents);
 	}
 
-	return {
-		nodes: taskGraph.nodes.map((node) => ({
-			id: node.id,
-			documentIndex: node.documentIndex,
-			dependsOn: Array.isArray(node.dependsOn) ? [...node.dependsOn] : [],
-		})),
-	};
+	return cloneTaskGraph(taskGraph);
+}
+
+export function doesPlaybookTaskGraphMatchDocuments(
+	documents: DocumentLike[],
+	taskGraph?: PlaybookTaskGraph | null
+): boolean {
+	if (
+		!taskGraph ||
+		!Array.isArray(taskGraph.nodes) ||
+		taskGraph.nodes.length !== documents.length
+	) {
+		return false;
+	}
+
+	const coveredDocumentIndexes = new Set<number>();
+
+	for (const node of taskGraph.nodes) {
+		if (
+			!Number.isInteger(node.documentIndex) ||
+			node.documentIndex < 0 ||
+			node.documentIndex >= documents.length
+		) {
+			return false;
+		}
+		if (coveredDocumentIndexes.has(node.documentIndex)) {
+			return false;
+		}
+		coveredDocumentIndexes.add(node.documentIndex);
+	}
+
+	return coveredDocumentIndexes.size === documents.length;
+}
+
+export function resolvePlaybookTaskGraph(
+	documents: DocumentLike[],
+	taskGraph?: PlaybookTaskGraph | null
+): PlaybookTaskGraph {
+	if (!doesPlaybookTaskGraphMatchDocuments(documents, taskGraph)) {
+		return buildImplicitTaskGraph(documents);
+	}
+
+	return cloneTaskGraph(taskGraph as PlaybookTaskGraph);
 }
 
 export function normalizePlaybookMaxParallelism(value?: number | null): number {
@@ -110,7 +156,7 @@ export function normalizePlaybookDagFields<T extends PlaybookGraphCarrier>(
 	return {
 		...playbook,
 		maxParallelism: normalizePlaybookMaxParallelism(playbook.maxParallelism),
-		taskGraph: normalizePlaybookTaskGraph(playbook.documents, playbook.taskGraph),
+		taskGraph: resolvePlaybookTaskGraph(playbook.documents, playbook.taskGraph),
 		skills: normalizePlaybookSkills(playbook.skills),
 	};
 }
@@ -260,6 +306,12 @@ export function validatePlaybookDag(
 			const dependency = idToNode.get(depId)!;
 			if (dependency.documentIndex === node.documentIndex) {
 				errors.push(`Node "${node.id}" has an illegal same-document dependency on "${depId}".`);
+				continue;
+			}
+			if (dependency.documentIndex > node.documentIndex) {
+				errors.push(
+					`Node "${node.id}" has an illegal cross-document dependency on "${depId}" that points forward in document order.`
+				);
 			}
 		}
 	}

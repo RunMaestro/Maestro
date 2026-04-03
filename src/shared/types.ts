@@ -61,6 +61,16 @@ export interface HistoryUsageBreakdown {
 	synopsis?: UsageStats;
 }
 
+export type AutoRunWorktreeMode =
+	| 'disabled'
+	| 'managed'
+	| 'existing-open'
+	| 'existing-closed'
+	| 'create-new';
+
+export type AutoRunSchedulerMode = 'sequential' | 'dag';
+export type AutoRunSchedulerOutcome = 'completed' | 'failed' | 'timed_out';
+
 // History entry types for the History panel
 export type HistoryEntryType = 'AUTO' | 'USER';
 
@@ -82,6 +92,13 @@ export interface HistoryEntry {
 	elapsedTimeMs?: number;
 	validated?: boolean;
 	verifierVerdict?: 'PASS' | 'WARN' | 'FAIL';
+	playbookId?: string;
+	playbookName?: string;
+	promptProfile?: PlaybookPromptProfile;
+	agentStrategy?: PlaybookAgentStrategy;
+	worktreeMode?: AutoRunWorktreeMode;
+	schedulerMode?: AutoRunSchedulerMode;
+	schedulerOutcome?: AutoRunSchedulerOutcome;
 }
 
 // Document entry within a playbook
@@ -173,6 +190,8 @@ export interface BatchRunConfig {
 	prompt: string;
 	loopEnabled: boolean;
 	maxLoops?: number | null;
+	playbookId?: string;
+	playbookName?: string;
 	taskTimeoutMs?: number | null;
 	skills?: string[];
 	agentStrategy?: PlaybookAgentStrategy;

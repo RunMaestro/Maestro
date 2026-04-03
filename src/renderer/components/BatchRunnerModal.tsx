@@ -34,7 +34,7 @@ import {
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
-import { buildImplicitTaskGraph, normalizePlaybookSkills } from '../../shared/playbookDag';
+import { normalizePlaybookSkills, resolvePlaybookTaskGraph } from '../../shared/playbookDag';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -415,13 +415,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			playbookId: loadedPlaybook?.id,
+			playbookName: loadedPlaybook?.name,
 			taskTimeoutMs,
 			skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
 			promptProfile,
 			documentContextMode: loadedPlaybook?.documentContextMode ?? 'active-task-only',
 			skillPromptMode: loadedPlaybook?.skillPromptMode ?? 'brief',
 			maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
-			taskGraph: loadedPlaybook?.taskGraph ?? buildImplicitTaskGraph(validDocuments),
+			taskGraph: resolvePlaybookTaskGraph(validDocuments, loadedPlaybook?.taskGraph),
 			agentStrategy,
 			definitionOfDone: definitionOfDoneText
 				.split('\n')

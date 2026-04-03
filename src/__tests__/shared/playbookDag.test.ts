@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildImplicitTaskGraph,
 	DEFAULT_AUTORUN_SKILLS,
+	doesPlaybookTaskGraphMatchDocuments,
 	normalizePlaybookDagFields,
 	normalizePlaybookSkills,
+	resolvePlaybookTaskGraph,
 	validatePlaybookDag,
 } from '../../shared/playbookDag';
 
@@ -19,6 +21,20 @@ describe('playbookDag helpers', () => {
 			{ id: 'phase-01', documentIndex: 0, dependsOn: [] },
 			{ id: 'phase-02', documentIndex: 1, dependsOn: ['phase-01'] },
 			{ id: 'phase-03', documentIndex: 2, dependsOn: ['phase-02'] },
+		]);
+	});
+
+	it('derives stable node ids for duplicate legacy document filenames', () => {
+		const graph = buildImplicitTaskGraph([
+			{ filename: 'phase-01.md' },
+			{ filename: 'phase-01.md' },
+			{ filename: 'nested/phase-01.md' },
+		]);
+
+		expect(graph.nodes).toEqual([
+			{ id: 'phase-01', documentIndex: 0, dependsOn: [] },
+			{ id: 'phase-01-2', documentIndex: 1, dependsOn: ['phase-01'] },
+			{ id: 'nested-phase-01', documentIndex: 2, dependsOn: ['phase-01-2'] },
 		]);
 	});
 
@@ -45,13 +61,26 @@ describe('playbookDag helpers', () => {
 		});
 	});
 
-	it('rejects duplicate node ids, missing dependencies, same-document refs, cycles, and invalid maxParallelism', () => {
+	it('falls back to the implicit graph when an existing graph no longer matches the document set', () => {
+		const documents = [{ filename: 'phase-01.md' }, { filename: 'phase-02.md' }];
+		const staleGraph = {
+			nodes: [{ id: 'phase-01', documentIndex: 0, dependsOn: [] }],
+		};
+
+		expect(doesPlaybookTaskGraphMatchDocuments(documents, staleGraph)).toBe(false);
+		expect(resolvePlaybookTaskGraph(documents, staleGraph)).toEqual(
+			buildImplicitTaskGraph(documents)
+		);
+	});
+
+	it('rejects duplicate node ids, missing dependencies, same-document refs, cycles, illegal forward links, and invalid maxParallelism', () => {
 		const result = validatePlaybookDag(
-			[{ filename: 'phase-01.md' }, { filename: 'phase-02.md' }],
+			[{ filename: 'phase-01.md' }, { filename: 'phase-02.md' }, { filename: 'phase-03.md' }],
 			{
 				nodes: [
-					{ id: 'dup', documentIndex: 0, dependsOn: ['dup'] },
+					{ id: 'dup', documentIndex: 0, dependsOn: ['dup', 'phase-03'] },
 					{ id: 'dup', documentIndex: 0, dependsOn: ['missing'] },
+					{ id: 'phase-03', documentIndex: 2, dependsOn: [] },
 				],
 			},
 			0
@@ -64,6 +93,7 @@ describe('playbookDag helpers', () => {
 				'Duplicate taskGraph node id: dup',
 				'Multiple taskGraph nodes reference documentIndex 0.',
 				'Missing taskGraph node for documentIndex 1.',
+				'Node "dup" has an illegal cross-document dependency on "phase-03" that points forward in document order.',
 				'Node "dup" cannot depend on itself.',
 				'Node "dup" depends on missing node "missing".',
 				'taskGraph contains a dependency cycle.',

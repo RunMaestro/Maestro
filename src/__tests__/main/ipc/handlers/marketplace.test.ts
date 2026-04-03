@@ -259,13 +259,61 @@ describe('marketplace IPC handlers', () => {
 			const writtenCache = JSON.parse(writeCall[1] as string) as MarketplaceCache;
 			expect(writtenCache.fetchedAt).toBeDefined();
 			expect(typeof writtenCache.fetchedAt).toBe('number');
-			expect(writtenCache.manifest).toEqual(sampleManifest);
+			expect(writtenCache.manifest.playbooks).toHaveLength(sampleManifest.playbooks.length);
+			expect(writtenCache.manifest.playbooks[0]).toMatchObject({
+				id: 'test-playbook-1',
+				maxParallelism: 1,
+				skills: [...DEFAULT_AUTORUN_SKILLS],
+				taskGraph: {
+					nodes: [
+						{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+						{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+					],
+				},
+			});
 
 			// Verify response indicates not from cache
 			expect(result.fromCache).toBe(false);
 			// Merged manifest includes source field for each playbook
 			expect(result.manifest.playbooks.length).toBe(sampleManifest.playbooks.length);
 			expect(result.manifest.playbooks.every((p: any) => p.source === 'official')).toBe(true);
+		});
+
+		it('should normalize canonical DAG fields in fetched and cached marketplace manifests', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve(sampleManifest),
+			});
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			const legacyPlaybook = result.manifest.playbooks.find(
+				(playbook: any) => playbook.id === 'test-playbook-1'
+			);
+			expect(legacyPlaybook.maxParallelism).toBe(1);
+			expect(legacyPlaybook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
+
+			const writeCall = vi.mocked(fs.writeFile).mock.calls[0];
+			const writtenCache = JSON.parse(writeCall[1] as string) as MarketplaceCache;
+			const cachedLegacyPlaybook = writtenCache.manifest.playbooks.find(
+				(playbook) => playbook.id === 'test-playbook-1'
+			);
+			expect(cachedLegacyPlaybook?.maxParallelism).toBe(1);
+			expect(cachedLegacyPlaybook?.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
 		});
 
 		it('should use cache when within TTL', async () => {
@@ -657,6 +705,12 @@ describe('marketplace IPC handlers', () => {
 			expect(typeof result.playbook.prompt).toBe('string');
 			expect(result.playbook.taskTimeoutMs).toBeNull();
 			expect(result.playbook.maxParallelism).toBe(1);
+			expect(result.playbook.taskGraph).toEqual({
+				nodes: [
+					{ id: 'phase-1', documentIndex: 0, dependsOn: [] },
+					{ id: 'phase-2', documentIndex: 1, dependsOn: ['phase-1'] },
+				],
+			});
 			expect(result.playbook.skills).toEqual([...DEFAULT_AUTORUN_SKILLS]);
 			expect(result.playbook.definitionOfDone).toEqual([]);
 			expect(result.playbook.promptProfile).toBe('compact-code');

@@ -30,7 +30,7 @@ import {
 	inferPlaybookPromptProfile,
 	normalizePlaybookPromptForStorage,
 } from './batchUtils';
-import { buildImplicitTaskGraph, normalizePlaybookSkills } from '../../../shared/playbookDag';
+import { normalizePlaybookSkills, resolvePlaybookTaskGraph } from '../../../shared/playbookDag';
 
 /**
  * Configuration passed to the hook for modification detection
@@ -330,11 +330,12 @@ export function usePlaybookManagement(
 	const handleImportPlaybook = useCallback(async () => {
 		try {
 			const result = await window.maestro.playbooks.import(sessionId, folderPath);
-			if (result.success && result.playbook) {
+			const importedPlaybook = result.success ? result.playbook : undefined;
+			if (importedPlaybook) {
 				// Add to local playbooks list
-				setPlaybooks((prev) => [...prev, result.playbook]);
+				setPlaybooks((prev) => [...prev, importedPlaybook]);
 				// Load the imported playbook
-				handleLoadPlaybook(result.playbook);
+				handleLoadPlaybook(importedPlaybook);
 			} else if (result.error && result.error !== 'Import cancelled') {
 				console.error('Failed to import playbook:', result.error);
 			}
@@ -364,9 +365,7 @@ export function usePlaybookManagement(
 				// Build playbook data
 				// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
 				const storedDocuments = toStoredDocuments(documents);
-				const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
-				const promptProfile =
-					loadedPlaybook?.promptProfile ?? inferPlaybookPromptProfile(prompt);
+				const promptProfile = loadedPlaybook?.promptProfile ?? inferPlaybookPromptProfile(prompt);
 				const playbookData: Parameters<typeof window.maestro.playbooks.create>[1] = {
 					name,
 					documents: storedDocuments,
@@ -374,10 +373,12 @@ export function usePlaybookManagement(
 					maxLoops,
 					taskTimeoutMs,
 					maxParallelism: loadedPlaybook?.maxParallelism ?? 1,
-					taskGraph:
-						shouldPreserveGraph && loadedPlaybook?.taskGraph
-							? loadedPlaybook.taskGraph
-							: buildImplicitTaskGraph(storedDocuments),
+					taskGraph: resolvePlaybookTaskGraph(
+						storedDocuments,
+						documentsMatchLoadedPlaybook(documents, loadedPlaybook)
+							? loadedPlaybook?.taskGraph
+							: null
+					),
 					prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
 					skills: normalizePlaybookSkills(loadedPlaybook?.skills ?? []),
 					definitionOfDone,
@@ -389,10 +390,11 @@ export function usePlaybookManagement(
 				};
 
 				const result = await window.maestro.playbooks.create(sessionId, playbookData);
+				const createdPlaybook = result.success ? result.playbook : undefined;
 
-				if (result.success) {
-					setPlaybooks((prev) => [...prev, result.playbook]);
-					setLoadedPlaybook(result.playbook);
+				if (createdPlaybook) {
+					setPlaybooks((prev) => [...prev, createdPlaybook]);
+					setLoadedPlaybook(createdPlaybook);
 					setShowSavePlaybookModal(false);
 				}
 			} catch (error) {
@@ -423,7 +425,6 @@ export function usePlaybookManagement(
 			// Build update data
 			// Note: Worktree settings are no longer stored in playbooks - see WorktreeConfigModal
 			const storedDocuments = toStoredDocuments(documents);
-			const shouldPreserveGraph = documentsMatchLoadedPlaybook(documents, loadedPlaybook);
 			const promptProfile = loadedPlaybook.promptProfile ?? inferPlaybookPromptProfile(prompt);
 			const updateData: Parameters<typeof window.maestro.playbooks.update>[2] = {
 				documents: storedDocuments,
@@ -431,10 +432,10 @@ export function usePlaybookManagement(
 				maxLoops,
 				taskTimeoutMs,
 				maxParallelism: loadedPlaybook.maxParallelism ?? 1,
-				taskGraph:
-					shouldPreserveGraph && loadedPlaybook.taskGraph
-						? loadedPlaybook.taskGraph
-						: buildImplicitTaskGraph(storedDocuments),
+				taskGraph: resolvePlaybookTaskGraph(
+					storedDocuments,
+					documentsMatchLoadedPlaybook(documents, loadedPlaybook) ? loadedPlaybook.taskGraph : null
+				),
 				prompt: normalizePlaybookPromptForStorage(prompt, promptProfile),
 				skills: normalizePlaybookSkills(loadedPlaybook.skills ?? []),
 				definitionOfDone,
@@ -451,11 +452,12 @@ export function usePlaybookManagement(
 				loadedPlaybook.id,
 				updateData
 			);
+			const updatedPlaybook = result.success ? result.playbook : undefined;
 
-			if (result.success) {
-				setLoadedPlaybook(result.playbook);
+			if (updatedPlaybook) {
+				setLoadedPlaybook(updatedPlaybook);
 				setPlaybooks((prev) =>
-					prev.map((p) => (p.id === result.playbook.id ? result.playbook : p))
+					prev.map((p) => (p.id === updatedPlaybook.id ? updatedPlaybook : p))
 				);
 			}
 		} catch (error) {

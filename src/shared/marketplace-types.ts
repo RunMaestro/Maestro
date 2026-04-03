@@ -6,7 +6,12 @@
  * and the local cache.
  */
 
-import type { Playbook, PlaybookBaselineMetadata, PlaybookTaskGraph } from './types';
+import type {
+	Playbook,
+	PlaybookBaselineMetadata,
+	PlaybookDocumentEntry,
+	PlaybookTaskGraph,
+} from './types';
 
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
@@ -77,12 +82,7 @@ export interface MarketplacePlaybook extends PlaybookBaselineMetadata {
 /**
  * Document entry within a marketplace playbook.
  */
-export interface MarketplaceDocument {
-	/** Filename without .md extension */
-	filename: string;
-	/** Whether to reset checkboxes on completion */
-	resetOnCompletion: boolean;
-}
+export type MarketplaceDocument = PlaybookDocumentEntry;
 
 // ============================================================================
 // Cache Types
