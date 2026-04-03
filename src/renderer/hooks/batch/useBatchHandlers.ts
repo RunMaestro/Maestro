@@ -29,9 +29,31 @@ import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadg
 import { getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useBatchProcessor } from './useBatchProcessor';
+import { useBatchStore } from '../../stores/batchStore';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+
+/**
+ * Session whose batch state has errorPaused (matches Auto Run UI / Zustand key).
+ * Prefer the active session when it is paused on error; otherwise any paused session;
+ * then legacy fallbacks.
+ */
+function resolveBatchSessionIdForPausedError(
+	batchRunStates: Record<string, BatchRunState>,
+	activeSessionId: string | undefined,
+	activeBatchSessionIds: string[]
+): string | undefined {
+	if (activeSessionId && batchRunStates[activeSessionId]?.errorPaused) {
+		return activeSessionId;
+	}
+	const pausedId = Object.keys(batchRunStates).find(
+		(id) => batchRunStates[id]?.errorPaused
+	);
+	if (pausedId) return pausedId;
+	if (activeBatchSessionIds.length > 0) return activeBatchSessionIds[0];
+	return activeSessionId;
+}
 
 // ============================================================================
 // Dependencies interface
@@ -618,24 +640,33 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 	);
 
 	const handleSkipCurrentDocument = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id,
+			activeBatchSessionIds
+		);
 		if (!sessionId) return;
 		skipCurrentDocument(sessionId);
 		handleClearAgentError(sessionId);
 	}, [activeBatchSessionIds, activeSession, skipCurrentDocument, handleClearAgentError]);
 
 	const handleResumeAfterError = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id,
+			activeBatchSessionIds
+		);
 		if (!sessionId) return;
 		resumeAfterError(sessionId);
 		handleClearAgentError(sessionId);
 	}, [activeBatchSessionIds, activeSession, resumeAfterError, handleClearAgentError]);
 
 	const handleAbortBatchOnError = useCallback(() => {
-		const sessionId =
-			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
+		const sessionId = resolveBatchSessionIdForPausedError(
+			useBatchStore.getState().batchRunStates,
+			activeSession?.id,
+			activeBatchSessionIds
+		);
 		if (!sessionId) return;
 		abortBatchOnError(sessionId);
 		handleClearAgentError(sessionId);
