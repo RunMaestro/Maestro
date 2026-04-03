@@ -30,6 +30,39 @@ describe('OpenClawOutputParser', () => {
 			expect(event!.text).toBe('Hello');
 		});
 
+		it('should buffer pretty-printed OpenClaw JSON until complete', () => {
+			const parser = new OpenClawOutputParser();
+			const lines = JSON.stringify(makeStandardResult(), null, 2).split('\n');
+
+			const partialEvents = lines.slice(0, -1).map((line) => parser.parseJsonLine(line));
+			expect(partialEvents.every((event) => event === null)).toBe(true);
+
+			const event = parser.parseJsonLine(lines.at(-1)!);
+			expect(event).not.toBeNull();
+			expect(event!.type).toBe('result');
+			expect(event!.text).toBe('Hello');
+			expect(event!.sessionId).toBe('session-1');
+		});
+
+		it('should resume parsing a new payload after a buffered result completes', () => {
+			const parser = new OpenClawOutputParser();
+			const firstPayload = JSON.stringify(makeStandardResult(), null, 2).split('\n');
+			for (const line of firstPayload) {
+				parser.parseJsonLine(line);
+			}
+
+			const second = parser.parseJsonLine(
+				JSON.stringify(
+					makeStandardResult({
+						payloads: [{ text: 'Second', mediaUrl: null }],
+					})
+				)
+			);
+			expect(second).not.toBeNull();
+			expect(second!.type).toBe('result');
+			expect(second!.text).toBe('Second');
+		});
+
 		it('should return null for invalid JSON', () => {
 			expect(parser.parseJsonLine('{')).toBeNull();
 		});

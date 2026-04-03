@@ -82,6 +82,7 @@ export class OpenClawOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'openclaw';
 	private readonly errorPatterns: AgentErrorPatterns = getErrorPatterns('openclaw');
 	private readonly openclawAgentName?: string;
+	private pendingJsonBuffer = '';
 
 	constructor(options?: { agentName?: string }) {
 		this.openclawAgentName = options?.agentName;
@@ -93,11 +94,23 @@ export class OpenClawOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		const shouldAccumulate =
+			!!this.pendingJsonBuffer || stripped.startsWith('{') || stripped.startsWith('[');
+		if (!shouldAccumulate) {
+			return null;
+		}
+
+		this.pendingJsonBuffer = this.pendingJsonBuffer
+			? `${this.pendingJsonBuffer}\n${stripped}`
+			: stripped;
+
 		try {
-			const parsed = JSON.parse(stripped);
+			const parsed = JSON.parse(this.pendingJsonBuffer);
+			this.pendingJsonBuffer = '';
 			return this.parseJsonObject(parsed);
 		} catch {
-			// Incomplete JSON line or non-JSON stderr output — skip
+			// OpenClaw may pretty-print a single JSON document across multiple lines.
+			// Keep buffering until the payload is complete, but ignore unrelated plain-text lines.
 			return null;
 		}
 	}
