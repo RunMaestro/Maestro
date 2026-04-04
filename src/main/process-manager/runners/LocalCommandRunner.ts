@@ -16,6 +16,7 @@ import {
 import { isWindows } from '../../../shared/platformDetection';
 import { captureException } from '../../utils/sentry';
 import { stripControlSequences } from '../../utils/terminalFilter';
+import { getDefaultShell } from '../../stores/defaults';
 
 /**
  * Runs single commands locally and captures stdout/stderr cleanly.
@@ -47,8 +48,7 @@ export class LocalCommandRunner {
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
 		return new Promise((resolve) => {
-			const defaultShell = isWindows() ? 'powershell.exe' : 'bash';
-			const shellToUse = shell || defaultShell;
+			const shellToUse = shell || getDefaultShell();
 
 			logger.debug('[ProcessManager] runCommand()', 'ProcessManager', {
 				sessionId,

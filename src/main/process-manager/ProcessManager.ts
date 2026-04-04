@@ -18,6 +18,7 @@ import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
+import { getDefaultShell } from '../stores/defaults';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -365,7 +366,7 @@ export class ProcessManager extends EventEmitter {
 		cols?: number;
 		rows?: number;
 	}): SpawnResult {
-		const shell = config.shell || (process.platform === 'win32' ? 'powershell.exe' : 'zsh');
+		const shell = config.shell || getDefaultShell();
 		logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
 			sessionId: config.sessionId,
 			cwd: config.cwd,

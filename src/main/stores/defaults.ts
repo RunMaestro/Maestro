@@ -39,8 +39,8 @@ export function getDefaultShell(): string {
 			return shellName;
 		}
 	}
-	// Fallback to bash (more portable than zsh on older Unix systems)
-	return 'bash';
+	// Fallback to the platform's default shell
+	return process.platform === 'darwin' ? 'zsh' : 'bash';
 }
 
 // ============================================================================

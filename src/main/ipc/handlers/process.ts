@@ -28,6 +28,7 @@ import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import { getDefaultShell } from '../../stores/defaults';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -311,7 +312,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let shellToUse =
 					config.shell ||
 					(config.toolType === 'terminal'
-						? settingsStore.get('defaultShell', isWindows() ? 'powershell' : 'zsh')
+						? settingsStore.get('defaultShell', getDefaultShell())
 						: undefined);
 				let shellArgsStr: string | undefined;
 
@@ -812,8 +813,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Resolve shell: prefer config.shell, then settings default
 				const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
-				let shellToUse =
-					config.shell || settingsStore.get('defaultShell', isWindows() ? 'powershell' : 'zsh');
+				let shellToUse = config.shell || settingsStore.get('defaultShell', getDefaultShell());
 				const customShellPath = settingsStore.get('customShellPath', '');
 				if (customShellPath && (customShellPath as string).trim()) {
 					shellToUse = (customShellPath as string).trim();
@@ -923,8 +923,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Get the shell from settings if not provided
 				// Custom shell path takes precedence over the selected shell ID
-				let shell =
-					config.shell || settingsStore.get('defaultShell', isWindows() ? 'powershell' : 'zsh');
+				let shell = config.shell || settingsStore.get('defaultShell', getDefaultShell());
 				const customShellPath = settingsStore.get('customShellPath', '');
 				if (customShellPath && customShellPath.trim()) {
 					shell = customShellPath.trim();

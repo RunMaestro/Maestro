@@ -13,6 +13,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
+import { getDefaultShell } from '../stores/defaults';
 
 /** UUID v4 format regex for validating stored security tokens.
  *  Enforces version nibble (4) and variant bits ([89ab]). */
@@ -311,12 +312,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}
 				// Resolve shell: custom path > default from settings > system default
 				const customShellPath = settingsStore.get<string>('customShellPath', '');
-				const defaultShell = settingsStore.get<string>(
-					'defaultShell',
-					process.platform === 'win32' ? 'powershell' : 'bash'
-				);
+				const defaultShell = settingsStore.get<string>('defaultShell', getDefaultShell());
 				const shell = (customShellPath && customShellPath.trim()) || defaultShell;
 				const shellArgs = settingsStore.get<string>('shellArgs', '');
+				const shellEnvVars = settingsStore.get<Record<string, string>>('shellEnvVars', {});
 
 				logger.info(`Spawning terminal PTY for web client: ${terminalSessionId}`, 'WebServer', {
 					shell,
@@ -327,6 +326,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					cwd: config.cwd,
 					shell,
 					shellArgs,
+					shellEnvVars,
 					cols: config.cols,
 					rows: config.rows,
 				});

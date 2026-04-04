@@ -17,6 +17,7 @@ import {
 	registerProcessHandlers,
 	ProcessHandlerDependencies,
 } from '../../../../main/ipc/handlers/process';
+import { getDefaultShell } from '../../../../main/stores/defaults';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -860,7 +861,7 @@ describe('process IPC handlers', () => {
 				'session-1',
 				'ls -la',
 				'/test/dir',
-				process.platform === 'win32' ? 'powershell' : 'zsh', // default shell
+				getDefaultShell(), // default shell
 				{}, // shell env vars
 				null // sshRemoteConfig (not set in this test)
 			);
