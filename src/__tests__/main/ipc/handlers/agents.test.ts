@@ -163,6 +163,7 @@ describe('agents IPC handlers', () => {
 				'agents:getCustomEnvVars',
 				'agents:getAllCustomEnvVars',
 				'agents:getModels',
+				'agents:getConfigOptions',
 				'agents:discoverSlashCommands',
 			];
 

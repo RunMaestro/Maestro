@@ -20,6 +20,43 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
+// Make readFileSync mockable for ESM - vi.spyOn on ESM namespace fails
+// Also mock fs.promises.access to prevent real filesystem probing
+const { _readFileSync, _fsAccess } = vi.hoisted(() => ({
+	_readFileSync: vi.fn(),
+	_fsAccess: vi.fn().mockRejectedValue(new Error('ENOENT: no such file or directory')),
+}));
+vi.mock('fs', async () => {
+	// Import the real fs module directly (not via importOriginal which returns a proxy)
+	const actual = await import('node:fs');
+	// Copy all exports into a plain object so vitest can enumerate them
+	const mod: Record<string, unknown> = {};
+	for (const key of Reflect.ownKeys(actual) as string[]) {
+		if (key === 'readFileSync') continue;
+		if (key === 'promises') continue;
+		try {
+			mod[key] = (actual as any)[key];
+		} catch {
+			// skip
+		}
+	}
+	mod.readFileSync = _readFileSync;
+	// Clone promises with overridden access
+	const promMod: Record<string, unknown> = {};
+	for (const key of Reflect.ownKeys(actual.promises) as string[]) {
+		if (key === 'access') continue;
+		try {
+			promMod[key] = (actual.promises as any)[key];
+		} catch {
+			// skip
+		}
+	}
+	promMod.access = _fsAccess;
+	mod.promises = promMod;
+	mod.default = actual;
+	return mod;
+});
+
 // Get mocked modules
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
@@ -34,12 +71,9 @@ describe('agent-detector', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// Mock fs.promises.access to always fail, simulating no direct path probing results.
+		// Reset fs.promises.access mock to always fail (set up via vi.mock above).
 		// This ensures tests rely on 'which'/'where' command mocking instead of actual filesystem.
-		// The probeUnixPaths/probeWindowsPaths methods check paths directly before falling back to 'which'.
-		vi.spyOn(fs.promises, 'access').mockRejectedValue(
-			new Error('ENOENT: no such file or directory')
-		);
+		_fsAccess.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 		detector = new AgentDetector();
 		// Default: no binaries found
 		mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
@@ -1026,7 +1060,7 @@ describe('agent-detector', () => {
 					'claude-sonnet-4-6': { inputTokens: 200 },
 				},
 			});
-			vi.spyOn(fs, 'readFileSync').mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
 				if (typeof filePath === 'string' && filePath.includes('stats-cache.json')) {
 					return statsData;
 				}
@@ -1062,7 +1096,7 @@ describe('agent-detector', () => {
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
 			});
 
-			vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+			_readFileSync.mockImplementation(() => {
 				throw new Error('ENOENT');
 			});
 
@@ -1093,7 +1127,7 @@ describe('agent-detector', () => {
 					{ slug: 'o4-mini', visibility: 'list' },
 				],
 			});
-			vi.spyOn(fs, 'readFileSync').mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
 				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
 					return cacheData;
 				}
@@ -1128,7 +1162,7 @@ describe('agent-detector', () => {
 				return { stdout: '', stderr: 'not found', exitCode: 1 };
 			});
 
-			vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+			_readFileSync.mockImplementation(() => {
 				throw new Error('ENOENT');
 			});
 
@@ -1559,7 +1593,7 @@ describe('agent-detector', () => {
 					},
 				],
 			});
-			vi.spyOn(fs, 'readFileSync').mockImplementation((filePath: fs.PathOrFileDescriptor) => {
+			_readFileSync.mockImplementation((filePath: fs.PathOrFileDescriptor) => {
 				if (typeof filePath === 'string' && filePath.includes('models_cache.json')) {
 					return cacheData;
 				}
