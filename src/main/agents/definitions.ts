@@ -96,6 +96,7 @@ export interface AgentConfig {
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
+	sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text instead of CLI arg (avoids shell escaping issues with long prompts)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
@@ -398,6 +399,65 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		binaryName: 'aider',
 		command: 'aider',
 		args: [], // Base args (placeholder - to be configured when implemented)
+	},
+	{
+		id: 'copilot-cli',
+		name: 'Copilot CLI',
+		binaryName: 'copilot',
+		command: 'copilot',
+		args: [], // Base args for interactive mode (none)
+		requiresPty: false, // Batch mode uses child process
+
+		// Batch mode: copilot --output-format json --allow-all
+		// Prompt is sent via stdin (sendPromptViaStdinRaw) - copilot reads
+		// from stdin automatically when no -p flag is provided and stdin is piped.
+		batchModePrefix: [],
+		batchModeArgs: ['--allow-all'],
+
+		// JSON output for parsing (JSONL format)
+		jsonOutputArgs: ['--output-format', 'json'],
+
+		// Session resume: --resume <id>
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+
+		// Read-only mode: not yet CLI-enforced; use prompt-only enforcement
+		readOnlyArgs: [],
+		readOnlyCliEnforced: false,
+
+		// YOLO mode (allow all tools, paths, and URLs)
+		yoloModeArgs: ['--allow-all'],
+
+		// Model selection
+		modelArgs: (modelId: string) => ['--model', modelId],
+
+		// Prompt sent via stdin (avoids shell escaping issues with long prompts on Windows)
+		sendPromptViaStdinRaw: true,
+
+		// No prompt separator or promptArgs needed — prompt goes via stdin
+		noPromptSeparator: true,
+
+		defaultEnvVars: {},
+
+		// UI config options
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use (e.g., "claude-sonnet-4", "gpt-5.1"). Leave empty for default.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window in tokens. Varies by model (e.g., 200000 for Claude/GPT-5, 128000 for GPT-4o).',
+				default: 200000,
+			},
+		],
 	},
 ];
 
