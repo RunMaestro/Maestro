@@ -699,6 +699,19 @@ export function LeftPanel({
 			clearTimeout(longPressTimerRef2.current);
 			longPressTimerRef2.current = null;
 		}
+		// Reset triggered flag after a microtask so the click handler sees it first
+		requestAnimationFrame(() => {
+			longPressTriggeredRef.current = false;
+		});
+	}, []);
+
+	// Clean up long-press timer on unmount
+	useEffect(() => {
+		return () => {
+			if (longPressTimerRef2.current) {
+				clearTimeout(longPressTimerRef2.current);
+			}
+		};
 	}, []);
 
 	const handleCreateGroupConfirm = useCallback(
