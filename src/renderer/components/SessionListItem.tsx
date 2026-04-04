@@ -217,7 +217,10 @@ export function SessionListItem({
 					{session.origin === 'user' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '30', color: theme.colors.accent }}
+							style={{
+								backgroundColor: theme.colors.accent + '40',
+								color: theme.colors.accentText,
+							}}
 							title="User-initiated through Maestro"
 						>
 							MAESTRO
@@ -226,7 +229,7 @@ export function SessionListItem({
 					{session.origin === 'auto' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
+							style={{ backgroundColor: theme.colors.warning + '40', color: theme.colors.warning }}
 							title="Auto-run session"
 						>
 							AUTO
@@ -235,7 +238,7 @@ export function SessionListItem({
 					{!session.origin && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
+							style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 							title="Claude Code CLI session"
 						>
 							CLI
@@ -245,7 +248,7 @@ export function SessionListItem({
 					{/* Session ID pill */}
 					<span
 						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-						style={{ backgroundColor: theme.colors.border + '60', color: theme.colors.textDim }}
+						style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
 					>
 						{session.sessionId.startsWith('agent-')
 							? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
@@ -281,7 +284,10 @@ export function SessionListItem({
 					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
 						<span
 							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+							style={{
+								backgroundColor: theme.colors.accent + '30',
+								color: theme.colors.accentText,
+							}}
 						>
 							<Search className="w-3 h-3" />
 							{searchResultInfo.matchCount}
