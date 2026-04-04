@@ -14,6 +14,7 @@ import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { truncatePath } from '../../shared/formatters';
 import type { Session } from '../hooks/useSessions';
+import type { GroupData } from '../hooks/useWebSocket';
 
 export interface LeftPanelProps {
 	sessions: Session[];
@@ -29,6 +30,12 @@ export interface LeftPanelProps {
 	/** Lifted group collapse state — persists across panel open/close */
 	collapsedGroups: Set<string>;
 	setCollapsedGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
+	/** Available groups for move-to-group */
+	groups?: GroupData[];
+	/** Create a new group */
+	onCreateGroup?: (name: string, emoji?: string) => Promise<{ id: string } | null>;
+	/** Move a session to a group (null = ungroup) */
+	onMoveToGroup?: (sessionId: string, groupId: string | null) => Promise<boolean>;
 }
 
 /**
@@ -147,6 +154,422 @@ function groupSessions(sessions: Session[]): {
 	return { groups, worktreeChildrenMap };
 }
 
+/**
+ * Inline bottom sheet for creating a new group.
+ */
+function CreateGroupSheet({
+	onConfirm,
+	onClose,
+}: {
+	onConfirm: (name: string, emoji?: string) => Promise<void>;
+	onClose: () => void;
+}) {
+	const colors = useThemeColors();
+	const [isVisible, setIsVisible] = useState(false);
+	const [name, setName] = useState('');
+	const [emoji, setEmoji] = useState('');
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		requestAnimationFrame(() => setIsVisible(true));
+	}, []);
+
+	useEffect(() => {
+		if (isVisible && inputRef.current) {
+			inputRef.current.focus();
+		}
+	}, [isVisible]);
+
+	const handleClose = useCallback(() => {
+		setIsVisible(false);
+		setTimeout(() => onClose(), 300);
+	}, [onClose]);
+
+	const handleSubmit = useCallback(async () => {
+		const trimmed = name.trim();
+		if (!trimmed) return;
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		await onConfirm(trimmed, emoji.trim() || undefined);
+		handleClose();
+	}, [name, emoji, onConfirm, handleClose]);
+
+	return (
+		<div
+			onClick={(e) => {
+				if (e.target === e.currentTarget) handleClose();
+			}}
+			style={{
+				position: 'fixed',
+				top: 0,
+				left: 0,
+				right: 0,
+				bottom: 0,
+				backgroundColor: `rgba(0, 0, 0, ${isVisible ? 0.5 : 0})`,
+				zIndex: 320,
+				display: 'flex',
+				alignItems: 'flex-end',
+				transition: 'background-color 0.3s ease-out',
+			}}
+		>
+			<div
+				style={{
+					width: '100%',
+					backgroundColor: colors.bgMain,
+					borderTopLeftRadius: '16px',
+					borderTopRightRadius: '16px',
+					display: 'flex',
+					flexDirection: 'column',
+					transform: isVisible ? 'translateY(0)' : 'translateY(100%)',
+					transition: 'transform 0.3s ease-out',
+					paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+				}}
+			>
+				{/* Drag handle */}
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'center',
+						padding: '10px 0 4px',
+						flexShrink: 0,
+					}}
+				>
+					<div
+						style={{
+							width: '36px',
+							height: '4px',
+							borderRadius: '2px',
+							backgroundColor: `${colors.textDim}40`,
+						}}
+					/>
+				</div>
+
+				<div style={{ padding: '8px 16px 12px', flexShrink: 0 }}>
+					<h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: colors.textMain }}>
+						New Group
+					</h2>
+				</div>
+
+				<div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+					<div style={{ display: 'flex', gap: '8px' }}>
+						<input
+							value={emoji}
+							onChange={(e) => setEmoji(e.target.value)}
+							placeholder="😀"
+							maxLength={2}
+							style={{
+								width: '48px',
+								padding: '10px',
+								fontSize: '18px',
+								textAlign: 'center',
+								borderRadius: '8px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgSidebar,
+								color: colors.textMain,
+								outline: 'none',
+							}}
+						/>
+						<input
+							ref={inputRef}
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter') handleSubmit();
+								if (e.key === 'Escape') handleClose();
+							}}
+							placeholder="Group name"
+							style={{
+								flex: 1,
+								padding: '10px 12px',
+								fontSize: '14px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgSidebar,
+								color: colors.textMain,
+								outline: 'none',
+							}}
+						/>
+					</div>
+					<button
+						onClick={handleSubmit}
+						disabled={!name.trim()}
+						style={{
+							padding: '12px',
+							fontSize: '14px',
+							fontWeight: 600,
+							borderRadius: '8px',
+							border: 'none',
+							backgroundColor: name.trim() ? colors.accent : `${colors.textDim}30`,
+							color: name.trim() ? '#fff' : colors.textDim,
+							cursor: name.trim() ? 'pointer' : 'default',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+						}}
+					>
+						Create Group
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Inline bottom sheet for moving a session to a group.
+ */
+function MoveToGroupSheet({
+	session,
+	groups,
+	onMove,
+	onClose,
+}: {
+	session: Session;
+	groups: GroupData[];
+	onMove: (sessionId: string, groupId: string | null) => Promise<void>;
+	onClose: () => void;
+}) {
+	const colors = useThemeColors();
+	const [isVisible, setIsVisible] = useState(false);
+
+	useEffect(() => {
+		requestAnimationFrame(() => setIsVisible(true));
+	}, []);
+
+	const handleClose = useCallback(() => {
+		setIsVisible(false);
+		setTimeout(() => onClose(), 300);
+	}, [onClose]);
+
+	const handleMove = useCallback(
+		async (groupId: string | null) => {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			await onMove(session.id, groupId);
+			handleClose();
+		},
+		[session.id, onMove, handleClose]
+	);
+
+	return (
+		<div
+			onClick={(e) => {
+				if (e.target === e.currentTarget) handleClose();
+			}}
+			style={{
+				position: 'fixed',
+				top: 0,
+				left: 0,
+				right: 0,
+				bottom: 0,
+				backgroundColor: `rgba(0, 0, 0, ${isVisible ? 0.5 : 0})`,
+				zIndex: 320,
+				display: 'flex',
+				alignItems: 'flex-end',
+				transition: 'background-color 0.3s ease-out',
+			}}
+		>
+			<div
+				style={{
+					width: '100%',
+					maxHeight: '60vh',
+					backgroundColor: colors.bgMain,
+					borderTopLeftRadius: '16px',
+					borderTopRightRadius: '16px',
+					display: 'flex',
+					flexDirection: 'column',
+					transform: isVisible ? 'translateY(0)' : 'translateY(100%)',
+					transition: 'transform 0.3s ease-out',
+					paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+				}}
+			>
+				{/* Drag handle */}
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'center',
+						padding: '10px 0 4px',
+						flexShrink: 0,
+					}}
+				>
+					<div
+						style={{
+							width: '36px',
+							height: '4px',
+							borderRadius: '2px',
+							backgroundColor: `${colors.textDim}40`,
+						}}
+					/>
+				</div>
+
+				<div style={{ padding: '8px 16px 12px', flexShrink: 0 }}>
+					<h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0, color: colors.textMain }}>
+						Move "{session.name}" to Group
+					</h2>
+				</div>
+
+				<div style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}>
+					{/* Ungrouped option */}
+					<button
+						onClick={() => handleMove(null)}
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '10px',
+							width: '100%',
+							padding: '14px',
+							marginBottom: '6px',
+							borderRadius: '10px',
+							border: `1px solid ${!session.groupId ? colors.accent : colors.border}`,
+							backgroundColor: !session.groupId ? `${colors.accent}10` : colors.bgSidebar,
+							color: colors.textMain,
+							fontSize: '14px',
+							fontWeight: 500,
+							cursor: 'pointer',
+							textAlign: 'left',
+							touchAction: 'manipulation',
+							WebkitTapHighlightColor: 'transparent',
+							outline: 'none',
+							minHeight: '44px',
+						}}
+					>
+						No Group
+					</button>
+					{groups.map((group) => {
+						const isCurrentGroup = session.groupId === group.id;
+						return (
+							<button
+								key={group.id}
+								onClick={() => handleMove(group.id)}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: '10px',
+									width: '100%',
+									padding: '14px',
+									marginBottom: '6px',
+									borderRadius: '10px',
+									border: `1px solid ${isCurrentGroup ? colors.accent : colors.border}`,
+									backgroundColor: isCurrentGroup ? `${colors.accent}10` : colors.bgSidebar,
+									color: colors.textMain,
+									fontSize: '14px',
+									fontWeight: 500,
+									cursor: 'pointer',
+									textAlign: 'left',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									outline: 'none',
+									minHeight: '44px',
+								}}
+							>
+								{group.emoji && <span style={{ fontSize: '16px' }}>{group.emoji}</span>}
+								<span>{group.name}</span>
+								{isCurrentGroup && (
+									<span style={{ marginLeft: 'auto', fontSize: '12px', color: colors.accent }}>
+										Current
+									</span>
+								)}
+							</button>
+						);
+					})}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Context menu for session actions (move to group).
+ */
+function SessionContextMenu({
+	session,
+	x,
+	y,
+	onMoveToGroup,
+	onClose,
+}: {
+	session: Session;
+	x: number;
+	y: number;
+	onMoveToGroup: (session: Session) => void;
+	onClose: () => void;
+}) {
+	const colors = useThemeColors();
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const handler = (e: MouseEvent | TouchEvent) => {
+			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+				onClose();
+			}
+		};
+		document.addEventListener('mousedown', handler);
+		document.addEventListener('touchstart', handler);
+		return () => {
+			document.removeEventListener('mousedown', handler);
+			document.removeEventListener('touchstart', handler);
+		};
+	}, [onClose]);
+
+	return (
+		<div
+			ref={menuRef}
+			style={{
+				position: 'fixed',
+				left: `${x}px`,
+				top: `${y}px`,
+				backgroundColor: colors.bgMain,
+				border: `1px solid ${colors.border}`,
+				borderRadius: '8px',
+				boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+				zIndex: 310,
+				minWidth: '160px',
+				padding: '4px 0',
+			}}
+		>
+			<button
+				onClick={() => {
+					triggerHaptic(HAPTIC_PATTERNS.tap);
+					onMoveToGroup(session);
+					onClose();
+				}}
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					gap: '8px',
+					width: '100%',
+					padding: '10px 14px',
+					fontSize: '13px',
+					color: colors.textMain,
+					backgroundColor: 'transparent',
+					border: 'none',
+					cursor: 'pointer',
+					textAlign: 'left',
+					touchAction: 'manipulation',
+					WebkitTapHighlightColor: 'transparent',
+				}}
+				onMouseEnter={(e) => {
+					(e.currentTarget as HTMLElement).style.backgroundColor = `${colors.textDim}15`;
+				}}
+				onMouseLeave={(e) => {
+					(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+				}}
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+				</svg>
+				Move to Group
+			</button>
+		</div>
+	);
+}
+
 export function LeftPanel({
 	sessions,
 	activeSessionId,
@@ -159,6 +582,9 @@ export function LeftPanel({
 	isFullScreen,
 	collapsedGroups,
 	setCollapsedGroups,
+	groups = [],
+	onCreateGroup,
+	onMoveToGroup,
 }: LeftPanelProps) {
 	const colors = useThemeColors();
 
@@ -244,6 +670,63 @@ export function LeftPanel({
 		[onSelectSession]
 	);
 
+	// --- Group management state ---
+	const [showCreateGroup, setShowCreateGroup] = useState(false);
+	const [moveSession, setMoveSession] = useState<Session | null>(null);
+	const [contextMenu, setContextMenu] = useState<{ session: Session; x: number; y: number } | null>(
+		null
+	);
+
+	// Long-press detection for context menu
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const longPressTriggeredRef = useRef(false);
+
+	// Cleanup long-press timer on unmount
+	useEffect(
+		() => () => {
+			if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+		},
+		[]
+	);
+
+	const handleLongPressStart = useCallback(
+		(session: Session, clientX: number, clientY: number) => {
+			if (!onMoveToGroup) return;
+			longPressTriggeredRef.current = false;
+			longPressTimerRef.current = setTimeout(() => {
+				longPressTriggeredRef.current = true;
+				triggerHaptic(HAPTIC_PATTERNS.tap);
+				setContextMenu({ session, x: clientX, y: clientY });
+			}, 500);
+		},
+		[onMoveToGroup]
+	);
+
+	const handleLongPressEnd = useCallback(() => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	}, []);
+
+	const handleCreateGroupConfirm = useCallback(
+		async (name: string, emoji?: string) => {
+			if (onCreateGroup) {
+				await onCreateGroup(name, emoji);
+			}
+		},
+		[onCreateGroup]
+	);
+
+	const handleMoveToGroup = useCallback(
+		async (sessionId: string, groupId: string | null) => {
+			if (onMoveToGroup) {
+				await onMoveToGroup(sessionId, groupId);
+			}
+		},
+		[onMoveToGroup]
+	);
+
 	// Calculate drawer transform based on open state and swipe offset
 	const swipeOffset = isSwiping && offsetX < 0 ? offsetX : 0;
 	const drawerTransform = isOpen ? `translateX(${swipeOffset}px)` : 'translateX(-100%)';
@@ -319,6 +802,42 @@ export function LeftPanel({
 						Agents
 					</span>
 					<div style={{ display: 'flex', gap: '4px' }}>
+						{onCreateGroup && (
+							<button
+								onClick={() => {
+									triggerHaptic(HAPTIC_PATTERNS.tap);
+									setShowCreateGroup(true);
+								}}
+								style={{
+									width: '24px',
+									height: '24px',
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									border: `1px solid ${colors.border}`,
+									borderRadius: '4px',
+									backgroundColor: 'transparent',
+									color: colors.textDim,
+									cursor: 'pointer',
+									padding: 0,
+								}}
+								aria-label="New group"
+								title="New group"
+							>
+								<svg
+									width="12"
+									height="12"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+								>
+									<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+								</svg>
+							</button>
+						)}
 						{onNewAgent && (
 							<button
 								onClick={() => {
@@ -534,9 +1053,29 @@ export function LeftPanel({
 														? `${colors.accent}15`
 														: 'transparent';
 												}}
+												onContextMenu={(e) => {
+													if (onMoveToGroup) {
+														e.preventDefault();
+														triggerHaptic(HAPTIC_PATTERNS.tap);
+														setContextMenu({ session, x: e.clientX, y: e.clientY });
+													}
+												}}
+												onTouchStart={(e) => {
+													const touch = e.touches[0];
+													handleLongPressStart(session, touch.clientX, touch.clientY);
+												}}
+												onTouchEnd={handleLongPressEnd}
+												onTouchMove={handleLongPressEnd}
+												onTouchCancel={handleLongPressEnd}
 											>
 												<button
-													onClick={() => handleSelect(session.id)}
+													onClick={(e) => {
+														if (longPressTriggeredRef.current) {
+															e.preventDefault();
+															return;
+														}
+														handleSelect(session.id);
+													}}
 													style={{
 														display: 'flex',
 														alignItems: 'center',
@@ -775,6 +1314,35 @@ export function LeftPanel({
 					/>
 				)}
 			</div>
+
+			{/* Context menu */}
+			{contextMenu && (
+				<SessionContextMenu
+					session={contextMenu.session}
+					x={contextMenu.x}
+					y={contextMenu.y}
+					onMoveToGroup={(session) => setMoveSession(session)}
+					onClose={() => setContextMenu(null)}
+				/>
+			)}
+
+			{/* Create group sheet */}
+			{showCreateGroup && (
+				<CreateGroupSheet
+					onConfirm={handleCreateGroupConfirm}
+					onClose={() => setShowCreateGroup(false)}
+				/>
+			)}
+
+			{/* Move to group sheet */}
+			{moveSession && (
+				<MoveToGroupSheet
+					session={moveSession}
+					groups={groups}
+					onMove={handleMoveToGroup}
+					onClose={() => setMoveSession(null)}
+				/>
+			)}
 		</>
 	);
 }

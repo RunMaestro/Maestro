@@ -3229,6 +3229,9 @@ export default function MobileApp() {
 						onResizeStart={isMobile ? undefined : leftPanelResize.onResizeStart}
 						collapsedGroups={collapsedGroups}
 						setCollapsedGroups={setCollapsedGroups}
+						groups={agentManagement.groups}
+						onCreateGroup={agentManagement.createGroup}
+						onMoveToGroup={agentManagement.moveToGroup}
 					/>
 				)}
 
