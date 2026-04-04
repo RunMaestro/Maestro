@@ -62,6 +62,20 @@ export default defineConfig(({ mode }) => ({
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
 		rollupOptions: {
+			// Prevent esbuild from re-minifying xterm's pre-minified code.
+			// Double-minification corrupts variable scoping in requestMode(),
+			// causing "ReferenceError: e is not defined" at runtime.
+			plugins: [
+				{
+					name: 'skip-xterm-minify',
+					renderChunk(code, chunk) {
+						if (chunk.name === 'vendor-xterm') {
+							return { code, map: null };
+						}
+						return null;
+					},
+				},
+			],
 			output: {
 				// Manual chunking for better caching and code splitting
 				manualChunks: (id) => {
@@ -77,7 +91,7 @@ export default defineConfig(({ mode }) => ({
 					}
 
 					// Terminal (xterm) in its own chunk - large and not immediately needed
-					if (id.includes('node_modules/xterm')) {
+					if (id.includes('node_modules/@xterm') || id.includes('node_modules/xterm')) {
 						return 'vendor-xterm';
 					}
 
