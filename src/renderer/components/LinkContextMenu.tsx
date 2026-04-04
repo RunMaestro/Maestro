@@ -49,7 +49,9 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 	}, [menu.url, onDismiss]);
 
 	const handleOpen = useCallback(() => {
-		window.maestro.shell.openExternal(menu.url);
+		if (/^https?:\/\/|^mailto:/.test(menu.url)) {
+			window.maestro.shell.openExternal(menu.url);
+		}
 		onDismiss();
 	}, [menu.url, onDismiss]);
 

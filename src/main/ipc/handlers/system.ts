@@ -200,7 +200,10 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		try {
 			parsed = new URL(url);
 		} catch {
-			throw new Error(`Invalid URL: ${url}`);
+			// Non-URL strings (e.g. relative file paths like "LICENSE", "./README.md") should not
+			// crash — log and return gracefully. Fixes MAESTRO-F4/E5/E3/BB/BA Sentry noise.
+			logger.warn(`Ignoring non-URL string passed to openExternal: "${url}"`, 'Shell');
+			return;
 		}
 		// Redirect file:// URLs to shell.openPath instead of rejecting — Fixes MAESTRO-9M
 		if (parsed.protocol === 'file:') {

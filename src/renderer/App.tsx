@@ -3787,8 +3787,10 @@ function MaestroConsoleInner() {
 								useFileExplorerStore.getState().setIsGraphViewOpen(false);
 							}}
 							onExternalLinkOpen={(url) => {
-								// Open external URL in default browser
-								window.maestro.shell.openExternal(url);
+								// Open external URL in default browser — guard against non-URL strings (MAESTRO-F4)
+								if (/^https?:\/\/|^mailto:/.test(url)) {
+									window.maestro.shell.openExternal(url);
+								}
 							}}
 							focusFilePath={graphFocusFilePath}
 							defaultShowExternalLinks={documentGraphShowExternalLinks}

@@ -566,6 +566,16 @@ describe('system IPC handlers', () => {
 			expect(shell.openExternal).not.toHaveBeenCalled();
 		});
 
+		it('should silently ignore non-URL strings like relative file paths', async () => {
+			const handler = handlers.get('shell:openExternal');
+			// These should return gracefully instead of throwing — Fixes MAESTRO-F4/E5
+			await expect(handler!({} as any, 'LICENSE')).resolves.toBeUndefined();
+			await expect(handler!({} as any, './README.md')).resolves.toBeUndefined();
+			await expect(handler!({} as any, '../docs/guide.md')).resolves.toBeUndefined();
+			await expect(handler!({} as any, 'vscode/')).resolves.toBeUndefined();
+			expect(shell.openExternal).not.toHaveBeenCalled();
+		});
+
 		it('should gracefully handle Launch Services errors', async () => {
 			vi.mocked(shell.openExternal).mockRejectedValue(
 				new Error('No application in the Launch Services database matches the input criteria.')
