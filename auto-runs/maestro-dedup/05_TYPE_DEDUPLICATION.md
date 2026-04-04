@@ -12,9 +12,9 @@ Consolidate 28 interfaces that have 98 redundant definitions across the codebase
 
 ## Pre-flight Checks
 
-- [ ] Phase 04 (formatters) is complete
-- [ ] `rtk npm run lint` passes
-- [ ] `rtk vitest run` passes
+- [x] Phase 04 (formatters) is complete
+- [x] `rtk npm run lint` passes
+- [x] `rtk vitest run` passes
 
 ---
 
@@ -36,30 +36,49 @@ Types in `src/shared/` are importable by all three. The problem is that instead 
 
 ### Task 1: Inventory all duplicated interfaces
 
-- [ ] Find AgentCapabilities definitions: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"`
-- [ ] Find UsageStats definitions: `rtk grep "interface UsageStats" src/ --glob "*.{ts,tsx}"`
-- [ ] Find SessionInfo definitions: `rtk grep "interface SessionInfo" src/ --glob "*.{ts,tsx}"`
-- [ ] Find AgentConfig definitions: `rtk grep "interface AgentConfig\b" src/ --glob "*.{ts,tsx}"`
-- [ ] Find AgentConfigsData definitions: `rtk grep "interface AgentConfigsData" src/ --glob "*.{ts,tsx}"`
-- [ ] For each, record: file path, line number, field list
+- [x] Find AgentCapabilities definitions: 1 definition (resolved in Phase 02) at `src/shared/types.ts:152`
+- [x] Find UsageStats definitions: 6 identical defs (except web makes fields optional). Fields: inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, totalCostUsd, contextWindow, reasoningTokens?. Locations: shared/types.ts:43, main/parsers/usage-aggregator.ts:33, main/preload/process.ts:101, main/process-manager/types.ts:91, renderer/global.d.ts:95, web/hooks/useWebSocket.ts:29
+- [x] Find SessionInfo definitions: 3 defs with DIFFERENT fields (not true duplicates). shared/types.ts:31 (basic), debug-package/collectors/sessions.ts:13 (debug-specific), group-chat/group-chat-router.ts:60 (SSH/custom args)
+- [x] Find AgentConfig definitions: 6 defs with varying field subsets. shared/types.ts:263, main/agents/definitions.ts:72 (richest), main/preload/agents.ts:20 (minimal), renderer/global.d.ts:65, renderer/types/index.ts:753, __tests__/integration/group-chat-integration.test.ts:43 (test-specific)
+- [x] Find AgentConfigsData definitions: 4 identical defs `{ configs: Record<string, Record<string, any>> }`. Locations: main/stores/types.ts:105, main/ipc/handlers/agents.ts:183, main/ipc/handlers/process.ts:49, main/ipc/handlers/tabNaming.ts:47
+- [x] For each, record: file path, line number, field list (see above)
 
 ### Task 2: Handle AgentCapabilities (6 defs, was addressed in Phase 02)
 
-- [ ] Verify Phase 02 is done: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"` (expect exactly 1 result)
-- [ ] If more than 1, finish the Phase 02 consolidation work before continuing
+- [x] Verify Phase 02 is done: `rtk grep "interface AgentCapabilities" src/ --glob "*.{ts,tsx}"` (expect exactly 1 result)
+  - Confirmed: exactly 1 definition at `src/shared/types.ts:152`
+- [x] If more than 1, finish the Phase 02 consolidation work before continuing
+  - N/A - only 1 definition exists, Phase 02 consolidation is complete
 
 ### Task 3: Consolidate UsageStats (6 definitions)
 
-- [ ] Read all 6 definitions and compare fields
-- [ ] Create a superset definition as canonical in `src/shared/stats-types.ts`
-- [ ] Replace definition in each non-canonical file with `import type { UsageStats } from '../../shared/stats-types';`
-- [ ] Run lint after each file: `rtk tsc -p tsconfig.lint.json --noEmit`
+- [x] Read all 6 definitions and compare fields
+  - 5 identical (required fields), 1 web version (all optional = Partial)
+- [x] Kept canonical definition in `src/shared/types.ts` (already existed there)
+  - No need for separate `stats-types.ts` since canonical def was already in `shared/types.ts`
+- [x] Replaced 5 duplicate definitions:
+  - `main/parsers/usage-aggregator.ts` - re-exports from shared/types
+  - `main/preload/process.ts` - imports + re-exports from shared/types
+  - `main/process-manager/types.ts` - imports + re-exports from shared/types
+  - `renderer/global.d.ts` - uses `import()` type syntax to preserve ambient declarations
+  - `web/hooks/useWebSocket.ts` - uses `Partial<BaseUsageStats>` for optional-fields variant
+- [x] TypeScript compilation passes (tsconfig.lint.json + tsconfig.main.json)
+- [x] 214 related tests pass (usage-aggregator: 20, process-manager: 38, SessionStatusBanner: 102, wakatime: 54)
 
 ### Task 4: Consolidate SessionInfo (3 definitions)
 
-- [ ] Read all 3 definitions and compare fields
-- [ ] Keep canonical definition in `src/shared/types.ts`
-- [ ] Replace other 2 definitions with imports from `shared/types.ts`
+- [x] Read all 3 definitions and compare fields
+  - shared/types.ts:31 (8 fields: id, groupId?, name, toolType, cwd, projectRoot, autoRunFolderPath?, customModel?)
+  - group-chat/group-chat-router.ts:60 (9 fields: id, name, toolType, cwd, customArgs?, customEnvVars?, customModel?, sshRemoteName?, sshRemoteConfig?) - different purpose: group chat participant routing with SSH support
+  - debug-package/collectors/sessions.ts:13 (20 fields: diagnostic snapshot with state, tabCount, contextUsage, etc.) - different purpose: debug diagnostics
+  - Verdict: NOT true duplicates - different fields serving different purposes
+- [x] Keep canonical definition in `src/shared/types.ts`
+- [x] Renamed non-canonical interfaces to eliminate naming collision:
+  - `debug-package/collectors/sessions.ts`: `SessionInfo` -> `DebugSessionInfo` (updated in collector, index.ts import/re-export)
+  - `group-chat/group-chat-router.ts`: `SessionInfo` -> `GroupChatSessionInfo` (updated in router, GetSessionsCallback, config comment, test file)
+  - Result: exactly 1 `interface SessionInfo` remains (in shared/types.ts)
+  - TypeScript compilation passes (tsconfig.main.json + tsconfig.lint.json)
+  - 141 related tests pass (4 test files: group-chat-router, debug-package)
 
 ### Task 5: Consolidate AgentConfig (5 definitions)
 

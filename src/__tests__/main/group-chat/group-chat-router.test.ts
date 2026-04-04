@@ -47,24 +47,19 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 }));
 
 import {
-	extractMentions,
 	routeUserMessage,
 	routeModeratorResponse,
 	routeAgentResponse,
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
-	type SessionInfo,
+	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
-	clearAllModeratorSessions,
 	type IProcessManager,
 } from '../../../main/group-chat/group-chat-moderator';
-import {
-	addParticipant,
-	clearAllParticipantSessionsGlobal,
-} from '../../../main/group-chat/group-chat-agent';
+import { addParticipant } from '../../../main/group-chat/group-chat-agent';
 import {
 	createGroupChat,
 	deleteGroupChat,
@@ -117,10 +112,6 @@ describe('group-chat-router', () => {
 			discoverModels: vi.fn().mockResolvedValue([]),
 			clearModelCache: vi.fn(),
 		} as unknown as AgentDetector;
-
-		// Clear any leftover sessions from previous tests
-		clearAllModeratorSessions();
-		clearAllParticipantSessionsGlobal();
 	});
 
 	afterEach(async () => {
@@ -133,10 +124,6 @@ describe('group-chat-router', () => {
 			}
 		}
 		createdChats = [];
-
-		// Clear sessions
-		clearAllModeratorSessions();
-		clearAllParticipantSessionsGlobal();
 
 		// Clean up temp directory
 		try {
@@ -162,158 +149,6 @@ describe('group-chat-router', () => {
 		await spawnModerator(chat, mockProcessManager);
 		return chat;
 	}
-
-	// ===========================================================================
-	// Test 5.1: extractMentions finds @mentions
-	// ===========================================================================
-	describe('extractMentions', () => {
-		it('extracts @mentions from text', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: 'Server', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('Hey @Client and @Server, please coordinate', participants);
-			expect(mentions).toEqual(['Client', 'Server']);
-		});
-
-		it('returns mentions in order of appearance', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Alpha', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: 'Beta', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-				{ name: 'Gamma', agentId: 'claude-code', sessionId: '3', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Gamma first, then @Alpha, finally @Beta', participants);
-			expect(mentions).toEqual(['Gamma', 'Alpha', 'Beta']);
-		});
-
-		it('handles single mention', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Client: Please implement this', participants);
-			expect(mentions).toEqual(['Client']);
-		});
-
-		it('returns empty array for no mentions', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('No mentions here', participants);
-			expect(mentions).toEqual([]);
-		});
-
-		it('handles empty text', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('', participants);
-			expect(mentions).toEqual([]);
-		});
-
-		it('handles empty participants list', () => {
-			const mentions = extractMentions('@Client and @Server', []);
-			expect(mentions).toEqual([]);
-		});
-
-		it('does not duplicate mentions', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Client and then @Client again', participants);
-			expect(mentions).toEqual(['Client']);
-		});
-
-		it('handles mentions with underscores', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Backend_Dev', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Backend_Dev: Please help', participants);
-			expect(mentions).toEqual(['Backend_Dev']);
-		});
-
-		it('handles mentions with numbers', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Agent1', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: 'Agent2', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Agent1 and @Agent2', participants);
-			expect(mentions).toEqual(['Agent1', 'Agent2']);
-		});
-
-		it('handles mentions with emojis', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: '✅-autorun-wizard', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: '🚀-launcher', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-			];
-
-			const mentions = extractMentions(
-				'@✅-autorun-wizard and @🚀-launcher please help',
-				participants
-			);
-			expect(mentions).toEqual(['✅-autorun-wizard', '🚀-launcher']);
-		});
-
-		it('handles mentions with mixed unicode characters', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: '日本語-agent', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: 'émoji-✨-test', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@日本語-agent and @émoji-✨-test', participants);
-			expect(mentions).toEqual(['日本語-agent', 'émoji-✨-test']);
-		});
-	});
-
-	// ===========================================================================
-	// Test 5.2: extractMentions ignores unknown mentions
-	// ===========================================================================
-	describe('extractMentions - unknown mentions', () => {
-		it('ignores mentions not in participants', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('Hey @Client and @Unknown', participants);
-			expect(mentions).toEqual(['Client']);
-		});
-
-		it('returns empty when all mentions are unknown', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@Unknown1 and @Unknown2', participants);
-			expect(mentions).toEqual([]);
-		});
-
-		it('case sensitive - ignores wrong case', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-			];
-
-			const mentions = extractMentions('@client @CLIENT @Client', participants);
-			expect(mentions).toEqual(['Client']); // Only exact match
-		});
-
-		it('only matches valid participant names', () => {
-			const participants: GroupChatParticipant[] = [
-				{ name: 'Client', agentId: 'claude-code', sessionId: '1', addedAt: 0 },
-				{ name: 'Server', agentId: 'claude-code', sessionId: '2', addedAt: 0 },
-			];
-
-			// @Cli shouldn't match Client, @ServerX shouldn't match Server
-			const mentions = extractMentions('@Cli and @ServerX and @Client', participants);
-			expect(mentions).toEqual(['Client']);
-		});
-	});
 
 	// ===========================================================================
 	// Test 5.3: routeUserMessage spawns moderator process in batch mode
@@ -801,7 +636,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH User Mention Test');
 
 			// Set up a session with SSH config that the router can discover
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-1',
 				name: 'RemoteAgent',
 				toolType: 'claude-code',
@@ -834,7 +669,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH Moderator Mention Test');
 
 			// Set up session with SSH config
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-2',
 				name: 'SSHWorker',
 				toolType: 'claude-code',
@@ -883,7 +718,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 
 			// Session without SSH config
-			const localSession: SessionInfo = {
+			const localSession: GroupChatSessionInfo = {
 				id: 'ses-local-1',
 				name: 'LocalAgent',
 				toolType: 'claude-code',

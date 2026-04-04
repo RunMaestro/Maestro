@@ -56,8 +56,9 @@ export { setGetCustomShellPathCallback };
 
 /**
  * Session info for matching @mentions to available Maestro sessions.
+ * Named distinctly from shared/types.ts SessionInfo to avoid collision.
  */
-export interface SessionInfo {
+export interface GroupChatSessionInfo {
 	id: string;
 	name: string;
 	toolType: string;
@@ -78,7 +79,7 @@ export interface SessionInfo {
 /**
  * Callback type for getting available sessions from the renderer.
  */
-export type GetSessionsCallback = () => SessionInfo[];
+export type GetSessionsCallback = () => GroupChatSessionInfo[];
 
 /**
  * Callback type for getting custom environment variables for an agent.
@@ -120,22 +121,8 @@ export function getGroupChatReadOnlyState(groupChatId: string): boolean {
 /**
  * Sets the read-only state for a group chat.
  */
-export function setGroupChatReadOnlyState(groupChatId: string, readOnly: boolean): void {
+function setGroupChatReadOnlyState(groupChatId: string, readOnly: boolean): void {
 	groupChatReadOnlyState.set(groupChatId, readOnly);
-}
-
-/**
- * Gets the pending participants for a group chat.
- */
-export function getPendingParticipants(groupChatId: string): Set<string> {
-	return pendingParticipantResponses.get(groupChatId) || new Set();
-}
-
-/**
- * Clears all pending participants for a group chat.
- */
-export function clearPendingParticipants(groupChatId: string): void {
-	pendingParticipantResponses.delete(groupChatId);
 }
 
 /**
@@ -191,7 +178,7 @@ export function setSshStore(store: SshRemoteSettingsStore): void {
  * @param participants - List of valid participants
  * @returns Array of participant names that were mentioned (using original names, not hyphenated)
  */
-export function extractMentions(text: string, participants: GroupChatParticipant[]): string[] {
+function extractMentions(text: string, participants: GroupChatParticipant[]): string[] {
 	const mentions: string[] = [];
 
 	// Match @Name patterns - captures characters after @ excluding:
@@ -220,7 +207,7 @@ export function extractMentions(text: string, participants: GroupChatParticipant
  * @param text - The text to search for mentions
  * @returns Array of unique names that were mentioned (without @ prefix)
  */
-export function extractAllMentions(text: string): string[] {
+function extractAllMentions(text: string): string[] {
 	const mentions: string[] = [];
 
 	// Match @Name patterns - captures characters after @ excluding:

@@ -15,7 +15,7 @@ import { collectSystemInfo, SystemInfo } from './collectors/system';
 import { collectSettings, SanitizedSettings } from './collectors/settings';
 import { collectAgents, AgentsInfo } from './collectors/agents';
 import { collectExternalTools, ExternalToolsInfo } from './collectors/external-tools';
-import { collectSessions, SessionInfo } from './collectors/sessions';
+import { collectSessions, DebugSessionInfo } from './collectors/sessions';
 import { collectProcesses, ProcessInfo } from './collectors/processes';
 import { collectLogs, LogsInfo } from './collectors/logs';
 import { collectErrors, ErrorsInfo } from './collectors/errors';
@@ -329,7 +329,7 @@ export type {
 	AgentsInfo,
 	ExternalToolsInfo,
 	WindowsDiagnosticsInfo,
-	SessionInfo,
+	DebugSessionInfo,
 	ProcessInfo,
 	LogsInfo,
 	ErrorsInfo,
