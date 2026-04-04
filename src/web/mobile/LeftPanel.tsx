@@ -914,9 +914,11 @@ export function LeftPanel({
 				<div
 					style={{
 						flex: 1,
+						minHeight: 0,
 						overflowY: 'auto',
 						overflowX: 'hidden',
 						padding: '6px',
+						paddingBottom: 'calc(80px + env(safe-area-inset-bottom))',
 					}}
 				>
 					{sessions.length === 0 && (

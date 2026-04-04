@@ -37,7 +37,7 @@ export const SidebarActions = memo(function SidebarActions({
 
 	return (
 		<div
-			className="p-2 border-t flex gap-2 items-center"
+			className="p-2 border-t flex gap-2 items-center shrink-0"
 			style={{ borderColor: theme.colors.border }}
 		>
 			<button

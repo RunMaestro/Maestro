@@ -29,7 +29,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 	handleContextMenu,
 }: SkinnySidebarProps) {
 	return (
-		<div className="flex-1 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
+		<div className="flex-1 min-h-0 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
 			{sortedSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);

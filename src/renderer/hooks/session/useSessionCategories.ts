@@ -68,6 +68,8 @@ export function useSessionCategories(
 	);
 
 	// Consolidated session categorization and sorting - computed in a single pass
+	const groupIds = useMemo(() => new Set(groups.map((g) => g.id)), [groups]);
+
 	const sessionCategories = useMemo(() => {
 		// Step 1: Filter sessions based on search query and unread filter
 		const query = sessionFilter?.toLowerCase() ?? '';
@@ -129,7 +131,7 @@ export function useSessionCategories(
 			if (s.bookmarked) {
 				bookmarked.push(s);
 			}
-			if (s.groupId) {
+			if (s.groupId && groupIds.has(s.groupId)) {
 				const list = groupedMap.get(s.groupId);
 				if (list) {
 					list.push(s);
@@ -168,7 +170,14 @@ export function useSessionCategories(
 			sortedUngroupedParent,
 			sortedGrouped,
 		};
-	}, [sessionFilter, showUnreadAgentsOnly, activeSessionId, sessions, worktreeChildrenByParentId]);
+	}, [
+		sessionFilter,
+		showUnreadAgentsOnly,
+		activeSessionId,
+		sessions,
+		worktreeChildrenByParentId,
+		groupIds,
+	]);
 
 	const sortedGroups = useMemo(
 		() => [...groups].sort((a, b) => compareSessionNames(a.name, b.name)),
