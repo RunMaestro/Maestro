@@ -5,8 +5,8 @@
  * and provides actions for rename and info.
  */
 
-import { Info, Edit2, Columns, DollarSign } from 'lucide-react';
-import type { Theme, Shortcut } from '../types';
+import { Info, Edit2, Columns, DollarSign, StopCircle } from 'lucide-react';
+import type { Theme, Shortcut, GroupChatState } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 
 interface GroupChatHeaderProps {
@@ -17,6 +17,8 @@ interface GroupChatHeaderProps {
 	totalCost?: number;
 	/** True if one or more participants don't have cost data (makes total incomplete) */
 	costIncomplete?: boolean;
+	state: GroupChatState;
+	onStopAll: () => void;
 	onRename: () => void;
 	onShowInfo: () => void;
 	rightPanelOpen: boolean;
@@ -30,6 +32,8 @@ export function GroupChatHeader({
 	participantCount,
 	totalCost,
 	costIncomplete,
+	state,
+	onStopAll,
 	onRename,
 	onShowInfo,
 	rightPanelOpen,
@@ -72,6 +76,22 @@ export function GroupChatHeader({
 			</div>
 
 			<div className="flex items-center gap-2">
+				{/* Stop All button - only shown when active */}
+				{state !== 'idle' && (
+					<button
+						onClick={onStopAll}
+						className="flex items-center gap-1 text-xs px-2 py-0.5 rounded hover:opacity-80 transition-opacity cursor-pointer"
+						style={{
+							backgroundColor: `${theme.colors.error}20`,
+							color: theme.colors.error,
+							border: `1px solid ${theme.colors.error}40`,
+						}}
+						title="Stop all moderator and participant activity"
+					>
+						<StopCircle className="w-3.5 h-3.5" />
+						Stop All
+					</button>
+				)}
 				<span
 					className="text-xs px-2 py-0.5 rounded-full"
 					style={{

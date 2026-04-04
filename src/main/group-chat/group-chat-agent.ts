@@ -6,9 +6,11 @@
  * - Each participant has a unique name within the chat
  * - Participants receive messages from the moderator
  * - Participants can collaborate by referencing the shared chat log
+ *
+ * Participants are registered up front, but their actual work runs in
+ * one-shot task processes spawned by the router for each moderator handoff.
  */
 
-import * as os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import {
 	GroupChatParticipant,
@@ -19,20 +21,11 @@ import {
 } from './group-chat-storage';
 import { appendToLog } from './group-chat-log';
 import { IProcessManager, isModeratorActive } from './group-chat-moderator';
-import type { AgentDetector } from '../agents';
-import {
-	buildAgentArgs,
-	applyAgentConfigOverrides,
-	getContextWindowValue,
-} from '../utils/agent-args';
 import { groupChatParticipantPrompt } from '../../prompts';
-import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
-import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
-import { getWindowsSpawnConfig } from './group-chat-config';
 
 /**
  * In-memory store for active participant sessions.
- * Maps `${groupChatId}:${participantName}` -> sessionId
+ * Maps `${groupChatId}:${participantName}` -> currently running task sessionId
  */
 const activeParticipantSessions = new Map<string, string>();
 
@@ -76,37 +69,30 @@ export interface SessionOverrides {
 }
 
 /**
- * Adds a participant to a group chat and spawns their agent session.
+ * Adds a participant to a group chat.
  *
  * @param groupChatId - The ID of the group chat
  * @param name - The participant's name (must be unique within the chat)
  * @param agentId - The agent type to use (e.g., 'claude-code')
- * @param processManager - The process manager to use for spawning
- * @param cwd - Working directory for the agent (defaults to home directory)
- * @param agentDetector - Optional agent detector for resolving agent paths
- * @param agentConfigValues - Optional agent config values (from config store)
- * @param customEnvVars - Optional custom environment variables for the agent (deprecated, use sessionOverrides)
- * @param sessionOverrides - Optional session-specific overrides (customModel, customArgs, customEnvVars, sshRemoteConfig)
- * @param sshStore - Optional SSH settings store for remote execution support
+ * @param processManager - Unused, kept for API compatibility with existing call sites
  * @returns The created participant
  */
 export async function addParticipant(
 	groupChatId: string,
 	name: string,
 	agentId: string,
-	processManager: IProcessManager,
-	cwd: string = os.homedir(),
-	agentDetector?: AgentDetector,
-	agentConfigValues?: Record<string, any>,
-	customEnvVars?: Record<string, string>,
+	_processManager: IProcessManager,
+	_cwd?: string,
+	_agentDetector?: unknown,
+	_agentConfigValues?: Record<string, any>,
+	_customEnvVars?: Record<string, string>,
 	sessionOverrides?: SessionOverrides,
-	sshStore?: SshRemoteSettingsStore
+	_sshStore?: unknown
 ): Promise<GroupChatParticipant> {
 	console.log(`[GroupChat:Debug] ========== ADD PARTICIPANT ==========`);
 	console.log(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
 	console.log(`[GroupChat:Debug] Participant Name: ${name}`);
 	console.log(`[GroupChat:Debug] Agent ID: ${agentId}`);
-	console.log(`[GroupChat:Debug] CWD: ${cwd}`);
 
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
@@ -133,124 +119,10 @@ export async function addParticipant(
 		return existingParticipant;
 	}
 
-	// Resolve the agent configuration to get the executable command
-	let command = agentId;
-	let args: string[] = [];
-	let agentConfig: Awaited<ReturnType<AgentDetector['getAgent']>> | null = null;
-
-	if (agentDetector) {
-		agentConfig = await agentDetector.getAgent(agentId);
-		console.log(
-			`[GroupChat:Debug] Agent resolved: ${agentConfig?.command || 'null'}, available: ${agentConfig?.available ?? false}`
-		);
-		if (!agentConfig || !agentConfig.available) {
-			console.log(`[GroupChat:Debug] ERROR: Agent not available!`);
-			throw new Error(`Agent '${agentId}' is not available`);
-		}
-		command = agentConfig.path || agentConfig.command;
-		args = [...agentConfig.args];
-	}
-
-	const prompt = getParticipantSystemPrompt(name, chat.name, chat.logPath);
-	// Note: Don't pass modelId to buildAgentArgs - it will be handled by applyAgentConfigOverrides
-	// via sessionCustomModel to avoid duplicate --model args
-	const baseArgs = buildAgentArgs(agentConfig, {
-		baseArgs: args,
-		prompt,
-		cwd,
-		readOnlyMode: false,
-	});
-	// Merge customEnvVars with sessionOverrides.customEnvVars (sessionOverrides takes precedence)
-	const effectiveEnvVars = sessionOverrides?.customEnvVars ?? customEnvVars;
-	const configResolution = applyAgentConfigOverrides(agentConfig, baseArgs, {
-		agentConfigValues: agentConfigValues || {},
-		sessionCustomModel: sessionOverrides?.customModel,
-		sessionCustomArgs: sessionOverrides?.customArgs,
-		sessionCustomEnvVars: effectiveEnvVars,
-	});
-
-	console.log(`[GroupChat:Debug] Command: ${command}`);
-	console.log(`[GroupChat:Debug] Args: ${JSON.stringify(configResolution.args)}`);
-
-	// Generate session ID for this participant
+	// Generate a stable participant record ID. Actual task runs use separate
+	// batch session IDs created by the router per moderator handoff.
 	const sessionId = `group-chat-${groupChatId}-participant-${name}-${uuidv4()}`;
-	console.log(`[GroupChat:Debug] Generated session ID: ${sessionId}`);
-
-	// Wrap spawn config with SSH if configured
-	let spawnCommand = command;
-	let spawnArgs = configResolution.args;
-	let spawnCwd = cwd;
-	let spawnPrompt: string | undefined = prompt;
-	let spawnEnvVars = configResolution.effectiveCustomEnvVars ?? effectiveEnvVars;
-	let spawnShell: string | undefined;
-	let spawnRunInShell = false;
-	let spawnSshStdinScript: string | undefined;
-
-	// Apply SSH wrapping if SSH is configured and store is available
-	if (sshStore && sessionOverrides?.sshRemoteConfig) {
-		console.log(`[GroupChat:Debug] Applying SSH wrapping for participant...`);
-		const sshWrapped = await wrapSpawnWithSsh(
-			{
-				command,
-				args: configResolution.args,
-				cwd,
-				prompt,
-				customEnvVars: configResolution.effectiveCustomEnvVars ?? effectiveEnvVars,
-				promptArgs: agentConfig?.promptArgs,
-				noPromptSeparator: agentConfig?.noPromptSeparator,
-				agentBinaryName: agentConfig?.binaryName,
-			},
-			sessionOverrides.sshRemoteConfig,
-			sshStore
-		);
-		spawnCommand = sshWrapped.command;
-		spawnArgs = sshWrapped.args;
-		spawnCwd = sshWrapped.cwd;
-		spawnPrompt = sshWrapped.prompt;
-		spawnEnvVars = sshWrapped.customEnvVars;
-		spawnSshStdinScript = sshWrapped.sshStdinScript;
-		if (sshWrapped.sshRemoteUsed) {
-			console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
-		}
-	}
-
-	// Get Windows-specific spawn config (shell, stdin mode) - handles SSH exclusion
-	const winConfig = getWindowsSpawnConfig(agentId, sessionOverrides?.sshRemoteConfig);
-	if (winConfig.shell) {
-		spawnShell = winConfig.shell;
-		spawnRunInShell = winConfig.runInShell;
-		console.log(`[GroupChat:Debug] Windows shell config for participant: ${winConfig.shell}`);
-	}
-
-	// Spawn the participant agent
-	console.log(`[GroupChat:Debug] Spawning participant agent...`);
-	const result = processManager.spawn({
-		sessionId,
-		toolType: agentId,
-		cwd: spawnCwd,
-		command: spawnCommand,
-		args: spawnArgs,
-		readOnlyMode: false, // Participants can make changes
-		prompt: spawnPrompt,
-		contextWindow: getContextWindowValue(agentConfig, agentConfigValues || {}),
-		customEnvVars: spawnEnvVars,
-		promptArgs: agentConfig?.promptArgs,
-		noPromptSeparator: agentConfig?.noPromptSeparator,
-		shell: spawnShell,
-		runInShell: spawnRunInShell,
-		sendPromptViaStdin: winConfig.sendPromptViaStdin,
-		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
-		sshStdinScript: spawnSshStdinScript,
-	});
-
-	console.log(`[GroupChat:Debug] Spawn result: ${JSON.stringify(result)}`);
-	console.log(`[GroupChat:Debug] promptArgs: ${agentConfig?.promptArgs ? 'defined' : 'undefined'}`);
-	console.log(`[GroupChat:Debug] noPromptSeparator: ${agentConfig?.noPromptSeparator ?? false}`);
-
-	if (!result.success) {
-		console.log(`[GroupChat:Debug] ERROR: Spawn failed!`);
-		throw new Error(`Failed to spawn participant '${name}' for group chat ${groupChatId}`);
-	}
+	console.log(`[GroupChat:Debug] Generated participant record ID: ${sessionId}`);
 
 	// Create participant record
 	const participant: GroupChatParticipant = {
@@ -261,16 +133,30 @@ export async function addParticipant(
 		sshRemoteName: sessionOverrides?.sshRemoteName,
 	};
 
-	// Store the session mapping
-	activeParticipantSessions.set(getParticipantKey(groupChatId, name), sessionId);
-	console.log(`[GroupChat:Debug] Session stored in active map`);
-
 	// Add participant to the group chat
 	await addParticipantToChat(groupChatId, participant);
 	console.log(`[GroupChat:Debug] Participant added to chat storage`);
 	console.log(`[GroupChat:Debug] =====================================`);
 
 	return participant;
+}
+
+/**
+ * Tracks the currently running task session for a participant.
+ */
+export function setActiveParticipantSession(
+	groupChatId: string,
+	participantName: string,
+	sessionId: string
+): void {
+	activeParticipantSessions.set(getParticipantKey(groupChatId, participantName), sessionId);
+}
+
+/**
+ * Clears the currently running task session for a participant.
+ */
+export function clearActiveParticipantSession(groupChatId: string, participantName: string): void {
+	activeParticipantSessions.delete(getParticipantKey(groupChatId, participantName));
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 	type ParticipantColorInfo,
 } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
+import { useGroupChatStore } from '../stores/groupChatStore';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -80,6 +81,8 @@ export function GroupChatRightPanel({
 	onJumpToMessage,
 	onColorsComputed,
 }: GroupChatRightPanelProps): JSX.Element | null {
+	const participantLiveOutput = useGroupChatStore((s) => s.participantLiveOutput);
+
 	// Color preferences state
 	const [colorPreferences, setColorPreferences] = useState<Record<string, number>>({});
 	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
@@ -322,6 +325,7 @@ export function GroupChatRightPanel({
 									color={participantColors[participant.name]}
 									groupChatId={groupChatId}
 									onContextReset={handleContextReset}
+									liveOutput={participantLiveOutput.get(`${groupChatId}:${participant.name}`)}
 								/>
 							);
 						})

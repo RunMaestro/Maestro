@@ -321,6 +321,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						groupId: session.groupId,
 						activeTabId: targetTab.id,
 						conductorProfile: deps.conductorProfile,
+						readOnlyMode: isReadOnly,
 					});
 				}
 
@@ -416,6 +417,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							groupId: session.groupId,
 							activeTabId: targetTab.id,
 							conductorProfile: deps.conductorProfile,
+							readOnlyMode: isReadOnly,
 						});
 					}
 

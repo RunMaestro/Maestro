@@ -60,3 +60,6 @@ yarn-error.log*
 .vscode/
 .VSCodeCounter
 .qodo
+
+# Claude Code local settings
+.claude/settings.local.json

@@ -986,6 +986,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								activeTabId: freshSession.activeTabId,
 								historyFilePath,
 								conductorProfile,
+								readOnlyMode: isReadOnly,
 							});
 						}
 

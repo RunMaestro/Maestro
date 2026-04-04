@@ -182,7 +182,7 @@ src/
 | Add theme                    | `src/renderer/constants/themes.ts`                                                                                                                                      |
 | Add modal                    | Component + `src/renderer/constants/modalPriorities.ts`                                                                                                                 |
 | Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                            |
-| Add setting                  | `src/renderer/hooks/useSettings.ts`, `src/main/index.ts`                                                                                                                |
+| Add setting                  | `src/shared/settingsMetadata.ts` (metadata), `src/renderer/stores/settingsStore.ts`, `src/main/stores/defaults.ts`                                                      |
 | Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                            |
 | Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                                                             |
 | Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                   |

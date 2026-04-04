@@ -17,6 +17,7 @@ export type ThemeId =
 	| 'monokai'
 	| 'github-light'
 	| 'solarized-light'
+	| 'solarized-dark'
 	| 'nord'
 	| 'tokyo-night'
 	| 'one-light'
@@ -115,6 +116,7 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'monokai',
 		'github-light',
 		'solarized-light',
+		'solarized-dark',
 		'nord',
 		'tokyo-night',
 		'one-light',

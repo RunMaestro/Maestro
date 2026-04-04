@@ -18,6 +18,16 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { autoRun } from './commands/auto-run';
+import { settingsList } from './commands/settings-list';
+import { settingsGet } from './commands/settings-get';
+import { settingsSet } from './commands/settings-set';
+import { settingsReset } from './commands/settings-reset';
+import {
+	settingsAgentList,
+	settingsAgentGet,
+	settingsAgentSet,
+	settingsAgentReset,
+} from './commands/settings-agent';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -156,5 +166,71 @@ program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
 	.action(status);
+
+// Settings commands
+const settings = program.command('settings').description('View and manage Maestro configuration');
+
+settings
+	.command('list')
+	.description('List all settings with current values')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.option('-v, --verbose', 'Show descriptions for each setting (useful for LLM context)')
+	.option('--keys-only', 'Show only setting key names')
+	.option('--defaults', 'Show default values alongside current values')
+	.option('-c, --category <name>', 'Filter by category (e.g., appearance, shell, editor)')
+	.option('--show-secrets', 'Show sensitive values like API keys (masked by default)')
+	.action(settingsList);
+
+settings
+	.command('get <key>')
+	.description(
+		'Get the value of a setting (supports dot-notation, e.g., encoreFeatures.directorNotes)'
+	)
+	.option('--json', 'Output as JSON line (for scripting)')
+	.option('-v, --verbose', 'Show full details including description, type, and default')
+	.action(settingsGet);
+
+settings
+	.command('set <key> <value>')
+	.description('Set a setting value (auto-detects type: bool, number, JSON, string)')
+	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--raw <json>', 'Pass an explicit JSON value (bypasses auto type coercion)')
+	.action(settingsSet);
+
+settings
+	.command('reset <key>')
+	.description('Reset a setting to its default value')
+	.option('--json', 'Output as JSON line (for scripting)')
+	.action(settingsReset);
+
+// Agent-specific config subcommands
+const agent = settings.command('agent').description('View and manage per-agent configuration');
+
+agent
+	.command('list [agent-id]')
+	.description('List agent configurations (all agents or a specific one)')
+	.option('--json', 'Output as JSON lines (for scripting)')
+	.option('-v, --verbose', 'Show descriptions for each config key')
+	.action(settingsAgentList);
+
+agent
+	.command('get <agent-id> <key>')
+	.description('Get a single agent config value')
+	.option('--json', 'Output as JSON line (for scripting)')
+	.option('-v, --verbose', 'Show full details including description')
+	.action(settingsAgentGet);
+
+agent
+	.command('set <agent-id> <key> <value>')
+	.description('Set an agent config value (auto-detects type)')
+	.option('--json', 'Output as JSON line (for scripting)')
+	.option('--raw <json>', 'Pass an explicit JSON value (bypasses auto type coercion)')
+	.action(settingsAgentSet);
+
+agent
+	.command('reset <agent-id> <key>')
+	.description('Remove an agent config key')
+	.option('--json', 'Output as JSON line (for scripting)')
+	.action(settingsAgentReset);
 
 program.parse();

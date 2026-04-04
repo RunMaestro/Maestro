@@ -11,6 +11,7 @@ import {
 	Server,
 	Monitor,
 	Globe,
+	Users,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -50,6 +51,7 @@ interface SettingsModalProps {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'groupchat'
 		| 'ssh'
 		| 'environment'
 		| 'encore';
@@ -98,6 +100,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 		setSshRemoteHonorGitignore,
+		// Group Chat settings
+		moderatorStandingInstructions,
+		setModeratorStandingInstructions,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
@@ -108,6 +113,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
+		| 'groupchat'
 		| 'ssh'
 		| 'environment'
 		| 'encore'
@@ -203,6 +209,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'theme'
 				| 'notifications'
 				| 'aicommands'
+				| 'groupchat'
 				| 'ssh'
 				| 'environment'
 				| 'encore'
@@ -215,6 +222,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'groupchat',
 						'ssh',
 						'environment',
 						'encore',
@@ -226,6 +234,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
+						'groupchat',
 						'ssh',
 						'environment',
 						'encore',
@@ -375,6 +384,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		{ id: 'theme', label: 'Themes', icon: Palette },
 		{ id: 'notifications', label: 'Notifications', icon: Bell },
 		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
+		{ id: 'groupchat', label: 'Group Chat', icon: Users },
 		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
 		{ id: 'environment', label: 'Environment', icon: Globe },
 		{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
@@ -620,6 +630,40 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								{/* BMAD Commands Section */}
 								<div data-setting-id="aicommands-bmad">
 									<BmadCommandsPanel theme={theme} />
+								</div>
+							</div>
+						)}
+
+						{activeTab === 'groupchat' && (
+							<div className="space-y-5">
+								<div>
+									<h3
+										className="text-sm font-bold uppercase tracking-wider mb-1"
+										style={{ color: theme.colors.textMain }}
+									>
+										Moderator Standing Instructions
+									</h3>
+									<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+										These instructions are included in every group chat moderator prompt. Use them
+										for standing practices like branch workflows, autorun setup, or coding
+										standards.
+									</p>
+									<textarea
+										value={moderatorStandingInstructions}
+										onChange={(e) => setModeratorStandingInstructions(e.target.value)}
+										placeholder={`Example:\n- Always instruct agents to work in git branches, not directly on main\n- When delegating tasks, tell agents to enable autorun with: /autorun on\n- Prefer TypeScript strict mode in all new files`}
+										className="w-full p-3 rounded border bg-transparent outline-none resize-vertical text-sm font-mono"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											minHeight: '150px',
+										}}
+										maxLength={2000}
+										rows={8}
+									/>
+									<div className="text-xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
+										{moderatorStandingInstructions.length} / 2000
+									</div>
 								</div>
 							</div>
 						)}

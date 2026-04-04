@@ -40,6 +40,8 @@ export interface QuitHandlerDependencies {
 	closeStatsDB: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
+	/** Function to stop settings file watcher (optional, may not be started yet) */
+	stopSettingsWatcher?: () => void;
 	/** Power manager instance for clearing sleep prevention on shutdown */
 	powerManager: typeof powerManagerInstance;
 	/** Function to stop group chat moderator cleanup interval */
@@ -90,6 +92,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		cleanupAllGroomingSessions,
 		closeStatsDB,
 		stopCliWatcher,
+		stopSettingsWatcher,
 		powerManager,
 		stopSessionCleanup,
 	} = deps;
@@ -201,6 +204,11 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// Stop CLI activity watcher
 		if (stopCliWatcher) {
 			stopCliWatcher();
+		}
+
+		// Stop settings file watcher
+		if (stopSettingsWatcher) {
+			stopSettingsWatcher();
 		}
 
 		// Stop group chat moderator cleanup interval

@@ -429,6 +429,16 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
 					const output = data.toString();
+					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
+					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
+					try {
+						this.emitter.emit('raw-stdout', sessionId, output);
+					} catch (err) {
+						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
+							sessionId,
+							error: String(err),
+						});
+					}
 					this.stdoutHandler.handleData(sessionId, output);
 				});
 			} else {

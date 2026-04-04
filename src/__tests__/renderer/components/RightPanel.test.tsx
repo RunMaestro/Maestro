@@ -910,7 +910,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
-			useBatchStore.setState({ batchRunStates: { 'session-1': currentSessionBatchState } });
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
@@ -943,7 +945,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
-			useBatchStore.setState({ batchRunStates: { 'session-1': currentSessionBatchState } });
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
@@ -975,7 +979,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
-			useBatchStore.setState({ batchRunStates: { 'session-1': currentSessionBatchState } });
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
 			render(<RightPanel {...props} />);
 
@@ -1008,7 +1014,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
-			useBatchStore.setState({ batchRunStates: { 'session-1': currentSessionBatchState } });
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({
 				currentSessionBatchState,
 				onResumeAfterError,
@@ -1052,7 +1060,9 @@ describe('RightPanel', () => {
 					agentId: 'test',
 				},
 			};
-			useBatchStore.setState({ batchRunStates: { 'session-1': currentSessionBatchState } });
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({
 				currentSessionBatchState,
 				onResumeAfterError,
@@ -1083,6 +1093,9 @@ describe('RightPanel', () => {
 				loopEnabled: false,
 				loopIteration: 0,
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({
 				currentSessionBatchState,
 				onResumeAfterError,
@@ -1465,6 +1478,9 @@ describe('RightPanel', () => {
 				loopEnabled: false,
 				loopIteration: 0,
 			};
+			useBatchStore.setState({
+				batchRunStates: { 'session-1': currentSessionBatchState },
+			});
 			const props = createDefaultProps({ currentSessionBatchState });
 			const { container } = render(<RightPanel {...props} />);
 

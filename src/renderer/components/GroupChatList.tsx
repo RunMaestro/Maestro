@@ -231,7 +231,7 @@ export function GroupChatList({
 				if (showArchived && a.archived !== b.archived) {
 					return a.archived ? 1 : -1;
 				}
-				return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+				return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
 			});
 	}, [groupChats, showArchived]);
 

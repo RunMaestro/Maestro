@@ -252,6 +252,7 @@ interface MaestroAPI {
 		get: (key: string) => Promise<unknown>;
 		set: (key: string, value: unknown) => Promise<boolean>;
 		getAll: () => Promise<Record<string, unknown>>;
+		onExternalChange: (handler: () => void) => () => void;
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
@@ -1939,6 +1940,12 @@ interface MaestroAPI {
 			readOnly?: boolean
 		) => Promise<void>;
 		stopModerator: (id: string) => Promise<void>;
+		stopAll: (id: string) => Promise<void>;
+		reportAutoRunComplete: (
+			groupChatId: string,
+			participantName: string,
+			summary: string
+		) => Promise<void>;
 		getModeratorSessionId: (id: string) => Promise<string | null>;
 		// Participants
 		addParticipant: (
@@ -2066,8 +2073,17 @@ interface MaestroAPI {
 		onParticipantState: (
 			callback: (groupChatId: string, participantName: string, state: 'idle' | 'working') => void
 		) => () => void;
+		onParticipantLiveOutput: (
+			callback: (groupChatId: string, participantName: string, chunk: string) => void
+		) => () => void;
 		onModeratorSessionIdChanged: (
 			callback: (groupChatId: string, sessionId: string) => void
+		) => () => void;
+		onAutoRunTriggered: (
+			callback: (groupChatId: string, participantName: string, filename?: string) => void
+		) => () => void;
+		onAutoRunBatchComplete: (
+			callback: (groupChatId: string, participantName: string) => void
 		) => () => void;
 	};
 	// Leaderboard API

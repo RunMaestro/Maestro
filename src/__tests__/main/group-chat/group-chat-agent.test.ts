@@ -47,6 +47,8 @@ import {
 	getActiveParticipants,
 	clearAllParticipantSessionsGlobal,
 	getParticipantSystemPrompt,
+	setActiveParticipantSession,
+	clearActiveParticipantSession,
 } from '../../../main/group-chat/group-chat-agent';
 import {
 	spawnModerator,
@@ -129,10 +131,10 @@ describe('group-chat-agent', () => {
 	}
 
 	// ===========================================================================
-	// Test 4.1: addParticipant creates session and updates chat
+	// Test 4.1: addParticipant creates participant record and updates chat
 	// ===========================================================================
 	describe('addParticipant', () => {
-		it('adds participant with new session', async () => {
+		it('adds participant with new participant record ID', async () => {
 			const chat = await createTestChatWithModerator('Test');
 
 			const participant = await addParticipant(
@@ -153,21 +155,12 @@ describe('group-chat-agent', () => {
 			expect(updated?.participants[0].name).toBe('Client');
 		});
 
-		it('spawns participant session correctly', async () => {
+		it('does not spawn a participant process during registration', async () => {
 			const chat = await createTestChatWithModerator('Spawn Test');
 
 			await addParticipant(chat.id, 'Backend', 'claude-code', mockProcessManager);
 
-			// spawn is called once for participant (moderator uses batch mode, not spawn)
-			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
-
-			// Check the participant spawn call
-			expect(mockProcessManager.spawn).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					toolType: 'claude-code',
-					readOnlyMode: false, // Participants can make changes
-				})
-			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
 		it('throws for non-existent chat', async () => {
@@ -185,23 +178,6 @@ describe('group-chat-agent', () => {
 
 			expect(second.name).toBe(first.name);
 			expect(second.sessionId).toBe(first.sessionId);
-		});
-
-		it('throws when spawn fails', async () => {
-			// Note: spawnModerator no longer calls spawn (uses batch mode),
-			// so we only need to mock the participant spawn to fail
-			const failingProcessManager: IProcessManager = {
-				spawn: vi.fn().mockReturnValue({ pid: -1, success: false }), // Participant fails
-				write: vi.fn(),
-				kill: vi.fn(),
-			};
-
-			const chat = await createTestChat('Fail Test');
-			await spawnModerator(chat, failingProcessManager);
-
-			await expect(
-				addParticipant(chat.id, 'Client', 'claude-code', failingProcessManager)
-			).rejects.toThrow(/Failed to spawn participant/);
 		});
 
 		it('throws when moderator is not active', async () => {
@@ -243,46 +219,9 @@ describe('group-chat-agent', () => {
 	});
 
 	// ===========================================================================
-	// Test 4.2: addParticipant sends introduction to agent
+	// Test 4.2: prompt helper
 	// ===========================================================================
-	describe('addParticipant - introduction', () => {
-		it('sends introduction to new participant', async () => {
-			const chat = await createTestChatWithModerator('Intro Test');
-
-			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
-
-			// Check that spawn was called with a prompt containing the role
-			expect(mockProcessManager.spawn).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					prompt: expect.stringContaining('Your Role: Client'),
-				})
-			);
-		});
-
-		it('includes chat name in introduction', async () => {
-			const chat = await createTestChatWithModerator('My Project Chat');
-
-			await addParticipant(chat.id, 'Developer', 'claude-code', mockProcessManager);
-
-			expect(mockProcessManager.spawn).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					prompt: expect.stringContaining('My Project Chat'),
-				})
-			);
-		});
-
-		it('includes log path in introduction', async () => {
-			const chat = await createTestChatWithModerator('Log Path Test');
-
-			await addParticipant(chat.id, 'Analyst', 'claude-code', mockProcessManager);
-
-			expect(mockProcessManager.spawn).toHaveBeenLastCalledWith(
-				expect.objectContaining({
-					prompt: expect.stringContaining('chat.log'),
-				})
-			);
-		});
-
+	describe('getParticipantSystemPrompt', () => {
 		it('getParticipantSystemPrompt generates correct prompt', () => {
 			const prompt = getParticipantSystemPrompt('Tester', 'QA Chat', '/path/to/chat.log');
 
@@ -299,41 +238,31 @@ describe('group-chat-agent', () => {
 	describe('sendToParticipant', () => {
 		it('sends message to participant session', async () => {
 			const chat = await createTestChatWithModerator('Send Test');
-			const participant = await addParticipant(
-				chat.id,
-				'Client',
-				'claude-code',
-				mockProcessManager
-			);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-123');
 
 			await sendToParticipant(chat.id, 'Client', 'Please implement auth', mockProcessManager);
 
 			expect(mockProcessManager.write).toHaveBeenCalledWith(
-				participant.sessionId,
+				'active-session-123',
 				expect.stringContaining('Please implement auth')
 			);
 		});
 
 		it('appends newline to message', async () => {
 			const chat = await createTestChatWithModerator('Newline Test');
-			const participant = await addParticipant(
-				chat.id,
-				'Client',
-				'claude-code',
-				mockProcessManager
-			);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-456');
 
 			await sendToParticipant(chat.id, 'Client', 'Task message', mockProcessManager);
 
-			expect(mockProcessManager.write).toHaveBeenCalledWith(
-				participant.sessionId,
-				'Task message\n'
-			);
+			expect(mockProcessManager.write).toHaveBeenCalledWith('active-session-456', 'Task message\n');
 		});
 
 		it('logs message to chat log', async () => {
 			const chat = await createTestChatWithModerator('Log Test');
 			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-log');
 
 			await sendToParticipant(chat.id, 'Client', 'Logged message', mockProcessManager);
 
@@ -381,16 +310,12 @@ describe('group-chat-agent', () => {
 	describe('removeParticipant', () => {
 		it('removes participant and kills session', async () => {
 			const chat = await createTestChatWithModerator('Remove Test');
-			const participant = await addParticipant(
-				chat.id,
-				'Client',
-				'claude-code',
-				mockProcessManager
-			);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-789');
 
 			await removeParticipant(chat.id, 'Client', mockProcessManager);
 
-			expect(mockProcessManager.kill).toHaveBeenCalledWith(participant.sessionId);
+			expect(mockProcessManager.kill).toHaveBeenCalledWith('active-session-789');
 
 			const updated = await loadGroupChat(chat.id);
 			expect(updated?.participants).toHaveLength(0);
@@ -399,6 +324,7 @@ describe('group-chat-agent', () => {
 		it('removes from active sessions', async () => {
 			const chat = await createTestChatWithModerator('Active Test');
 			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-999');
 
 			expect(isParticipantActive(chat.id, 'Client')).toBe(true);
 
@@ -439,14 +365,10 @@ describe('group-chat-agent', () => {
 	describe('helper functions', () => {
 		it('getParticipantSessionId returns correct ID', async () => {
 			const chat = await createTestChatWithModerator('Get Session Test');
-			const participant = await addParticipant(
-				chat.id,
-				'Client',
-				'claude-code',
-				mockProcessManager
-			);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-321');
 
-			expect(getParticipantSessionId(chat.id, 'Client')).toBe(participant.sessionId);
+			expect(getParticipantSessionId(chat.id, 'Client')).toBe('active-session-321');
 		});
 
 		it('getParticipantSessionId returns undefined for unknown', () => {
@@ -459,6 +381,7 @@ describe('group-chat-agent', () => {
 			expect(isParticipantActive(chat.id, 'Client')).toBe(false);
 
 			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-654');
 
 			expect(isParticipantActive(chat.id, 'Client')).toBe(true);
 		});
@@ -468,6 +391,8 @@ describe('group-chat-agent', () => {
 
 			await addParticipant(chat.id, 'Frontend', 'claude-code', mockProcessManager);
 			await addParticipant(chat.id, 'Backend', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Frontend', 'active-frontend');
+			setActiveParticipantSession(chat.id, 'Backend', 'active-backend');
 
 			const active = getActiveParticipants(chat.id);
 			expect(active).toContain('Frontend');
@@ -485,6 +410,8 @@ describe('group-chat-agent', () => {
 
 			await addParticipant(chat1.id, 'Client1', 'claude-code', mockProcessManager);
 			await addParticipant(chat2.id, 'Client2', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat1.id, 'Client1', 'global-client-1');
+			setActiveParticipantSession(chat2.id, 'Client2', 'global-client-2');
 
 			clearAllParticipantSessionsGlobal();
 
@@ -503,6 +430,8 @@ describe('group-chat-agent', () => {
 
 			await addParticipant(chat1.id, 'Client', 'claude-code', mockProcessManager);
 			await addParticipant(chat2.id, 'Client', 'opencode', mockProcessManager);
+			setActiveParticipantSession(chat1.id, 'Client', 'chat1-session');
+			setActiveParticipantSession(chat2.id, 'Client', 'chat2-session');
 
 			// Same name but different chats - both should work
 			expect(isParticipantActive(chat1.id, 'Client')).toBe(true);
@@ -524,6 +453,16 @@ describe('group-chat-agent', () => {
 			const updated = await loadGroupChat(chat.id);
 			expect(updated?.participants[0].agentId).toBe('claude-code');
 			expect(updated?.participants[1].agentId).toBe('opencode');
+		});
+
+		it('can clear a specific active participant session', async () => {
+			const chat = await createTestChatWithModerator('Clear Active Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			setActiveParticipantSession(chat.id, 'Client', 'active-session-clear');
+
+			clearActiveParticipantSession(chat.id, 'Client');
+
+			expect(isParticipantActive(chat.id, 'Client')).toBe(false);
 		});
 	});
 });

@@ -51,6 +51,10 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  * Context Variables:
  *   {{CONTEXT_USAGE}}     - Current context window usage percentage
  *
+ * Maestro Variables:
+ *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
+ *   {{READ_ONLY_MODE}}    - "true" if agent is in read-only/plan mode, "false" otherwise
+ *
  * Cue Variables (Cue automation only):
  *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
@@ -90,6 +94,23 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  */
 
 /**
+ * Returns the platform-appropriate command to run maestro-cli.
+ * The CLI is bundled as a JS file inside the Maestro application package,
+ * so the returned value includes the `node` invocation with the full path.
+ */
+function getMaestroCLIPath(): string {
+	switch (process.platform) {
+		case 'darwin':
+			return 'node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"';
+		case 'win32':
+			return `node "${process.env.ProgramFiles || 'C:\\Program Files'}\\Maestro\\resources\\maestro-cli.js"`;
+		default:
+			// Linux (deb/rpm installs to /opt)
+			return 'node "/opt/Maestro/resources/maestro-cli.js"';
+	}
+}
+
+/**
  * Minimal session interface that works for both CLI (SessionInfo) and renderer (Session)
  */
 export interface TemplateSessionInfo {
@@ -120,6 +141,8 @@ export interface TemplateContext {
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	// Read-only / plan mode state
+	readOnlyMode?: boolean;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
 		eventType?: string;
@@ -252,12 +275,15 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{GIT_BRANCH}}', description: 'Git branch name' },
 	{ variable: '{{GROUP_DEEP_LINK}}', description: 'Deep link to agent group (maestro://)' },
 	{ variable: '{{IS_GIT_REPO}}', description: 'Is git repo (true/false)' },
+	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{
 		variable: '{{LOOP_NUMBER}}',
 		description: 'Loop iteration (00001, 00002...)',
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
+	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
+	{ variable: '{{READ_ONLY_MODE}}', description: 'Read-only/plan mode (true/false)' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -288,6 +314,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		documentPath,
 		historyFilePath,
 		conductorProfile,
+		readOnlyMode,
 	} = context;
 	const now = new Date();
 
@@ -350,6 +377,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Context variables
 		CONTEXT_USAGE: String(session.contextUsage || 0),
+
+		// Maestro variables
+		MAESTRO_CLI_PATH: getMaestroCLIPath(),
+		READ_ONLY_MODE: String(readOnlyMode ?? false),
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',

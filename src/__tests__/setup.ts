@@ -207,6 +207,7 @@ const mockMaestro = {
 		get: vi.fn().mockResolvedValue(undefined),
 		set: vi.fn().mockResolvedValue(undefined),
 		getAll: vi.fn().mockResolvedValue({}),
+		onExternalChange: vi.fn().mockReturnValue(() => {}),
 	},
 	sessions: {
 		get: vi.fn().mockResolvedValue([]),

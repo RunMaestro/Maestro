@@ -106,6 +106,7 @@ export interface ProcessListenerDependencies {
 			processManager: ProcessManager,
 			agentDetector: AgentDetector
 		) => Promise<void>;
+		clearActiveParticipantTaskSession: (groupChatId: string, participantName: string) => void;
 	};
 	/** Group chat storage functions */
 	groupChatStorage: {
