@@ -9,13 +9,11 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
-import type { InactivityWatchdog } from './InactivityWatchdog';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
-	inactivityWatchdog?: InactivityWatchdog;
 }
 
 /**
@@ -107,13 +105,11 @@ export class StdoutHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
-	private inactivityWatchdog: InactivityWatchdog | null;
 
 	constructor(deps: StdoutHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
-		this.inactivityWatchdog = deps.inactivityWatchdog ?? null;
 	}
 
 	/**
@@ -122,12 +118,6 @@ export class StdoutHandler {
 	handleData(sessionId: string, output: string): void {
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) return;
-
-		// Record activity for the inactivity watchdog.
-		// Any stdout output means the process is still alive and working.
-		if (this.inactivityWatchdog) {
-			this.inactivityWatchdog.recordActivity(sessionId);
-		}
 
 		// Strip ANSI/control sequences before parsing. Applied unconditionally —
 		// control codes are never useful on the child-process stdout path regardless

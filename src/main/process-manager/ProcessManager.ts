@@ -13,7 +13,6 @@ import type {
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
-import { InactivityWatchdog } from './handlers/InactivityWatchdog';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
@@ -40,23 +39,12 @@ export class ProcessManager extends EventEmitter {
 	private childProcessSpawner: ChildProcessSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
-	private inactivityWatchdog: InactivityWatchdog;
 
 	constructor() {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
-		this.inactivityWatchdog = new InactivityWatchdog({
-			processes: this.processes,
-			emitter: this,
-			killProcess: (sessionId: string) => this.kill(sessionId),
-		});
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
-		this.childProcessSpawner = new ChildProcessSpawner(
-			this.processes,
-			this,
-			this.bufferManager,
-			this.inactivityWatchdog
-		);
+		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 	}
@@ -330,7 +318,6 @@ export class ProcessManager extends EventEmitter {
 	 * Snapshots the session IDs first because kill() deletes from the map.
 	 */
 	killAll(): void {
-		this.inactivityWatchdog.dispose();
 		const sessionIds = [...this.processes.keys()];
 		for (const sessionId of sessionIds) {
 			this.kill(sessionId);

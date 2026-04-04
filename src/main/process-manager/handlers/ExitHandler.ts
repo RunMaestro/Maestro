@@ -7,13 +7,11 @@ import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
-import type { InactivityWatchdog } from './InactivityWatchdog';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
-	inactivityWatchdog?: InactivityWatchdog;
 }
 
 /**
@@ -24,24 +22,17 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
-	private inactivityWatchdog: InactivityWatchdog | null;
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
-		this.inactivityWatchdog = deps.inactivityWatchdog ?? null;
 	}
 
 	/**
 	 * Handle process exit event
 	 */
 	handleExit(sessionId: string, code: number): void {
-		// Untrack from watchdog on normal exit to prevent stale tracking
-		if (this.inactivityWatchdog) {
-			this.inactivityWatchdog.untrackSession(sessionId);
-		}
-
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) {
 			this.emitter.emit('exit', sessionId, code);

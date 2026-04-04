@@ -12,7 +12,6 @@ import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
-import type { InactivityWatchdog } from '../handlers/InactivityWatchdog';
 import { buildChildProcessEnv } from '../utils/envBuilder';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
@@ -27,31 +26,25 @@ export class ChildProcessSpawner {
 	private stdoutHandler: StdoutHandler;
 	private stderrHandler: StderrHandler;
 	private exitHandler: ExitHandler;
-	private inactivityWatchdog: InactivityWatchdog | null;
 
 	constructor(
 		private processes: Map<string, ManagedProcess>,
 		private emitter: EventEmitter,
-		private bufferManager: DataBufferManager,
-		inactivityWatchdog?: InactivityWatchdog
+		private bufferManager: DataBufferManager
 	) {
-		this.inactivityWatchdog = inactivityWatchdog ?? null;
 		this.stdoutHandler = new StdoutHandler({
 			processes: this.processes,
 			emitter: this.emitter,
 			bufferManager: this.bufferManager,
-			inactivityWatchdog: this.inactivityWatchdog ?? undefined,
 		});
 		this.stderrHandler = new StderrHandler({
 			processes: this.processes,
 			emitter: this.emitter,
-			inactivityWatchdog: this.inactivityWatchdog ?? undefined,
 		});
 		this.exitHandler = new ExitHandler({
 			processes: this.processes,
 			emitter: this.emitter,
 			bufferManager: this.bufferManager,
-			inactivityWatchdog: this.inactivityWatchdog ?? undefined,
 		});
 	}
 
@@ -395,12 +388,6 @@ export class ChildProcessSpawner {
 			};
 
 			this.processes.set(sessionId, managedProcess);
-
-			// Register batch-mode processes with the inactivity watchdog.
-			// Terminal processes are excluded - they are interactive and expected to be idle.
-			if (isBatchMode && this.inactivityWatchdog) {
-				this.inactivityWatchdog.trackSession(sessionId);
-			}
 
 			logger.debug('[ProcessManager] Setting up stdout/stderr/exit handlers', 'ProcessManager', {
 				sessionId,

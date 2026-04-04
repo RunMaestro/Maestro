@@ -167,29 +167,6 @@ function getRecoveryActionsForError(
 			}
 			break;
 
-		case 'inactivity_timeout':
-			// Process killed due to inactivity - offer restart or new session
-			if (options.onRestartAgent) {
-				actions.push({
-					id: 'restart-agent',
-					label: 'Restart Agent',
-					description: 'Respawn the agent process',
-					primary: true,
-					icon: <RotateCcw className="w-4 h-4" />,
-					onClick: options.onRestartAgent,
-				});
-			}
-			if (options.onNewSession) {
-				actions.push({
-					id: 'new-session',
-					label: 'Start New Session',
-					description: 'Begin a fresh conversation',
-					icon: <MessageSquarePlus className="w-4 h-4" />,
-					onClick: options.onNewSession,
-				});
-			}
-			break;
-
 		default:
 			// Unknown error - offer generic retry
 			if (options.onRetry) {
