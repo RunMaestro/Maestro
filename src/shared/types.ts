@@ -195,6 +195,9 @@ export interface AgentError {
 	/** Timestamp when the error occurred */
 	timestamp: number;
 
+	/** Epoch ms when rate limit resets (parsed from error text, e.g. "resets 3pm") */
+	rateLimitResetAt?: number;
+
 	/** Original error data for debugging (stderr, exit code, etc.) */
 	raw?: {
 		exitCode?: number;

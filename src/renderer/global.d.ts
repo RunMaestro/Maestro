@@ -444,6 +444,7 @@ interface MaestroAPI {
 					agentId: string;
 					sessionId?: string;
 					timestamp: number;
+					rateLimitResetAt?: number;
 					raw?: {
 						exitCode?: number;
 						stderr?: string;

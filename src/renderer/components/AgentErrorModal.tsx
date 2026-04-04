@@ -12,11 +12,12 @@
  * - Clear error description with type indicator
  * - Collapsible JSON details viewer for structured error data
  * - Recovery action buttons (re-authenticate, start new session, retry, etc.)
+ * - Rate-limit countdown with auto-retry
  * - Dismiss option for non-critical errors
  * - Auto-focus on primary recovery action
  */
 
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import {
 	AlertCircle,
 	RefreshCw,
@@ -29,6 +30,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Code2,
+	Timer,
 } from 'lucide-react';
 import type { Theme, AgentError, AgentErrorType } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -113,6 +115,87 @@ function getErrorColor(error: AgentError, theme: Theme): string {
 	return theme.colors.warning;
 }
 
+/**
+ * Format remaining milliseconds as a human-readable countdown string.
+ */
+function formatCountdown(remainingMs: number): string {
+	if (remainingMs <= 0) return 'now';
+
+	const totalSeconds = Math.ceil(remainingMs / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	if (hours > 0) {
+		return `${hours}h ${minutes}m ${seconds}s`;
+	}
+	if (minutes > 0) {
+		return `${minutes}m ${seconds}s`;
+	}
+	return `${seconds}s`;
+}
+
+/**
+ * RateLimitCountdown - Live countdown until rate limit resets with auto-retry.
+ *
+ * Displays a pulsing timer with the remaining time. When the countdown reaches
+ * zero, it automatically invokes the onComplete callback to trigger a retry.
+ */
+function RateLimitCountdown({
+	resetAt,
+	theme,
+	onComplete,
+}: {
+	resetAt: number;
+	theme: Theme;
+	onComplete: () => void;
+}) {
+	const [remainingMs, setRemainingMs] = useState(() => Math.max(0, resetAt - Date.now()));
+	const completedRef = useRef(false);
+
+	useEffect(() => {
+		// Reset state when resetAt changes
+		completedRef.current = false;
+		setRemainingMs(Math.max(0, resetAt - Date.now()));
+
+		const interval = setInterval(() => {
+			const remaining = Math.max(0, resetAt - Date.now());
+			setRemainingMs(remaining);
+
+			if (remaining <= 0 && !completedRef.current) {
+				completedRef.current = true;
+				clearInterval(interval);
+				onComplete();
+			}
+		}, 1000);
+
+		return () => clearInterval(interval);
+	}, [resetAt, onComplete]);
+
+	const resetDate = new Date(resetAt);
+	const resetTimeStr = resetDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+	return (
+		<div
+			className="flex items-center gap-3 px-4 py-3 rounded-lg border"
+			style={{
+				borderColor: theme.colors.accent + '40',
+				backgroundColor: theme.colors.accent + '10',
+			}}
+		>
+			<Timer className="w-5 h-5 shrink-0 animate-pulse" style={{ color: theme.colors.accent }} />
+			<div className="flex-1 min-w-0">
+				<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					{remainingMs > 0 ? `Auto-retrying in ${formatCountdown(remainingMs)}` : 'Retrying now...'}
+				</div>
+				<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+					Limit resets at {resetTimeStr}
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export function AgentErrorModal({
 	theme,
 	error,
@@ -133,6 +216,69 @@ export function AgentErrorModal({
 
 	// Check if we have JSON details to show
 	const hasJsonDetails = error.parsedJson !== undefined;
+
+	// Find the retry action from recovery actions for auto-retry
+	const retryAction = useMemo(
+		() => recoveryActions.find((a) => a.id === 'retry'),
+		[recoveryActions]
+	);
+
+	// Auto-retry handler: when countdown completes, invoke the "retry" recovery action
+	const handleCountdownComplete = useCallback(() => {
+		if (retryAction) {
+			retryAction.onClick();
+		}
+	}, [retryAction]);
+
+	const [autoRetrySettings, setAutoRetrySettings] = useState<{
+		enabled: boolean;
+		fallbackHours: number;
+	} | null>(null);
+
+	useEffect(() => {
+		if (error.type === 'rate_limited') {
+			window.maestro.agents
+				.getConfig(error.agentId)
+				.then((config) => {
+					if (!config) {
+						setAutoRetrySettings({ enabled: true, fallbackHours: 2 });
+						return;
+					}
+
+					setAutoRetrySettings({
+						enabled: config.rateLimitAutoRetry ?? true,
+						fallbackHours: config.rateLimitFallbackHours ?? 2,
+					});
+				})
+				.catch((err) => {
+					console.error('Failed to load agent config for error modal:', err);
+					setAutoRetrySettings({ enabled: true, fallbackHours: 2 });
+				});
+		}
+	}, [error.type, error.agentId]);
+
+	// For rate-limited errors: use parsed reset time if available, otherwise use configured fallback
+	const rateLimitResetAt = useMemo(() => {
+		if (error.type !== 'rate_limited' || !retryAction || !autoRetrySettings) return null;
+
+		// If auto-retry is explicitly disabled by the user, don't show countdown or auto-retry
+		if (!autoRetrySettings.enabled) return null;
+
+		// Exact parsed reset time is always preferred
+		if (error.rateLimitResetAt && error.rateLimitResetAt > Date.now()) {
+			return error.rateLimitResetAt;
+		}
+
+		// If no fallback is configured or available, don't show countdown
+		if (autoRetrySettings.fallbackHours <= 0) return null;
+
+		// Configure fallback using the user's preferred wait time
+		const fallbackWaitMs = autoRetrySettings.fallbackHours * 60 * 60_000;
+		const fallback = error.timestamp + fallbackWaitMs;
+		return fallback > Date.now() ? fallback : null;
+	}, [error.type, error.rateLimitResetAt, error.timestamp, retryAction, autoRetrySettings]);
+
+	const showCountdown = rateLimitResetAt !== null;
 
 	const errorColor = getErrorColor(error, theme);
 	const errorIcon = getErrorIcon(error.type);
@@ -165,6 +311,15 @@ export function AgentErrorModal({
 				<p className="text-sm leading-relaxed" style={{ color: theme.colors.textMain }}>
 					{error.message}
 				</p>
+
+				{/* Rate-limit countdown with auto-retry */}
+				{showCountdown && (
+					<RateLimitCountdown
+						resetAt={rateLimitResetAt!}
+						theme={theme}
+						onComplete={handleCountdownComplete}
+					/>
+				)}
 
 				{/* Timestamp */}
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>

@@ -156,7 +156,7 @@ const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	rate_limited: [
 		{
-			pattern: /rate limit/i,
+			pattern: /rate[_ ]limit/i,
 			message: 'Rate limit exceeded. Please wait a moment before trying again.',
 			recoverable: true,
 		},
@@ -1003,4 +1003,117 @@ export function matchSshErrorPattern(
  */
 export function getSshErrorPatterns(): AgentErrorPatterns {
 	return SSH_ERROR_PATTERNS;
+}
+
+// ============================================================================
+// Rate Limit Reset Time Parsing
+// ============================================================================
+
+/**
+ * Regex to extract reset time from rate-limit error messages.
+ *
+ * Matches patterns like:
+ * - "resets 3pm (America/Winnipeg)"
+ * - "resets 3:30pm (America/Chicago)"
+ * - "resets 15:00 (US/Eastern)"
+ * - "resets 3:30 PM (America/New_York)"
+ *
+ * Capture groups:
+ *  1: hours (e.g. "3", "15")
+ *  2: optional ":minutes" (e.g. ":30")
+ *  3: optional am/pm designator
+ *  4: IANA timezone (e.g. "America/Winnipeg")
+ */
+const RATE_LIMIT_RESET_REGEX = /resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(([A-Za-z_/]+)\)/i;
+
+/**
+ * Parse a rate-limit reset time from an error message.
+ *
+ * Given text like "You've hit your limit · resets 3pm (America/Winnipeg)",
+ * returns the epoch-ms timestamp of the next occurrence of that time in
+ * the specified timezone. Returns null if the text doesn't contain a
+ * parseable reset time.
+ *
+ * Uses Intl.DateTimeFormat for timezone conversion (no external deps).
+ */
+export function parseRateLimitResetTime(text: string): number | null {
+	const m = text.match(RATE_LIMIT_RESET_REGEX);
+	if (!m) return null;
+
+	let hours = parseInt(m[1], 10);
+	const minutes = m[2] ? parseInt(m[2], 10) : 0;
+	const ampm = m[3]?.toLowerCase();
+	const timezone = m[4];
+
+	// Convert 12-hour to 24-hour
+	if (ampm === 'pm' && hours < 12) hours += 12;
+	if (ampm === 'am' && hours === 12) hours = 0;
+
+	// Validate ranges
+	if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+	// Validate timezone by trying to format a date with it
+	try {
+		Intl.DateTimeFormat('en-US', { timeZone: timezone }).format();
+	} catch {
+		return null;
+	}
+
+	// Get current wall-clock time in the target timezone
+	const now = new Date();
+	const formatter = new Intl.DateTimeFormat('en-US', {
+		timeZone: timezone,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hour12: false,
+	});
+	const parts = formatter.formatToParts(now);
+	const getPart = (type: string) => parseInt(parts.find((p) => p.type === type)?.value || '0', 10);
+
+	const tzHour = getPart('hour');
+	const tzMinute = getPart('minute');
+
+	// Compute the target date in the target timezone.
+	// Start with today; if that time has already passed, use tomorrow.
+	let targetDate = now;
+	const nowMinutes = tzHour * 60 + tzMinute;
+	const resetMinutes = hours * 60 + minutes;
+
+	if (resetMinutes <= nowMinutes) {
+		// Reset time already passed today — advance to tomorrow
+		targetDate = new Date(now.getTime() + 86400000);
+	}
+
+	const targetParts = formatter.formatToParts(targetDate);
+	const targetGetPart = (type: string) =>
+		parseInt(targetParts.find((p) => p.type === type)?.value || '0', 10);
+
+	const targetDay = targetGetPart('day');
+	const targetMonth = targetGetPart('month');
+	const targetYear = targetGetPart('year');
+	const targetHour = targetGetPart('hour');
+	const targetMinute = targetGetPart('minute');
+	const targetSecond = targetGetPart('second');
+
+	// Find the UTC offset exactly at the target instant
+	const targetUtcMs = targetDate.getTime();
+	const targetWallMs = Date.UTC(
+		targetYear,
+		targetMonth - 1,
+		targetDay,
+		targetHour,
+		targetMinute,
+		targetSecond
+	);
+	const targetTzOffsetMs = targetWallMs - targetUtcMs;
+
+	// Build the exact wall-clock reset target as pseudo-UTC
+	const wallTargetMs = Date.UTC(targetYear, targetMonth - 1, targetDay, hours, minutes, 0);
+
+	// Revert the offset to get real UTC
+	return wallTargetMs - targetTzOffsetMs;
 }

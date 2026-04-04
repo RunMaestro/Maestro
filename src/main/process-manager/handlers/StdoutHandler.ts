@@ -192,6 +192,7 @@ export class StdoutHandler {
 					sessionId,
 					errorType: agentError.type,
 					errorMessage: agentError.message,
+					rateLimitResetAt: agentError.rateLimitResetAt,
 					isRemote: !!managedProcess.sshRemoteId,
 				});
 				this.emitter.emit('agent-error', sessionId, agentError);
