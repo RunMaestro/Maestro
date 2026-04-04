@@ -341,9 +341,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle read-only mode/);
+			const toggle = screen.getByTitle(/Toggle plan mode/);
 			expect(toggle).toBeInTheDocument();
-			expect(toggle).toHaveTextContent('Read-only');
+			expect(toggle).toHaveTextContent('Plan-Mode');
 		});
 
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
@@ -383,7 +383,7 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			// Read-only toggle should not be present
-			expect(screen.queryByTitle(/Toggle read-only mode/)).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/Toggle (plan mode|Read-Only mode)/)).not.toBeInTheDocument();
 		});
 
 		it('shows save to history toggle when onToggleTabSaveToHistory is provided', () => {
@@ -546,7 +546,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle("Toggle read-only mode (agent won't modify files)");
+			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
 			expect(toggle).not.toBeDisabled();
 
 			fireEvent.click(toggle);
@@ -562,7 +562,7 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
-				screen.getByTitle("Toggle read-only mode (agent won't modify files)")
+				screen.getByTitle('Toggle plan mode (agent will plan but not modify files)')
 			).toBeInTheDocument();
 		});
 
@@ -575,7 +575,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle("Toggle read-only mode (agent won't modify files)");
+			const toggle = screen.getByTitle('Toggle plan mode (agent will plan but not modify files)');
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.textDim });
 		});
 	});
@@ -1531,7 +1531,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Toggle read-only mode/));
+			fireEvent.click(screen.getByTitle(/Toggle plan mode/));
 
 			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
 		});
@@ -1817,7 +1817,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Toggle read-only mode/);
+			const toggle = screen.getByTitle(/Toggle plan mode/);
 			// Should have warning color and background
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.warning });
 		});
