@@ -264,7 +264,7 @@ function SessionListInner(props: SessionListProps) {
 	const { onResizeStart: onSidebarResizeStart, transitionClass: sidebarTransitionClass } =
 		useResizablePanel({
 			width: leftSidebarWidthState,
-			minWidth: 256,
+			minWidth: 280,
 			maxWidth: 600,
 			settingsKey: 'leftSidebarWidth',
 			setWidth: setLeftSidebarWidthState,
