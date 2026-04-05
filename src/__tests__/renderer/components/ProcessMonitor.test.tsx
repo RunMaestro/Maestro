@@ -534,7 +534,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/Session: abcdef12\.\.\./)).toBeInTheDocument();
+				expect(screen.getByText(/Session: abcdef12/)).toBeInTheDocument();
 			});
 		});
 	});
@@ -693,7 +693,7 @@ describe('ProcessMonitor', () => {
 
 			await waitFor(() => {
 				// Claude session ID starts with abc12345
-				expect(screen.getByText('abc12345...')).toBeInTheDocument();
+				expect(screen.getByText('abc12345')).toBeInTheDocument();
 			});
 		});
 
@@ -713,7 +713,7 @@ describe('ProcessMonitor', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByText('abc12345...')).toBeInTheDocument();
+				expect(screen.getByText('abc12345')).toBeInTheDocument();
 			});
 
 			// Click the Claude session ID
@@ -732,7 +732,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('abc12345...')).toBeInTheDocument();
+				expect(screen.getByText('abc12345')).toBeInTheDocument();
 			});
 
 			// Should be a span, not a button
@@ -795,7 +795,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[session]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('abc12345...')).toBeInTheDocument();
+				expect(screen.getByText('abc12345')).toBeInTheDocument();
 			});
 
 			expect(screen.queryByTitle('Jump to agent')).not.toBeInTheDocument();

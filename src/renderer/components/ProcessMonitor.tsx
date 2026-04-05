@@ -875,7 +875,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		}
 	};
 
-	const renderNode = (node: ProcessNode, depth: number = 0): React.ReactNode => {
+	const renderNode = (node: ProcessNode, depth: number = 0, index: number = 0): React.ReactNode => {
 		const isExpanded = expandedNodes.has(node.id);
 		const hasChildren = node.children && node.children.length > 0;
 		const paddingLeft = depth * 20 + 16; // 20px per depth level + 16px base
@@ -932,7 +932,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						)}
 					</button>
 					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
+						<div>{node.children!.map((child, i) => renderNode(child, depth + 1, i))}</div>
 					)}
 				</div>
 			);
@@ -1023,7 +1023,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							>
 								{node.sshRemote ? `SSH: ${node.sshRemote.name}` : 'Local'}
 							</span>
-							<span>Session: {node.sessionId?.substring(0, 8)}...</span>
+							<span>Session: {node.sessionId?.substring(0, 8)}</span>
 						</span>
 						{node.sessionId && onNavigateToSession && (
 							<button
@@ -1045,7 +1045,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						)}
 					</div>
 					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
+						<div>{node.children!.map((child, i) => renderNode(child, depth + 1, i))}</div>
 					)}
 				</div>
 			);
@@ -1059,6 +1059,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			const isWizardProcess = node.processType === 'wizard' || node.processType === 'wizard-gen';
 			// Determine if this is a Cue run process
 			const isCueProcess = node.processType === 'cue';
+			const altBg = index % 2 === 1 ? `${theme.colors.textDim}08` : 'transparent';
 
 			return (
 				<div
@@ -1069,9 +1070,10 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 					style={{
 						paddingLeft: `${paddingLeft}px`,
 						color: theme.colors.textMain,
-						backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
+						backgroundColor: isSelected ? `${theme.colors.accent}25` : altBg,
 						outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
 						outlineOffset: '-2px',
+						borderTop: index > 0 ? `1px solid ${theme.colors.border}40` : 'none',
 					}}
 					onClick={() => setSelectedNodeId(node.id)}
 					onDoubleClick={() => openProcessDetail(node)}
@@ -1079,7 +1081,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
 					}}
 					onMouseLeave={(e) => {
-						if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+						if (!isSelected) e.currentTarget.style.backgroundColor = altBg;
 					}}
 				>
 					{/* First line: status dot, label, badges, kill button */}
@@ -1234,12 +1236,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								}}
 								title="Click to navigate to this session"
 							>
-								{node.agentSessionId.substring(0, 8)}...
+								{node.agentSessionId.substring(0, 8)}
 							</button>
 						)}
 						{node.agentSessionId && (!node.sessionId || !onNavigateToSession) && (
 							<span className="text-xs font-mono" style={{ color: theme.colors.accent }}>
-								{node.agentSessionId.substring(0, 8)}...
+								{node.agentSessionId.substring(0, 8)}
 							</span>
 						)}
 						{/* For group chat and wizard processes, show tool type */}
@@ -1355,7 +1357,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 						</span>
 					</button>
 					{isExpanded && hasChildren && (
-						<div>{node.children!.map((child) => renderNode(child, depth + 1))}</div>
+						<div>{node.children!.map((child, i) => renderNode(child, depth + 1, i))}</div>
 					)}
 				</div>
 			);
@@ -1746,8 +1748,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				role="dialog"
 				aria-modal="true"
 				aria-label={detailView ? 'Process Details' : 'System Processes'}
-				className="w-[875px] max-h-[80vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
-				style={{ backgroundColor: theme.colors.bgActivity, borderColor: theme.colors.border }}
+				className="max-h-[80vh] rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				style={{
+					backgroundColor: theme.colors.bgActivity,
+					borderColor: theme.colors.border,
+					width: 'fit-content',
+					minWidth: '500px',
+					maxWidth: '90vw',
+				}}
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={detailView ? undefined : handleKeyDown}
 			>
@@ -1850,7 +1858,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 									No running processes
 								</div>
 							) : (
-								<div className="py-2">{processTree.map((node) => renderNode(node, 0))}</div>
+								<div className="py-2">{processTree.map((node, i) => renderNode(node, 0, i))}</div>
 							)}
 						</div>
 
