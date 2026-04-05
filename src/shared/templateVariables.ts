@@ -94,16 +94,36 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  */
 
 /**
+ * Detect the current platform in both Node.js (main process / CLI) and
+ * renderer (browser) contexts.  The renderer has no `process` global —
+ * platform is exposed via the preload bridge at `window.maestro.platform`.
+ */
+function getCurrentPlatform(): string {
+	if (typeof process !== 'undefined' && process.platform) {
+		return process.platform;
+	}
+
+	if (typeof globalThis !== 'undefined' && (globalThis as any).maestro?.platform) {
+		return (globalThis as any).maestro.platform;
+	}
+	return 'linux'; // safe fallback
+}
+
+/**
  * Returns the platform-appropriate command to run maestro-cli.
  * The CLI is bundled as a JS file inside the Maestro application package,
  * so the returned value includes the `node` invocation with the full path.
  */
 function getMaestroCLIPath(): string {
-	switch (process.platform) {
+	const platform = getCurrentPlatform();
+	switch (platform) {
 		case 'darwin':
 			return 'node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js"';
-		case 'win32':
-			return `node "${process.env.ProgramFiles || 'C:\\Program Files'}\\Maestro\\resources\\maestro-cli.js"`;
+		case 'win32': {
+			const programFiles =
+				(typeof process !== 'undefined' && process.env?.ProgramFiles) || 'C:\\Program Files';
+			return `node "${programFiles}\\Maestro\\resources\\maestro-cli.js"`;
+		}
 		default:
 			// Linux (deb/rpm installs to /opt)
 			return 'node "/opt/Maestro/resources/maestro-cli.js"';
