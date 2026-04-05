@@ -62,7 +62,8 @@ export interface UseAgentSessionManagementReturn {
 		providedMessages?: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
+		usageStats?: UsageStats,
+		projectPath?: string
 	) => Promise<void>;
 }
 
@@ -165,10 +166,14 @@ export function useAgentSessionManagement(
 			providedMessages?: LogEntry[],
 			sessionName?: string,
 			starred?: boolean,
-			usageStats?: UsageStats
+			usageStats?: UsageStats,
+			projectPath?: string
 		) => {
-			// Use projectRoot (not cwd) for consistent session storage access
-			if (!activeSession?.projectRoot) return;
+			// Need an active session for tab management
+			if (!activeSession) return;
+			// Use provided projectPath (e.g. from history entry) or fall back to activeSession.projectRoot
+			const resolvedProjectRoot = projectPath || activeSession.projectRoot;
+			if (!resolvedProjectRoot) return;
 
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = activeSession.aiTabs?.find(
@@ -194,11 +199,11 @@ export function useAgentSessionManagement(
 					messages = providedMessages;
 				} else {
 					// Load the session messages using the generic agentSessions API
-					// Use projectRoot (not cwd) for consistent session storage access
+					// Use resolvedProjectRoot which may come from the history entry's projectPath
 					const agentId = activeSession.toolType || 'claude-code';
 					const result = await window.maestro.agentSessions.read(
 						agentId,
-						activeSession.projectRoot,
+						resolvedProjectRoot,
 						agentSessionId,
 						{ offset: 0, limit: 100 }
 					);
@@ -225,10 +230,8 @@ export function useAgentSessionManagement(
 					try {
 						// Look up session metadata from session origins (name, starred, contextUsage)
 						// Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
-						// Use projectRoot (not cwd) for consistent session storage access
-						const origins = await window.maestro.claude.getSessionOrigins(
-							activeSession.projectRoot
-						);
+						// Use resolvedProjectRoot which may come from the history entry's projectPath
+						const origins = await window.maestro.claude.getSessionOrigins(resolvedProjectRoot);
 						const originData = origins[agentSessionId];
 						if (originData && typeof originData === 'object') {
 							if (sessionName === undefined && originData.sessionName) {
