@@ -221,9 +221,17 @@ export const filterSlashCommands = <T extends SlashCommandLike>(
 
 /**
  * Render a slash command with fuzzy-matched characters highlighted.
- * Returns a React node: plain string when no query, spans with bold/dim otherwise.
+ * Matched characters use accent color + semibold (matching Settings search style).
+ * When selected, unmatched characters are dimmed so matches stand out on the
+ * accent background.
+ * Returns a React node: plain string when no query, spans otherwise.
  */
-export const highlightSlashCommand = (command: string, query: string): React.ReactNode => {
+export const highlightSlashCommand = (
+	command: string,
+	query: string,
+	accentColor?: string,
+	isSelected?: boolean
+): React.ReactNode => {
 	if (!query) return command;
 	const indices = new Set(
 		fuzzyMatchWithIndices(command.slice(1).toLowerCase(), query, '.').map((i) => i + 1)
@@ -234,7 +242,11 @@ export const highlightSlashCommand = (command: string, query: string): React.Rea
 			'span',
 			{
 				key: i,
-				style: indices.has(i) ? { fontWeight: 700 } : { opacity: 0.8 },
+				style: indices.has(i)
+					? { color: isSelected ? undefined : accentColor, fontWeight: isSelected ? 800 : 600 }
+					: isSelected
+						? { opacity: 0.6 }
+						: undefined,
 			},
 			ch
 		)
