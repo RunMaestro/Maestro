@@ -10,9 +10,10 @@
  *             batchStore (activeBatchSessionIds), modalStore (setStandingOvationData)
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useBatchStore } from '../../stores/batchStore';
 import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 
@@ -34,6 +35,13 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 	// --- Reactive subscriptions ---
 	const sessions = useSessionStore((s) => s.sessions);
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
+
+	// Filter out error-paused sessions so they don't accumulate achievement time
+	const activeNonPausedSessionIds = useMemo(
+		() => activeBatchSessionIds.filter((id) => !batchRunStates[id]?.errorPaused),
+		[activeBatchSessionIds, batchRunStates]
+	);
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
@@ -47,8 +55,8 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// Track elapsed time for active auto-runs and update achievement stats every minute
 	// This allows badges to be unlocked during an auto-run, not just when it completes
 	useEffect(() => {
-		// Only set up timer if there are active batch runs
-		if (activeBatchSessionIds.length === 0) {
+		// Only set up timer if there are non-paused active batch runs
+		if (activeNonPausedSessionIds.length === 0) {
 			autoRunProgressRef.current.lastUpdateTime = 0;
 			return;
 		}
@@ -64,9 +72,10 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 			const elapsedMs = now - autoRunProgressRef.current.lastUpdateTime;
 			autoRunProgressRef.current.lastUpdateTime = now;
 
-			// Multiply by number of concurrent sessions so each active Auto Run contributes its time
+			// Multiply by number of concurrent non-paused sessions so each active Auto Run contributes its time
 			// e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time
-			const deltaMs = elapsedMs * activeBatchSessionIds.length;
+			// Error-paused sessions are excluded so they don't inflate the time
+			const deltaMs = elapsedMs * activeNonPausedSessionIds.length;
 
 			// Update achievement stats with the delta
 			const autoRunStats = useSettingsStore.getState().autoRunStats;
@@ -88,7 +97,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		return () => {
 			clearInterval(intervalId);
 		};
-	}, [activeBatchSessionIds.length]);
+	}, [activeNonPausedSessionIds.length]);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
