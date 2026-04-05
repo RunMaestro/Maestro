@@ -174,7 +174,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 					modifiedAt: s.modifiedAt,
 					firstMessage: s.firstMessage,
 					messageCount: s.messageCount,
-					costUsd: s.costUsd,
+					costUsd: s.costUsd ?? 0,
 					durationSeconds: s.durationSeconds,
 					starred: s.starred,
 				})),

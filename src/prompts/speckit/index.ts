@@ -33,12 +33,8 @@ export interface SpecKitCommandDefinition {
 	isCustom: boolean;
 }
 
-export interface SpecKitMetadata {
-	lastRefreshed: string;
-	commitSha: string;
-	sourceVersion: string;
-	sourceUrl: string;
-}
+import type { SpecKitMetadata } from '../../main/speckit-manager';
+export type { SpecKitMetadata };
 
 /**
  * All bundled spec-kit commands
