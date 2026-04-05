@@ -14,9 +14,12 @@
  * ```
  */
 
-import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type { ToolType, SshRemoteConfig, SessionMessagesResult } from '../../shared/types';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
+
+// Re-export from shared for backward compatibility (consumers that imported from here)
+export type { SessionMessage, SessionMessagesResult } from '../../shared/types';
 
 const LOG_CONTEXT = '[AgentSessionStorage]';
 
@@ -24,19 +27,6 @@ const LOG_CONTEXT = '[AgentSessionStorage]';
  * Session origin types - indicates how the session was created
  */
 export type AgentSessionOrigin = 'user' | 'auto';
-
-/**
- * Session message from agent session files
- * Represents a single message in a conversation
- */
-export interface SessionMessage {
-	type: string;
-	role?: string;
-	content: string;
-	timestamp: string;
-	uuid: string;
-	toolUse?: unknown;
-}
 
 /**
  * Agent session metadata
@@ -70,15 +60,6 @@ export interface PaginatedSessionsResult {
 	hasMore: boolean;
 	totalCount: number;
 	nextCursor: string | null;
-}
-
-/**
- * Session messages result with pagination info
- */
-export interface SessionMessagesResult {
-	messages: SessionMessage[];
-	total: number;
-	hasMore: boolean;
 }
 
 /**

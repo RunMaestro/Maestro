@@ -1,6 +1,13 @@
 /**
  * Global type declarations for the renderer process.
- * This file makes the window.maestro API available throughout the renderer.
+ *
+ * POLICY: This file should ONLY contain:
+ *   1. Vite module declarations (e.g., *.md?raw)
+ *   2. The MaestroAPI interface (window.maestro shape)
+ *   3. The Window interface augmentation
+ *
+ * DO NOT declare types here that belong in importable .ts files.
+ * Use import() type aliases to reference canonical types from shared/ or renderer/.
  */
 
 // Vite raw imports for .md files
@@ -9,133 +16,26 @@ declare module '*.md?raw' {
 	export default content;
 }
 
-type AutoRunTreeNode = {
-	name: string;
-	type: 'file' | 'folder';
-	path: string;
-	children?: AutoRunTreeNode[];
-};
+// ============================================================================
+// Type aliases for use within MaestroAPI (all canonical defs live elsewhere)
+// ============================================================================
 
-interface ProcessConfig {
-	sessionId: string;
-	toolType: string;
-	cwd: string;
-	command: string;
-	args: string[];
-	prompt?: string;
-	shell?: string;
-	images?: string[];
-	// Agent-specific spawn options (used to build args via agent config)
-	agentSessionId?: string;
-	readOnlyMode?: boolean;
-	modelId?: string;
-	yoloMode?: boolean;
-	// Per-session overrides (take precedence over agent-level config)
-	sessionCustomPath?: string;
-	sessionCustomArgs?: string;
-	sessionCustomEnvVars?: Record<string, string>;
-	sessionCustomModel?: string;
-	sessionCustomContextWindow?: number;
-	// Per-session SSH remote config (takes precedence over agent-level SSH config)
-	sessionSshRemoteConfig?: {
-		enabled: boolean;
-		remoteId: string | null;
-		workingDirOverride?: string;
-		syncHistory?: boolean;
-	};
-	// System prompt delivery (separate from user message for token efficiency)
-	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
-}
-
-// AgentConfigOption - canonical definition in shared/types.ts
-type AgentConfigOption = import('../../shared/types').AgentConfigOption;
-
-// AgentCapabilities - canonical definition in shared/types.ts
-type AgentCapabilities = import('../../shared/types').AgentCapabilities;
-
-// AgentConfig - canonical definition in shared/types.ts
-type AgentConfig = import('../../shared/types').AgentConfig;
-
-interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
-
-interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
-
-// UsageStats - canonical definition in shared/types.ts
+// From shared/types.ts
+type ProcessConfig = import('../shared/types').ProcessConfig;
+type AgentConfigOption = import('../shared/types').AgentConfigOption;
+type AgentCapabilities = import('../shared/types').AgentCapabilities;
+type AgentConfig = import('../shared/types').AgentConfig;
+type DirectoryEntry = import('../shared/types').DirectoryEntry;
+type ShellInfo = import('../shared/types').ShellInfo;
 type UsageStats = import('../shared/types').UsageStats;
+type HistoryEntryType = import('../shared/types').HistoryEntryType;
+type SessionMessagesResult = import('../shared/types').SessionMessagesResult;
 
-type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+// From shared/group-chat-types.ts
+type GroupChatData = import('../shared/group-chat-types').GroupChat;
 
-/**
- * Result type for reading session messages from agent storage.
- * Used by context merging operations.
- */
-interface SessionMessagesResult {
-	messages: Array<{
-		type: string;
-		role?: string;
-		content: string;
-		timestamp: string;
-		uuid: string;
-		toolUse?: unknown;
-	}>;
-	total: number;
-	hasMore: boolean;
-}
-
-/** Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts) */
-type GroupChatData = {
-	id: string;
-	name: string;
-	createdAt: number;
-	updatedAt?: number;
-	moderatorAgentId: string;
-	moderatorSessionId: string;
-	moderatorAgentSessionId?: string;
-	moderatorConfig?: {
-		customPath?: string;
-		customArgs?: string;
-		customEnvVars?: Record<string, string>;
-		customModel?: string;
-		sshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		};
-	};
-	participants: Array<{
-		name: string;
-		agentId: string;
-		sessionId: string;
-		agentSessionId?: string;
-		addedAt: number;
-		lastActivity?: number;
-		lastSummary?: string;
-		contextUsage?: number;
-		color?: string;
-		tokenCount?: number;
-		messageCount?: number;
-		processingTimeMs?: number;
-		totalCost?: number;
-		sshRemoteName?: string;
-	}>;
-	logPath: string;
-	imagesDir: string;
-	draftMessage?: string;
-	archived?: boolean;
-};
+// From renderer hooks
+type AutoRunTreeNode = import('./hooks/batch/useAutoRunHandlers').AutoRunTreeNode;
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)

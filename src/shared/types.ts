@@ -580,3 +580,127 @@ export interface GlobalAgentStats {
 	/** Per-provider breakdown */
 	byProvider: Record<string, ProviderStats>;
 }
+
+/**
+ * IPC-level process spawn configuration
+ * Sent from renderer through preload to main process.
+ * Note: main/process-manager/types.ts has a separate ProcessConfig with internal fields.
+ */
+export interface ProcessConfig {
+	sessionId: string;
+	toolType: string;
+	cwd: string;
+	command?: string;
+	args?: string[];
+	prompt?: string;
+	shell?: string;
+	images?: string[];
+	// Agent-specific spawn options (used to build args via agent config)
+	agentSessionId?: string;
+	readOnlyMode?: boolean;
+	modelId?: string;
+	yoloMode?: boolean;
+	// Per-session overrides (take precedence over agent-level config)
+	sessionCustomPath?: string;
+	sessionCustomArgs?: string;
+	sessionCustomEnvVars?: Record<string, string>;
+	sessionCustomModel?: string;
+	sessionCustomContextWindow?: number;
+	// Per-session SSH remote config
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+		syncHistory?: boolean;
+	};
+	// System prompt delivery
+	appendSystemPrompt?: string;
+	// Stdin-based prompt delivery
+	sendPromptViaStdin?: boolean;
+	sendPromptViaStdinRaw?: boolean;
+	// Stats tracking options
+	querySource?: 'user' | 'auto';
+	tabId?: string;
+}
+
+/**
+ * Parsed SSH config host entry
+ */
+export interface SshConfigHost {
+	host: string;
+	hostName?: string;
+	port?: number;
+	user?: string;
+	identityFile?: string;
+	proxyJump?: string;
+}
+
+/**
+ * Shell information from system shell detection
+ */
+export interface ShellInfo {
+	id: string;
+	name: string;
+	available: boolean;
+	path?: string;
+}
+
+/**
+ * Update status communicated from main process to renderer
+ */
+export interface UpdateStatus {
+	status:
+		| 'idle'
+		| 'checking'
+		| 'available'
+		| 'not-available'
+		| 'downloading'
+		| 'downloaded'
+		| 'error';
+	info?: { version: string };
+	progress?: {
+		percent: number;
+		bytesPerSecond: number;
+		total: number;
+		transferred: number;
+		delta?: number;
+	};
+	error?: string;
+}
+
+/**
+ * Directory entry from filesystem listing
+ */
+export interface DirectoryEntry {
+	name: string;
+	isDirectory: boolean;
+	isFile: boolean;
+	path: string;
+}
+
+// ============================================================================
+// Session Message Types (cross-process, used by preload/IPC)
+// ============================================================================
+
+/**
+ * A single message in a conversation.
+ * Used by session storage implementations and IPC communication.
+ */
+export interface SessionMessage {
+	type: string;
+	role?: string;
+	content: string;
+	timestamp: string;
+	uuid: string;
+	toolUse?: unknown;
+}
+
+/**
+ * Session messages result with pagination info.
+ * Returned by readMessages IPC calls and session storage.
+ */
+export interface SessionMessagesResult {
+	messages: SessionMessage[];
+	total: number;
+	hasMore: boolean;
+}
