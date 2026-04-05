@@ -69,9 +69,148 @@ Also: `EditingCommand` interface has 3 definitions.
 
 ### Task 2: Design the shared base
 
-- [ ] Define `SpecCommandManagerConfig` interface with parameterized differences: `featureName`, `commandsDir`, `promptsDir`, `defaultCommands`
-- [ ] Design `SpecCommandManager` class with shared methods: `listCommands`, `getCommand`, `saveCommand`, `deleteCommand`
-- [ ] Confirm the design covers all logic from both existing managers
+- [x] Define `SpecCommandManagerConfig` interface with parameterized differences: `featureName`, `commandsDir`, `promptsDir`, `defaultCommands`
+- [x] Design `SpecCommandManager` class with shared methods: `listCommands`, `getCommand`, `saveCommand`, `deleteCommand`
+- [x] Confirm the design covers all logic from both existing managers
+
+**Design Document:**
+
+#### Unified Types (in `src/shared/specCommandTypes.ts`)
+
+```typescript
+// Replaces SpecKitCommand, OpenSpecCommand, BmadCommand (all identical fields)
+export interface SpecCommand {
+  id: string;
+  command: string;
+  description: string;
+  prompt: string;
+  isCustom: boolean;
+  isModified: boolean;
+}
+
+// Replaces SpecKitMetadata, OpenSpecMetadata, BmadMetadata (all identical fields)
+export interface SpecCommandMetadata {
+  lastRefreshed: string;
+  commitSha: string;
+  sourceVersion: string;
+  sourceUrl: string;
+}
+```
+
+#### Config Interface (in `src/main/spec-command-manager.ts`)
+
+```typescript
+interface CommandDefinition {
+  readonly id: string;
+  readonly command: string;        // e.g., '/speckit.constitution'
+  readonly description: string;
+  readonly isCustom: boolean;
+}
+
+export interface SpecCommandManagerConfig {
+  featureName: string;             // 'speckit' | 'openspec' | 'bmad'
+  logContext: string;              // '[SpecKit]' | '[OpenSpec]' | '[BMAD]'
+  customizationsFile: string;      // 'speckit-customizations.json'
+  promptsSubdir: string;          // 'speckit' - used for bundled path and user prompts path
+  filePrefix: string;             // 'speckit' - prefix for prompt .md files (e.g., 'speckit.constitution.md')
+  commands: readonly CommandDefinition[];
+  defaultMetadata: SpecCommandMetadata;
+  upstreamCommands: readonly string[];  // IDs that can be fetched from upstream
+}
+```
+
+#### SpecCommandManager Class (in `src/main/spec-command-manager.ts`)
+
+```typescript
+export class SpecCommandManager {
+  constructor(private readonly config: SpecCommandManagerConfig);
+
+  // --- Shared methods (100% identical logic across all managers) ---
+  getMetadata(): Promise<SpecCommandMetadata>;
+  getPrompts(): Promise<SpecCommand[]>;
+  savePrompt(id: string, content: string): Promise<void>;
+  resetPrompt(id: string): Promise<string>;
+  getCommand(id: string): Promise<SpecCommand | null>;
+  getCommandBySlash(slashCommand: string): Promise<SpecCommand | null>;
+
+  // --- Internal shared helpers ---
+  private getUserDataPath(): string;
+  private loadUserCustomizations(): Promise<StoredData | null>;
+  private saveUserCustomizations(data: StoredData): Promise<void>;
+  private getBundledPromptsPath(): string;
+  private getUserPromptsPath(): string;
+  private getBundledPrompts(): Promise<Record<string, {...}>>;
+  private getBundledMetadata(): Promise<SpecCommandMetadata>;
+}
+```
+
+#### What is NOT shared: `refreshPrompts()`
+
+`refreshPrompts()` has completely different implementations:
+- **SpecKit**: Downloads ZIP from GitHub releases, extracts with `unzip` CLI, uses `fsSync`/`https`/`child_process`
+- **OpenSpec**: Fetches AGENTS.md raw file, parses sections with regex markers (`parseAgentsMd()`)
+- **Bmad**: Has its own fetch strategy
+
+Each thin wrapper file will keep its own `refreshPrompts()` function and import `SpecCommandManager` for everything else. The manager exposes `getUserPromptsPath()` (as package-private or via getter) so refresh functions can write downloaded prompts to the correct directory.
+
+Alternatively, `refreshPrompts` can be injected as an optional callback in the config, but keeping it in the wrapper is simpler since it needs feature-specific imports (fsSync, https, exec for SpecKit).
+
+#### Thin Wrapper Pattern (e.g., `src/main/speckit-manager.ts` reduced to ~15 lines)
+
+```typescript
+import { SpecCommandManager } from './spec-command-manager';
+import type { SpecCommand, SpecCommandMetadata } from '../shared/specCommandTypes';
+
+const manager = new SpecCommandManager({
+  featureName: 'speckit',
+  logContext: '[SpecKit]',
+  customizationsFile: 'speckit-customizations.json',
+  promptsSubdir: 'speckit',
+  filePrefix: 'speckit',
+  commands: SPECKIT_COMMANDS,
+  defaultMetadata: { lastRefreshed: '2024-01-01T00:00:00Z', ... },
+  upstreamCommands: ['constitution', 'specify', ...],
+});
+
+// Re-export manager methods under existing function names for backward compatibility
+export const getSpeckitMetadata = () => manager.getMetadata();
+export const getSpeckitPrompts = () => manager.getPrompts();
+export const saveSpeckitPrompt = (id: string, content: string) => manager.savePrompt(id, content);
+export const resetSpeckitPrompt = (id: string) => manager.resetPrompt(id);
+export const getSpeckitCommand = (id: string) => manager.getCommand(id);
+export const getSpeckitCommandBySlash = (s: string) => manager.getCommandBySlash(s);
+// Type aliases for backward compatibility
+export type SpecKitCommand = SpecCommand;
+export type SpecKitMetadata = SpecCommandMetadata;
+
+// refreshSpeckitPrompts() stays here - unique implementation
+export async function refreshSpeckitPrompts(): Promise<SpecCommandMetadata> { ... }
+```
+
+#### Coverage Confirmation
+
+All functions from both managers are covered by the design:
+
+| Function | Shared in class? | Notes |
+|---|---|---|
+| `getUserDataPath()` | Yes (private) | Parameterized by `customizationsFile` |
+| `loadUserCustomizations()` | Yes (private) | Identical logic |
+| `saveUserCustomizations()` | Yes (private) | Identical logic |
+| `getBundledPromptsPath()` | Yes (private) | Parameterized by `promptsSubdir` |
+| `getUserPromptsPath()` | Yes (private) | Parameterized by `promptsSubdir` |
+| `getBundledPrompts()` | Yes (private) | Parameterized by `commands`, `filePrefix` |
+| `getBundledMetadata()` | Yes (private) | Parameterized by `defaultMetadata` |
+| `getMetadata()` | Yes (public) | Identical logic |
+| `getPrompts()` | Yes (public) | Parameterized by `filePrefix` |
+| `savePrompt()` | Yes (public) | Parameterized by `featureName` for logs |
+| `resetPrompt()` | Yes (public) | Parameterized by `featureName` |
+| `getCommand()` | Yes (public) | Identical logic |
+| `getCommandBySlash()` | Yes (public) | Identical logic |
+| `refreshPrompts()` | No | Stays in each wrapper - completely different |
+| `downloadFile()` (SpecKit only) | No | SpecKit-specific, stays in wrapper |
+| `parseAgentsMd()` (OpenSpec only) | No | OpenSpec-specific, stays in wrapper |
+
+Estimated line reduction: ~450 lines from managers + thin wrappers total ~30 lines each = ~1,001 - 60 - (new shared ~200) = ~740 lines saved from managers alone.
 
 ### Task 3: Consolidate the EditingCommand interface
 
