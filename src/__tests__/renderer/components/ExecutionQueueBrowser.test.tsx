@@ -971,7 +971,7 @@ describe('ExecutionQueueBrowser', () => {
 			const tabButton = screen.getByText('My Tab');
 			fireEvent.click(tabButton);
 
-			expect(mockOnSwitchSession).toHaveBeenCalledWith('session-1');
+			expect(mockOnSwitchSession).toHaveBeenCalledWith('session-1', 'tab-1');
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
