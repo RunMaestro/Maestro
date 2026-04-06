@@ -180,7 +180,7 @@ export function GroupChatParticipants({
 							groupChatId={groupChatId}
 							onContextReset={handleContextReset}
 							onRemove={handleRemoveParticipant}
-							liveOutput={participantLiveOutput.get(participant.name)}
+							liveOutput={participantLiveOutput.get(`${groupChatId}:${participant.name}`)}
 						/>
 					))
 				)}

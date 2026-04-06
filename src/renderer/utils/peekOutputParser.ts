@@ -18,9 +18,28 @@ export function parsePeekOutput(rawOutput: string): PeekLine[] {
 	const lines: PeekLine[] = [];
 	const rawLines = rawOutput.split('\n');
 
+	// Buffer for reassembling JSON objects split across lines
+	let jsonBuffer = '';
+
 	for (const line of rawLines) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
+
+		// If we have a pending buffer, append this line and try to parse
+		if (jsonBuffer) {
+			jsonBuffer += trimmed;
+			try {
+				const msg = JSON.parse(jsonBuffer);
+				const parsed = extractFromMessage(msg);
+				if (parsed.length > 0) {
+					lines.push(...parsed);
+				}
+				jsonBuffer = '';
+			} catch {
+				// Still incomplete — keep buffering
+			}
+			continue;
+		}
 
 		// Try to parse as JSON
 		if (trimmed.startsWith('{')) {
@@ -30,12 +49,11 @@ export function parsePeekOutput(rawOutput: string): PeekLine[] {
 				if (parsed.length > 0) {
 					lines.push(...parsed);
 				}
-				continue;
 			} catch {
-				// Might be a partial JSON line - skip it rather than showing raw JSON
-				// (chunked output from streaming can split JSON across lines)
-				continue;
+				// Incomplete JSON — start buffering to reassemble across lines
+				jsonBuffer = trimmed;
 			}
+			continue;
 		}
 
 		// Non-JSON line that doesn't look like a JSON fragment
