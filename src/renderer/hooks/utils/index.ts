@@ -5,6 +5,9 @@
  * and persistence. These hooks have no dependencies on other hook modules.
  */
 
+// Focus after render
+export { useFocusAfterRender } from './useFocusAfterRender';
+
 // Debounce and throttle utilities
 export { useDebouncedValue, useThrottledCallback, useDebouncedCallback } from './useThrottle';
 

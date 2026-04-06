@@ -15,9 +15,9 @@ Create two shared hooks to replace repetitive patterns:
 
 ## Pre-flight Checks
 
-- [ ] Phase 08 (UI components) is complete
-- [ ] `rtk npm run lint` passes
-- [ ] `rtk vitest run` passes
+- [x] Phase 08 (UI components) is complete
+- [x] `rtk npm run lint` passes
+- [x] `CI=1 rtk vitest run` passes (21 pre-existing test file failures on baseline, 590 passed)
 
 ---
 
@@ -27,16 +27,24 @@ Create two shared hooks to replace repetitive patterns:
 
 ### 1. Survey the setTimeout focus pattern
 
-- [ ] Run: `rtk grep "setTimeout.*focus" src/renderer/ --glob "*.{ts,tsx}"` (exclude `__tests__`)
-- [ ] Note delay values used (0ms, 50ms, 100ms are common)
-- [ ] Determine the most common default delay
+- [x] Run: `rtk grep "setTimeout.*focus" src/renderer/ --glob "*.{ts,tsx}"` (exclude `__tests__`)
+- [x] Note delay values used (0ms, 50ms, 100ms are common)
+- [x] Determine the most common default delay
+
+**Survey Results (2026-04-06):**
+- 0ms: 18 instances (useModalHandlers x6, InputArea x2, App.tsx, FilePreview, GroupChatHistoryPanel, HistoryPanel, LightboxModal, useGroupChatHandlers, useKeyboardNavigation, useMainKeyboardHandler x2, SshRemoteModal)
+- 50ms: 21 instances (AgentSessionsBrowser x6, AgentSessionsModal, App.tsx, CreateWorktreeModal, AgentDrawer, FileSearchModal, MarketplaceModal, MergeSessionModal, QuickActionsModal, SendToAgentModal, ShortcutsTab, ThemeTab, SymphonyModal, TabSwitcherModal, useSymphonyContribution, MobileHistoryPanel)
+- 100ms: 4 instances (BatchRunnerModal, useMainKeyboardHandler x2, useWizardHandlers)
+- const (FOCUS_AFTER_RENDER_DELAY_MS): 2 instances (useMainKeyboardHandler x2)
+- **Most common: 50ms (21/45), followed by 0ms (18/45)**
+- Recommendation: default delay = 50 (aligns with majority of call sites)
 
 ### 2. Create useFocusAfterRender hook
 
-- [ ] Create `src/renderer/hooks/utils/useFocusAfterRender.ts`
-- [ ] Implement with params: `ref` (RefObject), `shouldFocus` (boolean, default true), `delay` (number, default 0)
-- [ ] Use `useEffect` with `setTimeout` + `clearTimeout` cleanup
-- [ ] Export the function
+- [x] Create `src/renderer/hooks/utils/useFocusAfterRender.ts`
+- [x] Implement with params: `ref` (RefObject), `shouldFocus` (boolean, default true), `delay` (number, default 0)
+- [x] Use `useEffect` with `setTimeout` + `clearTimeout` cleanup
+- [x] Export the function
 
 ### 3. Write tests for useFocusAfterRender
 
@@ -45,7 +53,7 @@ Create two shared hooks to replace repetitive patterns:
 - [ ] Test respects delay parameter
 - [ ] Test cleans up timeout on unmount
 - [ ] Test does nothing when `shouldFocus` is false
-- [ ] Run tests: `rtk vitest run <hook-test-path>`
+- [ ] Run tests: `CI=1 rtk vitest run <hook-test-path>`
 
 ### 4. Migrate setTimeout focus patterns (45 instances across 28 files)
 
@@ -77,7 +85,7 @@ Create two shared hooks to replace repetitive patterns:
 - [ ] Test updates handler without re-attaching listener
 - [ ] Test works with custom HTML elements
 - [ ] Test handles null element gracefully
-- [ ] Run tests: `rtk vitest run <hook-test-path>`
+- [ ] Run tests: `CI=1 rtk vitest run <hook-test-path>`
 
 ### 8. Migrate event listener pairs (63+ files)
 
@@ -94,7 +102,7 @@ Create two shared hooks to replace repetitive patterns:
 ### 10. Verify full build
 
 - [ ] Run lint: `rtk npm run lint`
-- [ ] Run tests: `rtk vitest run`
+- [ ] Run tests: `CI=1 rtk vitest run`
 - [ ] Verify types: `rtk tsc -p tsconfig.main.json --noEmit && rtk tsc -p tsconfig.lint.json --noEmit`
 
 ---
@@ -104,7 +112,7 @@ Create two shared hooks to replace repetitive patterns:
 After completing changes, run targeted tests for the files you modified:
 
 ```bash
-rtk vitest run <path-to-relevant-test-files>
+CI=1 rtk vitest run <path-to-relevant-test-files>
 ```
 
 **Rule: Zero new test failures from your changes.** Pre-existing failures on the baseline are acceptable.
