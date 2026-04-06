@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, FocusArea } from '../../types';
-import { shouldOpenExternally, getAllFolderPaths } from '../../utils/fileExplorer';
+import {
+	shouldOpenExternally,
+	getAllFolderPaths,
+	type FileTreeNode,
+} from '../../utils/fileExplorer';
 import { useModalStore } from '../../stores/modalStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
@@ -91,6 +95,45 @@ export interface UseAppHandlersReturn {
 		sessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+}
+
+/**
+ * Collect all descendant folder paths under a given set of nodes.
+ */
+function collectDescendantFolders(nodes: FileTreeNode[], currentPath: string): string[] {
+	const result: string[] = [];
+	for (const node of nodes) {
+		const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
+		if (node.type === 'folder') {
+			result.push(fullPath);
+			if (node.children) {
+				result.push(...collectDescendantFolders(node.children, fullPath));
+			}
+		}
+	}
+	return result;
+}
+
+/**
+ * Find a folder by targetPath in the tree and return it plus all descendant folder paths.
+ */
+function findSubtreeFolders(
+	nodes: FileTreeNode[],
+	currentPath: string,
+	targetPath: string
+): string[] | null {
+	for (const node of nodes) {
+		const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
+		if (fullPath === targetPath && node.type === 'folder') {
+			const descendants = node.children ? collectDescendantFolders(node.children, fullPath) : [];
+			return [fullPath, ...descendants];
+		}
+		if (node.type === 'folder' && node.children && targetPath.startsWith(fullPath + '/')) {
+			const found = findSubtreeFolders(node.children, fullPath, targetPath);
+			if (found) return found;
+		}
+	}
+	return null;
 }
 
 /**
@@ -324,57 +367,13 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					if (!s.fileExplorerExpanded || !s.fileTree) return s;
 					const expanded = new Set(s.fileExplorerExpanded);
 					const isCurrentlyExpanded = expanded.has(path);
-
-					// Find the node at this path and collect all descendant folder paths
-					const collectDescendantFolders = (
-						nodes: typeof s.fileTree,
-						currentPath: string
-					): string[] => {
-						const result: string[] = [];
-						for (const node of nodes!) {
-							const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
-							if (node.type === 'folder') {
-								result.push(fullPath);
-								if (node.children) {
-									result.push(...collectDescendantFolders(node.children, fullPath));
-								}
-							}
-						}
-						return result;
-					};
-
-					// Find the subtree starting at the target path
-					const findSubtreeFolders = (
-						nodes: typeof s.fileTree,
-						currentPath: string
-					): string[] | null => {
-						for (const node of nodes!) {
-							const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
-							if (fullPath === path && node.type === 'folder') {
-								// Found the target - collect all descendants
-								const descendants = node.children
-									? collectDescendantFolders(node.children, fullPath)
-									: [];
-								return [fullPath, ...descendants];
-							}
-							if (node.type === 'folder' && node.children && path.startsWith(fullPath + '/')) {
-								// Recurse into this folder
-								const found = findSubtreeFolders(node.children, fullPath);
-								if (found) return found;
-							}
-						}
-						return null;
-					};
-
-					const allPaths = findSubtreeFolders(s.fileTree, '') || [path];
+					const allPaths = findSubtreeFolders(s.fileTree, '', path) || [path];
 
 					if (isCurrentlyExpanded) {
-						// Collapse: remove the folder and all descendants
 						for (const p of allPaths) {
 							expanded.delete(p);
 						}
 					} else {
-						// Expand: add the folder and all descendants
 						for (const p of allPaths) {
 							expanded.add(p);
 						}
