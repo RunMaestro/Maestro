@@ -297,7 +297,8 @@ export function hasActiveWizard(tab: AITab): boolean {
  */
 export function hasWizardInteraction(tab: AITab): boolean {
 	if (!tab.wizardState?.isActive) return false;
-	const hasUserMessages = tab.wizardState.conversationHistory.some((m) => m.role === 'user');
+	const hasUserMessages =
+		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
 	const hasInput = tab.inputValue?.trim() !== '';
 	const hasImages = tab.stagedImages?.length > 0;
 	return hasUserMessages || hasInput || hasImages;
