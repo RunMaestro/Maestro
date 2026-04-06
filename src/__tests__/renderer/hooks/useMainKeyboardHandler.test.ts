@@ -2021,6 +2021,55 @@ describe('useMainKeyboardHandler', () => {
 				expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('Terminal 1');
 				expect(mockSetRenameTabModalOpen).toHaveBeenCalledWith(true);
 			});
+
+			it('Cmd+U toggles unread filter from terminal mode', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockToggleUnreadFilter = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createTerminalTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'filterUnreadTabs',
+					toggleUnreadFilter: mockToggleUnreadFilter,
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'u',
+							metaKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockToggleUnreadFilter).toHaveBeenCalled();
+			});
+
+			it('Alt+Shift+U toggles tab unread from terminal mode', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockToggleTabUnread = vi.fn();
+
+				result.current.keyboardHandlerRef.current = createTerminalTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'toggleTabUnread',
+					toggleTabUnread: mockToggleTabUnread,
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'u',
+							altKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockToggleTabUnread).toHaveBeenCalled();
+			});
 		});
 	});
 

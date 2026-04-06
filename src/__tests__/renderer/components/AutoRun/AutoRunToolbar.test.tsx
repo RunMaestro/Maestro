@@ -262,9 +262,10 @@ describe('AutoRunToolbar', () => {
 	});
 
 	describe('Help button', () => {
-		it('renders help button', () => {
+		it('renders help button with text label', () => {
 			render(<AutoRunToolbar {...createDefaultProps()} />);
 			expect(screen.getByTitle('Learn about Auto Runner')).toBeDefined();
+			expect(screen.getByText('Help')).toBeDefined();
 		});
 
 		it('calls onOpenHelp when clicked', () => {

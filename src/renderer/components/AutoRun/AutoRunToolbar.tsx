@@ -37,8 +37,11 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 	fileInputRef,
 	onFileSelect,
 }: AutoRunToolbarProps) {
+	const btnClass =
+		'flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors hover:bg-white/10';
+
 	return (
-		<div className="flex gap-2 mb-3 justify-center pt-2">
+		<div className="flex gap-1.5 mb-3 px-2 pt-2">
 			<input
 				ref={fileInputRef}
 				type="file"
@@ -51,7 +54,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 				<button
 					onClick={() => !isStopping && onStopBatchRun?.(sessionId)}
 					disabled={isStopping}
-					className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${isStopping ? 'cursor-not-allowed' : ''}`}
+					className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors ${isStopping ? 'cursor-not-allowed' : ''}`}
 					style={{
 						backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
 						color: isStopping ? theme.colors.bgMain : 'white',
@@ -81,7 +84,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 						onOpenBatchRunner?.();
 					}}
 					disabled={isAgentBusy}
-					className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors ${isAgentBusy ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
+					className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded text-xs font-medium transition-colors ${isAgentBusy ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
 					style={{
 						backgroundColor: theme.colors.accent,
 						color: theme.colors.accentForeground,
@@ -97,7 +100,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 			{onOpenMarketplace && (
 				<button
 					onClick={onOpenMarketplace}
-					className="flex items-center gap-1.5 px-2 h-8 rounded transition-colors hover:opacity-90"
+					className={btnClass}
 					style={{
 						color: theme.colors.accent,
 						border: `1px solid ${theme.colors.accent}40`,
@@ -106,28 +109,28 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					title="Browse Playbook Exchange - discover and share community playbooks"
 				>
 					<LayoutGrid className="w-3.5 h-3.5" />
-					<span className="text-xs font-medium">Exchange</span>
+					Exchange
 				</button>
 			)}
 			{/* Launch Wizard button */}
 			{onLaunchWizard && (
 				<button
 					onClick={onLaunchWizard}
-					className="flex items-center gap-1.5 px-2 h-8 rounded transition-colors hover:bg-white/10"
+					className={btnClass}
 					style={{
-						color: theme.colors.accent,
+						color: theme.colors.textDim,
 						border: `1px solid ${theme.colors.border}`,
 					}}
 					title="Launch In-Tab Wizard"
 				>
 					<Wand2 className="w-3.5 h-3.5" />
-					<span className="text-xs font-medium">Wizard</span>
+					Wizard
 				</button>
 			)}
 			{/* Help button */}
 			<button
 				onClick={onOpenHelp}
-				className="flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
+				className={btnClass}
 				style={{
 					color: theme.colors.textDim,
 					border: `1px solid ${theme.colors.border}`,
@@ -135,6 +138,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 				title="Learn about Auto Runner"
 			>
 				<HelpCircle className="w-3.5 h-3.5" />
+				Help
 			</button>
 		</div>
 	);

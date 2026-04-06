@@ -828,16 +828,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						);
 						trackShortcut('toggleShowThinking');
 					}
-					if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
-						e.preventDefault();
-						ctx.toggleUnreadFilter();
-						trackShortcut('filterUnreadTabs');
-					}
-					if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
-						e.preventDefault();
-						ctx.toggleTabUnread();
-						trackShortcut('toggleTabUnread');
-					}
+				}
+				// Unread filter/toggle — works across ALL tab types (AI, file, terminal)
+				if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
+					e.preventDefault();
+					ctx.toggleUnreadFilter();
+					trackShortcut('filterUnreadTabs');
+				}
+				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
+					e.preventDefault();
+					ctx.toggleTabUnread();
+					trackShortcut('toggleTabUnread');
 				}
 				// Cmd+Shift+] / Cmd+Shift+[ — Navigate tabs in unified order
 				// Cycles through ALL tab types (AI, file, terminal) via unifiedTabOrder
