@@ -100,9 +100,9 @@ describe('AIOverviewTab', () => {
 
 		render(<AIOverviewTab theme={mockTheme} />);
 
-		// Should show generating state - text appears in both progress bar and spinner
+		// Should show generating state - spinner shows "Generating…"
 		await waitFor(() => {
-			const elements = screen.getAllByText(/Starting/);
+			const elements = screen.getAllByText(/Generating/);
 			expect(elements.length).toBeGreaterThan(0);
 		});
 	});

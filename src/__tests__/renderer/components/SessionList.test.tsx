@@ -1945,7 +1945,9 @@ describe('SessionList', () => {
 			const props = createDefaultProps({});
 			const { container } = render(<SessionList {...props} />);
 
-			expect(container.firstChild).toHaveClass('ring-1');
+			// Focus ring is applied via boxShadow inline style instead of ring-1 class
+			const panel = container.firstChild as HTMLElement;
+			expect(panel.style.boxShadow).toBeTruthy();
 		});
 	});
 
