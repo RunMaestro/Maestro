@@ -992,10 +992,6 @@ export function useTabHandlers(): TabHandlersReturn {
 
 		// AI tab is active
 		if (session.activeTabId) {
-			if (session.aiTabs.length <= 1) {
-				return { type: 'prevented' };
-			}
-
 			const tabId = session.activeTabId;
 			const tab = session.aiTabs.find((t) => t.id === tabId);
 			const isWizardTab = tab ? hasActiveWizard(tab) : false;
