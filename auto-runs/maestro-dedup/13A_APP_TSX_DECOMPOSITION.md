@@ -38,32 +38,32 @@ Break down `App.tsx` from 4,034 lines into focused modules. This is the single l
 
 **Analysis (3,934 lines total):**
 
-| Section | Lines | Range | Notes |
-|---------|-------|-------|-------|
-| Imports | 217 | 1-217 | Lazy-loaded components, hooks, stores, types |
-| Modal state destructuring (modalStore) | 150 | 222-372 | Already extracted to modalStore, just destructuring |
-| Wizard state + settings hook | 108 | 380-487 | Already extracted to useWizard/useSettings |
-| Session state (sessionStore) | 72 | 504-575 | Already extracted to sessionStore, ref-like getters |
-| UI layout state (uiStore) | 37 | 577-613 | Already extracted to uiStore |
-| Group chat state (groupChatStore) | 24 | 615-638 | Already extracted to groupChatStore |
-| Input context + file explorer state | 27 | 659-696 | Already extracted to InputContext |
-| Refs (DOM + value refs) | 33 | 766-798 | Essential - cannot extract further |
-| Debug helpers effect | 24 | 800-823 | Trivial |
-| Extracted hook calls (tab, group, modal, worktree, app) | 230 | 831-1046 | Already extracted - just call sites |
-| Theme/CWD memos + remote hooks | 67 | 1048-1118 | Small; already extracted |
-| Agent capabilities + merge/summarize | 40 | 1121-1160 | Already extracted |
-| allCustomCommands + allSlashCommands memos | 121 | 1162-1282 | **Extractable** - slash command assembly |
-| Agent execution/management/batch/listeners | 71 | 1287-1357 | Already extracted |
-| Callbacks (remove queue, exports, wizard, input) | 142 | 1359-1500 | Mixed; some are bridge wrappers |
-| Activity trackers + more callbacks | 102 | 1502-1604 | Small scattered handlers |
-| Deep link handler effect | 28 | 1606-1633 | **Extractable** |
-| Sorted sessions, keyboard nav, persistence, lifecycle | 159 | 1635-1793 | Already extracted - just call sites |
-| **Remote event listeners** | **494** | **1795-2288** | **LARGEST extractable section - 15 useEventListener handlers** |
-| Group management + session CRUD hooks | 42 | 2290-2331 | Already extracted - just call sites |
-| Inline callbacks (PR, batch, tab select, etc.) | 141 | 2333-2473 | Mixed; some extractable |
-| **Keyboard handler ref population** | **175** | **2476-2650** | **2nd largest - assigns ~100 fields to ref** |
-| Props hook calls (mainPanel, sessionList, rightPanel) | 336 | 2658-2993 | Already extracted to prop hooks |
-| **JSX return** | **922** | **2995-3916** | **3rd largest - modal rendering + layout** |
+| Section                                                 | Lines   | Range         | Notes                                                          |
+| ------------------------------------------------------- | ------- | ------------- | -------------------------------------------------------------- |
+| Imports                                                 | 217     | 1-217         | Lazy-loaded components, hooks, stores, types                   |
+| Modal state destructuring (modalStore)                  | 150     | 222-372       | Already extracted to modalStore, just destructuring            |
+| Wizard state + settings hook                            | 108     | 380-487       | Already extracted to useWizard/useSettings                     |
+| Session state (sessionStore)                            | 72      | 504-575       | Already extracted to sessionStore, ref-like getters            |
+| UI layout state (uiStore)                               | 37      | 577-613       | Already extracted to uiStore                                   |
+| Group chat state (groupChatStore)                       | 24      | 615-638       | Already extracted to groupChatStore                            |
+| Input context + file explorer state                     | 27      | 659-696       | Already extracted to InputContext                              |
+| Refs (DOM + value refs)                                 | 33      | 766-798       | Essential - cannot extract further                             |
+| Debug helpers effect                                    | 24      | 800-823       | Trivial                                                        |
+| Extracted hook calls (tab, group, modal, worktree, app) | 230     | 831-1046      | Already extracted - just call sites                            |
+| Theme/CWD memos + remote hooks                          | 67      | 1048-1118     | Small; already extracted                                       |
+| Agent capabilities + merge/summarize                    | 40      | 1121-1160     | Already extracted                                              |
+| allCustomCommands + allSlashCommands memos              | 121     | 1162-1282     | **Extractable** - slash command assembly                       |
+| Agent execution/management/batch/listeners              | 71      | 1287-1357     | Already extracted                                              |
+| Callbacks (remove queue, exports, wizard, input)        | 142     | 1359-1500     | Mixed; some are bridge wrappers                                |
+| Activity trackers + more callbacks                      | 102     | 1502-1604     | Small scattered handlers                                       |
+| Deep link handler effect                                | 28      | 1606-1633     | **Extractable**                                                |
+| Sorted sessions, keyboard nav, persistence, lifecycle   | 159     | 1635-1793     | Already extracted - just call sites                            |
+| **Remote event listeners**                              | **494** | **1795-2288** | **LARGEST extractable section - 15 useEventListener handlers** |
+| Group management + session CRUD hooks                   | 42      | 2290-2331     | Already extracted - just call sites                            |
+| Inline callbacks (PR, batch, tab select, etc.)          | 141     | 2333-2473     | Mixed; some extractable                                        |
+| **Keyboard handler ref population**                     | **175** | **2476-2650** | **2nd largest - assigns ~100 fields to ref**                   |
+| Props hook calls (mainPanel, sessionList, rightPanel)   | 336     | 2658-2993     | Already extracted to prop hooks                                |
+| **JSX return**                                          | **922** | **2995-3916** | **3rd largest - modal rendering + layout**                     |
 
 **Top extractable sections by size:**
 
@@ -115,24 +115,30 @@ Break down `App.tsx` from 4,034 lines into focused modules. This is the single l
 
 ### 6. Extract auto-run / batch processing coordination
 
-- [ ] Create `src/renderer/hooks/useAutoRunCoordination.ts`
-- [ ] Move auto-run state management and batch processing coordination from App.tsx
-- [ ] Import and call from App.tsx
-- [ ] Run lint and tests: `rtk npm run lint && CI=1 rtk vitest run`
+- [x] Create `src/renderer/hooks/useAutoRunCoordination.ts`
+- [x] Move auto-run state management and batch processing coordination from App.tsx
+- [x] Import and call from App.tsx
+- [x] Run lint and tests: `rtk npm run lint && CI=1 rtk vitest run`
+
+**Result:** Created `src/renderer/hooks/batch/useAutoRunCoordination.ts` (163 lines) that consolidates all Auto Run / batch processing coordination that was inline in App.tsx. The hook self-sources from sessionStore, batchStore, modalStore, and uiStore, taking only 3 external deps: `startBatchRun`, `activeBatchSessionIds` (from useBatchHandlers), and `handleAutoRunRefreshRef` (for circular dep resolution with useWizardHandlers). Internally calls `useAutoRunHandlers`, `useAutoRunAchievements`, and `useAutoRunDocumentLoader`. Contains `handleSetActiveRightTab` (auto-run setup modal gating), `handleMarketplaceImportComplete` (refresh docs on import), and `handleSaveBatchPrompt` (persist batch prompt to session). Also fixed pre-existing issue where `useAutoRunHandlers` was missing `setSessions` in its deps - now properly self-sourced from sessionStore. Removed `useBatchStore` import, `setBatchRunnerModalOpen`/`setAutoRunSetupModalOpen` destructuring from modalActions, and 3 standalone hook calls from App.tsx. App.tsx reduced from 3,038 to 2,974 lines (-64 lines). Lint passes (0 new errors; 19 pre-existing errors unchanged). Tests match baseline (24,537 passed, 42 pre-existing failures, 107 pending).
 
 ### 7. Extract Encore Feature gating logic
 
-- [ ] Create `src/renderer/hooks/useEncoreFeatures.ts`
-- [ ] Centralize all Encore Feature conditional logic from App.tsx
-- [ ] Import and call from App.tsx
-- [ ] Run lint and tests: `rtk npm run lint && CI=1 rtk vitest run`
+- [x] Create `src/renderer/hooks/useEncoreFeatures.ts`
+- [x] Centralize all Encore Feature conditional logic from App.tsx
+- [x] Import and call from App.tsx
+- [x] Run lint and tests: `rtk npm run lint && CI=1 rtk vitest run`
+
+**Result:** Created `src/renderer/hooks/settings/useEncoreFeatures.ts` (97 lines) centralizing all Encore Feature gating logic from App.tsx. The hook self-sources `encoreFeatures` from settingsStore, `sessions` from sessionStore, and modal actions via `getModalActions()`. Contains: (1) two modal-reset useEffects that close Symphony/UsageDashboard modals when their Encore Feature toggle is disabled, (2) the `useCueAutoDiscovery` call (gated by maestroCue flag), (3) five pre-gated callbacks (`gatedSetUsageDashboardOpen`, `gatedOnOpenSymphony`, `gatedOnOpenDirectorNotes`, `gatedOnOpenMaestroCue`, `gatedOnConfigureCue`) that return `undefined` when their feature is disabled. Takes only `handleConfigureCue` as external dep (from useModalHandlers). Removed `encoreFeatures` from settings destructuring, removed `useCueAutoDiscovery` import/call, and replaced 5 inline `encoreFeatures.xxx ? handler : undefined` ternary expressions in JSX with the pre-gated values. Exported from `hooks/settings/index.ts`. App.tsx reduced from 2,974 to 2,967 lines (-7 lines, but the primary value is centralization of scattered encore logic into one discoverable hook). Lint passes (0 new errors; 19 pre-existing errors unchanged). Tests match baseline (24,537 passed, 42 pre-existing failures, 107 pending).
 
 ### 8. Verify after each extraction
 
-- [ ] After each extraction above: `rtk npm run lint`
-- [ ] After each extraction above: `CI=1 rtk vitest run`
-- [ ] After each extraction: verify App.tsx still composes everything correctly
-- [ ] After each extraction: confirm no behavior changes
+- [x] After each extraction above: `rtk npm run lint`
+- [x] After each extraction above: `CI=1 rtk vitest run`
+- [x] After each extraction: verify App.tsx still composes everything correctly
+- [x] After each extraction: confirm no behavior changes
+
+**Result:** Final verification run across all extractions (tasks 2-7). Lint: 19 pre-existing errors (all `setSessions` missing property, `updateSessionWith`/`updateAiTab` broken imports, `Spinner`/`EditingCommand` missing exports) - zero new errors introduced by any extraction. Tests: 24,537 passed, 42 pre-existing failures, 107 pending - matches baseline. Composition verified: all 6 extracted hooks (`useMainKeyboardHandler`, `useAppRemoteEventListeners`, `useEncoreFeatures`, `useAutoRunCoordination`, `useSessionSwitchCallbacks`, `useSessionLifecycle`) are imported and called from App.tsx. Both modal components (`AppModals`, `AppStandaloneModals`) are rendered in JSX. All extracted modules self-source state from stores where possible, minimizing prop threading. No behavior changes - pure structural refactoring throughout.
 
 ### 9. Verify App.tsx is a thin coordinator
 
