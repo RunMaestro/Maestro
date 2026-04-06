@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Save, Loader2, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import { RefreshCw, Save, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import { Spinner } from '../ui';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
@@ -222,7 +223,7 @@ export function AIOverviewTab({ theme, onSynopsisReady, onProgressChange }: AIOv
 					}}
 				>
 					{isGenerating ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
+						<Spinner size="xs" className="w-3.5 h-3.5" />
 					) : (
 						<RefreshCw className="w-3.5 h-3.5" />
 					)}
@@ -351,10 +352,7 @@ export function AIOverviewTab({ theme, onSynopsisReady, onProgressChange }: AIOv
 				) : isGenerating ? (
 					<div className="flex items-center justify-center h-full">
 						<div className="text-center w-64">
-							<Loader2
-								className="w-8 h-8 animate-spin mx-auto mb-3"
-								style={{ color: theme.colors.accent }}
-							/>
+							<Spinner size="xl" className="mx-auto mb-3" style={{ color: theme.colors.accent }} />
 							<div
 								className="h-2 rounded-full overflow-hidden mb-2"
 								style={{ backgroundColor: theme.colors.border }}

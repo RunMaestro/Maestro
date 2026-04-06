@@ -19,7 +19,8 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { X, Check, Loader2, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { X, Check, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { Spinner as SpinnerIcon } from './ui';
 import type { Theme, ToolType } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -458,10 +459,7 @@ export function TransferProgressModal({
 												<Check className="w-3 h-3" style={{ color: '#fff' }} />
 											</div>
 										) : isActive ? (
-											<Loader2
-												className="w-5 h-5 animate-spin"
-												style={{ color: theme.colors.accent }}
-											/>
+											<SpinnerIcon size="md" style={{ color: theme.colors.accent }} />
 										) : (
 											<div
 												className="w-5 h-5 rounded-full border-2"

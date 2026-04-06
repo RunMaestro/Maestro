@@ -30,6 +30,7 @@ import {
 import type { Theme, ToolType } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { Spinner } from './ui';
 import { getAgentDisplayName } from '../services/contextGroomer';
 
 /**
@@ -431,7 +432,7 @@ export function TransferErrorModal({
 						}}
 					>
 						{isRetrying ? (
-							<Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+							<Spinner className="shrink-0" />
 						) : (
 							<RefreshCw className="w-4 h-4 shrink-0" />
 						)}

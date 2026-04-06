@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, GitBranch, Loader2, AlertTriangle } from 'lucide-react';
+import { X, GitBranch, AlertTriangle } from 'lucide-react';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
@@ -277,7 +278,7 @@ export function CreateWorktreeModal({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner />
 								Creating...
 							</>
 						) : (

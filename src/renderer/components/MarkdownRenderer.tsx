@@ -4,7 +4,8 @@ import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, Loader2, ImageOff } from 'lucide-react';
+import { Clipboard, ImageOff } from 'lucide-react';
+import { Spinner } from './ui';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
@@ -124,7 +125,7 @@ const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProp
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner style={{ color: theme.colors.textDim }} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading image...
 				</span>

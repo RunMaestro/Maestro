@@ -13,7 +13,6 @@ import {
 	RefreshCw,
 	X,
 	Search,
-	Loader2,
 	Package,
 	ArrowLeft,
 	ChevronDown,
@@ -35,6 +34,7 @@ import {
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 
 // ============================================================================
 // Types
@@ -627,7 +627,7 @@ function PlaybookDetailView({
 						<style>{proseStyles}</style>
 						{isLoadingDocument ? (
 							<div className="flex items-center justify-center h-32">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size="lg" style={{ color: theme.colors.accent }} />
 							</div>
 						) : (
 							<div className="prose prose-sm max-w-none" style={{ color: theme.colors.textMain }}>
@@ -701,7 +701,7 @@ function PlaybookDetailView({
 					>
 						{isImporting ? (
 							<span className="flex items-center gap-2">
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner />
 								Importing...
 							</span>
 						) : (

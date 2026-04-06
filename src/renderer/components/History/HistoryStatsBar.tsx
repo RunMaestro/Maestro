@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
-import { Layers, Hash, Bot, User, BarChart3, Loader2, ListOrdered } from 'lucide-react';
+import { Layers, Hash, Bot, User, BarChart3, ListOrdered } from 'lucide-react';
+import { Spinner } from '../ui';
 import type { Theme } from '../../types';
 
 export interface HistoryStats {
@@ -113,7 +114,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({
 									color: theme.colors.warning,
 								}}
 							>
-								<Loader2 className="w-3 h-3 animate-spin" />
+								<Spinner size="xs" />
 							</span>
 							<span
 								className="text-[10px] uppercase tracking-wider"

@@ -10,13 +10,13 @@ import React, {
 import {
 	PanelRightClose,
 	PanelRightOpen,
-	Loader2,
 	GitBranch,
 	Skull,
 	AlertTriangle,
 	Play,
 	XCircle,
 } from 'lucide-react';
+import { Spinner } from './ui';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -531,10 +531,7 @@ export const RightPanel = memo(
 								{currentSessionBatchState.errorPaused ? (
 									<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.error }} />
 								) : (
-									<Loader2
-										className="w-4 h-4 animate-spin"
-										style={{ color: theme.colors.warning }}
-									/>
+									<Spinner style={{ color: theme.colors.warning }} />
 								)}
 								{currentSessionBatchState.errorPaused ? (
 									<button

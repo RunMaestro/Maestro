@@ -27,7 +27,6 @@ import {
 	Check,
 	CheckCircle,
 	XCircle,
-	Loader2,
 	Wifi,
 	WifiOff,
 } from 'lucide-react';
@@ -36,6 +35,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui';
 
 export interface SshRemotesSectionProps {
 	/** Theme object for styling */
@@ -133,7 +133,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				className="flex items-center gap-3 p-4 rounded-xl border"
 				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 			>
-				<Loader2 className="w-5 h-5 animate-spin" style={{ color: theme.colors.accent }} />
+				<Spinner size="md" style={{ color: theme.colors.accent }} />
 				<span className="text-sm" style={{ color: theme.colors.textDim }}>
 					Loading SSH remotes...
 				</span>
@@ -271,7 +271,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													tooltip="Test connection"
 												>
 													{isTesting ? (
-														<Loader2 className="w-4 h-4 animate-spin" />
+														<Spinner />
 													) : config.enabled ? (
 														<Wifi className="w-4 h-4" />
 													) : (
@@ -314,11 +314,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													style={{ color: theme.colors.error }}
 													tooltip="Delete"
 												>
-													{isDeleting ? (
-														<Loader2 className="w-4 h-4 animate-spin" />
-													) : (
-														<Trash2 className="w-4 h-4" />
-													)}
+													{isDeleting ? <Spinner /> : <Trash2 className="w-4 h-4" />}
 												</GhostIconButton>
 											</div>
 										</div>

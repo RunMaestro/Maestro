@@ -23,33 +23,15 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import {
-	Server,
-	Plus,
-	Trash2,
-	CheckCircle,
-	XCircle,
-	Loader2,
-	FileCode,
-	ChevronDown,
-} from 'lucide-react';
+import { Server, Plus, Trash2, CheckCircle, XCircle, FileCode, ChevronDown } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { FormInput } from '../ui/FormInput';
+import { Spinner } from '../ui';
 
-/**
- * SSH config host entry from ~/.ssh/config
- */
-interface SshConfigHost {
-	host: string;
-	hostName?: string;
-	port?: number;
-	user?: string;
-	identityFile?: string;
-	proxyJump?: string;
-}
+import type { SshConfigHost } from '../../../shared/types';
 
 /**
  * Environment variable entry with stable ID for editing
@@ -465,7 +447,7 @@ export function SshRemoteModal({
 						>
 							{testing ? (
 								<>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner />
 									Testing...
 								</>
 							) : (
@@ -559,7 +541,7 @@ export function SshRemoteModal({
 							>
 								{sshConfigLoading ? (
 									<span className="flex items-center gap-2">
-										<Loader2 className="w-3 h-3 animate-spin" />
+										<Spinner size="xs" />
 										Loading...
 									</span>
 								) : (

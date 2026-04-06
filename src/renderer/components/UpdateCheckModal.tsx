@@ -3,7 +3,6 @@ import {
 	X,
 	Download,
 	ExternalLink,
-	Loader2,
 	CheckCircle2,
 	AlertCircle,
 	RefreshCw,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 import type { UpdateStatus } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import ReactMarkdown from 'react-markdown';
@@ -198,7 +198,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			<div className="space-y-4 -my-2">
 				{loading ? (
 					<div className="flex flex-col items-center justify-center py-8 gap-3">
-						<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+						<Spinner size="xl" style={{ color: theme.colors.accent }} />
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
 							Checking for updates...
 						</span>
@@ -420,7 +420,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg text-sm"
 									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 								>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner />
 									Binaries are still building...
 								</div>
 							) : (
@@ -432,7 +432,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								>
 									{isDownloading ? (
 										<>
-											<Loader2 className="w-4 h-4 animate-spin" />
+											<Spinner />
 											Downloading...
 										</>
 									) : (

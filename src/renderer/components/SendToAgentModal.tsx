@@ -14,7 +14,8 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, ArrowRight, X, Loader2, Circle } from 'lucide-react';
+import { Search, ArrowRight, X, Circle } from 'lucide-react';
+import { Spinner } from './ui';
 import type { Theme, Session, AITab, ToolType } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -603,7 +604,7 @@ export function SendToAgentModal({
 												aria-hidden="true"
 											>
 												{session.status === 'idle' && <Circle className="w-2 h-2 fill-current" />}
-												{session.status === 'busy' && <Loader2 className="w-3 h-3 animate-spin" />}
+												{session.status === 'busy' && <Spinner size="xs" />}
 												{getStatusLabel(session.status)}
 											</div>
 
@@ -723,7 +724,7 @@ export function SendToAgentModal({
 					>
 						{isSending ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+								<Spinner aria-hidden="true" />
 								Sending...
 							</>
 						) : (

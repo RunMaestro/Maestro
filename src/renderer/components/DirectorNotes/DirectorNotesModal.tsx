@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { X, History, Sparkles, Loader2, Clapperboard, HelpCircle } from 'lucide-react';
+import { X, History, Sparkles, Clapperboard, HelpCircle } from 'lucide-react';
+import { Spinner } from '../ui';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -244,11 +245,7 @@ export function DirectorNotesModal({
 									cursor: isDisabled ? 'default' : 'pointer',
 								}}
 							>
-								{showGenerating ? (
-									<Loader2 className="w-4 h-4 animate-spin" />
-								) : (
-									<Icon className="w-4 h-4" />
-								)}
+								{showGenerating ? <Spinner /> : <Icon className="w-4 h-4" />}
 								{tab.label}
 								{showGenerating && (
 									<span className="text-[10px] font-normal">
@@ -268,7 +265,7 @@ export function DirectorNotesModal({
 					<Suspense
 						fallback={
 							<div className="flex items-center justify-center h-full">
-								<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size="xl" style={{ color: theme.colors.textDim }} />
 							</div>
 						}
 					>

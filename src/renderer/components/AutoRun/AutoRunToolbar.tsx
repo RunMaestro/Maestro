@@ -1,15 +1,6 @@
 import { memo } from 'react';
-import {
-	Eye,
-	Edit,
-	Play,
-	Square,
-	HelpCircle,
-	Loader2,
-	Maximize2,
-	LayoutGrid,
-	Wand2,
-} from 'lucide-react';
+import { Eye, Edit, Play, Square, HelpCircle, Maximize2, LayoutGrid, Wand2 } from 'lucide-react';
+import { Spinner } from '../ui';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import type { Theme, Shortcut } from '../../types';
 
@@ -125,7 +116,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
 				>
 					{isStopping ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
+						<Spinner size="xs" className="w-3.5 h-3.5" />
 					) : (
 						<Square className="w-3.5 h-3.5" />
 					)}

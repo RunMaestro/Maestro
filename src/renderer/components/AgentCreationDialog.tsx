@@ -13,21 +13,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	Music,
-	X,
-	Loader2,
-	Bot,
-	Settings,
-	FolderOpen,
-	ChevronRight,
-	RefreshCw,
-} from 'lucide-react';
+import { Music, X, Bot, Settings, FolderOpen, ChevronRight, RefreshCw } from 'lucide-react';
 import type { Theme, AgentConfig } from '../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
@@ -302,11 +294,7 @@ export function AgentCreationDialog({
 							Create Symphony Agent
 						</h2>
 					</div>
-					<GhostIconButton
-						onClick={onClose}
-						size="md"
-						tooltip="Close (Esc)"
-					>
+					<GhostIconButton onClick={onClose} size="md" tooltip="Close (Esc)">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</GhostIconButton>
 				</div>
@@ -342,7 +330,7 @@ export function AgentCreationDialog({
 
 						{ac.isDetecting ? (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size="lg" style={{ color: theme.colors.accent }} />
 							</div>
 						) : ac.detectedAgents.length === 0 ? (
 							<div className="text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -623,7 +611,7 @@ export function AgentCreationDialog({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner />
 								Creating...
 							</>
 						) : (

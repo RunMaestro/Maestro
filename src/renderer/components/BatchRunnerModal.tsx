@@ -13,9 +13,9 @@ import {
 	Download,
 	Upload,
 	LayoutGrid,
-	Loader2,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -906,11 +906,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 														: 'Start auto-run'
 							}
 						>
-							{isPreparingWorktree ? (
-								<Loader2 className="w-4 h-4 animate-spin" />
-							) : (
-								<Play className="w-4 h-4" />
-							)}
+							{isPreparingWorktree ? <Spinner /> : <Play className="w-4 h-4" />}
 							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
 						</button>
 					</div>

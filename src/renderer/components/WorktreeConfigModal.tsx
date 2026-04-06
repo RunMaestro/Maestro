@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, GitBranch, FolderOpen, Plus, Loader2, AlertTriangle, Server } from 'lucide-react';
+import { X, GitBranch, FolderOpen, Plus, AlertTriangle, Server } from 'lucide-react';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 import { getParentDir } from '../../shared/formatters';
 
 interface WorktreeConfigModalProps {
@@ -368,11 +369,7 @@ export function WorktreeConfigModal({
 									color: theme.colors.accentForeground,
 								}}
 							>
-								{isCreating ? (
-									<Loader2 className="w-4 h-4 animate-spin" />
-								) : (
-									<Plus className="w-4 h-4" />
-								)}
+								{isCreating ? <Spinner /> : <Plus className="w-4 h-4" />}
 								Create
 							</button>
 						</div>
@@ -436,7 +433,7 @@ export function WorktreeConfigModal({
 							color: theme.colors.accentForeground,
 						}}
 					>
-						{isValidating && <Loader2 className="w-4 h-4 animate-spin" />}
+						{isValidating && <Spinner />}
 						{isValidating ? 'Validating...' : 'Save Configuration'}
 					</button>
 				</div>

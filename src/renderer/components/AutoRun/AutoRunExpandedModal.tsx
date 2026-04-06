@@ -7,12 +7,12 @@ import {
 	Edit,
 	Play,
 	Square,
-	Loader2,
 	Save,
 	RotateCcw,
 	LayoutGrid,
 	AlertTriangle,
 } from 'lucide-react';
+import { Spinner } from '../ui';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -375,7 +375,7 @@ export function AutoRunExpandedModal({
 								title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
 							>
 								{isStopping ? (
-									<Loader2 className="w-3.5 h-3.5 animate-spin" />
+									<Spinner size="xs" className="w-3.5 h-3.5" />
 								) : (
 									<Square className="w-3.5 h-3.5" />
 								)}
@@ -432,10 +432,7 @@ export function AutoRunExpandedModal({
 							<Minimize2 className="w-4 h-4" />
 							Collapse
 						</button>
-						<GhostIconButton
-							onClick={handleClose}
-							tooltip="Close (Esc)"
-						>
+						<GhostIconButton onClick={handleClose} tooltip="Close (Esc)">
 							<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
 						</GhostIconButton>
 					</div>

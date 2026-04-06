@@ -5,7 +5,6 @@ import {
 	ExternalLink,
 	FileCode,
 	BarChart3,
-	Loader2,
 	Trophy,
 	Globe,
 	Check,
@@ -18,6 +17,7 @@ import pedramAvatar from '../assets/pedram-avatar.png';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
 import { Modal } from './ui/Modal';
+import { Spinner } from './ui';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { formatElapsedTime } from '../../shared/formatters';
@@ -213,13 +213,11 @@ export function AboutModal({
 						<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 							Global Statistics
 						</span>
-						{!isStatsComplete && (
-							<Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.colors.textDim }} />
-						)}
+						{!isStatsComplete && <Spinner size="xs" style={{ color: theme.colors.textDim }} />}
 					</div>
 					{loading ? (
 						<div className="flex items-center justify-center py-4 gap-2">
-							<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+							<Spinner style={{ color: theme.colors.textDim }} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								Loading stats...
 							</span>

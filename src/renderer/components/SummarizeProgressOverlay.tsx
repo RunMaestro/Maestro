@@ -14,7 +14,8 @@
  */
 
 import { useState, useEffect, memo, useCallback } from 'react';
-import { X, Check, Loader2, AlertTriangle, Wand2 } from 'lucide-react';
+import { X, Check, AlertTriangle, Wand2 } from 'lucide-react';
+import { Spinner } from './ui';
 import type { Theme } from '../types';
 import type { SummarizeProgress, SummarizeResult } from '../types/contextMerge';
 import { formatElapsedTime } from '../../shared/formatters';
@@ -264,10 +265,7 @@ export const SummarizeProgressOverlay = memo(function SummarizeProgressOverlay({
 											{isCompleted ? (
 												<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
 											) : isActive ? (
-												<Loader2
-													className="w-3 h-3 animate-spin"
-													style={{ color: theme.colors.accent }}
-												/>
+												<Spinner size="xs" style={{ color: theme.colors.accent }} />
 											) : (
 												<div
 													className="w-3 h-3 rounded-full border"

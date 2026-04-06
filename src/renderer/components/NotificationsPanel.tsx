@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Bell, Volume2, Clock, Square, Check, AlertCircle } from 'lucide-react';
+import { Spinner } from './ui';
 import type { Theme } from '../types';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
@@ -192,7 +193,7 @@ export function NotificationsPanel({
 							>
 								{testStatus === 'running' ? (
 									<>
-										<Loader2 className="w-3 h-3 animate-spin" />
+										<Spinner size="xs" />
 										Running
 									</>
 								) : testStatus === 'success' ? (

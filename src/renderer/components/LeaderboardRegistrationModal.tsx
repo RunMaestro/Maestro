@@ -12,7 +12,6 @@ import {
 	Trophy,
 	Mail,
 	User,
-	Loader2,
 	Check,
 	AlertCircle,
 	ExternalLink,
@@ -31,6 +30,7 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
@@ -1146,7 +1146,7 @@ export function LeaderboardRegistrationModal({
 								>
 									{isResending ? (
 										<>
-											<Loader2 className="w-3.5 h-3.5 animate-spin" />
+											<Spinner size="xs" className="w-3.5 h-3.5" />
 											Sending...
 										</>
 									) : (
@@ -1305,7 +1305,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{submitState === 'submitting' ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner />
 										Pushing...
 									</>
 								) : (
@@ -1334,7 +1334,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{isSyncing ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner />
 										Pulling...
 									</>
 								) : (

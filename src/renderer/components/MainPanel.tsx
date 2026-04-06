@@ -12,7 +12,6 @@ import {
 	ExternalLink,
 	Columns,
 	Copy,
-	Loader2,
 	GitBranch,
 	ArrowUp,
 	ArrowDown,
@@ -26,6 +25,7 @@ import {
 	Bookmark,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui';
 import { LogViewer } from './LogViewer';
 import { TerminalOutput } from './TerminalOutput';
 import {
@@ -1245,11 +1245,7 @@ export const MainPanel = React.memo(
 												: 'Click to stop auto-run'
 										}
 									>
-										{isCurrentSessionStopping ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<Wand2 className="w-4 h-4" />
-										)}
+										{isCurrentSessionStopping ? <Spinner /> : <Wand2 className="w-4 h-4" />}
 										<span className="uppercase tracking-wider">
 											{isCurrentSessionStopping ? 'Stopping' : 'Auto'}
 										</span>
@@ -1633,10 +1629,7 @@ export const MainPanel = React.memo(
 										</button>
 									)}
 									{props.onClearAgentError && activeTabError.recoverable && (
-										<GhostIconButton
-											onClick={props.onClearAgentError}
-											tooltip="Dismiss error"
-										>
+										<GhostIconButton onClick={props.onClearAgentError} tooltip="Dismiss error">
 											<X className="w-4 h-4" style={{ color: theme.colors.error }} />
 										</GhostIconButton>
 									)}
@@ -1657,10 +1650,7 @@ export const MainPanel = React.memo(
 									style={{ backgroundColor: theme.colors.bgMain }}
 								>
 									<div className="flex flex-col items-center gap-3">
-										<Loader2
-											className="w-8 h-8 animate-spin"
-											style={{ color: theme.colors.accent }}
-										/>
+										<Spinner size="xl" style={{ color: theme.colors.accent }} />
 										<div className="text-center">
 											<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 												Loading{' '}
