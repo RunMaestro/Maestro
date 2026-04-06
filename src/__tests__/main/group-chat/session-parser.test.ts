@@ -12,7 +12,11 @@
 import { describe, it, expect } from 'vitest';
 import { parseParticipantSessionId } from '../../../main/group-chat/session-parser';
 
-// Real UUID v4s for test fixtures
+// Real UUIDs for test fixtures. The regex in constants.ts accepts the
+// canonical 8-4-4-4-12 hex shape regardless of UUID version, so a v1
+// (GC_ID_2 is the RFC 4122 namespace UUID) and a v4 (GC_ID) both work
+// equivalently and exercise the same code paths. Production groupChatIds
+// are uuidv4() but the regex itself is version-agnostic.
 const GC_ID = '550e8400-e29b-41d4-a716-446655440000';
 const GC_ID_2 = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
