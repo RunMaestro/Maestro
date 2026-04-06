@@ -31,7 +31,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { formatElapsedTime } from '../../shared/formatters';
 
 export interface RightPanelHandle {
@@ -461,11 +461,7 @@ export const RightPanel = memo(
 						// Only track scroll position for file explorer tab
 						if (activeRightTab === 'files') {
 							const scrollTop = e.currentTarget.scrollTop;
-							setSessions((prev) =>
-								prev.map((s) =>
-									s.id === session.id ? { ...s, fileExplorerScrollPos: scrollTop } : s
-								)
-							);
+							updateSessionWith(session.id, (s) => ({ ...s, fileExplorerScrollPos: scrollTop }));
 						}
 					}}
 				>

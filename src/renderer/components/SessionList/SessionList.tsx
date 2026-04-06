@@ -22,7 +22,7 @@ import { GroupChatList } from '../GroupChatList';
 import { useLiveOverlay, useResizablePanel } from '../../hooks';
 import { useGitFileStatus } from '../../contexts/GitStatusContext';
 import { useUIStore } from '../../stores/uiStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -308,14 +308,9 @@ function SessionListInner(props: SessionListProps) {
 	const ignoreNextBlurRef = useRef(false);
 
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
-	const toggleBookmark = useCallback(
-		(sessionId: string) => {
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
-			);
-		},
-		[setSessions]
-	);
+	const toggleBookmark = useCallback((sessionId: string) => {
+		updateSessionWith(sessionId, (s) => ({ ...s, bookmarked: !s.bookmarked }));
+	}, []);
 
 	// Context menu handlers - memoized to prevent SessionItem re-renders
 	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
@@ -324,14 +319,9 @@ function SessionListInner(props: SessionListProps) {
 		setContextMenu({ x: e.clientX, y: e.clientY, sessionId });
 	}, []);
 
-	const handleMoveToGroup = useCallback(
-		(sessionId: string, groupId: string) => {
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, groupId: groupId || undefined } : s))
-			);
-		},
-		[setSessions]
-	);
+	const handleMoveToGroup = useCallback((sessionId: string, groupId: string) => {
+		updateSessionWith(sessionId, (s) => ({ ...s, groupId: groupId || undefined }));
+	}, []);
 
 	const handleDeleteSession = (sessionId: string) => {
 		// Use the parent's delete handler if provided (includes proper cleanup)

@@ -24,6 +24,7 @@ import {
 	AlertTriangle,
 	Loader2,
 } from 'lucide-react';
+import { updateSessionWith } from '../stores/sessionStore';
 import type { Session, Theme, FocusArea } from '../types';
 import type { FileNode } from '../types/fileTree';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -690,40 +691,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			pathParts[pathParts.length - 1] = newName;
 			const newRelativePath = pathParts.join('/');
 
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== session.id) return s;
-					return {
-						...s,
-						fileTree: newTree,
-						// Update expanded folder paths if renamed item was a folder
-						fileExplorerExpanded:
-							renameModal.node.type === 'folder'
-								? (s.fileExplorerExpanded || []).map((p) => {
-										if (p === oldPath) return newRelativePath;
-										if (p.startsWith(oldPath + '/'))
-											return newRelativePath + p.slice(oldPath.length);
-										return p;
-									})
-								: s.fileExplorerExpanded,
-					};
-				})
-			);
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				fileTree: newTree,
+				// Update expanded folder paths if renamed item was a folder
+				fileExplorerExpanded:
+					renameModal.node.type === 'folder'
+						? (s.fileExplorerExpanded || []).map((p) => {
+								if (p === oldPath) return newRelativePath;
+								if (p.startsWith(oldPath + '/')) return newRelativePath + p.slice(oldPath.length);
+								return p;
+							})
+						: s.fileExplorerExpanded,
+			}));
 
 			setRenameModal(null);
 			onShowFlash?.(`Renamed to "${newName}"`);
 		} catch (error) {
 			setRenameError(error instanceof Error ? error.message : 'Rename failed');
 		}
-	}, [
-		renameModal,
-		renameValue,
-		session.id,
-		session.fileTree,
-		onShowFlash,
-		sshRemoteId,
-		setSessions,
-	]);
+	}, [renameModal, renameValue, session.id, session.fileTree, onShowFlash, sshRemoteId]);
 
 	// Open delete confirmation modal
 	const handleOpenDelete = useCallback(async () => {
@@ -778,27 +765,22 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 			// Update tree locally instead of full refresh
 			const newTree = removeNodeFromTree(session.fileTree || [], deleteModal.path);
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== session.id) return s;
-					return {
-						...s,
-						fileTree: newTree,
-						fileTreeStats: s.fileTreeStats
-							? {
-									...s.fileTreeStats,
-									fileCount: Math.max(0, s.fileTreeStats.fileCount - deletedFileCount),
-									folderCount: Math.max(0, s.fileTreeStats.folderCount - deletedFolderCount),
-								}
-							: undefined,
-						// Also remove from expanded folders if it was a folder
-						fileExplorerExpanded:
-							deleteModal.node.type === 'folder'
-								? (s.fileExplorerExpanded || []).filter((p) => !p.startsWith(deleteModal.path))
-								: s.fileExplorerExpanded,
-					};
-				})
-			);
+			updateSessionWith(session.id, (s) => ({
+				...s,
+				fileTree: newTree,
+				fileTreeStats: s.fileTreeStats
+					? {
+							...s.fileTreeStats,
+							fileCount: Math.max(0, s.fileTreeStats.fileCount - deletedFileCount),
+							folderCount: Math.max(0, s.fileTreeStats.folderCount - deletedFolderCount),
+						}
+					: undefined,
+				// Also remove from expanded folders if it was a folder
+				fileExplorerExpanded:
+					deleteModal.node.type === 'folder'
+						? (s.fileExplorerExpanded || []).filter((p) => !p.startsWith(deleteModal.path))
+						: s.fileExplorerExpanded,
+			}));
 
 			setDeleteModal(null);
 			onShowFlash?.(`Deleted "${deleteModal.node.name}"`);
@@ -807,7 +789,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		} finally {
 			setIsDeleting(false);
 		}
-	}, [deleteModal, session.id, session.fileTree, onShowFlash, sshRemoteId, setSessions]);
+	}, [deleteModal, session.id, session.fileTree, onShowFlash, sshRemoteId]);
 
 	// Close context menu on Escape key
 	useEffect(() => {
@@ -1224,9 +1206,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							theme={theme}
 							onRetryNow={() => {
 								// Clear retry time and trigger immediate refresh
-								setSessions((prev) =>
-									prev.map((s) => (s.id === session.id ? { ...s, fileTreeRetryAt: undefined } : s))
-								);
+								updateSessionWith(session.id, (s) => ({ ...s, fileTreeRetryAt: undefined }));
 							}}
 						/>
 					) : (

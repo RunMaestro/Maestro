@@ -483,7 +483,7 @@ describe('RightPanel', () => {
 	describe('Scroll position tracking', () => {
 		it('should update session scroll position on scroll for files tab', () => {
 			useUIStore.setState({ activeRightTab: 'files' });
-			const spy = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const spy = vi.spyOn(useSessionStore, 'setState');
 			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
@@ -499,7 +499,7 @@ describe('RightPanel', () => {
 
 		it('should not update scroll position for non-files tabs', () => {
 			useUIStore.setState({ activeRightTab: 'history' });
-			const spy = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const spy = vi.spyOn(useSessionStore, 'setState');
 			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
@@ -508,7 +508,7 @@ describe('RightPanel', () => {
 
 			fireEvent.scroll(scrollContainer);
 
-			// setSessions should not be called for scroll tracking on non-files tabs
+			// setState should not be called for scroll tracking on non-files tabs
 			expect(spy).not.toHaveBeenCalled();
 		});
 	});
@@ -1636,8 +1636,8 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			// Should show 0s when just started (elapsed time is displayed even at 0)
-			expect(screen.getByText('0s')).toBeInTheDocument();
+			// Should show 0ms when just started (elapsed time is displayed even at 0)
+			expect(screen.getByText('0ms')).toBeInTheDocument();
 		});
 	});
 
@@ -1645,21 +1645,14 @@ describe('RightPanel', () => {
 		it('should execute setSessions callback to update fileExplorerScrollPos', () => {
 			useUIStore.setState({ activeRightTab: 'files' });
 
-			const setSessions = vi.fn((callback) => {
-				// Execute the callback with a mock sessions array
-				if (typeof callback === 'function') {
-					const mockSessions = [
-						{ id: 'session-1', name: 'Test Session' },
-						{ id: 'other-session', name: 'Other Session' },
-					];
-					const result = callback(mockSessions);
-					// Verify the callback transforms sessions correctly
-					expect(result[0].fileExplorerScrollPos).toBe(250);
-					expect(result[1].fileExplorerScrollPos).toBeUndefined();
-				}
+			// Set up store with two sessions so we can verify only the active one is updated
+			const otherSession = { ...mockSession, id: 'other-session', name: 'Other Session' };
+			useSessionStore.setState({
+				sessions: [mockSession, otherSession],
+				activeSessionId: 'session-1',
 			});
-			// Replace the store's setSessions with our mock so the component calls it
-			vi.spyOn(useSessionStore.getState(), 'setSessions').mockImplementation(setSessions as any);
+
+			const spy = vi.spyOn(useSessionStore, 'setState');
 
 			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
@@ -1669,7 +1662,14 @@ describe('RightPanel', () => {
 
 			fireEvent.scroll(scrollContainer);
 
-			expect(setSessions).toHaveBeenCalled();
+			expect(spy).toHaveBeenCalled();
+
+			// Verify the store was updated with the correct scroll position for the active session
+			const updatedSessions = useSessionStore.getState().sessions;
+			const updatedActive = updatedSessions.find((s) => s.id === 'session-1');
+			const updatedOther = updatedSessions.find((s) => s.id === 'other-session');
+			expect(updatedActive?.fileExplorerScrollPos).toBe(250);
+			expect(updatedOther?.fileExplorerScrollPos).toBeUndefined();
 		});
 	});
 });

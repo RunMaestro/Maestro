@@ -5,6 +5,7 @@ import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { updateSessionWith } from '../../stores/sessionStore';
 
 /**
  * History entry for the addHistoryEntry function.
@@ -180,19 +181,13 @@ export function useAgentSessionManagement(
 			);
 			if (existingTab) {
 				// Switch to the existing tab instead of creating a duplicate
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === activeSession.id
-							? {
-									...s,
-									activeTabId: existingTab.id,
-									activeFileTabId: null,
-									activeTerminalTabId: null,
-									inputMode: 'ai',
-								}
-							: s
-					)
-				);
+				updateSessionWith(activeSession.id, (s) => ({
+					...s,
+					activeTabId: existingTab.id,
+					activeFileTabId: null,
+					activeTerminalTabId: null,
+					inputMode: 'ai',
+				}));
 				setActiveAgentSessionId(agentSessionId);
 				return;
 			}

@@ -6,6 +6,7 @@ import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as _createMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { mockTheme } from '../../helpers/mockTheme';
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
@@ -156,6 +157,7 @@ const createDefaultProps = (
 describe('QuickActionsModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.spyOn(useSessionStore, 'setState');
 		// Reset uiStore state used by search actions
 		useUIStore.setState({
 			sessionFilterOpen: false,
@@ -811,7 +813,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.change(input, { target: { value: 'debug' } });
 			fireEvent.click(screen.getByText('Debug: Reset Current Session'));
 
-			expect(props.setSessions).toHaveBeenCalled();
+			expect(useSessionStore.setState).toHaveBeenCalled();
 			expect(consoleSpy).toHaveBeenCalledWith('[Debug] Reset busy state for session:', 'session-1');
 
 			consoleSpy.mockRestore();

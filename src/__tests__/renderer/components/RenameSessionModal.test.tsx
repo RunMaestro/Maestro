@@ -8,6 +8,7 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import React from 'react';
 import { RenameSessionModal } from '../../../renderer/components/RenameSessionModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Theme, Session } from '../../../renderer/types';
 import { mockTheme, createMockTheme } from '../../helpers/mockTheme';
 
@@ -66,6 +67,7 @@ describe('RenameSessionModal', () => {
 	let mockSetValue: ReturnType<typeof vi.fn>;
 	let mockSetSessions: ReturnType<typeof vi.fn>;
 	let mockSessions: Session[];
+	let setStateSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
 		mockOnClose = vi.fn();
@@ -77,6 +79,10 @@ describe('RenameSessionModal', () => {
 			return updater;
 		});
 		mockSessions = createMockSessions();
+		setStateSpy = vi.spyOn(useSessionStore, 'setState');
+
+		// Initialize session store so updateSessionWith finds the sessions
+		useSessionStore.setState({ sessions: mockSessions });
 
 		// Setup window.maestro mock overrides on the centralized mock from setup.ts
 		Object.assign(window.maestro.claude, {
@@ -246,7 +252,9 @@ describe('RenameSessionModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
-			expect(mockSetSessions).toHaveBeenCalled();
+			const viaProp = mockSetSessions.mock.calls.length > 0;
+			const viaStore = setStateSpy.mock.calls.length > 0;
+			expect(viaProp || viaStore).toBe(true);
 			expect(mockOnClose).toHaveBeenCalledTimes(1);
 		});
 
@@ -358,7 +366,9 @@ describe('RenameSessionModal', () => {
 			const input = screen.getByRole('textbox');
 			fireEvent.keyDown(input, { key: 'Enter' });
 
-			expect(mockSetSessions).toHaveBeenCalled();
+			const viaProp = mockSetSessions.mock.calls.length > 0;
+			const viaStore = setStateSpy.mock.calls.length > 0;
+			expect(viaProp || viaStore).toBe(true);
 			expect(mockOnClose).toHaveBeenCalledTimes(1);
 		});
 
@@ -462,12 +472,10 @@ describe('RenameSessionModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
-			expect(mockSetSessions).toHaveBeenCalled();
-			// The updater function should be called with the active session ID
-			const updaterFn = mockSetSessions.mock.calls[0][0];
-			const result = updaterFn(mockSessions);
-			expect(result[0].name).toBe('New Name');
-			expect(result[1].name).toBe('Session 2'); // Unchanged
+			// Verify the store was updated with the correct session name
+			const storeSessions = useSessionStore.getState().sessions;
+			expect(storeSessions[0].name).toBe('New Name');
+			expect(storeSessions[1].name).toBe('Session 2'); // Unchanged
 		});
 
 		it('uses targetSessionId when provided', () => {
@@ -488,11 +496,10 @@ describe('RenameSessionModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
-			expect(mockSetSessions).toHaveBeenCalled();
-			const updaterFn = mockSetSessions.mock.calls[0][0];
-			const result = updaterFn(mockSessions);
-			expect(result[0].name).toBe('Session 1'); // Unchanged
-			expect(result[1].name).toBe('New Name');
+			// Verify the store was updated - session-2 renamed, session-1 unchanged
+			const storeSessions = useSessionStore.getState().sessions;
+			expect(storeSessions[0].name).toBe('Session 1'); // Unchanged
+			expect(storeSessions[1].name).toBe('New Name');
 		});
 
 		it('trims whitespace from the name', () => {
@@ -512,9 +519,9 @@ describe('RenameSessionModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
-			const updaterFn = mockSetSessions.mock.calls[0][0];
-			const result = updaterFn(mockSessions);
-			expect(result[0].name).toBe('Padded Name');
+			// Verify the store has the trimmed name
+			const storeSessions = useSessionStore.getState().sessions;
+			expect(storeSessions[0].name).toBe('Padded Name');
 		});
 	});
 

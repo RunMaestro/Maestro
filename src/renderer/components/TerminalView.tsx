@@ -8,7 +8,7 @@ import {
 	updateTerminalTabState,
 	updateTerminalTabPid,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
 import { captureException } from '../utils/sentry';
 import { notifyToast } from '../stores/notificationStore';
@@ -394,13 +394,7 @@ export const TerminalView = memo(
  */
 export function createTabStateChangeHandler(sessionId: string) {
 	return (tabId: string, state: TerminalTab['state'], exitCode?: number) => {
-		useSessionStore
-			.getState()
-			.setSessions((prev) =>
-				prev.map((s) =>
-					s.id === sessionId ? updateTerminalTabState(s, tabId, state, exitCode) : s
-				)
-			);
+		updateSessionWith(sessionId, (s) => updateTerminalTabState(s, tabId, state, exitCode));
 	};
 }
 
@@ -410,10 +404,6 @@ export function createTabStateChangeHandler(sessionId: string) {
  */
 export function createTabPidChangeHandler(sessionId: string) {
 	return (tabId: string, pid: number) => {
-		useSessionStore
-			.getState()
-			.setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? updateTerminalTabPid(s, tabId, pid) : s))
-			);
+		updateSessionWith(sessionId, (s) => updateTerminalTabPid(s, tabId, pid));
 	};
 }

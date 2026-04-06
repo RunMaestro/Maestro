@@ -498,7 +498,19 @@ describe('SessionList', () => {
 		it('shows OFFLINE text when sidebar width equals minimum threshold (256px) without autoRunStats', () => {
 			// Without autoRunStats, threshold is 256px so text shows at exactly 256px
 			useUIStore.setState({ leftSidebarOpen: true });
-			useSettingsStore.setState({ leftSidebarWidth: 256 });
+			useSettingsStore.setState({
+				leftSidebarWidth: 256,
+				autoRunStats: {
+					cumulativeTimeMs: 0,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					totalRuns: 0,
+					currentBadgeLevel: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+					badgeHistory: [],
+				},
+			});
 			const props = createDefaultProps({
 				isLiveMode: false,
 			});
@@ -549,7 +561,19 @@ describe('SessionList', () => {
 		it('shows LIVE text when sidebar width equals minimum threshold (256px) without autoRunStats', () => {
 			// Without autoRunStats, threshold is 256px so text shows at exactly 256px
 			useUIStore.setState({ leftSidebarOpen: true });
-			useSettingsStore.setState({ leftSidebarWidth: 256 });
+			useSettingsStore.setState({
+				leftSidebarWidth: 256,
+				autoRunStats: {
+					cumulativeTimeMs: 0,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					totalRuns: 0,
+					currentBadgeLevel: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+					badgeHistory: [],
+				},
+			});
 			const props = createDefaultProps({
 				isLiveMode: true,
 				webInterfaceUrl: 'http://localhost:3000',
@@ -700,7 +724,7 @@ describe('SessionList', () => {
 			const sessions = [createMockSession({ id: 's1', name: 'Test Session', bookmarked: false })];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const setStateSpy = vi.spyOn(useSessionStore, 'setState');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -714,7 +738,7 @@ describe('SessionList', () => {
 			const bookmarkButtons = screen.getAllByTitle(/bookmark/i);
 			fireEvent.click(bookmarkButtons[0]);
 
-			expect(setSessions).toHaveBeenCalled();
+			expect(setStateSpy).toHaveBeenCalled();
 		});
 	});
 
@@ -1027,7 +1051,7 @@ describe('SessionList', () => {
 			const sessions = [createMockSession({ id: 's1', name: 'Bookmark Me', bookmarked: false })];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const setStateSpy = vi.spyOn(useSessionStore, 'setState');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -1038,7 +1062,7 @@ describe('SessionList', () => {
 
 			fireEvent.click(screen.getByText('Add Bookmark'));
 
-			expect(setSessions).toHaveBeenCalled();
+			expect(setStateSpy).toHaveBeenCalled();
 		});
 
 		it('opens newInstance modal directly on duplicate (skips newAgentChoice)', () => {
@@ -1862,7 +1886,7 @@ describe('SessionList', () => {
 				groups: [group],
 			});
 			useUIStore.setState({ leftSidebarOpen: true });
-			const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const setStateSpy = vi.spyOn(useSessionStore, 'setState');
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
@@ -1884,7 +1908,7 @@ describe('SessionList', () => {
 			const submenuButton = groupButtons.find((el) => el.closest('button')?.closest('.absolute'));
 			fireEvent.click(submenuButton || groupButtons[groupButtons.length - 1]);
 
-			expect(setSessions).toHaveBeenCalled();
+			expect(setStateSpy).toHaveBeenCalled();
 		});
 	});
 

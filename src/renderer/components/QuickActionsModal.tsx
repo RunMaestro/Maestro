@@ -14,6 +14,7 @@ import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { updateSessionWith } from '../stores/sessionStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface QuickAction {
@@ -419,11 +420,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							? `Unbookmark: ${activeSession.name}`
 							: `Bookmark: ${activeSession.name}`,
 						action: () => {
-							setSessions((prev) =>
-								prev.map((s) =>
-									s.id === activeSessionId ? { ...s, bookmarked: !s.bookmarked } : s
-								)
-							);
+							updateSessionWith(activeSessionId, (s) => ({ ...s, bookmarked: !s.bookmarked }));
 							setQuickActionOpen(false);
 						},
 					},
@@ -636,9 +633,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						id: 'clearTerminal',
 						label: 'Clear Terminal History',
 						action: () => {
-							setSessions((prev) =>
-								prev.map((s) => (s.id === activeSessionId ? { ...s, shellLogs: [] } : s))
-							);
+							updateSessionWith(activeSessionId, (s) => ({ ...s, shellLogs: [] }));
 							setQuickActionOpen(false);
 						},
 					},
@@ -1327,24 +1322,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						label: 'Debug: Reset Current Session',
 						subtext: `Clear busy state for ${activeSession.name}`,
 						action: () => {
-							setSessions((prev) =>
-								prev.map((s) => {
-									if (s.id !== activeSessionId) return s;
-									return {
-										...s,
-										state: 'idle' as const,
-										busySource: undefined,
-										thinkingStartTime: undefined,
-										currentCycleTokens: undefined,
-										currentCycleBytes: undefined,
-										aiTabs: s.aiTabs?.map((tab) => ({
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										})),
-									};
-								})
-							);
+							updateSessionWith(activeSessionId, (s) => ({
+								...s,
+								state: 'idle' as const,
+								busySource: undefined,
+								thinkingStartTime: undefined,
+								currentCycleTokens: undefined,
+								currentCycleBytes: undefined,
+								aiTabs: s.aiTabs?.map((tab) => ({
+									...tab,
+									state: 'idle' as const,
+									thinkingStartTime: undefined,
+								})),
+							}));
 							console.log('[Debug] Reset busy state for session:', activeSessionId);
 							setQuickActionOpen(false);
 						},
