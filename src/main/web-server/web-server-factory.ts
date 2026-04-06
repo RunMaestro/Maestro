@@ -140,6 +140,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						createdAt: tab.createdAt,
 						state: tab.state || 'idle',
 						thinkingStartTime: tab.thinkingStartTime || null,
+						hasUnread: tab.hasUnread ?? false,
 					})) || [];
 
 				return {

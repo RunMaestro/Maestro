@@ -50,6 +50,7 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	hasUnread?: boolean;
 }
 
 /**
