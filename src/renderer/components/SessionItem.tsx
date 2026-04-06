@@ -94,12 +94,14 @@ export const SessionItem = memo(function SessionItem({
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
-		const base = `cursor-move flex flex-col group border-l-2 transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
+		const isWorktree = variant === 'worktree';
+		// Worktree items stay horizontal (compact single row); all others stack vertically
+		const base = `cursor-move flex ${isWorktree ? 'items-center justify-between' : 'flex-col'} group border-l-2 transition-all hover:bg-opacity-50 ${isDragging ? 'opacity-50' : ''}`;
 
 		if (variant === 'flat') {
 			return `mx-3 px-3 py-2 rounded mb-1 ${base}`;
 		}
-		if (variant === 'worktree') {
+		if (isWorktree) {
 			// Worktree children have extra left padding and smaller text
 			return `pl-8 pr-4 py-1.5 ${base}`;
 		}
@@ -140,7 +142,10 @@ export const SessionItem = memo(function SessionItem({
 					}}
 				/>
 			) : (
-				<div className="flex items-center gap-1.5 min-w-0" onDoubleClick={onStartRename}>
+				<div
+					className={`flex items-center gap-1.5 min-w-0 ${variant === 'worktree' ? 'flex-1' : ''}`}
+					onDoubleClick={onStartRename}
+				>
 					{/* Bookmark icon (only in bookmark variant, always filled) */}
 					{variant === 'bookmark' && session.bookmarked && (
 						<Bookmark
@@ -170,8 +175,10 @@ export const SessionItem = memo(function SessionItem({
 				</div>
 			)}
 
-			{/* Metadata + indicators row */}
-			<div className="flex items-center gap-2 text-[10px] mt-0.5">
+			{/* Metadata + indicators row (stacks below name; for worktree sits inline to the right) */}
+			<div
+				className={`flex items-center gap-2 text-[10px] ${variant === 'worktree' ? 'shrink-0 ml-2' : 'mt-0.5'}`}
+			>
 				{/* Left: metadata (hidden for worktree) */}
 				{variant !== 'worktree' && (
 					<div className="flex items-center gap-2 opacity-70">
