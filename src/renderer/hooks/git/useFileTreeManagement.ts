@@ -400,8 +400,8 @@ export function useFileTreeManagement(
 	 * Shows streaming progress updates during loading (useful for slow SSH connections).
 	 */
 	useEffect(() => {
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+		if (!activeSession) return;
+		const session = activeSession;
 
 		// Only load if file tree is empty, not already loading, and hasn't been loaded yet
 		// fileTreeStats is set after successful load, so we use it to detect "loaded but empty"
@@ -568,7 +568,7 @@ export function useFileTreeManagement(
 					signalInitialFileTreeReady();
 				});
 		}
-	}, [activeSessionId, sessions, sshContextOptions, localOptions, nextSeq, isStale]);
+	}, [activeSession, sshContextOptions, localOptions, nextSeq, isStale]);
 
 	// Cleanup retry timers on unmount
 	useEffect(() => {
@@ -586,12 +586,11 @@ export function useFileTreeManagement(
 		if (prevLocalOptionsRef.current === localOptions) return;
 		prevLocalOptionsRef.current = localOptions;
 
-		if (!activeSessionId) return;
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session || !session.fileTreeStats) return; // only re-scan already-loaded sessions
+		if (!activeSession) return;
+		if (!activeSession.fileTreeStats) return; // only re-scan already-loaded sessions
 
-		refreshFileTree(activeSessionId);
-	}, [activeSessionId, sessions, localOptions, refreshFileTree]);
+		refreshFileTree(activeSession.id);
+	}, [activeSession, localOptions, refreshFileTree]);
 
 	/**
 	 * Migration: Fetch stats for sessions that have a file tree but no stats.
@@ -599,8 +598,8 @@ export function useFileTreeManagement(
 	 * Only fetches stats - doesn't re-fetch the file tree since it's already loaded.
 	 */
 	useEffect(() => {
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
+		if (!activeSession) return;
+		const session = activeSession;
 
 		// Only migrate if: has file tree, no stats, no error, not loading
 		const needsStatsMigration =
@@ -643,7 +642,7 @@ export function useFileTreeManagement(
 					sessionId,
 				});
 			});
-	}, [activeSessionId, sessions]);
+	}, [activeSession]);
 
 	/**
 	 * Filter file tree based on search query.
