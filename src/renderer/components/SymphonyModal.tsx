@@ -64,6 +64,7 @@ import {
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { formatDurationCompact as formatDurationMs } from '../../shared/formatters';
+import { GhostIconButton } from './ui/GhostIconButton';
 
 // ============================================================================
 // Types
@@ -564,13 +565,9 @@ function RepositoryDetailView({
 				style={{ borderColor: theme.colors.border }}
 			>
 				<div className="flex items-center gap-3">
-					<button
-						onClick={onBack}
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="Back (Esc)"
-					>
+					<GhostIconButton onClick={onBack} size="md" tooltip="Back (Esc)">
 						<ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 					<div className="flex items-center gap-2">
 						<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
@@ -586,14 +583,13 @@ function RepositoryDetailView({
 						<span>{categoryInfo.emoji}</span>
 						<span>{categoryInfo.label}</span>
 					</span>
-					<button
-						type="button"
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="View repository on GitHub"
+					<GhostIconButton
+						size="md"
+						tooltip="View repository on GitHub"
 						onClick={() => handleOpenExternal(repo.url)}
 					>
 						<ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 			</div>
 
@@ -1033,17 +1029,17 @@ function ActiveContributionCard({
 					)}
 				</div>
 				<div className="flex items-center gap-2 shrink-0">
-					<button
+					<GhostIconButton
 						onClick={onSync}
 						disabled={isSyncing}
-						className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
-						title="Sync status with GitHub"
+						className="disabled:opacity-50"
+						tooltip="Sync status with GitHub"
 					>
 						<RefreshCw
 							className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
 							style={{ color: theme.colors.textDim }}
 						/>
-					</button>
+					</GhostIconButton>
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
 						style={{ backgroundColor: statusInfo.color + '20', color: statusInfo.color }}
@@ -1853,24 +1849,21 @@ export function SymphonyModal({
 										{fromCache ? `Cached ${formatCacheAge(cacheAge)}` : 'Live'}
 									</span>
 								)}
-								<button
+								<GhostIconButton
 									onClick={() => refresh(true)}
 									disabled={isRefreshing}
-									className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
-									title="Refresh"
+									size="md"
+									className="disabled:opacity-50"
+									tooltip="Refresh"
 								>
 									<RefreshCw
 										className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`}
 										style={{ color: theme.colors.textDim }}
 									/>
-								</button>
-								<button
-									onClick={onClose}
-									className="p-1.5 rounded hover:bg-white/10 transition-colors"
-									title="Close (Esc)"
-								>
+								</GhostIconButton>
+								<GhostIconButton onClick={onClose} size="md" tooltip="Close (Esc)">
 									<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-								</button>
+								</GhostIconButton>
 							</div>
 						</div>
 

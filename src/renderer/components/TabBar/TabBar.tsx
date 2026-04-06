@@ -10,6 +10,7 @@ import { TerminalTabItem } from './TerminalTabItem';
 import { NewTabPopover } from './NewTabPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import type { TabBarProps } from './types';
+import { GhostIconButton } from '../ui/GhostIconButton';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
@@ -336,14 +337,13 @@ function TabBarInner({
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
 				{onOpenTabSearch && (
-					<button
+					<GhostIconButton
 						onClick={onOpenTabSearch}
-						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textDim }}
-						title={`Search tabs (${formatShortcutKeys(tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't'])})`}
+						tooltip={`Search tabs (${formatShortcutKeys(tabShortcuts.tabSwitcher?.keys ?? ['Alt', 'Meta', 't'])})`}
 					>
 						<Search className="w-4 h-4" />
-					</button>
+					</GhostIconButton>
 				)}
 				<button
 					onClick={toggleUnreadFilter}

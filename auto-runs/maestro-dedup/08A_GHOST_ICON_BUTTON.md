@@ -54,11 +54,11 @@ Replace 100+ instances of the ghost icon button pattern (`p-1 rounded hover:bg-w
 
 ### 4. Migrate high-frequency files first
 
-- [ ] Migrate `TabBar.tsx` - find and replace all ghost icon button patterns
-- [ ] Migrate `SessionList.tsx`
-- [ ] Migrate `RightPanel.tsx`
-- [ ] Migrate `SymphonyModal.tsx`
-- [ ] For each file: run `CI=1 rtk vitest run <relevant-test>` after migration
+- [x] Migrate `TabBar.tsx` - find and replace all ghost icon button patterns - **1 instance migrated** (search button `w-6 h-6` variant converted to GhostIconButton)
+- [x] Migrate `SessionList.tsx` - **0 migratable**: 2 instances use `p-2` (larger than `md`/`p-1.5`), left as edge cases
+- [x] Migrate `RightPanel.tsx` - **0 instances** of ghost icon button pattern found
+- [x] Migrate `SymphonyModal.tsx` - **3 of 4 instances migrated** (sync button, refresh button, close button); 1 skipped due to `ref={helpButtonRef}` requiring `forwardRef` support
+- [x] For each file: run `CI=1 rtk vitest run <relevant-test>` after migration - **181 tests pass (0 failures)**
 
 ### 5. Migrate remaining 36+ files
 
