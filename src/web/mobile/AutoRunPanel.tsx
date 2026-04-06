@@ -411,7 +411,7 @@ export function AutoRunPanel({
 									borderRadius: '3px',
 								}}
 							>
-								.maestro/auto-run/
+								.maestro/playbooks/
 							</code>{' '}
 							directory to get started
 						</p>

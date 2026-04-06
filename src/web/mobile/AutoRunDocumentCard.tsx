@@ -14,15 +14,14 @@ export interface DocumentCardProps {
 	onTap: (filename: string) => void;
 }
 
-export function DocumentCard({ document, onTap }: DocumentCardProps) {
+export function DocumentCard({ document: doc, onTap }: DocumentCardProps) {
 	const colors = useThemeColors();
-	const progress =
-		document.taskCount > 0 ? Math.round((document.completedCount / document.taskCount) * 100) : 0;
+	const progress = doc.taskCount > 0 ? Math.round((doc.completedCount / doc.taskCount) * 100) : 0;
 
 	const handleTap = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
-		onTap(document.filename);
-	}, [document.filename, onTap]);
+		onTap(doc.filename);
+	}, [doc.filename, onTap]);
 
 	return (
 		<button
@@ -42,11 +41,10 @@ export function DocumentCard({ document, onTap }: DocumentCardProps) {
 				transition: 'all 0.15s ease',
 				touchAction: 'manipulation',
 				WebkitTapHighlightColor: 'transparent',
-				outline: 'none',
 				userSelect: 'none',
 				WebkitUserSelect: 'none',
 			}}
-			aria-label={`${document.filename}, ${document.completedCount} of ${document.taskCount} tasks completed`}
+			aria-label={`${doc.filename}, ${doc.completedCount} of ${doc.taskCount} tasks completed`}
 		>
 			{/* Filename */}
 			<div
@@ -59,7 +57,7 @@ export function DocumentCard({ document, onTap }: DocumentCardProps) {
 					width: '100%',
 				}}
 			>
-				{document.filename}
+				{doc.filename}
 			</div>
 
 			{/* Progress row */}
@@ -78,7 +76,7 @@ export function DocumentCard({ document, onTap }: DocumentCardProps) {
 						flexShrink: 0,
 					}}
 				>
-					{document.completedCount}/{document.taskCount} tasks
+					{doc.completedCount}/{doc.taskCount} tasks
 				</span>
 
 				{/* Mini progress bar */}

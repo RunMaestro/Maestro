@@ -551,6 +551,7 @@ interface MaestroAPI {
 				createdAt: number;
 				state: 'idle' | 'busy';
 				thinkingStartTime?: number | null;
+				hasUnread?: boolean;
 			}>,
 			activeTabId: string
 		) => Promise<void>;
