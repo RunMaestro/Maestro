@@ -3,6 +3,7 @@ import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { updateSessionWith, updateActiveAiTab } from '../../stores/sessionStore';
 
 // Font size keyboard shortcut constants
 const FONT_SIZE_STEP = 2;
@@ -21,7 +22,7 @@ const FONT_SIZE_DEFAULT = 14;
  * - activeFocus, activeRightTab: UI focus state
  * - Various modal open states (quickActionOpen, settingsModalOpen, etc.)
  * - hasOpenLayers, hasOpenModal: Layer stack functions
- * - State setters (setLeftSidebarOpen, setSessions, etc.)
+ * - State setters (setLeftSidebarOpen, setGroups, etc.)
  * - Handler functions (addNewSession, deleteSession, cycleSession, etc.)
  * - Tab management (createTab, closeTab, navigateToNextTab, etc.)
  * - Navigation handlers (handleSidebarNavigation, handleTabNavigation, etc.)
@@ -549,9 +550,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.activeSession && !ctx.activeGroupChatId) {
 					const result = ctx.navigateToClosestTerminalTab(ctx.activeSession);
 					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
-						);
+						updateSessionWith(ctx.activeSession!.id, () => result.session);
 						// Focus the terminal after switching
 						setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
 					} else if (ctx.activeSessionId) {
@@ -641,9 +640,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					});
 					if (result) {
 						const newSession = { ...result.session, inputMode: 'ai' as const };
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? newSession : s))
-						);
+						updateSessionWith(ctx.activeSession!.id, () => newSession);
 						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
 						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
@@ -723,9 +720,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					const result = ctx.reopenUnifiedClosedTab(ctx.activeSession);
 					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === ctx.activeSession!.id ? result.session : s))
-						);
+						updateSessionWith(ctx.activeSession!.id, () => result.session);
 						trackShortcut('reopenClosedTab');
 					}
 				}
@@ -756,32 +751,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.activeSession.inputMode === 'ai') {
 					if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
 						e.preventDefault();
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => {
-								if (s.id !== ctx.activeSession!.id) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab: AITab) =>
-										tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-									),
-								};
-							})
-						);
+						updateActiveAiTab(ctx.activeSession!.id, (tab) => ({
+							...tab,
+							readOnlyMode: !tab.readOnlyMode,
+						}));
 						trackShortcut('toggleReadOnlyMode');
 					}
 					if (ctx.isTabShortcut(e, 'toggleSaveToHistory')) {
 						e.preventDefault();
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => {
-								if (s.id !== ctx.activeSession!.id) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab: AITab) =>
-										tab.id === s.activeTabId ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-									),
-								};
-							})
-						);
+						updateActiveAiTab(ctx.activeSession!.id, (tab) => ({
+							...tab,
+							saveToHistory: !tab.saveToHistory,
+						}));
 						trackShortcut('toggleSaveToHistory');
 					}
 					if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
@@ -791,40 +772,29 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 							if (current === 'on') return 'sticky';
 							return 'off';
 						};
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => {
-								if (s.id !== ctx.activeSession!.id) return s;
+						updateActiveAiTab(ctx.activeSession!.id, (tab) => {
+							if (tab.wizardState?.isActive) {
 								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab: AITab) => {
-										if (tab.id !== s.activeTabId) return tab;
-										if (tab.wizardState?.isActive) {
-											return {
-												...tab,
-												wizardState: {
-													...tab.wizardState,
-													showWizardThinking: !tab.wizardState.showWizardThinking,
-													thinkingContent: !tab.wizardState.showWizardThinking
-														? ''
-														: tab.wizardState.thinkingContent,
-												},
-											};
-										}
-										const newMode = cycleThinkingMode(tab.showThinking);
-										if (newMode === 'off') {
-											return {
-												...tab,
-												showThinking: 'off',
-												logs: tab.logs.filter(
-													(l) => l.source !== 'thinking' && l.source !== 'tool'
-												),
-											};
-										}
-										return { ...tab, showThinking: newMode };
-									}),
+									...tab,
+									wizardState: {
+										...tab.wizardState,
+										showWizardThinking: !tab.wizardState.showWizardThinking,
+										thinkingContent: !tab.wizardState.showWizardThinking
+											? ''
+											: tab.wizardState.thinkingContent,
+									},
 								};
-							})
-						);
+							}
+							const newMode = cycleThinkingMode(tab.showThinking);
+							if (newMode === 'off') {
+								return {
+									...tab,
+									showThinking: 'off',
+									logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+								};
+							}
+							return { ...tab, showThinking: newMode };
+						});
 						trackShortcut('toggleShowThinking');
 					}
 					if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
@@ -842,23 +812,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// Cycles through ALL tab types (AI, file, terminal) via unifiedTabOrder
 				if (ctx.isTabShortcut(e, 'nextTab')) {
 					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
+					updateSessionWith(ctx.activeSessionId, (current) => {
 						const result = ctx.navigateToNextUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+						return result ? result.session : current;
 					});
 					trackShortcut('nextTab');
 				}
 				if (ctx.isTabShortcut(e, 'prevTab')) {
 					e.preventDefault();
-					ctx.setSessions((prev: Session[]) => {
-						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-						if (!current) return prev;
+					updateSessionWith(ctx.activeSessionId, (current) => {
 						const result = ctx.navigateToPrevUnifiedTab(current, ctx.showUnreadOnly);
-						if (!result) return prev;
-						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+						return result ? result.session : current;
 					});
 					trackShortcut('prevTab');
 				}
@@ -868,12 +832,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					for (let i = 1; i <= 9; i++) {
 						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
 							e.preventDefault();
-							ctx.setSessions((prev: Session[]) => {
-								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-								if (!current) return prev;
+							updateSessionWith(ctx.activeSessionId, (current) => {
 								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
-								if (!result) return prev;
-								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+								return result ? result.session : current;
 							});
 							trackShortcut(`goToTab${i}`);
 							break;
@@ -881,12 +842,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					if (ctx.isTabShortcut(e, 'goToLastTab')) {
 						e.preventDefault();
-						ctx.setSessions((prev: Session[]) => {
-							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
-							if (!current) return prev;
+						updateSessionWith(ctx.activeSessionId, (current) => {
 							const result = ctx.navigateToLastUnifiedTab(current);
-							if (!result) return prev;
-							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+							return result ? result.session : current;
 						});
 						trackShortcut('goToLastTab');
 					}

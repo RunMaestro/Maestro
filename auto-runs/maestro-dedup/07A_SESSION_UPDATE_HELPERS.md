@@ -92,9 +92,9 @@ updateAiTab(sessionId, tabId, (tab) => ({ ...tab, someField: newValue }));
 
 ### 6. Remove setSessions from component prop interfaces
 
-- [ ] Work bottom-up from leaf components: remove `setSessions` from each props interface after migration
-- [ ] Remove the prop from parent JSX where it was being passed
-- [ ] Verify no TypeScript errors: `rtk tsc -p tsconfig.main.json --noEmit`
+- [x] Work bottom-up from leaf components: remove `setSessions` from each props interface after migration - Verified: no renderer component Props or hook Deps interfaces contain `setSessions` as a member. The only interfaces with `setSessions` are: (1) `SessionStoreActions` in `sessionStore.ts` (the store definition itself, correct to keep), (2) `UseSessionPaginationResult` in `useSessionPagination.ts` (local `useState<ClaudeSession[]>` for API pagination, unrelated to store prop-drilling), (3) `useMobileSessionManagement` return type in `src/web/` (React useState, not Zustand - out of scope). Previous phases (3-5) already removed all prop-drilled `setSessions` from renderer interfaces.
+- [x] Remove the prop from parent JSX where it was being passed - Verified: zero `setSessions={...}` JSX prop-passing sites remain. All hooks/components now access `setSessions` via `useSessionStore.getState().setSessions` directly. Also cleaned up stale `setSessions` reference in `useMainKeyboardHandler.ts` JSDoc comment.
+- [x] Verify no TypeScript errors: `rtk tsc -p tsconfig.main.json --noEmit` - Both `tsconfig.main.json` and `tsconfig.lint.json` pass cleanly.
 
 ### 7. Verify full build
 
