@@ -30,7 +30,77 @@ textarea::placeholder {
 	font-style: italic;
 }
 
-/* Custom scrollbar styles - subtle by default, brighter on hover */
+/* ==========================================================================
+   App-wide themed scrollbars
+   ==========================================================================
+
+   Theme tokens (set on :root by useThemeStyles in src/renderer/hooks/ui/
+   useThemeStyles.ts):
+
+     --scrollbar-thumb        — idle thumb color (theme `border`)
+     --scrollbar-thumb-hover  — hover thumb color (theme `textDim`)
+     --scrollbar-thumb-active — actively-scrolling thumb (theme `accent`)
+     --scrollbar-track        — track tint (theme `bgActivity`)
+
+   Three layers, in order of specificity:
+
+   1) Global default (`*::-webkit-scrollbar`) — themes EVERY scrollable
+      element in the app, including the ~200 inline `overflow: auto`
+      containers that don't carry an explicit class. Width 10px, soft theme
+      colors. Works on light and dark themes.
+
+   2) `.scrollbar-thin` — slim 6px variant for tight UI areas (sidebars,
+      autocomplete dropdowns, command palettes, the right rail). Used in
+      ~50 components. Reuses the same CSS variables.
+
+   3) `.scrollbar-thin.scrolling` / `.scrollbar-thin.fading` — stateful
+      classes toggled by useThemeStyles to brighten the thumb during active
+      scrolling and fade it out after 1s of idle. Only fires for elements
+      with `.scrollbar-thin` (managed in JS to avoid wiring scroll listeners
+      to every element in the app).
+
+   Firefox: native `scrollbar-color` is set on `*` so non-WebKit Electron
+   builds and Firefox-based dev tools also get themed thumbs. Falls back
+   gracefully when CSS vars aren't set yet (initial paint before
+   useThemeStyles runs).
+*/
+
+/* (1) Global default scrollbar — themes every scrollable element */
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+	background-color: var(--scrollbar-thumb, rgba(255, 255, 255, 0.15));
+	border-radius: 6px;
+	/* Inset border via background-clip creates a small gap between the thumb
+	   and the track edges so the thumb looks floated rather than glued to the
+	   gutter. Border is transparent so it doesn't pick up theme bleed. */
+	border: 2px solid transparent;
+	background-clip: padding-box;
+	transition: background-color 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+	background-color: var(--scrollbar-thumb-hover, rgba(255, 255, 255, 0.3));
+}
+
+*::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+/* Firefox / non-WebKit fallback */
+* {
+	scrollbar-color: var(--scrollbar-thumb, rgba(255, 255, 255, 0.15)) transparent;
+	scrollbar-width: thin;
+}
+
+/* (2) Slim variant for tight UI areas — opt-in via .scrollbar-thin */
 .scrollbar-thin::-webkit-scrollbar {
 	width: 6px;
 	height: 6px;
@@ -41,31 +111,40 @@ textarea::placeholder {
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-	background: rgba(255, 255, 255, 0.15);
+	background-color: var(--scrollbar-thumb, rgba(255, 255, 255, 0.15));
 	border-radius: 3px;
+	border: none;
+	background-clip: border-box;
 	transition: background-color 0.2s ease;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-	background: rgba(255, 255, 255, 0.3);
+	background-color: var(--scrollbar-thumb-hover, rgba(255, 255, 255, 0.3));
 }
 
-/* Scrollbar with highlight color when actively scrolling */
+/* (3) Stateful: brighten when actively scrolling (managed by useThemeStyles) */
 .scrollbar-thin.scrolling::-webkit-scrollbar-thumb {
-	background: var(--highlight-color, var(--accent-color, rgba(99, 102, 241, 0.8)));
+	background-color: var(
+		--scrollbar-thumb-active,
+		var(--highlight-color, var(--accent-color, rgba(99, 102, 241, 0.8)))
+	);
 	transition: background-color 0.15s ease;
 }
 
 .scrollbar-thin.scrolling::-webkit-scrollbar-thumb:hover {
-	background: var(--highlight-color, var(--accent-color, rgba(99, 102, 241, 1)));
+	background-color: var(
+		--scrollbar-thumb-active,
+		var(--highlight-color, var(--accent-color, rgba(99, 102, 241, 1)))
+	);
 }
 
-/* Scrollbar fading out state - gradual transition to transparent */
+/* (3) Stateful: fade out after scroll idle */
 .scrollbar-thin.fading::-webkit-scrollbar-thumb {
-	background: transparent;
+	background-color: transparent;
 	transition: background-color 0.5s ease;
 }
 
+/* Hide scrollbars completely (cross-browser) */
 .no-scrollbar::-webkit-scrollbar {
 	display: none;
 }
