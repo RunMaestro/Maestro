@@ -99,6 +99,9 @@ export type {
 	UseMergeTransferHandlersReturn,
 } from './useMergeTransferHandlers';
 
+// Fork conversation (create new session from conversation history)
+export { useForkConversation } from './useForkConversation';
+
 // Agent IPC listeners (process event routing)
 export { useAgentListeners, getErrorTitleForType } from './useAgentListeners';
 export type { UseAgentListenersDeps } from './useAgentListeners';
