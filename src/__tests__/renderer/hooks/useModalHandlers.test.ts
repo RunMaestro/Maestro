@@ -1293,7 +1293,7 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('renameTab')).toBe(false);
 		});
 
-		it('handleQuickActionsRenameTab does nothing when tab has no agentSessionId', () => {
+		it('handleQuickActionsRenameTab works even when tab has no agentSessionId', () => {
 			const tab = createMockAITab({ id: 'tab-1', agentSessionId: null });
 			const session = createMockSession({
 				id: 'session-1',
@@ -1310,7 +1310,7 @@ describe('useModalHandlers', () => {
 				result.current.handleQuickActionsRenameTab();
 			});
 
-			expect(useModalStore.getState().isOpen('renameTab')).toBe(false);
+			expect(useModalStore.getState().isOpen('renameTab')).toBe(true);
 		});
 
 		it('handleQuickActionsOpenTabSwitcher opens tab switcher when in AI mode', () => {

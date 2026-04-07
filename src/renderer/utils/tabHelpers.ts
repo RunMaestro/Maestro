@@ -162,6 +162,49 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
  * @param tab - The AI tab being renamed
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
+/**
+ * Get the display name for a tab.
+ * Priority: name > agent session ID marker > tab ID marker
+ *
+ * Handles different agent session ID formats:
+ * - Claude UUID: "abc123-def456-ghi789" → "ABC123" (first octet)
+ * - OpenCode: "SES_4BCDFE8C5FFE4KC1UV9NSMYEDB" → "SES_4BCD" (prefix + 4 chars)
+ * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
+ *
+ * Falls back to the tab's own UUID when no agent session ID is available yet.
+ */
+export function getTabDisplayName(tab: AITab): string {
+	if (tab.name) {
+		return tab.name;
+	}
+	// Format agent session ID based on provider convention
+	if (tab.agentSessionId) {
+		return formatSessionId(tab.agentSessionId);
+	}
+	// No agentSessionId yet — use the tab's own UUID as display name
+	return formatSessionId(tab.id);
+}
+
+/**
+ * Format a session/tab ID into a short display label.
+ */
+function formatSessionId(id: string): string {
+	// OpenCode format: ses_XXXX... or SES_XXXX...
+	if (id.toLowerCase().startsWith('ses_')) {
+		return `SES_${id.slice(4, 8).toUpperCase()}`;
+	}
+	// Codex format: thread_XXXX...
+	if (id.toLowerCase().startsWith('thread_')) {
+		return `THR_${id.slice(7, 11).toUpperCase()}`;
+	}
+	// UUID format: has dashes, return first octet
+	if (id.includes('-')) {
+		return id.split('-')[0].toUpperCase();
+	}
+	// Generic fallback: first 8 chars uppercase
+	return id.slice(0, 8).toUpperCase();
+}
+
 export function getInitialRenameValue(tab: AITab): string {
 	return tab.name || '';
 }

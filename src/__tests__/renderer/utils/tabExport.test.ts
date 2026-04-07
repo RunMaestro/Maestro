@@ -117,12 +117,13 @@ describe('tabExport', () => {
 				expect(html).toContain('<title>Session ABC12345 - Maestro Tab Export</title>');
 			});
 
-			it('falls back to "New Session" when no name or session ID', () => {
+			it('falls back to tab ID marker when no name or session ID', () => {
 				const tab = createMockTab({ name: null, agentSessionId: null });
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
-				expect(html).toContain('New Session');
-				expect(html).toContain('<title>New Session - Maestro Tab Export</title>');
+				// tab.id is "tab-001" → getTabDisplayName returns "TAB" → tabName = "Session TAB"
+				expect(html).toContain('Session TAB');
+				expect(html).toContain('<title>Session TAB - Maestro Tab Export</title>');
 			});
 		});
 
@@ -832,7 +833,7 @@ describe('tabExport', () => {
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
 				expect(html).toContain('<!DOCTYPE html>');
-				expect(html).toContain('New Session');
+				expect(html).toContain('Session TAB');
 			});
 		});
 

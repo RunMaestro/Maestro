@@ -10,6 +10,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
+import { getTabDisplayName } from '../utils/tabHelpers';
 
 /** Named session from the store (not currently open) */
 interface NamedSession {
@@ -94,16 +95,6 @@ function getContextPercentage(tab: AITab, agentId?: ToolType): number {
  * Get the display name for a tab.
  * Priority: name > first UUID octet > "New Session"
  */
-function getTabDisplayName(tab: AITab): string {
-	if (tab.name) {
-		return tab.name;
-	}
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Session';
-}
-
 /**
  * Get the UUID pill display (first octet of session ID)
  */
