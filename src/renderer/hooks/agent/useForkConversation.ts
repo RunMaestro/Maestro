@@ -92,6 +92,8 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 			newTab.awaitingSessionId = true;
 
 			// Copy relevant session config from source
+			newSession.cwd = session.cwd;
+			newSession.fullPath = session.fullPath;
 			newSession.isGitRepo = session.isGitRepo;
 			newSession.customPath = session.customPath;
 			newSession.customArgs = session.customArgs;
