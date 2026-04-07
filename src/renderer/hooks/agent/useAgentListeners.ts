@@ -30,6 +30,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import type { HistoryEntryInput } from './useAgentSessionManagement';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
+import { useBatchStore } from '../../stores/batchStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import {
@@ -921,6 +922,19 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const unsubscribeSessionId = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {
 				if (isBatchSession(sessionId)) {
+					// Store the live agent session ID in batch state for UI display
+					const batchMatch = sessionId.match(/^(.+)-batch-\d+$/);
+					if (batchMatch) {
+						const baseSessionId = batchMatch[1];
+						useBatchStore.getState().setBatchRunStates((prev) => {
+							const existing = prev[baseSessionId];
+							if (!existing) return prev;
+							return {
+								...prev,
+								[baseSessionId]: { ...existing, currentAgentSessionId: agentSessionId },
+							};
+						});
+					}
 					return;
 				}
 

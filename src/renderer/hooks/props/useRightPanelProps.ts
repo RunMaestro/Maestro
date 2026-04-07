@@ -73,7 +73,11 @@ export interface UseRightPanelPropsDeps {
 	handleAbortBatchOnError: () => void;
 	handleResumeAfterError: () => void;
 	handleJumpToAgentSession: (agentSessionId: string) => void;
-	handleResumeSession: (agentSessionId: string) => void;
+	handleResumeSession: (
+		agentSessionId: string,
+		providedMessages?: undefined,
+		sessionName?: string
+	) => void;
 
 	// Modal handlers
 	handleOpenAboutModal: () => void;
@@ -134,7 +138,8 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
 			onResumeSession: deps.handleResumeSession,
-			onOpenSessionAsTab: deps.handleResumeSession,
+			onOpenSessionAsTab: (agentSessionId: string, sessionName?: string) =>
+				deps.handleResumeSession(agentSessionId, undefined, sessionName),
 
 			// Modal handlers
 			onOpenAboutModal: deps.handleOpenAboutModal,

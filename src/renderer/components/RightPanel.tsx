@@ -16,6 +16,7 @@ import {
 	AlertTriangle,
 	Play,
 	XCircle,
+	ExternalLink,
 } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -100,7 +101,7 @@ interface RightPanelProps {
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, sessionName?: string) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
@@ -597,6 +598,37 @@ export const RightPanel = memo(
 										{currentSessionBatchState.isStopping ? 'Stopping...' : 'Auto Run Active'}
 									</span>
 								)}
+								{/* Current agent session ID badge — matches history entry style */}
+								{(() => {
+									// Use live agent session ID from batch state (set by onSessionId IPC handler),
+									// falling back to the last completed session ID
+									const currentAgentSessionId =
+										currentSessionBatchState.currentAgentSessionId ||
+										(currentSessionBatchState.sessionIds?.length > 0
+											? currentSessionBatchState.sessionIds[
+													currentSessionBatchState.sessionIds.length - 1
+												]
+											: null);
+									if (!currentAgentSessionId || !onOpenSessionAsTab) return null;
+									const shortId = currentAgentSessionId.split('-')[0].toUpperCase();
+									return (
+										<button
+											onClick={() =>
+												onOpenSessionAsTab!(currentAgentSessionId, `${shortId} (snapshot)`)
+											}
+											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase transition-colors hover:opacity-80"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+												border: `1px solid ${theme.colors.accent}40`,
+											}}
+											title={`Open session ${currentAgentSessionId}`}
+										>
+											<span className="truncate">{shortId}</span>
+											<ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+										</button>
+									);
+								})()}
 								{currentSessionBatchState.worktreeActive && (
 									<span title={`Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`}>
 										<GitBranch className="w-4 h-4" style={{ color: theme.colors.warning }} />
