@@ -1,0 +1,35 @@
+{
+	"origins": {
+		"/tmp/showcase-projects/data-ai": {
+			"00000000-0000-4000-a000-000000000005": "user"
+		},
+		"/tmp/showcase-projects/investor-portal": {
+			"00000000-0000-4000-a000-000000000011": "user"
+		},
+		"/tmp/showcase-projects/maestro-mcs": {
+			"00000000-0000-4000-a000-00000000001d": "user"
+		},
+		"/tmp/showcase-projects/kinesis-mcs": {
+			"00000000-0000-4000-a000-000000000023": "user"
+		},
+		"$CWD": {
+			"00000000-0000-4000-a000-000000000029": "user",
+			"00000000-0000-4000-a000-00000000002d": "user",
+			"00000000-0000-4000-a000-000000000031": "user",
+			"00000000-0000-4000-a000-000000000035": "user",
+			"00000000-0000-4000-a000-000000000039": "user"
+		},
+		"/tmp/showcase-projects/prototyper": {
+			"00000000-0000-4000-a000-00000000003f": "user"
+		},
+		"/tmp/showcase-projects/mirix-mcp": {
+			"00000000-0000-4000-a000-00000000004b": "user"
+		},
+		"/tmp/showcase-projects/stripe-mcp": {
+			"00000000-0000-4000-a000-000000000051": "user"
+		},
+		"/tmp/showcase-projects/dev-sandbox": {
+			"00000000-0000-4000-a000-000000000057": "user"
+		}
+	}
+}

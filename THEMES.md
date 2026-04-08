@@ -75,3 +75,41 @@ It's a vibe.
 
 An homage to InQuest.net, acquired by OPSWAT in 2024.
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/7d10495d-6d66-41ce-83d9-36ba8681e3db" />
+
+---
+
+## Showcase Commands
+
+Launch the showcase in any theme with a window sized to match these screenshots (1796x1151 logical pixels, 3592x2302 at 2x retina):
+
+```bash
+# Default (Dracula)
+npm run dev:showcase
+
+# With a specific theme
+npm run dev:showcase -- --theme <id>
+
+# With theme and exact screenshot window size
+npm run dev:showcase -- --theme <id> --size 1796x1151
+```
+
+### Commands per theme
+
+| Theme            | Command                                                             |
+| ---------------- | ------------------------------------------------------------------- |
+| Dracula          | `npm run dev:showcase -- --theme dracula --size 1796x1151`          |
+| Monokai          | `npm run dev:showcase -- --theme monokai --size 1796x1151`          |
+| Nord             | `npm run dev:showcase -- --theme nord --size 1796x1151`             |
+| Tokyo Night      | `npm run dev:showcase -- --theme tokyo-night --size 1796x1151`      |
+| Catppuccin Mocha | `npm run dev:showcase -- --theme catppuccin-mocha --size 1796x1151` |
+| Gruvbox Dark     | `npm run dev:showcase -- --theme gruvbox-dark --size 1796x1151`     |
+| Github           | `npm run dev:showcase -- --theme github-light --size 1796x1151`     |
+| Solarized Light  | `npm run dev:showcase -- --theme solarized-light --size 1796x1151`  |
+| One Light        | `npm run dev:showcase -- --theme one-light --size 1796x1151`        |
+| Gruvbox Light    | `npm run dev:showcase -- --theme gruvbox-light --size 1796x1151`    |
+| Catppuccin Latte | `npm run dev:showcase -- --theme catppuccin-latte --size 1796x1151` |
+| Ayu Light        | `npm run dev:showcase -- --theme ayu-light --size 1796x1151`        |
+| Pedurple         | `npm run dev:showcase -- --theme pedurple --size 1796x1151`         |
+| Maestro's Choice | `npm run dev:showcase -- --theme maestros-choice --size 1796x1151`  |
+| Dre Synth        | `npm run dev:showcase -- --theme dre-synth --size 1796x1151`        |
+| InQuest          | `npm run dev:showcase -- --theme inquest --size 1796x1151`          |
