@@ -28,9 +28,13 @@ Maestro ships with a variety of themes that fall under three categories: Dark, L
 
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/3dab3ae6-ff18-4d66-aca5-ff5ef57096f2" />
 
+### Solarized Dark
+
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/24033392-3ac5-495c-9cd9-2587d2f0b5eb" />
+
 ## Light
 
-### Github
+### GitHub
 
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/b09e466a-5dbf-4510-80b9-a84815c52d14" />
 
@@ -103,7 +107,8 @@ npm run dev:showcase -- --theme <id> --size 1796x1151
 | Tokyo Night      | `npm run dev:showcase -- --theme tokyo-night --size 1796x1151`      |
 | Catppuccin Mocha | `npm run dev:showcase -- --theme catppuccin-mocha --size 1796x1151` |
 | Gruvbox Dark     | `npm run dev:showcase -- --theme gruvbox-dark --size 1796x1151`     |
-| Github           | `npm run dev:showcase -- --theme github-light --size 1796x1151`     |
+| Solarized Dark   | `npm run dev:showcase -- --theme solarized-dark --size 1796x1151`   |
+| GitHub           | `npm run dev:showcase -- --theme github-light --size 1796x1151`     |
 | Solarized Light  | `npm run dev:showcase -- --theme solarized-light --size 1796x1151`  |
 | One Light        | `npm run dev:showcase -- --theme one-light --size 1796x1151`        |
 | Gruvbox Light    | `npm run dev:showcase -- --theme gruvbox-light --size 1796x1151`    |
@@ -113,3 +118,12 @@ npm run dev:showcase -- --theme <id> --size 1796x1151
 | Maestro's Choice | `npm run dev:showcase -- --theme maestros-choice --size 1796x1151`  |
 | Dre Synth        | `npm run dev:showcase -- --theme dre-synth --size 1796x1151`        |
 | InQuest          | `npm run dev:showcase -- --theme inquest --size 1796x1151`          |
+
+### Adding a screenshot
+
+To get a hosted image URL for a new theme screenshot:
+
+1. Take a screenshot while running the showcase at the correct size (`--size 1796x1151`)
+2. Open any GitHub issue or pull request in this repo
+3. Drag and drop the screenshot into the comment box — GitHub will upload it and generate a `https://github.com/user-attachments/assets/...` URL
+4. Copy that URL and use it in the `<img>` tag when adding the theme section above
