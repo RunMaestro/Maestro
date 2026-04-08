@@ -373,6 +373,43 @@ describe('AutoRunDocumentSelector', () => {
 			expect(defaultProps.onSelectDocument).toHaveBeenCalledWith('folder1/nested-doc');
 		});
 
+		it('auto-expands folders to reveal selected document when dropdown opens', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
+					documentTree={documentTree}
+					selectedDocument="folder1/subfolder/deep-doc"
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /deep-doc\.md/i });
+			fireEvent.click(button);
+
+			// Both folder1 and folder1/subfolder should be auto-expanded
+			expect(screen.getByText('deep-doc.md')).toBeInTheDocument();
+			// The selected file should have data-selected attribute
+			const selectedButton = screen.getByText('deep-doc.md').closest('button');
+			expect(selectedButton).toHaveAttribute('data-selected', 'true');
+		});
+
+		it('auto-expands parent folder for single-level nested selection', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
+					documentTree={documentTree}
+					selectedDocument="folder1/nested-doc"
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /nested-doc\.md/i });
+			fireEvent.click(button);
+
+			// folder1 should be auto-expanded, nested-doc visible
+			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
+		});
+
 		it('renders root-level file in tree', () => {
 			render(
 				<AutoRunDocumentSelector

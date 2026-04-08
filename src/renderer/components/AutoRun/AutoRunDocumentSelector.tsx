@@ -87,6 +87,36 @@ export function AutoRunDocumentSelector({
 	// Close dropdown when clicking outside
 	useClickOutside(dropdownRef, () => setIsOpen(false), isOpen);
 
+	// Auto-expand folders to reveal the selected document when dropdown opens
+	useEffect(() => {
+		if (isOpen && selectedDocument && selectedDocument.includes('/')) {
+			const parts = selectedDocument.split('/');
+			// Build all ancestor folder paths (e.g., "a", "a/b" for "a/b/file")
+			const folderPaths: string[] = [];
+			for (let i = 1; i < parts.length; i++) {
+				folderPaths.push(parts.slice(0, i).join('/'));
+			}
+			setExpandedFolders((prev) => {
+				const next = new Set(prev);
+				for (const fp of folderPaths) {
+					next.add(fp);
+				}
+				return next;
+			});
+		}
+	}, [isOpen, selectedDocument]);
+
+	// Scroll the selected document into view when dropdown opens
+	useEffect(() => {
+		if (isOpen && selectedDocument) {
+			// Allow DOM to render expanded folders first
+			requestAnimationFrame(() => {
+				const el = dropdownRef.current?.querySelector('[data-selected="true"]');
+				el?.scrollIntoView({ block: 'nearest' });
+			});
+		}
+	}, [isOpen, selectedDocument]);
+
 	// Close dropdown on Escape
 	useEffect(() => {
 		function handleKeyDown(event: KeyboardEvent) {
@@ -202,16 +232,18 @@ export function AutoRunDocumentSelector({
 		}
 
 		// File node
+		const isSelected = node.path === selectedDocument;
 		const taskPct = getTaskPercentage(node.path);
 		return (
 			<button
 				key={node.path}
 				onClick={() => handleSelectDocument(node.path)}
+				data-selected={isSelected || undefined}
 				className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
 				style={{
 					paddingLeft,
-					color: node.path === selectedDocument ? theme.colors.accent : theme.colors.textMain,
-					backgroundColor: node.path === selectedDocument ? theme.colors.bgActivity : 'transparent',
+					color: isSelected ? theme.colors.accent : theme.colors.textMain,
+					backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
 				}}
 			>
 				{/* Spacer matching chevron width for alignment with folders */}
@@ -304,16 +336,16 @@ export function AutoRunDocumentSelector({
 								// Fallback to flat list
 								documents.map((doc) => {
 									const taskPct = getTaskPercentage(doc);
+									const isDocSelected = doc === selectedDocument;
 									return (
 										<button
 											key={doc}
 											onClick={() => handleSelectDocument(doc)}
+											data-selected={isDocSelected || undefined}
 											className="w-full flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors hover:bg-white/5"
 											style={{
-												color:
-													doc === selectedDocument ? theme.colors.accent : theme.colors.textMain,
-												backgroundColor:
-													doc === selectedDocument ? theme.colors.bgActivity : 'transparent',
+												color: isDocSelected ? theme.colors.accent : theme.colors.textMain,
+												backgroundColor: isDocSelected ? theme.colors.bgActivity : 'transparent',
 											}}
 										>
 											<span
