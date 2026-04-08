@@ -1,0 +1,16 @@
+{
+	"groups": [
+		{
+			"id": "00000000-0000-4000-a000-000000000001",
+			"name": "BOOKMARKS",
+			"emoji": "⭐",
+			"collapsed": false
+		},
+		{
+			"id": "00000000-0000-4000-a000-000000000002",
+			"name": "PROJECTS",
+			"emoji": "📁",
+			"collapsed": false
+		}
+	]
+}

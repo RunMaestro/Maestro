@@ -1,0 +1,45 @@
+{
+	"id": "00000000-0000-4000-a000-00000000005b",
+	"name": "w/ @pedramamini",
+	"createdAt": 1775296800000,
+	"updatedAt": 1775297100000,
+	"moderatorAgentId": "claude-code",
+	"moderatorSessionId": "group-chat-00000000-0000-4000-a000-00000000005b-moderator",
+	"moderatorAgentSessionId": "00000000-0000-4000-a000-00000000005c",
+	"moderatorConfig": {},
+	"participants": [
+		{
+			"name": "Maestro",
+			"agentId": "claude-code",
+			"sessionId": "group-chat-00000000-0000-4000-a000-00000000005b-Maestro",
+			"agentSessionId": "00000000-0000-4000-a000-00000000005d",
+			"addedAt": 1775296800000,
+			"lastActivity": 1775296920000,
+			"lastSummary": "Provided April ship report with feature launches and health metrics.",
+			"contextUsage": 18,
+			"color": "#a6e22e",
+			"tokenCount": 4200,
+			"messageCount": 1,
+			"processingTimeMs": 12000,
+			"totalCost": 0.08
+		},
+		{
+			"name": "Prototyper",
+			"agentId": "claude-code",
+			"sessionId": "group-chat-00000000-0000-4000-a000-00000000005b-Prototyper",
+			"agentSessionId": "00000000-0000-4000-a000-00000000005e",
+			"addedAt": 1775296800000,
+			"lastActivity": 1775296980000,
+			"lastSummary": "Covered UI/UX updates shipped and prototype pipeline status.",
+			"contextUsage": 14,
+			"color": "#66d9ef",
+			"tokenCount": 3100,
+			"messageCount": 1,
+			"processingTimeMs": 9500,
+			"totalCost": 0.06
+		}
+	],
+	"logPath": "$USERDATA/group-chats/00000000-0000-4000-a000-00000000005b/chat.log",
+	"imagesDir": "$USERDATA/group-chats/00000000-0000-4000-a000-00000000005b/images",
+	"archived": false
+}
