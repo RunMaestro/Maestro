@@ -2491,7 +2491,7 @@ describe('NewInstanceModal', () => {
 				{
 					enabled: true,
 					remoteId: 'remote-1',
-					syncHistory: undefined,
+					syncHistory: false,
 					workingDirOverride: undefined,
 				}
 			);
