@@ -96,6 +96,11 @@ function createDeps(
 		rightPanelRef: { current: { openAutoRunResetTasksModal: vi.fn() } as any },
 		handleSummarizeAndContinue: vi.fn(),
 		processQueuedItem: vi.fn().mockResolvedValue(undefined),
+		handleCloseCurrentTab: vi.fn(),
+		handleUnifiedTabReorder: vi.fn(),
+		handleCopyContext: vi.fn(),
+		handleExportHtml: vi.fn().mockResolvedValue(undefined),
+		handlePublishTabGist: vi.fn(),
 		...overrides,
 	};
 }
@@ -1055,7 +1060,7 @@ describe('useQuickActionsHandlers', () => {
 	// Return type completeness
 	// ========================================================================
 	describe('return type', () => {
-		it('returns all seven handler functions', () => {
+		it('returns all handler functions', () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useQuickActionsHandlers(deps));
 
@@ -1066,6 +1071,12 @@ describe('useQuickActionsHandlers', () => {
 			expect(typeof result.current.handleQuickActionsToggleMarkdownEditMode).toBe('function');
 			expect(typeof result.current.handleQuickActionsSummarizeAndContinue).toBe('function');
 			expect(typeof result.current.handleQuickActionsAutoRunResetTasks).toBe('function');
+			expect(typeof result.current.handleQuickActionsCloseCurrentTab).toBe('function');
+			expect(typeof result.current.handleQuickActionsMoveTabToFirst).toBe('function');
+			expect(typeof result.current.handleQuickActionsMoveTabToLast).toBe('function');
+			expect(typeof result.current.handleQuickActionsCopyTabContext).toBe('function');
+			expect(typeof result.current.handleQuickActionsExportTabHtml).toBe('function');
+			expect(typeof result.current.handleQuickActionsPublishTabGist).toBe('function');
 		});
 
 		it('returns stable references for handlers with empty deps across renders', () => {
@@ -1078,6 +1089,141 @@ describe('useQuickActionsHandlers', () => {
 
 			// handleQuickActionsAutoRunResetTasks has [] deps so should always be stable
 			expect(secondAutoRunResetTasks).toBe(firstAutoRunResetTasks);
+		});
+	});
+
+	// ========================================================================
+	// Tab-level actions from command palette
+	// ========================================================================
+	describe('handleQuickActionsCloseCurrentTab', () => {
+		it('delegates to handleCloseCurrentTab', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsCloseCurrentTab();
+			});
+
+			expect(deps.handleCloseCurrentTab).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('handleQuickActionsMoveTabToFirst', () => {
+		it('reorders active tab to index 0', () => {
+			const tab1 = createTab({ id: 'tab-1' });
+			const tab2 = createTab({ id: 'tab-2' });
+			const session = createSession({
+				activeTabId: 'tab-2',
+				aiTabs: [tab1, tab2],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsMoveTabToFirst();
+			});
+
+			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(1, 0);
+		});
+
+		it('is a no-op when active tab is already first', () => {
+			const tab = createTab({ id: 'tab-1' });
+			const session = createSession({
+				activeTabId: 'tab-1',
+				aiTabs: [tab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsMoveTabToFirst();
+			});
+
+			expect(deps.handleUnifiedTabReorder).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('handleQuickActionsMoveTabToLast', () => {
+		it('reorders active tab to last index', () => {
+			const tab1 = createTab({ id: 'tab-1' });
+			const tab2 = createTab({ id: 'tab-2' });
+			const tab3 = createTab({ id: 'tab-3' });
+			const session = createSession({
+				activeTabId: 'tab-1',
+				aiTabs: [tab1, tab2, tab3],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsMoveTabToLast();
+			});
+
+			expect(deps.handleUnifiedTabReorder).toHaveBeenCalledWith(0, 2);
+		});
+
+		it('is a no-op when active tab is already last', () => {
+			const tab1 = createTab({ id: 'tab-1' });
+			const tab2 = createTab({ id: 'tab-2' });
+			const session = createSession({
+				activeTabId: 'tab-2',
+				aiTabs: [tab1, tab2],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
+
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsMoveTabToLast();
+			});
+
+			expect(deps.handleUnifiedTabReorder).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('handleQuickActionsCopyTabContext', () => {
+		it('delegates to handleCopyContext with tabId', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsCopyTabContext('tab-123');
+			});
+
+			expect(deps.handleCopyContext).toHaveBeenCalledWith('tab-123');
+		});
+	});
+
+	describe('handleQuickActionsExportTabHtml', () => {
+		it('delegates to handleExportHtml with tabId', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			await act(async () => {
+				await result.current.handleQuickActionsExportTabHtml('tab-456');
+			});
+
+			expect(deps.handleExportHtml).toHaveBeenCalledWith('tab-456');
+		});
+	});
+
+	describe('handleQuickActionsPublishTabGist', () => {
+		it('delegates to handlePublishTabGist with tabId', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useQuickActionsHandlers(deps));
+
+			act(() => {
+				result.current.handleQuickActionsPublishTabGist('tab-789');
+			});
+
+			expect(deps.handlePublishTabGist).toHaveBeenCalledWith('tab-789');
 		});
 	});
 });

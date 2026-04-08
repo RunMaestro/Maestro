@@ -36,6 +36,16 @@ export interface UseQuickActionsHandlersDeps {
 	handleSummarizeAndContinue: () => void;
 	/** Process a queued execution item */
 	processQueuedItem: (sessionId: string, item: any) => Promise<void>;
+	/** Close the current tab */
+	handleCloseCurrentTab: () => void;
+	/** Reorder unified tabs (AI + file + terminal tabs) */
+	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	/** Copy tab context to clipboard */
+	handleCopyContext: (tabId: string) => void;
+	/** Export tab as HTML */
+	handleExportHtml: (tabId: string) => Promise<void>;
+	/** Publish tab as GitHub Gist */
+	handlePublishTabGist: (tabId: string) => void;
 }
 
 // ============================================================================
@@ -59,6 +69,18 @@ export interface UseQuickActionsHandlersReturn {
 	handleQuickActionsAutoRunResetTasks: () => void;
 	/** Clear the active terminal xterm buffer */
 	handleQuickActionsClearActiveTerminal: () => void;
+	/** Close the current tab */
+	handleQuickActionsCloseCurrentTab: () => void;
+	/** Move current tab to first position */
+	handleQuickActionsMoveTabToFirst: () => void;
+	/** Move current tab to last position */
+	handleQuickActionsMoveTabToLast: () => void;
+	/** Copy active tab context to clipboard */
+	handleQuickActionsCopyTabContext: (tabId: string) => void;
+	/** Export active tab as HTML */
+	handleQuickActionsExportTabHtml: (tabId: string) => Promise<void>;
+	/** Publish active tab as GitHub Gist */
+	handleQuickActionsPublishTabGist: (tabId: string) => void;
 }
 
 // ============================================================================
@@ -74,6 +96,11 @@ export function useQuickActionsHandlers(
 		rightPanelRef,
 		handleSummarizeAndContinue,
 		processQueuedItem,
+		handleCloseCurrentTab,
+		handleUnifiedTabReorder,
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
 	} = deps;
 
 	// --- Reactive subscriptions ---
@@ -184,6 +211,43 @@ export function useQuickActionsHandlers(
 		mainPanelRef.current?.clearActiveTerminal();
 	}, []);
 
+	const handleQuickActionsCloseCurrentTab = useCallback(() => {
+		handleCloseCurrentTab();
+	}, [handleCloseCurrentTab]);
+
+	const handleQuickActionsMoveTabToFirst = useCallback(() => {
+		if (!activeSession) return;
+		// Find the active tab's index in the unified tab list or AI tabs
+		const aiTabIndex = activeSession.aiTabs.findIndex((t) => t.id === activeSession.activeTabId);
+		if (aiTabIndex > 0) {
+			// Try unified reorder first, fall back to AI-only reorder
+			handleUnifiedTabReorder(aiTabIndex, 0);
+		}
+	}, [activeSession, handleUnifiedTabReorder]);
+
+	const handleQuickActionsMoveTabToLast = useCallback(() => {
+		if (!activeSession) return;
+		const aiTabIndex = activeSession.aiTabs.findIndex((t) => t.id === activeSession.activeTabId);
+		if (aiTabIndex >= 0 && aiTabIndex < activeSession.aiTabs.length - 1) {
+			handleUnifiedTabReorder(aiTabIndex, activeSession.aiTabs.length - 1);
+		}
+	}, [activeSession, handleUnifiedTabReorder]);
+
+	const handleQuickActionsCopyTabContext = useCallback(
+		(tabId: string) => handleCopyContext(tabId),
+		[handleCopyContext]
+	);
+
+	const handleQuickActionsExportTabHtml = useCallback(
+		(tabId: string) => handleExportHtml(tabId),
+		[handleExportHtml]
+	);
+
+	const handleQuickActionsPublishTabGist = useCallback(
+		(tabId: string) => handlePublishTabGist(tabId),
+		[handlePublishTabGist]
+	);
+
 	return {
 		handleQuickActionsToggleReadOnlyMode,
 		handleQuickActionsToggleTabShowThinking,
@@ -193,5 +257,11 @@ export function useQuickActionsHandlers(
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
 		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsCloseCurrentTab,
+		handleQuickActionsMoveTabToFirst,
+		handleQuickActionsMoveTabToLast,
+		handleQuickActionsCopyTabContext,
+		handleQuickActionsExportTabHtml,
+		handleQuickActionsPublishTabGist,
 	};
 }

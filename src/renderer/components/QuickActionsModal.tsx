@@ -16,6 +16,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { buildSessionDeepLink } from '../../shared/deep-link-urls';
 
 interface QuickAction {
 	id: string;
@@ -113,6 +114,13 @@ interface QuickActionsModalProps {
 	onCloseOtherTabs?: () => void;
 	onCloseTabsLeft?: () => void;
 	onCloseTabsRight?: () => void;
+	// Tab-level actions (for active tab)
+	onCloseCurrentTab?: () => void;
+	onMoveTabToFirst?: () => void;
+	onMoveTabToLast?: () => void;
+	onCopyTabContext?: (tabId: string) => void;
+	onExportTabHtml?: (tabId: string) => void;
+	onPublishTabGist?: (tabId: string) => void;
 	// Gist publishing
 	isFilePreviewOpen?: boolean;
 	ghCliAvailable?: boolean;
@@ -208,6 +216,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseCurrentTab,
+		onMoveTabToFirst,
+		onMoveTabToLast,
+		onCopyTabContext,
+		onExportTabHtml,
+		onPublishTabGist,
 		isFilePreviewOpen,
 		ghCliAvailable,
 		onPublishGist,
@@ -671,6 +685,211 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						},
 					},
 				]
+			: []),
+		// Close current tab
+		...(isAiMode && activeSession && activeSession.aiTabs.length > 1 && onCloseCurrentTab
+			? [
+					{
+						id: 'closeCurrentTab',
+						label: 'Close Tab',
+						shortcut: tabShortcuts?.closeTab,
+						action: () => {
+							onCloseCurrentTab();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Move tab to first/last position
+		...(isAiMode &&
+		activeSession &&
+		(() => {
+			const activeTabIndex = activeSession.aiTabs.findIndex(
+				(t) => t.id === activeSession.activeTabId
+			);
+			return activeTabIndex > 0;
+		})() &&
+		onMoveTabToFirst
+			? [
+					{
+						id: 'moveTabToFirst',
+						label: 'Move to First Position',
+						action: () => {
+							onMoveTabToFirst();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		...(isAiMode &&
+		activeSession &&
+		(() => {
+			const activeTabIndex = activeSession.aiTabs.findIndex(
+				(t) => t.id === activeSession.activeTabId
+			);
+			return activeTabIndex < activeSession.aiTabs.length - 1;
+		})() &&
+		onMoveTabToLast
+			? [
+					{
+						id: 'moveTabToLast',
+						label: 'Move to Last Position',
+						action: () => {
+							onMoveTabToLast();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Copy Session ID (for active tab)
+		...(isAiMode && activeSession
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab?.agentSessionId) return [];
+					return [
+						{
+							id: 'copySessionId',
+							label: 'Copy Session ID',
+							subtext: activeTab.agentSessionId,
+							action: () => {
+								safeClipboardWrite(activeTab.agentSessionId!);
+								notifyToast({
+									type: 'success',
+									title: 'Copied',
+									message: 'Session ID copied to clipboard.',
+								});
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Copy Deep Link (for active tab)
+		...(isAiMode && activeSession
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab?.agentSessionId) return [];
+					return [
+						{
+							id: 'copyDeepLink',
+							label: 'Copy Deep Link',
+							action: () => {
+								safeClipboardWrite(buildSessionDeepLink(activeSession.id, activeTab.id));
+								notifyToast({
+									type: 'success',
+									title: 'Copied',
+									message: 'Deep link copied to clipboard.',
+								});
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Star/Unstar Session (for active tab)
+		...(isAiMode && activeSession
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab?.agentSessionId) return [];
+					return [
+						{
+							id: 'toggleStarTab',
+							label: activeTab.starred ? 'Unstar Session' : 'Star Session',
+							action: () => {
+								setSessions((prev) =>
+									prev.map((s) => {
+										if (s.id !== activeSessionId) return s;
+										return {
+											...s,
+											aiTabs: s.aiTabs.map((t) =>
+												t.id === activeTab.id ? { ...t, starred: !t.starred } : t
+											),
+										};
+									})
+								);
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Mark as Unread (for active tab)
+		...(isAiMode && activeSession
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab?.agentSessionId) return [];
+					return [
+						{
+							id: 'markTabUnread',
+							label: 'Mark as Unread',
+							action: () => {
+								setSessions((prev) =>
+									prev.map((s) => {
+										if (s.id !== activeSessionId) return s;
+										return {
+											...s,
+											aiTabs: s.aiTabs.map((t) =>
+												t.id === activeTab.id ? { ...t, hasUnread: true } : t
+											),
+										};
+									})
+								);
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Export as HTML (for active tab)
+		...(isAiMode && activeSession && onExportTabHtml
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab || (activeTab.logs?.length ?? 0) < 1) return [];
+					return [
+						{
+							id: 'exportTabHtml',
+							label: 'Export as HTML',
+							action: () => {
+								onExportTabHtml(activeTab.id);
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Context: Copy to Clipboard (for active tab)
+		...(isAiMode && activeSession && onCopyTabContext
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab || (activeTab.logs?.length ?? 0) < 1) return [];
+					return [
+						{
+							id: 'copyTabContext',
+							label: 'Context: Copy to Clipboard',
+							action: () => {
+								onCopyTabContext(activeTab.id);
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
+			: []),
+		// Context: Publish as GitHub Gist (for active tab)
+		...(isAiMode && activeSession && ghCliAvailable && onPublishTabGist
+			? (() => {
+					const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
+					if (!activeTab || (activeTab.logs?.length ?? 0) < 1) return [];
+					return [
+						{
+							id: 'publishTabGist',
+							label: 'Context: Publish as GitHub Gist',
+							action: () => {
+								onPublishTabGist(activeTab.id);
+								setQuickActionOpen(false);
+							},
+						},
+					];
+				})()
 			: []),
 		...(activeSession && activeSession.inputMode === 'terminal' && onClearActiveTerminal
 			? [

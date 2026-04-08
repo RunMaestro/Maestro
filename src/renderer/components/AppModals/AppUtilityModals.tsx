@@ -128,6 +128,14 @@ export interface AppUtilityModalsProps {
 	onAutoRunResetTasks: () => void;
 	onClearActiveTerminal?: () => void;
 
+	// Tab-level actions (for QuickActionsModal)
+	onCloseCurrentTab?: () => void;
+	onMoveTabToFirst?: () => void;
+	onMoveTabToLast?: () => void;
+	onCopyTabContext?: (tabId: string) => void;
+	onExportTabHtml?: (tabId: string) => void;
+	onPublishTabGist?: (tabId: string) => void;
+
 	// Gist publishing (for QuickActionsModal)
 	isFilePreviewOpen: boolean;
 	ghCliAvailable: boolean;
@@ -338,6 +346,13 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	autoRunCompletedTaskCount,
 	onAutoRunResetTasks,
 	onClearActiveTerminal,
+	// Tab-level actions
+	onCloseCurrentTab,
+	onMoveTabToFirst,
+	onMoveTabToLast,
+	onCopyTabContext,
+	onExportTabHtml,
+	onPublishTabGist,
 	// Gist publishing
 	isFilePreviewOpen,
 	ghCliAvailable,
@@ -504,6 +519,12 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					autoRunCompletedTaskCount={autoRunCompletedTaskCount}
 					onAutoRunResetTasks={onAutoRunResetTasks}
 					onClearActiveTerminal={onClearActiveTerminal}
+					onCloseCurrentTab={onCloseCurrentTab}
+					onMoveTabToFirst={onMoveTabToFirst}
+					onMoveTabToLast={onMoveTabToLast}
+					onCopyTabContext={onCopyTabContext}
+					onExportTabHtml={onExportTabHtml}
+					onPublishTabGist={onPublishTabGist}
 					isFilePreviewOpen={isFilePreviewOpen}
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={onPublishGist}

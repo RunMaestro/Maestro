@@ -1871,12 +1871,23 @@ function MaestroConsoleInner() {
 		handleQuickActionsToggleMarkdownEditMode,
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
+		handleQuickActionsCloseCurrentTab,
+		handleQuickActionsMoveTabToFirst,
+		handleQuickActionsMoveTabToLast,
+		handleQuickActionsCopyTabContext,
+		handleQuickActionsExportTabHtml,
+		handleQuickActionsPublishTabGist,
 	} = useQuickActionsHandlers({
 		refreshGitFileState,
 		mainPanelRef,
 		rightPanelRef,
 		handleSummarizeAndContinue,
 		processQueuedItem,
+		handleCloseCurrentTab,
+		handleUnifiedTabReorder,
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
 	});
 
 	// Queue browser handlers — extracted to useQueueHandlers hook
@@ -2672,6 +2683,12 @@ function MaestroConsoleInner() {
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
 					onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
+					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
+					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
+					onMoveTabToLast={handleQuickActionsMoveTabToLast}
+					onCopyTabContext={handleQuickActionsCopyTabContext}
+					onExportTabHtml={handleQuickActionsExportTabHtml}
+					onPublishTabGist={handleQuickActionsPublishTabGist}
 					isFilePreviewOpen={!!activeSession?.activeFileTabId}
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={() => setGistPublishModalOpen(true)}
