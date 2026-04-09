@@ -28,6 +28,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { GroupContextMenu } from './GroupContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -162,6 +163,10 @@ function SessionListInner(props: SessionListProps) {
 		setRenameInstanceValue,
 		setRenameInstanceSessionId,
 		setDuplicatingSessionId,
+		setRenameGroupModalOpen,
+		setRenameGroupId,
+		setRenameGroupValue,
+		setRenameGroupEmoji,
 	} = getModalActions();
 
 	const {
@@ -255,6 +260,16 @@ function SessionListInner(props: SessionListProps) {
 		: null;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
+
+	// Group context menu state
+	const [groupContextMenu, setGroupContextMenu] = useState<{
+		x: number;
+		y: number;
+		groupId: string;
+	} | null>(null);
+	const groupContextMenuGroup = groupContextMenu
+		? groups.find((g) => g.id === groupContextMenu.groupId)
+		: null;
 
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
 	const toggleBookmark = useCallback(
@@ -891,6 +906,11 @@ function SessionListInner(props: SessionListProps) {
 									}}
 									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
 									onClick={() => toggleGroup(group.id)}
+									onContextMenu={(e) => {
+										e.preventDefault();
+										e.stopPropagation();
+										setGroupContextMenu({ x: e.clientX, y: e.clientY, groupId: group.id });
+									}}
 									onDragOver={handleDragOver}
 									onDrop={() => handleDropOnGroup(group.id)}
 								>
@@ -1238,6 +1258,43 @@ function SessionListInner(props: SessionListProps) {
 							? () => onCreateGroupAndMove(contextMenuSession.id)
 							: createNewGroup
 					}
+				/>
+			)}
+
+			{/* Group Context Menu */}
+			{groupContextMenu && groupContextMenuGroup && (
+				<GroupContextMenu
+					x={groupContextMenu.x}
+					y={groupContextMenu.y}
+					theme={theme}
+					group={groupContextMenuGroup}
+					onRename={() => startRenamingGroup(groupContextMenuGroup.id)}
+					onDelete={() => {
+						const groupSessions = sessions.filter((s) => s.groupId === groupContextMenuGroup.id);
+						if (groupSessions.length > 0) {
+							showConfirmation(
+								`Are you sure you want to delete the group "${groupContextMenuGroup.name}"? The ${groupSessions.length} agent(s) inside will be ungrouped.`,
+								() => {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.groupId === groupContextMenuGroup.id ? { ...s, groupId: undefined } : s
+										)
+									);
+									setGroups((prev) => prev.filter((g) => g.id !== groupContextMenuGroup.id));
+								}
+							);
+						} else {
+							setGroups((prev) => prev.filter((g) => g.id !== groupContextMenuGroup.id));
+						}
+					}}
+					onToggleCollapse={() => toggleGroup(groupContextMenuGroup.id)}
+					onChangeEmoji={() => {
+						setRenameGroupId(groupContextMenuGroup.id);
+						setRenameGroupValue(groupContextMenuGroup.name);
+						setRenameGroupEmoji(groupContextMenuGroup.emoji);
+						setRenameGroupModalOpen(true);
+					}}
+					onDismiss={() => setGroupContextMenu(null)}
 				/>
 			)}
 		</div>
