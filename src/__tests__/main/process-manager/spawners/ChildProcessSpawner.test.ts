@@ -51,15 +51,19 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 vi.mock('../../../../main/parsers', () => ({
-	getOutputParser: vi.fn(() => ({
-		agentId: 'claude-code',
-		parseJsonLine: vi.fn(),
-		extractUsage: vi.fn(),
-		extractSessionId: vi.fn(),
-		extractSlashCommands: vi.fn(),
-		isResultMessage: vi.fn(),
-		detectErrorFromLine: vi.fn(),
-	})),
+	getOutputParser: vi.fn((toolType: string) => {
+		// terminal has no output parser
+		if (toolType === 'terminal') return null;
+		return {
+			agentId: toolType,
+			parseJsonLine: vi.fn(),
+			extractUsage: vi.fn(),
+			extractSessionId: vi.fn(),
+			extractSlashCommands: vi.fn(),
+			isResultMessage: vi.fn(),
+			detectErrorFromLine: vi.fn(),
+		};
+	}),
 }));
 
 vi.mock('../../../../main/agents', () => ({
@@ -198,8 +202,10 @@ describe('ChildProcessSpawner', () => {
 
 			// sendPromptViaStdinRaw sends RAW text via stdin, not JSON
 			// So it should NOT set isStreamJsonMode (which is for JSON streaming)
+			// Use terminal toolType (no output parser) to test args-based detection only
 			spawner.spawn(
 				createBaseConfig({
+					toolType: 'terminal',
 					args: ['--print'],
 					sendPromptViaStdinRaw: true,
 					prompt: 'test prompt',
@@ -229,8 +235,10 @@ describe('ChildProcessSpawner', () => {
 		it('should NOT enable stream-json mode for plain args without JSON flags', () => {
 			const { processes, spawner } = createTestContext();
 
+			// Use terminal toolType (no output parser) to test args-based detection only
 			spawner.spawn(
 				createBaseConfig({
+					toolType: 'terminal',
 					args: ['--print', '--verbose'],
 				})
 			);

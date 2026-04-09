@@ -856,6 +856,82 @@ export const SSH_ERROR_PATTERNS: AgentErrorPatterns = {
 };
 
 // ============================================================================
+// Copilot CLI Error Patterns
+// ============================================================================
+
+const COPILOT_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
+	auth_expired: [
+		{
+			pattern: /not authenticated|not logged in/i,
+			message: 'Not authenticated. Please run "copilot login" to authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /authentication failed/i,
+			message: 'Authentication failed. Please run "copilot login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /token.*expired|expired.*token/i,
+			message: 'Authentication token expired. Please run "copilot login" to re-authenticate.',
+			recoverable: true,
+		},
+		{
+			pattern: /unauthorized/i,
+			message: 'Unauthorized. Please check your Copilot subscription and credentials.',
+			recoverable: true,
+		},
+	],
+
+	rate_limited: [
+		{
+			pattern: /rate limit|too many requests/i,
+			message: 'Rate limited by GitHub Copilot. Please wait a moment before retrying.',
+			recoverable: true,
+		},
+	],
+
+	network_error: [
+		{
+			pattern: /network error|connection refused|ECONNREFUSED/i,
+			message: 'Network error connecting to Copilot. Check your internet connection.',
+			recoverable: true,
+		},
+		{
+			pattern: /timeout|ETIMEDOUT/i,
+			message: 'Connection timed out. Check your internet connection.',
+			recoverable: true,
+		},
+	],
+
+	token_exhaustion: [
+		{
+			pattern: /context.*too long|context window/i,
+			message: 'Context window exceeded. Please start a new session.',
+			recoverable: true,
+		},
+		{
+			pattern: /maximum.*tokens/i,
+			message: 'Maximum token limit reached. Start a new session.',
+			recoverable: true,
+		},
+	],
+
+	agent_crashed: [
+		{
+			pattern: /model.*not available|model.*not found/i,
+			message: 'The selected model is not available. Try a different model.',
+			recoverable: true,
+		},
+		{
+			pattern: /copilot.*command not found/i,
+			message: 'Copilot CLI not found. Ensure it is installed and in your PATH.',
+			recoverable: false,
+		},
+	],
+};
+
+// ============================================================================
 // Pattern Registry
 // ============================================================================
 
@@ -864,6 +940,7 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 	['opencode', OPENCODE_ERROR_PATTERNS],
 	['codex', CODEX_ERROR_PATTERNS],
 	['factory-droid', FACTORY_DROID_ERROR_PATTERNS],
+	['copilot-cli', COPILOT_CLI_ERROR_PATTERNS],
 ]);
 
 /**

@@ -385,6 +385,44 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 	},
+
+	/**
+	 * Copilot CLI - GitHub's agentic coding CLI
+	 * https://github.com/github/copilot-cli
+	 *
+	 * Capabilities based on official CLI command reference documentation.
+	 * Binary: `copilot`. Batch mode: `-p` flag. JSON: `--output-format json` (JSONL).
+	 * Session resume: `--resume SESSION-ID`. YOLO: `--allow-all`.
+	 *
+	 * Phase 1 capabilities are conservative — advanced features (session storage
+	 * browsing, cost tracking, thinking display) will be enabled in Phase 2
+	 * after verifying the JSON output schema.
+	 */
+	'copilot-cli': {
+		supportsResume: true, // --resume SESSION-ID
+		supportsReadOnlyMode: false, // No explicit CLI flag; may use --deny-tool in future
+		supportsJsonOutput: true, // --output-format json (JSONL format)
+		supportsSessionId: true, // sessionId in 'result' event - Verified
+		supportsImageInput: false, // Not documented in CLI reference
+		supportsImageInputOnResume: false,
+		supportsSlashCommands: true, // /help, /compact, /model, /resume, /usage, etc.
+		supportsSessionStorage: true, // ~/.copilot/session-state/<uuid>/ - Verified
+		supportsCostTracking: false, // Uses premium requests model, not per-token cost
+		supportsUsageStats: true, // outputTokens in assistant.message events - Verified
+		supportsBatchMode: true, // -p flag for programmatic execution
+		requiresPromptToStart: true, // Requires -p prompt in batch mode
+		supportsStreaming: true, // assistant.message_delta events - Verified
+		supportsResultMessages: true, // assistant.message with content and no toolRequests - Verified
+		supportsModelSelection: true, // --model flag
+		supportsStreamJsonInput: false, // Not documented
+		supportsThinkingDisplay: false, // No reasoning/thinking events observed
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: false, // Phase 2: session storage
+		supportsWizard: false, // Phase 2
+		supportsGroupChatModeration: false, // Phase 2
+		usesJsonLineOutput: true, // JSONL output format - Verified
+		usesCombinedContextWindow: false, // Depends on selected model
+	},
 };
 
 /**

@@ -20,6 +20,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
+	'copilot-cli': 'Copilot CLI',
 	aider: 'Aider',
 };
 
@@ -68,6 +69,7 @@ export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'codex',
 	'opencode',
 	'factory-droid',
+	'copilot-cli',
 ]);
 
 /**

@@ -230,8 +230,19 @@ export class StdoutHandler {
 			} else {
 				this.handleLegacyMessage(sessionId, managedProcess, parsed);
 			}
-		} else {
+		} else if (!outputParser) {
+			// Only emit raw non-JSON lines when there's no output parser.
+			// JSONL agents (copilot-cli, codex, opencode, factory-droid) may output
+			// non-JSON noise from shell profiles or MCP server startup that should
+			// not be displayed to the user.
 			this.bufferManager.emitDataBuffered(sessionId, line);
+		} else {
+			// Suppressed non-JSON line for JSONL agent
+			logger.info('[StdoutHandler] SUPPRESSED non-JSON line for JSONL agent', 'ProcessManager', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				linePreview: line.substring(0, 80),
+			});
 		}
 	}
 

@@ -71,6 +71,13 @@ export const AGENT_TILES: AgentTile[] = [
 		description: "Factory's AI coding assistant",
 		brandColor: '#3B82F6', // Factory blue
 	},
+	{
+		id: 'copilot-cli',
+		name: 'Copilot CLI',
+		supported: true,
+		description: "GitHub's AI coding assistant",
+		brandColor: '#6E40C9', // GitHub purple
+	},
 	// Coming soon agents at the bottom
 	{
 		id: 'gemini-cli',
@@ -88,9 +95,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 6 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
 
 /**
  * Get SVG logo for an agent with brand colors
