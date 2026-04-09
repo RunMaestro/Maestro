@@ -890,16 +890,12 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 		it('should have better-sqlite3 native binding in expected location', async () => {
 			const fs = await import('node:fs');
 			const path = await import('node:path');
+			const betterSqlitePackagePath = require.resolve('better-sqlite3/package.json');
+			const betterSqliteDir = path.dirname(betterSqlitePackagePath);
 
 			// Check if the native binding exists in build/Release (compiled location)
 			const nativeModulePath = path.join(
-				__dirname,
-				'..',
-				'..',
-				'..',
-				'..',
-				'node_modules',
-				'better-sqlite3',
+				betterSqliteDir,
 				'build',
 				'Release',
 				'better_sqlite3.node'
@@ -912,16 +908,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			// If the native module doesn't exist, check if there's a prebuilt binary
 			if (!exists) {
 				// Check for prebuilt binaries in the bin directory
-				const binDir = path.join(
-					__dirname,
-					'..',
-					'..',
-					'..',
-					'..',
-					'node_modules',
-					'better-sqlite3',
-					'bin'
-				);
+				const binDir = path.join(betterSqliteDir, 'bin');
 
 				if (fs.existsSync(binDir)) {
 					const binContents = fs.readdirSync(binDir);
@@ -937,17 +924,10 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 		it('should verify binding.gyp exists for native compilation', async () => {
 			const fs = await import('node:fs');
 			const path = await import('node:path');
+			const betterSqlitePackagePath = require.resolve('better-sqlite3/package.json');
+			const betterSqliteDir = path.dirname(betterSqlitePackagePath);
 
-			const bindingGypPath = path.join(
-				__dirname,
-				'..',
-				'..',
-				'..',
-				'..',
-				'node_modules',
-				'better-sqlite3',
-				'binding.gyp'
-			);
+			const bindingGypPath = path.join(betterSqliteDir, 'binding.gyp');
 
 			// binding.gyp is required for node-gyp compilation
 			expect(fs.existsSync(bindingGypPath)).toBe(true);
