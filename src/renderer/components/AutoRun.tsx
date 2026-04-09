@@ -1761,7 +1761,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							Run
 						</button>
 					)}
-					{/* Playbook Exchange button */}
+					{/* PlayBooks button */}
 					{onOpenMarketplace && (
 						<button
 							onClick={onOpenMarketplace}
@@ -1771,10 +1771,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Browse Playbook Exchange - discover and share community playbooks"
+							title="Browse PlayBooks - discover and share community playbooks"
 						>
 							<LayoutGrid className="w-3.5 h-3.5" />
-							<span className="text-xs font-medium">Exchange</span>
+							<span className="text-xs font-medium">PlayBooks</span>
 						</button>
 					)}
 					{/* Launch Wizard button */}

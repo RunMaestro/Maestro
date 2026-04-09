@@ -718,7 +718,7 @@ function SessionListInner(props: SessionListProps) {
 							</div>
 						</div>
 						{/* Hamburger Menu */}
-						<div className="relative z-10" ref={menuRef} data-tour="hamburger-menu">
+						<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
 							<button
 								onClick={() => setMenuOpen(!menuOpen)}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -730,7 +730,7 @@ function SessionListInner(props: SessionListProps) {
 							{/* Menu Overlay */}
 							{menuOpen && (
 								<div
-									className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+									className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 									data-tour="hamburger-menu-contents"
 									style={{
 										backgroundColor: theme.colors.bgSidebar,
@@ -750,7 +750,7 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					<div className="w-full flex flex-col items-center gap-2 relative" ref={menuRef}>
+					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<button
 							onClick={() => setMenuOpen(!menuOpen)}
 							className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -764,7 +764,7 @@ function SessionListInner(props: SessionListProps) {
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div
-								className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+								className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
