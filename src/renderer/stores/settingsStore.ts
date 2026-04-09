@@ -256,6 +256,7 @@ export interface SettingsStoreState {
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
 	moderatorStandingInstructions: string;
+	spellCheck: boolean;
 }
 
 export interface SettingsStoreActions {
@@ -330,6 +331,7 @@ export interface SettingsStoreActions {
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
+	setSpellCheck: (value: boolean) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -484,6 +486,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		useNativeTitleBar: false,
 		autoHideMenuBar: false,
 		moderatorStandingInstructions: '',
+		spellCheck: false,
 
 		// ============================================================================
 		// Simple Setters
@@ -905,6 +908,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const trimmed = value.slice(0, 2000);
 			set({ moderatorStandingInstructions: trimmed });
 			window.maestro.settings.set('moderatorStandingInstructions', trimmed);
+		},
+
+		setSpellCheck: (value) => {
+			set({ spellCheck: value });
+			window.maestro.settings.set('spellCheck', value);
 		},
 
 		// ============================================================================
@@ -1825,6 +1833,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['moderatorStandingInstructions'] !== undefined)
 			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
 
+		if (allSettings['spellCheck'] !== undefined)
+			patch.spellCheck = allSettings['spellCheck'] as boolean;
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -1942,5 +1953,6 @@ export function getSettingsActions() {
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
+		setSpellCheck: state.setSpellCheck,
 	};
 }

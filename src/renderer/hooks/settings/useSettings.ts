@@ -315,6 +315,10 @@ export interface UseSettingsReturn {
 	// Group Chat settings
 	moderatorStandingInstructions: string;
 	setModeratorStandingInstructions: (value: string) => void;
+
+	// Spell check
+	spellCheck: boolean;
+	setSpellCheck: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {

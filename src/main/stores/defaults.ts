@@ -72,6 +72,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeApiKey: '',
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
+	spellCheck: false,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

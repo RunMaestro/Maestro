@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, startTransition } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	Terminal,
 	Cpu,
@@ -249,6 +250,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		wizardShowThinking = false,
 		onToggleWizardShowThinking,
 	} = props;
+
+	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 
 	const setCommandHistoryFilterRef = React.useCallback((el: HTMLInputElement | null) => {
 		if (el) {
@@ -871,6 +874,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 								}
 								value={inputValue}
+								spellCheck={spellCheckEnabled}
 								onFocus={onInputFocus}
 								onBlur={onInputBlur}
 								onChange={(e) => {

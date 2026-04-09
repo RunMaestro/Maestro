@@ -7,6 +7,7 @@ import React, {
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
@@ -658,6 +659,7 @@ export const FilePreview = React.memo(
 		},
 		ref
 	) {
+		const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 		// Search state - use initialSearchQuery if provided, and notify parent of changes
 		const [internalSearchQuery, setInternalSearchQuery] = useState(initialSearchQuery ?? '');
 		// Wrapper to update state and notify parent
@@ -2195,7 +2197,7 @@ export const FilePreview = React.memo(
 								caretColor: theme.colors.accent,
 								lineHeight: '1.6',
 							}}
-							spellCheck={false}
+							spellCheck={spellCheckEnabled}
 							onKeyDown={(e) => {
 								// Handle Cmd+S for save
 								if (e.key === 's' && (e.metaKey || e.ctrlKey)) {

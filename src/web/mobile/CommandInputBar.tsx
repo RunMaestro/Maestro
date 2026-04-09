@@ -136,6 +136,8 @@ export interface CommandInputBarProps {
 	onInputBlur?: () => void;
 	/** Whether to show recent command chips (defaults to true) */
 	showRecentCommands?: boolean;
+	/** Whether spell check is enabled (defaults to false) */
+	spellCheck?: boolean;
 }
 
 /**
@@ -165,6 +167,7 @@ export function CommandInputBar({
 	onInputFocus,
 	onInputBlur,
 	showRecentCommands = true,
+	spellCheck: spellCheckEnabled = false,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -593,7 +596,7 @@ export function CommandInputBar({
 						autoComplete="off"
 						autoCorrect="off"
 						autoCapitalize="off"
-						spellCheck={false}
+						spellCheck={spellCheckEnabled}
 						enterKeyHint="enter"
 						rows={1}
 						style={{
@@ -712,7 +715,7 @@ export function CommandInputBar({
 									autoComplete="off"
 									autoCorrect="off"
 									autoCapitalize="off"
-									spellCheck={false}
+									spellCheck={spellCheckEnabled}
 									enterKeyHint="send"
 									style={{
 										flex: 1,
@@ -792,7 +795,7 @@ export function CommandInputBar({
 								autoComplete="off"
 								autoCorrect="off"
 								autoCapitalize="off"
-								spellCheck={false}
+								spellCheck={spellCheckEnabled}
 								enterKeyHint="enter"
 								rows={1}
 								style={{
