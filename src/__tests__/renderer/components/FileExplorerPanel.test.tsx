@@ -1021,13 +1021,7 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('closes an empty file search when clicking Find files again', () => {
-			render(
-				<FileExplorerPanel
-					{...defaultProps}
-					fileTreeFilterOpen={true}
-					fileTreeFilter=""
-				/>
-			);
+			render(<FileExplorerPanel {...defaultProps} fileTreeFilterOpen={true} fileTreeFilter="" />);
 			const searchButton = screen.getByTitle('Close file search');
 			fireEvent.click(searchButton);
 
