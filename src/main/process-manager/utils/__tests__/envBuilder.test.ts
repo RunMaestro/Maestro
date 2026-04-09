@@ -451,6 +451,13 @@ describe('envBuilder - Global Environment Variables', () => {
 
 			expect(env.VIMINIT).toBe('set compatible');
 		});
+
+		it('should preserve VIMINIT from process env when present', () => {
+			process.env.VIMINIT = 'set compatible';
+			const env = buildPtyTerminalEnv({});
+
+			expect(env.VIMINIT).toBe('set compatible');
+		});
 	});
 
 	describe('Test 2.9: Edge Cases and Special Values', () => {

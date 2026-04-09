@@ -135,10 +135,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						} else if (e.key === 'Tab') {
 							data = '\t';
 						} else if (e.ctrlKey && e.key.length === 1) {
-							// Ctrl+A..Z -> send control character
-							const code = e.key.toUpperCase().charCodeAt(0);
-							if (code >= 65 && code <= 90) {
-								data = String.fromCharCode(code - 64);
+							// Keep Ctrl+F available for terminal search routing when xterm
+							// is not focused (Windows/Linux app-level shortcut behavior).
+							if (e.key.toLowerCase() !== 'f') {
+								// Ctrl+A..Z -> send control character
+								const code = e.key.toUpperCase().charCodeAt(0);
+								if (code >= 65 && code <= 90) {
+									data = String.fromCharCode(code - 64);
+								}
 							}
 						}
 
@@ -158,31 +162,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						}
 					}
 				}
-			}
-
-			// DEBUG: Trace tab-related shortcuts to diagnose broken Cmd+T / Cmd+Shift+T / Cmd+Shift+[]
-			const keyLowerDbg = e.key.toLowerCase();
-			if (
-				(e.metaKey || e.ctrlKey) &&
-				(keyLowerDbg === 't' ||
-					keyLowerDbg === '[' ||
-					keyLowerDbg === ']' ||
-					keyLowerDbg === '{' ||
-					keyLowerDbg === '}')
-			) {
-				console.warn(
-					'[KB-DEBUG] key=%s meta=%s shift=%s alt=%s ctrl=%s | layers=%s modal=%s | session=%s groupChat=%s mode=%s',
-					e.key,
-					e.metaKey,
-					e.shiftKey,
-					e.altKey,
-					e.ctrlKey,
-					ctx.hasOpenLayers(),
-					ctx.hasOpenModal(),
-					!!ctx.activeSessionId,
-					!!ctx.activeGroupChatId,
-					ctx.activeSession?.inputMode
-				);
 			}
 
 			// CRITICAL: When in terminal mode, let xterm.js handle Ctrl+[A-Z] control sequences.
@@ -1013,7 +992,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
 					// History filter - handled by HistoryPanel component, just track here
 					trackShortcut('filterHistory');
-				} else if (ctx.activeSession?.inputMode === 'terminal' && e.metaKey) {
+				} else if (ctx.activeSession?.inputMode === 'terminal' && !isXtermTarget) {
 					// Terminal search - only when main panel has focus
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();

@@ -542,7 +542,6 @@ export const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(funct
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
 			// Clipboard shortcuts in terminal:
 			// - Cmd/Ctrl+C copies current selection when present
-			// - Cmd/Ctrl+V pastes clipboard text into PTY
 			if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				const key = e.key.toLowerCase();
 				if (key === 'c') {
@@ -553,18 +552,6 @@ export const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(funct
 						});
 						return false;
 					}
-				}
-				if (key === 'v') {
-					void navigator.clipboard
-						.readText()
-						.then((text) => {
-							if (!text) return;
-							onDataRef.current(text);
-						})
-						.catch(() => {
-							// Clipboard may be unavailable without focus/permission.
-						});
-					return false;
 				}
 			}
 

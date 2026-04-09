@@ -2598,6 +2598,76 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('terminal search shortcut routing', () => {
+		it('should open terminal search on Ctrl+F in terminal mode when event is not from xterm', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('should not open terminal search on Ctrl+F when event target is xterm', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			const xtermInput = document.createElement('textarea');
+			xtermInput.className = 'xterm-helper-textarea';
+			document.body.appendChild(xtermInput);
+			xtermInput.focus();
+
+			act(() => {
+				xtermInput.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).not.toHaveBeenCalled();
+			xtermInput.remove();
+		});
+	});
+
 	describe('terminal focus recovery does not intercept group chat input', () => {
 		it('should not preventDefault on regular keystrokes in group chat even when session is in terminal mode', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

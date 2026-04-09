@@ -423,7 +423,6 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
 			// Clipboard shortcuts: keep terminal copy/paste ergonomic.
 			// - Cmd/Ctrl+C copies terminal selection when present
-			// - Cmd/Ctrl+V pastes clipboard text into PTY
 			if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				const key = e.key.toLowerCase();
 				if (key === 'c') {
@@ -432,18 +431,6 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 						void safeClipboardWrite(selection);
 						return false;
 					}
-				}
-				if (key === 'v') {
-					void navigator.clipboard
-						.readText()
-						.then((text) => {
-							if (!text) return;
-							return window.maestro.process.write(sessionId, text);
-						})
-						.catch(() => {
-							// Ignore clipboard read/write failures; users can retry.
-						});
-					return false;
 				}
 			}
 

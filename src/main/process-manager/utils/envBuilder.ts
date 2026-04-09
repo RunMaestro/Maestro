@@ -84,8 +84,8 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 	// Vim arrow-key ergonomics: when users launch `vi`/`vim` with distro defaults
 	// that force compatible mode, insert-mode arrows can degrade to literal ABCD.
 	// Provide a safe default for terminal sessions, but never override explicit user config.
-	if (!env.VIMINIT && !process.env.VIMINIT) {
-		env.VIMINIT = 'set nocompatible | set esckeys';
+	if (!env.VIMINIT) {
+		env.VIMINIT = process.env.VIMINIT || 'set nocompatible | set esckeys';
 	}
 
 	// Apply custom shell environment variables
