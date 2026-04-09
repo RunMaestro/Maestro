@@ -194,6 +194,47 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
 	});
 
+	it('fills in createdAt from the first tab if the session value is missing', async () => {
+		const base = createMockSession();
+		const tabCreatedAt = 1680000000000;
+		const session = {
+			...base,
+			createdAt: undefined as any,
+			aiTabs: [{ ...base.aiTabs[0], createdAt: tabCreatedAt }],
+		};
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session as any);
+		});
+
+		expect(restored!.createdAt).toBe(tabCreatedAt);
+	});
+
+	it('defaults createdAt to Date.now when no timestamp is available', async () => {
+		const base = createMockSession();
+		const session = {
+			...base,
+			createdAt: undefined as any,
+			aiTabs: [{ ...base.aiTabs[0], createdAt: undefined as any }],
+		};
+		const nowValue = 1680001234567;
+		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowValue);
+		try {
+			const { result } = renderHook(() => useSessionRestoration());
+
+			let restored: Session;
+			await act(async () => {
+				restored = await result.current.restoreSession(session as any);
+			});
+
+			expect(restored!.createdAt).toBe(nowValue);
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
+
 	it('migrates toolType terminal to claude-code', async () => {
 		const session = createMockSession({ toolType: 'terminal' as any });
 		const { result } = renderHook(() => useSessionRestoration());

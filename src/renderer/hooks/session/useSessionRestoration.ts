@@ -137,6 +137,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				};
 			}
 
+			// Migration: set createdAt when missing (use existing tab timestamp or now)
+			const inferredCreatedAt =
+				typeof session.createdAt === 'number' && session.createdAt > 0
+					? session.createdAt
+					: session.aiTabs?.[0]?.createdAt || Date.now();
+			if (!session.createdAt || session.createdAt <= 0) {
+				session = { ...session, createdAt: inferredCreatedAt };
+			}
+
 			// Migration: ensure fileTreeAutoRefreshInterval is set (default 180s for legacy sessions)
 			if (session.fileTreeAutoRefreshInterval == null) {
 				console.warn(
