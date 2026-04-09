@@ -56,6 +56,15 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 	}),
 }));
 
+// Mock batchStore — tracks errorPaused state per session
+const mockBatchRunStates: Record<string, any> = {};
+
+vi.mock('../../../renderer/stores/batchStore', () => ({
+	useBatchStore: vi.fn((selector: (s: any) => any) =>
+		selector({ batchRunStates: mockBatchRunStates })
+	),
+}));
+
 // Mock conductorBadges — provide just enough badges for tests (inlined to avoid TDZ in hoisted vi.mock)
 vi.mock('../../../renderer/constants/conductorBadges', () => ({
 	CONDUCTOR_BADGES: [
@@ -125,6 +134,9 @@ describe('useAutoRunAchievements', () => {
 
 		// Reset mock sessions to empty
 		mockSessions.length = 0;
+
+		// Reset batch run states
+		Object.keys(mockBatchRunStates).forEach((key) => delete mockBatchRunStates[key]);
 
 		// Reset autoRunStats
 		mockAutoRunStats.longestRunMs = 0;
@@ -756,6 +768,70 @@ describe('useAutoRunAchievements', () => {
 			expect(mockSetStandingOvationData).toHaveBeenCalledTimes(1);
 			const callArg = mockSetStandingOvationData.mock.calls[0][0];
 			expect(callArg.recordTimeMs).toBe(5000);
+		});
+	});
+
+	// ==========================================================================
+	// Error-paused sessions excluded from time accumulation (#242)
+	// ==========================================================================
+
+	describe('error-paused sessions excluded from time tracking', () => {
+		it('does not count error-paused sessions toward achievement time', () => {
+			// Session is active but error-paused
+			mockBatchRunStates['session-1'] = { isRunning: true, errorPaused: true };
+
+			renderHook(() => useAutoRunAchievements({ activeBatchSessionIds: ['session-1'] }));
+
+			act(() => {
+				vi.advanceTimersByTime(60000);
+			});
+
+			// Should not accumulate any time since the only session is error-paused
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+		});
+
+		it('only counts non-paused sessions in delta calculation', () => {
+			// Two sessions: one active, one error-paused
+			mockBatchRunStates['session-1'] = { isRunning: true, errorPaused: false };
+			mockBatchRunStates['session-2'] = { isRunning: true, errorPaused: true };
+
+			renderHook(() =>
+				useAutoRunAchievements({ activeBatchSessionIds: ['session-1', 'session-2'] })
+			);
+
+			act(() => {
+				vi.advanceTimersByTime(60000);
+			});
+
+			// Only 1 non-paused session, so delta should be multiplied by 1 (not 2)
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
+			const deltaMs = mockUpdateAutoRunProgress.mock.calls[0][0];
+			// Should be ~60000ms * 1 session (not * 2)
+			expect(deltaMs).toBeLessThanOrEqual(60000 * 1.1); // Allow small timing tolerance
+		});
+
+		it('resumes counting when error is resolved', () => {
+			// Start with error-paused session
+			mockBatchRunStates['session-1'] = { isRunning: true, errorPaused: true };
+
+			const { rerender } = renderHook(
+				({ ids }) => useAutoRunAchievements({ activeBatchSessionIds: ids }),
+				{ initialProps: { ids: ['session-1'] } }
+			);
+
+			act(() => {
+				vi.advanceTimersByTime(60000);
+			});
+			expect(mockUpdateAutoRunProgress).not.toHaveBeenCalled();
+
+			// Resolve error
+			mockBatchRunStates['session-1'] = { isRunning: true, errorPaused: false };
+			rerender({ ids: ['session-1'] });
+
+			act(() => {
+				vi.advanceTimersByTime(60000);
+			});
+			expect(mockUpdateAutoRunProgress).toHaveBeenCalledTimes(1);
 		});
 	});
 });
