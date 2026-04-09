@@ -16,6 +16,7 @@ import {
 	AlertTriangle,
 	Play,
 	XCircle,
+	ExternalLink,
 } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -100,7 +101,7 @@ interface RightPanelProps {
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, sessionName?: string) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
@@ -404,6 +405,17 @@ export const RightPanel = memo(
 			autoFollowEnabled,
 		};
 
+		// Resolve current agent session ID for the Auto Run badge
+		const batchSessionIds = currentSessionBatchState?.sessionIds;
+		const currentBadgeSessionId =
+			currentSessionBatchState?.currentAgentSessionId ||
+			(batchSessionIds && batchSessionIds.length > 0
+				? batchSessionIds[batchSessionIds.length - 1]
+				: null);
+		const badgeShortId = currentBadgeSessionId
+			? currentBadgeSessionId.split('-')[0].toUpperCase()
+			: null;
+
 		return (
 			<div
 				ref={panelRef}
@@ -596,6 +608,24 @@ export const RightPanel = memo(
 									>
 										{currentSessionBatchState.isStopping ? 'Stopping...' : 'Auto Run Active'}
 									</span>
+								)}
+								{/* Current agent session ID badge — matches history entry style */}
+								{currentBadgeSessionId && onOpenSessionAsTab && (
+									<button
+										onClick={() =>
+											onOpenSessionAsTab(currentBadgeSessionId, `${badgeShortId} (snapshot)`)
+										}
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase transition-colors hover:opacity-80"
+										style={{
+											backgroundColor: theme.colors.accent + '20',
+											color: theme.colors.accent,
+											border: `1px solid ${theme.colors.accent}40`,
+										}}
+										title={`Open session ${currentBadgeSessionId}`}
+									>
+										<span className="truncate">{badgeShortId}</span>
+										<ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+									</button>
 								)}
 								{currentSessionBatchState.worktreeActive && (
 									<span title={`Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`}>

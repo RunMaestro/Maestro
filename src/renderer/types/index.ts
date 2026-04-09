@@ -329,6 +329,7 @@ export interface BatchRunState {
 	// Prompt configuration
 	customPrompt?: string; // User's custom prompt if modified
 	sessionIds: string[]; // Claude session IDs from each iteration
+	currentAgentSessionId?: string; // Live agent session ID for the currently running task
 	startTime?: number; // Timestamp when batch run started
 	cumulativeTaskTimeMs?: number; // Sum of actual task durations (most accurate work time measure)
 	accumulatedElapsedMs?: number; // Accumulated active elapsed time (excludes sleep/suspend time)
