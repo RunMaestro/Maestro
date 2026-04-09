@@ -29,6 +29,7 @@ import {
 	createPowerApi,
 	createUpdatesApi,
 	createAppApi,
+	createUsageApi,
 } from './system';
 import { createSshRemoteApi } from './sshRemote';
 import { createLoggerApi } from './logger';
@@ -191,6 +192,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
+
+	// Claude Usage API (session limits, weekly limits)
+	usage: createUsageApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -264,6 +268,8 @@ export {
 	createDirectorNotesApi,
 	// WakaTime
 	createWakatimeApi,
+	// Usage
+	createUsageApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -302,6 +308,9 @@ export type {
 	AppApi,
 	ShellInfo,
 	UpdateStatus,
+	ClaudeUsageData,
+	ClaudeUsagePeriod,
+	ClaudeUsageResult,
 } from './system';
 export type {
 	// From sshRemote

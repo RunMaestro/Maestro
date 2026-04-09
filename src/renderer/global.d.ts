@@ -2732,6 +2732,25 @@ interface MaestroAPI {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
+
+	// Claude Usage API (session limits, weekly limits from Anthropic OAuth)
+	usage: {
+		getClaudeUsage: () => Promise<{
+			success: boolean;
+			data?: {
+				five_hour?: { utilization: number; resets_at: string } | null;
+				seven_day?: { utilization: number; resets_at: string } | null;
+				seven_day_sonnet?: { utilization: number; resets_at: string } | null;
+				extra_usage?: {
+					is_enabled: boolean;
+					monthly_limit: number;
+					used_credits: number;
+					utilization: number;
+				} | null;
+			};
+			error?: string;
+		}>;
+	};
 }
 
 declare global {

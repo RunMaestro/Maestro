@@ -253,6 +253,8 @@ describe('system IPC handlers', () => {
 				'power:removeReason',
 				// Clipboard handlers
 				'clipboard:writeImage',
+				// Usage handlers
+				'usage:getClaudeUsage',
 			];
 
 			for (const channel of expectedChannels) {
