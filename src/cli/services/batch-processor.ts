@@ -11,7 +11,7 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
-import { addHistoryEntry, readGroups } from './storage';
+import { addHistoryEntry, readGroups, readHistory } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
@@ -295,18 +295,64 @@ export async function* runPlaybook(
 		// Only write if we completed multiple loops or if looping was enabled
 		if (!playbook.loopEnabled && loopIteration === 0) return;
 
-		const totalElapsedMs = Date.now() - batchStartTime;
+		let finalTotalTasks = totalCompletedTasks;
+		let finalTotalInputTokens = totalInputTokens;
+		let finalTotalOutputTokens = totalOutputTokens;
+		let finalTotalCost = totalCost;
+		let finalTotalElapsedMs = Date.now() - batchStartTime;
+
+		// Reconcile in-memory counters with persisted history entries.
+		// In-memory counters reset on process restart, but history entries persist on disk.
+		try {
+			const allEntries = readHistory(undefined, session.id);
+			if (allEntries.length > 0) {
+				const taskEntries = allEntries.filter(
+					(e) =>
+						e.type === 'AUTO' &&
+						e.summary &&
+						!e.summary.startsWith('Loop ') &&
+						!e.summary.startsWith('Auto Run ') &&
+						!e.summary.startsWith('PR created') &&
+						!e.summary.startsWith('PR creation failed')
+				);
+
+				if (taskEntries.length > finalTotalTasks) {
+					let historyInputTokens = 0;
+					let historyOutputTokens = 0;
+					let historyCost = 0;
+					let historyElapsedMs = 0;
+
+					for (const entry of taskEntries) {
+						if (entry.usageStats) {
+							historyInputTokens += entry.usageStats.inputTokens || 0;
+							historyOutputTokens += entry.usageStats.outputTokens || 0;
+							historyCost += entry.usageStats.totalCostUsd || 0;
+						}
+						historyElapsedMs += entry.elapsedTimeMs || 0;
+					}
+
+					finalTotalTasks = Math.max(finalTotalTasks, taskEntries.length);
+					finalTotalInputTokens = Math.max(finalTotalInputTokens, historyInputTokens);
+					finalTotalOutputTokens = Math.max(finalTotalOutputTokens, historyOutputTokens);
+					finalTotalCost = Math.max(finalTotalCost, historyCost);
+					finalTotalElapsedMs = Math.max(finalTotalElapsedMs, historyElapsedMs);
+				}
+			}
+		} catch {
+			// Fall back to in-memory counters if history read fails
+		}
+
 		const loopsCompleted = loopIteration + 1;
-		const summary = `Auto Run completed: ${totalCompletedTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
+		const summary = `Auto Run completed: ${finalTotalTasks} tasks in ${loopsCompleted} loop${loopsCompleted !== 1 ? 's' : ''}`;
 
 		const totalUsageStats: UsageStats | undefined =
-			totalInputTokens > 0 || totalOutputTokens > 0
+			finalTotalInputTokens > 0 || finalTotalOutputTokens > 0
 				? {
-						inputTokens: totalInputTokens,
-						outputTokens: totalOutputTokens,
+						inputTokens: finalTotalInputTokens,
+						outputTokens: finalTotalOutputTokens,
 						cacheReadInputTokens: 0,
 						cacheCreationInputTokens: 0,
-						totalCostUsd: totalCost,
+						totalCostUsd: finalTotalCost,
 						contextWindow: 0, // Set to 0 for summaries - these are cumulative totals, not per-task context
 					}
 				: undefined;
@@ -314,13 +360,13 @@ export async function* runPlaybook(
 		const details = [
 			`**Auto Run Summary**`,
 			'',
-			`- **Total Tasks Completed:** ${totalCompletedTasks}`,
+			`- **Total Tasks Completed:** ${finalTotalTasks}`,
 			`- **Loops Completed:** ${loopsCompleted}`,
-			`- **Total Duration:** ${formatElapsedTime(totalElapsedMs)}`,
-			totalInputTokens > 0 || totalOutputTokens > 0
-				? `- **Total Tokens:** ${(totalInputTokens + totalOutputTokens).toLocaleString()} (${totalInputTokens.toLocaleString()} in / ${totalOutputTokens.toLocaleString()} out)`
+			`- **Total Duration:** ${formatElapsedTime(finalTotalElapsedMs)}`,
+			finalTotalInputTokens > 0 || finalTotalOutputTokens > 0
+				? `- **Total Tokens:** ${(finalTotalInputTokens + finalTotalOutputTokens).toLocaleString()} (${finalTotalInputTokens.toLocaleString()} in / ${finalTotalOutputTokens.toLocaleString()} out)`
 				: '',
-			totalCost > 0 ? `- **Total Cost:** $${totalCost.toFixed(4)}` : '',
+			finalTotalCost > 0 ? `- **Total Cost:** $${finalTotalCost.toFixed(4)}` : '',
 		]
 			.filter((line) => line !== '')
 			.join('\n');
@@ -334,7 +380,7 @@ export async function* runPlaybook(
 			projectPath: session.cwd,
 			sessionId: session.id,
 			success: true,
-			elapsedTimeMs: totalElapsedMs,
+			elapsedTimeMs: finalTotalElapsedMs,
 			usageStats: totalUsageStats,
 		};
 		addHistoryEntry(historyEntry);

@@ -1601,8 +1601,53 @@ export function useBatchProcessor({
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
-			const totalElapsedMs = timeTracking.getElapsedTime(sessionId);
+			let totalElapsedMs = timeTracking.getElapsedTime(sessionId);
 			const loopsCompleted = loopEnabled ? loopIteration + 1 : 1;
+
+			// Reconcile in-memory counters with persisted history entries.
+			// In-memory counters reset on app restart, but history entries persist on disk.
+			// For long-running sessions spanning restarts, history is the source of truth.
+			try {
+				const allEntries = await window.maestro.history.getAll(session.cwd, sessionId);
+				if (Array.isArray(allEntries) && allEntries.length > 0) {
+					// Filter to individual task entries (exclude loop/session summaries)
+					const taskEntries = allEntries.filter(
+						(e) =>
+							e.type === 'AUTO' &&
+							e.summary &&
+							!e.summary.startsWith('Loop ') &&
+							!e.summary.startsWith('Auto Run ') &&
+							!e.summary.startsWith('PR created') &&
+							!e.summary.startsWith('PR creation failed')
+					);
+
+					if (taskEntries.length > totalCompletedTasks) {
+						const historyTasks = taskEntries.length;
+						let historyInputTokens = 0;
+						let historyOutputTokens = 0;
+						let historyCost = 0;
+						let historyElapsedMs = 0;
+
+						for (const entry of taskEntries) {
+							if (entry.usageStats) {
+								historyInputTokens += entry.usageStats.inputTokens || 0;
+								historyOutputTokens += entry.usageStats.outputTokens || 0;
+								historyCost += entry.usageStats.totalCostUsd || 0;
+							}
+							historyElapsedMs += entry.elapsedTimeMs || 0;
+						}
+
+						// Use history-derived totals when they exceed in-memory counters
+						totalCompletedTasks = Math.max(totalCompletedTasks, historyTasks);
+						totalInputTokens = Math.max(totalInputTokens, historyInputTokens);
+						totalOutputTokens = Math.max(totalOutputTokens, historyOutputTokens);
+						totalCost = Math.max(totalCost, historyCost);
+						totalElapsedMs = Math.max(totalElapsedMs, historyElapsedMs);
+					}
+				}
+			} catch {
+				// Fall back to in-memory counters if history read fails
+			}
 
 			// Determine status based on stalled documents and completion
 			const stalledCount = stalledDocuments.size;
