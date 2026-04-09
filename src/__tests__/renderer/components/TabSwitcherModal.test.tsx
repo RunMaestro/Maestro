@@ -442,8 +442,8 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// Falls back to formatSessionId(tab.id) — "tab-XXX" → "TAB"
-				expect(screen.getByText('TAB')).toBeInTheDocument();
+				// No name or agentSessionId yet — shows "New Session"
+				expect(screen.getByText('New Session')).toBeInTheDocument();
 			});
 		});
 
