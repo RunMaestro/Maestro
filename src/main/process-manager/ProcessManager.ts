@@ -191,8 +191,16 @@ export class ProcessManager extends EventEmitter {
 		}
 	}
 
+	/** How long to wait after SIGTERM before escalating to SIGKILL (ms). */
+	private static readonly KILL_ESCALATION_TIMEOUT = 5000;
+
 	/**
-	 * Kill a specific process
+	 * Kill a specific process.
+	 *
+	 * Sends SIGTERM first. If the process doesn't exit within
+	 * KILL_ESCALATION_TIMEOUT, escalates to SIGKILL to guarantee cleanup.
+	 * The process is removed from the tracking map only when it actually exits
+	 * (handled by ExitHandler / PtySpawner), not optimistically up-front.
 	 */
 	kill(sessionId: string): boolean {
 		const process = this.processes.get(sessionId);
@@ -212,6 +220,7 @@ export class ProcessManager extends EventEmitter {
 					this.killWindowsProcessTree(process.pid, sessionId);
 				} else {
 					process.ptyProcess.kill();
+					this.scheduleKillEscalation(sessionId, process.pid);
 				}
 			} else if (process.childProcess) {
 				const pid = process.childProcess.pid;
@@ -226,9 +235,13 @@ export class ProcessManager extends EventEmitter {
 					process.childProcess.kill('SIGTERM');
 				} else {
 					process.childProcess.kill('SIGTERM');
+					this.scheduleKillEscalation(sessionId, pid);
 				}
 			}
-			this.processes.delete(sessionId);
+			// Don't delete from the process map here. The exit handlers
+			// (ExitHandler.handleExit / PtySpawner onExit) already clean up
+			// once the process actually terminates. Removing eagerly caused
+			// Maestro to report "stopped" while the process was still alive.
 			return true;
 		} catch (error) {
 			logger.error('[ProcessManager] Failed to kill process', 'ProcessManager', {
@@ -236,6 +249,47 @@ export class ProcessManager extends EventEmitter {
 				error: String(error),
 			});
 			return false;
+		}
+	}
+
+	/**
+	 * Schedule a SIGKILL escalation if the process doesn't exit after SIGTERM.
+	 * The timer is cancelled automatically if the process exits on its own.
+	 */
+	private scheduleKillEscalation(sessionId: string, pid: number | undefined): void {
+		if (!pid) return;
+
+		const escalationTimer = setTimeout(() => {
+			const stillRunning = this.processes.get(sessionId);
+			if (stillRunning) {
+				logger.warn(
+					'[ProcessManager] Process did not exit after SIGTERM, escalating to SIGKILL',
+					'ProcessManager',
+					{ sessionId, pid }
+				);
+				try {
+					globalThis.process.kill(pid, 'SIGKILL');
+				} catch {
+					// ESRCH = process already gone, which is fine
+					logger.debug(
+						'[ProcessManager] SIGKILL failed (process may already be terminated)',
+						'ProcessManager',
+						{ sessionId, pid }
+					);
+				}
+				// Final cleanup — if exit handler hasn't fired by now, remove manually
+				this.processes.delete(sessionId);
+			}
+		}, ProcessManager.KILL_ESCALATION_TIMEOUT);
+
+		// Cancel escalation if process exits on its own
+		const child = this.processes.get(sessionId)?.childProcess;
+		if (child) {
+			child.once('exit', () => clearTimeout(escalationTimer));
+		}
+		const pty = this.processes.get(sessionId)?.ptyProcess;
+		if (pty) {
+			pty.onExit(() => clearTimeout(escalationTimer));
 		}
 	}
 

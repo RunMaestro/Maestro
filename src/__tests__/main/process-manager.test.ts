@@ -523,7 +523,7 @@ describe('process-manager.ts', () => {
 				expect(mockChildProcess.kill).not.toHaveBeenCalled();
 			});
 
-			it('should remove process from map after kill', () => {
+			it('should keep process in map after kill (deferred cleanup on exit)', () => {
 				mockIsWindows.mockReturnValue(true);
 
 				const mockPtyProcess = { kill: vi.fn(), onExit: vi.fn() };
@@ -541,7 +541,10 @@ describe('process-manager.ts', () => {
 
 				processManager.kill('pty-session');
 
-				expect(processManager.get('pty-session')).toBeUndefined();
+				// Process stays in map until exit event fires; kill() no longer
+				// removes it eagerly so the SIGKILL escalation timer can detect
+				// a still-running process.
+				expect(processManager.get('pty-session')).toBeDefined();
 			});
 		});
 	});
