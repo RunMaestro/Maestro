@@ -61,6 +61,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		cwd: params.path,
 		fullPath: params.path,
 		projectRoot: params.path,
+		createdAt: Date.now(),
 		isGitRepo: true,
 		gitBranches: params.gitBranches,
 		gitTags: params.gitTags,

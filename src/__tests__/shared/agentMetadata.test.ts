@@ -76,9 +76,9 @@ describe('agentMetadata', () => {
 		});
 
 		it('should contain the expected beta agents', () => {
-			expect(BETA_AGENTS.has('codex')).toBe(true);
 			expect(BETA_AGENTS.has('opencode')).toBe(true);
 			expect(BETA_AGENTS.has('factory-droid')).toBe(true);
+			expect(BETA_AGENTS.has('codex')).toBe(false);
 		});
 
 		it('should not contain non-beta agents', () => {
@@ -98,12 +98,12 @@ describe('agentMetadata', () => {
 
 	describe('isBetaAgent', () => {
 		it('should return true for beta agents', () => {
-			expect(isBetaAgent('codex')).toBe(true);
 			expect(isBetaAgent('opencode')).toBe(true);
 			expect(isBetaAgent('factory-droid')).toBe(true);
 		});
 
 		it('should return false for non-beta agents', () => {
+			expect(isBetaAgent('codex')).toBe(false);
 			expect(isBetaAgent('claude-code')).toBe(false);
 			expect(isBetaAgent('terminal')).toBe(false);
 		});

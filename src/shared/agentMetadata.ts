@@ -65,7 +65,6 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
  * Used to render "(Beta)" badges throughout the UI.
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
-	'codex',
 	'opencode',
 	'factory-droid',
 ]);

@@ -228,9 +228,9 @@ describe('GroupChatModal', () => {
 
 			// Verify all agents appear as options
 			expect(screen.getByRole('option', { name: /Claude Code/i })).toBeInTheDocument();
-			expect(screen.getByRole('option', { name: /Codex.*Beta/i })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: /OpenCode.*Beta/i })).toBeInTheDocument();
 			expect(screen.getByRole('option', { name: /Factory Droid.*Beta/i })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /^Codex$/i })).toBeInTheDocument();
 		});
 	});
 

@@ -137,6 +137,7 @@ export function useSymphonyContribution(
 				cwd: data.localPath,
 				fullPath: data.localPath,
 				projectRoot: data.localPath,
+				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,
 				gitTags,
