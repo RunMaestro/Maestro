@@ -28,6 +28,16 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+// Mock sessionStore for tab close on Escape
+const mockSetSessions = vi.fn();
+vi.mock('../../../../renderer/stores/sessionStore', () => ({
+	useSessionStore: {
+		getState: () => ({
+			setSessions: mockSetSessions,
+		}),
+	},
+}));
+
 // Mock theme for testing
 const mockTheme: Theme = {
 	id: 'test-theme',
@@ -463,8 +473,31 @@ describe('WizardInputPanel', () => {
 	});
 
 	describe('escape key handling', () => {
-		it('shows exit confirmation dialog when Escape is pressed in textarea', () => {
-			render(<WizardInputPanel {...defaultProps} />);
+		it('exits wizard directly when Escape is pressed with no user interaction', () => {
+			const onExitWizard = vi.fn();
+			render(<WizardInputPanel {...defaultProps} onExitWizard={onExitWizard} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			// No dialog — exits directly (only 1 tab, so falls back to onExitWizard)
+			expect(screen.queryByText('Exit Wizard?')).not.toBeInTheDocument();
+			expect(onExitWizard).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with user interaction', () => {
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(<WizardInputPanel {...defaultProps} session={sessionWithHistory} />);
 
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
 			fireEvent.keyDown(textarea, { key: 'Escape' });
@@ -474,6 +507,24 @@ describe('WizardInputPanel', () => {
 			expect(
 				screen.getByText('Progress will be lost. Are you sure you want to exit the wizard?')
 			).toBeInTheDocument();
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with typed input', () => {
+			render(<WizardInputPanel {...defaultProps} inputValue="some text" />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
+		});
+
+		it('shows exit confirmation dialog when Escape is pressed with staged images', () => {
+			render(<WizardInputPanel {...defaultProps} stagedImages={['data:image/png;base64,abc']} />);
+
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+			fireEvent.keyDown(textarea, { key: 'Escape' });
+
+			expect(screen.getByText('Exit Wizard?')).toBeInTheDocument();
 		});
 
 		it('forwards non-Escape key events to handleInputKeyDown', () => {
@@ -498,7 +549,24 @@ describe('WizardInputPanel', () => {
 
 		it('calls onExitWizard when Exit is clicked in dialog', () => {
 			const onExitWizard = vi.fn();
-			render(<WizardInputPanel {...defaultProps} onExitWizard={onExitWizard} />);
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(
+				<WizardInputPanel
+					{...defaultProps}
+					session={sessionWithHistory}
+					onExitWizard={onExitWizard}
+				/>
+			);
 
 			// Show the dialog
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
@@ -511,7 +579,18 @@ describe('WizardInputPanel', () => {
 		});
 
 		it('closes dialog when Cancel is clicked', () => {
-			render(<WizardInputPanel {...defaultProps} />);
+			const sessionWithHistory = createMockSession({
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 50,
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+			});
+			render(<WizardInputPanel {...defaultProps} session={sessionWithHistory} />);
 
 			// Show the dialog
 			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');

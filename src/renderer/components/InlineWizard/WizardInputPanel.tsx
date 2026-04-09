@@ -31,6 +31,8 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../../utils/shortcutFormatter';
+import { useSessionStore } from '../../stores/sessionStore';
+import { closeTab } from '../../utils/tabHelpers';
 
 interface WizardInputPanelProps {
 	/** Current session with wizard state */
@@ -144,19 +146,41 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 		return () => cancelAnimationFrame(rafId);
 	}, [inputRef]);
 
-	// Handle Escape key to show exit confirmation
+	// Handle Escape key to show exit confirmation (only if user has interacted)
 	const handleEscapeKey = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
-				setShowExitConfirm(true);
+				const hasUserMessages = session.wizardState?.conversationHistory?.some(
+					(m) => m.role === 'user'
+				);
+				const hasInput = inputValue.trim() !== '';
+				const hasImages = stagedImages.length > 0;
+				if (hasUserMessages || hasInput || hasImages) {
+					setShowExitConfirm(true);
+				} else {
+					// No interaction — close the tab if safe, otherwise just exit wizard
+					const { setSessions } = useSessionStore.getState();
+					const activeTabId = session.activeTabId;
+					if (activeTabId && session.aiTabs.length > 1) {
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== session.id) return s;
+								const result = closeTab(s, activeTabId, false, { skipHistory: true });
+								return result ? result.session : s;
+							})
+						);
+					} else {
+						onExitWizard();
+					}
+				}
 				return;
 			}
 			// Forward other key events to the parent handler
 			handleInputKeyDown(e);
 		},
-		[handleInputKeyDown]
+		[handleInputKeyDown, session, inputValue, stagedImages, onExitWizard]
 	);
 
 	// Handle exit confirmation

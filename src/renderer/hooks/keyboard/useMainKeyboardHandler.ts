@@ -689,7 +689,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.handleCloseTerminalTab(closeResult.tabId);
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'ai' && closeResult.tabId) {
-						if (closeResult.isWizardTab) {
+						if (closeResult.hasWizardUserInteraction) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'Close this wizard? Your progress will be lost and cannot be restored.',
 								onConfirm: () => {
@@ -697,6 +697,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 									trackShortcut('closeTab');
 								},
 							});
+						} else if (closeResult.isWizardTab) {
+							// Wizard active but no user interaction - close without confirmation
+							ctx.performTabClose(closeResult.tabId);
+							trackShortcut('closeTab');
 						} else if (closeResult.hasDraft) {
 							useModalStore.getState().openModal('confirm', {
 								message: 'This tab has an unsent draft. Are you sure you want to close it?',

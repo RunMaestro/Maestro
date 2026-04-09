@@ -288,6 +288,23 @@ export function hasActiveWizard(tab: AITab): boolean {
 }
 
 /**
+ * Check if a tab's active wizard has any user interaction.
+ * Returns true if the user has sent messages, typed input, or staged images.
+ * Used to decide whether closing the wizard should show a confirmation dialog.
+ *
+ * @param tab - The AI tab to check
+ * @returns True if the wizard has user interaction worth confirming loss of
+ */
+export function hasWizardInteraction(tab: AITab): boolean {
+	if (!tab.wizardState?.isActive) return false;
+	const hasUserMessages =
+		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
+	const hasInput = (tab.inputValue ?? '').trim() !== '';
+	const hasImages = tab.stagedImages?.length > 0;
+	return hasUserMessages || hasInput || hasImages;
+}
+
+/**
  * Get the list of navigable tabs based on filter settings.
  * When showUnreadOnly is true, only returns unread tabs and tabs with unsent drafts/staged images.
  * When false (default), returns all tabs.

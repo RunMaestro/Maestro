@@ -1199,10 +1199,17 @@ describe('useTabHandlers', () => {
 	// ========================================================================
 
 	describe('handleTabClose wizard tab', () => {
-		it('shows confirmation modal for wizard tab', () => {
+		it('shows confirmation modal for wizard tab with user interaction', () => {
 			const wizardTab = createMockAITab({
 				id: 'wizard-1',
-				wizardState: { isActive: true, currentStep: 0, steps: ['step1'] },
+				wizardState: {
+					isActive: true,
+					currentStep: 0,
+					steps: ['step1'],
+					conversationHistory: [
+						{ id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+					],
+				},
 			} as any);
 			const tab2 = createMockAITab({ id: 'tab-2' });
 			setupSessionWithTabs([wizardTab, tab2], [], 'wizard-1');
@@ -1216,6 +1223,25 @@ describe('useTabHandlers', () => {
 			expect(useModalStore.getState().isOpen('confirm')).toBe(true);
 			const modal = useModalStore.getState().modals.get('confirm');
 			expect((modal?.data as any)?.message).toContain('wizard');
+		});
+
+		it('closes wizard tab directly when no user interaction', () => {
+			const wizardTab = createMockAITab({
+				id: 'wizard-1',
+				wizardState: { isActive: true, currentStep: 0, steps: ['step1'], conversationHistory: [] },
+			} as any);
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([wizardTab, tab2], [], 'wizard-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleTabClose('wizard-1');
+			});
+
+			// Should close directly without modal
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(1);
+			expect(useModalStore.getState().isOpen('confirm')).toBe(false);
 		});
 
 		it('closes directly for non-wizard tab', () => {
