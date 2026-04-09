@@ -187,7 +187,7 @@ export function EnvVarsEditor({
 									value={entry.value}
 									onChange={(e) => updateEntry(entry.id, 'value', e.target.value)}
 									placeholder="value"
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								/>
 								<button
