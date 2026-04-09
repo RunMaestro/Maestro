@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, FocusArea } from '../../types';
-import { shouldOpenExternally, getAllFolderPaths } from '../../utils/fileExplorer';
+import {
+	shouldOpenExternally,
+	getAllFolderPaths,
+	type FileTreeNode,
+} from '../../utils/fileExplorer';
 import { useModalStore } from '../../stores/modalStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
@@ -74,6 +78,12 @@ export interface UseAppHandlersReturn {
 		sessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	/** Toggle folder and all descendants (Alt+Click) */
+	toggleFolderRecursive: (
+		path: string,
+		sessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	/** Expand all folders in file tree */
 	expandAllFolders: (
 		sessionId: string,
@@ -85,6 +95,45 @@ export interface UseAppHandlersReturn {
 		sessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+}
+
+/**
+ * Collect all descendant folder paths under a given set of nodes.
+ */
+function collectDescendantFolders(nodes: FileTreeNode[], currentPath: string): string[] {
+	const result: string[] = [];
+	for (const node of nodes) {
+		const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
+		if (node.type === 'folder') {
+			result.push(fullPath);
+			if (node.children) {
+				result.push(...collectDescendantFolders(node.children, fullPath));
+			}
+		}
+	}
+	return result;
+}
+
+/**
+ * Find a folder by targetPath in the tree and return it plus all descendant folder paths.
+ */
+function findSubtreeFolders(
+	nodes: FileTreeNode[],
+	currentPath: string,
+	targetPath: string
+): string[] | null {
+	for (const node of nodes) {
+		const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
+		if (fullPath === targetPath && node.type === 'folder') {
+			const descendants = node.children ? collectDescendantFolders(node.children, fullPath) : [];
+			return [fullPath, ...descendants];
+		}
+		if (node.type === 'folder' && node.children && targetPath.startsWith(fullPath + '/')) {
+			const found = findSubtreeFolders(node.children, fullPath, targetPath);
+			if (found) return found;
+		}
+	}
+	return null;
 }
 
 /**
@@ -301,6 +350,42 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		[]
 	);
 
+	/**
+	 * Toggle a folder and all its descendant folders (Alt+Click behavior).
+	 * If the folder is currently expanded, collapse it and all descendants.
+	 * If collapsed, expand it and all descendants.
+	 */
+	const toggleFolderRecursive = useCallback(
+		(
+			path: string,
+			sessionId: string,
+			setSessionsFn: React.Dispatch<React.SetStateAction<Session[]>>
+		) => {
+			setSessionsFn((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					if (!s.fileExplorerExpanded || !s.fileTree) return s;
+					const expanded = new Set(s.fileExplorerExpanded);
+					const isCurrentlyExpanded = expanded.has(path);
+					const allPaths = findSubtreeFolders(s.fileTree, '', path) || [path];
+
+					if (isCurrentlyExpanded) {
+						for (const p of allPaths) {
+							expanded.delete(p);
+						}
+					} else {
+						for (const p of allPaths) {
+							expanded.add(p);
+						}
+					}
+
+					return { ...s, fileExplorerExpanded: Array.from(expanded) };
+				})
+			);
+		},
+		[]
+	);
+
 	const expandAllFolders = useCallback(
 		(
 			sessionId: string,
@@ -346,6 +431,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 
 		// Folder handlers
 		toggleFolder,
+		toggleFolderRecursive,
 		expandAllFolders,
 		collapseAllFolders,
 	};
