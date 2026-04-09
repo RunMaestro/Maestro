@@ -501,7 +501,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 				>
 					<div
-						className="overflow-y-auto max-h-80 scrollbar-thin"
+						className="overflow-y-auto max-h-96 scrollbar-thin"
 						style={{ overscrollBehavior: 'contain' }}
 					>
 						{filteredSlashCommands.map((cmd, idx) => (
@@ -509,7 +509,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								type="button"
 								key={cmd.command}
 								ref={(el) => (slashCommandItemRefs.current[idx] = el)}
-								className={`w-full px-3 py-2 text-left transition-colors ${
+								className={`w-full px-3 py-1 text-left transition-colors ${
 									idx === safeSelectedIndex ? 'font-semibold' : ''
 								}`}
 								style={{
@@ -529,7 +529,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
 							>
 								<div className="font-mono text-sm leading-tight">{cmd.command}</div>
-								<div className="text-[11px] opacity-70 mt-0.5 leading-tight">{cmd.description}</div>
+								<div className="text-[11px] opacity-70 leading-tight">{cmd.description}</div>
 							</button>
 						))}
 					</div>
