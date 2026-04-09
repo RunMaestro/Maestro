@@ -726,8 +726,12 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(`Since ${new Date(createdAt).toLocaleDateString()}`)).toBeInTheDocument();
-			expect(screen.queryByText(`Since ${new Date(oldestTimestamp).toLocaleDateString()}`)).toBeNull();
+			expect(
+				screen.getByText(`Since ${new Date(createdAt).toLocaleDateString()}`)
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText(`Since ${new Date(oldestTimestamp).toLocaleDateString()}`)
+			).toBeNull();
 		});
 
 		it('ignores stats updates for different project paths', async () => {
