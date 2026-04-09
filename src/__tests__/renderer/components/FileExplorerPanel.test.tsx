@@ -91,6 +91,11 @@ vi.mock('lucide-react', () => ({
 			🔃
 		</span>
 	),
+	Search: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="search-icon" className={className} style={style}>
+			🔎
+		</span>
+	),
 	Edit2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="edit2-icon" className={className} style={style}>
 			✏️
@@ -442,6 +447,11 @@ describe('FileExplorerPanel', () => {
 		it('renders refresh button', () => {
 			render(<FileExplorerPanel {...defaultProps} />);
 			expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
+		});
+
+		it('renders file search button with clear label', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			expect(screen.getByTitle('Find files')).toBeInTheDocument();
 		});
 
 		it('renders expand all button with correct title', () => {
@@ -1006,6 +1016,23 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+			expect(defaultProps.setSelectedFileIndex).toHaveBeenCalledWith(expect.any(Number));
+			expect(defaultProps.setActiveFocus).toHaveBeenCalledWith('right');
+		});
+
+		it('closes an empty file search when clicking Find files again', () => {
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					fileTreeFilterOpen={true}
+					fileTreeFilter=""
+				/>
+			);
+			const searchButton = screen.getByTitle('Close file search');
+			fireEvent.click(searchButton);
+
+			expect(defaultProps.setFileTreeFilter).toHaveBeenCalledWith('');
+			expect(defaultProps.setFileTreeFilterOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('sets selectedFileIndex and activeFocus when clicking a file', () => {
@@ -1108,6 +1135,24 @@ describe('FileExplorerPanel', () => {
 			const item = container.querySelector('[data-file-index="0"]');
 			// When on different tab, should not have accent color
 			expect(item).not.toHaveStyle({ borderLeftColor: mockTheme.colors.accent });
+		});
+	});
+
+	describe('Hidden Files Toggle', () => {
+		it('hides .maestro when hidden files are off', () => {
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					filteredFileTree={[
+						{ name: '.maestro', type: 'folder', children: [] },
+						{ name: 'visible', type: 'file' },
+					]}
+					showHiddenFiles={false}
+				/>
+			);
+
+			expect(screen.queryByText('.maestro')).not.toBeInTheDocument();
+			expect(screen.getByText('visible')).toBeInTheDocument();
 		});
 	});
 

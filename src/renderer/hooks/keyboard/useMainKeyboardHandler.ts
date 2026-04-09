@@ -795,7 +795,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
 				if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
 					e.preventDefault();
-					ctx.setFileTreeFilterOpen(true);
+					const fileTreeFilter = typeof ctx.fileTreeFilter === 'string' ? ctx.fileTreeFilter : '';
+					if (ctx.fileTreeFilterOpen && fileTreeFilter.trim().length === 0) {
+						ctx.setFileTreeFilter('');
+						ctx.setFileTreeFilterOpen(false);
+					} else if (!ctx.fileTreeFilterOpen) {
+						ctx.setFileTreeFilterOpen(true);
+					} else {
+						ctx.fileTreeFilterInputRef?.current?.focus();
+						ctx.fileTreeFilterInputRef?.current?.select?.();
+					}
 					trackShortcut('filterFiles');
 				} else if (ctx.activeFocus === 'sidebar') {
 					// Sidebar filter - handled by SessionList component, just track here

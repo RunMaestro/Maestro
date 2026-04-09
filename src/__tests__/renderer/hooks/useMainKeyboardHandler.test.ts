@@ -122,6 +122,59 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('files panel search toggle', () => {
+		it('should close the empty files search when Cmd+F is pressed again', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const setFileTreeFilter = vi.fn();
+			const setFileTreeFilterOpen = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeFocus: 'right',
+				activeRightTab: 'files',
+				fileTreeFilterOpen: true,
+				fileTreeFilter: '',
+				setFileTreeFilter,
+				setFileTreeFilterOpen,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(setFileTreeFilter).toHaveBeenCalledWith('');
+			expect(setFileTreeFilterOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('should open files search when Cmd+F is pressed and the filter is closed', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const setFileTreeFilterOpen = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeFocus: 'right',
+				activeRightTab: 'files',
+				fileTreeFilterOpen: false,
+				fileTreeFilter: '',
+				setFileTreeFilterOpen,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(setFileTreeFilterOpen).toHaveBeenCalledWith(true);
+		});
+	});
+
 	describe('showSessionJumpNumbers state', () => {
 		it('should show badges when Alt+Cmd are pressed together', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

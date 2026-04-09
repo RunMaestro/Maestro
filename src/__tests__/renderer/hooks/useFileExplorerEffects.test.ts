@@ -450,6 +450,7 @@ describe('useFileExplorerEffects', () => {
 			useSettingsStore.setState({ showHiddenFiles: false } as any);
 
 			const tree: FileNode[] = [
+				{ name: '.maestro', type: 'folder', children: [] },
 				{ name: '.hidden', type: 'folder', children: [] },
 				{ name: 'visible', type: 'folder', children: [] },
 			];
@@ -469,6 +470,7 @@ describe('useFileExplorerEffects', () => {
 			// flattenTree should be called with filtered tree (no .hidden)
 			const calledTree = vi.mocked(flattenTree).mock.calls[0]?.[0];
 			expect(calledTree).toBeDefined();
+			expect(calledTree?.some((n: any) => n.name === '.maestro')).toBe(false);
 			expect(calledTree?.some((n: any) => n.name === '.hidden')).toBe(false);
 			expect(calledTree?.some((n: any) => n.name === 'visible')).toBe(true);
 		});
@@ -1023,6 +1025,7 @@ describe('useFileExplorerEffects', () => {
 			useSettingsStore.setState({ showHiddenFiles: true } as any);
 
 			const tree: FileNode[] = [
+				{ name: '.maestro', type: 'folder', children: [] },
 				{ name: '.hidden', type: 'folder', children: [] },
 				{ name: 'visible', type: 'folder', children: [] },
 			];
@@ -1042,6 +1045,7 @@ describe('useFileExplorerEffects', () => {
 			// flattenTree should be called with ALL files (including .hidden)
 			const calledTree = vi.mocked(flattenTree).mock.calls[0]?.[0];
 			expect(calledTree).toBeDefined();
+			expect(calledTree?.some((n: any) => n.name === '.maestro')).toBe(true);
 			expect(calledTree?.some((n: any) => n.name === '.hidden')).toBe(true);
 			expect(calledTree?.some((n: any) => n.name === 'visible')).toBe(true);
 		});
@@ -1137,6 +1141,7 @@ describe('useFileExplorerEffects', () => {
 					name: 'src',
 					type: 'folder',
 					children: [
+						{ name: '.maestro', type: 'folder' },
 						{ name: '.env', type: 'file' },
 						{ name: 'index.ts', type: 'file' },
 					],
@@ -1160,6 +1165,7 @@ describe('useFileExplorerEffects', () => {
 			const srcFolder = calledTree?.find((n: any) => n.name === 'src');
 			expect(srcFolder).toBeDefined();
 			// Its children should not include '.env'
+			expect(srcFolder?.children?.some((n: any) => n.name === '.maestro')).toBe(false);
 			expect(srcFolder?.children?.some((n: any) => n.name === '.env')).toBe(false);
 			expect(srcFolder?.children?.some((n: any) => n.name === 'index.ts')).toBe(true);
 		});

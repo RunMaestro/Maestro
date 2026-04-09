@@ -17,6 +17,7 @@ import {
 	GitBranch,
 	Clock,
 	RotateCw,
+	Search,
 	FileText,
 	Edit2,
 	Trash2,
@@ -858,7 +859,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			if (!nodes) return [];
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter((node) => !node.name.startsWith('.') || node.name === '.maestro')
+				.filter((node) => !node.name.startsWith('.'))
 				.map((node) => ({
 					...node,
 					children: node.children ? filterHiddenFiles(node.children) : undefined,
@@ -992,6 +993,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					}}
 					onClick={() => {
 						if (isFolder) {
+							setSelectedFileIndex(globalIndex);
+							setActiveFocus('right');
 							toggleFolder(fullPath, session.id, setSessions);
 						} else {
 							setSelectedFileIndex(globalIndex);
@@ -1144,9 +1147,30 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						</button>
 					)}
 					<button
+						onClick={() => {
+							setActiveFocus('right');
+							if (fileTreeFilterOpen && fileTreeFilter.trim().length === 0) {
+								setFileTreeFilter('');
+								setFileTreeFilterOpen(false);
+								return;
+							}
+							fileTreeFilterInputRef?.current?.focus();
+							fileTreeFilterInputRef?.current?.select();
+							setFileTreeFilterOpen(true);
+						}}
+						className="p-1 rounded hover:bg-white/10 transition-colors"
+						title={fileTreeFilterOpen ? 'Close file search' : 'Find files'}
+						style={{
+							color: fileTreeFilterOpen ? theme.colors.accent : theme.colors.textDim,
+							backgroundColor: fileTreeFilterOpen ? `${theme.colors.accent}20` : 'transparent',
+						}}
+					>
+						<Search className="w-3.5 h-3.5" />
+					</button>
+					<button
 						onClick={() => setShowHiddenFiles(!showHiddenFiles)}
 						className="p-1 rounded hover:bg-white/10 transition-colors"
-						title={showHiddenFiles ? 'Hide dotfiles' : 'Show dotfiles'}
+						title={showHiddenFiles ? 'Hide hidden files' : 'Show hidden files'}
 						style={{
 							color: showHiddenFiles ? theme.colors.accent : theme.colors.textDim,
 							backgroundColor: showHiddenFiles ? `${theme.colors.accent}20` : 'transparent',
