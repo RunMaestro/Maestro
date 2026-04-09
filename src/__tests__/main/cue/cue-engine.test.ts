@@ -68,9 +68,9 @@ vi.mock('crypto', () => ({
 }));
 
 import { CueEngine, type CueEngineDeps } from '../../../main/cue/cue-engine';
-// `calculateNextScheduledTime` lives in cue-subscription-setup. Phase 3 cleanup
-// dropped the cue-engine re-export that previously existed for test convenience.
-import { calculateNextScheduledTime } from '../../../main/cue/cue-subscription-setup';
+// `calculateNextScheduledTime` moved to triggers/cue-schedule-utils as part of
+// the Phase 4 trigger source isolation. cue-subscription-setup.ts is gone.
+import { calculateNextScheduledTime } from '../../../main/cue/triggers/cue-schedule-utils';
 import { createMockSession, createMockConfig, createMockDeps } from './cue-test-helpers';
 
 describe('CueEngine', () => {

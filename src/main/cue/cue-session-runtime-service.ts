@@ -1,15 +1,6 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
-import { describeFilter, matchesFilter } from './cue-filter';
 import { loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
-import {
-	setupFileWatcherSubscription,
-	setupGitHubPollerSubscription,
-	setupHeartbeatSubscription,
-	setupScheduledSubscription,
-	setupTaskScannerSubscription,
-	type SubscriptionSetupDeps,
-} from './cue-subscription-setup';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
 import {
 	countActiveSubscriptions,
@@ -17,6 +8,9 @@ import {
 	type SessionState,
 } from './cue-session-state';
 import type { CueSessionRegistry } from './cue-session-registry';
+import { createTriggerSource } from './triggers/cue-trigger-source-registry';
+import { passesFilter } from './triggers/cue-trigger-filter';
+import type { CueTriggerSource } from './triggers/cue-trigger-source';
 
 /**
  * Why a session is being initialized. Used to gate `app.startup` triggers,
@@ -46,14 +40,11 @@ export interface CueSessionRuntimeServiceDeps {
 	onPreventSleep?: (reason: string) => void;
 	onAllowSleep?: (reason: string) => void;
 	registry: CueSessionRegistry;
-	executeCueRun: (
-		sessionId: string,
-		prompt: string,
-		event: CueEvent,
-		subscriptionName: string,
-		outputPrompt?: string,
-		chainDepth?: number
-	) => void;
+	/**
+	 * Dispatch a fired event for a subscription. This is the single dispatch
+	 * entry point — it handles fan-out vs single-target routing internally.
+	 * Trigger sources never call run-manager directly.
+	 */
 	dispatchSubscription: (
 		ownerSessionId: string,
 		sub: CueSubscription,
@@ -127,39 +118,38 @@ export function createCueSessionRuntimeService(
 
 		const state: SessionState = {
 			config,
-			timers: [],
-			watchers: [],
+			triggerSources: [],
 			yamlWatcher: null,
 			sleepPrevented: false,
-			nextTriggers: new Map(),
 		};
 
 		state.yamlWatcher = watchCueYaml(session.projectRoot, () => {
 			deps.onRefreshRequested(session.id, session.projectRoot);
 		});
 
-		const setupDeps: SubscriptionSetupDeps = {
-			enabled: deps.enabled,
-			registry,
-			onLog: deps.onLog,
-			dispatchSubscription: deps.dispatchSubscription,
-			executeCueRun: deps.executeCueRun,
-		};
-
+		// Wire each subscription up to its trigger source. Each source owns its
+		// own timer/watcher/poller and emits events through the `emit` callback,
+		// which centralizes the dispatch path: passesFilter → state.lastTriggered
+		// → dispatchSubscription. Sources never touch session state directly.
 		for (const sub of config.subscriptions) {
 			if (sub.enabled === false) continue;
 			if (sub.agent_id && sub.agent_id !== session.id) continue;
 
-			if (sub.event === 'time.heartbeat' && sub.interval_minutes) {
-				setupHeartbeatSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'time.scheduled' && sub.schedule_times?.length) {
-				setupScheduledSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'file.changed' && sub.watch) {
-				setupFileWatcherSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'task.pending' && sub.watch) {
-				setupTaskScannerSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
-				setupGitHubPollerSubscription(setupDeps, session, state, sub);
+			const source: CueTriggerSource | null = createTriggerSource(sub.event, {
+				session,
+				subscription: sub,
+				registry,
+				enabled: deps.enabled,
+				onLog: deps.onLog,
+				emit: (event) => {
+					state.lastTriggered = event.timestamp;
+					deps.dispatchSubscription(session.id, sub, event, session.name);
+				},
+			});
+
+			if (source) {
+				source.start();
+				state.triggerSources.push(source);
 			}
 		}
 
@@ -178,13 +168,7 @@ export function createCueSessionRuntimeService(
 					reason: 'system_startup',
 				});
 
-				if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
-					deps.onLog(
-						'cue',
-						`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
-					);
-					continue;
-				}
+				if (!passesFilter(sub, event, deps.onLog)) continue;
 
 				deps.onLog('cue', `[CUE] "${sub.name}" triggered (app.startup)`);
 				state.lastTriggered = event.timestamp;
@@ -213,12 +197,14 @@ export function createCueSessionRuntimeService(
 			deps.onAllowSleep?.(`cue:schedule:${sessionId}`);
 		}
 
-		for (const timer of state.timers) {
-			clearInterval(timer);
+		// Each trigger source owns its own underlying mechanism (timer, watcher,
+		// poller). Calling stop() releases all of them in one place — no more
+		// parallel timers[] / watchers[] arrays.
+		for (const source of state.triggerSources) {
+			source.stop();
 		}
-		for (const cleanup of state.watchers) {
-			cleanup();
-		}
+		state.triggerSources = [];
+
 		if (state.yamlWatcher) {
 			state.yamlWatcher();
 		}

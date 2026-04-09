@@ -1,14 +1,20 @@
 import type { CueConfig, CueSessionStatus, CueSubscription } from './cue-types';
+import type { CueTriggerSource } from './triggers/cue-trigger-source';
 
-/** Internal state per session with an active Cue config */
+/**
+ * Internal state per session with an active Cue config.
+ *
+ * Phase 4 cleanup: replaced the previous parallel `timers: Timer[]` /
+ * `watchers: (() => void)[]` arrays with a single `triggerSources` array.
+ * Each source owns its own underlying mechanism (interval, watcher, poller)
+ * and reports its next-fire time via `nextTriggerAt()`.
+ */
 export interface SessionState {
 	config: CueConfig;
-	timers: ReturnType<typeof setInterval>[];
-	watchers: (() => void)[];
+	triggerSources: CueTriggerSource[];
 	yamlWatcher: (() => void) | null;
 	sleepPrevented: boolean;
 	lastTriggered?: string;
-	nextTriggers: Map<string, number>;
 }
 
 export function countActiveSubscriptions(
@@ -21,12 +27,15 @@ export function countActiveSubscriptions(
 }
 
 export function getEarliestNextTriggerIso(state: SessionState): string | undefined {
-	if (state.nextTriggers.size === 0) {
-		return undefined;
+	let earliest: number | null = null;
+	for (const source of state.triggerSources) {
+		const next = source.nextTriggerAt();
+		if (next == null) continue;
+		if (earliest === null || next < earliest) {
+			earliest = next;
+		}
 	}
-
-	const earliest = Math.min(...state.nextTriggers.values());
-	return new Date(earliest).toISOString();
+	return earliest === null ? undefined : new Date(earliest).toISOString();
 }
 
 export function hasTimeBasedSubscriptions(config: CueConfig, sessionId: string): boolean {

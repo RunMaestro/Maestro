@@ -152,16 +152,6 @@ export class CueEngine {
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
 			registry: this.registry,
-			executeCueRun: (sessionId, prompt, event, subscriptionName, outputPrompt, chainDepth) => {
-				this.runManager.execute(
-					sessionId,
-					prompt,
-					event,
-					subscriptionName,
-					outputPrompt,
-					chainDepth
-				);
-			},
 			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
 				this.dispatchService.dispatchSubscription(
 					ownerSessionId,
