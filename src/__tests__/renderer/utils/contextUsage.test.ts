@@ -411,6 +411,21 @@ describe('calculateContextDisplay', () => {
 		expect(result.percentage).toBe(100);
 	});
 
+	it('should clamp fallback percentages above 100 before deriving tokens', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			150
+		);
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+	});
+
 	it('should use Codex semantics (includes output tokens)', () => {
 		const result = calculateContextDisplay(
 			{ inputTokens: 50000, outputTokens: 30000, cacheCreationInputTokens: 20000 },

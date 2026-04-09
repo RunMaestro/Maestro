@@ -168,9 +168,14 @@ export function calculateContextDisplay(
 
 	let tokens = raw;
 	if (raw > contextWindow) {
-		if (fallbackPercentage != null && fallbackPercentage >= 0) {
+		if (
+			fallbackPercentage != null &&
+			Number.isFinite(fallbackPercentage) &&
+			fallbackPercentage >= 0
+		) {
 			// Accumulated multi-tool turn: derive tokens from preserved percentage
-			tokens = Math.round((fallbackPercentage / 100) * contextWindow);
+			const boundedFallback = Math.min(100, fallbackPercentage);
+			tokens = Math.round((boundedFallback / 100) * contextWindow);
 		} else {
 			// We don't have a trustworthy fallback percentage yet, so clamp to the
 			// configured window instead of displaying an impossible token total.
