@@ -12,7 +12,7 @@ import {
 	AlertCircle,
 	Save,
 	Share2,
-	Zap,
+	Hammer,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -982,7 +982,7 @@ const LogItemComponent = memo(
 								title="Sent via forced parallel execution (bypassed queue)"
 								className="flex items-center"
 							>
-								<Zap
+								<Hammer
 									className="w-3.5 h-3.5"
 									style={{ color: theme.colors.warning, opacity: 0.7 }}
 								/>
