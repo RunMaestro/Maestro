@@ -1115,6 +1115,10 @@ describe('useQuickActionsHandlers', () => {
 			const session = createSession({
 				activeTabId: 'tab-2',
 				aiTabs: [tab1, tab2],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: 'tab-1' },
+					{ type: 'ai' as const, id: 'tab-2' },
+				],
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
 
@@ -1155,6 +1159,11 @@ describe('useQuickActionsHandlers', () => {
 			const session = createSession({
 				activeTabId: 'tab-1',
 				aiTabs: [tab1, tab2, tab3],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: 'tab-1' },
+					{ type: 'ai' as const, id: 'tab-2' },
+					{ type: 'ai' as const, id: 'tab-3' },
+				],
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
 

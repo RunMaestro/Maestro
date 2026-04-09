@@ -400,13 +400,11 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								onCustomPathBlur={() => {
 									/* Local state only */
 								}}
-								onCustomPathClear={() => ac.setCustomPath('')}
 								customArgs={ac.customArgs}
 								onCustomArgsChange={ac.setCustomArgs}
 								onCustomArgsBlur={() => {
 									/* Local state only */
 								}}
-								onCustomArgsClear={() => ac.setCustomArgs('')}
 								customEnvVars={ac.customEnvVars}
 								onEnvVarKeyChange={(oldKey, newKey, value) => {
 									const newVars = { ...ac.customEnvVars };

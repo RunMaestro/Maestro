@@ -14,7 +14,7 @@
  */
 
 import { useCallback } from 'react';
-import type { ThinkingMode } from '../../types';
+import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -86,6 +86,20 @@ export interface UseQuickActionsHandlersReturn {
 // ============================================================================
 // Hook implementation
 // ============================================================================
+
+/** Returns the UnifiedTabRef for the currently active tab (AI, file, or terminal). */
+function getActiveUnifiedRef(session: Session): UnifiedTabRef | null {
+	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
+		return { type: 'terminal', id: session.activeTerminalTabId };
+	}
+	if (session.activeFileTabId) {
+		return { type: 'file', id: session.activeFileTabId };
+	}
+	if (session.activeTabId) {
+		return { type: 'ai', id: session.activeTabId };
+	}
+	return null;
+}
 
 export function useQuickActionsHandlers(
 	deps: UseQuickActionsHandlersDeps
@@ -217,19 +231,26 @@ export function useQuickActionsHandlers(
 
 	const handleQuickActionsMoveTabToFirst = useCallback(() => {
 		if (!activeSession) return;
-		// Find the active tab's index in the unified tab list or AI tabs
-		const aiTabIndex = activeSession.aiTabs.findIndex((t) => t.id === activeSession.activeTabId);
-		if (aiTabIndex > 0) {
-			// Try unified reorder first, fall back to AI-only reorder
-			handleUnifiedTabReorder(aiTabIndex, 0);
+		// Find the active tab's index in the unified tab order (supports AI, file, and terminal tabs)
+		const activeRef = getActiveUnifiedRef(activeSession);
+		if (!activeRef) return;
+		const idx = activeSession.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (idx > 0) {
+			handleUnifiedTabReorder(idx, 0);
 		}
 	}, [activeSession, handleUnifiedTabReorder]);
 
 	const handleQuickActionsMoveTabToLast = useCallback(() => {
 		if (!activeSession) return;
-		const aiTabIndex = activeSession.aiTabs.findIndex((t) => t.id === activeSession.activeTabId);
-		if (aiTabIndex >= 0 && aiTabIndex < activeSession.aiTabs.length - 1) {
-			handleUnifiedTabReorder(aiTabIndex, activeSession.aiTabs.length - 1);
+		const activeRef = getActiveUnifiedRef(activeSession);
+		if (!activeRef) return;
+		const idx = activeSession.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (idx >= 0 && idx < activeSession.unifiedTabOrder.length - 1) {
+			handleUnifiedTabReorder(idx, activeSession.unifiedTabOrder.length - 1);
 		}
 	}, [activeSession, handleUnifiedTabReorder]);
 

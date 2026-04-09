@@ -44,13 +44,11 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 				onClick={() => props.onCustomPathChange('/custom/path')}
 			/>
 			<button data-testid="trigger-custom-path-blur" onClick={() => props.onCustomPathBlur()} />
-			<button data-testid="trigger-custom-path-clear" onClick={() => props.onCustomPathClear()} />
 			<button
 				data-testid="trigger-custom-args-change"
 				onClick={() => props.onCustomArgsChange('--verbose')}
 			/>
 			<button data-testid="trigger-custom-args-blur" onClick={() => props.onCustomArgsBlur()} />
-			<button data-testid="trigger-custom-args-clear" onClick={() => props.onCustomArgsClear()} />
 			<button data-testid="trigger-env-var-add" onClick={() => props.onEnvVarAdd()} />
 			<button
 				data-testid="trigger-env-var-key-change"
@@ -664,34 +662,6 @@ describe('EncoreTab', () => {
 			);
 		});
 
-		it('should clear custom path via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Set then clear
-			fireEvent.click(screen.getByTestId('trigger-custom-path-change'));
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-path-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customPath: undefined,
-				})
-			);
-		});
-
 		it('should update custom args via AgentConfigPanel callback', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -712,28 +682,6 @@ describe('EncoreTab', () => {
 			});
 
 			expect(screen.getByTestId('agent-config-custom-args')).toHaveTextContent('--verbose');
-		});
-
-		it('should clear custom args via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-args-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customArgs: undefined,
-				})
-			);
 		});
 	});
 

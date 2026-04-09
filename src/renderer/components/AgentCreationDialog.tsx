@@ -476,25 +476,11 @@ export function AgentCreationDialog({
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomPathBlur={() => {}}
-														onCustomPathClear={() => {
-															setCustomAgentPaths((prev) => {
-																const newPaths = { ...prev };
-																delete newPaths[agent.id];
-																return newPaths;
-															});
-														}}
 														customArgs={customAgentArgs[agent.id] || ''}
 														onCustomArgsChange={(value) => {
 															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomArgsBlur={() => {}}
-														onCustomArgsClear={() => {
-															setCustomAgentArgs((prev) => {
-																const newArgs = { ...prev };
-																delete newArgs[agent.id];
-																return newArgs;
-															});
-														}}
 														customEnvVars={customAgentEnvVars[agent.id] || {}}
 														onEnvVarKeyChange={(oldKey, newKey, value) => {
 															const currentVars = { ...customAgentEnvVars[agent.id] };

@@ -948,21 +948,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								}
 								await refreshAgentDetection();
 							}}
-							onCustomPathClear={async () => {
-								setCustomPath('');
-								// Clear custom path in agent detector before refreshing
-								if (configuringAgentId) {
-									await window.maestro.agents.setCustomPath(configuringAgentId, null);
-								}
-								await refreshAgentDetection();
-							}}
 							customArgs={customArgs}
 							onCustomArgsChange={setCustomArgs}
 							onCustomArgsBlur={() => {
 								// Wizard state is already updated via setCustomArgs - no provider-level save
-							}}
-							onCustomArgsClear={() => {
-								setCustomArgs('');
 							}}
 							customEnvVars={customEnvVars}
 							onEnvVarKeyChange={(oldKey, newKey, value) => {

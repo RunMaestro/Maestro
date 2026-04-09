@@ -26,9 +26,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	onRefreshAgent,
 	onDismissDebug,
 	onCustomPathChange,
-	onCustomPathClear,
 	onCustomArgsChange,
-	onCustomArgsClear,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
 	onEnvVarRemove,
@@ -214,18 +212,12 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											onCustomPathBlur={() => {
 												/* Saved on agent create */
 											}}
-											onCustomPathClear={() => {
-												onCustomPathClear(agent.id);
-											}}
 											customArgs={customAgentArgs[agent.id] || ''}
 											onCustomArgsChange={(value) => {
 												onCustomArgsChange(agent.id, value);
 											}}
 											onCustomArgsBlur={() => {
 												/* Saved on agent create */
-											}}
-											onCustomArgsClear={() => {
-												onCustomArgsClear(agent.id);
 											}}
 											customEnvVars={customAgentEnvVars[agent.id] || {}}
 											onEnvVarKeyChange={(oldKey, newKey, value) => {

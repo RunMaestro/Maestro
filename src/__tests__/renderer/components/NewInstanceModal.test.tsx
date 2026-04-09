@@ -1515,58 +1515,6 @@ describe('NewInstanceModal', () => {
 				{ enabled: false, remoteId: null }
 			);
 		});
-
-		it('should reset custom path to detected path when Reset button is clicked', async () => {
-			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
-				createAgentConfig({
-					id: 'claude-code',
-					name: 'Claude Code',
-					available: true,
-					path: '/detected/bin/claude',
-				}),
-			]);
-
-			render(
-				<NewInstanceModal
-					isOpen={true}
-					onClose={onClose}
-					onCreate={onCreate}
-					theme={theme}
-					existingSessions={[]}
-				/>
-			);
-
-			// Wait for agents to load, then click to expand
-			await waitFor(() => {
-				expect(screen.getByText('Claude Code')).toBeInTheDocument();
-			});
-			fireEvent.click(screen.getByText('Claude Code'));
-
-			// Path input should be pre-filled with detected path
-			await waitFor(() => {
-				expect(screen.getByDisplayValue('/detected/bin/claude')).toBeInTheDocument();
-			});
-
-			// Set a different custom path
-			const customPathInput = screen.getByDisplayValue('/detected/bin/claude');
-			fireEvent.change(customPathInput, { target: { value: '/custom/path' } });
-
-			await waitFor(() => {
-				expect(customPathInput).toHaveValue('/custom/path');
-			});
-
-			// Reset button should appear when custom path differs from detected path
-			await waitFor(() => {
-				expect(screen.getByText('Reset')).toBeInTheDocument();
-			});
-
-			await act(async () => {
-				fireEvent.click(screen.getByText('Reset'));
-			});
-
-			// Path should be reset to detected path
-			expect(customPathInput).toHaveValue('/detected/bin/claude');
-		});
 	});
 
 	describe('Error handling', () => {

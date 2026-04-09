@@ -21,11 +21,30 @@ import {
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
 } from '../../utils/tabHelpers';
+import { closeTerminalTab as closeTerminalTabHelper } from '../../utils/terminalTabHelpers';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/** Resolve the active tab's unified ref, accounting for terminal, file, and AI tabs. */
+function getActiveUnifiedRef(s: Session): { type: UnifiedTabRef['type']; id: string } | null {
+	if (s.inputMode === 'terminal' && s.activeTerminalTabId) {
+		return { type: 'terminal', id: s.activeTerminalTabId };
+	}
+	if (s.activeFileTabId) {
+		return { type: 'file', id: s.activeFileTabId };
+	}
+	if (s.activeTabId) {
+		return { type: 'ai', id: s.activeTabId };
+	}
+	return null;
+}
 
 // ============================================================================
 // Types
@@ -758,11 +777,11 @@ export function useTabHandlers(): TabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
+				const activeRef = getActiveUnifiedRef(s);
+				if (!activeRef) return s;
 
 				const tabsToClose = s.unifiedTabOrder.filter(
-					(ref) => !(ref.type === activeUnifiedType && ref.id === activeUnifiedId)
+					(ref) => !(ref.type === activeRef.type && ref.id === activeRef.id)
 				);
 
 				let updatedSession = s;
@@ -778,6 +797,8 @@ export function useTabHandlers(): TabHandlersReturn {
 								updatedSession = result.session;
 							}
 						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
 					} else {
 						updatedSession = {
 							...updatedSession,
@@ -818,11 +839,11 @@ export function useTabHandlers(): TabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
+				const activeRef = getActiveUnifiedRef(s);
+				if (!activeRef) return s;
 
 				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+					(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 				);
 				if (activeIndex <= 0) return s;
 
@@ -841,6 +862,8 @@ export function useTabHandlers(): TabHandlersReturn {
 								updatedSession = result.session;
 							}
 						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
 					} else {
 						updatedSession = {
 							...updatedSession,
@@ -862,10 +885,10 @@ export function useTabHandlers(): TabHandlersReturn {
 		const session = sessions.find((s) => s.id === activeSessionId);
 		if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
 		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 		);
 		if (activeIndex <= 0) return;
 
@@ -890,11 +913,11 @@ export function useTabHandlers(): TabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
+				const activeRef = getActiveUnifiedRef(s);
+				if (!activeRef) return s;
 
 				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+					(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 				);
 				if (activeIndex < 0 || activeIndex >= s.unifiedTabOrder.length - 1) return s;
 
@@ -913,6 +936,8 @@ export function useTabHandlers(): TabHandlersReturn {
 								updatedSession = result.session;
 							}
 						}
+					} else if (tabRef.type === 'terminal') {
+						updatedSession = closeTerminalTabHelper(updatedSession, tabRef.id);
 					} else {
 						updatedSession = {
 							...updatedSession,
@@ -934,10 +959,10 @@ export function useTabHandlers(): TabHandlersReturn {
 		const session = sessions.find((s) => s.id === activeSessionId);
 		if (!session) return;
 
-		const activeUnifiedId = session.activeFileTabId ?? session.activeTabId;
-		const activeUnifiedType = session.activeFileTabId ? 'file' : 'ai';
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
 		const activeIndex = session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
 		);
 		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
 

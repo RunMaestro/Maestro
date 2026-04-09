@@ -84,11 +84,9 @@ function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPane
 		customPath: '',
 		onCustomPathChange: vi.fn(),
 		onCustomPathBlur: vi.fn(),
-		onCustomPathClear: vi.fn(),
 		customArgs: '',
 		onCustomArgsChange: vi.fn(),
 		onCustomArgsBlur: vi.fn(),
-		onCustomArgsClear: vi.fn(),
 		customEnvVars: {},
 		onEnvVarKeyChange: vi.fn(),
 		onEnvVarValueChange: vi.fn(),
@@ -307,26 +305,6 @@ describe('AgentConfigPanel', () => {
 			// The input should show the custom path
 			const pathInput = screen.getByDisplayValue('/custom/path/to/claude');
 			expect(pathInput).toBeInTheDocument();
-		});
-
-		it('should show Reset button when custom path differs from detected path', () => {
-			render(
-				<AgentConfigPanel {...createDefaultProps({ customPath: '/custom/path/to/claude' })} />
-			);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should show Reset button when custom path matches detected path', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '/usr/local/bin/claude' })} />);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should NOT show Reset button when no custom path is set', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '' })} />);
-
-			expect(screen.queryByText('Reset')).not.toBeInTheDocument();
 		});
 
 		it('should render custom arguments input section', () => {

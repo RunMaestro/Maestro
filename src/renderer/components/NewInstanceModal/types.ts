@@ -105,9 +105,7 @@ export interface AgentPickerGridProps {
 	onRefreshAgent: (agentId: string) => void;
 	onDismissDebug: () => void;
 	onCustomPathChange: (agentId: string, value: string) => void;
-	onCustomPathClear: (agentId: string) => void;
 	onCustomArgsChange: (agentId: string, value: string) => void;
-	onCustomArgsClear: (agentId: string) => void;
 	onEnvVarKeyChange: (agentId: string, oldKey: string, newKey: string, value: string) => void;
 	onEnvVarValueChange: (agentId: string, key: string, value: string) => void;
 	onEnvVarRemove: (agentId: string, key: string) => void;

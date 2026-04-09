@@ -208,6 +208,68 @@ const CodeBlockWithCopy = memo(
 CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
 
 // ============================================================================
+// fixMarkdownLinkSpaces — pre-process markdown so CommonMark can parse links
+// whose URL destinations contain spaces.
+//
+// CommonMark rejects spaces in link destinations, but AI agents (e.g. Codex)
+// often emit links like [file.ts](/path/with spaces/file.ts).
+//
+// Strategy: walk the text looking for [label]( patterns, then find the
+// balanced closing ), and if the URL portion contains spaces, rewrite to
+// CommonMark's angle-bracket destination syntax: [label](<url>).
+//
+// This handles:
+//   - Nested brackets in labels:  [src/[id].tsx](path with spaces)
+//   - Balanced parens in URLs:    [file](path (copy)/file.ts)
+//   - Multiple links per line:    [a](x y) and [b](z w)
+//   - No-op for URLs without spaces
+// ============================================================================
+
+// Matches a markdown link label (with one level of nested brackets) followed
+// by the opening paren of the URL destination.
+const LINK_LABEL_REGEX = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(/g;
+
+function fixMarkdownLinkSpaces(text: string): string {
+	let result = '';
+	let lastEnd = 0;
+	let m;
+
+	LINK_LABEL_REGEX.lastIndex = 0;
+	while ((m = LINK_LABEL_REGEX.exec(text)) !== null) {
+		const label = m[1];
+		const urlStart = m.index + m[0].length;
+
+		// Walk forward to find the closing ) with balanced parens
+		let depth = 1;
+		let i = urlStart;
+		while (i < text.length && depth > 0) {
+			if (text[i] === '(') depth++;
+			else if (text[i] === ')') depth--;
+			i++;
+		}
+
+		if (depth !== 0) continue; // Unbalanced — skip
+
+		const url = text.slice(urlStart, i - 1); // Exclude closing )
+
+		if (url.includes(' ')) {
+			result += text.slice(lastEnd, m.index);
+			if (url.includes('<') || url.includes('>')) {
+				// Angle brackets in URL would break <url> syntax — fall back to %20
+				result += `[${label}](${url.replace(/ /g, '%20')})`;
+			} else {
+				result += `[${label}](<${url}>)`;
+			}
+			lastEnd = i;
+			LINK_LABEL_REGEX.lastIndex = i;
+		}
+	}
+
+	result += text.slice(lastEnd);
+	return result;
+}
+
+// ============================================================================
 // MarkdownRenderer - Unified markdown rendering component for AI responses
 // ============================================================================
 
@@ -294,10 +356,12 @@ export const MarkdownRenderer = memo(
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
 		const sanitizedContent = useMemo(() => {
+			const processed = fixMarkdownLinkSpaces(content);
+
 			if (allowRawHtml) {
-				return DOMPurify.sanitize(content);
+				return DOMPurify.sanitize(processed);
 			}
-			return content;
+			return processed;
 		}, [content, allowRawHtml]);
 
 		// Right-click context menus for links and file references

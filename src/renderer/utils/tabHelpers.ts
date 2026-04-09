@@ -164,15 +164,15 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
  */
 /**
  * Get the display name for a tab.
- * Priority: name > agent session ID marker > "New Session"
+ * Priority: name > agent session ID marker > tab UUID marker
  *
  * Handles different agent session ID formats:
  * - Claude UUID: "abc123-def456-ghi789" → "ABC123" (first octet)
  * - OpenCode: "SES_4BCDFE8C5FFE4KC1UV9NSMYEDB" → "SES_4BCD" (prefix + 4 chars)
  * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
  *
- * "New Session" is the correct state before any message is sent. Once the agent
- * responds with a session ID, the display transitions to the UUID marker.
+ * Falls back to the tab's own UUID (first octet) so there is always a
+ * meaningful identifier — "New Session" is never displayed.
  */
 export function getTabDisplayName(tab: AITab): string {
 	if (tab.name) {
@@ -181,7 +181,8 @@ export function getTabDisplayName(tab: AITab): string {
 	if (tab.agentSessionId) {
 		return formatSessionId(tab.agentSessionId);
 	}
-	return 'New Session';
+	// Fall back to the tab's own UUID so "New Session" never appears
+	return formatSessionId(tab.id);
 }
 
 /**

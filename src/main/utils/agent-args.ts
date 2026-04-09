@@ -133,7 +133,7 @@ export function applyAgentConfigOverrides(
 
 			let value: any;
 			if (option.key === 'model') {
-				if (overrides.sessionCustomModel !== undefined) {
+				if (overrides.sessionCustomModel !== undefined && overrides.sessionCustomModel !== '') {
 					value = overrides.sessionCustomModel;
 					modelSource = 'session';
 				} else if (agentConfigValues[option.key] !== undefined) {

@@ -167,7 +167,9 @@ export function EditAgentModal({
 					setAgentConfig(globalConfig);
 				} else {
 					// Use session-level values if set, otherwise use global defaults
-					const modelValue = session.customModel ?? globalConfig.model ?? '';
+					// Empty string means explicitly cleared, undefined means never set (use global default)
+					const modelValue =
+						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
 					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
 					setAgentConfig({
 						...globalConfig,
@@ -269,7 +271,8 @@ export function EditAgentModal({
 		if (!result.valid) return;
 
 		// Get model and contextWindow from agentConfig (which is updated via onConfigChange)
-		const modelValue = agentConfig.model?.trim() || undefined;
+		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
+		const modelValue = agentConfig.model?.trim() ?? undefined;
 		const contextWindowValue =
 			typeof agentConfig.contextWindow === 'number' && agentConfig.contextWindow > 0
 				? agentConfig.contextWindow
@@ -537,13 +540,11 @@ export function EditAgentModal({
 								onCustomPathBlur={() => {
 									/* Saved on modal save */
 								}}
-								onCustomPathClear={() => setCustomPath('')}
 								customArgs={customArgs}
 								onCustomArgsChange={setCustomArgs}
 								onCustomArgsBlur={() => {
 									/* Saved on modal save */
 								}}
-								onCustomArgsClear={() => setCustomArgs('')}
 								customEnvVars={customEnvVars}
 								onEnvVarKeyChange={(oldKey, newKey, value) => {
 									const newVars = { ...customEnvVars };

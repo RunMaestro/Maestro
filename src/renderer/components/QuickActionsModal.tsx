@@ -258,6 +258,31 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
 
+	// Compute the active tab's position in the unified tab order for command palette conditions.
+	// This works for AI, file, and terminal tabs.
+	const isTerminalMode = activeSession?.inputMode === 'terminal';
+	const hasActiveTab = !!(isAiMode || isTerminalMode || activeSession?.activeFileTabId);
+	const activeUnifiedIndex = (() => {
+		if (!activeSession) return -1;
+		let type: 'ai' | 'file' | 'terminal';
+		let id: string | undefined;
+		if (isTerminalMode && activeSession.activeTerminalTabId) {
+			type = 'terminal';
+			id = activeSession.activeTerminalTabId;
+		} else if (activeSession.activeFileTabId) {
+			type = 'file';
+			id = activeSession.activeFileTabId;
+		} else {
+			type = 'ai';
+			id = activeSession.activeTabId;
+		}
+		if (!id) return -1;
+		return (activeSession.unifiedTabOrder ?? []).findIndex(
+			(ref) => ref.type === type && ref.id === id
+		);
+	})();
+	const unifiedTabCount = activeSession?.unifiedTabOrder?.length ?? 0;
+
 	// Register layer on mount (handler will be updated by separate effect)
 	useEffect(() => {
 		layerIdRef.current = registerLayer({
@@ -551,7 +576,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && onRenameTab
+		...(hasActiveTab && onRenameTab
 			? [
 					{
 						id: 'renameTab',
@@ -630,13 +655,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 1 && onCloseOtherTabs
+		...(hasActiveTab && unifiedTabCount > 1 && onCloseOtherTabs
 			? [
 					{
 						id: 'closeOtherTabs',
 						label: 'Close Other Tabs',
 						shortcut: tabShortcuts?.closeOtherTabs,
-						subtext: `Keep only current tab, close ${activeSession.aiTabs.length - 1} others`,
+						subtext: `Keep only current tab, close ${unifiedTabCount - 1} others`,
 						action: () => {
 							onCloseOtherTabs();
 							setQuickActionOpen(false);
@@ -644,15 +669,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode &&
-		activeSession &&
-		(() => {
-			const activeTabIndex = activeSession.aiTabs.findIndex(
-				(t) => t.id === activeSession.activeTabId
-			);
-			return activeTabIndex > 0;
-		})() &&
-		onCloseTabsLeft
+		...(hasActiveTab && activeUnifiedIndex > 0 && onCloseTabsLeft
 			? [
 					{
 						id: 'closeTabsLeft',
@@ -665,14 +682,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode &&
-		activeSession &&
-		(() => {
-			const activeTabIndex = activeSession.aiTabs.findIndex(
-				(t) => t.id === activeSession.activeTabId
-			);
-			return activeTabIndex < activeSession.aiTabs.length - 1;
-		})() &&
+		...(hasActiveTab &&
+		activeUnifiedIndex >= 0 &&
+		activeUnifiedIndex < unifiedTabCount - 1 &&
 		onCloseTabsRight
 			? [
 					{
@@ -687,7 +699,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				]
 			: []),
 		// Close current tab
-		...(isAiMode && activeSession && activeSession.aiTabs.length > 1 && onCloseCurrentTab
+		...(hasActiveTab && unifiedTabCount > 1 && onCloseCurrentTab
 			? [
 					{
 						id: 'closeCurrentTab',
@@ -701,15 +713,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				]
 			: []),
 		// Move tab to first/last position
-		...(isAiMode &&
-		activeSession &&
-		(() => {
-			const activeTabIndex = activeSession.aiTabs.findIndex(
-				(t) => t.id === activeSession.activeTabId
-			);
-			return activeTabIndex > 0;
-		})() &&
-		onMoveTabToFirst
+		...(hasActiveTab && activeUnifiedIndex > 0 && onMoveTabToFirst
 			? [
 					{
 						id: 'moveTabToFirst',
@@ -721,14 +725,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		...(isAiMode &&
-		activeSession &&
-		(() => {
-			const activeTabIndex = activeSession.aiTabs.findIndex(
-				(t) => t.id === activeSession.activeTabId
-			);
-			return activeTabIndex < activeSession.aiTabs.length - 1;
-		})() &&
+		...(hasActiveTab &&
+		activeUnifiedIndex >= 0 &&
+		activeUnifiedIndex < unifiedTabCount - 1 &&
 		onMoveTabToLast
 			? [
 					{

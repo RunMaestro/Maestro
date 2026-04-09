@@ -640,22 +640,8 @@ export function NewInstanceModal({
 						onCustomPathChange={(agentId, value) => {
 							setCustomAgentPaths((prev) => ({ ...prev, [agentId]: value }));
 						}}
-						onCustomPathClear={(agentId) => {
-							setCustomAgentPaths((prev) => {
-								const newPaths = { ...prev };
-								delete newPaths[agentId];
-								return newPaths;
-							});
-						}}
 						onCustomArgsChange={(agentId, value) => {
 							setCustomAgentArgs((prev) => ({ ...prev, [agentId]: value }));
-						}}
-						onCustomArgsClear={(agentId) => {
-							setCustomAgentArgs((prev) => {
-								const newArgs = { ...prev };
-								delete newArgs[agentId];
-								return newArgs;
-							});
 						}}
 						onEnvVarKeyChange={(agentId, oldKey, newKey, value) => {
 							const currentVars = { ...customAgentEnvVars[agentId] };

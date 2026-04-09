@@ -264,12 +264,10 @@ export interface AgentConfigPanelProps {
 	customPath: string;
 	onCustomPathChange: (value: string) => void;
 	onCustomPathBlur: () => void;
-	onCustomPathClear: () => void;
 	// Custom arguments
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
 	onCustomArgsBlur: () => void;
-	onCustomArgsClear: () => void;
 	// Environment variables
 	customEnvVars: Record<string, string>;
 	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string) => void;
@@ -306,11 +304,9 @@ export function AgentConfigPanel({
 	customPath,
 	onCustomPathChange,
 	onCustomPathBlur,
-	onCustomPathClear,
 	customArgs,
 	onCustomArgsChange,
 	onCustomArgsBlur,
-	onCustomArgsClear,
 	customEnvVars,
 	onEnvVarKeyChange,
 	onEnvVarValueChange,
@@ -441,19 +437,6 @@ export function AgentConfigPanel({
 							opacity: isSshEnabled && !customPath ? 0.7 : 1,
 						}}
 					/>
-					{customPath && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onCustomPathClear();
-							}}
-							className="px-2 py-1.5 rounded text-xs"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-							title={isSshEnabled ? 'Reset to remote binary name' : 'Reset to detected path'}
-						>
-							Reset
-						</button>
-					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					{isSshEnabled
@@ -481,18 +464,6 @@ export function AgentConfigPanel({
 						className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					/>
-					{customArgs && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onCustomArgsClear();
-							}}
-							className="px-2 py-1.5 rounded text-xs"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							Clear
-						</button>
-					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					Additional CLI arguments appended to all calls to this agent
