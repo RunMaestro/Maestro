@@ -16,6 +16,15 @@ type AutoRunTreeNode = {
 	children?: AutoRunTreeNode[];
 };
 
+/** Playbook status data from .maestro/STATUS.json (mirrors shared/types PlaybookStatus) */
+type PlaybookStatusData = {
+	feature?: string;
+	phase?: string;
+	summary?: string;
+	tests?: { pass: number; fail: number };
+	artifact?: string;
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -1432,6 +1441,14 @@ interface MaestroAPI {
 			loopNumber: number,
 			sshRemoteId?: string
 		) => Promise<{ workingCopyPath: string; originalPath: string }>;
+		// Playbook STATUS.json watching
+		watchStatus: (projectPath: string) => Promise<{
+			status: PlaybookStatusData | null;
+		}>;
+		unwatchStatus: (projectPath: string) => Promise<Record<string, never>>;
+		onStatusChanged: (
+			handler: (data: { projectPath: string; status: PlaybookStatusData | null }) => void
+		) => () => void;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {

@@ -27,6 +27,17 @@ export interface WorktreeSettings {
 }
 
 /**
+ * Playbook status from .maestro/STATUS.json
+ */
+export interface PlaybookStatusInfo {
+	feature?: string;
+	phase?: string;
+	summary?: string;
+	tests?: { pass: number; fail: number };
+	artifact?: string;
+}
+
+/**
  * Playbook definition
  */
 export interface Playbook {
@@ -120,6 +131,26 @@ export function createAutorunApi() {
 				loopNumber,
 				sshRemoteId
 			),
+
+		watchStatus: (projectPath: string): Promise<{ status: PlaybookStatusInfo | null }> =>
+			ipcRenderer.invoke('autorun:watchStatus', projectPath),
+
+		unwatchStatus: (projectPath: string) =>
+			ipcRenderer.invoke('autorun:unwatchStatus', projectPath),
+
+		onStatusChanged: (
+			handler: (data: { projectPath: string; status: PlaybookStatusInfo | null }) => void
+		) => {
+			const wrappedHandler = (
+				_event: Electron.IpcRendererEvent,
+				data: {
+					projectPath: string;
+					status: PlaybookStatusInfo | null;
+				}
+			) => handler(data);
+			ipcRenderer.on('autorun:statusChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('autorun:statusChanged', wrappedHandler);
+		},
 	};
 }
 

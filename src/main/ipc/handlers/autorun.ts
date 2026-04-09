@@ -5,7 +5,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
-import { SshRemoteConfig } from '../../../shared/types';
+import { SshRemoteConfig, PlaybookStatus } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
@@ -54,6 +54,10 @@ function getSshRemoteById(
 // State managed by this module
 const autoRunWatchers = new Map<string, FSWatcher>();
 let autoRunWatchDebounceTimer: NodeJS.Timeout | null = null;
+
+// Playbook STATUS.json watchers (keyed by project path)
+const statusWatchers = new Map<string, FSWatcher>();
+let statusWatchDebounceTimer: NodeJS.Timeout | null = null;
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -1270,6 +1274,104 @@ export function registerAutorunHandlers(
 		)
 	);
 
+	// Watch for .maestro/STATUS.json changes in a project directory
+	// When the file changes, read and parse it, then emit the parsed status to the renderer
+	ipcMain.handle(
+		'autorun:watchStatus',
+		createIpcHandler(handlerOpts('watchStatus'), async (projectPath: string) => {
+			// Stop any existing status watcher for this path
+			if (statusWatchers.has(projectPath)) {
+				statusWatchers.get(projectPath)?.close();
+				statusWatchers.delete(projectPath);
+			}
+
+			const statusFilePath = path.join(projectPath, '.maestro', 'STATUS.json');
+
+			// Read initial status if file exists
+			let initialStatus: PlaybookStatus | null = null;
+			try {
+				const content = await fs.readFile(statusFilePath, 'utf-8');
+				initialStatus = JSON.parse(content) as PlaybookStatus;
+			} catch {
+				// File doesn't exist yet — that's fine
+			}
+
+			// Watch the .maestro directory for STATUS.json changes
+			const maestroDir = path.join(projectPath, '.maestro');
+			try {
+				await fs.stat(maestroDir);
+			} catch {
+				await fs.mkdir(maestroDir, { recursive: true });
+			}
+
+			const watcher = chokidar.watch(statusFilePath, {
+				persistent: true,
+				ignoreInitial: true,
+			});
+
+			const handleStatusChange = async () => {
+				if (statusWatchDebounceTimer) {
+					clearTimeout(statusWatchDebounceTimer);
+				}
+				statusWatchDebounceTimer = setTimeout(async () => {
+					statusWatchDebounceTimer = null;
+					try {
+						const content = await fs.readFile(statusFilePath, 'utf-8');
+						const status = JSON.parse(content) as PlaybookStatus;
+						const mainWindow = getMainWindow();
+						if (isWebContentsAvailable(mainWindow)) {
+							mainWindow.webContents.send('autorun:statusChanged', {
+								projectPath,
+								status,
+							});
+						}
+					} catch (err) {
+						logger.warn(`${LOG_CONTEXT} Failed to read STATUS.json: ${err}`, LOG_CONTEXT);
+					}
+				}, 500);
+			};
+
+			watcher.on('add', handleStatusChange);
+			watcher.on('change', handleStatusChange);
+			watcher.on('unlink', () => {
+				// File was deleted — clear status in renderer
+				const mainWindow = getMainWindow();
+				if (isWebContentsAvailable(mainWindow)) {
+					mainWindow.webContents.send('autorun:statusChanged', {
+						projectPath,
+						status: null,
+					});
+				}
+			});
+
+			watcher.on('error', (error) => {
+				logger.error(
+					`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
+					LOG_CONTEXT,
+					error
+				);
+			});
+
+			statusWatchers.set(projectPath, watcher);
+			logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+
+			return { status: initialStatus };
+		})
+	);
+
+	// Stop watching STATUS.json for a project
+	ipcMain.handle(
+		'autorun:unwatchStatus',
+		createIpcHandler(handlerOpts('unwatchStatus', false), async (projectPath: string) => {
+			if (statusWatchers.has(projectPath)) {
+				statusWatchers.get(projectPath)?.close();
+				statusWatchers.delete(projectPath);
+				logger.info(`Stopped watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+			}
+			return {};
+		})
+	);
+
 	// Clean up all watchers on app quit
 	app.on('before-quit', () => {
 		for (const [folderPath, watcher] of autoRunWatchers) {
@@ -1277,6 +1379,12 @@ export function registerAutorunHandlers(
 			logger.info(`Cleaned up Auto Run watcher for: ${folderPath}`, LOG_CONTEXT);
 		}
 		autoRunWatchers.clear();
+
+		for (const [projectPath, watcher] of statusWatchers) {
+			watcher.close();
+			logger.info(`Cleaned up STATUS.json watcher for: ${projectPath}`, LOG_CONTEXT);
+		}
+		statusWatchers.clear();
 	});
 
 	logger.debug(`${LOG_CONTEXT} Auto Run IPC handlers registered`);
@@ -1287,4 +1395,11 @@ export function registerAutorunHandlers(
  */
 export function getAutoRunWatcherCount(): number {
 	return autoRunWatchers.size;
+}
+
+/**
+ * Get the current number of active STATUS.json watchers (for testing/debugging)
+ */
+export function getStatusWatcherCount(): number {
+	return statusWatchers.size;
 }
