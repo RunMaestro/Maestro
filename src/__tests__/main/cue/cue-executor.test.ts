@@ -1406,7 +1406,10 @@ describe('cue-executor', () => {
 				}),
 				JSON.stringify({
 					type: 'assistant',
-					message: { id: msgId, content: [{ type: 'text', text: 'Hello, here is a longer response.' }] },
+					message: {
+						id: msgId,
+						content: [{ type: 'text', text: 'Hello, here is a longer response.' }],
+					},
 				}),
 				JSON.stringify({ type: 'result', result: '' }),
 			].join('\n');
