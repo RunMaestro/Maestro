@@ -1,12 +1,13 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Terminal } from 'lucide-react';
+import { Globe, Plus, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 interface NewTabPopoverProps {
 	theme: Theme;
 	onNewTab: () => void;
+	onNewBrowserTab?: () => void;
 	onNewTerminalTab?: () => void;
 	/** Shortcut keys config for new tab */
 	newTabKeys: string[];
@@ -24,6 +25,7 @@ interface NewTabPopoverProps {
 export const NewTabPopover = memo(function NewTabPopover({
 	theme,
 	onNewTab,
+	onNewBrowserTab,
 	onNewTerminalTab,
 	newTabKeys,
 	terminalKeys,
@@ -57,7 +59,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 	}, [popoverOpen]);
 
 	const handleClick = useCallback(() => {
-		if (!onNewTerminalTab) {
+		if (!onNewTerminalTab && !onNewBrowserTab) {
 			onNewTab();
 			return;
 		}
@@ -122,6 +124,16 @@ export const NewTabPopover = memo(function NewTabPopover({
 								{formatShortcutKeys(newTabKeys)}
 							</span>
 						</button>
+						{onNewBrowserTab && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(onNewBrowserTab)}
+							>
+								<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								New Browser Tab
+							</button>
+						)}
 						<button
 							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}

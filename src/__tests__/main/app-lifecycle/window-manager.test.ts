@@ -12,12 +12,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
 	send: vi.fn(),
 	openDevTools: vi.fn(),
-	on: vi.fn(),
+	on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+		webContentsEventHandlers.set(event, handler);
+	}),
 	setWindowOpenHandler: vi.fn(),
 	session: {
 		setPermissionRequestHandler: vi.fn(),
@@ -110,6 +113,7 @@ describe('app-lifecycle/window-manager', () => {
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
 		lastBrowserWindowOptions = null;
+		webContentsEventHandlers.clear();
 
 		mockWindowStateStore = {
 			store: {
@@ -173,6 +177,67 @@ describe('app-lifecycle/window-manager', () => {
 			const result = windowManager.createWindow();
 
 			expect(result).toBeInstanceOf(MockBrowserWindow);
+		});
+
+		it('enables webviewTag while keeping sandboxed renderer prefs', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions?.webPreferences).toMatchObject({
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+				webviewTag: true,
+			});
+		});
+
+		it('blocks unsafe webview attachments that use disallowed partitions or URLs', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+			expect(handler).toBeTruthy();
+
+			const preventDefault = vi.fn();
+			const webPreferences: Record<string, unknown> = {
+				partition: 'persist:unexpected',
+				preload: '/tmp/preload.js',
+			};
+
+			handler?.({ preventDefault } as any, webPreferences, {
+				src: 'file:///tmp/escape.html',
+			} as any);
+
+			expect(preventDefault).toHaveBeenCalled();
+			expect(webPreferences.preload).toBeUndefined();
+			expect(webPreferences.nodeIntegration).toBe(false);
+			expect(mockLogger.warn).toHaveBeenCalled();
 		});
 
 		it('should maximize window if saved state is maximized', async () => {

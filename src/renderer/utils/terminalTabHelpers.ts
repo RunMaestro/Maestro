@@ -117,6 +117,8 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 		...session,
 		terminalTabs: [...(session.terminalTabs || []), tab],
 		activeTerminalTabId: tab.id,
+		activeFileTabId: null,
+		activeBrowserTabId: null,
 		unifiedTabOrder: [...(session.unifiedTabOrder || []), newTabRef],
 	};
 }
@@ -191,6 +193,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			...baseSession,
 			activeTerminalTabId: fallbackRef.id,
 			activeFileTabId: null,
+			activeBrowserTabId: null,
 			inputMode: 'terminal',
 		};
 	} else if (fallbackRef?.type === 'file') {
@@ -198,6 +201,15 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			...baseSession,
 			activeTerminalTabId: null,
 			activeFileTabId: fallbackRef.id,
+			activeBrowserTabId: null,
+			inputMode: 'ai',
+		};
+	} else if (fallbackRef?.type === 'browser') {
+		return {
+			...baseSession,
+			activeTerminalTabId: null,
+			activeFileTabId: null,
+			activeBrowserTabId: fallbackRef.id,
 			inputMode: 'ai',
 		};
 	} else if (fallbackRef?.type === 'ai') {
@@ -206,6 +218,7 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 			activeTabId: fallbackRef.id,
 			activeTerminalTabId: null,
 			activeFileTabId: null,
+			activeBrowserTabId: null,
 			inputMode: 'ai',
 		};
 	} else {
@@ -236,6 +249,7 @@ export function selectTerminalTab(session: Session, tabId: string): Session {
 		...session,
 		activeTerminalTabId: tabId,
 		activeFileTabId: null,
+		activeBrowserTabId: null,
 	};
 }
 

@@ -175,8 +175,14 @@ export const MainPanel = React.memo(
 			unifiedTabs,
 			activeFileTabId,
 			activeFileTab,
+			activeBrowserTabId,
+			activeBrowserTab,
 			onFileTabSelect,
 			onFileTabClose,
+			onNewBrowserTab,
+			onBrowserTabSelect,
+			onBrowserTabClose,
+			onBrowserTabUpdate,
 			onFileTabEditModeChange,
 			onFileTabEditContentChange,
 			// Terminal tab callbacks (Phase 8)
@@ -530,8 +536,12 @@ export const MainPanel = React.memo(
 									// Unified tab system props (Phase 4)
 									unifiedTabs={unifiedTabs}
 									activeFileTabId={activeFileTabId}
+									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onNewBrowserTab={onNewBrowserTab}
+									onBrowserTabSelect={onBrowserTabSelect}
+									onBrowserTabClose={onBrowserTabClose}
 									// Terminal tab props (Phase 8)
 									onNewTerminalTab={onNewTerminalTab}
 									activeTerminalTabId={activeSession.activeTerminalTabId}
@@ -564,6 +574,8 @@ export const MainPanel = React.memo(
 							filePreviewLoading={filePreviewLoading}
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
+							activeBrowserTabId={activeBrowserTabId}
+							activeBrowserTab={activeBrowserTab}
 							memoizedFilePreviewFile={memoizedFilePreviewFile}
 							filePreviewCwd={filePreviewCwd}
 							filePreviewSshRemoteId={filePreviewSshRemoteId}
@@ -576,6 +588,7 @@ export const MainPanel = React.memo(
 							handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
 							handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
 							handleFilePreviewReload={handleFilePreviewReload}
+							handleBrowserTabUpdate={onBrowserTabUpdate}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}

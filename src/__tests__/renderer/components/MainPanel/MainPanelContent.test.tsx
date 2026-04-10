@@ -63,6 +63,10 @@ vi.mock('../../../../renderer/components/InlineWizard', () => ({
 		React.createElement('div', { 'data-testid': 'document-generation' }),
 }));
 
+vi.mock('../../../../renderer/components/MainPanel/BrowserTabView', () => ({
+	BrowserTabView: (props: any) => React.createElement('div', { 'data-testid': 'browser-tab-view' }),
+}));
+
 vi.mock('../../../../renderer/components/TerminalView', () => {
 	const TerminalView = React.forwardRef((props: any, ref: any) =>
 		React.createElement('div', {
@@ -112,6 +116,8 @@ function makeDefaultProps() {
 		filePreviewLoading: null,
 		activeFileTabId: null as string | null | undefined,
 		activeFileTab: null as FilePreviewTab | null | undefined,
+		activeBrowserTabId: null as string | null | undefined,
+		activeBrowserTab: null as any,
 		memoizedFilePreviewFile: null,
 		filePreviewCwd: '',
 		filePreviewSshRemoteId: undefined,
@@ -124,6 +130,7 @@ function makeDefaultProps() {
 		handleFilePreviewScrollPositionChange: vi.fn(),
 		handleFilePreviewSearchQueryChange: vi.fn(),
 		handleFilePreviewReload: vi.fn(),
+		handleBrowserTabUpdate: vi.fn(),
 		terminalViewRefs: { current: new Map() } as any,
 		mountedTerminalSessionIds: [] as string[],
 		mountedTerminalSessionsRef: { current: new Map() } as any,
@@ -218,6 +225,23 @@ describe('MainPanelContent', () => {
 		props.filePreviewLoading = { name: 'test.ts', path: '/test/test.ts' };
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByText(/Loading/)).toBeInTheDocument();
+	});
+
+	it('renders BrowserTabView when browser tab is active', () => {
+		const props = makeDefaultProps();
+		props.activeBrowserTabId = 'browser-1';
+		props.activeBrowserTab = {
+			id: 'browser-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			createdAt: Date.now(),
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<MainPanelContent {...props} />);
+		expect(screen.getByTestId('browser-tab-view')).toBeInTheDocument();
+		expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
 	});
 
 	it('renders TerminalView for mounted terminal sessions', () => {

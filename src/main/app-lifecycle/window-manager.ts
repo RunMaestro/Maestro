@@ -10,6 +10,10 @@ import type { WindowState } from '../stores/types';
 import { logger } from '../utils/logger';
 import { initAutoUpdater } from '../auto-updater';
 
+const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
+const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:']);
+const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
+
 /** Sentry severity levels */
 type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
 
@@ -106,6 +110,8 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 					contextIsolation: true,
 					nodeIntegration: false,
 					sandbox: true,
+					// Embedded browser tabs use Electron's guest webview surface in the renderer.
+					webviewTag: true,
 				},
 			});
 
@@ -176,6 +182,42 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			// ================================================================
 			// Navigation & Window Security Hardening
 			// ================================================================
+
+			// Restrict renderer-created webviews to the browser-tab surface only.
+			mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+				const src = typeof params.src === 'string' ? params.src : '';
+				const partition =
+					typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
+
+				delete webPreferences.preload;
+				delete (webPreferences as Record<string, unknown>).preloadURL;
+
+				webPreferences.nodeIntegration = false;
+				webPreferences.nodeIntegrationInSubFrames = false;
+				webPreferences.contextIsolation = true;
+				webPreferences.sandbox = true;
+				webPreferences.webSecurity = true;
+				webPreferences.allowRunningInsecureContent = false;
+
+				const isAllowedAboutUrl = ALLOWED_BROWSER_TAB_ABOUT_URLS.has(src);
+				const isAllowedNavigationTarget = (() => {
+					if (isAllowedAboutUrl) return true;
+					try {
+						return ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS.has(new URL(src).protocol);
+					} catch {
+						return false;
+					}
+				})();
+
+				const hasAllowedPartition = partition.startsWith(BROWSER_TAB_PARTITION_PREFIX);
+				if (!isAllowedNavigationTarget || !hasAllowedPartition) {
+					event.preventDefault();
+					logger.warn(`Blocked unsafe webview attachment: ${src || '<empty src>'}`, 'Window', {
+						src,
+						partition,
+					});
+				}
+			});
 
 			// Deny all popup/new-window requests — external links use IPC shell:openExternal
 			mainWindow.webContents.setWindowOpenHandler(({ url }) => {

@@ -89,6 +89,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
+		browserTabs: [],
+		activeBrowserTabId: null,
 		unifiedTabOrder: [],
 		unifiedClosedTabHistory: [],
 		terminalTabs: [],

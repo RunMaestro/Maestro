@@ -91,6 +91,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
+		browserTabs: [],
+		activeBrowserTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
 		unifiedClosedTabHistory: [],
 		busySource: 'user',
@@ -196,6 +198,38 @@ describe('restoreSession — Migration logic', () => {
 		});
 
 		expect(restored!.fileTreeAutoRefreshInterval).toBe(180);
+	});
+
+	it('rehydrates browser tabs with a safe URL, title, and partition', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: '',
+					title: '',
+					createdAt: 1,
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs[0].url).toBe('about:blank');
+		expect(restored!.browserTabs[0].title).toBe('New Tab');
+		expect(restored!.browserTabs[0].partition).toContain('persist:maestro-browser-session-');
+		expect(restored!.browserTabs[0].isLoading).toBe(false);
 	});
 
 	it('migrates toolType terminal to claude-code', async () => {

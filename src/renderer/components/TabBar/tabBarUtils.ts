@@ -10,14 +10,20 @@ export function isUnifiedTabActive(
 	tab: UnifiedTab,
 	activeTabId: string,
 	activeFileTabId: string | null | undefined,
+	activeBrowserTabId: string | null | undefined,
 	activeTerminalTabId: string | null | undefined,
 	inputMode: 'ai' | 'terminal' | undefined
 ): boolean {
 	if (tab.type === 'ai') {
-		return tab.id === activeTabId && !activeFileTabId && inputMode !== 'terminal';
+		return (
+			tab.id === activeTabId && !activeFileTabId && !activeBrowserTabId && inputMode !== 'terminal'
+		);
 	}
 	if (tab.type === 'file') {
 		return tab.id === activeFileTabId;
+	}
+	if (tab.type === 'browser') {
+		return tab.id === activeBrowserTabId && inputMode !== 'terminal';
 	}
 	return tab.id === activeTerminalTabId && inputMode === 'terminal';
 }

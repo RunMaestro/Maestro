@@ -19,6 +19,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
+import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 
 // ============================================================================
@@ -213,6 +214,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					activeTabId: defaultTabId,
 					filePreviewTabs: [],
 					activeFileTabId: null,
+					browserTabs: [],
+					activeBrowserTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					unifiedClosedTabHistory: [],
 				};
@@ -226,6 +229,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					`[restoreSession] Session has activeFileTabId='${session.activeFileTabId}' but inputMode='${session.inputMode}' — clearing orphaned file tab reference`
 				);
 				session = { ...session, activeFileTabId: null };
+			}
+			if (session.inputMode !== 'ai' && session.activeBrowserTabId) {
+				console.warn(
+					`[restoreSession] Session has activeBrowserTabId='${session.activeBrowserTabId}' but inputMode='${session.inputMode}' — clearing orphaned browser tab reference`
+				);
+				session = { ...session, activeBrowserTabId: null };
 			}
 
 			// Detect and fix inputMode/toolType mismatch
@@ -319,6 +328,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			if (!correctedSession.terminalTabs) {
 				correctedSession = {
 					...correctedSession,
+					browserTabs: correctedSession.browserTabs || [],
+					activeBrowserTabId: correctedSession.activeBrowserTabId ?? null,
 					terminalTabs: [],
 					activeTerminalTabId: null,
 					// When unifiedTabOrder is undefined (legacy session), build it from AI+file tabs only.
@@ -331,6 +342,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 							type: 'file' as const,
 							id: tab.id,
 						})),
+						...(correctedSession.browserTabs || []).map((tab) => ({
+							type: 'browser' as const,
+							id: tab.id,
+						})),
 					],
 				};
 			}
@@ -338,6 +353,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// Migration: ensure activeTerminalTabId is null if undefined
 			if (correctedSession.activeTerminalTabId === undefined) {
 				correctedSession = { ...correctedSession, activeTerminalTabId: null };
+			}
+			if (correctedSession.activeBrowserTabId === undefined) {
+				correctedSession = { ...correctedSession, activeBrowserTabId: null };
 			}
 
 			// Reset all tab states to idle - processes don't survive app restart
@@ -354,6 +372,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				state: 'idle' as const,
 				exitCode: undefined,
 			}));
+			const resetBrowserTabs = (correctedSession.browserTabs || []).map((tab) =>
+				rehydrateBrowserTab(tab, correctedSession.id)
+			);
 
 			return {
 				...correctedSession,
@@ -381,12 +402,18 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				closedTabHistory: [],
 				filePreviewTabs: correctedSession.filePreviewTabs || [],
 				activeFileTabId: correctedSession.activeFileTabId ?? null,
+				browserTabs: resetBrowserTabs,
+				activeBrowserTabId: correctedSession.activeBrowserTabId ?? null,
 				terminalTabs: resetTerminalTabs,
 				activeTerminalTabId: correctedSession.activeTerminalTabId ?? null,
 				unifiedTabOrder: correctedSession.unifiedTabOrder || [
 					...resetAiTabs.map((tab) => ({ type: 'ai' as const, id: tab.id })),
 					...(correctedSession.filePreviewTabs || []).map((tab) => ({
 						type: 'file' as const,
+						id: tab.id,
+					})),
+					...resetBrowserTabs.map((tab) => ({
+						type: 'browser' as const,
 						id: tab.id,
 					})),
 					...resetTerminalTabs.map((tab) => ({

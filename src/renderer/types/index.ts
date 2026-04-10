@@ -499,10 +499,28 @@ export interface TerminalTab {
 }
 
 /**
+ * Browser Tab for embedded web browsing via Electron webview.
+ * Browser tabs persist their chrome state, but guest contents are recreated on restore.
+ */
+export interface BrowserTab {
+	id: string; // Unique tab ID (UUID)
+	url: string; // Current URL shown in the address bar
+	title: string; // Last known document title (falls back to URL)
+	createdAt: number; // Timestamp for ordering
+	partition?: string; // Persisted Electron partition so browser tabs share session data per agent
+	canGoBack: boolean; // Navigation state for toolbar back button
+	canGoForward: boolean; // Navigation state for toolbar forward button
+	isLoading: boolean; // Current loading state for toolbar and restore UX
+	favicon?: string | null; // Optional site icon URL/data for tab chrome
+	// Runtime-only: populated by the embedded Electron browser surface, never persisted
+	webContentsId?: number;
+}
+
+/**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -512,7 +530,8 @@ export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal'; id: string };
 export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
 	| { type: 'file'; id: string; data: FilePreviewTab }
-	| { type: 'terminal'; id: string; data: TerminalTab };
+	| { type: 'terminal'; id: string; data: TerminalTab }
+	| { type: 'browser'; id: string; data: BrowserTab };
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
@@ -522,7 +541,8 @@ export type UnifiedTab =
 export type ClosedTabEntry =
 	| { type: 'ai'; tab: AITab; unifiedIndex: number; closedAt: number }
 	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number }
-	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number };
+	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number }
+	| { type: 'browser'; tab: BrowserTab; unifiedIndex: number; closedAt: number };
 
 export interface Session {
 	id: string;
@@ -648,14 +668,19 @@ export interface Session {
 	// Currently active file tab ID (null if an AI tab or terminal tab is active)
 	activeFileTabId: string | null;
 
+	// Browser Tabs - embedded web browsing (coexists with AI, file, and terminal tabs)
+	browserTabs: BrowserTab[];
+	// Currently active browser tab ID (null if an AI, file, or terminal tab is active)
+	activeBrowserTabId: string | null;
+
 	// Terminal tab management — each tab has its own PTY session with xterm.js rendering
 	terminalTabs: TerminalTab[];
 	// Currently active terminal tab ID (null if an AI or file tab is active)
 	activeTerminalTabId: string | null;
 
-	// Unified tab ordering - determines visual order of all tabs (AI, file, and terminal)
+	// Unified tab ordering - determines visual order of all tabs (AI, file, browser, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
-	// Stack of recently closed tabs (AI, file, and terminal) for undo (max 25, runtime-only, not persisted)
+	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
 

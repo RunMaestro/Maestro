@@ -375,7 +375,13 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		// Verify the file tab exists
 		if (!session.filePreviewTabs.some((t) => t.id === tabId)) return;
-		updateActiveSession({ ...session, activeFileTabId: tabId });
+		updateActiveSession({
+			...session,
+			activeFileTabId: tabId,
+			activeBrowserTabId: null,
+			activeTerminalTabId: null,
+			inputMode: 'ai',
+		});
 	},
 
 	navigateToNext: (showUnreadOnly?) => {

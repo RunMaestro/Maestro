@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell, Globe, X } from 'lucide-react';
 import type { AITab } from '../../types';
 import { hasDraft } from '../../utils/tabHelpers';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -28,6 +28,7 @@ function TabBarInner({
 	onTabSelect,
 	onTabClose,
 	onNewTab,
+	onNewBrowserTab,
 	onNewTerminalTab,
 	onRequestRename,
 	onTabReorder,
@@ -52,6 +53,9 @@ function TabBarInner({
 	activeFileTabId,
 	onFileTabSelect,
 	onFileTabClose,
+	activeBrowserTabId,
+	onBrowserTabSelect,
+	onBrowserTabClose,
 	onUnifiedTabReorder,
 	activeTerminalTabId,
 	inputMode = 'ai',
@@ -100,7 +104,7 @@ function TabBarInner({
 				const targetTabId =
 					inputMode === 'terminal'
 						? activeTerminalTabId || activeTabId
-						: activeFileTabId || activeTabId;
+						: activeFileTabId || activeBrowserTabId || activeTabId;
 				const tabElement = container?.querySelector(
 					`[data-tab-id="${targetTabId}"]`
 				) as HTMLElement | null;
@@ -123,7 +127,15 @@ function TabBarInner({
 				}
 			});
 		});
-	}, [activeTabId, activeFileTabId, activeTerminalTabId, inputMode, activeTabName, showUnreadOnly]);
+	}, [
+		activeTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTerminalTabId,
+		inputMode,
+		activeTabName,
+		showUnreadOnly,
+	]);
 
 	// Filter tabs for display
 	const displayedTabs = showUnreadOnly
@@ -410,6 +422,7 @@ function TabBarInner({
 							unifiedTab,
 							activeTabId,
 							activeFileTabId,
+							activeBrowserTabId,
 							activeTerminalTabId,
 							inputMode
 						);
@@ -419,6 +432,7 @@ function TabBarInner({
 									prevTab,
 									activeTabId,
 									activeFileTabId,
+									activeBrowserTabId,
 									activeTerminalTabId,
 									inputMode
 								)
@@ -482,7 +496,7 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-						} else {
+						} else if (unifiedTab.type === 'terminal') {
 							const terminalTab = unifiedTab.data;
 							const terminalIndex = allTabs
 								.filter((ut) => ut.type === 'terminal')
@@ -518,6 +532,47 @@ function TabBarInner({
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}
 									/>
+								</React.Fragment>
+							);
+						} else {
+							const browserTab = unifiedTab.data;
+							return (
+								<React.Fragment key={unifiedTab.id}>
+									{showSeparator && separator}
+									<div
+										ref={(el) => registerTabRef(browserTab.id, el)}
+										data-tab-id={browserTab.id}
+										draggable
+										onDragStart={(e) => handleDragStart(browserTab.id, e)}
+										onDragOver={(e) => handleDragOver(browserTab.id, e)}
+										onDragEnd={handleDragEnd}
+										onDrop={(e) => handleDrop(browserTab.id, e)}
+										onClick={() => onBrowserTabSelect?.(browserTab.id)}
+										className="group flex items-center gap-2 min-w-0 max-w-[220px] px-3 py-2 rounded-t-lg border border-b-0 cursor-pointer transition-colors"
+										style={{
+											backgroundColor: isActive ? theme.colors.bgMain : theme.colors.bgSidebar,
+											borderColor: theme.colors.border,
+											color: isActive ? theme.colors.textMain : theme.colors.textDim,
+											opacity: draggingTabId === browserTab.id ? 0.5 : 1,
+										}}
+									>
+										<Globe className="w-3.5 h-3.5 shrink-0" />
+										<span className="truncate text-sm">
+											{browserTab.title || browserTab.url || 'Browser'}
+										</span>
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												onBrowserTabClose?.(browserTab.id);
+											}}
+											className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+											style={{ color: theme.colors.textDim }}
+											title="Close browser tab"
+										>
+											<X className="w-3.5 h-3.5" />
+										</button>
+									</div>
 								</React.Fragment>
 							);
 						}
@@ -556,6 +611,7 @@ function TabBarInner({
 			<NewTabPopover
 				theme={theme}
 				onNewTab={onNewTab}
+				onNewBrowserTab={onNewBrowserTab}
 				onNewTerminalTab={onNewTerminalTab}
 				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
 				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}

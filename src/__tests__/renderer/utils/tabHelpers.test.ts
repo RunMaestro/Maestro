@@ -33,6 +33,7 @@ import {
 	createTab,
 	closeTab,
 	reopenClosedTab,
+	closeBrowserTab,
 	closeFileTab,
 	addAiTabToUnifiedHistory,
 	reopenUnifiedClosedTab,
@@ -102,6 +103,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
+		browserTabs: [],
+		activeBrowserTabId: null,
 		unifiedTabOrder: [],
 		unifiedClosedTabHistory: [],
 		terminalTabs: [],
@@ -140,6 +143,19 @@ function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): FilePreview
 		editContent: undefined,
 		createdAt: Date.now(),
 		lastModified: Date.now(),
+		...overrides,
+	};
+}
+
+function createMockBrowserTab(overrides: Record<string, unknown> = {}) {
+	return {
+		id: 'browser-tab-1',
+		url: 'https://example.com/',
+		title: 'Example',
+		createdAt: Date.now(),
+		canGoBack: false,
+		canGoForward: false,
+		isLoading: false,
 		...overrides,
 	};
 }
@@ -3460,6 +3476,62 @@ describe('tabHelpers', () => {
 			const result = findNextUnreadSession(sessions, 'b');
 			expect(result.jumped).toBe(true);
 			expect(result.targetSessionId).toBe('c');
+		});
+	});
+
+	describe('browser tabs', () => {
+		it('navigates to a browser tab from unified order', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				browserTabs: [browserTab as any],
+				unifiedTabOrder: [
+					{ type: 'ai', id: aiTab.id },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabByIndex(session, 1);
+			expect(result?.type).toBe('browser');
+			expect(result?.session.activeBrowserTabId).toBe('browser-1');
+			expect(result?.session.inputMode).toBe('ai');
+		});
+
+		it('closes an active browser tab and falls back to the previous AI tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				browserTabs: [browserTab as any],
+				activeBrowserTabId: 'browser-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: aiTab.id },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			const result = closeBrowserTab(session, 'browser-1');
+			expect(result?.session.browserTabs).toHaveLength(0);
+			expect(result?.session.activeBrowserTabId).toBeNull();
+			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		it('clears an active browser tab when selecting an AI tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: aiTab.id,
+				browserTabs: [browserTab as any],
+				activeBrowserTabId: 'browser-1',
+			});
+
+			const result = setActiveTab(session, 'ai-1');
+			expect(result?.session.activeBrowserTabId).toBeNull();
+			expect(result?.session.activeFileTabId).toBeNull();
 		});
 	});
 });

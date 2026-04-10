@@ -9,6 +9,7 @@ export interface TabBarProps {
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
+	onNewBrowserTab?: () => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */
 	onNewTerminalTab?: () => void;
 	onRequestRename?: (tabId: string) => void;
@@ -54,6 +55,12 @@ export interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+	/** Currently active browser tab ID (null if no browser tab is active) */
+	activeBrowserTabId?: string | null;
+	/** Handler to select a browser tab */
+	onBrowserTabSelect?: (tabId: string) => void;
+	/** Handler to close a browser tab */
+	onBrowserTabClose?: (tabId: string) => void;
 
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */
