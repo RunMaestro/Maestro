@@ -232,6 +232,43 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.browserTabs[0].isLoading).toBe(false);
 	});
 
+	it('preserves a safe persisted browser partition and active browser selection', async () => {
+		const session = createMockSession({
+			browserTabs: [
+				{
+					id: 'browser-1',
+					url: 'https://example.com/docs',
+					title: 'Example Docs',
+					createdAt: 1,
+					partition: 'persist:maestro-browser-session-session-1',
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 101,
+				},
+			] as any,
+			activeBrowserTabId: 'browser-1',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs[0].partition).toBe('persist:maestro-browser-session-session-1');
+		expect(restored!.browserTabs[0].webContentsId).toBeUndefined();
+		expect(restored!.activeBrowserTabId).toBe('browser-1');
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-1' },
+		]);
+	});
+
 	it('clears stale active browser references when the restored browser tab is missing', async () => {
 		const session = createMockSession({
 			activeBrowserTabId: 'browser-missing',

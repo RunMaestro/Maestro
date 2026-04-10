@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session } from '../../types';
+import { sanitizeBrowserTabForPersistence } from '../../utils/browserTabPersistence';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
@@ -111,6 +112,13 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const newActiveTerminalTabId = activeTerminalTabExists
 		? session.activeTerminalTabId
 		: (cleanedTerminalTabs[0]?.id ?? null);
+	const cleanedBrowserTabs = (session.browserTabs || []).map((tab) =>
+		sanitizeBrowserTabForPersistence(tab, session.id)
+	);
+	const activeBrowserTabExists = cleanedBrowserTabs.some(
+		(tab) => tab.id === session.activeBrowserTabId
+	);
+	const newActiveBrowserTabId = activeBrowserTabExists ? session.activeBrowserTabId : null;
 
 	return {
 		...sessionWithoutRuntimeFields,
@@ -119,6 +127,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// Reset terminal tab runtime state
 		terminalTabs: cleanedTerminalTabs,
 		activeTerminalTabId: newActiveTerminalTabId,
+		browserTabs: cleanedBrowserTabs,
+		activeBrowserTabId: newActiveBrowserTabId,
 		// Reset runtime-only session state - processes don't survive app restart
 		state: 'idle',
 		busySource: undefined,

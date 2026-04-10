@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabTitle,
+	getSafeBrowserTabPartition,
 	normalizeBrowserTabUrl,
+	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
 } from '../../../renderer/utils/browserTabPersistence';
 
@@ -51,6 +53,44 @@ describe('browserTabPersistence', () => {
 
 		it('derives a human-friendly title from a URL when page title is empty', () => {
 			expect(getBrowserTabTitle('https://example.com/docs', '')).toBe('example.com');
+		});
+
+		it('keeps safe persisted partitions and repairs unsafe ones', () => {
+			expect(
+				getSafeBrowserTabPartition('persist:maestro-browser-session-session-1', 'session-1')
+			).toBe('persist:maestro-browser-session-session-1');
+			expect(getSafeBrowserTabPartition('persist:evil', 'session-1')).toBe(
+				'persist:maestro-browser-session-session-1'
+			);
+		});
+
+		it('sanitizes persisted browser tabs to stable restart-safe state', () => {
+			expect(
+				sanitizeBrowserTabForPersistence(
+					{
+						id: 'browser-1',
+						url: 'localhost:3000/docs',
+						title: '',
+						createdAt: 1,
+						partition: 'persist:evil',
+						canGoBack: true,
+						canGoForward: true,
+						isLoading: true,
+						favicon: undefined,
+						webContentsId: 99,
+					},
+					'session-1'
+				)
+			).toMatchObject({
+				id: 'browser-1',
+				url: 'http://localhost:3000/docs',
+				title: 'localhost:3000',
+				partition: 'persist:maestro-browser-session-session-1',
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				favicon: null,
+			});
 		});
 	});
 });

@@ -1,6 +1,7 @@
 import type { BrowserTab } from '../types';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
+const BROWSER_TAB_PARTITION_PATTERN = /^persist:maestro-browser-session-[a-zA-Z0-9_-]+$/;
 export const DEFAULT_BROWSER_TAB_URL = 'about:blank';
 export const DEFAULT_BROWSER_TAB_TITLE = 'New Tab';
 
@@ -15,6 +16,17 @@ function sanitizeBrowserPartitionKey(sessionId: string): string {
 
 export function getBrowserTabPartition(sessionId: string): string {
 	return `${BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}`;
+}
+
+export function getSafeBrowserTabPartition(
+	partition: string | null | undefined,
+	sessionId: string
+): string {
+	if (typeof partition === 'string' && BROWSER_TAB_PARTITION_PATTERN.test(partition.trim())) {
+		return partition.trim();
+	}
+
+	return getBrowserTabPartition(sessionId);
 }
 
 function looksLikeLocalAddress(value: string): boolean {
@@ -92,7 +104,7 @@ export function getBrowserTabTitle(url: string, title?: string | null): string {
 	}
 }
 
-export function rehydrateBrowserTab(tab: BrowserTab, sessionId: string): BrowserTab {
+export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: string): BrowserTab {
 	const url =
 		typeof tab.url === 'string' && tab.url.trim()
 			? normalizeBrowserTabUrl(tab.url)
@@ -103,11 +115,16 @@ export function rehydrateBrowserTab(tab: BrowserTab, sessionId: string): Browser
 		...tab,
 		url,
 		title,
-		partition: tab.partition || getBrowserTabPartition(sessionId),
-		// Guest contents are recreated after restart, so restore with clean runtime state.
+		partition: getSafeBrowserTabPartition(tab.partition, sessionId),
+		favicon: tab.favicon ?? null,
+		// Guest contents are recreated after restart, so persist clean runtime state.
 		canGoBack: false,
 		canGoForward: false,
 		isLoading: false,
 		webContentsId: undefined,
 	};
+}
+
+export function rehydrateBrowserTab(tab: BrowserTab, sessionId: string): BrowserTab {
+	return sanitizeBrowserTabForPersistence(tab, sessionId);
 }
