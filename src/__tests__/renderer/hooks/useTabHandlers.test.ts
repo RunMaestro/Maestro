@@ -796,6 +796,148 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
+	// Browser Tab Handlers
+	// ========================================================================
+
+	describe('browser tab handlers', () => {
+		it('handleNewBrowserTab creates and activates a browser tab in unified order', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const sessionId = setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
+
+			useSessionStore.setState((state) => ({
+				...state,
+				sessions: state.sessions.map((session) =>
+					session.id === sessionId
+						? {
+								...session,
+								inputMode: 'terminal',
+								activeTerminalTabId: 'term-1',
+								terminalTabs: [
+									{
+										id: 'term-1',
+										name: null,
+										shellType: 'zsh',
+										pid: 1,
+										cwd: '/test',
+										createdAt: Date.now(),
+										state: 'idle',
+									},
+								],
+								unifiedTabOrder: [
+									{ type: 'ai', id: 'ai-1' },
+									{ type: 'file', id: 'file-1' },
+									{ type: 'terminal', id: 'term-1' },
+								],
+							}
+						: session
+				),
+			}));
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleNewBrowserTab();
+			});
+
+			const session = getSession();
+			expect(session.browserTabs).toHaveLength(1);
+			expect(session.browserTabs[0]).toMatchObject({
+				url: 'about:blank',
+				title: 'New Tab',
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				favicon: null,
+				partition: 'persist:maestro-browser-session-test-session',
+			});
+			expect(session.activeBrowserTabId).toBe(session.browserTabs[0].id);
+			expect(session.activeFileTabId).toBeNull();
+			expect(session.activeTerminalTabId).toBeNull();
+			expect(session.inputMode).toBe('ai');
+			expect(session.unifiedTabOrder.at(-1)).toEqual({
+				type: 'browser',
+				id: session.browserTabs[0].id,
+			});
+		});
+
+		it('handleSelectBrowserTab activates an existing browser tab and repairs unified order', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				browserTabs: [browserTab],
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				inputMode: 'terminal',
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				terminalTabs: [
+					{
+						id: 'term-1',
+						name: null,
+						shellType: 'zsh',
+						pid: 1,
+						cwd: '/test',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+			});
+
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleSelectBrowserTab('browser-1');
+			});
+
+			const updated = getSession();
+			expect(updated.activeBrowserTabId).toBe('browser-1');
+			expect(updated.activeFileTabId).toBeNull();
+			expect(updated.activeTerminalTabId).toBeNull();
+			expect(updated.inputMode).toBe('ai');
+			expect(updated.unifiedTabOrder).toContainEqual({ type: 'browser', id: 'browser-1' });
+		});
+
+		it('handleCloseBrowserTab removes the browser tab and restores the adjacent AI tab', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				id: 'test-session',
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				browserTabs: [browserTab],
+				activeBrowserTabId: 'browser-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'browser', id: 'browser-1' },
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'test-session',
+			});
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseBrowserTab('browser-1');
+			});
+
+			const updated = getSession();
+			expect(updated.browserTabs).toHaveLength(0);
+			expect(updated.activeBrowserTabId).toBeNull();
+			expect(updated.activeTabId).toBe('ai-1');
+			expect(updated.unifiedTabOrder).toEqual([{ type: 'ai', id: 'ai-1' }]);
+		});
+	});
+
+	// ========================================================================
 	// Tab Property Handlers
 	// ========================================================================
 
