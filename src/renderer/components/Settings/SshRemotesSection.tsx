@@ -105,7 +105,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			[config.id]: {
 				success: result.success,
 				message: result.success
-					? `Connected to ${config.label || config.host}`
+					? `Connected to ${config.name || config.host}`
 					: result.error || 'Connection failed',
 			},
 		}));
