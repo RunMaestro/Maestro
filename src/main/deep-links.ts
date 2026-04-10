@@ -130,6 +130,11 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 	// Register as handler for maestro:// URLs
 	// In dev mode, skip registration to avoid clobbering the production app's registration
 	const isDev = !app.isPackaged;
+	const shouldUseSingleInstanceLock =
+		!isDev ||
+		process.env.REGISTER_DEEP_LINKS_IN_DEV === '1' ||
+		process.env.ENFORCE_SINGLE_INSTANCE_IN_DEV === '1';
+
 	if (!isDev) {
 		app.setAsDefaultProtocolClient(PROTOCOL);
 		logger.info('Registered as default protocol client for maestro://', 'DeepLink');
@@ -148,6 +153,11 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 		} else {
 			logger.debug('Skipping protocol registration in dev mode', 'DeepLink');
 		}
+	}
+
+	if (!shouldUseSingleInstanceLock) {
+		logger.debug('Skipping single-instance lock in dev mode', 'DeepLink');
+		return true;
 	}
 
 	// Single-instance lock (Windows/Linux deep link support)

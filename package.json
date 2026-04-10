@@ -16,8 +16,8 @@
 		"maestro-cli": "./dist/cli/maestro-cli.js"
 	},
 	"scripts": {
-		"dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
-		"dev:prod-data": "USE_PROD_DATA=1 concurrently \"npm run dev:main:prod-data\" \"npm run dev:renderer\"",
+		"dev": "node scripts/dev.mjs",
+		"dev:prod-data": "USE_PROD_DATA=1 node scripts/dev.mjs",
 		"dev:demo": "MAESTRO_DEMO_DIR=/tmp/maestro-demo npm run dev",
 		"dev:main": "npm run build:prompts && tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development electron .",
 		"dev:main:prod-data": "npm run build:prompts && tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
