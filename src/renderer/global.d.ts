@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
  * This file makes the window.maestro API available throughout the renderer.
