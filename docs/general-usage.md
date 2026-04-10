@@ -256,7 +256,7 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 
 **Advanced configuration options:**
 
-- **Nudge Message** — An initial prompt sent when the agent starts
+- **Nudge Message** — A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages — they are not included in Auto Run tasks.
 - **Custom Path** — Override the default executable path
 - **Custom Arguments** — Additional command-line arguments
 - **Environment Variables** — Custom environment variables for the agent process

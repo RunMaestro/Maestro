@@ -78,6 +78,8 @@ A **Playbook** is a collection of Auto Run documents — Markdown files with che
 
 **Multi-phase efforts:** When creating 3 or more phase documents for a single effort, place them in a single flat subdirectory directly under `{{AUTORUN_FOLDER}}`, prefixed with today's date (e.g., `{{AUTORUN_FOLDER}}/YYYY-MM-DD-Feature-Name/FEATURE-NAME-01.md`). Do NOT create nested subdirectories — all phase documents for a given effort go into one folder, never `project/feature/` nesting. This allows users to add the entire folder at once and keeps related documents organized with a clear creation date.
 
+**Note:** Nudge messages configured on an agent do not apply to Auto Run tasks. They are only appended to interactive user messages.
+
 ### Where to Write
 
 Write all Auto Run documents to: `{{AUTORUN_FOLDER}}`
