@@ -28,9 +28,10 @@ import fastifyStatic from '@fastify/static';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { logger } from '../utils/logger';
 import { getLocalIpAddress } from '../utils/networkUtils';
+import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
 import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
@@ -206,16 +207,16 @@ export class WebServer {
 	private resolveWebAssetsPath(): string | null {
 		// Try multiple locations for the web assets
 		const possiblePaths = [
-			// Production: relative to the compiled main process
-			path.join(__dirname, '..', '..', 'web'),
 			// Development: from project root
 			path.join(process.cwd(), 'dist', 'web'),
+			// Production: relative to the compiled main process
+			path.join(__dirname, '..', '..', 'web'),
 			// Alternative: relative to __dirname going up to dist
 			path.join(__dirname, '..', 'web'),
 		];
 
 		for (const p of possiblePaths) {
-			if (existsSync(path.join(p, 'index.html'))) {
+			if (this.isServableWebAssetsPath(p)) {
 				logger.debug(`Web assets found at: ${p}`, LOG_CONTEXT);
 				return p;
 			}
@@ -226,6 +227,38 @@ export class WebServer {
 			LOG_CONTEXT
 		);
 		return null;
+	}
+
+	/**
+	 * Only serve built web assets. Source `src/web/index.html` references `/main.tsx`,
+	 * which the embedded Fastify server cannot compile or serve.
+	 */
+	private isServableWebAssetsPath(candidatePath: string): boolean {
+		const indexPath = path.join(candidatePath, 'index.html');
+		if (!existsSync(indexPath)) {
+			return false;
+		}
+
+		try {
+			const html = readFileSync(indexPath, 'utf-8');
+			const referencesDevEntrypoint =
+				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
+			return !referencesDevEntrypoint;
+		} catch (error) {
+			const err = error as NodeJS.ErrnoException;
+			if (err.code === 'ENOENT') {
+				logger.warn(`Web assets disappeared while inspecting ${candidatePath}`, LOG_CONTEXT);
+				return false;
+			}
+
+			logger.error(`Failed to inspect web assets at ${candidatePath}`, LOG_CONTEXT, error);
+			captureException(error, {
+				operation: 'webServer:isServableWebAssetsPath',
+				candidatePath,
+				indexPath,
+			});
+			throw error;
+		}
 	}
 
 	// ============ Live Session Management (Delegated to LiveSessionManager) ============
