@@ -131,4 +131,37 @@ describe('useMobileKeyboardHandler', () => {
 
 		expect(handleModeToggle).not.toHaveBeenCalled();
 	});
+
+	it('does not steal shortcuts from xterm when terminal is focused', () => {
+		const handleModeToggle = vi.fn();
+		const handleSelectTab = vi.fn();
+		const activeSession: MobileKeyboardSession = { inputMode: 'terminal' };
+
+		renderHook(() =>
+			useMobileKeyboardHandler({
+				activeSessionId: 'session-1',
+				activeSession,
+				handleModeToggle,
+				handleSelectTab,
+			})
+		);
+
+		const xtermInput = document.createElement('textarea');
+		xtermInput.className = 'xterm-helper-textarea';
+		document.body.appendChild(xtermInput);
+
+		const event = new KeyboardEvent('keydown', {
+			key: 'j',
+			metaKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+
+		act(() => {
+			xtermInput.dispatchEvent(event);
+		});
+
+		expect(handleModeToggle).not.toHaveBeenCalled();
+		xtermInput.remove();
+	});
 });

@@ -32,11 +32,23 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 describe('useMainKeyboardHandler', () => {
 	// Track event listeners for cleanup
 	let addedListeners: { type: string; handler: EventListener }[] = [];
+	let originalMaestro: unknown;
 	const originalAddEventListener = window.addEventListener;
 	const originalRemoveEventListener = window.removeEventListener;
 
 	beforeEach(() => {
 		addedListeners = [];
+		originalMaestro = (window as any).maestro;
+		const maestroObj = ((window as any).maestro ?? {}) as Record<string, unknown>;
+		const processObj = ((maestroObj.process as Record<string, unknown> | undefined) ??
+			{}) as Record<string, unknown>;
+		(window as any).maestro = {
+			...maestroObj,
+			process: {
+				...processObj,
+				write: vi.fn(),
+			},
+		};
 		window.addEventListener = vi.fn((type, handler) => {
 			addedListeners.push({ type, handler: handler as EventListener });
 			originalAddEventListener.call(window, type, handler as EventListener);
@@ -52,6 +64,7 @@ describe('useMainKeyboardHandler', () => {
 	afterEach(() => {
 		window.addEventListener = originalAddEventListener;
 		window.removeEventListener = originalRemoveEventListener;
+		(window as any).maestro = originalMaestro;
 	});
 
 	describe('hook initialization', () => {
@@ -2585,6 +2598,76 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('terminal search shortcut routing', () => {
+		it('should open terminal search on Ctrl+F in terminal mode when event is not from xterm', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('should not open terminal search on Ctrl+F when event target is xterm', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			const xtermInput = document.createElement('textarea');
+			xtermInput.className = 'xterm-helper-textarea';
+			document.body.appendChild(xtermInput);
+			xtermInput.focus();
+
+			act(() => {
+				xtermInput.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).not.toHaveBeenCalled();
+			xtermInput.remove();
+		});
+	});
+
 	describe('terminal focus recovery does not intercept group chat input', () => {
 		it('should not preventDefault on regular keystrokes in group chat even when session is in terminal mode', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
@@ -2671,6 +2754,74 @@ describe('useMainKeyboardHandler', () => {
 
 			// Ctrl handler should NOT fire when group chat is active
 			expect(mockFocusActiveTerminal).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('terminal focus recovery forwards lost terminal keys', () => {
+		it('should refocus and consume ArrowUp without synthesizing PTY sequences', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockFocusActiveTerminal = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { focusActiveTerminal: mockFocusActiveTerminal } },
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(mockFocusActiveTerminal).toHaveBeenCalled();
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect((window as any).maestro.process.write).not.toHaveBeenCalled();
+		});
+
+		it('should not forward keys when typing in an editable input', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockFocusActiveTerminal = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { focusActiveTerminal: mockFocusActiveTerminal } },
+			});
+
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+			input.focus();
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				bubbles: true,
+				cancelable: true,
+			});
+
+			act(() => {
+				input.dispatchEvent(event);
+			});
+
+			expect(mockFocusActiveTerminal).not.toHaveBeenCalled();
+			expect((window as any).maestro.process.write).not.toHaveBeenCalled();
+			input.remove();
 		});
 	});
 });

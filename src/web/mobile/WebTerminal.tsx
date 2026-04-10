@@ -540,6 +540,21 @@ export const WebTerminal = forwardRef<WebTerminalHandle, WebTerminalProps>(funct
 		// Custom key event handler — matches desktop behavior
 		// Navigation sequences are written directly; Meta/Ctrl+Shift combos pass through
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+			// Clipboard shortcuts in terminal:
+			// - Cmd/Ctrl+C copies current selection when present
+			if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				const key = e.key.toLowerCase();
+				if (key === 'c') {
+					const selection = term.getSelection();
+					if (selection) {
+						void navigator.clipboard.writeText(selection).catch(() => {
+							// Clipboard may be unavailable without focus/permission.
+						});
+						return false;
+					}
+				}
+			}
+
 			// Ctrl+F / Cmd+F → open search bar
 			if ((e.ctrlKey || e.metaKey) && e.key === 'f' && e.type === 'keydown') {
 				setShowSearch(true);

@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../../shared/theme-types';
 import type { ITheme } from '@xterm/xterm';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 // ============================================================================
 // Custom key event handler logic
@@ -420,6 +421,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		// register conflicting accelerators. E.g., { role: 'close' } would steal Cmd+W
 		// at the NSMenu level before it reaches the renderer.
 		term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+			// Clipboard shortcuts: keep terminal copy/paste ergonomic.
+			// - Cmd/Ctrl+C copies terminal selection when present
+			if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				const key = e.key.toLowerCase();
+				if (key === 'c') {
+					const selection = term.getSelection();
+					if (selection) {
+						void safeClipboardWrite(selection);
+						return false;
+					}
+				}
+			}
+
 			const action = evaluateCustomKeyEvent(e);
 			if (typeof action === 'object' && action.action === 'write') {
 				window.maestro.process.write(sessionId, action.data);

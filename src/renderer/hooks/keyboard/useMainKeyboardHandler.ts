@@ -70,6 +70,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 	// Main keyboard handler effect
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target;
+			const activeElement = document.activeElement;
+			const isXtermElement = (el: EventTarget | null) =>
+				el instanceof Element &&
+				(el.classList.contains('xterm-helper-textarea') || !!el.closest('.xterm'));
+			const isXtermTarget = isXtermElement(target) || isXtermElement(activeElement);
+			const isEditableTarget =
+				target instanceof HTMLInputElement ||
+				target instanceof HTMLTextAreaElement ||
+				(target instanceof HTMLElement && target.isContentEditable);
+
 			// Block browser refresh (Cmd+R / Ctrl+R / Cmd+Shift+R / Ctrl+Shift+R) globally
 			// We override these shortcuts for other purposes, but even in views where that
 			// doesn't apply (e.g., file preview), we never want the app to refresh
@@ -82,29 +93,75 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
-			// DEBUG: Trace tab-related shortcuts to diagnose broken Cmd+T / Cmd+Shift+T / Cmd+Shift+[]
-			const keyLowerDbg = e.key.toLowerCase();
-			if (
-				(e.metaKey || e.ctrlKey) &&
-				(keyLowerDbg === 't' ||
-					keyLowerDbg === '[' ||
-					keyLowerDbg === ']' ||
-					keyLowerDbg === '{' ||
-					keyLowerDbg === '}')
-			) {
-				console.warn(
-					'[KB-DEBUG] key=%s meta=%s shift=%s alt=%s ctrl=%s | layers=%s modal=%s | session=%s groupChat=%s mode=%s',
-					e.key,
-					e.metaKey,
-					e.shiftKey,
-					e.altKey,
-					e.ctrlKey,
-					ctx.hasOpenLayers(),
-					ctx.hasOpenModal(),
-					!!ctx.activeSessionId,
-					!!ctx.activeGroupChatId,
-					ctx.activeSession?.inputMode
-				);
+			// Terminal focus recovery: if a key event reaches this window handler while in
+			// terminal mode, xterm's textarea likely lost focus. Recover early (before any
+			// global shortcut/navigation logic) so arrow keys and editor escape paths still
+			// work in interactive TUIs like vi/vim/nano.
+			const isTerminalRecoveryContext =
+				ctx.activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId &&
+				!ctx.hasOpenLayers() &&
+				!e.defaultPrevented &&
+				!isXtermTarget &&
+				!isEditableTarget;
+			if (isTerminalRecoveryContext) {
+				// Preserve explicit app shortcuts that are intentionally global.
+				const isExplicitAppShortcut =
+					e.metaKey || e.altKey || (e.ctrlKey && e.shiftKey && e.code === 'Backquote');
+				if (!isExplicitAppShortcut) {
+					const tabId = ctx.activeSession.activeTerminalTabId;
+					if (tabId) {
+						const termSid = `${ctx.activeSession.id}-terminal-${tabId}`;
+						let data: string | null = null;
+						const isNavigationKey =
+							e.key === 'ArrowUp' ||
+							e.key === 'ArrowDown' ||
+							e.key === 'ArrowRight' ||
+							e.key === 'ArrowLeft' ||
+							e.key === 'Home' ||
+							e.key === 'End' ||
+							e.key === 'Delete' ||
+							e.key === 'PageUp' ||
+							e.key === 'PageDown';
+
+						if (!e.ctrlKey && e.key.length === 1) {
+							data = e.key;
+						} else if (e.key === 'Enter') {
+							data = '\r';
+						} else if (e.key === 'Backspace') {
+							data = '\x7f';
+						} else if (e.key === 'Escape') {
+							data = '\x1b';
+						} else if (e.key === 'Tab') {
+							data = '\t';
+						} else if (e.ctrlKey && e.key.length === 1) {
+							// Keep Ctrl+F available for terminal search routing when xterm
+							// is not focused (Windows/Linux app-level shortcut behavior).
+							if (e.key.toLowerCase() !== 'f') {
+								// Ctrl+A..Z -> send control character
+								const code = e.key.toUpperCase().charCodeAt(0);
+								if (code >= 65 && code <= 90) {
+									data = String.fromCharCode(code - 64);
+								}
+							}
+						}
+
+						if (data !== null) {
+							ctx.mainPanelRef?.current?.focusActiveTerminal?.();
+							e.preventDefault();
+							window.maestro?.process?.write(termSid, data);
+							return;
+						}
+						if (isNavigationKey) {
+							// Avoid synthesizing arrow/home/end escapes on focus recovery:
+							// xterm is authoritative for these and manual sequences can
+							// corrupt insert mode in editors (vi/vim).
+							ctx.mainPanelRef?.current?.focusActiveTerminal?.();
+							e.preventDefault();
+							return;
+						}
+					}
+				}
 			}
 
 			// CRITICAL: When in terminal mode, let xterm.js handle Ctrl+[A-Z] control sequences.
@@ -118,6 +175,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				isMac &&
 				ctx.activeSession?.inputMode === 'terminal' &&
 				!ctx.activeGroupChatId &&
+				!isXtermTarget &&
 				e.ctrlKey &&
 				!e.metaKey &&
 				!e.altKey &&
@@ -934,7 +992,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
 					// History filter - handled by HistoryPanel component, just track here
 					trackShortcut('filterHistory');
-				} else if (ctx.activeSession?.inputMode === 'terminal') {
+				} else if (ctx.activeSession?.inputMode === 'terminal' && !isXtermTarget) {
 					// Terminal search - only when main panel has focus
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();
@@ -942,47 +1000,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');
-				}
-			}
-
-			// Terminal focus recovery: if a key event reaches this window handler while in
-			// terminal mode with no layers open, xterm's textarea likely lost focus. Normally
-			// xterm calls stopPropagation on handled events, so they never bubble to window.
-			// Re-focus the terminal and forward the missed keystroke to the PTY so interactive
-			// apps like vim/vi/nano keep working even after a transient focus loss.
-			if (
-				ctx.activeSession?.inputMode === 'terminal' &&
-				!ctx.activeGroupChatId &&
-				!ctx.hasOpenLayers() &&
-				!e.defaultPrevented
-			) {
-				ctx.mainPanelRef?.current?.focusActiveTerminal?.();
-
-				const tabId = ctx.activeSession.activeTerminalTabId;
-				if (tabId) {
-					const termSid = `${ctx.activeSession.id}-terminal-${tabId}`;
-					let data: string | null = null;
-					if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-						data = e.key;
-					} else if (e.key === 'Enter') {
-						data = '\r';
-					} else if (e.key === 'Backspace') {
-						data = '\x7f';
-					} else if (e.key === 'Escape') {
-						data = '\x1b';
-					} else if (e.key === 'Tab') {
-						data = '\t';
-					} else if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-						// Ctrl+A..Z → send control character
-						const code = e.key.toUpperCase().charCodeAt(0);
-						if (code >= 65 && code <= 90) {
-							data = String.fromCharCode(code - 64);
-						}
-					}
-					if (data !== null) {
-						e.preventDefault();
-						window.maestro?.process?.write(termSid, data);
-					}
 				}
 			}
 		};

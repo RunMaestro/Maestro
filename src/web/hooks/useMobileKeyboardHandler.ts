@@ -84,6 +84,17 @@ export function useMobileKeyboardHandler(deps: UseMobileKeyboardHandlerDeps): vo
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target;
+			const activeElement = document.activeElement;
+			const isXtermElement = (el: EventTarget | null) =>
+				el instanceof Element &&
+				(el.classList.contains('xterm-helper-textarea') || !!el.closest('.xterm'));
+			const isXtermTarget = isXtermElement(target) || isXtermElement(activeElement);
+			if (activeSession?.inputMode === 'terminal' && isXtermTarget) {
+				// Keep terminal keystrokes inside xterm while a terminal app is active.
+				return;
+			}
+
 			// Cmd+K / Ctrl+K: Open command palette
 			if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
 				if (isCommandPaletteOpen && onCloseCommandPalette) {
