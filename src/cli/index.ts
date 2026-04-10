@@ -96,6 +96,7 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');

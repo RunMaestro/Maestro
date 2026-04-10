@@ -67,9 +67,16 @@ export async function* runPlaybook(
 		writeHistory?: boolean;
 		debug?: boolean;
 		verbose?: boolean;
+		skipSynopsis?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
-	const { dryRun = false, writeHistory = true, debug = false, verbose = false } = options;
+	const {
+		dryRun = false,
+		writeHistory = true,
+		debug = false,
+		verbose = false,
+		skipSynopsis = false,
+	} = options;
 	const batchStartTime = Date.now();
 
 	// Get git branch and group name for template variable substitution
@@ -426,7 +433,7 @@ export async function* runPlaybook(
 				// Include explicit file path so agent knows where to save changes
 				const finalPrompt = `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`;
 
-				// Emit verbose event with full prompt
+				// Emit verbose event with full prompt and prompt size
 				if (verbose) {
 					yield {
 						type: 'verbose',
@@ -435,13 +442,23 @@ export async function* runPlaybook(
 						document: docEntry.filename,
 						taskIndex,
 						prompt: finalPrompt,
+						promptCharCount: finalPrompt.length,
+						documentCharCount: expandedDocContent.length,
+					};
+				}
+
+				// Emit debug event with prompt size (always when debug enabled)
+				if (debug) {
+					yield {
+						type: 'debug',
+						timestamp: Date.now(),
+						category: 'prompt_size',
+						message: `Prompt: ${finalPrompt.length} chars (document: ${expandedDocContent.length} chars, base prompt: ${basePrompt.length} chars)`,
 					};
 				}
 
 				// Spawn agent with combined prompt + document
 				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt);
-
-				const elapsedMs = Date.now() - taskStartTime;
 
 				// Re-read document to get new task count
 				const { taskCount: newRemainingTasks } = readDocAndCountTasks(
@@ -456,7 +473,7 @@ export async function* runPlaybook(
 				loopTasksCompleted += tasksCompletedThisRun;
 				anyTasksProcessedThisIteration = true;
 
-				// Track usage
+				// Track task usage (excludes synopsis)
 				if (result.usageStats) {
 					loopTotalInputTokens += result.usageStats.inputTokens || 0;
 					loopTotalOutputTokens += result.usageStats.outputTokens || 0;
@@ -466,11 +483,13 @@ export async function* runPlaybook(
 					totalOutputTokens += result.usageStats.outputTokens || 0;
 				}
 
-				// Generate synopsis
+				// Generate synopsis (unless skipped via --no-synopsis)
 				let shortSummary = `[${docEntry.filename}] Task completed`;
 				let fullSynopsis = shortSummary;
+				let synopsisUsageStats: UsageStats | undefined;
 
-				if (result.success && result.agentSessionId) {
+				if (!skipSynopsis && result.success && result.agentSessionId) {
+					const synopsisStartTime = Date.now();
 					// Request synopsis from the agent
 					const synopsisResult = await spawnAgent(
 						session.toolType,
@@ -484,12 +503,44 @@ export async function* runPlaybook(
 						shortSummary = parsed.shortSummary;
 						fullSynopsis = parsed.fullSynopsis;
 					}
+					synopsisUsageStats = synopsisResult.usageStats;
+
+					// Track synopsis usage separately
+					if (synopsisResult.usageStats) {
+						loopTotalInputTokens += synopsisResult.usageStats.inputTokens || 0;
+						loopTotalOutputTokens += synopsisResult.usageStats.outputTokens || 0;
+						loopTotalCost += synopsisResult.usageStats.totalCostUsd || 0;
+						totalCost += synopsisResult.usageStats.totalCostUsd || 0;
+						totalInputTokens += synopsisResult.usageStats.inputTokens || 0;
+						totalOutputTokens += synopsisResult.usageStats.outputTokens || 0;
+					}
+
+					if (debug) {
+						const synopsisElapsedMs = Date.now() - synopsisStartTime;
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'synopsis',
+							message: `Synopsis generated in ${formatElapsedTime(synopsisElapsedMs)}${synopsisResult.usageStats ? ` (${synopsisResult.usageStats.inputTokens || 0} input tokens)` : ''}`,
+						};
+					}
+				} else if (skipSynopsis && result.success) {
+					if (debug) {
+						yield {
+							type: 'debug',
+							timestamp: Date.now(),
+							category: 'synopsis',
+							message: 'Synopsis skipped (--no-synopsis)',
+						};
+					}
 				} else if (!result.success) {
 					shortSummary = `[${docEntry.filename}] Task failed`;
 					fullSynopsis = result.error || shortSummary;
 				}
 
-				// Emit task complete event
+				const elapsedMs = Date.now() - taskStartTime;
+
+				// Emit task complete event with separated usage stats
 				yield {
 					type: 'task_complete',
 					timestamp: Date.now(),
@@ -500,6 +551,8 @@ export async function* runPlaybook(
 					fullResponse: fullSynopsis,
 					elapsedMs,
 					usageStats: result.usageStats,
+					synopsisUsageStats,
+					synopsisSkipped: skipSynopsis,
 					agentSessionId: result.agentSessionId,
 				};
 
