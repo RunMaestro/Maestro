@@ -21,6 +21,7 @@ import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { extractHexColor } from '../../shared/hexColor';
 
 /**
  * Props for MobileMarkdownRenderer
@@ -269,6 +270,7 @@ export const MobileMarkdownRenderer = memo(
 
 						// Inline code only — block code is handled by pre above
 						code: ({ className: _className, children, ...props }: any) => {
+							const hexColor = extractHexColor(children);
 							return (
 								<code
 									{...props}
@@ -281,6 +283,20 @@ export const MobileMarkdownRenderer = memo(
 											'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
 									}}
 								>
+									{hexColor && (
+										<span
+											style={{
+												display: 'inline-block',
+												width: '0.75em',
+												height: '0.75em',
+												backgroundColor: hexColor,
+												borderRadius: '2px',
+												marginRight: '0.35em',
+												verticalAlign: 'middle',
+												border: '1px solid rgba(128, 128, 128, 0.3)',
+											}}
+										/>
+									)}
 									{children}
 								</code>
 							);

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import React from 'react';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock react-syntax-highlighter before importing the module under test
 vi.mock('react-syntax-highlighter', () => ({
@@ -816,5 +817,56 @@ describe('createMarkdownComponents link handling', () => {
 		element.props.onClick(clickEvent);
 		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
 		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Hex color swatch in inline code
+// ---------------------------------------------------------------------------
+
+describe('hex color swatch in inline code', () => {
+	it('should render a color swatch span before hex color in createMarkdownComponents', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#FF0000' });
+		// Should have two children: the swatch span and the text
+		const children = React.Children.toArray(element.props.children);
+		expect(children).toHaveLength(2);
+		const swatch = children[0] as React.ReactElement;
+		expect(swatch.type).toBe('span');
+		expect(swatch.props.style.backgroundColor).toBe('#FF0000');
+	});
+
+	it('should not render swatch for non-hex inline code', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: 'console.log' });
+		const children = React.Children.toArray(element.props.children);
+		expect(children).toHaveLength(1);
+	});
+
+	it('should render swatch in wizard bubble inline code', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#8B3FFC' });
+		const children = React.Children.toArray(element.props.children);
+		// swatch (or null filtered) + text
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#8B3FFC');
+	});
+
+	it('should render swatch in release notes inline code', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#00CC00' });
+		const children = React.Children.toArray(element.props.children);
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#00CC00');
 	});
 });

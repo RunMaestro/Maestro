@@ -22,6 +22,7 @@ import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { extractHexColor } from '../../shared/hexColor';
 
 // ============================================================================
 // Types
@@ -436,6 +437,26 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		},
 		// Inline code only — block code is handled by the pre component above
 		code: ({ node: _node, className, children, ...props }: any) => {
+			const hexColor = extractHexColor(children);
+			if (hexColor) {
+				return React.createElement(
+					'code',
+					{ className, ...props },
+					React.createElement('span', {
+						style: {
+							display: 'inline-block',
+							width: '0.75em',
+							height: '0.75em',
+							backgroundColor: hexColor,
+							borderRadius: '2px',
+							marginRight: '0.35em',
+							verticalAlign: 'middle',
+							border: '1px solid rgba(128, 128, 128, 0.3)',
+						},
+					}),
+					children
+				);
+			}
 			return React.createElement('code', { className, ...props }, children);
 		},
 	};
@@ -619,16 +640,32 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
 		code: ({ children, className }: any) => {
 			const isInline = !className;
-			return isInline
-				? React.createElement(
-						'code',
-						{
-							className: 'px-1 py-0.5 rounded text-xs font-mono',
-							style: { backgroundColor: `${theme.colors.bgMain}80` },
-						},
-						children
-					)
-				: React.createElement('code', { className }, children);
+			if (isInline) {
+				const hexColor = extractHexColor(children);
+				return React.createElement(
+					'code',
+					{
+						className: 'px-1 py-0.5 rounded text-xs font-mono',
+						style: { backgroundColor: `${theme.colors.bgMain}80` },
+					},
+					hexColor
+						? React.createElement('span', {
+								style: {
+									display: 'inline-block',
+									width: '0.75em',
+									height: '0.75em',
+									backgroundColor: hexColor,
+									borderRadius: '2px',
+									marginRight: '0.35em',
+									verticalAlign: 'middle',
+									border: '1px solid rgba(128, 128, 128, 0.3)',
+								},
+							})
+						: null,
+					children
+				);
+			}
+			return React.createElement('code', { className }, children);
 		},
 		pre: ({ children }: any) =>
 			React.createElement(
@@ -728,8 +765,9 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 			),
 		li: ({ children }: any) =>
 			React.createElement('li', { style: { color: theme.colors.textDim } }, children),
-		code: ({ children }: any) =>
-			React.createElement(
+		code: ({ children }: any) => {
+			const hexColor = extractHexColor(children);
+			return React.createElement(
 				'code',
 				{
 					className: 'px-1 py-0.5 rounded font-mono text-xs',
@@ -738,8 +776,23 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 						color: theme.colors.accent,
 					},
 				},
+				hexColor
+					? React.createElement('span', {
+							style: {
+								display: 'inline-block',
+								width: '0.75em',
+								height: '0.75em',
+								backgroundColor: hexColor,
+								borderRadius: '2px',
+								marginRight: '0.35em',
+								verticalAlign: 'middle',
+								border: '1px solid rgba(128, 128, 128, 0.3)',
+							},
+						})
+					: null,
 				children
-			),
+			);
+		},
 		a: ({ href, children }: any) =>
 			React.createElement(
 				'a',
