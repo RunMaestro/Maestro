@@ -186,8 +186,23 @@ export const QueuedItemsList = memo(
 								style={{ color: theme.colors.textMain }}
 							>
 								{item.type === 'command' && (
-									<span style={{ color: theme.colors.success, fontWeight: 600 }}>
-										{item.command}
+									<span className="flex items-baseline gap-1 overflow-hidden">
+										<span
+											className="shrink-0"
+											style={{ color: theme.colors.success, fontWeight: 600 }}
+										>
+											{item.command}
+										</span>
+										{(item.commandArgs || item.commandDescription) && (
+											<span
+												className="truncate"
+												style={{
+													color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
+												}}
+											>
+												{item.commandArgs || item.commandDescription}
+											</span>
+										)}
 									</span>
 								)}
 								{item.type === 'message' &&
