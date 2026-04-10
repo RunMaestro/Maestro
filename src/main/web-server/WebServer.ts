@@ -31,6 +31,7 @@ import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { getLocalIpAddressSync } from '../utils/networkUtils';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
 import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
@@ -203,8 +204,19 @@ export class WebServer {
 				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
 			return !referencesDevEntrypoint;
 		} catch (error) {
-			logger.warn(`Failed to inspect web assets at ${candidatePath}: ${error}`, LOG_CONTEXT);
-			return false;
+			const err = error as NodeJS.ErrnoException;
+			if (err.code === 'ENOENT') {
+				logger.warn(`Web assets disappeared while inspecting ${candidatePath}`, LOG_CONTEXT);
+				return false;
+			}
+
+			logger.error(`Failed to inspect web assets at ${candidatePath}`, LOG_CONTEXT, error);
+			captureException(error, {
+				operation: 'webServer:isServableWebAssetsPath',
+				candidatePath,
+				indexPath,
+			});
+			throw error;
 		}
 	}
 
