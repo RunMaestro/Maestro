@@ -57,6 +57,23 @@ async function createBrowserTab(window: Page): Promise<void> {
 	await expect(getVisibleAddressInput(window)).toBeVisible();
 }
 
+async function createTerminalTab(window: Page): Promise<void> {
+	await window.getByTitle('New tab…').click();
+	await window.getByRole('button', { name: 'New Terminal' }).click();
+	await expect(getTabByTitle(window, 'Terminal 1')).toBeVisible();
+}
+
+async function openFileTab(window: Page, filePath: string): Promise<void> {
+	await window.evaluate(async (targetPath) => {
+		const sessionId = await window.maestro.sessions.getActiveSessionId();
+		window.dispatchEvent(
+			new CustomEvent('maestro:openFileTab', {
+				detail: { sessionId, filePath: targetPath },
+			})
+		);
+	}, filePath);
+}
+
 async function navigateBrowser(window: Page, value: string): Promise<void> {
 	const address = getVisibleAddressInput(window);
 	await address.fill(value);
@@ -64,21 +81,21 @@ async function navigateBrowser(window: Page, value: string): Promise<void> {
 }
 
 function getVisibleAddressInput(window: Page): Locator {
-	return window.locator('input[placeholder="Enter a URL"]:visible').first();
+	return window.locator('input[placeholder="Enter a URL or search term"]:visible').first();
 }
 
-function getBrowserTabByTitle(window: Page, title: string) {
-	return window.locator('div[data-tab-id]').filter({ hasText: title }).first();
+function getTabByTitle(window: Page, title: string) {
+	return window.locator('div[data-tab-id][role="tab"]').filter({ hasText: title }).first();
 }
 
-async function selectBrowserTab(window: Page, title: string): Promise<void> {
-	await getBrowserTabByTitle(window, title).evaluate((element) => {
+async function selectTab(window: Page, title: string): Promise<void> {
+	await getTabByTitle(window, title).evaluate((element) => {
 		(element as HTMLElement).click();
 	});
 }
 
 test.describe('Browser Tab Prototype', () => {
-	test('creates, navigates, persists, reselects, reloads, and closes browser tabs', async ({
+	test('keeps browser, ai, terminal, and file tabs unified across creation, switching, restore, and close', async ({
 		appPath,
 		testDataDir,
 	}) => {
@@ -94,26 +111,40 @@ test.describe('Browser Tab Prototype', () => {
 			await expect(window.getByText('Something went wrong')).toHaveCount(0);
 
 			await createBrowserTab(window);
-			await expect(getBrowserTabByTitle(window, 'New Tab')).toBeVisible();
+			await expect(getTabByTitle(window, 'New Tab')).toBeVisible();
 
 			await navigateBrowser(window, `127.0.0.1:${LOCAL_TEST_PORT}`);
 			await expect(window.locator('body')).toContainText(LOCAL_TEST_TITLE, { timeout: 15000 });
 			await expect(getVisibleAddressInput(window)).toHaveValue(
 				`http://127.0.0.1:${LOCAL_TEST_PORT}/`
 			);
+			await expect(getTabByTitle(window, LOCAL_TEST_TITLE)).toBeVisible({ timeout: 15000 });
 
 			await createBrowserTab(window);
 			await navigateBrowser(window, 'example.com');
-			await expect(getBrowserTabByTitle(window, EXTERNAL_TEST_TITLE)).toBeVisible({
+			await expect(getTabByTitle(window, EXTERNAL_TEST_TITLE)).toBeVisible({
 				timeout: 20000,
 			});
-			await selectBrowserTab(window, EXTERNAL_TEST_TITLE);
+			await selectTab(window, EXTERNAL_TEST_TITLE);
 			await expect(getVisibleAddressInput(window)).toHaveValue('https://example.com/');
+
+			await createTerminalTab(window);
+			await expect(getTabByTitle(window, 'Terminal 1')).toBeVisible();
+
+			await openFileTab(
+				window,
+				'/Users/jeffscottward/Github/tools/Maestro-worktrees/browser-tab/ARCHITECTURE.md'
+			);
+			await expect(getTabByTitle(window, 'ARCHITECTURE')).toBeVisible({ timeout: 10000 });
+			await expect(getVisibleAddressInput(window)).toHaveCount(0);
+
+			await selectTab(window, 'Terminal 1');
+			await expect(getVisibleAddressInput(window)).toHaveCount(0);
 
 			await window.getByText('Seed Tab', { exact: true }).click();
 			await expect(getVisibleAddressInput(window)).toHaveCount(0);
 
-			await selectBrowserTab(window, EXTERNAL_TEST_TITLE);
+			await selectTab(window, EXTERNAL_TEST_TITLE);
 			await expect(getVisibleAddressInput(window)).toHaveValue('https://example.com/');
 
 			await window.getByTitle(/Reload|Stop/).click({ force: true });
@@ -127,16 +158,22 @@ test.describe('Browser Tab Prototype', () => {
 			window = secondLaunch.window;
 
 			await expect(window.getByText('Something went wrong')).toHaveCount(0);
-			await expect(getBrowserTabByTitle(window, EXTERNAL_TEST_TITLE)).toBeVisible({
+			await expect(getTabByTitle(window, EXTERNAL_TEST_TITLE)).toBeVisible({
 				timeout: 15000,
 			});
-			await selectBrowserTab(window, EXTERNAL_TEST_TITLE);
+			await expect(getTabByTitle(window, 'Terminal 1')).toBeVisible({ timeout: 15000 });
+			await expect(getTabByTitle(window, 'ARCHITECTURE')).toBeVisible({ timeout: 15000 });
+			await selectTab(window, EXTERNAL_TEST_TITLE);
 			await expect(getVisibleAddressInput(window)).toHaveValue('https://example.com/');
 
-			const allTabs = window.locator('div[data-tab-id]');
+			const allTabs = window.locator('div[data-tab-id][role="tab"]');
 			const tabCountBeforeClose = await allTabs.count();
 			await window.keyboard.press('Meta+W');
 			await expect(allTabs).toHaveCount(tabCountBeforeClose - 1);
+
+			await selectTab(window, 'ARCHITECTURE');
+			await window.keyboard.press('Meta+W');
+			await expect(getTabByTitle(window, 'ARCHITECTURE')).toHaveCount(0);
 			await expect(window.getByText('Seed Tab', { exact: true })).toBeVisible();
 		} finally {
 			server.close();
