@@ -219,6 +219,14 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		};
 	}
 
+	// Populate CLI trigger-specific template context
+	if (event.type === 'cli.trigger') {
+		templateContext.cue = {
+			...templateContext.cue,
+			cliPrompt: String(event.payload.cliPrompt ?? ''),
+		};
+	}
+
 	// 4. Substitute template variables
 	const substitutedPrompt = substituteTemplateVariables(promptContent, templateContext);
 

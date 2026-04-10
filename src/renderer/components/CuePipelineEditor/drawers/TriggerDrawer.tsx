@@ -68,6 +68,13 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		icon: EVENT_ICONS['task.pending'],
 		color: EVENT_COLORS['task.pending'],
 	},
+	{
+		eventType: 'cli.trigger',
+		label: 'CLI Trigger',
+		description: 'Triggered via maestro-cli',
+		icon: EVENT_ICONS['cli.trigger'],
+		color: EVENT_COLORS['cli.trigger'],
+	},
 ];
 
 function handleDragStart(e: React.DragEvent, item: TriggerItem) {

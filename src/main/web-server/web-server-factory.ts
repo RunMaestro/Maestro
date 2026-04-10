@@ -1706,6 +1706,52 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Trigger a Cue subscription by name — uses IPC request-response pattern
+		server.setTriggerCueSubscriptionCallback(async (subscriptionName: string, prompt?: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for triggerCueSubscription', 'WebServer');
+				return false;
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:triggerCueSubscription:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result ?? false);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for triggerCueSubscription', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(false);
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:triggerCueSubscription',
+					subscriptionName,
+					prompt,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`triggerCueSubscription callback timed out for ${subscriptionName}`,
+						'WebServer'
+					);
+					resolve(false);
+				}, 10000);
+			});
+		});
+
 		// ============ Usage Dashboard & Achievements Callbacks ============
 
 		// Get usage dashboard data — aggregates from session usage stats via IPC

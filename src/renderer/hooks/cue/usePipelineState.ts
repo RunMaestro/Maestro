@@ -47,6 +47,7 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'Issue',
 	'task.pending': 'Pending Task',
+	'cli.trigger': 'CLI Trigger',
 };
 
 /** Validates pipeline graph before save. Returns array of error messages. */

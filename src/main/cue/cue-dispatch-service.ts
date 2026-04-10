@@ -21,7 +21,8 @@ export interface CueDispatchService {
 		sub: CueSubscription,
 		event: CueEvent,
 		sourceSessionName: string,
-		chainDepth?: number
+		chainDepth?: number,
+		promptOverride?: string
 	): void;
 }
 
@@ -32,7 +33,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			sub: CueSubscription,
 			event: CueEvent,
 			sourceSessionName: string,
-			chainDepth?: number
+			chainDepth?: number,
+			promptOverride?: string
 		): void {
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
@@ -60,7 +62,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						},
 					};
 					const perTargetPrompt = sub.fan_out_prompts?.[i];
-					const prompt = perTargetPrompt ?? sub.prompt ?? sub.prompt_file ?? '';
+					const prompt = promptOverride ?? perTargetPrompt ?? sub.prompt ?? sub.prompt_file ?? '';
 					deps.executeRun(
 						targetSession.id,
 						prompt,
@@ -75,7 +77,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 
 			deps.executeRun(
 				ownerSessionId,
-				sub.prompt ?? sub.prompt_file ?? '',
+				promptOverride ?? sub.prompt ?? sub.prompt_file ?? '',
 				event,
 				sub.name,
 				sub.output_prompt,

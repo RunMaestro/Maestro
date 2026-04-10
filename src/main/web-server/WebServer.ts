@@ -102,6 +102,7 @@ import type {
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
+	TriggerCueSubscriptionCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
 	GetUsageDashboardCallback,
@@ -508,6 +509,10 @@ export class WebServer {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
 	}
 
+	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
+		this.callbackRegistry.setTriggerCueSubscriptionCallback(callback);
+	}
+
 	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
 		this.callbackRegistry.setGetUsageDashboardCallback(callback);
 	}
@@ -734,6 +739,8 @@ export class WebServer {
 				this.callbackRegistry.toggleCueSubscription(subscriptionId, enabled),
 			getCueActivity: async (sessionId?: string, limit?: number) =>
 				this.callbackRegistry.getCueActivity(sessionId, limit),
+			triggerCueSubscription: async (subscriptionName: string, prompt?: string) =>
+				this.callbackRegistry.triggerCueSubscription(subscriptionName, prompt),
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),

@@ -59,9 +59,9 @@ export function createCueApi() {
 		// Stop all running Cue executions
 		stopAll: (): Promise<void> => ipcRenderer.invoke('cue:stopAll'),
 
-		// Manually trigger a subscription by name (Run Now)
-		triggerSubscription: (subscriptionName: string): Promise<boolean> =>
-			ipcRenderer.invoke('cue:triggerSubscription', { subscriptionName }),
+		// Manually trigger a subscription by name (Run Now), with optional prompt override
+		triggerSubscription: (subscriptionName: string, prompt?: string): Promise<boolean> =>
+			ipcRenderer.invoke('cue:triggerSubscription', { subscriptionName, prompt }),
 
 		// Get queue status per session
 		getQueueStatus: (): Promise<Record<string, number>> => ipcRenderer.invoke('cue:getQueueStatus'),

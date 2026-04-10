@@ -589,6 +589,10 @@ export type GetCueActivityCallback = (
 	sessionId?: string,
 	limit?: number
 ) => Promise<CueActivityEntry[]>;
+export type TriggerCueSubscriptionCallback = (
+	subscriptionName: string,
+	prompt?: string
+) => Promise<boolean>;
 
 // =============================================================================
 // Usage Dashboard Types

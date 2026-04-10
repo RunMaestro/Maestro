@@ -174,6 +174,7 @@ export interface MessageHandlerCallbacks {
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
+	triggerCueSubscription: (subscriptionName: string, prompt?: string) => Promise<boolean>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	writeToTerminal: (sessionId: string, data: string) => boolean;
@@ -411,6 +412,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_cue_activity':
 				this.handleGetCueActivity(client, message);
+				break;
+
+			case 'trigger_cue_subscription':
+				this.handleTriggerCueSubscription(client, message);
 				break;
 
 			case 'get_usage_dashboard':
@@ -2310,6 +2315,39 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to get Cue activity: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle trigger_cue_subscription message - manually trigger a Cue subscription
+	 */
+	private handleTriggerCueSubscription(client: WebClient, message: WebClientMessage): void {
+		const subscriptionName = message.subscriptionName as string;
+		const prompt = message.prompt as string | undefined;
+
+		if (!subscriptionName) {
+			this.sendError(client, 'Missing subscriptionName');
+			return;
+		}
+
+		if (!this.callbacks.triggerCueSubscription) {
+			this.sendError(client, 'Cue trigger not available');
+			return;
+		}
+
+		this.callbacks
+			.triggerCueSubscription(subscriptionName, prompt)
+			.then((success) => {
+				this.send(client, {
+					type: 'trigger_cue_subscription_result',
+					success,
+					subscriptionName,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to trigger Cue subscription: ${error.message}`);
 			});
 	}
 

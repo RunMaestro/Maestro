@@ -148,6 +148,8 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Task Pending';
 		case 'agent.completed':
 			return 'Agent Done';
+		case 'cli.trigger':
+			return 'CLI Trigger';
 		default:
 			return 'Trigger';
 	}

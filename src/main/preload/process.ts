@@ -1084,6 +1084,33 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Listen for remote trigger Cue subscription requests (from web/CLI clients)
+		 */
+		onRemoteTriggerCueSubscription: (
+			callback: (
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string
+			) => callback(subscriptionName, prompt, responseChannel);
+			ipcRenderer.on('remote:triggerCueSubscription', handler);
+			return () => ipcRenderer.removeListener('remote:triggerCueSubscription', handler);
+		},
+
+		/**
+		 * Send response for remote trigger Cue subscription
+		 */
+		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {
