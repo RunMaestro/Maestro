@@ -32,17 +32,24 @@ export function useForkConversation(
 			const slicedLogs = sourceTab.logs.slice(0, rawLogIndex + 1);
 			if (slicedLogs.length === 0) return;
 
-			// 2. Format sliced logs as context (same filter as Send-to-Agent: user, ai, stdout)
+			// 2. Format sliced logs as context (user, ai, stdout, and tool sources)
 			const formattedContext = slicedLogs
 				.filter(
 					(log) =>
 						log.text &&
 						log.text.trim() &&
-						(log.source === 'user' || log.source === 'ai' || log.source === 'stdout')
+						(log.source === 'user' ||
+							log.source === 'ai' ||
+							log.source === 'stdout' ||
+							log.source === 'tool')
 				)
 				.map((log) => {
 					const role =
-						log.source === 'user' ? 'User' : log.source === 'stdout' ? 'Tool Output' : 'Assistant';
+						log.source === 'user'
+							? 'User'
+							: log.source === 'stdout' || log.source === 'tool'
+								? 'Tool Output'
+								: 'Assistant';
 					return `${role}: ${log.text}`;
 				})
 				.join('\n\n');
@@ -50,7 +57,7 @@ export function useForkConversation(
 			// 3. Build the context message (similar to Send-to-Agent)
 			const sourceDisplayName = getTabDisplayName(sourceTab);
 			const sessionName = session.name || session.projectRoot.split('/').pop() || 'Unknown';
-			const forkName = `Fork: ${sessionName}`;
+			const forkName = `Forked: ${sessionName}`;
 
 			const contextMessage = formattedContext
 				? `# Forked Conversation
@@ -111,6 +118,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 			newSession.customEnvVars = session.customEnvVars;
 			newSession.customModel = session.customModel;
 			newSession.customContextWindow = session.customContextWindow;
+			newSession.customEffort = session.customEffort;
 			newSession.sessionSshRemoteConfig = session.sessionSshRemoteConfig;
 			newSession.groupId = session.groupId;
 
@@ -198,6 +206,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 						sessionCustomArgs: session.customArgs,
 						sessionCustomEnvVars: session.customEnvVars,
 						sessionCustomModel: session.customModel,
+						sessionCustomEffort: session.customEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 						sendPromptViaStdin,
@@ -232,6 +241,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 												...tab,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
+												awaitingSessionId: false,
 												logs: [...tab.logs, errorLog],
 											}
 										: tab
