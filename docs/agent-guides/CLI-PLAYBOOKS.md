@@ -345,7 +345,7 @@ The CLI spawner is simpler than the desktop process manager:
 
 ### What is a Playbook?
 
-A playbook is a saved Auto Run configuration: an ordered list of markdown documents with a prompt template. Running a playbook iterates through each document's tasks, sending each to the agent.
+A playbook is a saved Auto Run configuration: an ordered list of Markdown documents with a prompt template. Running a playbook iterates through each document's tasks, sending each to the agent.
 
 ### Playbook Storage
 

@@ -191,7 +191,7 @@ Wires up process output streaming, group chat routing, power management, usage t
 
 #### 8. Application Menu
 
-- **macOS**: Custom menu to prevent native tab switching shortcuts from intercepting keyboard events
+- **macOS**: Custom menu to prevent native tab-switching shortcuts from intercepting keyboard events
 - **Windows/Linux**: Menu hidden entirely (Maestro uses its own UI)
 
 #### 9. Window Creation

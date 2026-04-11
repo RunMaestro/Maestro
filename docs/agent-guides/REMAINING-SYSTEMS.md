@@ -13,7 +13,7 @@ Four React context files (~770 lines total) that provide cross-component state w
 ### When to Use Context vs. Store
 
 - **Context** - State that needs React's render cycle (triggers re-renders on change). Used for UI state that multiple components read: completion dropdowns, layer stack, wizard state, git polling data.
-- **Store (useUIStore, zustand)** - State that changes frequently or needs imperitive access outside React. Used for sidebar toggles, focus area, UI flags.
+- **Store (useUIStore, zustand)** - State that changes frequently or needs imperative access outside React. Used for sidebar toggles, focus area, UI flags.
 
 The dividing line: contexts own _derived/polled data_ or _popup/modal coordination_. Stores own _simple toggles and flags_.
 
@@ -77,7 +77,7 @@ Manages completion popup and command history state extracted from App.tsx. Four 
 
 Provides global modal/overlay layer stack management with centralized Escape key handling. The provider installs a capture-phase keydown listener that delegates Escape to the topmost layer's `onEscape` handler.
 
-**Hook:** `useLayerStack()` returns `LayerStackAPI` with `registerLayer()`, `unregisterLayer()`, `updateLayerHandler()`, `getTopLayer()`, `closeTopLayer()`, `hasOpenLayers`, `hasOpenModal`
+**Hook:** `useLayerStack()` returns `LayerStackAPI` with methods `registerLayer(layer: LayerInput): string`, `unregisterLayer(id: string): void`, `updateLayerHandler(id, handler): void`, `getTopLayer(): Layer | undefined`, `closeTopLayer(): Promise<boolean>`, `getLayers(): Layer[]`, and boolean helpers `hasOpenLayers()` / `hasOpenModal()`, plus a `layerCount: number` field. Defined in `src/renderer/hooks/ui/useLayerStack.ts`.
 
 **Usage:** 20+ consumers - every modal and overlay component registers with the layer stack (App.tsx, AgentCreationDialog, BatchRunnerModal, SettingsModal, AutoRunLightbox, etc.)
 

@@ -74,7 +74,7 @@ These namespaces are exposed on `window.maestro` via the preload bridge:
 | `platform`      | Direct value               | N/A                 | `process.platform` string (synchronous)                 |
 | `stats`         | `createStatsApi()`         | `stats.ts`          | Usage statistics DB                                     |
 | `leaderboard`   | `createLeaderboardApi()`   | `leaderboard.ts`    | Leaderboard submission                                  |
-| `symphony`      | `createSymphonyApi()`      | `symphony.ts`       | Open source contribution system                         |
+| `symphony`      | `createSymphonyApi()`      | `symphony.ts`       | Open-source contribution system                         |
 | `tabNaming`     | `createTabNamingApi()`     | `tabNaming.ts`      | Automatic tab name generation                           |
 | `directorNotes` | `createDirectorNotesApi()` | `director-notes.ts` | Unified history + synopsis                              |
 | `wakatime`      | `createWakatimeApi()`      | `wakatime.ts`       | WakaTime integration                                    |

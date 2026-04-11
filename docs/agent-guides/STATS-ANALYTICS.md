@@ -275,20 +275,24 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 
 ### Querying
 
-| Handler                      | Description                                                 |
-| ---------------------------- | ----------------------------------------------------------- |
-| `stats:get-stats`            | Get `QueryEvent[]` with time range and optional filters     |
-| `stats:get-autorun-sessions` | Get `AutoRunSession[]` within a time range                  |
-| `stats:get-autorun-tasks`    | Get `AutoRunTask[]` for a specific Auto Run session         |
-| `stats:get-aggregation`      | Get `StatsAggregation` for a time range (used by dashboard) |
+| Handler                        | Description                                                            |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `stats:get-stats`              | Get `QueryEvent[]` with time range and optional filters                |
+| `stats:get-autorun-sessions`   | Get `AutoRunSession[]` within a time range                             |
+| `stats:get-autorun-tasks`      | Get `AutoRunTask[]` for a specific Auto Run session                    |
+| `stats:get-aggregation`        | Get `StatsAggregation` for a time range (used by dashboard)            |
+| `stats:get-session-lifecycle`  | Get `SessionLifecycleEvent[]` within a time range                      |
+| `stats:get-earliest-timestamp` | Get the earliest recorded event timestamp (used for "all time" ranges) |
 
 ### Data Management
 
-| Handler                   | Description                                                        |
-| ------------------------- | ------------------------------------------------------------------ |
-| `stats:export-csv`        | Export query events to CSV for a time range                        |
-| `stats:clear-old-data`    | Delete records older than N days (transactional across all tables) |
-| `stats:get-database-size` | Get the database file size in bytes                                |
+| Handler                             | Description                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `stats:export-csv`                  | Export query events to CSV for a time range                                          |
+| `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
+| `stats:get-database-size`           | Get the database file size in bytes                                                  |
+| `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
+| `stats:clear-initialization-result` | Clear the cached initialization result                                               |
 
 ### Broadcast
 

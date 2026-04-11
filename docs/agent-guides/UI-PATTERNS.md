@@ -190,6 +190,8 @@ interface Theme {
 | `warning`          | Yellow/orange states                        |
 | `error`            | Red states                                  |
 
+`ThemeColors` also has optional ANSI 16-color terminal fields (`ansiBlack`, `ansiRed`, `ansiGreen`, `ansiYellow`, `ansiBlue`, `ansiMagenta`, `ansiCyan`, `ansiWhite`, and their `ansiBright*` variants). When not provided, `XTerminal` uses theme-appropriate defaults.
+
 ### Available Themes
 
 Three modes with built-in themes:
@@ -514,12 +516,34 @@ Each tab has an `AITab` type with:
 
 ### Tab Handlers
 
-`useTabHandlers` (`src/renderer/hooks/tabs/useTabHandlers.ts`) provides:
+`useTabHandlers` (`src/renderer/hooks/tabs/useTabHandlers.ts`) returns a large `TabHandlersReturn` object covering both AI/terminal tabs and file-preview tabs. The main handlers are:
 
-- `createTab`, `closeTab`, `closeAllTabs`, `closeOtherTabs`
-- `navigateToNextTab`, `navigateToPreviousTab`
-- `reopenClosedTab` (keeps a closed tab stack)
-- `setActiveTab`, `reorderTabs`
+**AI/terminal tab handlers:**
+
+- `handleNewTab()` - create a new AI tab
+- `handleTabSelect(tabId)` - switch active tab
+- `handleTabClose(tabId)` - close a tab
+- `handleCloseAllTabs()` - close every AI tab
+- `handleCloseOtherTabs()` - close all except active
+- `handleCloseTabsLeft()` / `handleCloseTabsRight()` - close tabs on one side of active
+- `handleCloseCurrentTab()` - returns `CloseCurrentTabResult` indicating which tab type was closed
+- `handleTabReorder(fromIndex, toIndex)` - reorder AI tabs
+- `handleUnifiedTabReorder(fromIndex, toIndex)` - reorder the unified tab bar (mixes AI, file, browser, terminal)
+- `handleRequestTabRename(tabId)` - open rename modal
+- `handleTabStar(tabId, starred)` - pin/unpin
+- `handleTabMarkUnread(tabId)` - mark unread
+- `handleToggleTabReadOnlyMode()` / `handleToggleTabSaveToHistory()` / `handleToggleTabShowThinking()` - per-tab toggles
+
+**File-preview tab handlers:**
+
+- `handleOpenFileTab(params)` - open a file preview
+- `handleSelectFileTab(tabId)` / `handleCloseFileTab(tabId)` - file tab lifecycle
+- `handleFileTabEditModeChange(tabId, editMode)` / `handleFileTabEditContentChange(tabId, content)` - edit mode state
+- `handleFileTabScrollPositionChange(tabId, scrollTop)` / `handleFileTabSearchQueryChange(tabId, query)` - per-tab scroll/search state
+- `handleReloadFileTab(tabId)` - reload file from disk
+- `handleFileTabNavigateBack()` / `handleFileTabNavigateForward()` - per-file-tab navigation history
+
+The hook also returns selectors: `activeTab`, `unifiedTabs`, `activeFileTab`, `activeBrowserTab`, and the file-tab history state (`fileTabBackHistory`, `fileTabForwardHistory`, `fileTabCanGoBack`, `fileTabCanGoForward`).
 
 ---
 

@@ -50,6 +50,7 @@ interface SessionStoreState {
 	activeSessionId: string; // Currently selected session
 	sessionsLoaded: boolean; // Loaded from disk
 	initialLoadComplete: boolean; // First load finished
+	initialFileTreeReady: boolean; // File tree hydrated on startup
 	removedWorktreePaths: Set<string>; // Prevent worktree re-discovery
 	cyclePosition: number; // Cmd+J/K navigation position
 }
@@ -238,7 +239,20 @@ interface ModalEntry<T = unknown> {
 
 ### ModalId Union
 
-All 44 modal identifiers: `settings`, `shortcutsHelp`, `about`, `newInstance`, `editAgent`, `deleteAgent`, `quickAction`, `tabSwitcher`, `fuzzyFileSearch`, `promptComposer`, `renameTab`, `renameGroup`, `mergeSession`, `sendToAgent`, `agentSessions`, `queueBrowser`, `batchRunner`, `autoRunSetup`, `marketplace`, `worktreeConfig`, `createWorktree`, `createPR`, `deleteWorktree`, `newGroupChat`, `deleteGroupChat`, `renameGroupChat`, `editGroupChat`, `groupChatInfo`, `gitDiff`, `gitLog`, `wizardResume`, `tour`, `debugWizard`, `debugPackage`, `playground`, `logViewer`, `processMonitor`, `usageDashboard`, `confirm`, `quitConfirm`, `standingOvation`, `firstRunCelebration`, `keyboardMastery`, `leaderboard`, `lightbox`, `symphony`, `windowsWarning`, `directorNotes`, `agentError`, `renameInstance`, `updateCheck`
+The current union in `src/renderer/stores/modalStore.ts` lists ~55 modal identifiers (exact list grows as features land — check the source):
+
+- **Chrome / global:** `settings`, `shortcutsHelp`, `about`, `feedback`, `updateCheck`
+- **Agent lifecycle:** `newAgentChoice`, `newInstance`, `editAgent`, `deleteAgent`, `renameInstance`, `agentError`
+- **Navigation / command:** `quickAction`, `tabSwitcher`, `fuzzyFileSearch`, `promptComposer`
+- **Tab / group edit:** `renameTab`, `renameGroup`
+- **Session actions:** `mergeSession`, `sendToAgent`, `agentSessions`, `queueBrowser`, `batchRunner`, `autoRunSetup`, `marketplace`
+- **Worktree:** `worktreeConfig`, `createWorktree`, `createPR`, `deleteWorktree`
+- **Group chat:** `newGroupChat`, `deleteGroupChat`, `renameGroupChat`, `editGroupChat`, `groupChatInfo`
+- **Git:** `gitDiff`, `gitLog`
+- **Wizard / onboarding:** `wizardResume`, `tour`
+- **Debug / diagnostic:** `debugWizard`, `debugPackage`, `playground`, `logViewer`, `processMonitor`, `usageDashboard`
+- **Confirm / celebration:** `confirm`, `quitConfirm`, `standingOvation`, `firstRunCelebration`, `keyboardMastery`, `leaderboard`, `lightbox`
+- **Feature-specific:** `symphony`, `windowsWarning`, `directorNotes`, `cueModal`, `cueYamlEditor`
 
 ### Core Actions
 

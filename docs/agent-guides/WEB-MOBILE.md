@@ -10,15 +10,17 @@ Architecture, components, hooks, and patterns for the Maestro web/mobile remote 
 
 The web interface is a **separate React application** from the desktop renderer. It provides remote control of Maestro sessions from mobile/tablet devices over the local network. Communication with the Electron main process happens via WebSocket and REST API, not Electron IPC.
 
-```
+```text
 Desktop App (Electron)
 ├── Main Process
-│   └── Web Server (Express + WebSocket)
+│   └── Web Server (Fastify + @fastify/websocket)
 │       ├── REST API: /$TOKEN/api/*
 │       └── WebSocket: /$TOKEN/ws
 └── Web Client (separate React app)
     └── Connects over HTTP/WS to main process
 ```
+
+The server stack is Fastify with plugins: `@fastify/cors`, `@fastify/websocket`, `@fastify/rate-limit`, `@fastify/static`. See `src/main/web-server/WebServer.ts`.
 
 ---
 
@@ -26,7 +28,7 @@ Desktop App (Electron)
 
 ### Directory Structure
 
-```
+```text
 src/web/
 ├── App.tsx                   # Root app component (contexts, routing)
 ├── main.tsx                  # Entry point (createRoot)
@@ -146,7 +148,7 @@ Access via `getMaestroConfig()` from `src/web/utils/config.ts`.
 
 ### URL Structure
 
-```
+```text
 http://host:port/$SECURITY_TOKEN/                    # Dashboard
 http://host:port/$SECURITY_TOKEN/session/$SESSION_ID  # Session view
 http://host:port/$SECURITY_TOKEN/session/$SESSION_ID?tabId=$TAB_ID  # Tab view
@@ -173,7 +175,7 @@ type WebSocketState =
 	| 'authenticated';
 ```
 
-The hook provides connection state, message sending, and event handlers. Authentication happens via the URL path (security token), so no separate auth handshake is needed.
+The hook provides connection state, message sending, and event handlers. The primary auth path is the URL token (the `$SECURITY_TOKEN` segment), but the hook also exposes an explicit runtime handshake: `UseWebSocketReturn` includes `authenticate(token: string): void` and an `isAuthenticated: boolean` flag for clients that need to confirm auth state or re-authenticate over an existing connection. Typical usage: connect via URL token and rely on `isAuthenticated` to gate UI.
 
 ### Session Data Model
 
@@ -273,7 +275,7 @@ interface GroupInfo {
 
 ## Mobile App Component Tree
 
-```
+```text
 AppRoot (App.tsx)
 ├── ThemeProvider
 │   └── MaestroModeContext.Provider

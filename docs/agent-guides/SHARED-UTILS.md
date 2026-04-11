@@ -17,18 +17,18 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Agent IDs & Metadata
 
-| Function / Constant       | File                           | Signature                                 | Process | Purpose                                                                                                                           |
-| ------------------------- | ------------------------------ | ----------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'aider']` |
-| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                |
-| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                               |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Human-readable display names for every agent.                                                                                     |
-| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                           |
-| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Set of agents in beta status. Currently: codex, opencode, factory-droid.                                                          |
-| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                     |
-| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`        | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                               |
-| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                         | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                      |
-| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                    | Both    | Agents with combined input+output context windows (currently: codex).                                                             |
+| Function / Constant       | File                           | Signature                                 | Process | Purpose                                                                                                                                                |
+| ------------------------- | ------------------------------ | ----------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'aider']`                      |
+| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                                     |
+| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                                                    |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use — it falls back to the raw id for unknown agents. |
+| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                                                |
+| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode` and `factory-droid`. **Prefer `isBetaAgent()`** for external use.               |
+| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                                          |
+| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`        | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                    |
+| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                         | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                           |
+| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                    | Both    | Agents with combined input+output context windows (currently: codex).                                                                                  |
 
 ---
 
@@ -109,6 +109,7 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                        |
 | `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                   |
 | `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.          |
+| `getParentDir(path)`                   | `(string) => string`                   | Return the parent directory segment of a path.                |
 | `truncateCommand(command, maxLength?)` | `(string, number?) => string`          | Single-line with ellipsis. Default max 40 chars.              |
 
 ---

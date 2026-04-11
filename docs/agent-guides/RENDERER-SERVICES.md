@@ -291,7 +291,7 @@ Defines all keyboard shortcuts in three tiers:
 
 - Panel toggles: sidebar, right panel, AI/shell mode
 - Agent navigation: previous/next, jump to session
-- View actions: files tab, history tab, auto run tab, git diff, git log
+- View actions: files tab, history tab, Auto Run tab, git diff, git log
 - Actions: new agent, kill agent, quick actions, settings, help
 - Editor: markdown mode, auto-scroll, bookmarks, font size reset
 - Modals: prompt composer, wizard, symphony, director's notes

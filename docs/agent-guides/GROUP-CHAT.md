@@ -358,7 +358,7 @@ Located in `src/renderer/components/`:
 
 ## Symphony System
 
-Symphony is a separate feature that connects Maestro users with open source projects seeking contributions. It is not part of the group chat system, but shares some infrastructure:
+Symphony is a separate feature that connects Maestro users with open-source projects seeking contributions. It is not part of the group chat system, but shares some infrastructure:
 
 - **Registry**: Hosted at `symphony-registry.json` in the Maestro GitHub repo. Contains registered repositories with categories, maintainer info, and active status.
 - **Workflow**: Browse repositories, select an issue labeled `runmaestro.ai`, clone the repo, create a branch and draft PR, run Auto Run documents from the issue, then mark the PR as ready for review.
