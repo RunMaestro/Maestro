@@ -11,7 +11,7 @@ import {
 	Server,
 	Monitor,
 	Globe,
-	FileText,
+	Wand2,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
@@ -56,6 +56,7 @@ interface SettingsModalProps {
 		| 'environment'
 		| 'encore'
 		| 'prompts';
+	initialSelectedPromptId?: string;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -68,6 +69,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		theme,
 		themes,
 		initialTab,
+		initialSelectedPromptId,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -382,7 +384,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		{ id: 'theme', label: 'Themes', icon: Palette },
 		{ id: 'notifications', label: 'Notifications', icon: Bell },
 		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
-		{ id: 'prompts', label: 'Maestro Prompts', icon: FileText },
+		{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
 		{ id: 'environment', label: 'Environment', icon: Globe },
 		{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
@@ -632,7 +634,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							</div>
 						)}
 
-						{activeTab === 'prompts' && <MaestroPromptsTab theme={theme} />}
+						{activeTab === 'prompts' && (
+							<MaestroPromptsTab theme={theme} initialSelectedPromptId={initialSelectedPromptId} />
+						)}
 
 						{activeTab === 'ssh' && (
 							<div className="space-y-5">

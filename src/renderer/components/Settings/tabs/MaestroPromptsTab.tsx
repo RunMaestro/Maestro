@@ -21,6 +21,7 @@ interface CorePrompt {
 
 interface MaestroPromptsTabProps {
 	theme: Theme;
+	initialSelectedPromptId?: string;
 }
 
 // Category display names and order
@@ -34,33 +35,40 @@ const CATEGORY_INFO: Record<string, { label: string; order: number }> = {
 	system: { label: 'System', order: 7 },
 };
 
-export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Element {
+export function MaestroPromptsTab({
+	theme,
+	initialSelectedPromptId,
+}: MaestroPromptsTabProps): JSX.Element {
 	const [prompts, setPrompts] = useState<CorePrompt[]>([]);
 	const [selectedPrompt, setSelectedPrompt] = useState<CorePrompt | null>(null);
 	const [editedContent, setEditedContent] = useState('');
 	const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 	const [isResetting, setIsResetting] = useState(false);
-	const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+	const [successMessage, setSuccessMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	// Auto-dismiss success message after 3 seconds
 	useEffect(() => {
-		if (!showSuccessMessage) return;
-		const timer = setTimeout(() => setShowSuccessMessage(false), 3000);
+		if (!successMessage) return;
+		const timer = setTimeout(() => setSuccessMessage(null), 3000);
 		return () => clearTimeout(timer);
-	}, [showSuccessMessage]);
+	}, [successMessage]);
 
-	// Load prompts on mount and select first
+	// Load prompts on mount and select initial prompt (or first)
 	useEffect(() => {
 		(async () => {
 			try {
 				const result = await window.maestro.prompts.getAll();
 				if (result.success && result.prompts) {
 					setPrompts(result.prompts);
-					if (result.prompts.length > 0) {
-						setSelectedPrompt(result.prompts[0]);
-						setEditedContent(result.prompts[0].content);
+					const initial = initialSelectedPromptId
+						? result.prompts.find((p) => p.id === initialSelectedPromptId)
+						: undefined;
+					const target = initial || result.prompts[0];
+					if (target) {
+						setSelectedPrompt(target);
+						setEditedContent(target.content);
 					}
 				} else {
 					setError(result.error || 'Failed to load prompts');
@@ -97,7 +105,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 			setSelectedPrompt(prompt);
 			setEditedContent(prompt.content);
 			setHasUnsavedChanges(false);
-			setShowSuccessMessage(false);
+			setSuccessMessage(null);
 		},
 		[hasUnsavedChanges]
 	);
@@ -129,7 +137,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 					prev ? { ...prev, content: editedContent, isModified: true } : null
 				);
 				setHasUnsavedChanges(false);
-				setShowSuccessMessage(true);
+				setSuccessMessage('Changes saved');
 			} else {
 				setError(result.error || 'Failed to save prompt');
 			}
@@ -165,7 +173,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 				);
 				setEditedContent(result.content);
 				setHasUnsavedChanges(false);
-				setShowSuccessMessage(true);
+				setSuccessMessage('Reset to default');
 			} else {
 				setError(result.error || 'Failed to reset prompt');
 			}
@@ -231,7 +239,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 								)}
 							</div>
 
-							{showSuccessMessage && (
+							{successMessage && (
 								<div
 									className="success-message"
 									style={{
@@ -239,7 +247,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 										color: theme.colors.success,
 									}}
 								>
-									Changes saved and applied
+									{successMessage}
 								</div>
 							)}
 
@@ -282,7 +290,7 @@ export function MaestroPromptsTab({ theme }: MaestroPromptsTabProps): JSX.Elemen
 								<button
 									className="reset-button"
 									onClick={handleReset}
-									disabled={!selectedPrompt.isModified || isResetting}
+									disabled={(!selectedPrompt.isModified && !hasUnsavedChanges) || isResetting}
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,

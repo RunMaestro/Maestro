@@ -243,6 +243,7 @@ function AppStandaloneModalsInner({
 		deleteAgentSession,
 		settingsModalOpen,
 		settingsTab,
+		settingsPromptId,
 		wizardResumeModalOpen,
 		wizardResumeState,
 		tourOpen,
@@ -534,6 +535,7 @@ function AppStandaloneModalsInner({
 						theme={theme}
 						themes={THEMES}
 						initialTab={settingsTab}
+						initialSelectedPromptId={settingsPromptId}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

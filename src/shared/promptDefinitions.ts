@@ -210,6 +210,17 @@ export const PROMPT_IDS = {
 export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
 
 /**
+ * Prompts surfaced in the command palette (Quick Actions) for direct editing.
+ * Edit this list to add or remove prompts from the command palette.
+ */
+export const QUICK_ACTION_PROMPTS: { id: PromptId; label: string }[] = [
+	{ id: 'maestro-system-prompt', label: 'Maestro System Prompt' },
+	{ id: 'autorun-default', label: 'Auto Run Default' },
+	{ id: 'commit-command', label: 'Commit Command' },
+	{ id: 'group-chat-moderator-system', label: 'Group Chat Moderator' },
+];
+
+/**
  * Get filename for a prompt ID. Used by CLI loader and prompt-manager.
  */
 export function getPromptFilename(id: string): string {
