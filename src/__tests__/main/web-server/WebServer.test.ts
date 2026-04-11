@@ -25,7 +25,7 @@ describe('WebServer web asset resolution', () => {
 
 	it('prefers built dist/web assets over the source web index', () => {
 		const distWebDir = path.join(tempRoot, 'dist', 'web');
-		mkdirSync(distWebDir, { recursive: true });
+		mkdirSync(path.join(distWebDir, 'assets'), { recursive: true });
 		writeFileSync(
 			path.join(distWebDir, 'index.html'),
 			'<script type="module" src="./assets/main.js"></script>'

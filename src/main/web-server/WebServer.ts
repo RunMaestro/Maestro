@@ -198,11 +198,13 @@ export class WebServer {
 			return false;
 		}
 
+		const assetsPath = path.join(candidatePath, 'assets');
+
 		try {
 			const html = readFileSync(indexPath, 'utf-8');
 			const referencesDevEntrypoint =
 				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
-			return !referencesDevEntrypoint;
+			return !referencesDevEntrypoint && existsSync(assetsPath);
 		} catch (error) {
 			const err = error as NodeJS.ErrnoException;
 			if (err.code === 'ENOENT') {
@@ -475,8 +477,8 @@ export class WebServer {
 				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
-			selectSession: async (sessionId: string, tabId?: string) =>
-				this.callbackRegistry.selectSession(sessionId, tabId),
+			selectSession: async (sessionId: string, tabId?: string, focus?: boolean) =>
+				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
 			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),
