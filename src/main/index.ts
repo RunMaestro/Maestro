@@ -91,6 +91,7 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { initializePrompts } from './prompt-manager';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -371,6 +372,20 @@ app.whenReady().then(async () => {
 	processManager = new ProcessManager();
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
+
+	// Initialize core prompts from disk (must happen before features that use them)
+	try {
+		await initializePrompts();
+	} catch (error) {
+		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+		const { dialog } = await import('electron');
+		dialog.showErrorBox(
+			'Startup Error',
+			'Failed to load system prompts. Please reinstall the application.'
+		);
+		app.quit();
+		return;
+	}
 
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
