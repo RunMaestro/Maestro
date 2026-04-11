@@ -8,6 +8,8 @@
  * after save/reset, so edits take effect immediately without restart.
  */
 
+import { captureException, captureMessage } from '../utils/sentry';
+
 // Stores
 import { loadSettingsStorePrompts } from '../stores/settingsStore';
 import { loadAgentStorePrompts } from '../stores/agentStore';
@@ -64,17 +66,16 @@ export async function initializeRendererPrompts(): Promise<void> {
 
 	// Start initialization
 	initPromise = (async () => {
-		console.log('[PromptInit] Loading renderer prompts...');
-
 		try {
 			await loadAll();
 			initialized = true;
-			console.log('[PromptInit] Renderer prompts loaded successfully');
 		} catch (error) {
 			// Clear the promise so a subsequent call can retry instead of
 			// returning the same rejected promise forever
 			initPromise = null;
-			console.error('[PromptInit] Failed to load renderer prompts:', error);
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { context: 'initializeRendererPrompts' },
+			});
 			throw error;
 		}
 	})();
@@ -88,9 +89,7 @@ export async function initializeRendererPrompts(): Promise<void> {
  * immediately in all renderer consumers.
  */
 export async function refreshRendererPrompts(): Promise<void> {
-	console.log('[PromptInit] Refreshing renderer prompts...');
 	await loadAll(true);
-	console.log('[PromptInit] Renderer prompts refreshed');
 }
 
 /**

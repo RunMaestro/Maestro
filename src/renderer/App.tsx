@@ -3100,7 +3100,9 @@ export default function MaestroConsole() {
 		initializeRendererPrompts()
 			.then(() => setPromptsReady(true))
 			.catch((err) => {
-				console.error('Failed to initialize prompts:', err);
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'MaestroConsole.initializeRendererPrompts' },
+				});
 				setPromptsReady(true); // Allow app to render; features degrade gracefully
 			});
 	}, []);
