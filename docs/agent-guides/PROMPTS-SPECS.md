@@ -94,6 +94,7 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 
 | Variable                 | Description                                                      |
 | ------------------------ | ---------------------------------------------------------------- |
+| `{{AGENT_ID}}`           | Agent UUID (Maestro agent identifier, for CLI targeting)         |
 | `{{AGENT_NAME}}`         | Agent display name                                               |
 | `{{AGENT_PATH}}`         | Agent home directory path (full path to project)                 |
 | `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
@@ -145,27 +146,97 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 | ------------------- | --------------------------------------- |
 | `{{CONTEXT_USAGE}}` | Current context window usage percentage |
 
+#### Deep Link Variables
+
+| Variable              | Description                                                                |
+| --------------------- | -------------------------------------------------------------------------- |
+| `{{AGENT_DEEP_LINK}}` | `maestro://` deep link to this agent                                       |
+| `{{TAB_DEEP_LINK}}`   | `maestro://` deep link to this agent + active tab                          |
+| `{{GROUP_DEEP_LINK}}` | `maestro://` deep link to this agent's group (empty string if not grouped) |
+
+#### Maestro Variables
+
+| Variable               | Description                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| `{{MAESTRO_CLI_PATH}}` | Platform-appropriate path to the `maestro-cli` binary (for use in shell commands) |
+
+#### Cue Variables (Cue automation only)
+
+Variables populated only when a prompt is rendered as part of a Maestro Cue run. Accessed on `context.cue` in the substitution function. See `src/shared/templateVariables.ts` for the full list, which includes:
+
+- **Event metadata:** `{{CUE_EVENT_TYPE}}`, `{{CUE_EVENT_TIMESTAMP}}`, `{{CUE_TRIGGER_NAME}}`, `{{CUE_RUN_ID}}`
+- **File change events:** `{{CUE_FILE_PATH}}`, `{{CUE_FILE_NAME}}`, `{{CUE_FILE_DIR}}`, `{{CUE_FILE_EXT}}`, `{{CUE_FILE_CHANGE_TYPE}}`
+- **Agent-completion / chained-run events:** `{{CUE_SOURCE_SESSION}}`, `{{CUE_SOURCE_OUTPUT}}`, `{{CUE_SOURCE_STATUS}}`, `{{CUE_SOURCE_EXIT_CODE}}`, `{{CUE_SOURCE_DURATION}}`, `{{CUE_SOURCE_TRIGGERED_BY}}`
+- **Task pending events (`task.pending`):** `{{CUE_TASK_FILE}}`, `{{CUE_TASK_FILE_NAME}}`, `{{CUE_TASK_FILE_DIR}}`, `{{CUE_TASK_COUNT}}`, `{{CUE_TASK_LIST}}`, `{{CUE_TASK_CONTENT}}`
+- **GitHub events (`github.pull_request`, `github.issue`):** `{{CUE_GH_TYPE}}`, `{{CUE_GH_NUMBER}}`, `{{CUE_GH_TITLE}}`, `{{CUE_GH_AUTHOR}}`, `{{CUE_GH_URL}}`, `{{CUE_GH_BODY}}`, `{{CUE_GH_LABELS}}`, `{{CUE_GH_STATE}}`, `{{CUE_GH_REPO}}`, `{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`, `{{CUE_GH_ASSIGNEES}}`, `{{CUE_GH_MERGED_AT}}`
+
 ### Substitution Flow
 
-Template variables are resolved at runtime by `src/renderer/utils/templateVariables.ts`:
+Template variables are resolved at runtime by `src/shared/templateVariables.ts` (used from both main and renderer):
 
-1. The renderer collects a `TemplateContext` object with the current session, git info, group name, Auto Run state, conductor profile, and history path
-2. The `replaceTemplateVariables()` function performs case-insensitive replacement of all `{{...}}` patterns
-3. Variables not matched are left as-is (no error for unknown variables)
+1. Callers build a `TemplateContext` object with the current session, git info, group name, Auto Run state, conductor profile, history path, and — for Cue prompts — a `cue` sub-object with event metadata.
+2. `substituteTemplateVariables(template, context)` performs case-insensitive replacement of all `{{...}}` patterns.
+3. Variables not matched are left as-is (no error for unknown variables).
 
-The `TemplateContext` interface:
+The `TemplateContext` interface (abbreviated - see `src/shared/templateVariables.ts:148` for the full definition, including the 30+ fields on the `cue` sub-object):
 
 ```typescript
 interface TemplateContext {
 	session: TemplateSessionInfo;
 	gitBranch?: string;
 	groupName?: string;
+	groupId?: string;
+	activeTabId?: string;
 	autoRunFolder?: string;
 	loopNumber?: number;
+	// Auto Run document context
 	documentName?: string;
 	documentPath?: string;
+	// History file path for task recall
 	historyFilePath?: string;
+	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	// Cue event context (populated only for Cue automation prompts)
+	cue?: {
+		eventType?: string;
+		eventTimestamp?: string;
+		triggerName?: string;
+		runId?: string;
+		// File change fields
+		filePath?: string;
+		fileName?: string;
+		fileDir?: string;
+		fileExt?: string;
+		fileChangeType?: string;
+		// Source-session fields (agent.completed / chained runs)
+		sourceSession?: string;
+		sourceOutput?: string;
+		sourceStatus?: string;
+		sourceExitCode?: string;
+		sourceDuration?: string;
+		sourceTriggeredBy?: string;
+		// task.pending fields
+		taskFile?: string;
+		taskFileName?: string;
+		taskFileDir?: string;
+		taskCount?: string;
+		taskList?: string;
+		taskContent?: string;
+		// github.pull_request / github.issue fields
+		ghType?: string;
+		ghNumber?: string;
+		ghTitle?: string;
+		ghAuthor?: string;
+		ghUrl?: string;
+		ghBody?: string;
+		ghLabels?: string;
+		ghState?: string;
+		ghRepo?: string;
+		ghBranch?: string;
+		ghBaseBranch?: string;
+		ghAssignees?: string;
+		ghMergedAt?: string;
+	};
 }
 ```
 
