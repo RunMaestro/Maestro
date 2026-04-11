@@ -1183,7 +1183,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{/* Expand all */}
 					<button
 						onClick={() => expandAllFolders(session.id, session, setSessions)}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="flex items-center justify-center py-0.5 px-0.5 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -1199,7 +1199,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					{/* Collapse all */}
 					<button
 						onClick={() => collapseAllFolders(session.id, setSessions)}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="flex items-center justify-center py-0.5 px-0.5 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
