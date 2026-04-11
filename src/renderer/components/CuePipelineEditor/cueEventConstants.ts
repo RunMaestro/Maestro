@@ -5,7 +5,16 @@
  * TriggerNode, TriggerDrawer, NodeConfigPanel, and PipelineCanvas.
  */
 
-import { Clock, FileText, Zap, GitPullRequest, CircleDot, CheckSquare, Power } from 'lucide-react';
+import {
+	Clock,
+	FileText,
+	Zap,
+	GitPullRequest,
+	CircleDot,
+	CheckSquare,
+	Power,
+	Terminal,
+} from 'lucide-react';
 import type { CueEventType } from '../../../shared/cue-pipeline-types';
 
 /** Icon component for each event type */
@@ -18,6 +27,7 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'github.pull_request': GitPullRequest,
 	'github.issue': CircleDot,
 	'task.pending': CheckSquare,
+	'cli.trigger': Terminal,
 };
 
 /** Display label for each event type */
@@ -30,6 +40,7 @@ export const EVENT_LABELS: Record<CueEventType, string> = {
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'GitHub Issue',
 	'task.pending': 'Pending Task',
+	'cli.trigger': 'CLI Trigger',
 };
 
 /** Default prompt templates for event types that benefit from pre-populated context */
@@ -61,4 +72,5 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'github.pull_request': '#a855f7',
 	'github.issue': '#f97316',
 	'task.pending': '#06b6d4',
+	'cli.trigger': '#64748b',
 };

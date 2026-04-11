@@ -55,7 +55,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -90,6 +90,8 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_GH_BRANCH}}       - Head branch (github.pull_request events)
  *   {{CUE_GH_BASE_BRANCH}}  - Base branch (github.pull_request events)
  *   {{CUE_GH_ASSIGNEES}}    - Comma-separated assignees (github.issue events)
+ *
+ *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  */
 
 /**
@@ -198,6 +200,8 @@ export interface TemplateContext {
 		ghBaseBranch?: string;
 		ghAssignees?: string;
 		ghMergedAt?: string;
+		// CLI trigger fields (cli.trigger)
+		cliPrompt?: string;
 	};
 }
 
@@ -216,6 +220,11 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
+	{
+		variable: '{{CUE_CLI_PROMPT}}',
+		description: 'CLI prompt override (cli.trigger events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
@@ -438,6 +447,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
+		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 	};
 
 	// Perform case-insensitive replacement

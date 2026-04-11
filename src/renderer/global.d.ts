@@ -468,6 +468,14 @@ interface MaestroAPI {
 			callback: (sessionId: string, filePath: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteGetGitDiffResponse: (responseChannel: string, result: any) => void;
+		onRemoteTriggerCueSubscription: (
+			callback: (
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
@@ -3044,7 +3052,7 @@ interface MaestroAPI {
 		disable: () => Promise<void>;
 		stopRun: (runId: string) => Promise<boolean>;
 		stopAll: () => Promise<void>;
-		triggerSubscription: (subscriptionName: string) => Promise<boolean>;
+		triggerSubscription: (subscriptionName: string, prompt?: string) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;

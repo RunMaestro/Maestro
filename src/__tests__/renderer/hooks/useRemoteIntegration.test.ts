@@ -188,6 +188,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
+		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -217,6 +221,11 @@ describe('useRemoteIntegration', () => {
 		updateSessionName: vi.fn().mockResolvedValue(true),
 	};
 
+	const mockCue = {
+		...window.maestro.cue,
+		triggerSubscription: vi.fn().mockResolvedValue(true),
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		onRemoteCommandHandler = undefined;
@@ -239,6 +248,7 @@ describe('useRemoteIntegration', () => {
 			claude: mockClaude as typeof window.maestro.claude,
 			agentSessions: mockAgentSessions as typeof window.maestro.agentSessions,
 			history: mockHistory as typeof window.maestro.history,
+			cue: mockCue as typeof window.maestro.cue,
 		};
 	});
 

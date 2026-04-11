@@ -22,6 +22,13 @@ if (!existsSync('.git')) {
 	process.exit(0);
 }
 
+// Check if git is available before attempting hook setup
+const gitCheck = spawnSync('git', ['--version'], { stdio: 'pipe', encoding: 'utf8' });
+if (gitCheck.error || gitCheck.status !== 0) {
+	console.log('[setup-git-hooks] Skipping hook installation because git is not available.');
+	process.exit(0);
+}
+
 const desiredHooksPath = '.husky';
 const currentHooksPath = getGitConfig('core.hooksPath');
 

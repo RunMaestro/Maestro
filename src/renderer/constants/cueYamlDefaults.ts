@@ -45,6 +45,11 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #     prompt: prompts/process-task.md
 #     enabled: true
 #
+#   - name: "deploy"
+#     event: cli.trigger
+#     prompt: "Run the deployment pipeline for the current branch"
+#     enabled: true
+#
 # settings:
 #   timeout_minutes: 30
 #   timeout_on_fail: break

@@ -196,6 +196,8 @@ export function validateCueConfigDocument(config: unknown): { valid: boolean; er
 				}
 			} else if (event === 'app.startup') {
 				// No additional required fields for the startup trigger.
+			} else if (event === 'cli.trigger') {
+				// No additional required fields — triggered manually via maestro-cli.
 			} else if (
 				sub.event &&
 				typeof sub.event === 'string' &&

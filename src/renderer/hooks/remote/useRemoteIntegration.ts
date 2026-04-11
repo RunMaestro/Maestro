@@ -880,5 +880,21 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => clearInterval(intervalId);
 	}, [isLiveMode, sessionsRef]);
 
+	// Handle remote trigger Cue subscription requests (from web/CLI clients)
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteTriggerCueSubscription(
+			async (subscriptionName: string, prompt: string | undefined, responseChannel: string) => {
+				try {
+					const result = await window.maestro.cue.triggerSubscription(subscriptionName, prompt);
+					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, result);
+				} catch (error) {
+					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
+					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, false);
+				}
+			}
+		);
+		return unsubscribe;
+	}, []);
+
 	return {};
 }

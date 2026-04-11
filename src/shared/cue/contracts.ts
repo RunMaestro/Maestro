@@ -27,7 +27,8 @@ export type CueEventType =
 	| 'agent.completed'
 	| 'github.pull_request'
 	| 'github.issue'
-	| 'task.pending';
+	| 'task.pending'
+	| 'cli.trigger';
 
 /** All valid event type values */
 export const CUE_EVENT_TYPES: CueEventType[] = [
@@ -39,6 +40,7 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'github.pull_request',
 	'github.issue',
 	'task.pending',
+	'cli.trigger',
 ];
 
 /** Valid GitHub state filters for polling triggers */

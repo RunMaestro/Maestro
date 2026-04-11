@@ -102,6 +102,7 @@ import type {
 	SummarizeContextCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	TriggerCueSubscriptionCallback,
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
@@ -239,11 +240,13 @@ export class WebServer {
 			return false;
 		}
 
+		const assetsPath = path.join(candidatePath, 'assets');
+
 		try {
 			const html = readFileSync(indexPath, 'utf-8');
 			const referencesDevEntrypoint =
 				html.includes('src="/main.tsx"') || html.includes("src='/main.tsx'");
-			return !referencesDevEntrypoint;
+			return !referencesDevEntrypoint && existsSync(assetsPath);
 		} catch (error) {
 			const err = error as NodeJS.ErrnoException;
 			if (err.code === 'ENOENT') {
@@ -535,6 +538,10 @@ export class WebServer {
 
 	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
 		this.callbackRegistry.setToggleCueSubscriptionCallback(callback);
+	}
+
+	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
+		this.callbackRegistry.setTriggerCueSubscriptionCallback(callback);
 	}
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {

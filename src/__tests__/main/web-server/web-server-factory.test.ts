@@ -68,6 +68,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
 			setGetCueActivityCallback = vi.fn();
+			setTriggerCueSubscriptionCallback = vi.fn();
 			setGetUsageDashboardCallback = vi.fn();
 			setGetAchievementsCallback = vi.fn();
 			setWriteToTerminalCallback = vi.fn();

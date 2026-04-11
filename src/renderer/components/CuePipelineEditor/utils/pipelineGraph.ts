@@ -41,6 +41,8 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return config.watch ?? 'tasks';
 		case 'agent.completed':
 			return 'agent done';
+		case 'cli.trigger':
+			return 'cli';
 		default:
 			return '';
 	}

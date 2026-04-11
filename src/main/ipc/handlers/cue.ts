@@ -142,8 +142,8 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		'cue:triggerSubscription',
 		withIpcErrorLogging(
 			handlerOpts('triggerSubscription'),
-			async (options: { subscriptionName: string }): Promise<boolean> => {
-				return requireEngine().triggerSubscription(options.subscriptionName);
+			async (options: { subscriptionName: string; prompt?: string }): Promise<boolean> => {
+				return requireEngine().triggerSubscription(options.subscriptionName, options.prompt);
 			}
 		)
 	);

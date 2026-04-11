@@ -18,6 +18,7 @@ import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { autoRun } from './commands/auto-run';
+import { cueTrigger } from './commands/cue-trigger';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
@@ -160,6 +161,16 @@ program
 	.option('--launch', 'Start the auto-run immediately (default: just configure)')
 	.option('--reset-on-completion', 'Enable reset-on-completion for all documents')
 	.action(autoRun);
+
+// Cue commands - interact with Maestro Cue automation
+const cue = program.command('cue').description('Interact with Maestro Cue automation');
+
+cue
+	.command('trigger <subscription-name>')
+	.description('Manually trigger a Cue subscription by name')
+	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(cueTrigger);
 
 // Status command - check if Maestro desktop app is running and reachable
 program

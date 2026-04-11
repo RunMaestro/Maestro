@@ -352,17 +352,30 @@ export class CueEngine {
 	 * Creates a synthetic event and dispatches through the normal execution path.
 	 * Returns true if the subscription was found and triggered.
 	 */
-	triggerSubscription(subscriptionName: string): boolean {
+	triggerSubscription(subscriptionName: string, promptOverride?: string): boolean {
 		for (const [sessionId, state] of this.registry.snapshot()) {
 			for (const sub of state.config.subscriptions) {
 				if (sub.name !== subscriptionName) continue;
 				if (sub.agent_id && sub.agent_id !== sessionId) continue;
 
-				const event = createCueEvent(sub.event, sub.name, { manual: true });
+				const event = createCueEvent(sub.event, sub.name, {
+					manual: true,
+					...(promptOverride ? { cliPrompt: promptOverride } : {}),
+				});
 
-				this.deps.onLog('cue', `[CUE] "${sub.name}" manually triggered`);
+				this.deps.onLog(
+					'cue',
+					`[CUE] "${sub.name}" manually triggered${promptOverride ? ' (with prompt override)' : ''}`
+				);
 				state.lastTriggered = event.timestamp;
-				this.dispatchService.dispatchSubscription(sessionId, sub, event, 'manual');
+				this.dispatchService.dispatchSubscription(
+					sessionId,
+					sub,
+					event,
+					'manual',
+					undefined,
+					promptOverride
+				);
 				return true;
 			}
 		}

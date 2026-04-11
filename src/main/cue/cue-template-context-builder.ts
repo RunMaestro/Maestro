@@ -82,6 +82,11 @@ function buildGitHubContext(event: CueEvent): Record<string, string> {
 enricherRegistry.set('github.pull_request', (event) => buildGitHubContext(event));
 enricherRegistry.set('github.issue', (event) => buildGitHubContext(event));
 
+/** cli.trigger enricher — adds CLI prompt override field. */
+enricherRegistry.set('cli.trigger', (event) => ({
+	cliPrompt: String(event.payload.cliPrompt ?? ''),
+}));
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**

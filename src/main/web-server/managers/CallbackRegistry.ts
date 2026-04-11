@@ -61,6 +61,7 @@ import type {
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
+	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	GetUsageDashboardCallback,
@@ -123,6 +124,7 @@ export interface WebServerCallbacks {
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
+	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 }
@@ -177,6 +179,7 @@ export class CallbackRegistry {
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
+		triggerCueSubscription: null,
 		getUsageDashboard: null,
 		getAchievements: null,
 	};
@@ -450,6 +453,11 @@ export class CallbackRegistry {
 		return this.callbacks.getCueActivity(sessionId, limit);
 	}
 
+	async triggerCueSubscription(subscriptionName: string, prompt?: string): Promise<boolean> {
+		if (!this.callbacks.triggerCueSubscription) return false;
+		return this.callbacks.triggerCueSubscription(subscriptionName, prompt);
+	}
+
 	async getUsageDashboard(
 		timeRange: 'day' | 'week' | 'month' | 'all'
 	): Promise<UsageDashboardData> {
@@ -668,6 +676,10 @@ export class CallbackRegistry {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbacks.getCueActivity = callback;
+	}
+
+	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
+		this.callbacks.triggerCueSubscription = callback;
 	}
 
 	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
