@@ -96,7 +96,7 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 					Run
 				</button>
 			)}
-			{/* Playbook Exchange button */}
+			{/* PlayBooks button */}
 			{onOpenMarketplace && (
 				<button
 					onClick={onOpenMarketplace}
@@ -106,10 +106,10 @@ export const AutoRunToolbar = memo(function AutoRunToolbar({
 						border: `1px solid ${theme.colors.accent}40`,
 						backgroundColor: `${theme.colors.accent}15`,
 					}}
-					title="Browse Playbook Exchange - discover and share community playbooks"
+					title="Browse PlayBooks - discover and share community playbooks"
 				>
 					<LayoutGrid className="w-3.5 h-3.5" />
-					Exchange
+					PlayBooks
 				</button>
 			)}
 			{/* Launch Wizard button */}

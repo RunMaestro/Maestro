@@ -93,7 +93,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	return (
 		<div
 			ref={headerRef}
-			className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
+			className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
 			style={{
 				borderColor: theme.colors.border,
 				backgroundColor: theme.colors.bgSidebar,

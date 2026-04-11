@@ -328,5 +328,20 @@ describe('TunnelManager', () => {
 			expect('url' in status).toBe(true);
 			expect('error' in status).toBe(true);
 		});
+
+		it('preserves an error after unexpected exit post-connect', async () => {
+			const startPromise = tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			mockProcess.stderr.emit('data', Buffer.from('https://abc.trycloudflare.com'));
+			await startPromise;
+
+			mockProcess.emit('exit', 1);
+
+			const status = tunnelManager.getStatus();
+			expect(status.isRunning).toBe(false);
+			expect(status.url).toBe('https://abc.trycloudflare.com');
+			expect(status.error).toContain('cloudflared exited unexpectedly');
+		});
 	});
 });

@@ -332,7 +332,7 @@ describe('EncoreTab', () => {
 			expect(options[0]).toHaveValue('claude-code');
 			expect(options[0]).toHaveTextContent('Claude Code');
 			expect(options[1]).toHaveValue('codex');
-			expect(options[1]).toHaveTextContent('Codex (Beta)');
+			expect(options[1]).toHaveTextContent('Codex');
 		});
 
 		it('should call setDirectorNotesSettings on provider change', async () => {
