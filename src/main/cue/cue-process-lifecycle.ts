@@ -8,12 +8,13 @@
  * it receives a fully resolved SpawnSpec and executes it.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execFile, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType } from '../../shared/types';
 import { getOutputParser } from '../parsers';
 import { captureException } from '../utils/sentry';
+import { isWindows } from '../../shared/platformDetection';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -93,6 +94,27 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 	return textParts.length > 0 ? textParts.join('\n') : rawStdout;
 }
 
+/**
+ * Kill a Cue child process, using taskkill on Windows to terminate the entire
+ * process tree (POSIX signals don't work for shell-spawned processes on Windows).
+ */
+function killCueProcess(child: ChildProcess): void {
+	if (isWindows() && child.pid) {
+		execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], () => {
+			// taskkill returns non-zero if the process is already dead, which is fine
+		});
+	} else {
+		child.kill('SIGTERM');
+
+		// Escalate to SIGKILL after delay — only if the process hasn't actually exited.
+		setTimeout(() => {
+			if (child.exitCode === null && child.signalCode === null) {
+				child.kill('SIGKILL');
+			}
+		}, SIGKILL_DELAY_MS);
+	}
+}
+
 // ─── Public API ─────────────���─────────────────────────���──────────────────────
 
 /**
@@ -140,7 +162,6 @@ export function runProcess(
 		let stderr = '';
 		let settled = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-		let killTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const finish = (status: CueRunStatus, exitCode: number | null) => {
 			if (settled) return;
@@ -148,7 +169,6 @@ export function runProcess(
 
 			activeProcesses.delete(runId);
 			if (timeoutTimer) clearTimeout(timeoutTimer);
-			if (killTimer) clearTimeout(killTimer);
 
 			resolve({
 				stdout: extractCleanStdout(stdout, toolType),
@@ -201,21 +221,14 @@ export function runProcess(
 			child.stdin?.end();
 		}
 
-		// Enforce timeout with SIGTERM → SIGKILL escalation
+		// Enforce timeout — use platform-appropriate kill
 		if (timeoutMs > 0) {
 			timeoutTimer = setTimeout(() => {
 				if (settled) return;
-				onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, sending SIGTERM`);
-				child.kill('SIGTERM');
+				onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, killing process`);
+				killCueProcess(child);
 
-				// Escalate to SIGKILL after delay
-				killTimer = setTimeout(() => {
-					if (settled) return;
-					onLog('cue', `[CUE] Run ${runId} still alive, sending SIGKILL`);
-					child.kill('SIGKILL');
-				}, SIGKILL_DELAY_MS);
-
-				// If the process exits after SIGTERM, mark as timeout
+				// If the process exits after kill, mark as timeout
 				child.removeAllListeners('close');
 				child.on('close', (code) => {
 					finish('timeout', code);
@@ -227,7 +240,7 @@ export function runProcess(
 
 /**
  * Stop a running Cue process by runId.
- * Sends SIGTERM, then SIGKILL after 5 seconds.
+ * On Windows uses taskkill /t /f; on POSIX sends SIGTERM then SIGKILL after 5s.
  *
  * @returns true if the process was found and signaled, false if not found
  */
@@ -235,16 +248,19 @@ export function stopProcess(runId: string): boolean {
 	const entry = activeProcesses.get(runId);
 	if (!entry) return false;
 
-	entry.child.kill('SIGTERM');
-
-	// Escalate to SIGKILL after delay — only if the process hasn't actually exited.
-	setTimeout(() => {
-		if (entry.child.exitCode === null && entry.child.signalCode === null) {
-			entry.child.kill('SIGKILL');
-		}
-	}, SIGKILL_DELAY_MS);
-
+	killCueProcess(entry.child);
 	return true;
+}
+
+/**
+ * Stop all active Cue processes. Called during application shutdown to prevent
+ * orphaned processes surviving after the main Electron process exits.
+ */
+export function stopAllProcesses(): void {
+	for (const [runId, entry] of activeProcesses) {
+		killCueProcess(entry.child);
+		activeProcesses.delete(runId);
+	}
 }
 
 /**
