@@ -11,7 +11,7 @@
 import * as os from 'os';
 import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage';
 import { appendToLog, readLog } from './group-chat-log';
-import { groupChatModeratorSystemPrompt, groupChatModeratorSynthesisPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 import { powerManager } from '../power-manager';
 
 /**
@@ -128,7 +128,7 @@ function touchSession(groupChatId: string): void {
  * Loaded from src/prompts/group-chat-moderator-system.md
  */
 export function getModeratorSystemPrompt(): string {
-	return groupChatModeratorSystemPrompt;
+	return getPrompt('group-chat-moderator-system');
 }
 
 /**
@@ -137,7 +137,7 @@ export function getModeratorSystemPrompt(): string {
  * Loaded from src/prompts/group-chat-moderator-synthesis.md
  */
 export function getModeratorSynthesisPrompt(): string {
-	return groupChatModeratorSynthesisPrompt;
+	return getPrompt('group-chat-moderator-synthesis');
 }
 
 /**

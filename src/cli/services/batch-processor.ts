@@ -15,13 +15,39 @@ import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
-import { autorunSynopsisPrompt, autorunDefaultPrompt } from '../../prompts';
 import { parseSynopsis } from '../../shared/synopsis';
 import { generateUUID } from '../../shared/uuid';
 import { formatElapsedTime } from '../../shared/formatters';
+import { getPromptFilename, PROMPT_IDS } from '../../shared/promptDefinitions';
+import fs from 'fs/promises';
+import path from 'path';
 
-// Synopsis prompt for batch tasks
-const BATCH_SYNOPSIS_PROMPT = autorunSynopsisPrompt;
+// CLI prompt cache (loaded once on first use)
+const cliPromptCache = new Map<string, string>();
+
+async function getCliPrompt(id: string): Promise<string> {
+	if (cliPromptCache.has(id)) {
+		return cliPromptCache.get(id)!;
+	}
+
+	// Resolve filename from shared definitions (single source of truth)
+	const filename = getPromptFilename(id);
+
+	// In dev mode, __dirname is dist/cli/services/ — resolve to project root's src/prompts/
+	const projectRoot = path.resolve(__dirname, '..', '..', '..');
+	const devPath = path.join(projectRoot, 'src', 'prompts', filename);
+	try {
+		const content = await fs.readFile(devPath, 'utf-8');
+		cliPromptCache.set(id, content);
+		return content;
+	} catch {
+		// Try bundled path (when running from packaged app)
+		const bundledPath = path.join(process.resourcesPath || '', 'prompts', 'core', filename);
+		const content = await fs.readFile(bundledPath, 'utf-8');
+		cliPromptCache.set(id, content);
+		return content;
+	}
+}
 
 /**
  * Get the current git branch for a directory
@@ -408,7 +434,7 @@ export async function* runPlaybook(
 				// Use default Auto Run prompt if playbook.prompt is empty/null
 				// Marketplace playbooks with prompt: null will use the default
 				const basePrompt = substituteTemplateVariables(
-					playbook.prompt || autorunDefaultPrompt,
+					playbook.prompt || (await getCliPrompt(PROMPT_IDS.AUTORUN_DEFAULT)),
 					templateContext
 				);
 
@@ -478,7 +504,7 @@ export async function* runPlaybook(
 					const synopsisResult = await spawnAgent(
 						session.toolType,
 						session.cwd,
-						BATCH_SYNOPSIS_PROMPT,
+						await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 						result.agentSessionId,
 						{ customModel: session.customModel }
 					);

@@ -23,7 +23,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
-import { directorNotesPrompt } from '../../../prompts';
+import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
@@ -363,7 +363,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				});
 
 				const prompt = [
-					directorNotesPrompt,
+					getPrompt('director-notes'),
 					'',
 					'---',
 					'',
