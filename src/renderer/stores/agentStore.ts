@@ -31,8 +31,25 @@ import { getStdinFlags } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
-import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
+
+let cachedMaestroSystemPrompt: string = '';
+let agentStorePromptsLoaded = false;
+
+export async function loadAgentStorePrompts(force = false): Promise<void> {
+	if (agentStorePromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('maestro-system-prompt');
+	if (!result.success) {
+		throw new Error(`Failed to load maestro-system-prompt: ${result.error}`);
+	}
+	cachedMaestroSystemPrompt = result.content!;
+	agentStorePromptsLoaded = true;
+}
+
+function getMaestroSystemPrompt(): string {
+	return cachedMaestroSystemPrompt;
+}
 import { gitService } from '../services/git';
 import { filterYoloArgs } from '../utils/agentArgs';
 
@@ -304,7 +321,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// For NEW sessions (no agentSessionId), prepare Maestro system prompt separately
 				const isNewSession = !tabAgentSessionId;
 				let appendSystemPrompt: string | undefined;
-				if (isNewSession && maestroSystemPrompt) {
+				if (isNewSession && getMaestroSystemPrompt()) {
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
 						try {
@@ -315,7 +332,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						}
 					}
 
-					appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					appendSystemPrompt = substituteTemplateVariables(getMaestroSystemPrompt(), {
 						session,
 						gitBranch,
 						groupId: session.groupId,
@@ -409,8 +426,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// For NEW sessions, prepare Maestro system prompt separately
 					const isNewSessionForCommand = !tabAgentSessionId;
 					let appendSystemPromptForCommand: string | undefined;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						appendSystemPromptForCommand = substituteTemplateVariables(maestroSystemPrompt, {
+					if (isNewSessionForCommand && getMaestroSystemPrompt()) {
+						appendSystemPromptForCommand = substituteTemplateVariables(getMaestroSystemPrompt(), {
 							session,
 							gitBranch,
 							groupId: session.groupId,

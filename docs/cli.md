@@ -193,6 +193,47 @@ maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
 ```
 
+### Prompt Customization
+
+The CLI uses the same core system prompts as the desktop app. When you customize prompts via Settings → **Maestro Prompts**, those customizations are stored in `core-prompts-customizations.json` in the Maestro data directory and are automatically picked up by the CLI during playbook runs.
+
+The prompts most relevant to CLI playbook execution are:
+
+| Prompt ID               | Controls                                      |
+| ----------------------- | --------------------------------------------- |
+| `autorun-default`       | Default Auto Run task execution behavior      |
+| `autorun-synopsis`      | Synopsis generation after task completion     |
+| `commit-command`        | `/commit` command behavior                    |
+| `maestro-system-prompt` | Maestro system context injected into sessions |
+| `context-grooming`      | Context grooming during transfers             |
+
+To customize these prompts, either use the desktop app's **Maestro Prompts** tab or edit the JSON file directly:
+
+```
+# macOS
+~/Library/Application Support/Maestro/core-prompts-customizations.json
+
+# Linux
+~/.config/Maestro/core-prompts-customizations.json
+
+# Windows
+%APPDATA%\Maestro\core-prompts-customizations.json
+```
+
+The file format is:
+
+```json
+{
+	"prompts": {
+		"autorun-default": {
+			"content": "Your customized prompt content...",
+			"isModified": true,
+			"modifiedAt": "2026-04-11T..."
+		}
+	}
+}
+```
+
 ### Managing Settings
 
 View and modify any Maestro configuration setting directly from the CLI. Changes take effect immediately in the running desktop app — no restart required.

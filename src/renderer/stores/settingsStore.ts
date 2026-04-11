@@ -37,7 +37,51 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/
 import { getLevelIndex } from '../constants/keyboardMastery';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import { commitCommandPrompt } from '../../prompts';
+// ============================================================================
+// Prompt cache (loaded via IPC at startup)
+// ============================================================================
+
+let cachedCommitCommandPrompt: string = '';
+let settingsStorePromptsLoaded = false;
+
+export async function loadSettingsStorePrompts(force = false): Promise<void> {
+	if (settingsStorePromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('commit-command');
+	if (!result.success) {
+		throw new Error(`Failed to load commit-command prompt: ${result.error}`);
+	}
+	cachedCommitCommandPrompt = result.content!;
+	settingsStorePromptsLoaded = true;
+	// Update the exported DEFAULT_AI_COMMANDS so the /commit prompt reflects the loaded value
+	DEFAULT_AI_COMMANDS = [
+		{
+			id: 'commit',
+			command: '/commit',
+			description: 'Commit outstanding changes and push up',
+			prompt: cachedCommitCommandPrompt,
+			isBuiltIn: true,
+		},
+	];
+
+	// Patch the live Zustand store so the /commit command reflects the current prompt.
+	// On first load: the store was created with an empty prompt from module-load time.
+	// On refresh (force=true): the user edited/reset the prompt in Settings.
+	// In both cases, update the built-in commit command in the store.
+	const currentCommands = useSettingsStore.getState().customAICommands;
+	const commitCmd = currentCommands.find((c) => c.id === 'commit');
+	if (commitCmd && commitCmd.prompt !== cachedCommitCommandPrompt) {
+		useSettingsStore.setState({
+			customAICommands: currentCommands.map((c) =>
+				c.id === 'commit' ? { ...c, prompt: cachedCommitCommandPrompt } : c
+			),
+		});
+	}
+}
+
+function getCommitCommandPrompt(): string {
+	return cachedCommitCommandPrompt;
+}
 
 // ============================================================================
 // Shared Type Aliases
@@ -129,12 +173,13 @@ export const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	defaultLookbackDays: 7,
 };
 
-export const DEFAULT_AI_COMMANDS: CustomAICommand[] = [
+// Uses `let` so the binding updates after loadSettingsStorePrompts() populates the cache
+export let DEFAULT_AI_COMMANDS: CustomAICommand[] = [
 	{
 		id: 'commit',
 		command: '/commit',
 		description: 'Commit outstanding changes and push up',
-		prompt: commitCommandPrompt,
+		prompt: getCommitCommandPrompt(),
 		isBuiltIn: true,
 	},
 ];
@@ -262,7 +307,6 @@ export interface SettingsStoreState {
 	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
-	moderatorStandingInstructions: string;
 }
 
 export interface SettingsStoreActions {
@@ -339,7 +383,6 @@ export interface SettingsStoreActions {
 	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
-	setModeratorStandingInstructions: (value: string) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -496,7 +539,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeDetailedTracking: false,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
-		moderatorStandingInstructions: '',
 
 		// ============================================================================
 		// Simple Setters
@@ -927,12 +969,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
-		},
-
-		setModeratorStandingInstructions: (value) => {
-			const trimmed = value.slice(0, 2000);
-			set({ moderatorStandingInstructions: trimmed });
-			window.maestro.settings.set('moderatorStandingInstructions', trimmed);
 		},
 
 		// ============================================================================
@@ -1865,9 +1901,6 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
-		if (allSettings['moderatorStandingInstructions'] !== undefined)
-			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
-
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -1987,6 +2020,5 @@ export function getSettingsActions() {
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
-		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 	};
 }

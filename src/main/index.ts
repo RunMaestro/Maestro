@@ -65,6 +65,7 @@ import {
 	registerCueHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
+	registerPromptsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -91,6 +92,7 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -371,6 +373,37 @@ app.whenReady().then(async () => {
 	processManager = new ProcessManager();
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
+
+	// Initialize core prompts from disk (must happen before features that use them)
+	try {
+		await initializePrompts();
+	} catch (error) {
+		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+		const { dialog } = await import('electron');
+		dialog.showErrorBox(
+			'Startup Error',
+			'Failed to load system prompts. Please reinstall the application.'
+		);
+		app.quit();
+		return;
+	}
+
+	// One-time migration: bake standing instructions into moderator prompt customization
+	const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
+	const migratedKey = 'moderatorStandingInstructionsMigrated';
+
+	if (standingInstructions && !store.get(migratedKey, false)) {
+		const currentPrompt = getPrompt('group-chat-moderator-system');
+
+		// Guard against double-append: only migrate if the section isn't already present
+		if (!currentPrompt.includes('## Standing Instructions')) {
+			const migratedPrompt = `${currentPrompt}\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
+			await savePrompt('group-chat-moderator-system', migratedPrompt);
+			logger.info('Migrated moderator standing instructions into prompt customization', 'Startup');
+		}
+
+		store.set(migratedKey, true);
+	}
 
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
@@ -813,6 +846,9 @@ function setupIpcHandlers() {
 	// Register BMAD handlers (no dependencies needed)
 	registerBmadHandlers();
 
+	// Register Core Prompts handlers (no dependencies needed)
+	registerPromptsHandlers();
+
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
 		getMainWindow: () => mainWindow,
@@ -875,9 +911,8 @@ function setupIpcHandlers() {
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
 
-	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	// Set up callback for group chat router to get moderator conductor profile
 	setGetModeratorSettingsCallback(() => ({
-		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
 		conductorProfile: (store.get('conductorProfile', '') as string) || '',
 	}));
 

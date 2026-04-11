@@ -52,6 +52,7 @@ import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createWakatimeApi } from './wakatime';
+import { createPromptsApi } from './prompts';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -200,6 +201,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: createWakatimeApi(),
+
+	// Core Prompts API (view, edit, reset system prompts)
+	prompts: createPromptsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -278,6 +282,8 @@ export {
 	createCueApi,
 	// WakaTime
 	createWakatimeApi,
+	// Core Prompts
+	createPromptsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -502,3 +508,8 @@ export type {
 	// From wakatime
 	WakatimeApi,
 } from './wakatime';
+export type {
+	// From prompts
+	PromptsApi,
+	CorePromptData,
+} from './prompts';

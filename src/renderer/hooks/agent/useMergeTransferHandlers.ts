@@ -23,8 +23,25 @@ import { getModalActions } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
-import { maestroSystemPrompt } from '../../../prompts';
 import { useSettingsStore } from '../../stores/settingsStore';
+
+let cachedMergeTransferSystemPrompt: string = '';
+let mergeTransferPromptsLoaded = false;
+
+export async function loadMergeTransferPrompts(force = false): Promise<void> {
+	if (mergeTransferPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('maestro-system-prompt');
+	if (!result.success) {
+		throw new Error(`Failed to load maestro-system-prompt: ${result.error}`);
+	}
+	cachedMergeTransferSystemPrompt = result.content!;
+	mergeTransferPromptsLoaded = true;
+}
+
+function getMaestroSystemPrompt(): string {
+	return cachedMergeTransferSystemPrompt;
+}
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
@@ -494,8 +511,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Prepare Maestro system prompt separately for token-efficient delivery
 					let appendSystemPrompt: string | undefined;
-					if (maestroSystemPrompt) {
-						appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					if (getMaestroSystemPrompt()) {
+						appendSystemPrompt = substituteTemplateVariables(getMaestroSystemPrompt(), {
 							session: targetSession,
 							gitBranch,
 							groupId: targetSession.groupId,

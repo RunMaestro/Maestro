@@ -14,13 +14,46 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
-import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
 import { useSettingsStore } from '../../stores/settingsStore';
+
+let cachedImageOnlyPrompt: string = '';
+let cachedInputMaestroSystemPrompt: string = '';
+let inputProcessingPromptsLoaded = false;
+
+export async function loadInputProcessingPrompts(force = false): Promise<void> {
+	if (inputProcessingPromptsLoaded && !force) return;
+
+	const [imageResult, systemResult] = await Promise.all([
+		window.maestro.prompts.get('image-only-default'),
+		window.maestro.prompts.get('maestro-system-prompt'),
+	]);
+
+	if (!imageResult.success) {
+		throw new Error(`Failed to load image-only-default prompt: ${imageResult.error}`);
+	}
+	if (!systemResult.success) {
+		throw new Error(`Failed to load maestro-system-prompt: ${systemResult.error}`);
+	}
+	cachedImageOnlyPrompt = imageResult.content!;
+	cachedInputMaestroSystemPrompt = systemResult.content!;
+	inputProcessingPromptsLoaded = true;
+	// Update the exported binding so consumers see the loaded value
+	DEFAULT_IMAGE_ONLY_PROMPT = cachedImageOnlyPrompt;
+}
+
+function getImageOnlyPrompt(): string {
+	return cachedImageOnlyPrompt;
+}
+
+function getInputMaestroSystemPrompt(): string {
+	return cachedInputMaestroSystemPrompt;
+}
 
 /**
  * Default prompt used when user sends only an image without text.
+ * Uses `let` so the binding updates after loadInputProcessingPrompts() populates the cache.
  */
-export const DEFAULT_IMAGE_ONLY_PROMPT = imageOnlyDefaultPrompt;
+export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -987,7 +1020,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// This introduces Maestro and sets directory restrictions for the agent
 						const isNewSession = !tabAgentSessionId;
 						let appendSystemPrompt: string | undefined;
-						if (isNewSession && maestroSystemPrompt) {
+						if (isNewSession && getInputMaestroSystemPrompt()) {
 							// Get git branch for template substitution
 							let gitBranch: string | undefined;
 							if (freshSession.isGitRepo) {
@@ -1023,7 +1056,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								parentSessionId: freshSession.parentSessionId,
 								historyFilePath,
 							});
-							appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							appendSystemPrompt = substituteTemplateVariables(getInputMaestroSystemPrompt(), {
 								session: freshSession,
 								gitBranch,
 								groupId: freshSession.groupId,

@@ -33,9 +33,12 @@ vi.mock('uuid', () => ({
 	v4: vi.fn(() => 'mock-uuid-1234'),
 }));
 
-// Mock the prompts
-vi.mock('../../../../prompts', () => ({
-	tabNamingPrompt: 'You are a tab naming assistant. Generate a concise tab name.',
+// Mock prompt-manager so getPrompt() returns mock content without needing disk I/O
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'tab-naming') return 'You are a tab naming assistant. Generate a concise tab name.';
+		return `mock prompt for ${id}`;
+	}),
 }));
 
 // Mock the agent args utilities

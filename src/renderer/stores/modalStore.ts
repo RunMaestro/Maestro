@@ -49,6 +49,7 @@ export interface LightboxData {
 /** Settings modal data */
 export interface SettingsModalData {
 	tab: SettingsTab;
+	promptId?: string;
 }
 
 /** New instance modal data */
@@ -918,6 +919,7 @@ export function useModalActions() {
 		// Settings Modal
 		settingsModalOpen,
 		settingsTab: settingsData?.tab ?? 'general',
+		settingsPromptId: settingsData?.promptId,
 		...actions,
 
 		// New Instance Modal

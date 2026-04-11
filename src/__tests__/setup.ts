@@ -581,6 +581,14 @@ const mockMaestro = {
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 	},
+	// Core Prompts API (disk-based prompts loaded at runtime)
+	prompts: {
+		get: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getAll: vi.fn().mockResolvedValue({ success: true, prompts: [] }),
+		getAllIds: vi.fn().mockResolvedValue({ success: true, ids: [] }),
+		save: vi.fn().mockResolvedValue({ success: true }),
+		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };

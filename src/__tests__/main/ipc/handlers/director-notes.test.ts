@@ -55,9 +55,12 @@ vi.mock('../../../../main/utils/context-groomer', () => ({
 	groomContext: vi.fn(),
 }));
 
-// Mock the prompts module
-vi.mock('../../../../../prompts', () => ({
-	directorNotesPrompt: 'Mock director notes prompt',
+// Mock prompt-manager so getPrompt() returns mock content without needing disk I/O
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		if (id === 'director-notes') return 'Mock director notes prompt';
+		return `mock prompt for ${id}`;
+	}),
 }));
 
 describe('director-notes IPC handlers', () => {

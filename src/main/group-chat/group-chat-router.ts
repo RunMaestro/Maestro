@@ -45,7 +45,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../utils/agent-args';
-import { groupChatParticipantRequestPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { setGetCustomShellPathCallback, getWindowsSpawnConfig } from './group-chat-config';
@@ -92,7 +92,6 @@ export type GetSessionsCallback = () => SessionInfo[];
 export type GetCustomEnvVarsCallback = (agentId: string) => Record<string, string> | undefined;
 export type GetAgentConfigCallback = (agentId: string) => Record<string, any> | undefined;
 export type GetModeratorSettingsCallback = () => {
-	standingInstructions: string;
 	conductorProfile: string;
 };
 
@@ -758,7 +757,6 @@ export async function routeUserMessage(
 
 			// Get moderator settings for prompt customization
 			const moderatorSettings = getModeratorSettingsCallback?.() ?? {
-				standingInstructions: '',
 				conductorProfile: '',
 			};
 
@@ -768,12 +766,7 @@ export async function routeUserMessage(
 				moderatorSettings.conductorProfile || '(No conductor profile set)'
 			);
 
-			// Build standing instructions section if configured
-			const standingInstructionsSection = moderatorSettings.standingInstructions
-				? `\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${moderatorSettings.standingInstructions}`
-				: '';
-
-			const fullPrompt = `${baseSystemPrompt}${standingInstructionsSection}
+			const fullPrompt = `${baseSystemPrompt}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -1276,7 +1269,7 @@ export async function routeModeratorResponse(
 			// Get the group chat folder path for file access permissions
 			const groupChatFolder = getGroupChatDir(groupChatId);
 
-			const participantPrompt = groupChatParticipantRequestPrompt
+			const participantPrompt = getPrompt('group-chat-participant-request')
 				.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
 				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
@@ -1698,18 +1691,14 @@ export async function spawnModeratorSynthesis(
 
 	// Get moderator settings for prompt customization
 	const synthModeratorSettings = getModeratorSettingsCallback?.() ?? {
-		standingInstructions: '',
 		conductorProfile: '',
 	};
 	const synthBasePrompt = getModeratorSystemPrompt().replace(
 		'{{CONDUCTOR_PROFILE}}',
 		synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 	);
-	const synthStandingInstructions = synthModeratorSettings.standingInstructions
-		? `\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${synthModeratorSettings.standingInstructions}`
-		: '';
 
-	const synthesisPrompt = `${synthBasePrompt}${synthStandingInstructions}
+	const synthesisPrompt = `${synthBasePrompt}
 
 ${getModeratorSynthesisPrompt()}
 
@@ -1918,7 +1907,7 @@ export async function respawnParticipantWithRecovery(
 	const groupChatFolder = getGroupChatDir(groupChatId);
 
 	// Build the recovery prompt - includes standard prompt plus recovery context
-	const basePrompt = groupChatParticipantRequestPrompt
+	const basePrompt = getPrompt('group-chat-participant-request')
 		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, chat.name)
 		.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
