@@ -43,8 +43,9 @@ export function createTriggerSource(
 			return createCueGitHubPollerTriggerSource(ctx);
 		case 'agent.completed':
 		case 'app.startup':
-			// These are not timer/watcher-driven — the runtime handles them
-			// directly via the completion service / startup loop.
+		case 'cli.trigger':
+			// These are not timer/watcher-driven ��� the runtime handles them
+			// directly via the completion service / startup loop / CLI command.
 			return null;
 		default: {
 			const unsupported: never = eventType;

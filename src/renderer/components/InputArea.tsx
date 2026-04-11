@@ -39,6 +39,7 @@ import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 import { getReadOnlyModeLabel, getReadOnlyModeTooltip } from '../../shared/agentMetadata';
+import { highlightSlashCommand } from '../utils/search';
 
 interface SlashCommand {
 	command: string;
