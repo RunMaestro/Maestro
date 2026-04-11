@@ -76,6 +76,7 @@ export const TerminalView = memo(
 		// Dedup spawn-failure toasts: batch rapid failures into a single notification
 		const spawnFailureCountRef = useRef(0);
 		const spawnFailureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const spawnFailureLastMessageRef = useRef<string | null>(null);
 		// Stable refs for callback props — prevents spawnPtyForTab from getting a new
 		// identity on every render, which would re-trigger the spawn useEffect in a loop.
 		const onTabPidChangeRef = useRef(onTabPidChange);
@@ -87,20 +88,26 @@ export const TerminalView = memo(
 		// triggers many tabs at once) into a single toast with a count.
 		const notifySpawnFailure = useCallback((message: string) => {
 			spawnFailureCountRef.current++;
+			// Keep the most recent message; prefer SSH-specific messages over generic ones
+			if (!spawnFailureLastMessageRef.current) {
+				spawnFailureLastMessageRef.current = message;
+			} else if (message.startsWith('SSH ')) {
+				spawnFailureLastMessageRef.current = message;
+			}
 			if (spawnFailureTimerRef.current) {
 				clearTimeout(spawnFailureTimerRef.current);
 			}
 			spawnFailureTimerRef.current = setTimeout(() => {
 				const count = spawnFailureCountRef.current;
+				const lastMessage = spawnFailureLastMessageRef.current ?? message;
 				spawnFailureCountRef.current = 0;
+				spawnFailureLastMessageRef.current = null;
 				spawnFailureTimerRef.current = null;
 				notifyToast({
 					type: 'error',
 					title: count > 1 ? `Failed to start ${count} terminals` : 'Failed to start terminal',
 					message:
-						count > 1
-							? `${count} shell processes could not be started. Check system PTY availability.`
-							: message,
+						count > 1 ? `${count} terminals could not be started. ${lastMessage}` : lastMessage,
 				});
 			}, 200);
 		}, []);

@@ -22,6 +22,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { shellEscape } from '../../utils/shell-escape';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
@@ -910,7 +911,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Remote command (must come after destination)
 						if (workingDirOverride) {
-							sshArgs.push(`cd ${JSON.stringify(workingDirOverride)} && exec $SHELL`);
+							sshArgs.push(`cd ${shellEscape(workingDirOverride)} && exec "$SHELL"`);
 						}
 						return processManager.spawn({
 							sessionId: config.sessionId,

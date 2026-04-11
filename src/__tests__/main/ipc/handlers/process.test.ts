@@ -1104,11 +1104,36 @@ describe('process IPC handlers', () => {
 			expect(tIndex).toBeLessThan(hostIndex);
 			// Destination must appear before the remote command
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
-			expect(lastArg).toContain('/remote/project');
-			expect(lastArg).toContain('exec $SHELL');
+			// Path must be shell-escaped (single-quoted) to prevent injection
+			expect(lastArg).toBe('cd \'/remote/project\' && exec "$SHELL"');
+			expect(lastArg).toContain('exec "$SHELL"');
 			// SSH options must be present
 			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
 			expect(spawnCall.args).toContain('ConnectTimeout=10');
+		});
+
+		it('should shell-escape workingDirOverride to prevent injection', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5010, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/tmp/$(whoami)',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Single-quoted path prevents command substitution
+			expect(lastArg).toBe('cd \'/tmp/$(whoami)\' && exec "$SHELL"');
 		});
 
 		it('should include port flag for non-default SSH port', async () => {
