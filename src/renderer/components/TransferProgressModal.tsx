@@ -14,8 +14,6 @@
  * - Elapsed time tracking
  * - Cancel functionality with confirmation
  * - Agent-specific messaging (source → target)
- *
- * Based on MergeProgressModal patterns, adapted for cross-agent transfer workflow.
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
