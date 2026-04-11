@@ -11,11 +11,12 @@
  */
 
 import * as crypto from 'crypto';
-import type { CueRunResult, CueSubscription } from './cue-types';
+import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
 import type { HistoryEntry, SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
+import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
 	stopProcess,
@@ -33,7 +34,7 @@ export interface CueExecutionConfig {
 	runId: string;
 	session: SessionInfo;
 	subscription: CueSubscription;
-	event: import('./cue-types').CueEvent;
+	event: CueEvent;
 	promptPath: string;
 	toolType: string;
 	projectRoot: string;
@@ -47,7 +48,7 @@ export interface CueExecutionConfig {
 	customEffort?: string;
 	onLog: (level: string, message: string) => void;
 	/** Optional SSH settings store for SSH remote execution */
-	sshStore?: import('../utils/ssh-remote-resolver').SshRemoteSettingsStore;
+	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
 }
