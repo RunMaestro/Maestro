@@ -13,6 +13,7 @@ import {
 	Save,
 	Share2,
 	Hammer,
+	GitFork,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -176,6 +177,8 @@ interface LogItemProps {
 	// Publish to GitHub Gist (AI mode only, non-user messages, requires gh CLI)
 	ghCliAvailable?: boolean;
 	onPublishGist?: (text: string) => void;
+	// Fork conversation from this message (AI mode only, user and ai source messages)
+	onForkConversation?: (logId: string) => void;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
 }
@@ -218,6 +221,7 @@ const LogItemComponent = memo(
 		onSaveToFile,
 		ghCliAvailable,
 		onPublishGist,
+		onForkConversation,
 		userMessageAlignment,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
@@ -913,6 +917,17 @@ const LogItemComponent = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
+						{/* Fork conversation from this message - AI and user messages only */}
+						{(log.source === 'ai' || log.source === 'user') && isAIMode && onForkConversation && (
+							<button
+								onClick={() => onForkConversation(log.id)}
+								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+								style={{ color: theme.colors.textDim }}
+								title="Fork conversation from here"
+							>
+								<GitFork className="w-3.5 h-3.5" />
+							</button>
+						)}
 						{/* Publish to GitHub Gist - only for AI responses when gh CLI available */}
 						{log.source !== 'user' && isAIMode && ghCliAvailable && onPublishGist && (
 							<button
@@ -1023,7 +1038,8 @@ const LogItemComponent = memo(
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
-			prevProps.ghCliAvailable === nextProps.ghCliAvailable
+			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
+			prevProps.onForkConversation === nextProps.onForkConversation
 		);
 	}
 );
@@ -1057,6 +1073,7 @@ interface TerminalOutputProps {
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
+	onForkConversation?: (logId: string) => void; // Fork conversation from a specific message
 	fileTree?: FileNode[]; // File tree for linking file references
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
@@ -1102,6 +1119,7 @@ export const TerminalOutput = memo(
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
+			onForkConversation,
 			fileTree,
 			cwd,
 			projectRoot,
@@ -1780,6 +1798,7 @@ export const TerminalOutput = memo(
 							markdownEditMode={markdownEditMode}
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
+							onForkConversation={onForkConversation}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}

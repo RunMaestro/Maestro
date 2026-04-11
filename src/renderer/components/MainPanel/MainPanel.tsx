@@ -670,6 +670,7 @@ export const MainPanel = React.memo(
 							onInputBlur={props.onInputBlur}
 							onOpenPromptComposer={props.onOpenPromptComposer}
 							onReplayMessage={props.onReplayMessage}
+							onForkConversation={props.onForkConversation}
 							fileTree={props.fileTree}
 							onFileClick={props.onFileClick}
 							refreshFileTree={props.refreshFileTree}

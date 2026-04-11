@@ -222,6 +222,7 @@ export interface UseMainPanelPropsDeps {
 	handleMainPanelInputBlur: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
+	handleForkConversation: (logId: string) => void;
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
@@ -409,6 +410,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onInputBlur: deps.handleMainPanelInputBlur,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
+			onForkConversation: deps.handleForkConversation,
 			fileTree: deps.fileTree,
 			onFileClick: deps.handleMainPanelFileClick,
 			canGoBack: deps.canGoBack,
@@ -627,6 +629,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleMainPanelInputBlur,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
+			deps.handleForkConversation,
 			deps.handleMainPanelFileClick,
 			deps.handleNavigateBack,
 			deps.handleNavigateForward,

@@ -196,6 +196,7 @@ export interface MainPanelProps {
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)
 	onReplayMessage?: (text: string, images?: string[]) => void;
+	onForkConversation?: (logId: string) => void;
 	// File tree for linking file references in AI responses
 	fileTree?: import('../../types/fileTree').FileNode[];
 	// Callback when a file link is clicked in AI response
