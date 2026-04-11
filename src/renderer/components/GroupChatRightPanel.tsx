@@ -3,7 +3,6 @@
  *
  * Right panel component for group chats with tabbed interface.
  * Contains "Participants" and "History" tabs.
- * Replaces direct use of GroupChatParticipants when group chat is active.
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';

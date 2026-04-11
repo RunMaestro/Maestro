@@ -889,9 +889,6 @@ describe('BatchRunnerModal', () => {
 		});
 	});
 
-	// NOTE: Git Worktree tests were removed - worktree configuration has moved to WorktreeConfigModal
-	// See src/__tests__/renderer/components/GitWorktreeSection.test.tsx for worktree-specific tests
-
 	describe('Go/Run Functionality', () => {
 		it('calls onGo with correct config when Go is clicked', async () => {
 			const props = createDefaultProps();
