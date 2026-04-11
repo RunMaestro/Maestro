@@ -282,7 +282,6 @@ export interface SettingsStoreState {
 	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
-	moderatorStandingInstructions: string;
 }
 
 export interface SettingsStoreActions {
@@ -359,7 +358,6 @@ export interface SettingsStoreActions {
 	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
-	setModeratorStandingInstructions: (value: string) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -516,7 +514,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		wakatimeDetailedTracking: false,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
-		moderatorStandingInstructions: '',
 
 		// ============================================================================
 		// Simple Setters
@@ -947,12 +944,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
-		},
-
-		setModeratorStandingInstructions: (value) => {
-			const trimmed = value.slice(0, 2000);
-			set({ moderatorStandingInstructions: trimmed });
-			window.maestro.settings.set('moderatorStandingInstructions', trimmed);
 		},
 
 		// ============================================================================
@@ -1885,9 +1876,6 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoHideMenuBar'] !== undefined)
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
-		if (allSettings['moderatorStandingInstructions'] !== undefined)
-			patch.moderatorStandingInstructions = allSettings['moderatorStandingInstructions'] as string;
-
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
@@ -2007,6 +1995,5 @@ export function getSettingsActions() {
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
-		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 	};
 }

@@ -91,7 +91,7 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
-import { initializePrompts } from './prompt-manager';
+import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -385,6 +385,23 @@ app.whenReady().then(async () => {
 		);
 		app.quit();
 		return;
+	}
+
+	// One-time migration: bake standing instructions into moderator prompt customization
+	const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
+	const migratedKey = 'moderatorStandingInstructionsMigrated';
+
+	if (standingInstructions && !store.get(migratedKey, false)) {
+		const currentPrompt = getPrompt('group-chat-moderator-system');
+
+		// Guard against double-append: only migrate if the section isn't already present
+		if (!currentPrompt.includes('## Standing Instructions')) {
+			const migratedPrompt = `${currentPrompt}\n\n## Standing Instructions\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
+			await savePrompt('group-chat-moderator-system', migratedPrompt);
+			logger.info('Migrated moderator standing instructions into prompt customization', 'Startup');
+		}
+
+		store.set(migratedKey, true);
 	}
 
 	// Load custom agent paths from settings
@@ -890,9 +907,8 @@ function setupIpcHandlers() {
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
 
-	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	// Set up callback for group chat router to get moderator conductor profile
 	setGetModeratorSettingsCallback(() => ({
-		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
 		conductorProfile: (store.get('conductorProfile', '') as string) || '',
 	}));
 
