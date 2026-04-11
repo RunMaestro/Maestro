@@ -4434,6 +4434,54 @@ branch refs/heads/bugfix-123
 			vi.useRealTimers();
 		});
 
+		it('should not kill a new watcher when unwatch races with watch (StrictMode)', async () => {
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let closeResolveA: (() => void) | undefined;
+			const mockWatcherA = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn(
+					() =>
+						new Promise<void>((r) => {
+							closeResolveA = r;
+						})
+				),
+			};
+			const mockWatcherB = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch)
+				.mockReturnValueOnce(mockWatcherA as any)
+				.mockReturnValueOnce(mockWatcherB as any);
+
+			const watchHandler = handlers.get('git:watchWorktreeDirectory');
+			const unwatchHandler = handlers.get('git:unwatchWorktreeDirectory');
+
+			// Create initial watcher A
+			await watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Simulate React StrictMode: unwatch and watch fire concurrently.
+			// Start unwatch (will await watcher.close() which we control)
+			const unwatchPromise = unwatchHandler!({} as any, 'race-session');
+
+			// Before unwatch resolves, start watch — this creates watcher B
+			const watchPromise = watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Now let watcher A's close resolve (unwatch resumes)
+			closeResolveA!();
+			await unwatchPromise;
+			await watchPromise;
+
+			// Watcher B should still be functional — the late-resolving unwatch
+			// must NOT have removed it from the map
+			expect(mockWatcherB.close).not.toHaveBeenCalled();
+
+			// Verify watcher B is the active watcher by unwatching and confirming B is closed
+			await unwatchHandler!({} as any, 'race-session');
+			expect(mockWatcherB.close).toHaveBeenCalled();
+		});
+
 		it('should handle multiple watch/unwatch cycles for same session', async () => {
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);
 

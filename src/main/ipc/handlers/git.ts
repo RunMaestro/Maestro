@@ -1180,11 +1180,12 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					};
 				}
 
-				// Stop existing watcher if any
+				// Stop existing watcher if any — delete from map BEFORE awaiting close
+				// to prevent race conditions with concurrent unwatch/watch IPC calls
 				const existingWatcher = worktreeWatchers.get(sessionId);
 				if (existingWatcher) {
-					await existingWatcher.close();
 					worktreeWatchers.delete(sessionId);
+					await existingWatcher.close();
 				}
 
 				// Clear any pending debounce timer
@@ -1303,8 +1304,12 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 		createIpcHandler(handlerOpts('unwatchWorktreeDirectory'), async (sessionId: string) => {
 			const watcher = worktreeWatchers.get(sessionId);
 			if (watcher) {
-				await watcher.close();
+				// Delete from map BEFORE awaiting close to prevent a race condition:
+				// React StrictMode double-fires effects, so unwatchWorktreeDirectory and
+				// watchWorktreeDirectory can interleave. If we delete after await, the
+				// unwatch can remove a NEW watcher that watchWorktreeDirectory just created.
 				worktreeWatchers.delete(sessionId);
+				await watcher.close();
 				logger.info(`${LOG_CONTEXT} Stopped watching worktree directory for session ${sessionId}`);
 			}
 
