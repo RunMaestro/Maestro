@@ -6,14 +6,17 @@
 import { describe, it, expect } from 'vitest';
 import {
 	SymphonyError,
-	type SymphonyErrorType,
 	type SymphonyCategory,
-	type SymphonyLabel,
 	type SymphonyIssue,
 	type SymphonyCache,
 	type ContributionStatus,
 	type IssueStatus,
 } from '../../shared/symphony-types';
+
+// Local aliases mirroring (now-internal) shared/symphony-types definitions.
+// Kept in sync manually; failures here are a signal the source types changed.
+type SymphonyErrorType = ConstructorParameters<typeof SymphonyError>[1];
+type SymphonyLabel = SymphonyIssue['labels'][number];
 
 describe('shared/symphony-types', () => {
 	// ==========================================================================

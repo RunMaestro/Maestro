@@ -24,7 +24,7 @@ export interface MarketplaceManifest {
 /**
  * Playbook source type - distinguishes official GitHub playbooks from local ones.
  */
-export type PlaybookSource = 'official' | 'local';
+type PlaybookSource = 'official' | 'local';
 
 /**
  * Individual playbook entry in the marketplace manifest.

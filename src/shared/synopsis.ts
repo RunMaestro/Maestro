@@ -4,7 +4,6 @@
  *
  * Functions:
  * - parseSynopsis: Parse AI-generated synopsis responses into structured format
- * - isNothingToReport: Check if response indicates no meaningful work was done
  */
 
 import { stripAnsiCodes } from './stringUtils';
@@ -15,7 +14,7 @@ import { stripAnsiCodes } from './stringUtils';
  */
 export const NOTHING_TO_REPORT = 'NOTHING_TO_REPORT';
 
-export interface ParsedSynopsis {
+interface ParsedSynopsis {
 	shortSummary: string;
 	fullSynopsis: string;
 	/** True if the AI indicated there was nothing meaningful to report */
@@ -53,22 +52,6 @@ function isConversationalFiller(text: string): boolean {
 		/^(no\s+problem|no\s+worries|happy\s+to\s+help)[\s!.]*$/i,
 	];
 	return fillerPatterns.some((pattern) => pattern.test(text.trim()));
-}
-
-/**
- * Check if a response indicates nothing meaningful to report.
- * Looks for the NOTHING_TO_REPORT sentinel token anywhere in the response.
- *
- * @param response - Raw AI response string
- * @returns True if the response contains NOTHING_TO_REPORT
- */
-export function isNothingToReport(response: string): boolean {
-	const clean = stripAnsiCodes(response)
-		.replace(/─+/g, '')
-		.replace(/[│┌┐└┘├┤┬┴┼]/g, '')
-		.trim();
-
-	return clean.includes(NOTHING_TO_REPORT);
 }
 
 /**

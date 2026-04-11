@@ -3,11 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-	buildSessionDeepLink,
-	buildGroupDeepLink,
-	buildFocusDeepLink,
-} from '../../shared/deep-link-urls';
+import { buildSessionDeepLink, buildGroupDeepLink } from '../../shared/deep-link-urls';
 
 describe('buildSessionDeepLink', () => {
 	it('should build a session-only deep link', () => {
@@ -47,8 +43,3 @@ describe('buildGroupDeepLink', () => {
 	});
 });
 
-describe('buildFocusDeepLink', () => {
-	it('should build a focus deep link', () => {
-		expect(buildFocusDeepLink()).toBe('maestro://focus');
-	});
-});

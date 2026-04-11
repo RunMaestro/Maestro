@@ -82,26 +82,6 @@ function splitVersionParts(version: string): [string, string | undefined] {
 }
 
 /**
- * Parse version string to comparable array of numbers.
- * Pre-release suffixes (e.g., -rc.1, -beta.2) are stripped before parsing.
- *
- * @param version - Version string (e.g., "v22.10.0" or "0.14.0" or "0.15.0-rc.1")
- * @returns Array of version numbers (e.g., [22, 10, 0])
- *
- * @example
- * ```typescript
- * parseVersion('v22.10.0')      // [22, 10, 0]
- * parseVersion('0.14.0')        // [0, 14, 0]
- * parseVersion('0.15.0-rc.1')   // [0, 15, 0]
- * ```
- */
-export function parseVersion(version: string): number[] {
-	const cleaned = version.replace(/^v/, '');
-	const [numericPart] = splitVersionParts(cleaned);
-	return numericPart.split('.').map((n) => parseInt(n, 10) || 0);
-}
-
-/**
  * Compare two version strings following semver pre-release rules.
  *
  * Returns: 1 if a > b, -1 if a < b, 0 if equal.

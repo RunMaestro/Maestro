@@ -72,7 +72,7 @@ export interface PaginatedResult<T> {
  * @internal Used internally by paginateEntries; consumers should pass
  * their own PaginationOptions if different values are needed.
  */
-export const DEFAULT_PAGINATION: Required<PaginationOptions> = {
+const DEFAULT_PAGINATION: Required<PaginationOptions> = {
 	limit: 100,
 	offset: 0,
 };

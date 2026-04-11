@@ -57,9 +57,3 @@ export interface SystemLogEntry {
 	data?: unknown;
 }
 
-/**
- * Check if a log level should be logged given the minimum level.
- */
-export function shouldLogLevel(level: MainLogLevel, minLevel: MainLogLevel): boolean {
-	return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[minLevel];
-}

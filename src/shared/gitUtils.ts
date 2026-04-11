@@ -14,7 +14,7 @@
 /**
  * Represents a file change from git status output
  */
-export interface GitFileStatus {
+interface GitFileStatus {
 	path: string;
 	status: string;
 }
@@ -22,7 +22,7 @@ export interface GitFileStatus {
 /**
  * Represents a file with numstat information (additions/deletions)
  */
-export interface GitNumstatFile {
+interface GitNumstatFile {
 	path: string;
 	additions: number;
 	deletions: number;
@@ -31,7 +31,7 @@ export interface GitNumstatFile {
 /**
  * Behind/ahead counts relative to upstream
  */
-export interface GitBehindAhead {
+interface GitBehindAhead {
 	behind: number;
 	ahead: number;
 }
@@ -227,30 +227,6 @@ export function parseGitTags(stdout: string): string[] {
 }
 
 /**
- * Clean and normalize a branch name from git output
- *
- * @param stdout - Raw stdout from `git rev-parse --abbrev-ref HEAD`
- * @returns Trimmed branch name or empty string
- *
- * @internal Currently used only in tests; available for future use
- */
-export function cleanBranchName(stdout: string): string {
-	return stdout?.trim() || '';
-}
-
-/**
- * Clean and normalize a path from git output
- *
- * @param stdout - Raw stdout from git commands returning paths
- * @returns Trimmed path or empty string
- *
- * @internal Currently used only in tests; available for future use
- */
-export function cleanGitPath(stdout: string): string {
-	return stdout?.trim() || '';
-}
-
-/**
  * Convert a git remote URL to a browser-friendly URL
  * Supports GitHub, GitLab, Bitbucket, and other common hosts
  *
@@ -311,7 +287,7 @@ export function remoteUrlToBrowserUrl(remoteUrl: string): string | null {
 /**
  * Common image file extensions for git file handling
  */
-export const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
+const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
 
 /**
  * Check if a file path is an image based on extension

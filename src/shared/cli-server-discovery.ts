@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-export interface CliServerInfo {
+interface CliServerInfo {
 	port: number;
 	token: string;
 	pid: number;

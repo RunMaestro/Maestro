@@ -30,12 +30,12 @@ export const PIPELINE_COLORS: string[] = [
 
 export type EdgeMode = 'pass' | 'debate' | 'autorun';
 
-export interface DebateConfig {
+interface DebateConfig {
 	maxRounds: number;
 	timeoutPerRound: number;
 }
 
-export interface PipelineNodePosition {
+interface PipelineNodePosition {
 	x: number;
 	y: number;
 }
@@ -70,7 +70,7 @@ export interface AgentNodeData {
 	fanInTimeoutOnFail?: 'break' | 'continue';
 }
 
-export type PipelineNodeType = 'trigger' | 'agent';
+type PipelineNodeType = 'trigger' | 'agent';
 
 export interface PipelineNode {
 	id: string;
@@ -102,7 +102,7 @@ export interface CuePipelineState {
 	selectedPipelineId: string | null;
 }
 
-export interface PipelineViewport {
+interface PipelineViewport {
 	x: number;
 	y: number;
 	zoom: number;

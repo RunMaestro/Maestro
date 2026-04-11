@@ -42,7 +42,7 @@ export interface PerformanceMetric {
 /**
  * Logger function type for outputting performance metrics
  */
-export type PerformanceLogger = (message: string, context?: string, data?: unknown) => void;
+type PerformanceLogger = (message: string, context?: string, data?: unknown) => void;
 
 /**
  * Performance metrics collector and logger.
@@ -317,14 +317,6 @@ export class PerformanceMetrics {
 			this.end(startTime, name, details);
 		}
 	}
-}
-
-/**
- * Create a no-op performance metrics instance.
- * Useful for testing or when performance logging is not needed.
- */
-export function createNoOpMetrics(): PerformanceMetrics {
-	return new PerformanceMetrics('noop', () => {}, false);
 }
 
 /**

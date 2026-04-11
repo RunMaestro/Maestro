@@ -4,49 +4,31 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-	AGENT_DISPLAY_NAMES,
 	getAgentDisplayName,
-	BETA_AGENTS,
 	isBetaAgent,
 	getReadOnlyModeLabel,
 	getReadOnlyModeTooltip,
 } from '../../shared/agentMetadata';
 import { AGENT_IDS } from '../../shared/agentIds';
-import type { AgentId } from '../../shared/agentIds';
 
 describe('agentMetadata', () => {
-	describe('AGENT_DISPLAY_NAMES', () => {
-		it('should have an entry for every agent in AGENT_IDS', () => {
+	describe('getAgentDisplayName', () => {
+		it('should return a non-empty display name for every agent in AGENT_IDS', () => {
 			for (const id of AGENT_IDS) {
-				expect(AGENT_DISPLAY_NAMES[id]).toBeDefined();
-				expect(typeof AGENT_DISPLAY_NAMES[id]).toBe('string');
-				expect(AGENT_DISPLAY_NAMES[id].length).toBeGreaterThan(0);
+				const name = getAgentDisplayName(id);
+				expect(typeof name).toBe('string');
+				expect(name.length).toBeGreaterThan(0);
 			}
 		});
 
-		it('should return correct names for known agents', () => {
-			expect(AGENT_DISPLAY_NAMES['claude-code']).toBe('Claude Code');
-			expect(AGENT_DISPLAY_NAMES['codex']).toBe('Codex');
-			expect(AGENT_DISPLAY_NAMES['opencode']).toBe('OpenCode');
-			expect(AGENT_DISPLAY_NAMES['factory-droid']).toBe('Factory Droid');
-			expect(AGENT_DISPLAY_NAMES['gemini-cli']).toBe('Gemini CLI');
-			expect(AGENT_DISPLAY_NAMES['qwen3-coder']).toBe('Qwen3 Coder');
-			expect(AGENT_DISPLAY_NAMES['aider']).toBe('Aider');
-			expect(AGENT_DISPLAY_NAMES['terminal']).toBe('Terminal');
-		});
-
-		it('should not have entries for unknown agents', () => {
-			// TypeScript would prevent this at compile time, but runtime check for safety
-			expect((AGENT_DISPLAY_NAMES as Record<string, string>)['unknown']).toBeUndefined();
-		});
-	});
-
-	describe('getAgentDisplayName', () => {
 		it('should return display name for valid agent IDs', () => {
 			expect(getAgentDisplayName('claude-code')).toBe('Claude Code');
 			expect(getAgentDisplayName('codex')).toBe('Codex');
 			expect(getAgentDisplayName('opencode')).toBe('OpenCode');
 			expect(getAgentDisplayName('factory-droid')).toBe('Factory Droid');
+			expect(getAgentDisplayName('gemini-cli')).toBe('Gemini CLI');
+			expect(getAgentDisplayName('qwen3-coder')).toBe('Qwen3 Coder');
+			expect(getAgentDisplayName('aider')).toBe('Aider');
 			expect(getAgentDisplayName('terminal')).toBe('Terminal');
 		});
 
@@ -61,39 +43,6 @@ describe('agentMetadata', () => {
 			expect(getAgentDisplayName('hasOwnProperty')).toBe('hasOwnProperty');
 			expect(getAgentDisplayName('valueOf')).toBe('valueOf');
 		});
-
-		it('should work for all AGENT_IDS entries', () => {
-			for (const id of AGENT_IDS) {
-				const name = getAgentDisplayName(id);
-				expect(name).toBe(AGENT_DISPLAY_NAMES[id]);
-			}
-		});
-	});
-
-	describe('BETA_AGENTS', () => {
-		it('should be a ReadonlySet', () => {
-			expect(BETA_AGENTS).toBeInstanceOf(Set);
-		});
-
-		it('should contain the expected beta agents', () => {
-			expect(BETA_AGENTS.has('opencode')).toBe(true);
-			expect(BETA_AGENTS.has('factory-droid')).toBe(true);
-			expect(BETA_AGENTS.has('codex')).toBe(false);
-		});
-
-		it('should not contain non-beta agents', () => {
-			expect(BETA_AGENTS.has('claude-code')).toBe(false);
-			expect(BETA_AGENTS.has('terminal')).toBe(false);
-			expect(BETA_AGENTS.has('gemini-cli')).toBe(false);
-			expect(BETA_AGENTS.has('qwen3-coder')).toBe(false);
-			expect(BETA_AGENTS.has('aider')).toBe(false);
-		});
-
-		it('should only contain valid agent IDs', () => {
-			for (const id of BETA_AGENTS) {
-				expect(AGENT_IDS).toContain(id);
-			}
-		});
 	});
 
 	describe('isBetaAgent', () => {
@@ -103,9 +52,12 @@ describe('agentMetadata', () => {
 		});
 
 		it('should return false for non-beta agents', () => {
-			expect(isBetaAgent('codex')).toBe(false);
 			expect(isBetaAgent('claude-code')).toBe(false);
+			expect(isBetaAgent('codex')).toBe(false);
 			expect(isBetaAgent('terminal')).toBe(false);
+			expect(isBetaAgent('gemini-cli')).toBe(false);
+			expect(isBetaAgent('qwen3-coder')).toBe(false);
+			expect(isBetaAgent('aider')).toBe(false);
 		});
 
 		it('should return false for unknown agents', () => {
@@ -113,9 +65,9 @@ describe('agentMetadata', () => {
 			expect(isBetaAgent('')).toBe(false);
 		});
 
-		it('should agree with BETA_AGENTS set for all known IDs', () => {
+		it('should produce a stable boolean for every known AGENT_ID', () => {
 			for (const id of AGENT_IDS) {
-				expect(isBetaAgent(id)).toBe(BETA_AGENTS.has(id));
+				expect(typeof isBetaAgent(id)).toBe('boolean');
 			}
 		});
 	});

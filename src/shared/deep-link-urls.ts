@@ -24,10 +24,3 @@ export function buildSessionDeepLink(sessionId: string, tabId?: string): string 
 export function buildGroupDeepLink(groupId: string): string {
 	return `${PROTOCOL}group/${encodeURIComponent(groupId)}`;
 }
-
-/**
- * Build a deep link URL that simply brings the window to foreground.
- */
-export function buildFocusDeepLink(): string {
-	return `${PROTOCOL}focus`;
-}

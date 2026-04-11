@@ -87,7 +87,7 @@ export interface DocumentReference {
 /**
  * A GitHub label on an issue.
  */
-export interface SymphonyLabel {
+interface SymphonyLabel {
 	/** Label name */
 	name: string;
 	/** Label hex color (without #) */
@@ -440,7 +440,7 @@ export interface CompleteContributionResponse {
 // Error Types
 // ============================================================================
 
-export type SymphonyErrorType =
+type SymphonyErrorType =
 	| 'network' // Network/fetch errors
 	| 'github_api' // GitHub API errors
 	| 'git' // Git operation errors
