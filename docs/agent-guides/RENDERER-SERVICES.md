@@ -16,7 +16,7 @@ The services directory provides a clean API layer between React components and t
 
 ### Architecture
 
-```
+```text
 React Components
       |
       v
@@ -318,15 +318,16 @@ Each shortcut has `id`, `label`, and `keys` array.
 Defines priority/z-index values for all modals and overlays. Used by the layer stack system for Escape key handling and visual stacking.
 
 **Priority Ranges:**
-| Range | Category | Examples |
-|-------|----------|---------|
-| 1000+ | Critical/Celebrations | Standing ovation (1100), Keyboard mastery (1095), Tour (1050), Quit confirm (1020) |
-| 900-999 | High priority | Gist publish (980), Playbook delete (950), Rename instance (900) |
-| 700-899 | Standard modals | Wizard (760), New instance (750), Batch runner (720), Quick action (700) |
-| 600-699 | Group chat + info | New group chat (650), Shortcuts help (650), About (600) |
-| 400-599 | Settings + analytics | Process monitor (550), Usage dashboard (540), Log viewer (500), Settings (450) |
-| 100-399 | Overlays + previews | Git diff (200), Git log (190), Lightbox (150), File preview (100) |
-| 1-99 | Autocomplete | Slash autocomplete (50), File tree filter (30) |
+
+| Range   | Category              | Examples                                                                           |
+| ------- | --------------------- | ---------------------------------------------------------------------------------- |
+| 1000+   | Critical/Celebrations | Standing ovation (1100), Keyboard mastery (1095), Tour (1050), Quit confirm (1020) |
+| 900-999 | High priority         | Gist publish (980), Playbook delete (950), Rename instance (900)                   |
+| 700-899 | Standard modals       | Wizard (760), New instance (750), Batch runner (720), Quick action (700)           |
+| 600-699 | Group chat + info     | New group chat (650), Shortcuts help (650), About (600)                            |
+| 400-599 | Settings + analytics  | Process monitor (550), Usage dashboard (540), Log viewer (500), Settings (450)     |
+| 100-399 | Overlays + previews   | Git diff (200), Git log (190), Lightbox (150), File preview (100)                  |
+| 1-99    | Autocomplete          | Slash autocomplete (50), File tree filter (30)                                     |
 
 Exported as `MODAL_PRIORITIES` const object with 60+ named entries.
 
@@ -398,19 +399,20 @@ Used extensively by UsageDashboard charts and SymphonyModal.
 Gamification system tracking cumulative AutoRun time with conductor-themed achievements.
 
 **11 badge levels:**
-| Level | Name | Required Time |
-|-------|------|--------------|
-| 1 | Apprentice Conductor | 15 minutes |
-| 2 | Assistant Conductor | 1 hour |
-| 3 | Associate Conductor | 8 hours |
-| 4 | Resident Conductor | 24 hours |
-| 5 | Principal Guest Conductor | 1 week |
-| 6 | Chief Conductor | 30 days |
-| 7 | Music Director | 3 months |
-| 8 | Maestro Emeritus | 6 months |
-| 9 | World Maestro | 1 year |
-| 10 | Grand Maestro | 5 years |
-| 11 | Titan of the Baton | 10 years |
+
+| Level | Name                      | Required Time |
+| ----- | ------------------------- | ------------- |
+| 1     | Apprentice Conductor      | 15 minutes    |
+| 2     | Assistant Conductor       | 1 hour        |
+| 3     | Associate Conductor       | 8 hours       |
+| 4     | Resident Conductor        | 24 hours      |
+| 5     | Principal Guest Conductor | 1 week        |
+| 6     | Chief Conductor           | 30 days       |
+| 7     | Music Director            | 3 months      |
+| 8     | Maestro Emeritus          | 6 months      |
+| 9     | World Maestro             | 1 year        |
+| 10    | Grand Maestro             | 5 years       |
+| 11    | Titan of the Baton        | 10 years      |
 
 Each badge includes name, description, a historical example conductor with Wikipedia link, and flavor text.
 
@@ -431,13 +433,14 @@ Used by AchievementCard, LeaderboardRegistrationModal, PlaygroundPanel, SessionL
 Keyboard shortcut mastery progression system.
 
 **5 levels:**
-| Level | Name | Threshold |
-|-------|------|-----------|
-| beginner | Beginner | 0% |
-| student | Student | 25% |
-| performer | Performer | 50% |
-| virtuoso | Virtuoso | 75% |
-| maestro | Keyboard Maestro | 100% |
+
+| Level     | Name             | Threshold |
+| --------- | ---------------- | --------- |
+| beginner  | Beginner         | 0%        |
+| student   | Student          | 25%       |
+| performer | Performer        | 50%       |
+| virtuoso  | Virtuoso         | 75%       |
+| maestro   | Keyboard Maestro | 100%      |
 
 **Helper functions:**
 

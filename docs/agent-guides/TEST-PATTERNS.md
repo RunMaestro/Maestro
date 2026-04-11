@@ -40,7 +40,7 @@ npm run test:watch    # Watch mode
 
 ## File Organization
 
-```
+```text
 src/
 ├── __tests__/
 │   ├── setup.ts                          # Global test setup

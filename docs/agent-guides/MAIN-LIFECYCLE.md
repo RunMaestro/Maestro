@@ -328,7 +328,7 @@ interface MaestroSettings {
 
 ### Store Module Organization
 
-```
+```text
 src/main/stores/
   index.ts       # Public API barrel
   types.ts       # Type definitions
@@ -467,7 +467,7 @@ Defined in `src/main/history-manager.ts`.
 
 The history manager uses per-session JSON files instead of a single global file:
 
-```
+```text
 {userData}/history/
   {sessionId}.json    # Per-session history file
 ```

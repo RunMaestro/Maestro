@@ -8,7 +8,7 @@ The group chat system enables multi-agent collaboration through a hub-and-spoke 
 
 ### Hub-and-Spoke Model
 
-```
+```text
                   +-----------+
                   |   User    |
                   +-----+-----+
@@ -124,7 +124,7 @@ type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
 
 Each group chat lives in its own directory under `{userData}/group-chats/{id}/`:
 
-```
+```text
 group-chats/
   {uuid}/
     metadata.json    # GroupChat object
@@ -141,7 +141,7 @@ group-chats/
 
 Pipe-delimited with escape sequences:
 
-```
+```text
 TIMESTAMP|FROM|CONTENT
 TIMESTAMP|FROM|CONTENT|readOnly
 ```
@@ -261,7 +261,7 @@ Extracts text content from agent JSON/JSONL output:
 
 Parses group chat session IDs to extract `groupChatId` and `participantName`:
 
-```
+```text
 group-chat-{groupChatId}-participant-{name}-{uuid|timestamp}
 group-chat-{groupChatId}-participant-{name}-recovery-{timestamp}
 ```

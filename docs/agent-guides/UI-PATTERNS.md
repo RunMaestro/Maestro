@@ -12,7 +12,7 @@ Maestro uses a centralized **LayerStack** to manage all modals, overlays, and se
 
 ### Architecture
 
-```
+```text
 LayerStackProvider          (src/renderer/contexts/LayerStackContext.tsx)
   -> useLayerStack hook     (src/renderer/hooks/ui/useLayerStack.ts)
   -> useModalLayer hook     (src/renderer/hooks/ui/useModalLayer.ts)
@@ -153,7 +153,7 @@ In development mode, `window.__MAESTRO_DEBUG__.layers` provides:
 
 ### Architecture
 
-```
+```text
 src/shared/theme-types.ts   - Type definitions (ThemeId, ThemeColors, Theme)
 src/shared/themes.ts        - Canonical theme objects (THEMES record)
 src/renderer/constants/themes.ts - Re-exports for renderer imports
@@ -237,7 +237,7 @@ Custom theme colors are managed through `customThemeColors` / `setCustomThemeCol
 
 ### Architecture
 
-```
+```text
 src/renderer/constants/shortcuts.ts                 - Shortcut definitions
 src/renderer/hooks/keyboard/useMainKeyboardHandler.ts - Global keydown handler
 src/renderer/hooks/keyboard/useKeyboardShortcutHelpers.ts - Shortcut matching
@@ -310,7 +310,7 @@ Shortcut usage is tracked for a gamification system (`keyboardMasteryStats`). Th
 
 ### Architecture
 
-```
+```text
 src/renderer/stores/notificationStore.ts - Zustand store + notifyToast()
 src/renderer/components/Toast.tsx        - ToastContainer + ToastItem
 ```
@@ -585,7 +585,7 @@ if (ctx.encoreFeatures.symphony && ctx.isShortcut('openSymphony', e)) {
 
 ### Architecture
 
-```
+```text
 src/renderer/hooks/settings/useSettings.ts   - Hook adapter over Zustand store
 src/renderer/stores/settingsStore.ts         - Zustand store (source of truth)
 src/main/index.ts                            - IPC handlers for persistence

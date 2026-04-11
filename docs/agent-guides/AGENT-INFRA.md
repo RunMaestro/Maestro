@@ -8,7 +8,7 @@ Complete reference for Maestro's agent registration system: agent IDs, definitio
 
 ## Agent Registration Pipeline
 
-```
+```text
 1. Agent IDs         src/shared/agentIds.ts           Single source of truth for all agent IDs
 2. Definitions       src/main/agents/definitions.ts   CLI args, config options, argument builders
 3. Capabilities      src/main/agents/capabilities.ts  Feature flags per agent

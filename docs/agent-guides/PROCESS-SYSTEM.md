@@ -228,7 +228,7 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 
 ### Event Flow
 
-```
+```text
 Agent Process
     |
     v
@@ -260,7 +260,7 @@ The web server provides HTTP and WebSocket access to Maestro for mobile devices 
 
 **URL structure:**
 
-```
+```text
 http://IP:PORT/                          -> Redirect to runmaestro.ai
 http://IP:PORT/health                    -> Health check (no auth)
 http://IP:PORT/$TOKEN/                   -> Dashboard (SPA)

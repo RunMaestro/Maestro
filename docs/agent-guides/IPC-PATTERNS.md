@@ -8,7 +8,7 @@ Complete reference for Maestro's IPC (Inter-Process Communication) architecture:
 
 ## Architecture Overview
 
-```
+```text
 Renderer (React)                    Main (Electron)
   window.maestro.settings.get()  -->  ipcMain.handle('settings:get', ...)
   window.maestro.process.spawn() -->  ipcMain.handle('process:spawn', ...)

@@ -12,7 +12,7 @@ The Maestro CLI (`maestro-cli`) provides command-line access to agents, playbook
 
 ### Architecture
 
-```
+```text
 src/cli/
 ├── index.ts              # Entry point (Commander.js program)
 ├── commands/             # Command implementations
@@ -225,7 +225,7 @@ Reads Electron Store JSON files directly from disk. No Electron dependency.
 
 ### Config Directory Paths
 
-```
+```text
 macOS:   ~/Library/Application Support/Maestro/
 Windows: %APPDATA%/Maestro/
 Linux:   $XDG_CONFIG_HOME/Maestro/ (or ~/.config/Maestro/)
@@ -398,7 +398,7 @@ The core execution engine for running playbooks. It yields JSONL events as an as
 
 ### Execution Flow
 
-```
+```text
 1. Register CLI activity (notifies desktop app)
 2. For each document in playbook:
    a. Read document content

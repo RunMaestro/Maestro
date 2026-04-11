@@ -6,7 +6,7 @@ The stats system tracks AI interaction metrics using a SQLite database with a si
 
 ## Architecture Overview
 
-```
+```text
 Renderer (Usage Dashboard)        Main Process
 +-----------------------+         +---------------------------+
 | UsageDashboardModal   |  IPC    | IPC Handlers (stats.ts)   |
@@ -28,7 +28,7 @@ Renderer (Usage Dashboard)        Main Process
 
 ### Location
 
-```
+```text
 {userData}/stats.db
 ```
 

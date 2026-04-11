@@ -10,7 +10,7 @@ Maestro's prompt system consists of Markdown templates compiled to TypeScript at
 
 Prompt templates are stored as `.md` files in `src/prompts/`. At build time, `scripts/generate-prompts.mjs` compiles them into `src/generated/prompts.ts` as exported string constants. The barrel file `src/prompts/index.ts` re-exports these constants.
 
-```
+```text
 src/prompts/*.md
     |
     v  (scripts/generate-prompts.mjs)
@@ -194,7 +194,7 @@ Commands marked "Custom" (`isCustom: true`) are Maestro-specific additions not f
 
 Bundled prompts in `src/prompts/speckit/`:
 
-```
+```text
 speckit/
   index.ts            # Export barrel
   metadata.json        # Version and source info
@@ -275,7 +275,7 @@ OpenSpec provides structured change management for software projects. It follows
 
 Bundled prompts in `src/prompts/openspec/`:
 
-```
+```text
 openspec/
   index.ts             # Export barrel
   metadata.json         # Version and source info
