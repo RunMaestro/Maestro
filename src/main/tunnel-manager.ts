@@ -1,6 +1,7 @@
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, execFile } from 'child_process';
 import { logger } from './utils/logger';
 import { getCloudflaredPath, isCloudflaredInstalled } from './utils/cliDetection';
+import { isWindows } from '../shared/platformDetection';
 
 export interface TunnelStatus {
 	isRunning: boolean;
@@ -111,16 +112,27 @@ class TunnelManager {
 			logger.info('Stopping tunnel', 'TunnelManager');
 			this.stopping = true;
 			const proc = this.process;
-			proc.kill('SIGTERM');
+
+			if (isWindows() && proc.pid) {
+				// On Windows, POSIX signals don't terminate process trees.
+				// Use taskkill /t /f to kill the cloudflared process and its children.
+				execFile('taskkill', ['/pid', String(proc.pid), '/t', '/f'], () => {
+					// taskkill returns non-zero if the process is already dead, which is fine
+				});
+			} else {
+				proc.kill('SIGTERM');
+			}
 
 			// Wait for process to exit with timeout
 			await new Promise<void>((resolve) => {
 				const timeout = setTimeout(() => {
-					// Force kill if SIGTERM didn't work
-					try {
-						proc.kill('SIGKILL');
-					} catch {
-						// Process may already be dead
+					// Force kill if SIGTERM didn't work (POSIX only; Windows already used taskkill)
+					if (!isWindows()) {
+						try {
+							proc.kill('SIGKILL');
+						} catch {
+							// Process may already be dead
+						}
 					}
 					resolve();
 				}, 3000);

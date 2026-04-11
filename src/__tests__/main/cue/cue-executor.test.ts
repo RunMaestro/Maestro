@@ -115,6 +115,8 @@ class MockChildProcess extends EventEmitter {
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
+	exitCode: number | null = null;
+	signalCode: string | null = null;
 
 	kill(signal?: string) {
 		this.killed = true;

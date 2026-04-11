@@ -65,6 +65,12 @@ vi.mock('../../../main/power-manager', () => ({
 	},
 }));
 
+// Mock cue-executor to avoid pulling in agent/parser/SSH dependencies
+const mockStopAllCueRuns = vi.fn();
+vi.mock('../../../main/cue/cue-executor', () => ({
+	stopAllCueRuns: (...args: unknown[]) => mockStopAllCueRuns(...args),
+}));
+
 describe('app-lifecycle/quit-handler', () => {
 	let mockMainWindow: {
 		isDestroyed: ReturnType<typeof vi.fn>;
@@ -299,11 +305,15 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockHistoryManager.stopWatching).toHaveBeenCalled();
 			expect(deps.stopCliWatcher).toHaveBeenCalled();
 			expect(deps.stopSessionCleanup).toHaveBeenCalled();
+			// Cue processes (tracked separately) must be killed before ProcessManager.killAll
+			expect(mockStopAllCueRuns).toHaveBeenCalled();
 			expect(mockProcessManager.killAll).toHaveBeenCalled();
+			const cueOrder = mockStopAllCueRuns.mock.invocationCallOrder[0];
+			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
+			expect(cueOrder).toBeLessThan(killOrder);
 			// clearAllReasons must be called AFTER killAll to prevent late process
 			// output from re-arming the sleep blocker
 			expect(mockPowerManager.clearAllReasons).toHaveBeenCalled();
-			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
 			const clearOrder = mockPowerManager.clearAllReasons.mock.invocationCallOrder[0];
 			expect(killOrder).toBeLessThan(clearOrder);
 			expect(mockTunnelManager.stop).toHaveBeenCalled();

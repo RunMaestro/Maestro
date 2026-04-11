@@ -20,6 +20,7 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
 	stopProcess,
+	stopAllProcesses,
 	getActiveProcessMap,
 	getProcessList,
 } from './cue-process-lifecycle';
@@ -146,6 +147,14 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
  */
 export function stopCueRun(runId: string): boolean {
 	return stopProcess(runId);
+}
+
+/**
+ * Stop all active Cue processes. Called during application shutdown to prevent
+ * orphaned processes surviving after the main Electron process exits.
+ */
+export function stopAllCueRuns(): void {
+	stopAllProcesses();
 }
 
 /**
