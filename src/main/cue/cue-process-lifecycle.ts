@@ -13,6 +13,7 @@ import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType } from '../../shared/types';
 import { getOutputParser } from '../parsers';
+import { captureException } from '../utils/sentry';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -108,11 +109,23 @@ export function runProcess(
 	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog } = options;
 
 	return new Promise<ProcessRunResult>((resolve) => {
-		const child = spawn(spec.command, spec.args, {
-			cwd: spec.cwd,
-			env: spec.env,
-			stdio: ['pipe', 'pipe', 'pipe'],
-		});
+		let child: ChildProcess;
+		try {
+			child = spawn(spec.command, spec.args, {
+				cwd: spec.cwd,
+				env: spec.env,
+				stdio: ['pipe', 'pipe', 'pipe'],
+			});
+		} catch (err) {
+			captureException(err, { operation: 'cue:spawn', runId, command: spec.command });
+			resolve({
+				stdout: '',
+				stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
+				exitCode: null,
+				status: 'failed',
+			});
+			return;
+		}
 
 		activeProcesses.set(runId, {
 			child,
@@ -163,8 +176,13 @@ export function runProcess(
 			finish(status, code);
 		});
 
-		// Handle spawn errors
+		// Handle spawn errors (async — e.g. ENOENT after spawn returns)
 		child.on('error', (error) => {
+			captureException(error, {
+				operation: 'cue:childProcess:error',
+				runId,
+				command: spec.command,
+			});
 			stderr += `\nSpawn error: ${error.message}`;
 			finish('failed', null);
 		});

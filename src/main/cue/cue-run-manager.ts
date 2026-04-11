@@ -15,6 +15,7 @@ import type { MainLogLevel } from '../../shared/logger-types';
 import type { CueEvent, CueRunResult, CueSettings, CueSubscription } from './cue-types';
 import { recordCueEvent, updateCueEventStatus } from './cue-db';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
+import { captureException } from '../utils/sentry';
 
 /** Phase of a run in the state machine: running → stopping | finished */
 export type RunPhase = 'running' | 'stopping' | 'finished';
@@ -24,6 +25,8 @@ export interface ActiveRun {
 	result: CueRunResult;
 	abortController?: AbortController;
 	phase: RunPhase;
+	/** The runId of the currently executing child process (differs from result.runId during output prompt phase) */
+	processRunId?: string;
 }
 
 /** A queued event waiting for a concurrency slot */
@@ -250,6 +253,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					// Non-fatal if DB is unavailable
 				}
 
+				// Track the output prompt's process ID so stopRun can kill it
+				const run = activeRuns.get(runId);
+				if (run) run.processRunId = outputRunId;
+
 				const contextPrompt = `${outputPrompt}\n\n---\n\nContext from completed task:\n${result.stdout.substring(0, SOURCE_OUTPUT_MAX_CHARS)}`;
 				const outputResult = await deps.onCueRun({
 					runId: outputRunId,
@@ -303,8 +310,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 
 				try {
 					updateCueEventStatus(runId, result.status);
-				} catch {
-					// Non-fatal if DB is unavailable
+				} catch (err) {
+					deps.onLog('warn', `[CUE] Failed to update DB status for run ${runId}`);
+					captureException(err, {
+						operation: 'cue:updateEventStatus',
+						runId,
+						status: result.status,
+					});
 				}
 				deps.onLog('cue', `[CUE] Run finished: ${subscriptionName} (${result.status})`, {
 					type: 'runFinished',
@@ -377,8 +389,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 
 			const run = activeRuns.get(runId)!;
 
-			// Signal the process to stop
+			// Signal the process to stop — kill the currently executing child process.
+			// During output prompt phase, processRunId differs from the parent runId.
 			deps.onStopCueRun?.(runId);
+			if (run.processRunId && run.processRunId !== runId) {
+				deps.onStopCueRun?.(run.processRunId);
+			}
 			run.abortController?.abort();
 
 			// Finalize the result for immediate UI feedback
@@ -399,8 +415,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// Record final status in DB and notify
 			try {
 				updateCueEventStatus(runId, 'stopped');
-			} catch {
-				// Non-fatal if DB is unavailable
+			} catch (err) {
+				deps.onLog('warn', `[CUE] Failed to update DB status for stopped run ${runId}`);
+				captureException(err, { operation: 'cue:updateEventStatus', runId, status: 'stopped' });
 			}
 			deps.onRunStopped(run.result);
 			deps.onLog('cue', `[CUE] Run stopped: ${runId}`, {

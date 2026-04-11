@@ -99,7 +99,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 
 	// 2. Build template context and substitute variables
 	templateContext.cue = buildCueTemplateContext(event, subscription, runId);
-	const substitutedPrompt = substituteTemplateVariables(promptPath, templateContext);
+	const substitutedPrompt = substituteTemplateVariables(trimmedPrompt, templateContext);
 
 	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
 	const buildResult = await buildSpawnSpec(config, substitutedPrompt);
@@ -159,7 +159,7 @@ export function stopCueRun(runId: string): boolean {
  * Get the map of currently active processes (for testing/monitoring).
  * Delegates to the process lifecycle module.
  */
-export function getActiveProcesses(): Map<string, any> {
+export function getActiveProcesses(): ReturnType<typeof getActiveProcessMap> {
 	return getActiveProcessMap();
 }
 

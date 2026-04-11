@@ -18,6 +18,12 @@ vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
+// Mock Sentry
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 // Mock child_process.spawn
 class MockChildProcess extends EventEmitter {
 	pid = 12345;
@@ -424,6 +430,37 @@ describe('cue-process-lifecycle', () => {
 			await resultPromise;
 
 			expect(getProcessList().some((p) => p.runId === 'completed-run')).toBe(false);
+		});
+	});
+
+	describe('Sentry error reporting', () => {
+		it('reports synchronous spawn failure to Sentry', async () => {
+			mockSpawn.mockImplementationOnce(() => {
+				throw new Error('spawn EPERM');
+			});
+
+			const result = await runProcess('run-1', createSpec(), createOptions());
+
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toContain('Spawn error: spawn EPERM');
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.objectContaining({ message: 'spawn EPERM' }),
+				expect.objectContaining({ operation: 'cue:spawn', runId: 'run-1' })
+			);
+		});
+
+		it('reports async child process error to Sentry', async () => {
+			const resultPromise = runProcess('run-1', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			const spawnError = new Error('spawn ENOENT');
+			mockChild.emit('error', spawnError);
+			await resultPromise;
+
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				spawnError,
+				expect.objectContaining({ operation: 'cue:childProcess:error', runId: 'run-1' })
+			);
 		});
 	});
 

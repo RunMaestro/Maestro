@@ -17,6 +17,11 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 }));
 
+const mockCaptureException = vi.fn();
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 let uuidCounter = 0;
 vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `run-${++uuidCounter}`),
@@ -673,6 +678,97 @@ describe('createCueRunManager', () => {
 			manager.stopRun(runId);
 
 			expect(abortSpy).toHaveBeenCalled();
+		});
+	});
+
+	describe('output prompt process stop targeting', () => {
+		it('stopRun calls onStopCueRun with output prompt runId when in output phase', async () => {
+			let onCueRunCallCount = 0;
+			const deps = createDeps({
+				onCueRun: vi.fn(() => {
+					onCueRunCallCount++;
+					if (onCueRunCallCount === 1) {
+						return Promise.resolve(makeResult());
+					}
+					// Output prompt — never resolves
+					return new Promise<CueRunResult>(() => {});
+				}),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub', 'output prompt');
+			await vi.advanceTimersByTimeAsync(0);
+
+			// Main task completed, output prompt is running
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			const runId = [...manager.getActiveRunMap().keys()][0];
+
+			manager.stopRun(runId);
+
+			// Should have called onStopCueRun for both the parent and output process
+			expect(deps.onStopCueRun).toHaveBeenCalledTimes(2);
+			expect(deps.onStopCueRun).toHaveBeenCalledWith(runId);
+			// The output prompt's runId is the second UUID generated (run-2 is the parent, run-3 is the outputEvent id, run-4... let's check)
+			// UUIDs: run-1 = parent runId, run-2 = outputRunId, run-3 = outputEvent.id
+			// Actually: the parent run generates run-1 (runId), then outputRunId = run-2, outputEvent.id = run-3
+			const outputRunId = (deps.onStopCueRun as ReturnType<typeof vi.fn>).mock.calls[1][0];
+			expect(outputRunId).not.toBe(runId);
+		});
+
+		it('stopRun does not double-call onStopCueRun when not in output phase', () => {
+			const deps = createDeps({ onCueRun: vi.fn(() => new Promise(() => {})) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			const runId = manager.getActiveRuns()[0].runId;
+
+			manager.stopRun(runId);
+
+			// Only one call since no output prompt phase
+			expect(deps.onStopCueRun).toHaveBeenCalledTimes(1);
+			expect(deps.onStopCueRun).toHaveBeenCalledWith(runId);
+		});
+	});
+
+	describe('DB error Sentry reporting', () => {
+		it('reports updateCueEventStatus failure to Sentry on stop', () => {
+			const dbError = new Error('SQLITE_BUSY');
+			(updateCueEventStatus as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+				throw dbError;
+			});
+			const deps = createDeps({ onCueRun: vi.fn(() => new Promise(() => {})) });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			const runId = manager.getActiveRuns()[0].runId;
+
+			manager.stopRun(runId);
+
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				dbError,
+				expect.objectContaining({ operation: 'cue:updateEventStatus', runId, status: 'stopped' })
+			);
+			expect(deps.onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('Failed to update DB status')
+			);
+		});
+
+		it('reports updateCueEventStatus failure to Sentry on natural completion', async () => {
+			const dbError = new Error('SQLITE_CORRUPT');
+			(updateCueEventStatus as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+				throw dbError;
+			});
+			const deps = createDeps();
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				dbError,
+				expect.objectContaining({ operation: 'cue:updateEventStatus', status: 'completed' })
+			);
 		});
 	});
 

@@ -351,6 +351,25 @@ describe('cue-spawn-builder', () => {
 					expect(result.spec.stdinPrompt).toBe('large prompt content');
 				}
 			});
+
+			it('still appends prompt when SSH is enabled but sshStore is missing', async () => {
+				// SSH enabled in config, but no sshStore → SSH wrapping skipped
+				// Prompt should still be appended for local fallback
+				const result = await buildSpawnSpec(
+					createConfig({
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						// sshStore deliberately omitted
+					}),
+					'Hello world'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					const args = result.spec.args;
+					expect(args[args.length - 1]).toBe('Hello world');
+					expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+				}
+			});
 		});
 	});
 });

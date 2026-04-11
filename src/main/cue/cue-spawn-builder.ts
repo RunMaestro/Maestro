@@ -138,9 +138,10 @@ export async function buildSpawnSpec(
 		}
 	}
 
-	// 5. For local execution: append prompt as a positional CLI argument.
-	// SSH mode skips this — wrapSpawnWithSsh already embedded the prompt.
-	if (!sshRemoteConfig?.enabled) {
+	// 5. Append prompt as a positional CLI argument when the SSH wrapper
+	// was NOT actually used. If sshRemoteConfig.enabled is true but sshStore
+	// was missing, SSH wrapping was skipped so we still need to append.
+	if (!sshRemoteUsed) {
 		if (agentDef.promptArgs) {
 			spawnArgs = [...spawnArgs, ...agentDef.promptArgs(substitutedPrompt)];
 		} else if (agentDef.noPromptSeparator) {
