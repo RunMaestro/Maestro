@@ -1305,6 +1305,125 @@ describe('cue-executor', () => {
 
 			expect(result.stdout).toBe(rawOutput);
 		});
+
+		it('should fall back to assistant text when result event has empty text', async () => {
+			// Simulates Claude Code output where the result event has an empty
+			// string but assistant messages contain the actual response text.
+			const msgId = 'msg_test123';
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant' && msg.message?.content) {
+							const textBlock = msg.message.content.find((b: any) => b.type === 'text');
+							return {
+								type: 'text',
+								text: textBlock?.text || '',
+								sessionId: msg.session_id,
+								isPartial: true,
+								raw: msg,
+							};
+						}
+						if (msg.type === 'result') {
+							return { type: 'result', text: msg.result || '', raw: msg };
+						}
+						return { type: 'system', raw: msg };
+					} catch {
+						return { type: 'system', raw: {} };
+					}
+				},
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Here is the summary of your data.' }],
+					},
+					session_id: 'sess-1',
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'tool_1', name: 'Bash', input: {} }],
+					},
+					session_id: 'sess-1',
+				}),
+				JSON.stringify({
+					type: 'result',
+					result: '',
+					session_id: 'sess-1',
+				}),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Here is the summary of your data.');
+		});
+
+		it('should deduplicate streaming assistant chunks by message ID', async () => {
+			// Claude Code streams assistant messages as chunks with increasing
+			// content. The same message ID appears multiple times. We should
+			// keep only the longest (latest) version per message ID.
+			const msgId = 'msg_dedup';
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant' && msg.message?.content) {
+							const textBlock = msg.message.content.find((b: any) => b.type === 'text');
+							return {
+								type: 'text',
+								text: textBlock?.text || '',
+								isPartial: true,
+								raw: msg,
+							};
+						}
+						if (msg.type === 'result') {
+							return { type: 'result', text: msg.result || '', raw: msg };
+						}
+						return { type: 'system', raw: msg };
+					} catch {
+						return { type: 'system', raw: {} };
+					}
+				},
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({
+					type: 'assistant',
+					message: { id: msgId, content: [{ type: 'text', text: 'Hello' }] },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						content: [{ type: 'text', text: 'Hello, here is a longer response.' }],
+					},
+				}),
+				JSON.stringify({ type: 'result', result: '' }),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Hello, here is a longer response.');
+		});
 	});
 
 	describe('getCueProcessList', () => {

@@ -12,7 +12,7 @@
 
 import * as crypto from 'crypto';
 import type { CueEvent, CueRunResult, CueSubscription } from './cue-types';
-import type { HistoryEntry, SessionInfo } from '../../shared/types';
+import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
@@ -23,6 +23,7 @@ import {
 	getActiveProcessMap,
 	getProcessList,
 } from './cue-process-lifecycle';
+import { getOutputParser } from '../parsers';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
@@ -51,6 +52,57 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+}
+
+/**
+ * Extract clean human-readable text from agent stdout.
+ * For agents that output JSON/NDJSON (like OpenCode --format json), parses each
+ * line and collects text from 'result' events. Falls back to raw stdout when no
+ * parser is available or no result-text events are found (e.g. plain-text agents).
+ */
+function extractCleanStdout(rawStdout: string, toolType: string): string {
+	if (!rawStdout.trim()) {
+		return rawStdout;
+	}
+
+	const parser = getOutputParser(toolType as ToolType);
+	if (!parser) {
+		return rawStdout;
+	}
+
+	const resultParts: string[] = [];
+	const assistantTextByMessage = new Map<string, string>();
+	const assistantTextWithoutId: string[] = [];
+	for (const line of rawStdout.split('\n')) {
+		if (!line.trim()) continue;
+		const event = parser.parseJsonLine(line);
+		if (event?.type === 'result' && event.text) {
+			resultParts.push(event.text);
+		} else if (event?.type === 'text' && event.text) {
+			// Track assistant text per message ID to avoid duplication from
+			// streaming chunks. Each chunk for the same message ID carries the
+			// full text so far, so we keep only the latest (longest) version.
+			const raw = event.raw as { message?: { id?: string } } | undefined;
+			const msgId = raw?.message?.id;
+			if (msgId) {
+				const existing = assistantTextByMessage.get(msgId);
+				if (!existing || event.text.length > existing.length) {
+					assistantTextByMessage.set(msgId, event.text);
+				}
+			} else {
+				assistantTextWithoutId.push(event.text);
+			}
+		}
+	}
+
+	// Prefer explicit result text, fall back to assistant message text
+	if (resultParts.length > 0) {
+		return resultParts.join('\n');
+	}
+	if (assistantTextByMessage.size > 0 || assistantTextWithoutId.length > 0) {
+		return [...assistantTextByMessage.values(), ...assistantTextWithoutId].join('\n');
+	}
+	return rawStdout;
 }
 
 /**
@@ -131,7 +183,7 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		subscriptionName: subscription.name,
 		event,
 		status: processResult.status,
-		stdout: processResult.stdout,
+		stdout: extractCleanStdout(processResult.stdout, config.toolType),
 		stderr: processResult.stderr,
 		exitCode: processResult.exitCode,
 		durationMs: Date.now() - startTime,
