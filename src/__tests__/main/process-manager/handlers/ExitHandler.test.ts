@@ -44,6 +44,7 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
+import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
@@ -319,6 +320,80 @@ describe('ExitHandler', () => {
 			exitHandler.handleExit('unknown-session', 1);
 
 			expect(exitEvents).toEqual([{ sessionId: 'unknown-session', code: 1 }]);
+		});
+	});
+
+	describe('SSH error pattern false-positive prevention', () => {
+		it('should only check stderr for SSH patterns, not stdout', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(null);
+
+			const proc = createMockProcess({
+				sshRemoteId: 'remote-1',
+				// stdout contains JSONL with response text that mentions "command not found"
+				stdoutBuffer:
+					'{"type":"assistant","message":{"content":[{"text":"bash: opencode: command not found"}]}}\n',
+				stderrBuffer: 'Warning: something harmless',
+			});
+			processes.set('test-session', proc);
+
+			exitHandler.handleExit('test-session', 1);
+
+			// Should be called with stderr only, NOT the combined stdout+stderr
+			expect(mockedMatchSsh).toHaveBeenCalledWith('Warning: something harmless');
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('should NOT false-positive when agent response text contains SSH error keywords', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			// Return null — no SSH error in stderr
+			mockedMatchSsh.mockReturnValue(null);
+
+			const proc = createMockProcess({
+				sshRemoteId: 'remote-1',
+				stdoutBuffer:
+					'{"type":"result","result":"The pattern bash:.*opencode.*command not found matches shell errors"}\n',
+				stderrBuffer: '',
+			});
+			processes.set('test-session', proc);
+
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (...args: unknown[]) => errors.push(args));
+
+			exitHandler.handleExit('test-session', 1);
+
+			// matchSshErrorPattern should receive empty stderr, not the stdout with response text
+			expect(mockedMatchSsh).toHaveBeenCalledWith('');
+			expect(errors).toHaveLength(0);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('should detect real SSH errors from stderr', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'OpenCode command not found.',
+				recoverable: false,
+			});
+
+			const proc = createMockProcess({
+				sshRemoteId: 'remote-1',
+				stdoutBuffer: '',
+				stderrBuffer: 'bash: opencode: command not found',
+			});
+			processes.set('test-session', proc);
+
+			const errors: Array<[string, unknown]> = [];
+			emitter.on('agent-error', (sid: string, err: unknown) => errors.push([sid, err]));
+
+			exitHandler.handleExit('test-session', 1);
+
+			expect(mockedMatchSsh).toHaveBeenCalledWith('bash: opencode: command not found');
+			expect(errors).toHaveLength(1);
+
+			mockedMatchSsh.mockReset();
 		});
 	});
 });

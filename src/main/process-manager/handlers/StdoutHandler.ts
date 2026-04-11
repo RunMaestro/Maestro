@@ -200,7 +200,10 @@ export class StdoutHandler {
 		}
 
 		// ── SSH error detection (line-based — SSH patterns are plain text) ──
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId) {
+		// Only check non-JSON lines. Valid JSON lines contain structured agent output
+		// (e.g., assistant messages) whose text content can false-positive match SSH
+		// error patterns like "command not found" when the agent quotes shell commands.
+		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && parsed === null) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
 				managedProcess.errorEmitted = true;

@@ -48,6 +48,7 @@ vi.mock('../../../../main/parsers/error-patterns', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1584,5 +1585,96 @@ describe('StdoutHandler — single JSON parse per line', () => {
 		// Should fall back to line-based detection since JSON.parse fails
 		expect(mockParser.detectErrorFromLine).toHaveBeenCalledTimes(1);
 		expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
+	});
+
+	describe('SSH error pattern false-positive prevention', () => {
+		it('should NOT check SSH patterns on valid JSON lines (prevents false positives from response text)', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'OpenCode command not found.',
+				recoverable: false,
+			});
+
+			const mockParser = {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(() => null),
+				parseJsonObject: vi.fn(() => ({
+					type: 'text',
+					text: 'response with opencode command not found',
+				})),
+				isResultMessage: vi.fn(() => false),
+				extractSessionId: vi.fn(() => null),
+				extractUsage: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+			});
+
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (...args: unknown[]) => errors.push(args));
+
+			// Send a valid JSON line whose text content would match SSH error patterns
+			const jsonLine = JSON.stringify({
+				type: 'assistant',
+				message: { content: [{ text: 'bash: opencode: command not found' }] },
+			});
+			handler.handleData(sessionId, jsonLine + '\n');
+
+			// SSH pattern check should NOT have been called for a valid JSON line
+			expect(mockedMatchSsh).not.toHaveBeenCalled();
+			expect(errors).toHaveLength(0);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('should check SSH patterns on non-JSON lines for SSH sessions', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue({
+				type: 'agent_crashed',
+				message: 'OpenCode command not found.',
+				recoverable: false,
+			});
+
+			const mockParser = {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn(() => null),
+				parseJsonObject: vi.fn(() => null),
+				isResultMessage: vi.fn(() => false),
+				extractSessionId: vi.fn(() => null),
+				extractUsage: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				detectErrorFromLine: vi.fn(() => null),
+				detectErrorFromParsed: vi.fn(() => null),
+				detectErrorFromExit: vi.fn(() => null),
+			};
+
+			const { handler, sessionId, emitter } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: mockParser as any,
+				sshRemoteId: 'remote-1',
+			});
+
+			const errors: Array<[string, unknown]> = [];
+			emitter.on('agent-error', (sid: string, err: unknown) => errors.push([sid, err]));
+
+			// Send a plain text line (not JSON) — this is a real SSH error
+			handler.handleData(sessionId, 'bash: opencode: command not found\n');
+
+			// SSH pattern check SHOULD be called for non-JSON lines
+			expect(mockedMatchSsh).toHaveBeenCalledWith('bash: opencode: command not found');
+			expect(errors).toHaveLength(1);
+
+			mockedMatchSsh.mockReset();
+		});
 	});
 });
