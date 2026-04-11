@@ -76,6 +76,7 @@ export const TerminalView = memo(
 		// Dedup spawn-failure toasts: batch rapid failures into a single notification
 		const spawnFailureCountRef = useRef(0);
 		const spawnFailureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const spawnFailureLastMessageRef = useRef<string | null>(null);
 		// Stable refs for callback props — prevents spawnPtyForTab from getting a new
 		// identity on every render, which would re-trigger the spawn useEffect in a loop.
 		const onTabPidChangeRef = useRef(onTabPidChange);
@@ -87,20 +88,29 @@ export const TerminalView = memo(
 		// triggers many tabs at once) into a single toast with a count.
 		const notifySpawnFailure = useCallback((message: string) => {
 			spawnFailureCountRef.current++;
+			// Always store the most recent message, but never let a non-SSH message
+			// overwrite an SSH-specific one (SSH messages take precedence).
+			if (
+				!spawnFailureLastMessageRef.current ||
+				message.startsWith('SSH ') ||
+				!spawnFailureLastMessageRef.current.startsWith('SSH ')
+			) {
+				spawnFailureLastMessageRef.current = message;
+			}
 			if (spawnFailureTimerRef.current) {
 				clearTimeout(spawnFailureTimerRef.current);
 			}
 			spawnFailureTimerRef.current = setTimeout(() => {
 				const count = spawnFailureCountRef.current;
+				const lastMessage = spawnFailureLastMessageRef.current ?? message;
 				spawnFailureCountRef.current = 0;
+				spawnFailureLastMessageRef.current = null;
 				spawnFailureTimerRef.current = null;
 				notifyToast({
 					type: 'error',
 					title: count > 1 ? `Failed to start ${count} terminals` : 'Failed to start terminal',
 					message:
-						count > 1
-							? `${count} shell processes could not be started. Check system PTY availability.`
-							: message,
+						count > 1 ? `${count} terminals could not be started. ${lastMessage}` : lastMessage,
 				});
 			}, 200);
 		}, []);
@@ -150,19 +160,25 @@ export const TerminalView = memo(
 				// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
 				// to sshRemoteId which is set after an AI agent connects. Without this fallback,
 				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
+				//
+				// workingDirOverride must be a REMOTE path. session.remoteCwd is the tracked remote
+				// working directory; sessionSshRemoteConfig.workingDirOverride is the user-configured
+				// remote project root. session.cwd is LOCAL and must NOT be used here — it would
+				// cause `cd "/local/path"` on the remote, which fails and exits SSH immediately.
 				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
 					? {
 							...session.sessionSshRemoteConfig,
 							workingDirOverride:
-								session.sessionSshRemoteConfig.workingDirOverride || session.cwd || undefined,
+								session.sessionSshRemoteConfig.workingDirOverride || session.remoteCwd || undefined,
 						}
 					: session.sshRemoteId
 						? {
 								enabled: true,
 								remoteId: session.sshRemoteId,
-								// Use session.cwd as the remote working directory so the terminal starts
-								// in the project directory rather than the remote home directory.
-								workingDirOverride: session.cwd || undefined,
+								workingDirOverride:
+									session.remoteCwd ||
+									session.sessionSshRemoteConfig?.workingDirOverride ||
+									undefined,
 							}
 						: undefined;
 
@@ -184,7 +200,9 @@ export const TerminalView = memo(
 							// Spawn failed — close the tab and notify via batched toast
 							setTimeout(() => closeTerminalTab(tabId), 0);
 							notifySpawnFailure(
-								'The shell process could not be started. Check system PTY availability.'
+								effectiveSshConfig?.enabled
+									? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
+									: 'The shell process could not be started. Check system PTY availability.'
 							);
 						}
 					})
@@ -209,6 +227,7 @@ export const TerminalView = memo(
 			[
 				session.id,
 				session.cwd,
+				session.remoteCwd,
 				session.sessionSshRemoteConfig,
 				session.sshRemoteId,
 				defaultShell,

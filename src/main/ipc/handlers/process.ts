@@ -22,6 +22,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
+import { shellEscape } from '../../utils/shell-escape';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
@@ -880,23 +881,37 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							hasWorkingDirOverride: !!config.sessionSshRemoteConfig.workingDirOverride,
 						});
 						// For SSH terminal tabs we spawn ssh interactively so xterm.js can interact
-						const sshArgs = [
-							sshResult.config.username
-								? `${sshResult.config.username}@${sshResult.config.host}`
-								: sshResult.config.host,
-						];
-						if (sshResult.config.port && sshResult.config.port !== 22) {
-							sshArgs.unshift('-p', String(sshResult.config.port));
-						}
+						const sshArgs: string[] = [];
+
+						// SSH options for reliable connection (consistent with SshRemoteManager)
+						sshArgs.push('-o', 'StrictHostKeyChecking=accept-new');
+						sshArgs.push('-o', 'ConnectTimeout=10');
+						sshArgs.push('-o', 'ClearAllForwardings=yes');
+
 						if (sshResult.config.privateKeyPath) {
-							sshArgs.unshift('-i', sshResult.config.privateKeyPath);
+							sshArgs.push('-i', sshResult.config.privateKeyPath);
 						}
+						if (sshResult.config.port && sshResult.config.port !== 22) {
+							sshArgs.push('-p', String(sshResult.config.port));
+						}
+
 						// If workingDirOverride is set, cd to that directory after connecting.
 						// -t forces PTY allocation (required when passing a remote command).
 						const workingDirOverride = config.sessionSshRemoteConfig.workingDirOverride;
 						if (workingDirOverride) {
-							sshArgs.unshift('-t');
-							sshArgs.push(`cd ${JSON.stringify(workingDirOverride)} && exec $SHELL`);
+							sshArgs.push('-t');
+						}
+
+						// Destination: user@host or just host
+						sshArgs.push(
+							sshResult.config.username
+								? `${sshResult.config.username}@${sshResult.config.host}`
+								: sshResult.config.host
+						);
+
+						// Remote command (must come after destination)
+						if (workingDirOverride) {
+							sshArgs.push(`cd ${shellEscape(workingDirOverride)} && exec "$SHELL"`);
 						}
 						return processManager.spawn({
 							sessionId: config.sessionId,

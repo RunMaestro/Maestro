@@ -1058,13 +1058,29 @@ describe('process IPC handlers', () => {
 				},
 			});
 
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'ssh',
-					args: expect.arrayContaining(['devuser@dev.example.com']),
-					toolType: 'terminal',
-				})
-			);
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.command).toBe('ssh');
+			expect(spawnCall.toolType).toBe('terminal');
+			const args: string[] = spawnCall.args;
+
+			// Verify SSH options appear before destination and in correct paired order
+			const hostIndex = args.indexOf('devuser@dev.example.com');
+			expect(hostIndex).toBeGreaterThan(0);
+
+			const expectedOptions = [
+				['StrictHostKeyChecking=accept-new'],
+				['ConnectTimeout=10'],
+				['ClearAllForwardings=yes'],
+			];
+			let lastOptionIndex = -1;
+			for (const [value] of expectedOptions) {
+				const oIndex = args.indexOf('-o', lastOptionIndex + 1);
+				expect(oIndex).toBeGreaterThan(lastOptionIndex);
+				expect(oIndex).toBeLessThan(hostIndex);
+				expect(args[oIndex + 1]).toBe(value);
+				lastOptionIndex = oIndex + 1;
+			}
+
 			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5001, success: true });
 		});
@@ -1094,10 +1110,38 @@ describe('process IPC handlers', () => {
 			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
 			expect(tIndex).toBeGreaterThanOrEqual(0);
 			expect(tIndex).toBeLessThan(hostIndex);
-			// Remote command to cd and exec shell must be the last arg
+			// Destination must appear before the remote command
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
-			expect(lastArg).toContain('/remote/project');
-			expect(lastArg).toContain('exec $SHELL');
+			// Path must be shell-escaped (single-quoted) to prevent injection
+			expect(lastArg).toBe('cd \'/remote/project\' && exec "$SHELL"');
+			expect(lastArg).toContain('exec "$SHELL"');
+			// SSH options must be present
+			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
+			expect(spawnCall.args).toContain('ConnectTimeout=10');
+		});
+
+		it('should shell-escape workingDirOverride to prevent injection', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5010, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/tmp/$(whoami)',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Single-quoted path prevents command substitution
+			expect(lastArg).toBe('cd \'/tmp/$(whoami)\' && exec "$SHELL"');
 		});
 
 		it('should include port flag for non-default SSH port', async () => {
@@ -1119,6 +1163,9 @@ describe('process IPC handlers', () => {
 			const portIndex = spawnCall.args.indexOf('-p');
 			expect(portIndex).toBeGreaterThanOrEqual(0);
 			expect(spawnCall.args[portIndex + 1]).toBe('2222');
+			// Port must appear before destination
+			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
+			expect(portIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should include identity file flag when privateKeyPath is set', async () => {
@@ -1139,6 +1186,9 @@ describe('process IPC handlers', () => {
 			const keyIndex = spawnCall.args.indexOf('-i');
 			expect(keyIndex).toBeGreaterThanOrEqual(0);
 			expect(spawnCall.args[keyIndex + 1]).toBe('~/.ssh/id_ed25519');
+			// Identity file must appear before destination
+			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
+			expect(keyIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should return failure when SSH is enabled but remote config not found', async () => {
