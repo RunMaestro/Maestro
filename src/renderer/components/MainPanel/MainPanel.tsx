@@ -255,33 +255,58 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
-		// Fetch available models, effort levels, and agent defaults when agent type changes
+		// Fetch available models, effort levels, and agent defaults when session or agent type changes.
+		// The stale flag prevents a slow response from an earlier session overwriting
+		// the values for the current one (race between consecutive async fetches).
 		useEffect(() => {
 			if (!activeSession?.toolType) return;
+			let stale = false;
 			const agentId = activeSession.toolType;
+
+			// Clear immediately so stale values from the previous session
+			// are never shown while the new fetch is in flight.
+			setPillModels([]);
+			setPillEfforts([]);
+			setAgentDefaultModel('');
+			setAgentDefaultEffort('');
+
 			// Fetch models
 			window.maestro.agents
 				.getModels(agentId)
-				.then(setPillModels)
-				.catch(() => setPillModels([]));
+				.then((m) => {
+					if (!stale) setPillModels(m);
+				})
+				.catch(() => {
+					if (!stale) setPillModels([]);
+				});
 			// Fetch effort options — use the effort-related config key for this agent
 			const effortKey = agentId === 'codex' ? 'reasoningEffort' : 'effort';
 			window.maestro.agents
 				.getConfigOptions(agentId, effortKey)
-				.then(setPillEfforts)
-				.catch(() => setPillEfforts([]));
+				.then((o) => {
+					if (!stale) setPillEfforts(o);
+				})
+				.catch(() => {
+					if (!stale) setPillEfforts([]);
+				});
 			// Fetch agent-level config for default model/effort
 			window.maestro.agents
 				.getConfig(agentId)
 				.then((config) => {
+					if (stale) return;
 					setAgentDefaultModel(config?.model || '');
 					setAgentDefaultEffort(config?.effort || config?.reasoningEffort || '');
 				})
 				.catch(() => {
+					if (stale) return;
 					setAgentDefaultModel('');
 					setAgentDefaultEffort('');
 				});
-		}, [activeSession?.toolType]);
+
+			return () => {
+				stale = true;
+			};
+		}, [activeSession?.id, activeSession?.toolType]);
 
 		// Resolved current model/effort: session override > agent config > empty
 		const resolvedModel = activeSession?.customModel || agentDefaultModel;
