@@ -871,7 +871,6 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						const freshActiveTab = getActiveTab(freshSession);
 						const tabAgentSessionId = freshActiveTab?.agentSessionId;
 
-						// Guard: warn if spawning without a session ID for a tab that has prior logs
 						if (!tabAgentSessionId && freshActiveTab?.logs && freshActiveTab.logs.length > 0) {
 							console.warn(
 								'[InputProcessing] Spawning batch agent without agentSessionId for tab with existing logs',

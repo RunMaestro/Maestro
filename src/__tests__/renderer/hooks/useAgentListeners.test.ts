@@ -168,7 +168,6 @@ function createMockBatchedUpdater(): BatchedUpdater {
 		markUnread: vi.fn(),
 		updateUsage: vi.fn(),
 		updateContextUsage: vi.fn(),
-		resetContextUsage: vi.fn(),
 		updateCycleBytes: vi.fn(),
 		updateCycleTokens: vi.fn(),
 	};
@@ -638,7 +637,7 @@ describe('useAgentListeners', () => {
 			);
 			expect(resumeLog).toBeDefined();
 			// Should reset context usage
-			expect(deps.batchedUpdater.resetContextUsage).toHaveBeenCalledWith('sess-1', 0);
+			expect(deps.batchedUpdater.updateContextUsage).toHaveBeenCalledWith('sess-1', 0);
 		});
 
 		it('does not warn on resume success (same session ID returned)', () => {
@@ -664,7 +663,7 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'same-session-id');
 
 			// Should NOT reset context usage
-			expect(deps.batchedUpdater.resetContextUsage).not.toHaveBeenCalled();
+			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
 			// Session ID should remain unchanged
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
@@ -695,7 +694,7 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-1', 'existing-session');
 
 			// Context usage should NOT be reset
-			expect(deps.batchedUpdater.resetContextUsage).not.toHaveBeenCalled();
+			expect(deps.batchedUpdater.updateContextUsage).not.toHaveBeenCalled();
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
 			expect(updated?.contextUsage).toBe(48);
 		});
