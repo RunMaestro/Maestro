@@ -46,6 +46,7 @@ interface ClaudeRawMessage {
 	session_id?: string;
 	result?: string;
 	message?: {
+		id?: string;
 		role?: string;
 		content?: string | ClaudeContentBlock[];
 	};
