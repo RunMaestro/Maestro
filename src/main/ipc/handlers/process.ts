@@ -911,7 +911,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Remote command (must come after destination)
 						if (workingDirOverride) {
-							sshArgs.push(`cd ${shellEscape(workingDirOverride)} && exec "$SHELL"`);
+							// Handle leading ~ by using $HOME outside of quotes so the remote shell expands it
+							const cdPath = workingDirOverride.startsWith('~/')
+								? `"$HOME"/${shellEscape(workingDirOverride.slice(2))}`
+								: workingDirOverride === '~'
+									? '"$HOME"'
+									: shellEscape(workingDirOverride);
+							sshArgs.push(`cd ${cdPath} && exec "$SHELL"`);
 						}
 						return processManager.spawn({
 							sessionId: config.sessionId,

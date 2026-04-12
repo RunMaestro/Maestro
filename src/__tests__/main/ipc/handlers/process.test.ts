@@ -1154,6 +1154,53 @@ describe('process IPC handlers', () => {
 			expect(lastArg).toBe('cd \'/tmp/$(whoami)\' && exec "$SHELL"');
 		});
 
+		it('should expand tilde in workingDirOverride for remote shell', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5011, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/project',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
+			expect(lastArg).toBe('cd "$HOME"/\'project\' && exec "$SHELL"');
+		});
+
+		it('should handle bare tilde workingDirOverride', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5012, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			expect(lastArg).toBe('cd "$HOME" && exec "$SHELL"');
+		});
+
 		it('should include port flag for non-default SSH port', async () => {
 			const remoteWithPort = { ...mockSshRemoteForTerminal, port: 2222 };
 			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
