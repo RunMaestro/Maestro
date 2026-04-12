@@ -435,6 +435,30 @@ describe('CopilotCliOutputParser', () => {
 				expect(event?.type).toBe('error');
 				expect(event?.text).toBe('Rate limited');
 			});
+
+			it('should parse error from data.message when error field is absent', () => {
+				const line = JSON.stringify({
+					type: 'error',
+					data: { message: 'Context window exceeded' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('error');
+				expect(event?.text).toBe('Context window exceeded');
+			});
+
+			it('should parse session.error with nested error object', () => {
+				const line = JSON.stringify({
+					type: 'session.error',
+					data: { message: 'Model overloaded', errorType: 'server_error' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('error');
+				expect(event?.text).toBe('Model overloaded');
+			});
 		});
 
 		// ================================================================

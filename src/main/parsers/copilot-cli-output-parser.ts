@@ -238,7 +238,7 @@ export class CopilotCliOutputParser implements AgentOutputParser {
 				const result = msg.data?.result as
 					| { content?: string; detailedContent?: string }
 					| undefined;
-				let output = result?.content || '';
+				let output = result?.content || result?.detailedContent || '';
 				if (output.length > MAX_TOOL_OUTPUT_LENGTH) {
 					const originalLength = output.length;
 					output =
@@ -374,8 +374,10 @@ export class CopilotCliOutputParser implements AgentOutputParser {
 		// Handle generic error events
 		else if (obj.type?.includes('error') || obj.error) {
 			parsedJson = parsed;
-			errorText = extractErrorText(obj.error);
-			if (errorText === 'Unknown error') errorText = null;
+			errorText =
+				extractErrorText(obj.error, '') ||
+				extractErrorText(obj.data?.message as string, '') ||
+				null;
 		}
 
 		if (!errorText) {
