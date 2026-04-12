@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, powerMonitor } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import path from 'path';
 import os from 'os';
@@ -586,6 +586,46 @@ app.whenReady().then(async () => {
 	// Create main window
 	logger.info('Creating main window', 'Startup');
 	createWindow();
+
+	// In development, set the app icon explicitly (unpackaged apps have no bundle icon)
+	// dev:prod-data gets the production icon; RC branch + tag gets RC icon; otherwise dev icon
+	if (isDevelopment && !app.isPackaged) {
+		let iconFile: string;
+		if (process.env.USE_PROD_DATA) {
+			iconFile = 'Maestro.png';
+		} else {
+			iconFile = 'Maestro_dev.png';
+			try {
+				const { execSync } = require('child_process');
+				const appRoot = app.getAppPath();
+				const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+					cwd: appRoot,
+					encoding: 'utf8',
+				}).trim();
+				const tag = execSync('git tag --points-at HEAD', { cwd: appRoot, encoding: 'utf8' }).trim();
+				if (/rc/i.test(branch) && tag) {
+					iconFile = 'Maestro_rc.png';
+				}
+			} catch {
+				// git not available or not a git repo — fall back to dev icon
+			}
+		}
+		const iconDir = path.join(app.getAppPath(), 'build', 'newest-icon');
+		const iconPath = path.join(iconDir, iconFile);
+		const icon = nativeImage.createFromPath(iconPath);
+		if (!icon.isEmpty()) {
+			if (isMacOS() && app.dock) {
+				// Use padded _dock variant if available, otherwise the original
+				const dockFile = iconFile.replace('.png', '_dock.png');
+				const dockPath = path.join(iconDir, dockFile);
+				const dockIcon = nativeImage.createFromPath(dockPath);
+				app.dock.setIcon(!dockIcon.isEmpty() ? dockPath : iconPath);
+			}
+			if (mainWindow) {
+				mainWindow.setIcon(icon);
+			}
+		}
+	}
 
 	// Flush any deep link URL that arrived before the window was ready (cold start)
 	flushPendingDeepLink(() => mainWindow);
