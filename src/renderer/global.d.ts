@@ -2732,6 +2732,15 @@ interface MaestroAPI {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
+
+	// Feedback API (Send Feedback feature)
+	feedback: {
+		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		submit: (
+			sessionId: string,
+			feedbackText: string
+		) => Promise<{ success: boolean; error?: string }>;
+	};
 }
 
 declare global {
