@@ -1081,11 +1081,16 @@ describe('process IPC handlers', () => {
 				lastOptionIndex = oIndex + 1;
 			}
 
+			// -t must appear before the destination for all SSH terminal sessions
+			const tIndex = args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
+
 			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5001, success: true });
 		});
 
-		it('should add -t flag and remote cd command when workingDirOverride is set', async () => {
+		it('should add remote cd command when workingDirOverride is set', async () => {
 			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
 				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
 				return defaultValue;
@@ -1166,6 +1171,10 @@ describe('process IPC handlers', () => {
 			// Port must appear before destination
 			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
 			expect(portIndex).toBeLessThan(hostIndex);
+			// -t must appear before destination
+			const tIndex = spawnCall.args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should include identity file flag when privateKeyPath is set', async () => {
@@ -1189,6 +1198,10 @@ describe('process IPC handlers', () => {
 			// Identity file must appear before destination
 			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
 			expect(keyIndex).toBeLessThan(hostIndex);
+			// -t must appear before destination
+			const tIndex = spawnCall.args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should return failure when SSH is enabled but remote config not found', async () => {

@@ -895,12 +895,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							sshArgs.push('-p', String(sshResult.config.port));
 						}
 
-						// If workingDirOverride is set, cd to that directory after connecting.
-						// -t forces PTY allocation (required when passing a remote command).
+						// -t forces PTY allocation, required for interactive SSH terminals
+						// regardless of whether a remote command is specified.
+						sshArgs.push('-t');
+
 						const workingDirOverride = config.sessionSshRemoteConfig.workingDirOverride;
-						if (workingDirOverride) {
-							sshArgs.push('-t');
-						}
 
 						// Destination: user@host or just host
 						sshArgs.push(
