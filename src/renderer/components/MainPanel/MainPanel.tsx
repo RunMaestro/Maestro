@@ -249,32 +249,49 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
-		// Fetch available models, effort levels, and agent defaults when agent type changes
+		// Fetch available models, effort levels, and agent defaults when agent type changes.
+		// Uses a stale flag to prevent race conditions when switching between agents —
+		// without this, a slow response (e.g., `opencode models` subprocess) from the
+		// previous agent can overwrite the current agent's model list.
 		useEffect(() => {
 			if (!activeSession?.toolType) return;
+			let stale = false;
 			const agentId = activeSession.toolType;
 			// Fetch models
 			window.maestro.agents
 				.getModels(agentId)
-				.then(setPillModels)
-				.catch(() => setPillModels([]));
+				.then((models) => {
+					if (!stale) setPillModels(models);
+				})
+				.catch(() => {
+					if (!stale) setPillModels([]);
+				});
 			// Fetch effort options — use the effort-related config key for this agent
 			const effortKey = agentId === 'codex' ? 'reasoningEffort' : 'effort';
 			window.maestro.agents
 				.getConfigOptions(agentId, effortKey)
-				.then(setPillEfforts)
-				.catch(() => setPillEfforts([]));
+				.then((efforts) => {
+					if (!stale) setPillEfforts(efforts);
+				})
+				.catch(() => {
+					if (!stale) setPillEfforts([]);
+				});
 			// Fetch agent-level config for default model/effort
 			window.maestro.agents
 				.getConfig(agentId)
 				.then((config) => {
+					if (stale) return;
 					setAgentDefaultModel(config?.model || '');
 					setAgentDefaultEffort(config?.effort || config?.reasoningEffort || '');
 				})
 				.catch(() => {
+					if (stale) return;
 					setAgentDefaultModel('');
 					setAgentDefaultEffort('');
 				});
+			return () => {
+				stale = true;
+			};
 		}, [activeSession?.toolType]);
 
 		// Resolved current model/effort: session override > agent config > empty
