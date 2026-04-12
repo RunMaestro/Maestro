@@ -816,6 +816,9 @@ interface MaestroAPI {
 				worktree: { path: string; name: string; branch: string | null };
 			}) => void
 		) => () => void;
+		onWorktreeRemoved: (
+			callback: (data: { sessionId: string; worktreePath: string }) => void
+		) => () => void;
 	};
 	fs: {
 		homeDir: () => Promise<string>;

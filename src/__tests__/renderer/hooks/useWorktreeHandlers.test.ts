@@ -46,6 +46,7 @@ const mockGit = {
 	watchWorktreeDirectory: vi.fn().mockResolvedValue({ success: true }),
 	unwatchWorktreeDirectory: vi.fn(),
 	onWorktreeDiscovered: vi.fn().mockReturnValue(() => {}),
+	onWorktreeRemoved: vi.fn().mockReturnValue(() => {}),
 	worktreeSetup: vi.fn().mockResolvedValue({ success: true }),
 	removeWorktree: vi.fn().mockResolvedValue({ success: true }),
 };
@@ -1465,6 +1466,108 @@ describe('Effects', () => {
 			expect(removeListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
 
 			removeListenerSpy.mockRestore();
+		});
+	});
+
+	describe('Worktree removal detection', () => {
+		it('removes child session when worktree:removed event fires', () => {
+			let removalCallback: ((data: any) => void) | undefined;
+			mockGit.onWorktreeRemoved.mockImplementation((cb: any) => {
+				removalCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			const child = createChildSession({
+				id: 'child-to-remove',
+				cwd: '/projects/worktrees/feature-1',
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch, child],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Simulate worktree removal from CLI
+			act(() => {
+				removalCallback!({
+					sessionId: 'parent-1',
+					worktreePath: '/projects/worktrees/feature-1',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.find((s) => s.id === 'child-to-remove')).toBeUndefined();
+			expect(sessions.find((s) => s.id === 'parent-1')).toBeDefined();
+		});
+
+		it('does not remove sessions when path does not match any child', () => {
+			let removalCallback: ((data: any) => void) | undefined;
+			mockGit.onWorktreeRemoved.mockImplementation((cb: any) => {
+				removalCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			const child = createChildSession({
+				id: 'child-stays',
+				cwd: '/projects/worktrees/feature-1',
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch, child],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Fire removal for a path that doesn't match any child
+			act(() => {
+				removalCallback!({
+					sessionId: 'parent-1',
+					worktreePath: '/projects/worktrees/nonexistent',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions).toHaveLength(2);
+		});
+
+		it('cleans up removal listener on unmount', () => {
+			const cleanupFn = vi.fn();
+			mockGit.onWorktreeRemoved.mockReturnValue(cleanupFn);
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			const { unmount } = renderHook(() => useWorktreeHandlers());
+			unmount();
+
+			expect(cleanupFn).toHaveBeenCalled();
 		});
 	});
 });

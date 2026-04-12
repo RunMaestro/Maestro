@@ -682,6 +682,29 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			});
 		});
 
+		// Listen for worktree removals (e.g., git worktree remove from CLI)
+		const cleanupRemovalListener = window.maestro.git.onWorktreeRemoved((data) => {
+			const { sessionId, worktreePath } = data;
+			console.warn(`[WT-DEBUG] onWorktreeRemoved fired:`, { sessionId, worktreePath });
+
+			const normalizedRemovedPath = normalizePath(worktreePath);
+
+			useSessionStore.getState().setSessions((prev) => {
+				const childToRemove = prev.find(
+					(s) => s.parentSessionId === sessionId && normalizePath(s.cwd) === normalizedRemovedPath
+				);
+				if (!childToRemove) return prev;
+
+				notifyToast({
+					type: 'info',
+					title: 'Worktree Removed',
+					message: childToRemove.worktreeBranch || childToRemove.name,
+				});
+
+				return prev.filter((s) => s.id !== childToRemove.id);
+			});
+		});
+
 		// Visibility-change rescan: detects worktrees created by CLI or external tools
 		// while the app was in the background or if the chokidar watcher missed the event.
 		const handleVisibilityChange = () => {
@@ -694,6 +717,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 
 		return () => {
 			cleanupListener();
+			cleanupRemovalListener();
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			for (const session of watchableSessions) {
 				window.maestro.git.unwatchWorktreeDirectory(session.id);

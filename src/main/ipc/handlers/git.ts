@@ -1299,6 +1299,24 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 						worktreeWatchDebounceTimers.set(sessionId, timer);
 					});
 
+					// Handler for directory removals (e.g., git worktree remove from CLI)
+					watcher.on('unlinkDir', (dirPath: string) => {
+						if (dirPath === worktreePath) return;
+
+						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
+						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
+
+						const windows = BrowserWindow.getAllWindows();
+						for (const win of windows) {
+							if (isWebContentsAvailable(win)) {
+								win.webContents.send('worktree:removed', {
+									sessionId,
+									worktreePath: dirPath,
+								});
+							}
+						}
+					});
+
 					watcher.on('error', (error) => {
 						logger.error(
 							`${LOG_CONTEXT} Worktree watcher error for session ${sessionId}: ${error}`
