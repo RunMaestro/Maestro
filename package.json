@@ -25,6 +25,7 @@
 		"dev:web": "vite --config vite.config.web.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
 		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
+		"build:prompts": "echo 'No-op: prompts are now loaded from disk at runtime (see prompt-manager.ts)'",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
