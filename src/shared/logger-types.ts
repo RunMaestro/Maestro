@@ -56,4 +56,3 @@ export interface SystemLogEntry {
 	/** Optional additional data */
 	data?: unknown;
 }
-
