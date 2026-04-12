@@ -78,10 +78,17 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
-	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
+	InputArea: (props: {
+		session: { name: string };
+		onInputFocus: () => void;
+		availableModels?: string[];
+	}) => {
 		return React.createElement(
 			'div',
-			{ 'data-testid': 'input-area' },
+			{
+				'data-testid': 'input-area',
+				'data-available-models': JSON.stringify(props.availableModels ?? []),
+			},
 			React.createElement('input', { 'data-testid': 'input-field', onFocus: props.onInputFocus }),
 			`Input for ${props.session?.name}`
 		);
@@ -3549,10 +3556,17 @@ describe('MainPanel', () => {
 				resolveOpenCodeModels(openCodeModels);
 			});
 
-			// The stale OpenCode models should NOT appear — Claude models should persist.
-			// getModels was called for both agents
+			// Both IPC calls should have fired
 			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
 			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+
+			// The stale OpenCode models should NOT appear — Claude models should persist.
+			// Verify via the data attribute exposed by the InputArea mock.
+			await waitFor(() => {
+				const inputArea = screen.getByTestId('input-area');
+				const models = JSON.parse(inputArea.getAttribute('data-available-models') || '[]');
+				expect(models).toEqual(claudeModels);
+			});
 		});
 	});
 });
