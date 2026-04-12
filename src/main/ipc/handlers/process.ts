@@ -27,6 +27,7 @@ import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
+import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
@@ -916,7 +917,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							sessionId: config.sessionId,
 							toolType: 'terminal',
 							cwd: os.homedir(),
-							command: 'ssh',
+							command: await resolveSshPath(),
 							args: sshArgs,
 							shellEnvVars: mergedEnvVars,
 							cols: config.cols || 80,

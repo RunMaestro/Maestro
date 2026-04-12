@@ -191,6 +191,11 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	}),
 }));
 
+// Mock cliDetection to provide a resolved SSH path
+vi.mock('../../../../main/utils/cliDetection', () => ({
+	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
+}));
+
 describe('process IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockProcessManager: {
