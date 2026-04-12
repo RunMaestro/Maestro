@@ -325,6 +325,28 @@ describe('EditAgentModal', () => {
 		expect(onSave).toHaveBeenCalled();
 	});
 
+	it('should trigger save on Cmd+S when form is valid', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+		});
+
+		const dialog = screen.getByRole('group');
+		fireEvent.keyDown(dialog, { key: 's', metaKey: true });
+
+		expect(onSave).toHaveBeenCalled();
+	});
+
 	it('should not trigger save on Cmd+Enter when name is empty', async () => {
 		render(
 			<EditAgentModal

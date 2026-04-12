@@ -472,8 +472,8 @@ export function NewInstanceModal({
 				}
 				return;
 			}
-			// Handle Cmd+Enter for creating agent
-			if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			// Handle Cmd+Enter or Cmd+S for creating agent
+			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (isFormValid) {

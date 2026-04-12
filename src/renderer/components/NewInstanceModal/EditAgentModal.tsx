@@ -358,8 +358,8 @@ export function EditAgentModal({
 	// Handle keyboard shortcuts
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			// Handle Cmd+Enter for saving
-			if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			// Handle Cmd+Enter or Cmd+S for saving
+			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (isFormValid) {
