@@ -1717,6 +1717,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return new Promise((resolve) => {
 				const responseChannel = `remote:triggerCueSubscription:response:${randomUUID()}`;
 				let resolved = false;
+				// eslint-disable-next-line prefer-const -- circular ref: handleResponse clears the timeout, timeout references resolved
 				let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
 				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
