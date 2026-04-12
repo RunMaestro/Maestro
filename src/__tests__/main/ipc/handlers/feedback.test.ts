@@ -51,7 +51,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 // Mock prompts
-vi.mock('../../../../../prompts', () => ({
+vi.mock('../../../../prompts', () => ({
 	feedbackPrompt: 'Please file this feedback on GitHub: {{FEEDBACK}}',
 }));
 
@@ -173,12 +173,10 @@ describe('feedback IPC handlers', () => {
 		});
 
 		it('returns failure when process manager is unavailable', async () => {
-			registerFeedbackHandlers({ getProcessManager: () => null });
 			const newHandlers = new Map<string, Function>();
 			vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
 				newHandlers.set(channel, handler as Function);
 			});
-			// Re-register with null process manager
 			handlers = newHandlers;
 			registerFeedbackHandlers({ getProcessManager: () => null });
 

@@ -882,15 +882,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
-		{
-			id: 'feedback',
-			label: 'Send Feedback',
-			subtext: 'Report a bug or suggest a feature via GitHub',
-			action: () => {
-				setFeedbackModalOpen?.(true);
-				setQuickActionOpen(false);
-			},
-		},
+		...(setFeedbackModalOpen
+			? [
+					{
+						id: 'feedback',
+						label: 'Send Feedback',
+						subtext: 'Report a bug or suggest a feature via GitHub',
+						action: () => {
+							setFeedbackModalOpen(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		{
 			id: 'website',
 			label: 'Maestro Website',

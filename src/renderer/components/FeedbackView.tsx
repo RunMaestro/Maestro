@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { Theme, Session } from '../types';
+import { captureException } from '../utils/sentry';
 
 interface FeedbackViewProps {
 	theme: Theme;
@@ -18,8 +19,12 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 	const [submitError, setSubmitError] = useState<string | null>(null);
 
 	// Sessions that have an active agent process
-	const runningSessions = sessions.filter(
-		(s) => s.state === 'idle' || s.state === 'busy' || s.state === 'waiting_input'
+	const runningSessions = useMemo(
+		() =>
+			sessions.filter(
+				(s) => s.state === 'idle' || s.state === 'busy' || s.state === 'waiting_input'
+			),
+		[sessions]
 	);
 
 	useEffect(() => {
@@ -30,13 +35,19 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 	}, [runningSessions, selectedSessionId]);
 
 	const checkAuth = useCallback(async (): Promise<boolean> => {
-		const result = await window.maestro.feedback.checkGhAuth();
-		if (!result.authenticated) {
-			setAuthError(result.message ?? 'GitHub CLI authentication required.');
+		try {
+			const result = await window.maestro.feedback.checkGhAuth();
+			if (!result.authenticated) {
+				setAuthError(result.message ?? 'GitHub CLI authentication required.');
+				return false;
+			}
+			setAuthError(null);
+			return true;
+		} catch (error) {
+			captureException(error, { extra: { context: 'FeedbackView.checkAuth' } });
+			setAuthError('Unable to verify GitHub CLI authentication. Please try again.');
 			return false;
 		}
-		setAuthError(null);
-		return true;
 	}, []);
 
 	useEffect(() => {
@@ -50,18 +61,23 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 		setSubmitting(true);
 		setSubmitError(null);
 
-		// Pre-submit auth re-check
-		const stillAuthed = await checkAuth();
-		if (!stillAuthed) {
-			setSubmitting(false);
-			return;
-		}
+		try {
+			// Pre-submit auth re-check
+			const stillAuthed = await checkAuth();
+			if (!stillAuthed) return;
 
-		const result = await window.maestro.feedback.submit(selectedSessionId, feedbackText.trim());
-		if (result.success) {
-			onSubmitSuccess(selectedSessionId);
-		} else {
-			setSubmitError('The selected agent is no longer running. Please select another agent.');
+			const result = await window.maestro.feedback.submit(selectedSessionId, feedbackText.trim());
+			if (result.success) {
+				onSubmitSuccess(selectedSessionId);
+				return;
+			}
+			setSubmitError(
+				result.error ?? 'The selected agent is no longer running. Please select another agent.'
+			);
+		} catch (error) {
+			captureException(error, { extra: { context: 'FeedbackView.handleSubmit' } });
+			setSubmitError('Unable to send feedback. Please try again.');
+		} finally {
 			setSubmitting(false);
 		}
 	}, [selectedSessionId, feedbackText, checkAuth, onSubmitSuccess]);

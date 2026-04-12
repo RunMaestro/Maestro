@@ -22,7 +22,7 @@ Your job is to turn this raw feedback into a well-structured GitHub issue on Run
 
 3. **Ensure the label exists** — run this command first:
 
-   ```
+   ```bash
    gh label create "Maestro-feedback" --repo RunMaestro/Maestro --description "User feedback submitted via Maestro" --color "0E8A16"
    ```
 
@@ -30,7 +30,7 @@ Your job is to turn this raw feedback into a well-structured GitHub issue on Run
 
 4. **Create the issue**:
 
-   ```
+   ```bash
    gh issue create --repo RunMaestro/Maestro --label "Maestro-feedback" --title "TITLE" --body "BODY"
    ```
 

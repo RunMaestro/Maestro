@@ -99,8 +99,17 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 		'feedback:submit',
 		withIpcErrorLogging(
 			handlerOpts('submit'),
-			async (params: { sessionId: string; feedbackText: string }) => {
-				const { sessionId, feedbackText } = params;
+			async (params: { sessionId?: unknown; feedbackText?: unknown }) => {
+				const sessionId = typeof params?.sessionId === 'string' ? params.sessionId.trim() : '';
+				const feedbackText =
+					typeof params?.feedbackText === 'string' ? params.feedbackText.trim() : '';
+
+				if (!sessionId) {
+					return { success: false, error: 'Invalid session id' };
+				}
+				if (!feedbackText || feedbackText.length > 5000) {
+					return { success: false, error: 'Feedback must be between 1 and 5,000 characters' };
+				}
 
 				const processManager = getProcessManager();
 				if (!processManager) {
