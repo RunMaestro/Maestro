@@ -870,6 +870,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Use the ACTIVE TAB's agentSessionId (not the deprecated session-level one)
 						const freshActiveTab = getActiveTab(freshSession);
 						const tabAgentSessionId = freshActiveTab?.agentSessionId;
+
+						// Guard: warn if spawning without a session ID for a tab that has prior logs
+						if (!tabAgentSessionId && freshActiveTab?.logs && freshActiveTab.logs.length > 0) {
+							console.warn(
+								'[InputProcessing] Spawning batch agent without agentSessionId for tab with existing logs',
+								{
+									tabId: freshActiveTab.id,
+									logCount: freshActiveTab.logs.length,
+									sessionId: activeSessionId,
+								}
+							);
+						}
+
 						// Check CURRENT session's Auto Run state (not any session's) and respect worktree bypass
 						const currentSessionBatchState = getBatchState(activeSessionId);
 						const isAutoRunReadOnly =

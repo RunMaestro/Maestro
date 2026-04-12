@@ -168,6 +168,7 @@ function createMockBatchedUpdater(): BatchedUpdater {
 		markUnread: vi.fn(),
 		updateUsage: vi.fn(),
 		updateContextUsage: vi.fn(),
+		resetContextUsage: vi.fn(),
 		updateCycleBytes: vi.fn(),
 		updateCycleTokens: vi.fn(),
 	};
@@ -600,6 +601,103 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-batch-0-ai', 'agent-session-abc');
 
 			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
+		});
+
+		it('detects resume failure when agent returns a different session ID', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'old-session-id',
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Agent returns a DIFFERENT session ID → resume failed
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'new-session-id');
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+
+			// Should accept the new session ID (not keep the stale one)
+			expect(updatedTab?.agentSessionId).toBe('new-session-id');
+			// Should clear usage stats
+			expect(updatedTab?.usageStats).toBeUndefined();
+			// Should add a system log entry about resume failure
+			const resumeLog = updatedTab?.logs.find((l) =>
+				l.text.includes('Session resume failed')
+			);
+			expect(resumeLog).toBeDefined();
+			// Should reset context usage
+			expect(deps.batchedUpdater.resetContextUsage).toHaveBeenCalledWith('sess-1', 0);
+		});
+
+		it('does not warn on resume success (same session ID returned)', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'same-session-id',
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Agent returns the SAME session ID → resume succeeded
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'same-session-id');
+
+			// Should NOT reset context usage
+			expect(deps.batchedUpdater.resetContextUsage).not.toHaveBeenCalled();
+			// Session ID should remain unchanged
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const updatedTab = updated?.aiTabs.find((t) => t.id === 'tab-1');
+			expect(updatedTab?.agentSessionId).toBe('same-session-id');
+		});
+
+		it('preserves context gauge when resume succeeds', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				agentSessionId: 'existing-session',
+				awaitingSessionId: false,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				contextUsage: 48,
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			// Same session ID → resume succeeded
+			onSessionIdHandler?.('sess-1-ai-tab-1', 'existing-session');
+
+			// Context usage should NOT be reset
+			expect(deps.batchedUpdater.resetContextUsage).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			expect(updated?.contextUsage).toBe(48);
 		});
 	});
 

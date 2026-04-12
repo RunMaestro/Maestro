@@ -68,6 +68,7 @@ export interface BatchedUpdater {
 	markUnread: (sessionId: string, tabId: string, unread: boolean) => void;
 	updateUsage: (sessionId: string, tabId: string | null, usage: UsageStats) => void;
 	updateContextUsage: (sessionId: string, percentage: number) => void;
+	resetContextUsage: (sessionId: string, percentage: number) => void;
 	updateCycleBytes: (sessionId: string, bytes: number) => void;
 	updateCycleTokens: (sessionId: string, tokens: number) => void;
 }
@@ -912,6 +913,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const actualSessionId = parsed.actualSessionId;
 				const tabId = parsed.tabId ?? undefined;
 
+				// Track whether a resume failure was detected inside setSessions
+				// so we can fire side-effects (toast, context reset) afterwards.
+				let resumeFailureDetected = false;
+
 				setSessions((prev) => {
 					const session = prev.find((s) => s.id === actualSessionId);
 					if (!session) return prev;
@@ -942,8 +947,45 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							return { ...s, agentSessionId };
 						}
 
+						// Detect resume failure: tab had a session ID but agent returned a different one.
+						// This means --resume failed silently and the agent started a fresh session.
+						// Accept the new ID to prevent a death spiral of failed resumes.
 						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
-							return s;
+							console.warn(
+								'[onSessionId] Session resume failed — agent returned a new session ID',
+								{
+									expected: targetTab.agentSessionId,
+									received: agentSessionId,
+									tabId: targetTab.id,
+									sessionId: actualSessionId,
+								}
+							);
+
+							resumeFailureDetected = true;
+
+							const resumeFailLog: LogEntry = {
+								id: generateId(),
+								timestamp: Date.now(),
+								source: 'system',
+								text: '⚠️ Session resume failed — agent started a new session. Previous context was lost.',
+							};
+
+							const updatedAiTabs = s.aiTabs.map((tab) => {
+								if (tab.id !== targetTab.id) return tab;
+								return {
+									...tab,
+									agentSessionId,
+									awaitingSessionId: false,
+									usageStats: undefined,
+									logs: [...tab.logs, resumeFailLog],
+								};
+							});
+
+							return {
+								...s,
+								aiTabs: updatedAiTabs,
+								agentSessionId,
+							};
 						}
 
 						const updatedAiTabs = s.aiTabs.map((tab) => {
@@ -964,6 +1006,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						};
 					});
 				});
+
+				// Fire side-effects outside the state updater
+				if (resumeFailureDetected) {
+					deps.batchedUpdater.resetContextUsage(actualSessionId, 0);
+					notifyToast({
+						type: 'warning',
+						title: 'Session Resume Failed',
+						message: 'Agent started a new session. Previous context was lost.',
+						sessionId: actualSessionId,
+					});
+				}
 			}
 		);
 
