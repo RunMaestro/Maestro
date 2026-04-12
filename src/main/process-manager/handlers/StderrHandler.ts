@@ -114,7 +114,7 @@ export class StderrHandler {
 				const benignPatterns = [
 					/^Pseudo-terminal/i,
 					/^Warning:.*known hosts/i,
-					/mcp.*server/i,
+					/mcp server .*(start|connect|ready|loaded|initializ)/i, // MCP startup/status only — not errors/timeouts
 					/^Reading prompt from stdin/i,
 					/^\s*$/,
 				];

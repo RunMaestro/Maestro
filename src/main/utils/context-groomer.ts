@@ -33,6 +33,7 @@ export interface GroomingProcessManager {
 		prompt?: string;
 		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
+		sendPromptViaStdinRaw?: boolean;
 		// SSH remote config for running on a remote host
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -363,6 +364,7 @@ export async function groomContext(
 			prompt: prompt, // Triggers batch mode (no PTY)
 			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
 			noPromptSeparator: agent.noPromptSeparator,
+			sendPromptViaStdinRaw: agent.sendPromptViaStdinRaw, // Required for copilot-cli (sends prompt via stdin instead of CLI arg)
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
