@@ -8,7 +8,7 @@
  * it receives a fully resolved SpawnSpec and executes it.
  */
 
-import { spawn, execFile, type ChildProcess } from 'child_process';
+import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType } from '../../shared/types';
@@ -98,19 +98,31 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
  * Kill a Cue child process, using taskkill on Windows to terminate the entire
  * process tree (POSIX signals don't work for shell-spawned processes on Windows).
  */
-function killCueProcess(child: ChildProcess): void {
+function killCueProcess(child: ChildProcess, sync = false): void {
 	if (isWindows() && child.pid) {
-		execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-			if (!error) return;
-			const msg = error.message.toLowerCase();
-			const alreadyStopped = msg.includes('not found') || msg.includes('no running instance');
-			if (alreadyStopped) return;
+		if (sync) {
+			// During shutdown, block until taskkill completes so the process tree
+			// is actually dead before Electron exits.
+			try {
+				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+					timeout: 5000,
+				});
+			} catch {
+				// taskkill returns non-zero if the process is already dead, which is fine
+			}
+		} else {
+			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
+				if (!error) return;
+				const msg = error.message.toLowerCase();
+				const alreadyStopped = msg.includes('not found') || msg.includes('no running instance');
+				if (alreadyStopped) return;
 
-			captureException(error, {
-				operation: 'cue:taskkill',
-				pid: child.pid,
+				captureException(error, {
+					operation: 'cue:taskkill',
+					pid: child.pid,
+				});
 			});
-		});
+		}
 	} else {
 		child.kill('SIGTERM');
 
@@ -266,7 +278,8 @@ export function stopProcess(runId: string): boolean {
  */
 export function stopAllProcesses(): void {
 	for (const [runId, entry] of activeProcesses) {
-		killCueProcess(entry.child);
+		// Use sync kills so process trees are dead before the app exits.
+		killCueProcess(entry.child, true);
 		activeProcesses.delete(runId);
 	}
 }

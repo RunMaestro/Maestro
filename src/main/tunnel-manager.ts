@@ -1,4 +1,4 @@
-import { ChildProcess, spawn, execFile } from 'child_process';
+import { ChildProcess, spawn, execFileSync } from 'child_process';
 import { logger } from './utils/logger';
 import { getCloudflaredPath, isCloudflaredInstalled } from './utils/cliDetection';
 import { isWindows } from '../shared/platformDetection';
@@ -115,10 +115,15 @@ class TunnelManager {
 
 			if (isWindows() && proc.pid) {
 				// On Windows, POSIX signals don't terminate process trees.
-				// Use taskkill /t /f to kill the cloudflared process and its children.
-				execFile('taskkill', ['/pid', String(proc.pid), '/t', '/f'], () => {
+				// Use taskkill /t /f synchronously to ensure the process tree is
+				// dead before the app exits (stop() is called during shutdown).
+				try {
+					execFileSync('taskkill', ['/pid', String(proc.pid), '/t', '/f'], {
+						timeout: 5000,
+					});
+				} catch {
 					// taskkill returns non-zero if the process is already dead, which is fine
-				});
+				}
 			} else {
 				proc.kill('SIGTERM');
 			}
