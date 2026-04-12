@@ -17,6 +17,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { buildSessionDeepLink } from '../../shared/deep-link-urls';
+import { openUrl } from '../utils/openUrl';
 
 interface QuickAction {
 	id: string;
@@ -1119,7 +1120,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 							try {
 								const browserUrl = await gitService.getRemoteBrowserUrl(cwd);
 								if (browserUrl) {
-									await window.maestro.shell.openExternal(browserUrl);
+									openUrl(browserUrl);
 								} else {
 									notifyToast({
 										type: 'error',
@@ -1221,7 +1222,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Maestro Website',
 			subtext: 'Open the Maestro website',
 			action: () => {
-				window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/'));
+				openUrl(buildMaestroUrl('https://runmaestro.ai/'));
 				setQuickActionOpen(false);
 			},
 		},
@@ -1230,7 +1231,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Documentation and User Guide',
 			subtext: 'Open the Maestro documentation',
 			action: () => {
-				window.maestro.shell.openExternal(buildMaestroUrl('https://docs.runmaestro.ai/'));
+				openUrl(buildMaestroUrl('https://docs.runmaestro.ai/'));
 				setQuickActionOpen(false);
 			},
 		},
@@ -1239,7 +1240,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Join Discord',
 			subtext: 'Join the Maestro community',
 			action: () => {
-				window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/discord'));
+				openUrl(buildMaestroUrl('https://runmaestro.ai/discord'));
 				setQuickActionOpen(false);
 			},
 		},

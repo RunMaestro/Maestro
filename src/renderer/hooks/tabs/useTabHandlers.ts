@@ -667,20 +667,21 @@ export function useTabHandlers(): TabHandlersReturn {
 
 	const handleNewBrowserTab = useCallback(() => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const homeUrl = useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 
-				const url = DEFAULT_BROWSER_TAB_URL;
+				const url = homeUrl;
 				const newBrowserTab: BrowserTab = {
 					id: generateId(),
 					url,
-					title: DEFAULT_BROWSER_TAB_TITLE,
+					title: url === DEFAULT_BROWSER_TAB_URL ? DEFAULT_BROWSER_TAB_TITLE : url,
 					createdAt: Date.now(),
 					partition: getBrowserTabPartition(s.id),
 					canGoBack: false,
 					canGoForward: false,
-					isLoading: false,
+					isLoading: url !== DEFAULT_BROWSER_TAB_URL,
 					favicon: null,
 				};
 

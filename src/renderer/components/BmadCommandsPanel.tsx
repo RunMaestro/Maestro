@@ -13,6 +13,7 @@ import type { Theme, BmadCommand, BmadMetadata } from '../types';
 import { useTemplateAutocomplete } from '../hooks';
 import { captureException } from '../utils/sentry';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { openUrl } from '../utils/openUrl';
 
 interface BmadCommandsPanelProps {
 	theme: Theme;
@@ -172,9 +173,7 @@ export function BmadCommandsPanel({ theme }: BmadCommandsPanelProps) {
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Bundled commands from{' '}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/bmad-code-org/BMAD-METHOD')
-						}
+						onClick={() => openUrl('https://github.com/bmad-code-org/BMAD-METHOD')}
 						className="underline hover:opacity-80 inline-flex items-center gap-1"
 						style={{
 							color: theme.colors.accent,

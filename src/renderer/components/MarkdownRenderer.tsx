@@ -17,6 +17,7 @@ import { REMARK_GFM_PLUGINS } from '../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -406,11 +407,11 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openExternal; file:// URLs via openPath
+											// Open http/https URLs via openUrl; file:// URLs via openPath
 											if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
-												window.maestro.shell.openExternal(href);
+												openUrl(href, { ctrlKey: e.ctrlKey });
 											} else {
 												// Attempt to convert non-standard URLs (e.g. git@host:user/repo)
 												try {
@@ -421,7 +422,7 @@ export const MarkdownRenderer = memo(
 																.replace(/\.git$/, '')
 														: href;
 													if (/^https?:\/\//.test(converted)) {
-														window.maestro.shell.openExternal(converted);
+														openUrl(converted, { ctrlKey: e.ctrlKey });
 													}
 												} catch {
 													// Silently ignore unparseable URLs

@@ -13,6 +13,7 @@ import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
 import { AttachmentImage } from '../../components/AutoRun/AttachmentImage';
 import React from 'react';
+import { openUrl } from '../../utils/openUrl';
 
 export interface UseAutoRunMarkdownParams {
 	theme: Theme;
@@ -167,7 +168,7 @@ export function useAutoRunMarkdown({
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			// Provide container ref for anchor link scrolling
 			containerRef: previewRef,
 			// No search highlighting here - added separately when needed
@@ -204,7 +205,7 @@ export function useAutoRunMarkdown({
 					React.createElement(MermaidRenderer, { chart: code, theme: t }),
 			},
 			onFileClick: handleFileClick,
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			containerRef: previewRef,
 			searchHighlight: {
 				query: searchQuery,

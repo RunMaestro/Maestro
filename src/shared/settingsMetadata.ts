@@ -578,6 +578,21 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'integrations',
 	},
 
+	// --- Browser ---
+	useSystemBrowser: {
+		description:
+			'Use the system browser for opening links instead of the Maestro built-in browser tab. Ctrl+click inverts the behavior.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	browserHomeUrl: {
+		description: 'The default URL loaded when opening a new browser tab.',
+		type: 'string',
+		default: 'https://runmaestro.ai/#leaderboard',
+		category: 'editor',
+	},
+
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',

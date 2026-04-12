@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../../shared/theme-types';
 import type { ITheme } from '@xterm/xterm';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // Custom key event handler logic
@@ -361,8 +362,8 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 							end: { x: startCol + url.length - 1, y: lineNumber },
 						},
 						text: url,
-						activate(_event, linkText) {
-							window.maestro.shell.openExternal(linkText);
+						activate(event, linkText) {
+							openUrl(linkText, { ctrlKey: event.ctrlKey });
 						},
 						hover(_event, linkText) {
 							hoveredLinkRef.current = linkText;

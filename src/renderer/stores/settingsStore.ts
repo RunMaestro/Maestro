@@ -250,6 +250,8 @@ export interface SettingsStoreState {
 	localHonorGitignore: boolean;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
+	useSystemBrowser: boolean;
+	browserHomeUrl: string;
 	automaticTabNamingEnabled: boolean;
 	fileTabAutoRefreshEnabled: boolean;
 	suppressWindowsWarning: boolean;
@@ -327,6 +329,8 @@ export interface SettingsStoreActions {
 	setLocalHonorGitignore: (value: boolean) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	setUseSystemBrowser: (value: boolean) => void;
+	setBrowserHomeUrl: (value: string) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
@@ -484,6 +488,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		localHonorGitignore: true,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
+		useSystemBrowser: false,
+		browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
 		automaticTabNamingEnabled: true,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
@@ -867,6 +873,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setSshRemoteHonorGitignore: (value) => {
 			set({ sshRemoteHonorGitignore: value });
 			window.maestro.settings.set('sshRemoteHonorGitignore', value);
+		},
+
+		setUseSystemBrowser: (value) => {
+			set({ useSystemBrowser: value });
+			window.maestro.settings.set('useSystemBrowser', value);
+		},
+
+		setBrowserHomeUrl: (value) => {
+			set({ browserHomeUrl: value });
+			window.maestro.settings.set('browserHomeUrl', value);
 		},
 
 		setAutomaticTabNamingEnabled: (value) => {
@@ -1815,6 +1831,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
 			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
 
+		if (allSettings['useSystemBrowser'] !== undefined)
+			patch.useSystemBrowser = allSettings['useSystemBrowser'] as boolean;
+
+		if (allSettings['browserHomeUrl'] !== undefined)
+			patch.browserHomeUrl = allSettings['browserHomeUrl'] as string;
+
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;
 
@@ -1976,6 +1998,8 @@ export function getSettingsActions() {
 		setLocalHonorGitignore: state.setLocalHonorGitignore,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
+		setUseSystemBrowser: state.setUseSystemBrowser,
+		setBrowserHomeUrl: state.setBrowserHomeUrl,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,

@@ -40,6 +40,7 @@ import {
 } from '../services/feedbackConversation';
 import { isBetaAgent } from '../../shared/agentMetadata';
 import { ThemedSelect } from './shared/ThemedSelect';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // Constants
@@ -645,7 +646,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						</button>
 						<button
 							type="button"
-							onClick={() => window.maestro.shell.openExternal(createdIssueUrl)}
+							onClick={() => openUrl(createdIssueUrl)}
 							className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
 							style={{ color: theme.colors.textDim }}
 							title="Open in browser"
@@ -733,7 +734,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 											className="p-1.5 rounded transition-colors hover:bg-white/5"
 											style={{ color: theme.colors.textDim }}
 											title="View on GitHub"
-											onClick={() => window.maestro.shell.openExternal(issue.url)}
+											onClick={() => openUrl(issue.url)}
 										>
 											<ExternalLink className="w-3.5 h-3.5" />
 										</button>
@@ -946,7 +947,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 									</span>
 									<button
 										type="button"
-										onClick={() => window.maestro.shell.openExternal(issue.url)}
+										onClick={() => openUrl(issue.url)}
 										className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
 										style={{ color: theme.colors.textDim }}
 										title="View on GitHub"

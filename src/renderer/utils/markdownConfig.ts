@@ -23,6 +23,7 @@ import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
+import { openUrl } from './openUrl';
 
 // ============================================================================
 // Types
@@ -51,7 +52,7 @@ export interface MarkdownComponentsOptions {
 	/** Callback when internal file link is clicked (maestro-file:// protocol) */
 	onFileClick?: (filePath: string, options?: { openInNewTab?: boolean }) => void;
 	/** Callback when external link is clicked - if not provided, uses default browser behavior */
-	onExternalLinkClick?: (href: string) => void;
+	onExternalLinkClick?: (href: string, options?: { ctrlKey?: boolean }) => void;
 	/** Callback when anchor link is clicked (same-page #section links) */
 	onAnchorClick?: (anchorId: string) => void;
 	/** Container ref for scrolling to anchors - if not provided, uses document.getElementById */
@@ -506,7 +507,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 								}
 							}
 						} else if (href && onExternalLinkClick && /^https?:\/\/|^mailto:/.test(href)) {
-							onExternalLinkClick(href);
+							onExternalLinkClick(href, { ctrlKey: e.ctrlKey });
 						} else if (
 							href &&
 							onFileClick &&
@@ -683,9 +684,9 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					type: 'button',
 					className: 'underline',
 					style: { color: theme.colors.accent },
-					onClick: () => {
+					onClick: (e: React.MouseEvent) => {
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							window.maestro.shell.openExternal(href);
+							openUrl(href, { ctrlKey: e.ctrlKey });
 						}
 					},
 				},
@@ -801,7 +802,7 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							window.maestro.shell.openExternal(href);
+							openUrl(href, { ctrlKey: e.ctrlKey });
 						}
 					},
 					className: 'hover:underline cursor-pointer',

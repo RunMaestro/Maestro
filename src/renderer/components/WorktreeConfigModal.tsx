@@ -4,6 +4,7 @@ import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
+import { openUrl } from '../utils/openUrl';
 
 interface WorktreeConfigModalProps {
 	isOpen: boolean;
@@ -231,7 +232,7 @@ export function WorktreeConfigModal({
 										type="button"
 										className="underline hover:opacity-80"
 										style={{ color: theme.colors.accent }}
-										onClick={() => window.maestro.shell.openExternal('https://cli.github.com')}
+										onClick={() => openUrl('https://cli.github.com')}
 									>
 										GitHub CLI
 									</button>{' '}

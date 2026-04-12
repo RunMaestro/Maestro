@@ -12,6 +12,7 @@ import {
 	getNextBadge,
 } from '../constants/conductorBadges';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { openUrl } from '../utils/openUrl';
 
 interface StandingOvationOverlayProps {
 	theme: Theme;
@@ -494,9 +495,7 @@ export function StandingOvationOverlay({
 								{badge.exampleConductor.achievement}
 							</p>
 							<button
-								onClick={() =>
-									window.maestro.shell.openExternal(badge.exampleConductor.wikipediaUrl)
-								}
+								onClick={() => openUrl(badge.exampleConductor.wikipediaUrl)}
 								className="inline-flex items-center gap-1 text-xs mt-2 hover:underline"
 								style={{ color: purpleAccent }}
 							>

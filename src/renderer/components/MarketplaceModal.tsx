@@ -34,6 +34,7 @@ import {
 	createMarkdownComponents,
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // Types
@@ -300,11 +301,7 @@ function PlaybookDetailView({
 		() =>
 			createMarkdownComponents({
 				theme,
-				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
-				},
+				onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			}),
 		[theme]
 	);
@@ -423,7 +420,7 @@ function PlaybookDetailView({
 						</h4>
 						{playbook.authorLink ? (
 							<button
-								onClick={() => window.maestro.shell.openExternal(playbook.authorLink!)}
+								onClick={() => openUrl(playbook.authorLink!)}
 								tabIndex={0}
 								className="text-sm hover:underline inline-flex items-center gap-1 outline-none"
 								style={{ color: theme.colors.accent }}
@@ -1185,9 +1182,7 @@ export function MarketplaceModal({
 											</p>
 											<button
 												onClick={() => {
-													window.maestro.shell.openExternal(
-														'https://github.com/RunMaestro/Maestro-Playbooks'
-													);
+													openUrl('https://github.com/RunMaestro/Maestro-Playbooks');
 													setShowHelp(false);
 												}}
 												className="text-xs hover:opacity-80 transition-colors"
@@ -1213,9 +1208,7 @@ export function MarketplaceModal({
 								{/* GitHub submit button */}
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(
-											'https://github.com/RunMaestro/Maestro-Playbooks'
-										);
+										openUrl('https://github.com/RunMaestro/Maestro-Playbooks');
 									}}
 									className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
 									title="Submit your playbook to the community"

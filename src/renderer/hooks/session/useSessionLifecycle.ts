@@ -211,6 +211,22 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				return;
 			}
 
+			// If this is a browser tab, update its title directly
+			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						return {
+							...s,
+							browserTabs: (s.browserTabs || []).map((t) =>
+								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+							),
+						};
+					})
+				);
+				return;
+			}
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;

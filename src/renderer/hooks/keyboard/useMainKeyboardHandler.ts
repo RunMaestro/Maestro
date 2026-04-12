@@ -678,12 +678,26 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						trackShortcut('newTab');
 					}
 				}
-				// Cmd+W: Close the active tab (AI, file, or terminal) via unified handler
+				// Cmd+B: New browser tab (works in any mode)
+				if (ctx.isTabShortcut(e, 'newBrowserTab')) {
+					e.preventDefault();
+					ctx.handleNewBrowserTab();
+					trackShortcut('newBrowserTab');
+				}
+				// Cmd+L: Focus browser address bar (only when a browser tab is active)
+				if (ctx.isTabShortcut(e, 'focusBrowserAddress') && ctx.activeSession?.activeBrowserTabId) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					trackShortcut('focusBrowserAddress');
+				}
+				// Cmd+W: Close the active tab (AI, file, browser, or terminal) via unified handler
 				if (ctx.isTabShortcut(e, 'closeTab')) {
 					e.preventDefault();
 					const closeResult = ctx.handleCloseCurrentTab();
 
 					if (closeResult.type === 'file') {
+						trackShortcut('closeTab');
+					} else if (closeResult.type === 'browser') {
 						trackShortcut('closeTab');
 					} else if (closeResult.type === 'terminal' && closeResult.tabId) {
 						ctx.handleCloseTerminalTab(closeResult.tabId);
@@ -767,6 +781,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						if (activeTerminalTabId && terminalTab) {
 							ctx.setRenameTabId(activeTerminalTabId);
 							ctx.setRenameTabInitialName(terminalTab.name ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
+					} else if (ctx.activeSession.activeBrowserTabId) {
+						const browserTab = ctx.activeSession.browserTabs?.find(
+							(t: { id: string }) => t.id === ctx.activeSession.activeBrowserTabId
+						);
+						if (browserTab) {
+							ctx.setRenameTabId(browserTab.id);
+							ctx.setRenameTabInitialName(browserTab.title ?? '');
 							ctx.setRenameTabModalOpen(true);
 							trackShortcut('renameTab');
 						}

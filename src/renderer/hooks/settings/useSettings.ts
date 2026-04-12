@@ -270,6 +270,12 @@ export interface UseSettingsReturn {
 	sshRemoteHonorGitignore: boolean;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 
+	// Browser settings
+	useSystemBrowser: boolean;
+	setUseSystemBrowser: (value: boolean) => void;
+	browserHomeUrl: string;
+	setBrowserHomeUrl: (value: string) => void;
+
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;

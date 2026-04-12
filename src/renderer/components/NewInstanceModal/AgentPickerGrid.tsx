@@ -5,6 +5,7 @@ import { isBetaAgent } from '../../../shared/agentMetadata';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { SUPPORTED_AGENTS } from './types';
 import type { AgentPickerGridProps } from './types';
+import { openUrl } from '../../utils/openUrl';
 
 export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	theme,
@@ -267,7 +268,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 					className="underline hover:opacity-80"
 					style={{ color: theme.colors.accent }}
 					onClick={() =>
-						window.maestro.shell.openExternal(
+						openUrl(
 							buildMaestroUrl('https://docs.runmaestro.ai/autorun-playbooks#environment-variables')
 						)
 					}

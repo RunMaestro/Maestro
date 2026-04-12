@@ -27,6 +27,7 @@ import { MaestroSilhouette } from './MaestroSilhouette';
 import { formatTokensCompact } from '../utils/formatters';
 import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { openUrl } from '../utils/openUrl';
 
 /**
  * Circular progress ring with 11 segments that fill as badges are unlocked
@@ -259,7 +260,7 @@ function BadgeTooltip({
 			<button
 				onClick={(e) => {
 					e.stopPropagation();
-					window.maestro.shell.openExternal(badge.exampleConductor.wikipediaUrl);
+					openUrl(badge.exampleConductor.wikipediaUrl);
 				}}
 				className="flex items-center justify-center gap-1 text-xs mt-2 hover:underline w-full"
 				style={{ color: theme.colors.accent }}

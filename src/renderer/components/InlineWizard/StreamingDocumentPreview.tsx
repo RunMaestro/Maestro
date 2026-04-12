@@ -21,6 +21,7 @@ import {
 	createMarkdownComponents,
 	generateInlineWizardPreviewProseStyles,
 } from '../../utils/markdownConfig';
+import { openUrl } from '../../utils/openUrl';
 
 /**
  * Props for StreamingDocumentPreview
@@ -147,11 +148,7 @@ export function StreamingDocumentPreview({
 		() =>
 			createMarkdownComponents({
 				theme,
-				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
-				},
+				onExternalLinkClick: (href, opts) => openUrl(href, opts),
 				codeBlockStyle: {
 					padding: '0.75em',
 					fontSize: '0.85em',

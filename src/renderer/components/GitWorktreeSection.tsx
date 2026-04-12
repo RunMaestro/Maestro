@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { GitBranch, AlertTriangle, Loader2, ChevronDown } from 'lucide-react';
 import type { Theme, WorktreeValidationState, GhCliStatus } from '../types';
 import { useClickOutside } from '../hooks';
+import { openUrl } from '../utils/openUrl';
 
 // Re-export types for backward compatibility
 export type { WorktreeValidationState, GhCliStatus } from '../types';
@@ -166,7 +167,7 @@ export function GitWorktreeSection({
 								style={{ color: theme.colors.accent }}
 								onClick={(e) => {
 									e.stopPropagation();
-									window.maestro.shell.openExternal('https://cli.github.com');
+									openUrl('https://cli.github.com');
 								}}
 							>
 								GitHub CLI

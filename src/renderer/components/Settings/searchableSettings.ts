@@ -148,6 +148,28 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		keywords: ['crash', 'reporting', 'privacy', 'telemetry', 'sentry', 'anonymous'],
 	},
 	{
+		id: 'general-browser',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Default Browser',
+		description:
+			'Choose whether links open in the Maestro built-in browser tab or the system browser. Ctrl+click inverts the behavior. Set the default URL for new browser tabs.',
+		keywords: [
+			'browser',
+			'links',
+			'external',
+			'system',
+			'internal',
+			'url',
+			'open',
+			'ctrl',
+			'home',
+			'homepage',
+			'default',
+			'leaderboard',
+		],
+	},
+	{
 		id: 'general-storage',
 		tab: 'general',
 		tabLabel: 'General',

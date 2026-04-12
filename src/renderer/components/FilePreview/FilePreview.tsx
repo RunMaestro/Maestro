@@ -27,6 +27,7 @@ import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
+import { openUrl } from '../../utils/openUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import type { FilePreviewProps, FilePreviewHandle, FileStats } from './types';
 import {
@@ -351,13 +352,13 @@ export const FilePreview = React.memo(
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
-				onExternalLinkClick: (href) => {
+				onExternalLinkClick: (href, opts) => {
 					if (/^file:\/\//.test(href)) {
 						void window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 						return;
 					}
 					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
+						openUrl(href, opts);
 					}
 				},
 				containerRef: markdownContainerRef,

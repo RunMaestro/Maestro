@@ -13,6 +13,7 @@ import {
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { openUrl } from '../utils/openUrl';
 
 interface OpenSpecCommandsPanelProps {
 	theme: Theme;
@@ -181,9 +182,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Change management commands from{' '}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/Fission-AI/OpenSpec')
-						}
+						onClick={() => openUrl('https://github.com/Fission-AI/OpenSpec')}
 						className="underline hover:opacity-80 inline-flex items-center gap-1"
 						style={{
 							color: theme.colors.accent,

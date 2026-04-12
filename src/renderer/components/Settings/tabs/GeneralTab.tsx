@@ -75,6 +75,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// Browser settings
+		useSystemBrowser,
+		setUseSystemBrowser,
+		browserHomeUrl,
+		setBrowserHomeUrl,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -206,7 +211,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						value={conductorProfile}
 						onChange={(e) => setConductorProfile(e.target.value)}
 						placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
-						className="w-full p-3 pb-8 rounded border bg-transparent outline-none text-sm resize-none"
+						className="w-full p-3 pb-8 rounded border bg-transparent outline-none text-sm resize-y"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
@@ -885,6 +890,50 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					onChange={setCrashReportingEnabled}
 					theme={theme}
 				/>
+			</div>
+
+			{/* Default Browser */}
+			<div data-setting-id="general-browser">
+				<SettingCheckbox
+					icon={ExternalLink}
+					sectionLabel="Default Browser"
+					title="Use system browser for links"
+					description="When enabled, clicking links opens them in your system browser instead of a Maestro browser tab. Ctrl+click always uses the other browser."
+					checked={useSystemBrowser}
+					onChange={setUseSystemBrowser}
+					theme={theme}
+				/>
+				<div
+					className="mt-3 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="block text-xs opacity-60 mb-1">Browser Home URL</div>
+					<div className="flex gap-2">
+						<input
+							type="text"
+							value={browserHomeUrl}
+							onChange={(e) => setBrowserHomeUrl(e.target.value)}
+							placeholder="https://runmaestro.ai/#leaderboard"
+							className="flex-1 p-1.5 rounded border bg-transparent outline-none text-xs font-mono"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						/>
+						{browserHomeUrl !== 'https://runmaestro.ai/#leaderboard' && (
+							<button
+								onClick={() => setBrowserHomeUrl('https://runmaestro.ai/#leaderboard')}
+								className="px-2 py-1 rounded text-xs"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textDim,
+								}}
+							>
+								Reset
+							</button>
+						)}
+					</div>
+					<p className="text-xs opacity-40 mt-2">
+						The URL loaded when opening a new browser tab (Cmd+B).
+					</p>
+				</div>
 			</div>
 
 			{/* Settings Storage Location */}

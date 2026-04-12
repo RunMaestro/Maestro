@@ -18,6 +18,7 @@ import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
 import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
+import { openUrl } from '../utils/openUrl';
 
 interface Release {
 	tag_name: string;
@@ -226,7 +227,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							{result.error}
 						</span>
 						<button
-							onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+							onClick={() => openUrl(result.releasesUrl)}
 							className="flex items-center gap-2 text-sm hover:underline"
 							style={{ color: theme.colors.accent }}
 						>
@@ -374,7 +375,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								</div>
 								<p style={{ color: theme.colors.textDim }}>{downloadError}</p>
 								<button
-									onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+									onClick={() => openUrl(result.releasesUrl)}
 									className="flex items-center gap-1 mt-2 hover:underline"
 									style={{ color: theme.colors.accent }}
 								>
@@ -462,7 +463,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 							{/* Fallback link */}
 							<button
-								onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+								onClick={() => openUrl(result.releasesUrl)}
 								className="w-full flex items-center justify-center gap-2 p-2 rounded text-xs transition-colors hover:bg-white/5"
 								style={{ color: theme.colors.textDim }}
 							>
@@ -486,9 +487,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						</div>
 						<button
 							onClick={() =>
-								window.maestro.shell.openExternal(
-									result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases'
-								)
+								openUrl(result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases')
 							}
 							className="flex items-center gap-2 text-xs hover:underline mt-2"
 							style={{ color: theme.colors.accent }}

@@ -63,6 +63,7 @@ import {
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // Types
@@ -406,7 +407,7 @@ function IssueCard({
 						style={{ color: theme.colors.accent, pointerEvents: 'auto' }}
 						onClick={(e) => {
 							e.stopPropagation();
-							window.maestro.shell.openExternal(issue.claimedByPr!.url);
+							openUrl(issue.claimedByPr!.url);
 						}}
 					>
 						<GitPullRequest className="w-3 h-3" />
@@ -492,9 +493,9 @@ function RepositoryDetailView({
 		() =>
 			createMarkdownComponents({
 				theme,
-				onExternalLinkClick: (href) => {
+				onExternalLinkClick: (href, opts) => {
 					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
+						openUrl(href, opts);
 					}
 				},
 			}),
@@ -559,7 +560,7 @@ function RepositoryDetailView({
 	};
 
 	const handleOpenExternal = useCallback((url: string) => {
-		window.maestro.shell.openExternal(url);
+		openUrl(url);
 	}, []);
 
 	return (
@@ -1004,7 +1005,7 @@ function ActiveContributionCard({
 	const canFinalize = contribution.status === 'ready_for_review';
 
 	const handleOpenExternal = useCallback((url: string) => {
-		window.maestro.shell.openExternal(url);
+		openUrl(url);
 	}, []);
 
 	return (
@@ -1153,7 +1154,7 @@ function CompletedContributionCard({
 	theme: Theme;
 }) {
 	const handleOpenPR = useCallback(() => {
-		window.maestro.shell.openExternal(contribution.prUrl);
+		openUrl(contribution.prUrl);
 	}, [contribution.prUrl]);
 
 	// Check both wasMerged (preferred) and merged (legacy) for backward compatibility
@@ -1813,9 +1814,7 @@ export function SymphonyModal({
 											</p>
 											<button
 												onClick={() => {
-													window.maestro.shell.openExternal(
-														buildMaestroUrl('https://docs.runmaestro.ai/symphony')
-													);
+													openUrl(buildMaestroUrl('https://docs.runmaestro.ai/symphony'));
 													setShowHelp(false);
 												}}
 												className="text-xs hover:opacity-80 transition-colors"
@@ -1841,9 +1840,7 @@ export function SymphonyModal({
 								{/* Register Project link */}
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(
-											buildMaestroUrl('https://docs.runmaestro.ai/symphony')
-										);
+										openUrl(buildMaestroUrl('https://docs.runmaestro.ai/symphony'));
 									}}
 									className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
 									title="Register your project for Symphony contributions"

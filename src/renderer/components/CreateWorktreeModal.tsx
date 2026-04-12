@@ -3,6 +3,7 @@ import { X, GitBranch, Loader2, AlertTriangle } from 'lucide-react';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { openUrl } from '../utils/openUrl';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
@@ -165,7 +166,7 @@ export function CreateWorktreeModal({
 										type="button"
 										className="underline hover:opacity-80"
 										style={{ color: theme.colors.accent }}
-										onClick={() => window.maestro.shell.openExternal('https://cli.github.com')}
+										onClick={() => openUrl('https://cli.github.com')}
 									>
 										GitHub CLI
 									</button>{' '}

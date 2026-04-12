@@ -32,6 +32,7 @@ import type {
 import type { FileTabInfo } from '../hooks/ui/useAppHandlers';
 import type { MainPanelHandle } from './MainPanel';
 import type { FileNode } from '../types/fileTree';
+import { openUrl } from '../utils/openUrl';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -480,7 +481,7 @@ function AppStandaloneModalsInner({
 						}}
 						onExternalLinkOpen={(url) => {
 							// Open external URL in default browser
-							window.maestro.shell.openExternal(url);
+							openUrl(url);
 						}}
 						focusFilePath={graphFocusFilePath}
 						defaultShowExternalLinks={documentGraphShowExternalLinks}

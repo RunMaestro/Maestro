@@ -843,6 +843,7 @@ function MaestroConsoleInner() {
 		handleUpdateGroupChat,
 		handleArchiveGroupChat,
 		deleteGroupChatWithConfirmation,
+		handleDeleteAllArchivedGroupChats,
 		handleProcessMonitorNavigateToGroupChat,
 		handleOpenModeratorSession,
 		handleJumpToGroupChatMessage,
@@ -2075,6 +2076,9 @@ function MaestroConsoleInner() {
 		handleCloseTerminalTab,
 		mainPanelRef,
 
+		// Browser tab handler for keyboard shortcut (Cmd+B)
+		handleNewBrowserTab,
+
 		// Session bookmark toggle
 		toggleBookmark,
 
@@ -2384,6 +2388,7 @@ function MaestroConsoleInner() {
 		handleOpenRenameGroupChatModal,
 		handleOpenDeleteGroupChatModal,
 		handleArchiveGroupChat,
+		handleDeleteAllArchivedGroupChats,
 	});
 
 	const rightPanelProps = useRightPanelProps({

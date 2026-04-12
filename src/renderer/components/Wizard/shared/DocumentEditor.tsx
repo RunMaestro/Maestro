@@ -29,6 +29,7 @@ import {
 	createMarkdownComponents,
 } from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { openUrl } from '../../../utils/openUrl';
 
 // Memoize plugin arrays - they never change
 const REHYPE_PLUGINS = [rehypeSlug];
@@ -481,11 +482,7 @@ export function DocumentEditor({
 				customLanguageRenderers: {
 					mermaid: MermaidWrapper,
 				},
-				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
-				},
+				onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			}),
 		[theme, WizardImageRenderer, MermaidWrapper]
 	);

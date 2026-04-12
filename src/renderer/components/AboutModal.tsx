@@ -19,6 +19,7 @@ import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
 import { Modal } from './ui/Modal';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
 
 interface AboutModalProps {
 	theme: Theme;
@@ -128,9 +129,7 @@ export function AboutModal({
 				</h2>
 				<button
 					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'))
-					}
+					onClick={() => openUrl(buildMaestroUrl('https://runmaestro.ai'))}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Visit runmaestro.ai"
 					aria-label="Visit runmaestro.ai"
@@ -140,9 +139,7 @@ export function AboutModal({
 				</button>
 				<button
 					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/discord'))
-					}
+					onClick={() => openUrl(buildMaestroUrl('https://runmaestro.ai/discord'))}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Join our Discord"
 					aria-label="Join our Discord"
@@ -154,9 +151,7 @@ export function AboutModal({
 				</button>
 				<button
 					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://docs.runmaestro.ai/'))
-					}
+					onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/'))}
 					className="p-1 rounded hover:bg-white/10 transition-colors"
 					title="Documentation"
 					aria-label="Documentation"
@@ -342,9 +337,7 @@ export function AboutModal({
 				<div className="flex gap-2">
 					{/* Project Link */}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/RunMaestro/Maestro')
-						}
+						onClick={() => openUrl('https://github.com/RunMaestro/Maestro')}
 						className="flex-1 flex items-center justify-between p-3 rounded border hover:bg-white/5 transition-colors"
 						style={{ borderColor: theme.colors.border }}
 					>
@@ -410,9 +403,7 @@ export function AboutModal({
 							</div>
 							<div className="flex items-center gap-2 text-xs">
 								<button
-									onClick={() =>
-										window.maestro.shell.openExternal('https://github.com/pedramamini')
-									}
+									onClick={() => openUrl('https://github.com/pedramamini')}
 									className="inline-flex items-center gap-1 hover:underline cursor-pointer"
 									style={{
 										color: theme.colors.accent,
@@ -425,9 +416,7 @@ export function AboutModal({
 								</button>
 								<span style={{ color: theme.colors.textDim }}>·</span>
 								<button
-									onClick={() =>
-										window.maestro.shell.openExternal('https://www.linkedin.com/in/pedramamini/')
-									}
+									onClick={() => openUrl('https://www.linkedin.com/in/pedramamini/')}
 									className="inline-flex items-center gap-1 hover:underline cursor-pointer"
 									style={{
 										color: theme.colors.accent,
@@ -452,7 +441,7 @@ export function AboutModal({
 						</span>
 						{/* Texas Flag - Lone Star Flag */}
 						<button
-							onClick={() => window.maestro.shell.openExternal('https://www.sanjacsaloon.com')}
+							onClick={() => openUrl('https://www.sanjacsaloon.com')}
 							className="hover:opacity-100 transition-opacity cursor-pointer"
 							style={{ background: 'none', border: 'none', padding: 0 }}
 						>

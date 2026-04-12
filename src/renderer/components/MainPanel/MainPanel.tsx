@@ -326,6 +326,17 @@ export const MainPanel = React.memo(
 						terminalViewRefs.current.get(activeSession.id)?.focusActiveTerminal();
 					}
 				},
+				focusBrowserAddressBar: () => {
+					if (activeSession?.activeBrowserTabId) {
+						const input = document.getElementById(
+							`browser-tab-address-${activeSession.activeBrowserTabId}`
+						) as HTMLInputElement | null;
+						if (input) {
+							input.focus();
+							input.select();
+						}
+					}
+				},
 				openTerminalSearch: () => {
 					setTerminalSearchOpen(true);
 				},

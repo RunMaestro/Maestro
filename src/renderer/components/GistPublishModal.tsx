@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { openUrl } from '../utils/openUrl';
 
 export interface GistInfo {
 	gistUrl: string;
@@ -89,7 +90,7 @@ export function GistPublishModal({
 
 	const handleOpenGist = useCallback(() => {
 		if (existingGist?.gistUrl) {
-			window.maestro.shell.openExternal(existingGist.gistUrl);
+			openUrl(existingGist.gistUrl);
 		}
 	}, [existingGist?.gistUrl]);
 

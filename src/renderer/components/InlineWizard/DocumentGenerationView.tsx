@@ -25,6 +25,7 @@ import { MermaidRenderer } from '../MermaidRenderer';
 import { formatSize, formatElapsedTime } from '../../../shared/formatters';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
+import { openUrl } from '../../utils/openUrl';
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -637,7 +638,7 @@ export function DocumentEditor({
 					href={href}
 					onClick={(e) => {
 						e.preventDefault();
-						if (href) window.maestro.shell.openExternal(href);
+						if (href) openUrl(href);
 					}}
 					style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
 				>

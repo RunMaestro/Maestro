@@ -3,6 +3,7 @@ import { X, GitPullRequest, Loader2, AlertTriangle, ExternalLink } from 'lucide-
 import type { Theme, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { openUrl } from '../utils/openUrl';
 
 /**
  * Renders error text with URLs converted to clickable links
@@ -32,7 +33,7 @@ function renderErrorWithLinks(error: string, theme: Theme): React.ReactNode {
 					style={{ color: theme.colors.error }}
 					onClick={(e) => {
 						e.stopPropagation();
-						window.maestro.shell.openExternal(part);
+						openUrl(part);
 					}}
 				>
 					{displayText}
@@ -255,7 +256,7 @@ export function CreatePRModal({
 										type="button"
 										className="underline hover:opacity-80"
 										style={{ color: theme.colors.accent }}
-										onClick={() => window.maestro.shell.openExternal('https://cli.github.com')}
+										onClick={() => openUrl('https://cli.github.com')}
 									>
 										GitHub CLI
 									</button>{' '}

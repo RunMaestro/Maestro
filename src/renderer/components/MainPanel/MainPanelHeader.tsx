@@ -23,6 +23,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
+import { openUrl } from '../../utils/openUrl';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -253,7 +254,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														onClick={(e) => {
 															e.stopPropagation();
 															const url = remoteUrlToBrowserUrl(gitInfo.remote);
-															if (url) window.maestro.shell.openExternal(url);
+															if (url) openUrl(url);
 														}}
 														className="text-xs font-mono truncate hover:underline text-left"
 														style={{ color: theme.colors.textMain }}

@@ -9,6 +9,7 @@ import { Copy, ExternalLink } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { openUrl } from '../utils/openUrl';
 
 export interface LinkContextMenuState {
 	x: number;
@@ -50,7 +51,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 
 	const handleOpen = useCallback(() => {
 		if (/^https?:\/\/|^mailto:/.test(menu.url)) {
-			window.maestro.shell.openExternal(menu.url);
+			openUrl(menu.url);
 		}
 		onDismiss();
 	}, [menu.url, onDismiss]);
