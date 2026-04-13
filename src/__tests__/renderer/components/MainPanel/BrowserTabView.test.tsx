@@ -77,6 +77,7 @@ describe('BrowserTabView', () => {
 			throw getterError;
 		});
 		webview.getWebContentsId = vi.fn(() => 77);
+		webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
 
 		await waitFor(() => {
 			expect(onUpdateTab).not.toHaveBeenCalled();
@@ -119,6 +120,7 @@ describe('BrowserTabView', () => {
 		webview.getTitle = vi.fn(() => 'Redirected Docs');
 		webview.isLoading = vi.fn(() => false);
 		webview.getWebContentsId = vi.fn(() => 91);
+		webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
 
 		await act(async () => {
 			webview.dispatchEvent(new Event('dom-ready'));
@@ -195,6 +197,7 @@ describe('BrowserTabView', () => {
 		webview.getTitle = vi.fn(() => '');
 		webview.isLoading = vi.fn(() => false);
 		webview.getWebContentsId = vi.fn(() => 103);
+		webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
 
 		await act(async () => {
 			webview.dispatchEvent(new Event('dom-ready'));
@@ -431,6 +434,7 @@ describe('BrowserTabView', () => {
 		webview.getTitle = vi.fn(() => 'Example');
 		webview.isLoading = vi.fn(() => false);
 		webview.getWebContentsId = vi.fn(() => 88);
+		webview.executeJavaScript = vi.fn().mockResolvedValue(undefined);
 
 		await act(async () => {
 			webview.dispatchEvent(new Event('dom-ready'));

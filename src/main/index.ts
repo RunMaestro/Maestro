@@ -570,7 +570,22 @@ app.whenReady().then(async () => {
 	// hides) so the native Close menu item is unnecessary.
 	if (isMacOS()) {
 		const template: Electron.MenuItemConstructorOptions[] = [
-			{ role: 'appMenu' },
+			{
+				// Explicit appMenu — omits "Quit and Keep Windows" (Opt+Cmd+Q)
+				// which otherwise immediately kills the app without cleanup.
+				role: 'appMenu',
+				submenu: [
+					{ role: 'about' },
+					{ type: 'separator' },
+					{ role: 'services' },
+					{ type: 'separator' },
+					{ role: 'hide' },
+					{ role: 'hideOthers' },
+					{ role: 'unhide' },
+					{ type: 'separator' },
+					{ role: 'quit' },
+				],
+			},
 			{ role: 'editMenu' },
 			{
 				label: 'Window',

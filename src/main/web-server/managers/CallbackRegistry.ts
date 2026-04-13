@@ -40,6 +40,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	WebSettings,
@@ -369,10 +370,11 @@ export class CallbackRegistry {
 		name: string,
 		toolType: string,
 		cwd: string,
-		groupId?: string
+		groupId?: string,
+		config?: CreateSessionConfig
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
-		return this.callbacks.createSession(name, toolType, cwd, groupId);
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {

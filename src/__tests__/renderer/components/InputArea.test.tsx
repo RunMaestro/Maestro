@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
-import { formatShortcutKeys, formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Theme } from '../../../renderer/types';
 
 // Mock scrollIntoView since jsdom doesn't support it
@@ -95,6 +95,12 @@ vi.mock('../../../renderer/components/InlineWizard', () => ({
 				Exit Wizard
 			</button>
 		</div>
+	)),
+}));
+
+vi.mock('../../../renderer/components/NotificationPopover', () => ({
+	NotificationPopover: vi.fn(({ onClose }) => (
+		<div data-testid="notification-popover">NotificationPopover</div>
 	)),
 }));
 
@@ -232,13 +238,11 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
-		it('renders the mode toggle button', () => {
+		it('renders the notification settings button', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			expect(
-				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTitle('Notification Settings')).toBeInTheDocument();
 		});
 
 		it('renders the send button', () => {
@@ -1496,14 +1500,13 @@ describe('InputArea', () => {
 	});
 
 	describe('Button Actions', () => {
-		it('calls toggleInputMode when clicking mode toggle', () => {
-			const toggleInputMode = vi.fn();
-			const props = createDefaultProps({ toggleInputMode });
+		it('opens notification popover when clicking notification button', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`));
+			fireEvent.click(screen.getByTitle('Notification Settings'));
 
-			expect(toggleInputMode).toHaveBeenCalled();
+			expect(screen.getByTestId('notification-popover')).toBeInTheDocument();
 		});
 
 		it('calls processInput when clicking send button', () => {
@@ -1739,75 +1742,28 @@ describe('InputArea', () => {
 		});
 	});
 
-	describe('Mode Icon Display', () => {
-		it('shows Terminal icon in terminal mode', () => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'terminal' }),
-			});
+	describe('Notification Button', () => {
+		it('renders bell icon notification button', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			// Terminal icon should be in the mode toggle button
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			const notifButton = screen.getByTitle('Notification Settings');
+			expect(notifButton).toBeInTheDocument();
 		});
 
-		it('shows Cpu icon in AI mode', () => {
-			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-			});
+		it('shows notification popover on click and hides on second click', () => {
+			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="cpu-icon"]')).toBeInTheDocument();
-		});
+			const notifButton = screen.getByTitle('Notification Settings');
 
-		it('shows Wand2 icon in AI mode when wizard is active', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'ai',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
-				}),
-				// Note: onExitWizard is intentionally NOT provided, so we test the fallback path
-				// in the regular InputArea (not WizardInputPanel)
-			});
-			render(<InputArea {...props} />);
+			// Click to open
+			fireEvent.click(notifButton);
+			expect(screen.getByTestId('notification-popover')).toBeInTheDocument();
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			// wand2 icon should be shown with accent color
-			expect(modeButton.querySelector('[data-testid="wand2-icon"]')).toBeInTheDocument();
-		});
-
-		it('shows Terminal icon in terminal mode even when wizard is active', () => {
-			const props = createDefaultProps({
-				session: createMockSession({
-					inputMode: 'terminal',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
-				}),
-			});
-			render(<InputArea {...props} />);
-
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			// Click again to close (toggle)
+			fireEvent.click(notifButton);
+			expect(screen.queryByTestId('notification-popover')).not.toBeInTheDocument();
 		});
 	});
 
@@ -2114,9 +2070,7 @@ describe('InputArea', () => {
 			expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
 			// Normal components should NOT be rendered
 			expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
-			expect(
-				screen.queryByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTitle('Notification Settings')).not.toBeInTheDocument();
 			expect(screen.queryByTitle('Send message')).not.toBeInTheDocument();
 		});
 

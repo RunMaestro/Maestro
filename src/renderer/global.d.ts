@@ -435,6 +435,7 @@ interface MaestroAPI {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
 			) => void
 		) => () => void;

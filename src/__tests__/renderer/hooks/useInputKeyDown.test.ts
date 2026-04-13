@@ -1269,7 +1269,7 @@ describe('Slash command autocomplete — additional', () => {
 // ============================================================================
 
 describe('Enter-to-send — additional', () => {
-	it('Enter+Meta when enterToSendAI=true does NOT send', () => {
+	it('Enter+Meta when enterToSendAI=true also sends', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({ enterToSendAI: true } as any);
 		const deps = createMockDeps();
@@ -1280,7 +1280,7 @@ describe('Enter-to-send — additional', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		expect(deps.processInput).not.toHaveBeenCalled();
+		expect(deps.processInput).toHaveBeenCalled();
 	});
 
 	it('no active session uses undefined inputMode, falls to AI enterToSend setting', () => {

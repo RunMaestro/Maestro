@@ -296,6 +296,30 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				// so we forward it to the app. If the page DID preventDefault, the page's
 				// shortcut takes precedence and we leave it alone.
 				const guest = guestContents as BrowserTabGuestContents;
+
+				// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
+				// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
+				// internally and never reach the injected JS listener below.
+				guest.on('before-input-event', (event, input) => {
+					if (!input.meta && !input.control && !input.alt) return;
+					if (input.type !== 'keyDown') return;
+					const k = input.key.toLowerCase();
+					// Let standard text-editing shortcuts pass through to the page
+					const isTextEditing =
+						(input.meta || input.control) && !input.alt && !input.shift && 'acvxzf'.includes(k);
+					const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
+					if (isTextEditing || isRedo) return;
+					event.preventDefault();
+					mainWindow.webContents.send('browser-tab:shortcutKey', {
+						key: input.key,
+						code: input.code,
+						meta: input.meta,
+						control: input.control,
+						alt: input.alt,
+						shift: input.shift,
+					});
+				});
+
 				const shortcutInjection = `(function(){
 					if(window.__maestroShortcutListenerInstalled)return;
 					window.__maestroShortcutListenerInstalled=true;

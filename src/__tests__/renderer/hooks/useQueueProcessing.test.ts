@@ -16,6 +16,10 @@
  *   - Startup recovery: skips sessions that are not idle (e.g., busy)
  *   - Startup recovery: uses getActiveTab fallback when tabId does not match any tab
  *   - Startup recovery: cleans up the timer on unmount
+ *   - Runtime recovery: dispatches stuck items after error-to-idle transition
+ *   - Runtime recovery: guards against double-dispatch via state re-check
+ *   - Runtime recovery: does not fire before startup recovery
+ *   - Runtime recovery: skips busy and error sessions
  *   - Return value: exposes processQueuedItem and processQueuedItemRef
  */
 
@@ -1067,6 +1071,189 @@ describe('startup recovery — timer cleanup', () => {
 
 		expect(mockSetSessions).not.toHaveBeenCalled();
 		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================================
+// Return type
+// ============================================================================
+
+// ============================================================================
+// Runtime queue recovery — dispatches stuck items after error recovery
+// ============================================================================
+
+describe('runtime queue recovery', () => {
+	it('dispatches queued items when a session transitions from error to idle', () => {
+		vi.useFakeTimers();
+
+		// Start with sessions loaded and startup recovery already done (no queued items initially)
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		// Advance past startup recovery
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+		mockAgentStoreProcessQueuedItem.mockClear();
+
+		// Simulate: session now idle with a stuck queued item (post-error recovery)
+		const tab = createTab({ id: 'tab-1', state: 'idle' });
+		const item = createQueuedItem({ id: 'stuck-item', tabId: 'tab-1' });
+		mockSessionStoreState.sessions = [
+			createSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [item],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		act(() => {
+			rerender();
+		});
+
+		expect(mockSetSessions).toHaveBeenCalled();
+	});
+
+	it('the updater guards against double-dispatch by re-checking state', () => {
+		vi.useFakeTimers();
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+
+		const tab = createTab({ id: 'tab-1' });
+		const item = createQueuedItem({ tabId: 'tab-1' });
+		const session = createSession({
+			id: 'session-1',
+			state: 'idle',
+			aiTabs: [tab],
+			executionQueue: [item],
+		});
+
+		mockSessionStoreState.sessions = [session];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		let capturedUpdater: ((prev: Session[]) => Session[]) | null = null;
+		mockSetSessions.mockImplementation((updater: any) => {
+			capturedUpdater = updater;
+		});
+
+		act(() => {
+			rerender();
+		});
+
+		// Calling updater with a session already busy should be a no-op
+		const alreadyBusy = createSession({
+			id: 'session-1',
+			state: 'busy',
+			aiTabs: [tab],
+			executionQueue: [item],
+		});
+		const result = capturedUpdater!([alreadyBusy]);
+		expect(result[0]).toBe(alreadyBusy); // unchanged reference = no mutation
+	});
+
+	it('does not fire before startup recovery has completed', () => {
+		vi.useFakeTimers();
+
+		const tab = createTab({ id: 'tab-1' });
+		const item = createQueuedItem({ tabId: 'tab-1' });
+
+		// Sessions loaded with queued items — startup recovery should handle this, not runtime
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'idle',
+				aiTabs: [tab],
+				executionQueue: [item],
+			}),
+		];
+		mockGetActiveTab.mockReturnValue(tab);
+
+		renderHook(() => useQueueProcessing(createDeps()));
+
+		// Before startup timer fires (500ms), runtime recovery should NOT have dispatched
+		// because startupRecoveryComplete is still false
+		expect(mockSetSessions).not.toHaveBeenCalled();
+
+		// After startup timer fires — startup recovery dispatches the items
+		act(() => {
+			vi.advanceTimersByTime(500);
+		});
+
+		expect(mockSetSessions).toHaveBeenCalled();
+	});
+
+	it('skips sessions that are busy', () => {
+		vi.useFakeTimers();
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+
+		// Session is busy with queued items — should NOT dispatch
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'busy',
+				executionQueue: [createQueuedItem()],
+			}),
+		];
+
+		act(() => {
+			rerender();
+		});
+
+		expect(mockSetSessions).not.toHaveBeenCalled();
+	});
+
+	it('skips sessions in error state', () => {
+		vi.useFakeTimers();
+
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [createSession({ state: 'idle', executionQueue: [] })];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+
+		mockSetSessions.mockClear();
+
+		// Session in error state with queued items — should NOT dispatch
+		mockSessionStoreState.sessions = [
+			createSession({
+				state: 'error',
+				executionQueue: [createQueuedItem()],
+			}),
+		];
+
+		act(() => {
+			rerender();
+		});
+
+		expect(mockSetSessions).not.toHaveBeenCalled();
 	});
 });
 

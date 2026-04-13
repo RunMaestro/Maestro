@@ -19,6 +19,8 @@ import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { autoRun } from './commands/auto-run';
 import { cueTrigger } from './commands/cue-trigger';
+import { createAgent } from './commands/create-agent';
+import { removeAgent } from './commands/remove-agent';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
@@ -177,6 +179,42 @@ program
 	.command('status')
 	.description('Check if the Maestro desktop app is running and reachable')
 	.action(status);
+
+// Create agent command - create a new agent in the Maestro desktop app
+program
+	.command('create-agent <name>')
+	.description('Create a new agent in the Maestro desktop app')
+	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
+	.option(
+		'-t, --type <type>',
+		'Agent type (claude-code, codex, opencode, factory-droid, gemini-cli, qwen3-coder, aider)',
+		'claude-code'
+	)
+	.option('-g, --group <id>', 'Group ID to assign the agent to')
+	.option('--nudge <message>', 'Nudge message appended to every user message')
+	.option('--custom-path <path>', 'Custom binary path for the agent')
+	.option('--custom-args <args>', 'Custom CLI arguments for the agent')
+	.option(
+		'--env <KEY=VALUE>',
+		'Environment variable (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--model <model>', 'Model override (e.g., sonnet, opus)')
+	.option('--effort <level>', 'Effort/reasoning level override')
+	.option('--context-window <size>', 'Context window size in tokens')
+	.option('--provider-path <path>', 'Custom provider path')
+	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
+	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(createAgent);
+
+// Remove agent command - remove an agent from the Maestro desktop app
+program
+	.command('remove-agent <agent-id>')
+	.description('Remove an agent from the Maestro desktop app')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(removeAgent);
 
 // Settings commands
 const settings = program.command('settings').description('View and manage Maestro configuration');

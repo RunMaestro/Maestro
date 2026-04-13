@@ -904,51 +904,50 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to create a session
 		// Uses IPC request-response pattern — renderer creates the session and responds with sessionId
-		server.setCreateSessionCallback(
-			async (name: string, toolType: string, cwd: string, groupId?: string) => {
-				const mainWindow = getMainWindow();
-				if (!mainWindow) {
-					logger.warn('mainWindow is null for createSession', 'WebServer');
-					return null;
-				}
-
-				return new Promise((resolve) => {
-					const responseChannel = `remote:createSession:response:${randomUUID()}`;
-					let resolved = false;
-
-					const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-						if (resolved) return;
-						resolved = true;
-						clearTimeout(timeoutId);
-						resolve(result || null);
-					};
-
-					ipcMain.once(responseChannel, handleResponse);
-					if (!isWebContentsAvailable(mainWindow)) {
-						logger.warn('webContents is not available for createSession', 'WebServer');
-						ipcMain.removeListener(responseChannel, handleResponse);
-						resolve(null);
-						return;
-					}
-					mainWindow.webContents.send(
-						'remote:createSession',
-						name,
-						toolType,
-						cwd,
-						groupId,
-						responseChannel
-					);
-
-					const timeoutId = setTimeout(() => {
-						if (resolved) return;
-						resolved = true;
-						ipcMain.removeListener(responseChannel, handleResponse);
-						logger.warn(`createSession callback timed out`, 'WebServer');
-						resolve(null);
-					}, 10000);
-				});
+		server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for createSession', 'WebServer');
+				return null;
 			}
-		);
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:createSession:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || null);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for createSession', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(null);
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:createSession',
+					name,
+					toolType,
+					cwd,
+					groupId,
+					config,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`createSession callback timed out`, 'WebServer');
+					resolve(null);
+				}, 10000);
+			});
+		});
 
 		// Set up callback for web server to delete a session
 		// Fire-and-forget pattern

@@ -47,7 +47,9 @@ import type {
 	CueActivityEntry,
 	UsageDashboardData,
 	AchievementData,
+	CreateSessionConfig,
 } from '../types';
+import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -157,7 +159,8 @@ export interface MessageHandlerCallbacks {
 		name: string,
 		toolType: string,
 		cwd: string,
-		groupId?: string
+		groupId?: string,
+		config?: CreateSessionConfig
 	) => Promise<{ sessionId: string } | null>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
@@ -1613,14 +1616,12 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Known agent types for validation
+	 * Known agent types for validation — derived from the canonical AGENT_IDS list.
+	 * Excludes 'terminal' since it's an internal-only agent type.
 	 */
-	private static readonly VALID_AGENT_TYPES = new Set([
-		'claude-code',
-		'codex',
-		'opencode',
-		'factory-droid',
-	]);
+	private static readonly VALID_AGENT_TYPES: Set<string> = new Set(
+		AGENT_IDS.filter((id) => id !== 'terminal')
+	);
 
 	/**
 	 * Handle create_session message - create a new agent session
@@ -1654,8 +1655,27 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// Extract optional config fields
+		const config: CreateSessionConfig = {};
+		if (message.nudgeMessage) config.nudgeMessage = message.nudgeMessage as string;
+		if (message.customPath) config.customPath = message.customPath as string;
+		if (message.customArgs) config.customArgs = message.customArgs as string;
+		if (message.customEnvVars)
+			config.customEnvVars = message.customEnvVars as Record<string, string>;
+		if (message.customModel) config.customModel = message.customModel as string;
+		if (message.customEffort) config.customEffort = message.customEffort as string;
+		if (message.customContextWindow)
+			config.customContextWindow = message.customContextWindow as number;
+		if (message.customProviderPath)
+			config.customProviderPath = message.customProviderPath as string;
+		if (message.sessionSshRemoteConfig) {
+			config.sessionSshRemoteConfig =
+				message.sessionSshRemoteConfig as CreateSessionConfig['sessionSshRemoteConfig'];
+		}
+		const hasConfig = Object.keys(config).length > 0;
+
 		this.callbacks
-			.createSession(name, toolType, cwd, groupId)
+			.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_session_result',

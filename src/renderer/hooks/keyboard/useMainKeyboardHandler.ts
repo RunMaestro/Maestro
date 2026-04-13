@@ -1061,6 +1061,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (focused && focused.tagName === 'WEBVIEW') {
 				(focused as HTMLElement).blur();
 			}
+
+			// Handle browser address bar focus directly: build a synthetic event
+			// for isTabShortcut matching, then focus the address bar without
+			// re-dispatching through the main handler (which may be blocked
+			// by the overlay/modal shortcut guard).
+			const ctx = keyboardHandlerRef.current;
+			if (ctx?.activeSession?.activeBrowserTabId) {
+				const probe = new KeyboardEvent('keydown', {
+					key: input.key,
+					code: input.code,
+					metaKey: input.meta,
+					ctrlKey: input.control,
+					altKey: input.alt,
+					shiftKey: input.shift,
+				});
+				if (ctx.isTabShortcut(probe, 'focusBrowserAddress')) {
+					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+			}
+
 			window.dispatchEvent(
 				new KeyboardEvent('keydown', {
 					key: input.key,

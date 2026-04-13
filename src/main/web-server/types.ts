@@ -466,11 +466,32 @@ export type MoveSessionToGroupCallback = (
 	sessionId: string,
 	groupId: string | null
 ) => Promise<boolean>;
+/**
+ * Optional configuration fields for session creation via CLI/web.
+ * These map 1:1 to the optional params of createNewSession in useSessionCrud.ts.
+ */
+export interface CreateSessionConfig {
+	nudgeMessage?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customModel?: string;
+	customEffort?: string;
+	customContextWindow?: number;
+	customProviderPath?: string;
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
+}
+
 export type CreateSessionCallback = (
 	name: string,
 	toolType: string,
 	cwd: string,
-	groupId?: string
+	groupId?: string,
+	config?: CreateSessionConfig
 ) => Promise<{ sessionId: string } | null>;
 export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type RenameSessionCallback = (sessionId: string, newName: string) => Promise<boolean>;

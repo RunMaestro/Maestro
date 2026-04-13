@@ -282,7 +282,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					}
 				}
 
-				if (enterToSendAI && !e.shiftKey && !e.metaKey) {
+				if (enterToSendAI && !e.shiftKey) {
 					e.preventDefault();
 					processInput();
 				} else if (!enterToSendAI && (e.metaKey || e.ctrlKey)) {

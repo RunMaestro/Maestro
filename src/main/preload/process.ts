@@ -653,6 +653,7 @@ export function createProcessApi() {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -662,8 +663,9 @@ export function createProcessApi() {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
-			) => callback(name, toolType, cwd, groupId, responseChannel);
+			) => callback(name, toolType, cwd, groupId, config, responseChannel);
 			ipcRenderer.on('remote:createSession', handler);
 			return () => ipcRenderer.removeListener('remote:createSession', handler);
 		},

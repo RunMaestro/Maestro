@@ -349,7 +349,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -424,6 +424,25 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				unifiedClosedTabHistory: [],
 				groupId: groupId || undefined,
 				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
+				// Apply optional config fields from CLI/web
+				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
+				...(config?.customPath && { customPath: config.customPath as string }),
+				...(config?.customArgs && { customArgs: config.customArgs as string }),
+				...(config?.customEnvVars && {
+					customEnvVars: config.customEnvVars as Record<string, string>,
+				}),
+				...(config?.customModel && { customModel: config.customModel as string }),
+				...(config?.customEffort && { customEffort: config.customEffort as string }),
+				...(config?.customContextWindow && {
+					customContextWindow: config.customContextWindow as number,
+				}),
+				...(config?.customProviderPath && {
+					customProviderPath: config.customProviderPath as string,
+				}),
+				...(config?.sessionSshRemoteConfig && {
+					sessionSshRemoteConfig:
+						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
+				}),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);

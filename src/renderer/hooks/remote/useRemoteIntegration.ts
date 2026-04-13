@@ -719,11 +719,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
 			) => {
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCreateSession', {
-						detail: { name, toolType, cwd, groupId, responseChannel },
+						detail: { name, toolType, cwd, groupId, config, responseChannel },
 					})
 				);
 			}
