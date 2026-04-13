@@ -231,8 +231,18 @@ describe('autorun IPC handlers', () => {
 
 			// Mock readdir to return markdown files
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'doc2.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'doc2.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:listDocs');
@@ -252,10 +262,30 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'readme.txt', isDirectory: () => false, isFile: () => true },
-				{ name: 'image.png', isDirectory: () => false, isFile: () => true },
-				{ name: 'doc2.MD', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'readme.txt',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'image.png',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'doc2.MD',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:listDocs');
@@ -311,9 +341,24 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'zebra.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'alpha.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'Beta.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'zebra.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'alpha.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'Beta.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:listDocs');
@@ -332,11 +377,26 @@ describe('autorun IPC handlers', () => {
 			// First call for root, second for subfolder
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'subfolder', isDirectory: () => true, isFile: () => false },
-					{ name: 'root.md', isDirectory: () => false, isFile: () => true },
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'root.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
 				] as any)
 				.mockResolvedValueOnce([
-					{ name: 'nested.md', isDirectory: () => false, isFile: () => true },
+					{
+						name: 'nested.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
 				] as any);
 
 			const handler = handlers.get('autorun:listDocs');
@@ -355,8 +415,18 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: '.hidden.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'visible.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: '.hidden.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'visible.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:listDocs');
@@ -375,7 +445,12 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -407,8 +482,18 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'image.png', isDirectory: () => false, isFile: () => true },
-				{ name: 'readme.txt', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'image.png',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'readme.txt',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -450,10 +535,20 @@ describe('autorun IPC handlers', () => {
 			// First call for root (no .md), second for subfolder (has .md)
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'subfolder', isDirectory: () => true, isFile: () => false },
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
+						isSymbolicLink: () => false,
+					},
 				] as any)
 				.mockResolvedValueOnce([
-					{ name: 'nested.md', isDirectory: () => false, isFile: () => true },
+					{
+						name: 'nested.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
 				] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -470,8 +565,13 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: '.hidden.md', isDirectory: () => false, isFile: () => true },
-				{ name: '.git', isDirectory: () => true, isFile: () => false },
+				{
+					name: '.hidden.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{ name: '.git', isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false },
 			] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -488,7 +588,12 @@ describe('autorun IPC handlers', () => {
 			} as any);
 
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.MD', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.MD',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -506,8 +611,18 @@ describe('autorun IPC handlers', () => {
 
 			// Root has a .md file, so we shouldn't recurse into subfolder
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'first.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'subfolder', isDirectory: () => true, isFile: () => false },
+				{
+					name: 'first.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'subfolder',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:hasDocuments');
@@ -1052,9 +1167,24 @@ describe('autorun IPC handlers', () => {
 				isDirectory: () => true,
 			} as any);
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.backup.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'doc2.backup.md', isDirectory: () => false, isFile: () => true },
-				{ name: 'doc3.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.backup.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'doc2.backup.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'doc3.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 			vi.mocked(fs.unlink).mockResolvedValue(undefined);
 
@@ -1071,7 +1201,12 @@ describe('autorun IPC handlers', () => {
 				isDirectory: () => true,
 			} as any);
 			vi.mocked(fs.readdir).mockResolvedValue([
-				{ name: 'doc1.md', isDirectory: () => false, isFile: () => true },
+				{
+					name: 'doc1.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
 			] as any);
 
 			const handler = handlers.get('autorun:deleteBackups');
@@ -1088,11 +1223,26 @@ describe('autorun IPC handlers', () => {
 			} as any);
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'doc1.backup.md', isDirectory: () => false, isFile: () => true },
-					{ name: 'subfolder', isDirectory: () => true, isFile: () => false },
+					{
+						name: 'doc1.backup.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
+						isSymbolicLink: () => false,
+					},
 				] as any)
 				.mockResolvedValueOnce([
-					{ name: 'nested.backup.md', isDirectory: () => false, isFile: () => true },
+					{
+						name: 'nested.backup.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
 				] as any);
 			vi.mocked(fs.unlink).mockResolvedValue(undefined);
 

@@ -418,7 +418,16 @@ export function registerFilesystemHandlers(): void {
 			const countRecursive = async (dir: string) => {
 				const entries = await fs.readdir(dir, { withFileTypes: true });
 				for (const entry of entries) {
-					if (entry.isDirectory()) {
+					let isDir = entry.isDirectory();
+					if (entry.isSymbolicLink()) {
+						try {
+							const targetStat = await fs.stat(path.join(dir, entry.name));
+							isDir = targetStat.isDirectory();
+						} catch {
+							// Broken symlink — count as file
+						}
+					}
+					if (isDir) {
 						folderCount++;
 						await countRecursive(path.join(dir, entry.name));
 					} else {

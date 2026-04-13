@@ -111,8 +111,18 @@ describe('filesystem handlers', () => {
 	describe('fs:readDir', () => {
 		it('should read local directory entries', async () => {
 			const mockEntries = [
-				{ name: 'file1.txt', isDirectory: () => false, isFile: () => true },
-				{ name: 'folder1', isDirectory: () => true, isFile: () => false },
+				{
+					name: 'file1.txt',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'folder1',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
 			];
 			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
 
@@ -165,7 +175,14 @@ describe('filesystem handlers', () => {
 			// Verify precondition: the names are different byte sequences
 			expect(nfdName).not.toBe(nfcName);
 
-			const mockEntries = [{ name: nfdName, isDirectory: () => false, isFile: () => true }];
+			const mockEntries = [
+				{
+					name: nfdName,
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			];
 			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
 
 			const handler = registeredHandlers.get('fs:readDir');
@@ -357,10 +374,12 @@ describe('filesystem handlers', () => {
 			// Mock a simple directory structure
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'file1.txt', isDirectory: () => false },
-					{ name: 'subfolder', isDirectory: () => true },
+					{ name: 'file1.txt', isDirectory: () => false, isSymbolicLink: () => false },
+					{ name: 'subfolder', isDirectory: () => true, isSymbolicLink: () => false },
 				] as any)
-				.mockResolvedValueOnce([{ name: 'file2.txt', isDirectory: () => false }] as any);
+				.mockResolvedValueOnce([
+					{ name: 'file2.txt', isDirectory: () => false, isSymbolicLink: () => false },
+				] as any);
 
 			const handler = registeredHandlers.get('fs:countItems');
 			const result = await handler!({}, '/test/folder');
