@@ -89,7 +89,13 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 					sessionId,
 					sessionName: session.name,
 					toolType: session.toolType,
-					subscriptions: state.config.subscriptions,
+					// Only report subscriptions that belong to this session. A subscription
+					// with no agent_id is unbound (legacy / shared) and surfaces under every
+					// session sharing this project root; one with an agent_id is owned
+					// exclusively by that session.
+					subscriptions: state.config.subscriptions.filter(
+						(sub) => !sub.agent_id || sub.agent_id === sessionId
+					),
 				});
 			}
 
@@ -103,7 +109,9 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 						sessionId: session.id,
 						sessionName: session.name,
 						toolType: session.toolType,
-						subscriptions: config.subscriptions,
+						subscriptions: config.subscriptions.filter(
+							(sub) => !sub.agent_id || sub.agent_id === session.id
+						),
 					});
 				}
 			}

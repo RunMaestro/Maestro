@@ -448,20 +448,14 @@ function findTargetSession(
 	allSubs: CueSubscription[],
 	sessions: PipelineSessionInfo[]
 ): string | null {
-	// If the subscription has an explicit agent_id, resolve by session ID directly.
+	// If the subscription has an explicit agent_id, trust it — the editor writes
+	// agent_id whenever the user binds a subscription to a specific session, and
+	// per-project-root YAML partitioning guarantees it is never a cross-session leak.
 	if (sub.agent_id) {
 		const session = sessions.find((s) => s.id === sub.agent_id);
-		if (session) {
-			// Cross-check: if subscription base name matches a DIFFERENT session,
-			// prefer the name match. agent_id may be stale from a previous bad
-			// resolution (e.g., pre-agent_id YAML that got locked to the wrong session).
-			const baseName = getBasePipelineName(sub.name);
-			const nameMatch = sessions.find((s) => s.name === baseName);
-			if (nameMatch && nameMatch.name !== session.name) {
-				return nameMatch.name;
-			}
-			return session.name;
-		}
+		if (session) return session.name;
+		// agent_id references a session that no longer exists — fall through
+		// to owner / name-based resolution below.
 	}
 
 	// If the subscription was tagged with owning sessions from getGraphData(),

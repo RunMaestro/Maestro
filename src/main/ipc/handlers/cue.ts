@@ -19,6 +19,7 @@ import { validateCueConfig } from '../../cue/cue-yaml-loader';
 import {
 	deleteCueConfigFile,
 	readCueConfigFile,
+	pruneOrphanedPromptFiles,
 	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../cue/config/cue-config-repository';
@@ -217,6 +218,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				content: string;
 				promptFiles?: Record<string, string>;
 			}): Promise<void> => {
+				const referencedPaths: string[] = [];
 				if (options.promptFiles) {
 					const promptsBase = path.resolve(options.projectRoot, '.maestro/prompts');
 					for (const [relativePath, content] of Object.entries(options.promptFiles)) {
@@ -232,10 +234,15 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 							);
 						}
 						writeCuePromptFile(options.projectRoot, relativePath, content);
+						referencedPaths.push(relativePath);
 					}
 				}
 
 				writeCueConfigFile(options.projectRoot, options.content);
+
+				// Remove any `.md` files under .maestro/prompts/ that the new YAML no
+				// longer references (handles pipeline/agent renames and deletions).
+				pruneOrphanedPromptFiles(options.projectRoot, referencedPaths);
 			}
 		)
 	);

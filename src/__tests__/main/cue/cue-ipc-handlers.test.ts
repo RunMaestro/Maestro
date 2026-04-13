@@ -51,6 +51,7 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	writeCueConfigFile: vi.fn(),
 	deleteCueConfigFile: vi.fn(),
 	writeCuePromptFile: vi.fn(),
+	pruneOrphanedPromptFiles: vi.fn(() => []),
 }));
 
 vi.mock('../../../main/cue/pipeline-layout-store', () => ({

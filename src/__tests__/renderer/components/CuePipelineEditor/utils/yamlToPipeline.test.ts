@@ -381,9 +381,11 @@ describe('subscriptionsToPipelines', () => {
 		expect(agentNames).toContain('tester');
 	});
 
-	it('overrides stale agent_id when subscription name matches a different session', () => {
-		// Bug scenario: agent_id was corrupted (points to Maestro) but subscription
-		// name "Pedsidian" matches the Pedsidian session. Name match should win.
+	it('trusts explicit agent_id even when subscription name matches a different session', () => {
+		// Per-project-root YAML partitioning guarantees agent_id is the source
+		// of truth. A coincidental pipeline-name/session-name overlap must NOT
+		// flip the resolved agent — doing so caused the "Maestro swap reverts"
+		// bug where replacing an agent would snap back on reload.
 		const subs: CueSubscription[] = [
 			{
 				name: 'Pedsidian',
@@ -392,7 +394,7 @@ describe('subscriptionsToPipelines', () => {
 				prompt: 'Do briefing',
 				schedule_times: ['08:30'],
 				schedule_days: ['mon', 'tue', 'wed', 'thu', 'fri'],
-				agent_id: 'maestro-uuid', // Wrong! Should be pedsidian-uuid
+				agent_id: 'maestro-uuid',
 			},
 		];
 		const sessions: SessionInfo[] = [
@@ -417,9 +419,9 @@ describe('subscriptionsToPipelines', () => {
 
 		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
 		expect(agents).toHaveLength(1);
-		// Should resolve to Pedsidian (name match), not Maestro (stale agent_id)
-		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Pedsidian');
-		expect((agents[0].data as { sessionId: string }).sessionId).toBe('pedsidian-uuid');
+		// agent_id wins — resolves to Maestro despite the name match on Pedsidian.
+		expect((agents[0].data as { sessionName: string }).sessionName).toBe('Maestro');
+		expect((agents[0].data as { sessionId: string }).sessionId).toBe('maestro-uuid');
 	});
 
 	it('uses subscription name to find target when agent_id is absent', () => {

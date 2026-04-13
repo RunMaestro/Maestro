@@ -107,6 +107,61 @@ export function writeCuePromptFile(
 }
 
 /**
+ * Remove `.md` files under `.maestro/prompts/` that are not referenced by the
+ * current YAML. Called after a successful `cue:writeYaml` so that renames and
+ * deletions do not leave orphan prompt files behind.
+ *
+ * `referencedRelativePaths` is the set of project-root-relative paths the YAML
+ * references (via `prompt_file` / `output_prompt_file`). Any `.md` file inside
+ * `.maestro/prompts/` whose relative path is not in this set is deleted.
+ *
+ * Silently skips when the prompts directory does not exist. Errors on
+ * individual files are swallowed to keep the save path non-fatal.
+ */
+export function pruneOrphanedPromptFiles(
+	projectRoot: string,
+	referencedRelativePaths: Iterable<string>
+): string[] {
+	const promptsDir = path.resolve(path.join(projectRoot, CUE_PROMPTS_DIR));
+	if (!fs.existsSync(promptsDir)) return [];
+
+	const keep = new Set<string>();
+	for (const rel of referencedRelativePaths) {
+		if (path.isAbsolute(rel)) continue;
+		keep.add(path.resolve(path.join(projectRoot, rel)));
+	}
+
+	const removed: string[] = [];
+	const walk = (dir: string) => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const abs = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(abs);
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+			// Defense-in-depth: only touch files strictly inside the prompts dir.
+			if (!abs.startsWith(promptsDir + path.sep)) continue;
+			if (keep.has(abs)) continue;
+			try {
+				fs.unlinkSync(abs);
+				removed.push(abs);
+			} catch {
+				// Ignore — a file we can't delete is not worth failing the save.
+			}
+		}
+	};
+	walk(promptsDir);
+	return removed;
+}
+
+/**
  * Watches both canonical and legacy Cue config paths.
  * Debounces onChange by 1 second.
  */
