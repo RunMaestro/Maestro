@@ -5,6 +5,7 @@ import { withMaestroClient } from '../services/maestro-client';
 interface CueTriggerOptions {
 	prompt?: string;
 	json?: boolean;
+	sourceAgentId?: string;
 }
 
 export async function cueTrigger(
@@ -23,6 +24,7 @@ export async function cueTrigger(
 					type: 'trigger_cue_subscription',
 					subscriptionName,
 					prompt: options.prompt,
+					sourceAgentId: options.sourceAgentId,
 				},
 				'trigger_cue_subscription_result'
 			);
@@ -35,6 +37,7 @@ export async function cueTrigger(
 					success: result.success,
 					subscriptionName,
 					...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+					...(options.sourceAgentId !== undefined ? { sourceAgentId: options.sourceAgentId } : {}),
 					...(result.error ? { error: result.error } : {}),
 				})
 			);

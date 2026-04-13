@@ -459,9 +459,9 @@ export class CallbackRegistry {
 		return this.callbacks.getCueActivity(sessionId, limit);
 	}
 
-	async triggerCueSubscription(subscriptionName: string, prompt?: string): Promise<boolean> {
+	async triggerCueSubscription(subscriptionName: string, prompt?: string, sourceAgentId?: string): Promise<boolean> {
 		if (!this.callbacks.triggerCueSubscription) return false;
-		return this.callbacks.triggerCueSubscription(subscriptionName, prompt);
+		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
 	}
 
 	async getUsageDashboard(

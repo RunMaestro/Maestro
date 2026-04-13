@@ -107,6 +107,7 @@ enricherRegistry.set('github.issue', (event) => buildGitHubContext(event));
 /** cli.trigger enricher — adds CLI-specific fields. */
 enricherRegistry.set('cli.trigger', (event) => ({
 	cliPrompt: String(event.payload.cliPrompt ?? ''),
+	sourceAgentId: String(event.payload.sourceAgentId ?? ''),
 }));
 
 // ─── Public API ──────────────────────────────────────────────────────────────

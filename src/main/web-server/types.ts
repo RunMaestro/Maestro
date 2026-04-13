@@ -613,7 +613,8 @@ export type GetCueActivityCallback = (
 ) => Promise<CueActivityEntry[]>;
 export type TriggerCueSubscriptionCallback = (
 	subscriptionName: string,
-	prompt?: string
+	prompt?: string,
+	sourceAgentId?: string
 ) => Promise<boolean>;
 
 // =============================================================================

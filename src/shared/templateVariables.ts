@@ -202,6 +202,7 @@ export interface TemplateContext {
 		ghMergedAt?: string;
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
+		sourceAgentId?: string;
 	};
 }
 
@@ -223,6 +224,11 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_CLI_PROMPT}}',
 		description: 'CLI prompt override (cli.trigger events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_SOURCE_AGENT_ID}}',
+		description: 'Source agent ID passed via --source-agent-id (cli.trigger events)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
@@ -448,6 +454,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
+		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

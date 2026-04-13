@@ -1706,7 +1706,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		});
 
 		// Trigger a Cue subscription by name — uses IPC request-response pattern
-		server.setTriggerCueSubscriptionCallback(async (subscriptionName: string, prompt?: string) => {
+		server.setTriggerCueSubscriptionCallback(async (subscriptionName: string, prompt?: string, sourceAgentId?: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for triggerCueSubscription', 'WebServer');
@@ -1737,7 +1737,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					'remote:triggerCueSubscription',
 					subscriptionName,
 					prompt,
-					responseChannel
+					responseChannel,
+					sourceAgentId
 				);
 
 				timeoutId = setTimeout(() => {

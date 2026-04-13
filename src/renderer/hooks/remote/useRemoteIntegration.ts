@@ -886,9 +886,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// Handle remote trigger Cue subscription requests (from web/CLI clients)
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteTriggerCueSubscription(
-			async (subscriptionName: string, prompt: string | undefined, responseChannel: string) => {
+			async (subscriptionName: string, prompt: string | undefined, responseChannel: string, sourceAgentId?: string) => {
 				try {
-					const result = await cueService.triggerSubscription(subscriptionName, prompt);
+					const result = await cueService.triggerSubscription(subscriptionName, prompt, sourceAgentId);
 					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, result);
 				} catch (error) {
 					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
