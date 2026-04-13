@@ -18,7 +18,7 @@ import type { SshRemoteConfig } from '../../../../shared/types';
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { ExistingDocsModal } from '../ExistingDocsModal';
-import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 
 interface DirectorySelectionScreenProps {
 	theme: Theme;
@@ -183,7 +183,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	const checkForExistingDocs = useCallback(
 		async (dirPath: string): Promise<{ exists: boolean; count: number }> => {
 			try {
-				const autoRunPath = `${dirPath}/${AUTO_RUN_FOLDER_NAME}`;
+				const autoRunPath = `${dirPath}/${PLAYBOOKS_DIR}`;
 				const sshRemoteId = getSshRemoteId();
 				const result = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
 				if (result.success && result.files && result.files.length > 0) {
@@ -369,7 +369,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 
 		// Check if Auto Run Docs folder exists and has files
 		try {
-			const autoRunPath = `${state.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = `${state.directoryPath}/${PLAYBOOKS_DIR}`;
 			const sshRemoteId = getSshRemoteId();
 			const result = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
 			const docs = result.success ? result.files : [];

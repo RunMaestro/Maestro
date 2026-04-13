@@ -41,10 +41,6 @@ vi.mock('../../../renderer/utils/sessionValidation', () => ({
 	validateNewSession: vi.fn(() => ({ valid: true, error: null })),
 }));
 
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
-}));
-
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================

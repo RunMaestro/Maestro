@@ -30,7 +30,8 @@ import {
 	createAssistantMessage,
 } from '../services/conversationManager';
 import type { WizardError } from '../services/wizardErrorDetection';
-import { AUTO_RUN_FOLDER_NAME, wizardDebugLogger } from '../services/phaseGenerator';
+import { wizardDebugLogger } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { getNextFillerPhrase } from '../services/fillerPhrases';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
@@ -462,7 +463,7 @@ export function ConversationScreen({
 			}
 
 			try {
-				const autoRunPath = `${state.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+				const autoRunPath = `${state.directoryPath}/${PLAYBOOKS_DIR}`;
 				const listResult = await window.maestro.autorun.listDocs(autoRunPath);
 
 				if (!listResult.success || !listResult.files || listResult.files.length === 0) {
@@ -867,7 +868,7 @@ export function ConversationScreen({
 				}
 
 				// Fetch existing docs for the system prompt
-				const autoRunPath = `${state.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+				const autoRunPath = `${state.directoryPath}/${PLAYBOOKS_DIR}`;
 				const listResult = await window.maestro.autorun.listDocs(autoRunPath);
 				const existingDocs: ExistingDocument[] = [];
 

@@ -18,7 +18,7 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { Loader2, Rocket, Compass, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { useWizard } from '../WizardContext';
-import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
@@ -79,7 +79,7 @@ function DocumentReview({
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
 	const currentDoc = generatedDocuments[currentDocumentIndex] || generatedDocuments[0];
-	const folderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+	const folderPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 
 	// Local content state for editing - tracks current document
 	const [localContent, setLocalContent] = useState(

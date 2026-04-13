@@ -66,10 +66,6 @@ vi.mock('../../../shared/formatters', () => ({
 	formatRelativeTime: vi.fn(() => '5 minutes ago'),
 }));
 
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
-}));
-
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
 	DEFAULT_BATCH_PROMPT: 'Run each task sequentially.',
 }));

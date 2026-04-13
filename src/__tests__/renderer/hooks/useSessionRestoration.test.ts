@@ -23,11 +23,6 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
-// Mock AUTO_RUN_FOLDER_NAME
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro-autorun',
-}));
-
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
@@ -185,7 +180,7 @@ describe('restoreSession — Migration logic', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(restored!.autoRunFolderPath).toBe('/projects/myapp/.maestro-autorun');
+		expect(restored!.autoRunFolderPath).toBe('/projects/myapp/.maestro/playbooks');
 	});
 
 	it('sets fileTreeAutoRefreshInterval to 180 when missing', async () => {

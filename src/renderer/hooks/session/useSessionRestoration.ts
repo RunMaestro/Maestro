@@ -21,7 +21,7 @@ import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
-import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 
 // ============================================================================
 // Return type
@@ -165,7 +165,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			if (!session.autoRunFolderPath && session.projectRoot) {
 				session = {
 					...session,
-					autoRunFolderPath: `${session.projectRoot}/${AUTO_RUN_FOLDER_NAME}`,
+					autoRunFolderPath: `${session.projectRoot}/${PLAYBOOKS_DIR}`,
 				};
 			}
 

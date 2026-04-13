@@ -25,7 +25,7 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
-import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 
 // ============================================================================
 // Dependencies interface
@@ -262,7 +262,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customContextWindow,
 					customProviderPath,
 					sessionSshRemoteConfig,
-					autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
+					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 				};
 
 				setSessions((prev) => [...prev, newSession]);

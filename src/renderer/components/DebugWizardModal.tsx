@@ -12,7 +12,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { useWizard } from './Wizard/WizardContext';
-import { AUTO_RUN_FOLDER_NAME } from './Wizard/services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 
 interface DebugWizardModalProps {
 	theme: Theme;
@@ -84,7 +84,7 @@ export function DebugWizardModal({
 
 		try {
 			// Check if Auto Run Docs folder exists
-			const autoRunPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 
 			let files: string[] = [];
 			try {
@@ -230,7 +230,7 @@ export function DebugWizardModal({
 						</button>
 					</div>
 					<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-						Must contain an "{AUTO_RUN_FOLDER_NAME}" folder with .md files
+						Must contain an "{PLAYBOOKS_DIR}" folder with .md files
 					</p>
 				</div>
 

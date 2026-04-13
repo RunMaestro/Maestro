@@ -8,11 +8,6 @@
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../shared/maestro-paths';
 
 /**
- * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
- */
-export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
-
-/**
  * Represents an existing Auto Run document.
  */
 export interface ExistingDocument {
