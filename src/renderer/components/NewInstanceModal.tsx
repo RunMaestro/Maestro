@@ -45,7 +45,8 @@ interface NewInstanceModalProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		groupId?: string
 	) => void;
 	theme: any;
 	existingSessions: Session[];
@@ -478,7 +479,8 @@ export function NewInstanceModal({
 			agentCustomModel,
 			agentCustomContextWindow,
 			agentCustomProviderPath,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			sourceSession?.groupId
 		);
 		onClose();
 
@@ -576,6 +578,10 @@ export function NewInstanceModal({
 	}, [agents]);
 
 	// Effects - load agents and optionally pre-fill from source session
+	// Depend on sourceSession?.id (not the full object) so store updates that
+	// create a new sourceSession reference don't re-fire and overwrite the name
+	// the user has already typed.
+	const sourceSessionId = sourceSession?.id;
 	useEffect(() => {
 		if (isOpen) {
 			// Pass sourceSession to loadAgents to handle pre-fill AFTER agents are loaded
@@ -590,7 +596,8 @@ export function NewInstanceModal({
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
 		}
-	}, [isOpen, sourceSession]);
+		 
+	}, [isOpen, sourceSessionId]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
