@@ -102,13 +102,14 @@ export function registerFilesystemHandlers(): void {
 			if (!result.success) {
 				throw new Error(result.error || 'Failed to read remote directory');
 			}
-			// Map remote entries to match local format (isFile derived from !isDirectory && !isSymlink)
+			// Map remote entries to match local format
 			// Include full path for recursive directory scanning (e.g., document graph)
 			// Use POSIX path joining for remote paths (always forward slashes)
+			// Symlinks with isDirectory=true have already been resolved by readDirRemote
 			return result.data!.map((entry) => ({
 				name: entry.name.normalize('NFC'),
 				isDirectory: entry.isDirectory,
-				isFile: !entry.isDirectory && !entry.isSymlink,
+				isFile: !entry.isDirectory,
 				// Preserve raw filesystem name in path for correct remote operations
 				path: dirPath.endsWith('/') ? `${dirPath}${entry.name}` : `${dirPath}/${entry.name}`,
 			}));
@@ -118,13 +119,32 @@ export function registerFilesystemHandlers(): void {
 		const entries = await fs.readdir(dirPath, { withFileTypes: true });
 		// Convert Dirent objects to plain objects for IPC serialization
 		// Include full path for recursive directory scanning (e.g., document graph)
-		return entries.map((entry: any) => ({
-			name: entry.name.normalize('NFC'),
-			isDirectory: entry.isDirectory(),
-			isFile: entry.isFile(),
-			// Preserve raw filesystem name in path for correct local operations
-			path: path.join(dirPath, entry.name),
-		}));
+		// Resolve symlinks via fs.stat() so symlinked dirs/files are properly classified
+		return Promise.all(
+			entries.map(async (entry: any) => {
+				const fullPath = path.join(dirPath, entry.name);
+				let isDirectory = entry.isDirectory();
+				let isFile = entry.isFile();
+
+				if (entry.isSymbolicLink()) {
+					try {
+						const targetStat = await fs.stat(fullPath);
+						isDirectory = targetStat.isDirectory();
+						isFile = targetStat.isFile();
+					} catch {
+						// Broken symlink — treat as file so it still appears
+						isFile = true;
+					}
+				}
+
+				return {
+					name: entry.name.normalize('NFC'),
+					isDirectory,
+					isFile,
+					path: fullPath,
+				};
+			})
+		);
 	});
 
 	// Read file contents (supports SSH remote, with image base64 encoding)

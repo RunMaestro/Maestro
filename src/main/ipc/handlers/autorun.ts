@@ -79,19 +79,39 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	const nodes: TreeNode[] = [];
 
+	// Resolve symlinks: determine actual target type for each entry
+	const resolved = await Promise.all(
+		entries
+			.filter((entry) => !entry.name.startsWith('.'))
+			.map(async (entry) => {
+				let isDir = entry.isDirectory();
+				let isFile = entry.isFile();
+				if (entry.isSymbolicLink()) {
+					try {
+						const targetStat = await fs.stat(path.join(dirPath, entry.name));
+						isDir = targetStat.isDirectory();
+						isFile = targetStat.isFile();
+					} catch {
+						// Broken symlink — skip
+						return null;
+					}
+				}
+				return { name: entry.name, isDir, isFile };
+			})
+	);
+	const validEntries = resolved.filter((e): e is NonNullable<typeof e> => e !== null);
+
 	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = entries
-		.filter((entry) => !entry.name.startsWith('.'))
-		.sort((a, b) => {
-			if (a.isDirectory() && !b.isDirectory()) return -1;
-			if (!a.isDirectory() && b.isDirectory()) return 1;
-			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-		});
+	const sortedEntries = validEntries.sort((a, b) => {
+		if (a.isDir && !b.isDir) return -1;
+		if (!a.isDir && b.isDir) return 1;
+		return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+	});
 
 	for (const entry of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDirectory()) {
+		if (entry.isDir) {
 			// Recursively scan subdirectory
 			const children = await scanDirectory(path.join(dirPath, entry.name), entryRelativePath);
 			// Only include folders that contain .md files (directly or in subfolders)
@@ -103,7 +123,7 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 					children,
 				});
 			}
-		} else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (entry.isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -162,7 +182,7 @@ async function scanDirectoryRemote(
 					children,
 				});
 			}
-		} else if (!entry.isDirectory && !entry.isSymlink && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (!entry.isDirectory && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -672,8 +692,8 @@ export function registerAutorunHandlers(
 					// Filter files that start with the docName prefix
 					const images = dirResult.data
 						.filter((entry) => {
-							// Only include files (not directories or symlinks)
-							if (entry.isDirectory || entry.isSymlink) {
+							// Only include files (not directories)
+							if (entry.isDirectory) {
 								return false;
 							}
 							// Check if filename starts with docName-
@@ -1206,8 +1226,8 @@ export function registerAutorunHandlers(
 						for (const entry of dirResult.data) {
 							const entryPath = `${dirPath}/${entry.name}`;
 
-							if (entry.isDirectory && !entry.isSymlink) {
-								// Recurse into subdirectory
+							if (entry.isDirectory) {
+								// Recurse into subdirectory (including symlinked dirs)
 								deleted += await deleteBackupsRemoteRecursive(entryPath);
 							} else if (!entry.isDirectory && entry.name.endsWith('.backup.md')) {
 								// Delete backup file
