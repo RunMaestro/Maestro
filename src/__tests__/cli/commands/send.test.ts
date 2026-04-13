@@ -13,6 +13,11 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
+// Mock maestro-client
+vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: vi.fn(),
+}));
+
 // Mock agent-spawner
 vi.mock('../../../cli/services/agent-spawner', () => ({
 	spawnAgent: vi.fn(),
@@ -44,6 +49,7 @@ vi.mock('../../../main/agents/definitions', () => ({
 }));
 
 import { send } from '../../../cli/commands/send';
+import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
@@ -300,5 +306,77 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	describe('--live mode', () => {
+		it('should send send_command WebSocket message via withMaestroClient', async () => {
+			const mockSendCommand = vi.fn().mockResolvedValue({ type: 'command_result' });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{ type: 'send_command', sessionId: 'my-agent-id', command: 'Hello live', inputMode: 'ai' },
+				'command_result'
+			);
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(true);
+			expect(output.agentId).toBe('my-agent-id');
+			expect(output.agentName).toBe('live');
+			expect(output.sessionId).toBeNull();
+			expect(output.response).toBeNull();
+			expect(output.usage).toBeNull();
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should error when --live is combined with --session', async () => {
+			await send('my-agent-id', 'Hello', { live: true, session: 'some-session' });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toBe('--live cannot be combined with --session or --read-only');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should error when --live is combined with --read-only', async () => {
+			await send('my-agent-id', 'Hello', { live: true, readOnly: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toBe('--live cannot be combined with --session or --read-only');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should produce MAESTRO_NOT_RUNNING error when connection fails', async () => {
+			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Connection refused'));
+
+			await send('my-agent-id', 'Hello', { live: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
+			expect(output.error).toBe('Maestro desktop is not running or not reachable');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should not call agent resolution or spawn in --live mode', async () => {
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: vi.fn().mockResolvedValue({ type: 'command_result' }) };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Hello live', { live: true });
+
+			expect(resolveAgentId).not.toHaveBeenCalled();
+			expect(getSessionById).not.toHaveBeenCalled();
+			expect(detectAgent).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
 	});
 });
