@@ -193,6 +193,7 @@ export interface UseMainPanelPropsDeps {
 	activeBrowserTab: import('../../types').BrowserTab | null;
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
+	handleNewFileTab: () => void;
 	handleNewBrowserTab: () => void;
 	handleBrowserTabSelect: (tabId: string) => void;
 	handleBrowserTabClose: (tabId: string) => void;
@@ -389,6 +390,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			activeBrowserTab: deps.activeBrowserTab,
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
+			onNewFileTab: deps.handleNewFileTab,
 			onNewBrowserTab: deps.handleNewBrowserTab,
 			onBrowserTabSelect: deps.handleBrowserTabSelect,
 			onBrowserTabClose: deps.handleBrowserTabClose,
@@ -610,6 +612,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.activeBrowserTab,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
+			deps.handleNewFileTab,
 			deps.handleNewBrowserTab,
 			deps.handleBrowserTabSelect,
 			deps.handleBrowserTabClose,

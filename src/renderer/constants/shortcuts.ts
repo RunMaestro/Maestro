@@ -176,6 +176,7 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
 	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
+	newFileTab: { id: 'newFileTab', label: 'New File', keys: ['Alt', 'n'] },
 	focusBrowserAddress: {
 		id: 'focusBrowserAddress',
 		label: 'Focus Browser Address Bar',

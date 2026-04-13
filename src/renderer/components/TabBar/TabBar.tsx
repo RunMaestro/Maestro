@@ -28,6 +28,7 @@ function TabBarInner({
 	onTabSelect,
 	onTabClose,
 	onNewTab,
+	onNewFileTab,
 	onNewBrowserTab,
 	onNewTerminalTab,
 	onRequestRename,
@@ -603,9 +604,11 @@ function TabBarInner({
 			<NewTabPopover
 				theme={theme}
 				onNewTab={onNewTab}
+				onNewFileTab={onNewFileTab}
 				onNewBrowserTab={onNewBrowserTab}
 				onNewTerminalTab={onNewTerminalTab}
 				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
+				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
 				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
 				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
 				isOverflowing={isOverflowing}

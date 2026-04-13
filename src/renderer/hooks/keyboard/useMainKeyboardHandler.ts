@@ -742,6 +742,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						trackShortcut('newTab');
 					}
 				}
+				// Alt+N: New file tab (works in any mode)
+				if (ctx.isTabShortcut(e, 'newFileTab')) {
+					e.preventDefault();
+					ctx.handleNewFileTab();
+					trackShortcut('newFileTab');
+				}
 				// Cmd+B: New browser tab (works in any mode)
 				if (ctx.isTabShortcut(e, 'newBrowserTab')) {
 					e.preventDefault();
@@ -1047,53 +1053,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, []); // Empty dependencies - handler reads from ref
 
-	// Forward keyboard shortcuts from browser tab webviews.
-	// When a <webview> has focus, keystrokes are trapped in its guest process.
-	// The main process forwards unhandled app shortcuts here via IPC.
-	// We blur the webview first (so the app can manage focus for the new
-	// tab/panel), then re-dispatch as a synthetic KeyboardEvent.
+	// Browser tab shortcut forwarding: BrowserTabView handles this directly
+	// via its own console-message listener (capture-phase interception in the
+	// guest page).  This IPC listener is kept as a no-op subscriber so the
+	// main-process side doesn't warn about unhandled messages.
 	useEffect(() => {
 		if (!window.maestro?.app?.onBrowserTabShortcutKey) return;
-		return window.maestro.app.onBrowserTabShortcutKey((input) => {
-			// Release focus from the webview so downstream handlers (e.g. Cmd+T
-			// creating a new tab) can move focus to the correct element.
-			const focused = document.activeElement;
-			if (focused && focused.tagName === 'WEBVIEW') {
-				(focused as HTMLElement).blur();
-			}
-
-			// Handle browser address bar focus directly: build a synthetic event
-			// for isTabShortcut matching, then focus the address bar without
-			// re-dispatching through the main handler (which may be blocked
-			// by the overlay/modal shortcut guard).
-			const ctx = keyboardHandlerRef.current;
-			if (ctx?.activeSession?.activeBrowserTabId) {
-				const probe = new KeyboardEvent('keydown', {
-					key: input.key,
-					code: input.code,
-					metaKey: input.meta,
-					ctrlKey: input.control,
-					altKey: input.alt,
-					shiftKey: input.shift,
-				});
-				if (ctx.isTabShortcut(probe, 'focusBrowserAddress')) {
-					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
-					return;
-				}
-			}
-
-			window.dispatchEvent(
-				new KeyboardEvent('keydown', {
-					key: input.key,
-					code: input.code,
-					metaKey: input.meta,
-					ctrlKey: input.control,
-					altKey: input.alt,
-					shiftKey: input.shift,
-					bubbles: true,
-					cancelable: true,
-				})
-			);
+		return window.maestro.app.onBrowserTabShortcutKey(() => {
+			// Handled by BrowserTabView console-message listener
 		});
 	}, []);
 

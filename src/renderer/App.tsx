@@ -798,6 +798,7 @@ function MaestroConsoleInner() {
 		handleOpenFileTab,
 		handleSelectFileTab,
 		handleCloseFileTab,
+		handleNewFileTab,
 		handleNewBrowserTab,
 		handleSelectBrowserTab,
 		handleCloseBrowserTab,
@@ -2091,6 +2092,9 @@ function MaestroConsoleInner() {
 		handleCloseTerminalTab,
 		mainPanelRef,
 
+		// File tab handler for keyboard shortcut (Alt+N)
+		handleNewFileTab,
+
 		// Browser tab handler for keyboard shortcut (Cmd+B)
 		handleNewBrowserTab,
 
@@ -2277,6 +2281,7 @@ function MaestroConsoleInner() {
 		activeBrowserTab,
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
+		handleNewFileTab,
 		handleNewBrowserTab,
 		handleBrowserTabSelect: handleSelectBrowserTab,
 		handleBrowserTabClose: handleCloseBrowserTab,

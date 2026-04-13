@@ -179,6 +179,7 @@ export const MainPanel = React.memo(
 			activeBrowserTab,
 			onFileTabSelect,
 			onFileTabClose,
+			onNewFileTab,
 			onNewBrowserTab,
 			onBrowserTabSelect,
 			onBrowserTabClose,
@@ -586,6 +587,7 @@ export const MainPanel = React.memo(
 									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onNewFileTab={onNewFileTab}
 									onNewBrowserTab={onNewBrowserTab}
 									onBrowserTabSelect={onBrowserTabSelect}
 									onBrowserTabClose={onBrowserTabClose}

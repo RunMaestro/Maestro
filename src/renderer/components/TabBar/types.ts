@@ -9,6 +9,7 @@ export interface TabBarProps {
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
+	onNewFileTab?: () => void;
 	onNewBrowserTab?: () => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */
 	onNewTerminalTab?: () => void;

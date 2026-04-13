@@ -136,6 +136,7 @@ export interface TabHandlersReturn {
 	handleFileTabNavigateForward: () => Promise<void>;
 	handleFileTabNavigateToIndex: (index: number) => Promise<void>;
 	handleClearFilePreviewHistory: () => void;
+	handleNewFileTab: () => void;
 
 	// Browser Tab handlers
 	handleNewBrowserTab: () => void;
@@ -664,6 +665,64 @@ export function useTabHandlers(): TabHandlersReturn {
 				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
 			}
 		}
+	}, []);
+
+	const handleNewFileTab = useCallback(() => {
+		const { setSessions, activeSessionId } = useSessionStore.getState();
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+
+				const newTabId = generateId();
+				const newFileTab: FilePreviewTab = {
+					id: newTabId,
+					path: '',
+					name: 'Untitled',
+					extension: '',
+					content: '',
+					scrollTop: 0,
+					searchQuery: '',
+					editMode: true,
+					editContent: '',
+					createdAt: Date.now(),
+					lastModified: Date.now(),
+					isLoading: false,
+					navigationHistory: [],
+					navigationIndex: -1,
+				};
+
+				const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
+
+				// Insert adjacent to current file tab if one is active
+				let updatedUnifiedTabOrder: UnifiedTabRef[];
+				if (s.activeFileTabId) {
+					const currentIndex = s.unifiedTabOrder.findIndex(
+						(ref) => ref.type === 'file' && ref.id === s.activeFileTabId
+					);
+					if (currentIndex !== -1) {
+						updatedUnifiedTabOrder = [
+							...s.unifiedTabOrder.slice(0, currentIndex + 1),
+							newTabRef,
+							...s.unifiedTabOrder.slice(currentIndex + 1),
+						];
+					} else {
+						updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
+					}
+				} else {
+					updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
+				}
+
+				return {
+					...s,
+					filePreviewTabs: [...s.filePreviewTabs, newFileTab],
+					unifiedTabOrder: updatedUnifiedTabOrder,
+					activeFileTabId: newTabId,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+				};
+			})
+		);
 	}, []);
 
 	const handleNewBrowserTab = useCallback(() => {
@@ -1746,6 +1805,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleFileTabNavigateForward,
 		handleFileTabNavigateToIndex,
 		handleClearFilePreviewHistory,
+		handleNewFileTab,
 
 		// Browser Tab handlers
 		handleNewBrowserTab,

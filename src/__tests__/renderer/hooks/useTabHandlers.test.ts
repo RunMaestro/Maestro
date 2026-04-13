@@ -939,6 +939,88 @@ describe('useTabHandlers', () => {
 	});
 
 	// ========================================================================
+	// New File Tab Handler
+	// ========================================================================
+
+	describe('new file tab handler', () => {
+		it('handleNewFileTab creates an untitled file tab in edit mode', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			setupSessionWithTabs([aiTab]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleNewFileTab();
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(1);
+			expect(session.filePreviewTabs[0]).toMatchObject({
+				path: '',
+				name: 'Untitled',
+				extension: '',
+				content: '',
+				editMode: true,
+				editContent: '',
+			});
+			expect(session.activeFileTabId).toBe(session.filePreviewTabs[0].id);
+			expect(session.activeBrowserTabId).toBeNull();
+			expect(session.activeTerminalTabId).toBeNull();
+			expect(session.unifiedTabOrder).toContainEqual({
+				type: 'file',
+				id: session.filePreviewTabs[0].id,
+			});
+		});
+
+		it('handleNewFileTab inserts adjacent to active file tab', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([aiTab], [fileTab], 'ai-1', 'file-1');
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleNewFileTab();
+			});
+
+			const session = getSession();
+			expect(session.filePreviewTabs).toHaveLength(2);
+			// New tab should be right after the existing file tab in unified order
+			const fileIndices = session.unifiedTabOrder
+				.map((ref, i) => (ref.type === 'file' ? i : -1))
+				.filter((i) => i >= 0);
+			expect(fileIndices[1] - fileIndices[0]).toBe(1);
+		});
+
+		it('handleNewFileTab clears terminal and browser selection', () => {
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const sessionId = setupSessionWithTabs([aiTab]);
+
+			useSessionStore.setState((state) => ({
+				...state,
+				sessions: state.sessions.map((session) =>
+					session.id === sessionId
+						? {
+								...session,
+								inputMode: 'terminal',
+								activeTerminalTabId: 'term-1',
+								activeBrowserTabId: 'browser-1',
+							}
+						: session
+				),
+			}));
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleNewFileTab();
+			});
+
+			const session = getSession();
+			expect(session.activeTerminalTabId).toBeNull();
+			expect(session.activeBrowserTabId).toBeNull();
+			expect(session.inputMode).toBe('ai');
+		});
+	});
+
+	// ========================================================================
 	// Tab Property Handlers
 	// ========================================================================
 
