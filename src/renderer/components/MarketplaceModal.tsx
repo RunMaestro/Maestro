@@ -28,6 +28,7 @@ import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useMarketplace } from '../hooks/batch/useMarketplace';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import {
 	REMARK_GFM_PLUGINS,
 	generateProseStyles,
@@ -246,43 +247,39 @@ function PlaybookDetailView({
 
 	// Keyboard shortcuts for scrolling the document preview
 	// OPT+Up/Down: page up/down, CMD+Up/Down: home/end
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const scrollContainer = previewScrollRef.current;
-			if (!scrollContainer) return;
+	useEventListener('keydown', (event: Event) => {
+		const e = event as KeyboardEvent;
+		const scrollContainer = previewScrollRef.current;
+		if (!scrollContainer) return;
 
-			// Don't handle if typing in an input
-			if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-				return;
+		// Don't handle if typing in an input
+		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+			return;
+		}
+
+		const pageHeight = scrollContainer.clientHeight * 0.9; // 90% of visible height
+
+		// CMD+Up/Down: Home/End
+		if (e.metaKey && !e.altKey && !e.shiftKey) {
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+			} else if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
 			}
-
-			const pageHeight = scrollContainer.clientHeight * 0.9; // 90% of visible height
-
-			// CMD+Up/Down: Home/End
-			if (e.metaKey && !e.altKey && !e.shiftKey) {
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
-				}
+		}
+		// OPT+Up/Down: Page up/down
+		else if (e.altKey && !e.metaKey && !e.shiftKey) {
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				scrollContainer.scrollBy({ top: -pageHeight, behavior: 'smooth' });
+			} else if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				scrollContainer.scrollBy({ top: pageHeight, behavior: 'smooth' });
 			}
-			// OPT+Up/Down: Page up/down
-			else if (e.altKey && !e.metaKey && !e.shiftKey) {
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					scrollContainer.scrollBy({ top: -pageHeight, behavior: 'smooth' });
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					scrollContainer.scrollBy({ top: pageHeight, behavior: 'smooth' });
-				}
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, []);
+		}
+	});
 
 	// Generate prose styles scoped to marketplace panel
 	const proseStyles = useMemo(
