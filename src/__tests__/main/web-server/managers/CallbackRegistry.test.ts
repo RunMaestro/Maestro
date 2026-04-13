@@ -656,6 +656,25 @@ describe('CallbackRegistry', () => {
 			expect(sessionsCallback).toHaveBeenCalledTimes(1);
 		});
 
+		it('triggerCueSubscription() returns false when no callback set', async () => {
+			expect(await registry.triggerCueSubscription('my-sub')).toBe(false);
+		});
+
+		it('triggerCueSubscription() passes sourceAgentId through to callback', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setTriggerCueSubscriptionCallback(callback);
+			const result = await registry.triggerCueSubscription('my-sub', 'prompt', 'agent-xyz-123');
+			expect(result).toBe(true);
+			expect(callback).toHaveBeenCalledWith('my-sub', 'prompt', 'agent-xyz-123');
+		});
+
+		it('triggerCueSubscription() passes undefined sourceAgentId when not provided', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setTriggerCueSubscriptionCallback(callback);
+			await registry.triggerCueSubscription('my-sub');
+			expect(callback).toHaveBeenCalledWith('my-sub', undefined, undefined);
+		});
+
 		it('multiple callbacks can be set and work independently', async () => {
 			const sessionsCallback = vi.fn().mockReturnValue([{ id: 's1' }]);
 			const themeCallback = vi.fn().mockReturnValue({ name: 'dark' });

@@ -467,6 +467,58 @@ describe('Cue IPC Handlers', () => {
 		});
 	});
 
+	describe('cue:triggerSubscription', () => {
+		it('should pass subscriptionName to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, { subscriptionName: 'my-sub' });
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith('my-sub', undefined, undefined);
+		});
+
+		it('should pass prompt to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, { subscriptionName: 'my-sub', prompt: 'custom prompt' });
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				'custom prompt',
+				undefined
+			);
+		});
+
+		it('should pass sourceAgentId to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, {
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz-123',
+			});
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				undefined,
+				'agent-xyz-123'
+			);
+		});
+
+		it('should pass both prompt and sourceAgentId to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, {
+				subscriptionName: 'my-sub',
+				prompt: 'override prompt',
+				sourceAgentId: 'agent-abc',
+			});
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				'override prompt',
+				'agent-abc'
+			);
+		});
+
+		it('should return the boolean result from engine', async () => {
+			mockEngine.triggerSubscription.mockReturnValue(false);
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			const result = await handler(null, { subscriptionName: 'nonexistent' });
+			expect(result).toBe(false);
+		});
+	});
+
 	describe('cue:loadPipelineLayout', () => {
 		it('should return layout when file exists', async () => {
 			const layout = {

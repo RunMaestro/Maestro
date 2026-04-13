@@ -116,6 +116,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),
+		triggerCueSubscription: vi.fn().mockResolvedValue(true),
 		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
@@ -1111,6 +1112,84 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('terminal_resize_result');
 			expect(response.success).toBe(true);
+		});
+	});
+
+	describe('Trigger Cue Subscription (sourceAgentId)', () => {
+		it('should pass sourceAgentId through to triggerCueSubscription callback', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz-123',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					undefined,
+					'agent-xyz-123'
+				);
+			});
+		});
+
+		it('should pass prompt and sourceAgentId together', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				prompt: 'custom prompt',
+				sourceAgentId: 'agent-abc',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					'custom prompt',
+					'agent-abc'
+				);
+			});
+		});
+
+		it('should pass undefined sourceAgentId when not provided', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					undefined,
+					undefined
+				);
+			});
+		});
+
+		it('should return trigger_cue_subscription_result on success', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz',
+			});
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('trigger_cue_subscription_result');
+			expect(response.success).toBe(true);
+			expect(response.subscriptionName).toBe('my-sub');
+		});
+
+		it('should reject missing subscriptionName', () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				sourceAgentId: 'agent-xyz',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.triggerCueSubscription).not.toHaveBeenCalled();
 		});
 	});
 });

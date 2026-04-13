@@ -2986,4 +2986,125 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 	});
+
+	describe('triggerSubscription with sourceAgentId', () => {
+		it('should include sourceAgentId in the event payload', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'test-sub',
+						event: 'cli.trigger',
+						enabled: true,
+						prompt: 'Do the thing',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('test-sub', undefined, 'agent-xyz-123');
+			expect(result).toBe(true);
+
+			// Verify the event passed to onCueRun contains sourceAgentId in payload
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+							sourceAgentId: 'agent-xyz-123',
+						}),
+					}),
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('should not include sourceAgentId in event payload when not provided', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'test-sub',
+						event: 'cli.trigger',
+						enabled: true,
+						prompt: 'Do the thing',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.triggerSubscription('test-sub');
+
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+						}),
+					}),
+				})
+			);
+			// Verify sourceAgentId is NOT in the payload
+			const callArgs = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(callArgs.event.payload).not.toHaveProperty('sourceAgentId');
+
+			engine.stop();
+		});
+
+		it('should include both sourceAgentId and cliPrompt in event payload', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'test-sub',
+						event: 'cli.trigger',
+						enabled: true,
+						prompt: 'Default prompt',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.triggerSubscription('test-sub', 'override prompt', 'agent-abc');
+
+			expect(deps.onCueRun).toHaveBeenCalledWith(
+				expect.objectContaining({
+					event: expect.objectContaining({
+						payload: expect.objectContaining({
+							manual: true,
+							sourceAgentId: 'agent-abc',
+							cliPrompt: 'override prompt',
+						}),
+					}),
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('should return false when subscription is not found', () => {
+			const config = createMockConfig({ subscriptions: [] });
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const result = engine.triggerSubscription('nonexistent', undefined, 'agent-xyz');
+			expect(result).toBe(false);
+			expect(deps.onCueRun).not.toHaveBeenCalled();
+
+			engine.stop();
+		});
+	});
 });
