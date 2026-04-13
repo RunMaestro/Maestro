@@ -596,7 +596,6 @@ export function NewInstanceModal({
 			// Reset warning acknowledgment when modal opens
 			setDirectoryWarningAcknowledged(false);
 		}
-		 
 	}, [isOpen, sourceSessionId]);
 
 	// Load SSH remote configurations independently of agent detection
