@@ -383,7 +383,7 @@ export function formatDurationDecimal(ms: number): string {
  */
 export function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
+	return Math.ceil(totalChars / 4);
 }
 
 /**
@@ -407,13 +407,13 @@ export function formatTimestamp(
 
 	switch (style) {
 		case 'time':
-			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 		case 'datetime':
 			return date.toLocaleString([], {
 				month: 'short',
 				day: 'numeric',
-				hour: '2-digit',
+				hour: 'numeric',
 				minute: '2-digit',
 			});
 
@@ -426,12 +426,12 @@ export function formatTimestamp(
 			const isToday = date.toDateString() === now.toDateString();
 
 			if (isToday) {
-				return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+				return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 			}
 			return (
 				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
 				' ' +
-				date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+				date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 			);
 		}
 	}
