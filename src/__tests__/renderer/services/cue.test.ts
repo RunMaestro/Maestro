@@ -212,8 +212,10 @@ describe('cueService — write methods', () => {
 
 	it('triggerSubscription — passes args and rethrows on error', async () => {
 		mockCue.triggerSubscription.mockRejectedValue(new Error('IPC fail'));
-		await expect(cueService.triggerSubscription('sub-1', 'prompt')).rejects.toThrow('IPC fail');
-		expect(mockCue.triggerSubscription).toHaveBeenCalledWith('sub-1', 'prompt');
+		await expect(cueService.triggerSubscription('sub-1', 'prompt', 'agent-1')).rejects.toThrow(
+			'IPC fail'
+		);
+		expect(mockCue.triggerSubscription).toHaveBeenCalledWith('sub-1', 'prompt', 'agent-1');
 	});
 
 	it('refreshSession — passes args and rethrows on error', async () => {
