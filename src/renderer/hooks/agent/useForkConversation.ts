@@ -3,7 +3,6 @@ import type { Session, LogEntry } from '../../types';
 import { createMergedSession, getTabDisplayName, getActiveTab } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { maestroSystemPrompt } from '../../../prompts';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
@@ -183,8 +182,9 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 
 					const conductorProfile = useSettingsStore.getState().conductorProfile;
 					let appendSystemPrompt: string | undefined;
-					if (maestroSystemPrompt) {
-						appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					const systemPromptResult = await window.maestro.prompts.get('maestro-system-prompt');
+					if (systemPromptResult.success && systemPromptResult.content) {
+						appendSystemPrompt = substituteTemplateVariables(systemPromptResult.content, {
 							session: newSession,
 							gitBranch,
 							groupId: newSession.groupId,

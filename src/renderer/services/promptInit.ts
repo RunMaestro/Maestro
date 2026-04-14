@@ -8,7 +8,7 @@
  * after save/reset, so edits take effect immediately without restart.
  */
 
-import { captureException, captureMessage } from '../utils/sentry';
+import { captureException } from '../utils/sentry';
 
 // Stores
 import { loadSettingsStorePrompts } from '../stores/settingsStore';

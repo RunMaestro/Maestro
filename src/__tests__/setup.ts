@@ -589,6 +589,8 @@ const mockMaestro = {
 		getAllIds: vi.fn().mockResolvedValue({ success: true, ids: [] }),
 		save: vi.fn().mockResolvedValue({ success: true }),
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
