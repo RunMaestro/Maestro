@@ -218,7 +218,11 @@ export function useAutoRunHandlers(
 		startBatchRun,
 	} = deps;
 
-	// Handler for auto run folder selection from setup modal
+	// Handler for auto run folder selection from setup modal.
+	// Worktree sessions store their own independent Auto Run folder paths -
+	// the selected path is stored directly on activeSession (whichever session
+	// is active), with no parent-session resolution. This is correct because
+	// the user picks the folder relative to the worktree's own working directory.
 	const handleAutoRunFolderSelected = useCallback(
 		async (folderPath: string) => {
 			if (!activeSession) return;
@@ -395,14 +399,72 @@ export function useAutoRunHandlers(
 				}
 			}
 
+			// Resolve the folder path for the batch run.
+			// When the user IS on the worktree, activeSession.autoRunFolderPath already
+			// points to the worktree's own directory (set by buildWorktreeSession).
+			// When dispatching from parent to worktree, copy queued docs to the
+			// worktree's Auto Run folder so subsequent runs find them locally.
+			let folderPath = activeSession.autoRunFolderPath;
+			if (targetSessionId !== activeSession.id) {
+				const targetSession = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === targetSessionId);
+				if (targetSession?.autoRunFolderPath && targetSession.autoRunFolderPath !== folderPath) {
+					const sshRemoteId = getSshRemoteId(activeSession);
+					const destFolder = targetSession.autoRunFolderPath;
+					// Copy only the queued documents from the parent's folder to the worktree
+					let copyFailed = false;
+					await Promise.all(
+						config.documents.map(async (doc) => {
+							try {
+								const readResult = await window.maestro.autorun.readDoc(
+									folderPath,
+									doc.filename + '.md',
+									sshRemoteId
+								);
+								if (readResult.success && readResult.content != null) {
+									await window.maestro.autorun.writeDoc(
+										destFolder,
+										doc.filename + '.md',
+										readResult.content,
+										sshRemoteId
+									);
+								} else {
+									copyFailed = true;
+									window.maestro.logger.log(
+										'warn',
+										`Failed to read doc "${doc.filename}" from source folder`,
+										'AutoRunHandlers'
+									);
+								}
+							} catch (err) {
+								copyFailed = true;
+								window.maestro.logger.log(
+									'warn',
+									`Failed to copy doc "${doc.filename}" to worktree: ${err instanceof Error ? err.message : String(err)}`,
+									'AutoRunHandlers'
+								);
+							}
+						})
+					);
+					if (copyFailed) {
+						notifyToast({
+							type: 'warning',
+							title: 'Some Documents Failed to Copy',
+							message: 'Not all documents could be copied to the worktree. Check logs for details.',
+						});
+					}
+					folderPath = destFolder;
+				}
+			}
+
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {
 				sessionId: targetSessionId,
-				folderPath: activeSession.autoRunFolderPath,
+				folderPath,
 				isWorktreeTarget: targetSessionId !== activeSession.id,
 			});
 			setBatchRunnerModalOpen(false);
-			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
-			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
+			startBatchRun(targetSessionId, config, folderPath);
 		},
 		[activeSession, startBatchRun, setBatchRunnerModalOpen]
 	);

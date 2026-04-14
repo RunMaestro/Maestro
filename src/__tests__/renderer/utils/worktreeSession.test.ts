@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildWorktreeSession } from '../../../renderer/utils/worktreeSession';
+import { buildWorktreeSession, isPathUnderRoot } from '../../../renderer/utils/worktreeSession';
 import type { Session } from '../../../renderer/types';
 
 // Mock generateId for deterministic IDs
@@ -137,6 +137,171 @@ describe('buildWorktreeSession', () => {
 		});
 
 		expect(session.sessionSshRemoteConfig).toEqual(sshConfig);
+	});
+
+	describe('autoRunFolderPath resolution', () => {
+		it('should rebase absolute path under parent cwd onto worktree cwd', () => {
+			const parent = createMockParentSession({
+				cwd: '/projects/main',
+				autoRunFolderPath: '/projects/main/Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('/worktrees/feature-x/Auto Run Docs');
+		});
+
+		it('should keep relative path as-is', () => {
+			const parent = createMockParentSession({
+				autoRunFolderPath: 'Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('Auto Run Docs');
+		});
+
+		it('should keep external absolute path as-is', () => {
+			const parent = createMockParentSession({
+				cwd: '/projects/main',
+				autoRunFolderPath: '/shared/autorun-docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('/shared/autorun-docs');
+		});
+
+		it('should handle Windows backslash paths', () => {
+			const parent = createMockParentSession({
+				cwd: 'C:\\Users\\Admin\\Software\\Maestro',
+				autoRunFolderPath: 'C:\\Users\\Admin\\Software\\Maestro\\Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: 'C:\\Users\\Admin\\Software\\Maestro-worktree',
+				name: 'worktree',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe(
+				'C:\\Users\\Admin\\Software\\Maestro-worktree\\Auto Run Docs'
+			);
+		});
+
+		it('should return undefined when parent has no autoRunFolderPath', () => {
+			const parent = createMockParentSession({
+				autoRunFolderPath: undefined,
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBeUndefined();
+		});
+
+		it('should treat empty string autoRunFolderPath as undefined', () => {
+			const parent = createMockParentSession({
+				autoRunFolderPath: '',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBeUndefined();
+		});
+
+		it('should rebase when autoRunFolderPath equals parent cwd exactly', () => {
+			const parent = createMockParentSession({
+				cwd: '/projects/main',
+				autoRunFolderPath: '/projects/main',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe('/worktrees/feature-x');
+		});
+
+		it('should handle case-insensitive matching on Windows-style paths', () => {
+			const parent = createMockParentSession({
+				cwd: 'C:\\Users\\Admin\\Software\\Maestro',
+				autoRunFolderPath: 'c:\\users\\admin\\software\\Maestro\\Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: 'C:\\Users\\Admin\\Software\\Maestro-worktree',
+				name: 'worktree',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			expect(session.autoRunFolderPath).toBe(
+				'C:\\Users\\Admin\\Software\\Maestro-worktree\\Auto Run Docs'
+			);
+		});
+
+		it('should use case-sensitive comparison for Unix paths', () => {
+			const parent = createMockParentSession({
+				cwd: '/Projects/Main',
+				autoRunFolderPath: '/projects/main/Auto Run Docs',
+			});
+			const session = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			// Different case on Unix means different directory - treat as external
+			expect(session.autoRunFolderPath).toBe('/projects/main/Auto Run Docs');
+		});
+	});
+
+	describe('isPathUnderRoot', () => {
+		it('returns true for path under root (Unix)', () => {
+			expect(isPathUnderRoot('/projects/main/Auto Run Docs', '/projects/main')).toBe(true);
+		});
+
+		it('returns true when path equals root', () => {
+			expect(isPathUnderRoot('/projects/main', '/projects/main')).toBe(true);
+		});
+
+		it('returns false for external path', () => {
+			expect(isPathUnderRoot('/other/path', '/projects/main')).toBe(false);
+		});
+
+		it('returns false for partial prefix match', () => {
+			expect(isPathUnderRoot('/projects/main-fork/docs', '/projects/main')).toBe(false);
+		});
+
+		it('handles Windows case-insensitive', () => {
+			expect(isPathUnderRoot('C:\\Users\\Admin\\docs', 'c:\\users\\admin')).toBe(true);
+		});
+
+		it('handles Unix case-sensitive', () => {
+			expect(isPathUnderRoot('/Projects/Main/docs', '/projects/main')).toBe(false);
+		});
 	});
 
 	it('should create initial AI tab with correct settings', () => {
