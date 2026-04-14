@@ -449,11 +449,12 @@ export async function* runPlaybook(
 
 				// Emit debug event with prompt size (always when debug enabled)
 				if (debug) {
+					const wrapperChars = finalPrompt.length - basePrompt.length - expandedDocContent.length;
 					yield {
 						type: 'debug',
 						timestamp: Date.now(),
 						category: 'prompt_size',
-						message: `Prompt: ${finalPrompt.length} chars (document: ${expandedDocContent.length} chars, base prompt: ${basePrompt.length} chars)`,
+						message: `Prompt: ${finalPrompt.length} chars (document: ${expandedDocContent.length} chars, base prompt: ${basePrompt.length} chars, wrapper: ${wrapperChars} chars)`,
 					};
 				}
 
@@ -482,6 +483,8 @@ export async function* runPlaybook(
 					totalInputTokens += result.usageStats.inputTokens || 0;
 					totalOutputTokens += result.usageStats.outputTokens || 0;
 				}
+
+				const taskElapsedMs = Date.now() - taskStartTime;
 
 				// Generate synopsis (unless skipped via --no-synopsis)
 				let shortSummary = `[${docEntry.filename}] Task completed`;
@@ -538,8 +541,6 @@ export async function* runPlaybook(
 					fullSynopsis = result.error || shortSummary;
 				}
 
-				const elapsedMs = Date.now() - taskStartTime;
-
 				// Emit task complete event with separated usage stats
 				yield {
 					type: 'task_complete',
@@ -549,7 +550,7 @@ export async function* runPlaybook(
 					success: result.success,
 					summary: shortSummary,
 					fullResponse: fullSynopsis,
-					elapsedMs,
+					elapsedMs: taskElapsedMs,
 					usageStats: result.usageStats,
 					synopsisUsageStats,
 					synopsisSkipped: skipSynopsis,
@@ -558,6 +559,28 @@ export async function* runPlaybook(
 
 				// Add history entry if enabled
 				if (writeHistory) {
+					// Merge task + synopsis usage for history persistence
+					const combinedUsageStats: UsageStats | undefined =
+						result.usageStats || synopsisUsageStats
+							? {
+									inputTokens:
+										(result.usageStats?.inputTokens || 0) + (synopsisUsageStats?.inputTokens || 0),
+									outputTokens:
+										(result.usageStats?.outputTokens || 0) +
+										(synopsisUsageStats?.outputTokens || 0),
+									cacheReadInputTokens:
+										(result.usageStats?.cacheReadInputTokens || 0) +
+										(synopsisUsageStats?.cacheReadInputTokens || 0),
+									cacheCreationInputTokens:
+										(result.usageStats?.cacheCreationInputTokens || 0) +
+										(synopsisUsageStats?.cacheCreationInputTokens || 0),
+									totalCostUsd:
+										(result.usageStats?.totalCostUsd || 0) +
+										(synopsisUsageStats?.totalCostUsd || 0),
+									contextWindow:
+										result.usageStats?.contextWindow || synopsisUsageStats?.contextWindow || 0,
+								}
+							: undefined;
 					const historyEntry: HistoryEntry = {
 						id: generateUUID(),
 						type: 'AUTO',
@@ -568,8 +591,8 @@ export async function* runPlaybook(
 						projectPath: session.cwd,
 						sessionId: session.id,
 						success: result.success,
-						usageStats: result.usageStats,
-						elapsedTimeMs: elapsedMs,
+						usageStats: combinedUsageStats,
+						elapsedTimeMs: taskElapsedMs,
 					};
 					addHistoryEntry(historyEntry);
 					if (debug) {
