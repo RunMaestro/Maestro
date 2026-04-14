@@ -57,8 +57,8 @@ Centralized in `src/shared/agentMetadata.ts` (importable from any process):
 
 - `getAgentDisplayName(agentId)` — human-readable name with fallback
 - `isBetaAgent(agentId)` — beta badge check
-- `AGENT_DISPLAY_NAMES` — internal `Record<AgentId, string>` map (not exported, use `getAgentDisplayName()`)
-- `BETA_AGENTS` — internal `ReadonlySet<AgentId>` (not exported, use `isBetaAgent()`)
+
+The backing data (`AGENT_DISPLAY_NAMES` record, `BETA_AGENTS` set) is module-private. Use the functions above to access it.
 
 ## Agent-Specific Details
 
