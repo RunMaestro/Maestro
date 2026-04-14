@@ -3105,6 +3105,12 @@ interface MaestroAPI {
 		getAllIds: () => Promise<{ success: boolean; ids?: string[]; error?: string }>;
 		save: (id: string, content: string) => Promise<{ success: boolean; error?: string }>;
 		reset: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		listFiles: () => Promise<{
+			success: boolean;
+			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
+			error?: string;
+		}>;
 	};
 }
 

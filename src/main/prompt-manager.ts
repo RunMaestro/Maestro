@@ -10,10 +10,16 @@
  * - On load: User customization wins if isModified=true, else bundled
  * - On save: Writes to customizations JSON AND updates in-memory cache immediately
  * - On reset: Removes from customizations JSON AND updates in-memory cache immediately
+ *
+ * Include directives:
+ * - Prompts can reference other files via {{INCLUDE:name}}
+ * - Resolution: prompt cache first, then <promptsDir>/<name>.md on disk
+ * - Max depth of 3 to prevent runaway recursion; cycles are detected
  */
 
 import { app } from 'electron';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import { logger } from './utils/logger';
 import { CORE_PROMPTS } from '../shared/promptDefinitions';
@@ -154,7 +160,7 @@ export async function initializePrompts(): Promise<void> {
 }
 
 /**
- * Get a prompt by ID. Returns cached value (prompts are loaded once at startup).
+ * Get a prompt by ID. Resolves {{INCLUDE:name}} directives in the content.
  */
 export function getPrompt(id: string): string {
 	if (!initialized) {
@@ -166,7 +172,7 @@ export function getPrompt(id: string): string {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
-	return cached.content;
+	return resolveIncludes(cached.content, new Set([id]), 0);
 }
 
 /**
@@ -258,4 +264,89 @@ export function arePromptsInitialized(): boolean {
  */
 export function getAllPromptIds(): string[] {
 	return CORE_PROMPTS.map((p) => p.id);
+}
+
+/**
+ * Get the platform-resolved path to the prompts directory.
+ */
+export function getPromptsPath(): string {
+	return getBundledPromptsPath();
+}
+
+/**
+ * List all .md files in the prompts directory, including user-added files
+ * that aren't in the catalog. Returns objects with name (without .md) and
+ * whether the file is a registered catalog prompt.
+ */
+export async function listPromptFiles(): Promise<
+	Array<{ name: string; filename: string; isCatalog: boolean }>
+> {
+	const promptsPath = getBundledPromptsPath();
+	const catalogFilenames = new Set(CORE_PROMPTS.map((p) => p.filename));
+
+	try {
+		const entries = await fs.readdir(promptsPath);
+		return entries
+			.filter((f) => f.endsWith('.md'))
+			.sort()
+			.map((filename) => ({
+				name: filename.replace(/\.md$/, ''),
+				filename,
+				isCatalog: catalogFilenames.has(filename),
+			}));
+	} catch (error) {
+		logger.error(`Failed to list prompt files from ${promptsPath}: ${error}`, LOG_CONTEXT);
+		return CORE_PROMPTS.map((p) => ({
+			name: p.id,
+			filename: p.filename,
+			isCatalog: true,
+		}));
+	}
+}
+
+// ============================================================================
+// Include Resolution
+// ============================================================================
+
+const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
+const MAX_INCLUDE_DEPTH = 3;
+
+function resolveIncludes(content: string, visited: Set<string>, depth: number): string {
+	if (depth >= MAX_INCLUDE_DEPTH) return content;
+	if (!INCLUDE_PATTERN.test(content)) return content;
+
+	INCLUDE_PATTERN.lastIndex = 0;
+
+	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
+		if (visited.has(name)) {
+			logger.warn(
+				`Circular include detected: ${name} (visited: ${[...visited].join(' → ')})`,
+				LOG_CONTEXT
+			);
+			return match;
+		}
+
+		const resolved = resolveIncludeContent(name);
+		if (resolved === null) {
+			logger.warn(`Include not found: ${name}`, LOG_CONTEXT);
+			return match;
+		}
+
+		const nextVisited = new Set(visited);
+		nextVisited.add(name);
+		return resolveIncludes(resolved, nextVisited, depth + 1);
+	});
+}
+
+function resolveIncludeContent(name: string): string | null {
+	const cached = promptCache.get(name);
+	if (cached) return cached.content;
+
+	const promptsPath = getBundledPromptsPath();
+	const filePath = path.join(promptsPath, `${name}.md`);
+	try {
+		return fsSync.readFileSync(filePath, 'utf-8');
+	} catch {
+		return null;
+	}
 }

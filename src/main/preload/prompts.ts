@@ -19,6 +19,12 @@ export interface CorePromptData {
 	isModified: boolean;
 }
 
+export interface PromptFileEntry {
+	name: string;
+	filename: string;
+	isCatalog: boolean;
+}
+
 /**
  * Creates the Prompts API object for preload exposure
  */
@@ -46,6 +52,17 @@ export function createPromptsApi() {
 		// Reset to bundled default (immediate effect)
 		reset: (id: string): Promise<{ success: boolean; content?: string; error?: string }> =>
 			ipcRenderer.invoke('prompts:reset', id),
+
+		// Get prompts directory path (for "Open Folder" button)
+		getPath: (): Promise<{ success: boolean; path?: string; error?: string }> =>
+			ipcRenderer.invoke('prompts:getPath'),
+
+		// List all .md files in the prompts directory (includes user-added files)
+		listFiles: (): Promise<{
+			success: boolean;
+			files?: PromptFileEntry[];
+			error?: string;
+		}> => ipcRenderer.invoke('prompts:listFiles'),
 	};
 }
 

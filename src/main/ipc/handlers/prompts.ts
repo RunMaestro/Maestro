@@ -13,6 +13,8 @@ import {
 	savePrompt,
 	resetPrompt,
 	arePromptsInitialized,
+	getPromptsPath,
+	listPromptFiles,
 } from '../../prompt-manager';
 import { logger } from '../../utils/logger';
 
@@ -85,6 +87,27 @@ export function registerPromptsHandlers(): void {
 			return { success: true, content };
 		} catch (error) {
 			logger.error(`Failed to reset prompt ${id}: ${error}`, LOG_CONTEXT);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// Get the prompts directory path (for "Open Folder" button)
+	ipcMain.handle('prompts:getPath', async () => {
+		try {
+			return { success: true, path: getPromptsPath() };
+		} catch (error) {
+			logger.error(`Failed to get prompts path: ${error}`, LOG_CONTEXT);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// List all .md files in prompts directory (includes user-added files)
+	ipcMain.handle('prompts:listFiles', async () => {
+		try {
+			const files = await listPromptFiles();
+			return { success: true, files };
+		} catch (error) {
+			logger.error(`Failed to list prompt files: ${error}`, LOG_CONTEXT);
 			return { success: false, error: String(error) };
 		}
 	});

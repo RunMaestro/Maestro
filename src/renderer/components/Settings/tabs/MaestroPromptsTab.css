@@ -27,11 +27,23 @@
 }
 
 .category-header {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
 	padding: 4px 12px;
+	border: none;
+	background: transparent;
 	font-size: 11px;
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.category-header:hover {
+	opacity: 0.7;
 }
 
 .prompt-item {
@@ -124,6 +136,7 @@
 
 .editor-actions {
 	display: flex;
+	align-items: center;
 	gap: 8px;
 	margin-top: 12px;
 }
@@ -142,6 +155,20 @@
 .reset-button {
 	border: 1px solid;
 	background: transparent;
+}
+
+.open-folder-button {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 8px 16px;
+	border: 1px solid;
+	border-radius: 4px;
+	background: transparent;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: opacity 0.1s;
 }
 
 .save-button:disabled,

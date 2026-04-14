@@ -6,8 +6,10 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
+import { getOpenInLabel } from '../../../utils/platformUtils';
 import { captureException, captureMessage } from '../../../utils/sentry';
 import './MaestroPromptsTab.css';
 
@@ -48,6 +50,8 @@ export function MaestroPromptsTab({
 	const [isResetting, setIsResetting] = useState(false);
 	const [successMessage, setSuccessMessage] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+	const [promptsPath, setPromptsPath] = useState<string | null>(null);
 
 	// Auto-dismiss success message after 3 seconds
 	useEffect(() => {
@@ -56,11 +60,17 @@ export function MaestroPromptsTab({
 		return () => clearTimeout(timer);
 	}, [successMessage]);
 
-	// Load prompts on mount and select initial prompt (or first)
+	// Load prompts and prompts path on mount
 	useEffect(() => {
 		(async () => {
 			try {
-				const result = await window.maestro.prompts.getAll();
+				const [result, pathResult] = await Promise.all([
+					window.maestro.prompts.getAll(),
+					window.maestro.prompts.getPath(),
+				]);
+				if (pathResult.success && pathResult.path) {
+					setPromptsPath(pathResult.path);
+				}
 				if (result.success && result.prompts) {
 					setPrompts(result.prompts);
 					const initial = initialSelectedPromptId
@@ -125,6 +135,18 @@ export function MaestroPromptsTab({
 		},
 		[selectedPrompt]
 	);
+
+	const toggleCategory = useCallback((category: string) => {
+		setCollapsedCategories((prev) => {
+			const next = new Set(prev);
+			if (next.has(category)) {
+				next.delete(category);
+			} else {
+				next.add(category);
+			}
+			return next;
+		});
+	}, []);
 
 	const handleSave = useCallback(async () => {
 		if (!selectedPrompt || !hasUnsavedChanges) return;
@@ -210,39 +232,56 @@ export function MaestroPromptsTab({
 		<div className="maestro-prompts-settings-tab">
 			<div className="text-xs font-bold opacity-70 uppercase mb-3">Core System Prompts</div>
 			<p className="text-xs opacity-50 mb-4">
-				Customize the system prompts used by Maestro features. Changes take effect immediately.
+				Customize the system prompts used by Maestro features. Changes take effect immediately. Use{' '}
+				<code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to reference other prompt
+				files.
 			</p>
 
 			<div className="prompts-split-view" style={{ borderColor: theme.colors.border }}>
 				{/* Prompt List */}
 				<div className="prompts-list" style={{ borderColor: theme.colors.border }}>
-					{groupedPrompts.map(([category, categoryPrompts]) => (
-						<div key={category} className="prompt-category">
-							<div className="category-header" style={{ color: theme.colors.textDim }}>
-								{CATEGORY_INFO[category]?.label || category}
-							</div>
-							{categoryPrompts.map((prompt) => (
+					{groupedPrompts.map(([category, categoryPrompts]) => {
+						const isCollapsed = collapsedCategories.has(category);
+						return (
+							<div key={category} className="prompt-category">
 								<button
-									key={prompt.id}
-									className={`prompt-item ${selectedPrompt?.id === prompt.id ? 'selected' : ''}`}
-									onClick={() => handleSelectPrompt(prompt)}
-									title={prompt.description}
-									style={{
-										backgroundColor:
-											selectedPrompt?.id === prompt.id ? theme.colors.accent + '20' : 'transparent',
-										color: theme.colors.textMain,
-									}}
+									className="category-header"
+									onClick={() => toggleCategory(category)}
+									style={{ color: theme.colors.textDim }}
 								>
-									<span className="prompt-name">{prompt.id}</span>
-									{prompt.isModified && (
-										<span className="modified-indicator" style={{ color: theme.colors.accent }}>
-											&bull;
-										</span>
+									{isCollapsed ? (
+										<ChevronRight className="w-3 h-3" />
+									) : (
+										<ChevronDown className="w-3 h-3" />
 									)}
+									{CATEGORY_INFO[category]?.label || category}
 								</button>
-							))}
-						</div>
-					))}
+								{!isCollapsed &&
+									categoryPrompts.map((prompt) => (
+										<button
+											key={prompt.id}
+											className={`prompt-item ${selectedPrompt?.id === prompt.id ? 'selected' : ''}`}
+											onClick={() => handleSelectPrompt(prompt)}
+											title={prompt.description}
+											style={{
+												backgroundColor:
+													selectedPrompt?.id === prompt.id
+														? theme.colors.accent + '20'
+														: 'transparent',
+												color: theme.colors.textMain,
+											}}
+										>
+											<span className="prompt-name">{prompt.id}</span>
+											{prompt.isModified && (
+												<span className="modified-indicator" style={{ color: theme.colors.accent }}>
+													&bull;
+												</span>
+											)}
+										</button>
+									))}
+							</div>
+						);
+					})}
 				</div>
 
 				{/* Editor Panel */}
@@ -320,6 +359,21 @@ export function MaestroPromptsTab({
 								>
 									{isResetting ? 'Resetting...' : 'Reset to Default'}
 								</button>
+								<div className="flex-1" />
+								{promptsPath && (
+									<button
+										className="open-folder-button"
+										onClick={() => window.maestro?.shell?.openPath(promptsPath)}
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+										title={promptsPath}
+									>
+										<ExternalLink className="w-3 h-3" />
+										{getOpenInLabel(window.maestro?.platform || 'darwin')}
+									</button>
+								)}
 							</div>
 						</>
 					) : (
