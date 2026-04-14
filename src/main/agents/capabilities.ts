@@ -13,48 +13,11 @@
  * existing `from './capabilities'` imports keep working.
  */
 
-<<<<<<< HEAD
 import type { AgentCapabilities } from '../../shared/types';
 import { DEFAULT_CAPABILITIES } from '../../shared/types';
 
 export type { AgentCapabilities };
 export { DEFAULT_CAPABILITIES };
-=======
-// Re-export canonical AgentCapabilities from shared
-export type { AgentCapabilities } from '../../shared/types';
-import type { AgentCapabilities } from '../../shared/types';
-
-/**
- * Default capabilities - safe defaults for unknown agents.
- * All capabilities disabled by default (conservative approach).
- */
-export const DEFAULT_CAPABILITIES: AgentCapabilities = {
-	supportsResume: false,
-	supportsReadOnlyMode: false,
-	supportsJsonOutput: false,
-	supportsSessionId: false,
-	supportsImageInput: false,
-	supportsImageInputOnResume: false,
-	supportsSlashCommands: false,
-	supportsSessionStorage: false,
-	supportsCostTracking: false,
-	supportsUsageStats: false,
-	supportsBatchMode: false,
-	requiresPromptToStart: false,
-	supportsStreaming: false,
-	supportsResultMessages: false,
-	supportsModelSelection: false,
-	supportsStreamJsonInput: false,
-	supportsThinkingDisplay: false,
-	supportsContextMerge: false,
-	supportsContextExport: false,
-	supportsWizard: false,
-	supportsGroupChatModeration: false,
-	usesJsonLineOutput: false,
-	usesCombinedContextWindow: false,
-	supportsAppendSystemPrompt: false,
-};
->>>>>>> 55862d5ce (refactor: consolidate duplicated type definitions (Phase 05))
 
 /**
  * Capability definitions for each supported agent.
