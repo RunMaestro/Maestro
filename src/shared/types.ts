@@ -97,6 +97,29 @@ export interface Playbook {
 	};
 }
 
+/**
+ * Playbook status file contract (.maestro/STATUS.json)
+ *
+ * Playbooks can write this file during auto-run to surface rich execution
+ * context to the Maestro UI. Maestro watches for this file and displays
+ * its contents in the progress panel.
+ */
+export interface PlaybookStatus {
+	/** Current feature or work item identifier (e.g. "F-13") */
+	feature?: string;
+	/** Current phase of the playbook (e.g. "IMPLEMENT", "VERIFY", "SPECIFY") */
+	phase?: string;
+	/** Human-readable summary of current progress */
+	summary?: string;
+	/** Test results from the current phase */
+	tests?: {
+		pass: number;
+		fail: number;
+	};
+	/** Relative path to a relevant artifact file */
+	artifact?: string;
+}
+
 // Document entry in the batch run queue (runtime version with IDs)
 export interface BatchDocumentEntry {
 	id: string;

@@ -839,6 +839,32 @@ export function useBatchProcessor({
 			// State machine: INITIALIZING -> RUNNING (initialization complete)
 			dispatch({ type: 'SET_RUNNING', sessionId });
 
+			// Start watching .maestro/STATUS.json for playbook status updates
+			const statusProjectPath = effectiveCwd;
+			let statusCleanup: (() => void) | null = null;
+			try {
+				const { status: initialStatus } =
+					await window.maestro.autorun.watchStatus(statusProjectPath);
+				if (initialStatus) {
+					dispatch({
+						type: 'UPDATE_PLAYBOOK_STATUS',
+						sessionId,
+						status: initialStatus,
+					});
+				}
+				statusCleanup = window.maestro.autorun.onStatusChanged((data) => {
+					if (data.projectPath === statusProjectPath) {
+						dispatch({
+							type: 'UPDATE_PLAYBOOK_STATUS',
+							sessionId,
+							status: data.status ?? undefined,
+						});
+					}
+				});
+			} catch {
+				// STATUS.json watching is optional — don't fail the batch
+			}
+
 			// Prevent system sleep while Auto Run is active
 			window.maestro.power.addReason(`autorun:${sessionId}`);
 
@@ -1725,6 +1751,16 @@ export function useBatchProcessor({
 					// Don't fail cleanup if stats tracking fails
 					console.warn('[BatchProcessor] Failed to end stats tracking:', statsError);
 				}
+			}
+
+			// Clean up STATUS.json watcher
+			if (statusCleanup) {
+				statusCleanup();
+			}
+			try {
+				await window.maestro.autorun.unwatchStatus(statusProjectPath);
+			} catch {
+				// Ignore cleanup errors
 			}
 
 			// Critical: Always flush debounced updates and dispatch COMPLETE_BATCH to clean up state.

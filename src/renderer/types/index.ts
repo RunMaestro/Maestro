@@ -18,6 +18,7 @@ export type {
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
 	Playbook,
+	PlaybookStatus,
 	ThinkingMode,
 	WorktreeRunTarget,
 } from '../../shared/types';
@@ -35,6 +36,7 @@ import type {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	PlaybookStatus,
 } from '../../shared/types';
 
 // Re-export group chat types from shared location
@@ -337,6 +339,9 @@ export interface BatchRunState {
 	errorPaused?: boolean; // True if batch is paused waiting for error resolution
 	errorDocumentIndex?: number; // Which document had the error (for skip functionality)
 	errorTaskDescription?: string; // Description of the task that failed (for UI display)
+
+	// Playbook status (from .maestro/STATUS.json)
+	playbookStatus?: PlaybookStatus; // Rich context from playbook execution
 }
 
 // Badge unlock record for history tracking

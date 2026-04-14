@@ -11,7 +11,7 @@
  * - Debug logging for state transition auditing
  */
 
-import type { BatchRunState, AgentError } from '../../types';
+import type { BatchRunState, AgentError, PlaybookStatus } from '../../types';
 import {
 	transition,
 	canTransition,
@@ -225,7 +225,8 @@ export type BatchAction =
 	| { type: 'CLEAR_ERROR'; sessionId: string }
 	| { type: 'SET_COMPLETING'; sessionId: string } // RUNNING -> COMPLETING
 	| { type: 'COMPLETE_BATCH'; sessionId: string; finalSessionIds?: string[] }
-	| { type: 'INCREMENT_LOOP'; sessionId: string; newTotalTasks: number };
+	| { type: 'INCREMENT_LOOP'; sessionId: string; newTotalTasks: number }
+	| { type: 'UPDATE_PLAYBOOK_STATUS'; sessionId: string; status: PlaybookStatus | undefined };
 
 /**
  * Batch state reducer
@@ -559,6 +560,20 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					totalTasksAcrossAllDocs: newTotalTasks + currentState.completedTasksAcrossAllDocs,
 					totalTasks: newTotalTasks + currentState.completedTasks,
 					processingState,
+				},
+			};
+		}
+
+		case 'UPDATE_PLAYBOOK_STATUS': {
+			const { sessionId, status } = action;
+			const currentState = state[sessionId];
+			if (!currentState) return state;
+
+			return {
+				...state,
+				[sessionId]: {
+					...currentState,
+					playbookStatus: status,
 				},
 			};
 		}

@@ -604,6 +604,60 @@ export const RightPanel = memo(
 							)}
 						</div>
 
+						{/* Playbook status from .maestro/STATUS.json */}
+						{currentSessionBatchState.playbookStatus && (
+							<div
+								className="mb-2 px-2 py-1.5 rounded text-[11px] leading-relaxed"
+								style={{
+									backgroundColor: theme.colors.accent + '10',
+									borderLeft: `2px solid ${theme.colors.accent}`,
+								}}
+							>
+								<div className="flex items-center gap-2 flex-wrap">
+									{currentSessionBatchState.playbookStatus.feature && (
+										<span className="font-mono font-bold" style={{ color: theme.colors.accent }}>
+											{currentSessionBatchState.playbookStatus.feature}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.phase && (
+										<span
+											className="px-1 py-0.5 rounded text-[10px] font-medium uppercase"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.phase}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.tests && (
+										<span
+											className="text-[10px] font-mono"
+											style={{
+												color:
+													currentSessionBatchState.playbookStatus.tests.fail > 0
+														? theme.colors.error
+														: theme.colors.success,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.tests.pass}✓
+											{currentSessionBatchState.playbookStatus.tests.fail > 0 &&
+												` ${currentSessionBatchState.playbookStatus.tests.fail}✗`}
+										</span>
+									)}
+								</div>
+								{currentSessionBatchState.playbookStatus.summary && (
+									<div
+										className="mt-1 truncate"
+										style={{ color: theme.colors.textDim }}
+										title={currentSessionBatchState.playbookStatus.summary}
+									>
+										{currentSessionBatchState.playbookStatus.summary}
+									</div>
+								)}
+							</div>
+						)}
+
 						{/* Current document name - for single document runs */}
 						{currentSessionBatchState.documents &&
 							currentSessionBatchState.documents.length === 1 && (
