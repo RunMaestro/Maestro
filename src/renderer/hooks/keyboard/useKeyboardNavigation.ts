@@ -137,10 +137,12 @@ export function useKeyboardNavigation(
 				return false;
 			}
 
-			// Skip if Alt+Cmd+Arrow is pressed (layout toggle shortcut)
-			const isToggleLayoutShortcut =
-				e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-			if (isToggleLayoutShortcut) return false;
+			// Skip if Cmd/Ctrl+Arrow is pressed (with or without Alt) — could be a user-configured
+			// tab navigation shortcut (e.g. Cmd+Left/Right) or layout toggle (Alt+Cmd+Arrow).
+			// Plain ArrowLeft/Right (no modifiers) is reserved for group collapse/expand.
+			const isModifiedArrow =
+				(e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+			if (isModifiedArrow) return false;
 
 			// Only handle arrow keys and space
 			if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
