@@ -8,19 +8,40 @@ import type {
 	BatchRunState,
 } from '../../types';
 import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { gitService } from '../../services/git';
-import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
 import { useSettingsStore } from '../../stores/settingsStore';
+
+let cachedImageOnlyPrompt: string = '';
+let inputProcessingPromptsLoaded = false;
+
+export async function loadInputProcessingPrompts(force = false): Promise<void> {
+	if (inputProcessingPromptsLoaded && !force) return;
+
+	const imageResult = await window.maestro.prompts.get('image-only-default');
+
+	if (!imageResult.success) {
+		throw new Error(`Failed to load image-only-default prompt: ${imageResult.error}`);
+	}
+	cachedImageOnlyPrompt = imageResult.content!;
+	inputProcessingPromptsLoaded = true;
+	// Update the exported binding so consumers see the loaded value
+	DEFAULT_IMAGE_ONLY_PROMPT = cachedImageOnlyPrompt;
+}
+
+function getImageOnlyPrompt(): string {
+	return cachedImageOnlyPrompt;
+}
 
 /**
  * Default prompt used when user sends only an image without text.
+ * Uses `let` so the binding updates after loadInputProcessingPrompts() populates the cache.
  */
-export const DEFAULT_IMAGE_ONLY_PROMPT = imageOnlyDefaultPrompt;
+export let DEFAULT_IMAGE_ONLY_PROMPT: string = getImageOnlyPrompt();
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -948,6 +969,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						let effectivePrompt =
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
+						// Prefix new session message if present (only for the first message in a new session)
+						const newSessionMsg = freshSession.newSessionMessage;
+						if (newSessionMsg && !tabAgentSessionId) {
+							effectivePrompt = `${newSessionMsg}\n\n---\n\n${effectivePrompt}`;
+						}
+
 						// For read-only mode, append instruction to return plan in response instead of writing files
 						if (isReadOnly) {
 							effectivePrompt +=
@@ -984,53 +1011,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 						// For NEW sessions (no agentSessionId), prepare Maestro system prompt separately
 						// This introduces Maestro and sets directory restrictions for the agent
-						const isNewSession = !tabAgentSessionId;
-						let appendSystemPrompt: string | undefined;
-						if (isNewSession && maestroSystemPrompt) {
-							// Get git branch for template substitution
-							let gitBranch: string | undefined;
-							if (freshSession.isGitRepo) {
-								try {
-									const status = await gitService.getStatus(freshSession.cwd);
-									gitBranch = status.branch;
-								} catch {
-									// Ignore git errors
-								}
-							}
-
-							// Get history file path for task recall
-							// Skip for SSH sessions — the local path is unreachable from the remote host
-							let historyFilePath: string | undefined;
-							const isSSH =
-								freshSession.sshRemoteId || freshSession.sessionSshRemoteConfig?.enabled;
-							if (!isSSH) {
-								try {
-									historyFilePath =
-										(await window.maestro.history.getFilePath(freshSession.id)) || undefined;
-								} catch {
-									// Ignore history errors
-								}
-							}
-
-							// Substitute template variables in the system prompt
-							console.log('[useInputProcessing] Template substitution context:', {
-								sessionId: freshSession.id,
-								sessionName: freshSession.name,
-								autoRunFolderPath: freshSession.autoRunFolderPath,
-								fullPath: freshSession.fullPath,
-								cwd: freshSession.cwd,
-								parentSessionId: freshSession.parentSessionId,
-								historyFilePath,
-							});
-							appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-								session: freshSession,
-								gitBranch,
-								groupId: freshSession.groupId,
-								activeTabId: freshSession.activeTabId,
-								historyFilePath,
-								conductorProfile,
-							});
-						}
+						const appendSystemPrompt = await prepareMaestroSystemPrompt({
+							session: freshSession,
+							activeTabId: freshSession.activeTabId,
+							agentSessionId: tabAgentSessionId,
+						});
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 							isSshSession:

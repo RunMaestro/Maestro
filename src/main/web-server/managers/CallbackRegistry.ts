@@ -69,6 +69,8 @@ import type {
 	GetAchievementsCallback,
 	UsageDashboardData,
 	AchievementData,
+	GenerateDirectorNotesSynopsisCallback,
+	DirectorNotesSynopsisResult,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -128,6 +130,7 @@ export interface WebServerCallbacks {
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
+	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 }
 
 export class CallbackRegistry {
@@ -183,6 +186,7 @@ export class CallbackRegistry {
 		triggerCueSubscription: null,
 		getUsageDashboard: null,
 		getAchievements: null,
+		generateDirectorNotesSynopsis: null,
 	};
 
 	// ============ Getter Methods ============
@@ -480,6 +484,16 @@ export class CallbackRegistry {
 		return this.callbacks.getAchievements();
 	}
 
+	async generateDirectorNotesSynopsis(
+		lookbackDays: number,
+		provider: string
+	): Promise<DirectorNotesSynopsisResult> {
+		if (!this.callbacks.generateDirectorNotesSynopsis) {
+			return { success: false, synopsis: '', error: "Director's Notes synopsis not available" };
+		}
+		return this.callbacks.generateDirectorNotesSynopsis(lookbackDays, provider);
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -690,6 +704,10 @@ export class CallbackRegistry {
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
 		this.callbacks.getAchievements = callback;
+	}
+
+	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
+		this.callbacks.generateDirectorNotesSynopsis = callback;
 	}
 
 	// ============ Check Methods ============

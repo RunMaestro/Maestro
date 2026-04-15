@@ -15,6 +15,8 @@ import { getExtensionColor } from '../../utils/extensionColors';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 /**
  * Props for the FileTab component.
@@ -121,6 +123,17 @@ export const FileTab = memo(function FileTab({
 		overlayMouseLeave,
 	} = useTabHoverOverlay({ registerRef });
 
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	const ShortcutHint = ({ keys }: { keys: string[] }) => (
+		<span
+			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+		>
+			{formatShortcutKeys(keys)}
+		</span>
+	);
+
 	// Event handlers using stable tabId to avoid inline closure captures
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
@@ -214,28 +227,31 @@ export const FileTab = memo(function FileTab({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseOtherTabs?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tab.id, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tab.id, setOverlayOpen]
 	);
 
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsLeft?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tab.id, setOverlayOpen]
 	);
 
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsRight?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
 	);
 
 	// Handlers for drag events using stable tabId
@@ -506,6 +522,7 @@ export const FileTab = memo(function FileTab({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
+									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
 								</button>
 
 								{/* Close Other Tabs */}
@@ -520,6 +537,9 @@ export const FileTab = memo(function FileTab({
 									>
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
+										{tabShortcuts.closeOtherTabs && (
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+										)}
 									</button>
 								)}
 
@@ -535,6 +555,9 @@ export const FileTab = memo(function FileTab({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
+										{tabShortcuts.closeTabsLeft && (
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+										)}
 									</button>
 								)}
 
@@ -555,6 +578,9 @@ export const FileTab = memo(function FileTab({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Close Tabs to Right
+										{tabShortcuts.closeTabsRight && (
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+										)}
 									</button>
 								)}
 							</div>

@@ -24,6 +24,8 @@ import { removeAgent } from './commands/remove-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
+import { directorNotesHistory } from './commands/director-notes-history';
+import { directorNotesSynopsis } from './commands/director-notes-synopsis';
 import { settingsList } from './commands/settings-list';
 import { settingsGet } from './commands/settings-get';
 import { settingsSet } from './commands/settings-set';
@@ -183,6 +185,29 @@ cue
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueTrigger);
 
+// Director's Notes commands
+const directorNotes = program
+	.command('director-notes')
+	.description("Director's Notes: unified history and AI synopsis");
+
+directorNotes
+	.command('history')
+	.description('Show unified history across all agents')
+	.option('-d, --days <n>', 'Lookback period in days (default: from app settings)')
+	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
+	.option('--filter <type>', 'Filter by entry type: auto, user, cue')
+	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
+	.option('--json', 'Output as JSON (shorthand for --format json)')
+	.action(directorNotesHistory);
+
+directorNotes
+	.command('synopsis')
+	.description('Generate AI synopsis of recent activity (requires running Maestro app)')
+	.option('-d, --days <n>', 'Lookback period in days (default: from app settings)')
+	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
+	.option('--json', 'Output as JSON (shorthand for --format json)')
+	.action(directorNotesSynopsis);
+
 // Status command - check if Maestro desktop app is running and reachable
 program
 	.command('status')
@@ -201,6 +226,7 @@ program
 	)
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
 	.option('--nudge <message>', 'Nudge message appended to every user message')
+	.option('--new-session-message <message>', 'Message prefixed to first message in new sessions')
 	.option('--custom-path <path>', 'Custom binary path for the agent')
 	.option('--custom-args <args>', 'Custom CLI arguments for the agent')
 	.option(

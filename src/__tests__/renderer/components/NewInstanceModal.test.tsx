@@ -728,6 +728,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ enabled: false, remoteId: null }
 			);
 		});
@@ -767,6 +768,7 @@ describe('NewInstanceModal', () => {
 				'claude-code',
 				'/home/testuser',
 				'Home Session',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -820,6 +822,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{ enabled: false, remoteId: null }
 			);
 		});
@@ -860,6 +863,7 @@ describe('NewInstanceModal', () => {
 				'claude-code',
 				'/my/project',
 				'My Session',
+				undefined,
 				undefined,
 				undefined,
 				undefined,
@@ -1360,6 +1364,7 @@ describe('NewInstanceModal', () => {
 				'/my/project',
 				'My Session',
 				undefined,
+				undefined,
 				'/custom/path/to/claude',
 				undefined,
 				undefined,
@@ -1505,6 +1510,7 @@ describe('NewInstanceModal', () => {
 				'claude-code',
 				'/my/project',
 				'Custom Path Agent',
+				undefined,
 				undefined,
 				'/custom/bin/claude',
 				undefined,
@@ -2438,6 +2444,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				{
 					enabled: true,
 					remoteId: 'remote-1',
@@ -2662,6 +2669,7 @@ describe('NewInstanceModal', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				expect.objectContaining({
 					enabled: true,
 					remoteId: 'remote-1',
@@ -2764,6 +2772,7 @@ describe('NewInstanceModal', () => {
 				expect.any(String),
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined,
 				undefined,
 				undefined,

@@ -108,6 +108,7 @@ import type {
 	CueSubscriptionInfo,
 	GetUsageDashboardCallback,
 	GetAchievementsCallback,
+	GenerateDirectorNotesSynopsisCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -554,6 +555,10 @@ export class WebServer {
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
 		this.callbackRegistry.setGetAchievementsCallback(callback);
+	}
+
+	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
+		this.callbackRegistry.setGenerateDirectorNotesSynopsisCallback(callback);
 	}
 
 	broadcastGroupsChanged(groups: GroupData[]): void {

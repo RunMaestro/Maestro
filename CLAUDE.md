@@ -238,7 +238,9 @@ src/
 | Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                            |
 | Add setting                  | `src/shared/settingsMetadata.ts` (metadata), `src/renderer/stores/settingsStore.ts`, `src/main/stores/defaults.ts`                                                      |
 | Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                            |
-| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                                                             |
+| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.) or edit via **Maestro Prompts** tab in Settings                                                                             |
+| Customize prompts            | Use **Maestro Prompts** tab in Settings, or edit `userData/core-prompts-customizations.json`                                                                            |
+| Add new prompt               | `src/prompts/*.md`, `src/shared/promptDefinitions.ts` (add to `CORE_PROMPTS` array and `PROMPT_IDS`)                                                                    |
 | Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                   |
 | Add OpenSpec command         | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                 |
 | Add CLI command              | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                 |

@@ -6,28 +6,11 @@ import { execFileNoThrow } from './utils/execFile';
 import { getWhichCommand, isWindows } from '../shared/platformDetection';
 import { compareVersions } from '../shared/pathUtils';
 import { getExpandedEnv } from './utils/cliDetection';
+import { logger } from './utils/logger';
+import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 
 const CLI_BINARY_NAME = 'maestro-cli';
-
-export interface MaestroCliStatus {
-	expectedVersion: string;
-	installed: boolean;
-	inPath: boolean;
-	commandPath: string | null;
-	installedVersion: string | null;
-	versionMatch: boolean;
-	needsInstallOrUpdate: boolean;
-	installDir: string;
-	bundledCliPath: string | null;
-}
-
-export interface MaestroCliInstallResult {
-	success: boolean;
-	status: MaestroCliStatus;
-	pathUpdated: boolean;
-	restartRequired: boolean;
-	shellFilesUpdated: string[];
-}
+const LOG_CONTEXT = 'MaestroCliManager';
 
 function normalizeVersion(raw: string): string {
 	const firstLine = raw.trim().split(/\r?\n/)[0] || '';
@@ -43,6 +26,14 @@ function splitOutputLines(output: string): string[] {
 }
 
 export class MaestroCliManager {
+	private escapeForWindowsCmd(value: string): string {
+		return value.replace(/"/g, '""');
+	}
+
+	private escapeForPowerShellSingleQuoted(value: string): string {
+		return value.replace(/'/g, "''");
+	}
+
 	private getInstallDir(): string {
 		return path.join(os.homedir(), '.local', 'bin');
 	}
@@ -111,7 +102,8 @@ export class MaestroCliManager {
 	}
 
 	private async writeWindowsShim(installPath: string, bundledCliPath: string): Promise<void> {
-		const script = `@echo off\r\nnode ${JSON.stringify(bundledCliPath)} %*\r\n`;
+		const escapedCliPath = this.escapeForWindowsCmd(bundledCliPath);
+		const script = `@echo off\r\nnode "${escapedCliPath}" %*\r\n`;
 		await fs.promises.writeFile(installPath, script, 'utf-8');
 	}
 
@@ -159,8 +151,9 @@ export class MaestroCliManager {
 	}
 
 	private async ensureWindowsUserPath(installDir: string): Promise<boolean> {
+		const escapedInstallDir = this.escapeForPowerShellSingleQuoted(installDir);
 		const script = [
-			`$installDir = ${JSON.stringify(installDir)}`,
+			`$installDir = '${escapedInstallDir}'`,
 			"$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
 			"if (-not $current) { $current = '' }",
 			"$parts = @($current -split ';' | Where-Object { $_ -and $_.Trim() -ne '' })",
@@ -176,6 +169,13 @@ export class MaestroCliManager {
 			'-Command',
 			script,
 		]);
+		if (result.exitCode !== 0) {
+			logger.error('Failed to update Windows user PATH for maestro-cli', LOG_CONTEXT, {
+				exitCode: result.exitCode,
+				stdout: result.stdout,
+				stderr: result.stderr,
+			});
+		}
 		return result.exitCode === 0;
 	}
 
@@ -238,8 +238,9 @@ export class MaestroCliManager {
 		}
 
 		const status = await this.checkStatus();
+		const executionSucceeded = (await this.readCliVersion(installPath)) !== null;
 		return {
-			success: status.installed,
+			success: status.installed && status.versionMatch && executionSucceeded,
 			status,
 			pathUpdated,
 			restartRequired: pathUpdated,

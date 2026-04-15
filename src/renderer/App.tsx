@@ -6,7 +6,7 @@ import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
-// DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
+import { initializeRendererPrompts } from './services/promptInit';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 // AppOverlays, PlaygroundPanel, DebugWizardModal, DebugPackageModal, WindowsWarningModal,
@@ -3123,6 +3123,23 @@ function MaestroConsoleInner() {
  * InlineWizardProvider - inline /wizard command state management
  */
 export default function MaestroConsole() {
+	const [promptsReady, setPromptsReady] = useState(false);
+
+	useEffect(() => {
+		initializeRendererPrompts()
+			.then(() => setPromptsReady(true))
+			.catch((err) => {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'MaestroConsole.initializeRendererPrompts' },
+				});
+				setPromptsReady(true); // Allow app to render; features degrade gracefully
+			});
+	}, []);
+
+	if (!promptsReady) {
+		return null;
+	}
+
 	return (
 		<InlineWizardProvider>
 			<InputProvider>

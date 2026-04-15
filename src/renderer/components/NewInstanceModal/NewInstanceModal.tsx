@@ -9,7 +9,7 @@ import { Modal, ModalFooter } from '../ui/Modal';
 import { SshRemoteSelector } from '../shared/SshRemoteSelector';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import type { AgentDebugInfo, NewInstanceModalProps } from './types';
-import { SUPPORTED_AGENTS } from './types';
+import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
@@ -29,6 +29,7 @@ export function NewInstanceModal({
 	const [workingDir, setWorkingDir] = useState('');
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
+	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [loading, setLoading] = useState(true);
 	const [refreshingAgent, setRefreshingAgent] = useState<string | null>(null);
 	const [debugInfo, setDebugInfo] = useState<AgentDebugInfo | null>(null);
@@ -225,6 +226,7 @@ export function NewInstanceModal({
 				handleWorkingDirChange(source.cwd);
 				setInstanceName(`${source.name} (Copy)`);
 				setNudgeMessage(source.nudgeMessage || '');
+				setNewSessionMessage(source.newSessionMessage || '');
 
 				// Pre-fill custom agent configuration
 				setCustomAgentPaths((prev) => ({
@@ -393,6 +395,7 @@ export function NewInstanceModal({
 			expandedWorkingDir,
 			name,
 			nudgeMessage.trim() || undefined,
+			newSessionMessage.trim() || undefined,
 			agentCustomPath,
 			agentCustomArgs,
 			agentCustomEnvVars,
@@ -407,6 +410,7 @@ export function NewInstanceModal({
 		setInstanceName('');
 		handleWorkingDirChange('');
 		setNudgeMessage('');
+		setNewSessionMessage('');
 		// Reset per-agent config for selected agent
 		setCustomAgentPaths((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setCustomAgentArgs((prev) => ({ ...prev, [selectedAgent]: '' }));
@@ -421,6 +425,7 @@ export function NewInstanceModal({
 		selectedAgent,
 		workingDir,
 		nudgeMessage,
+		newSessionMessage,
 		customAgentPaths,
 		customAgentArgs,
 		customAgentEnvVars,
@@ -834,6 +839,17 @@ export function NewInstanceModal({
 						}}
 					/>
 				)}
+
+				{/* New Session Message */}
+				<NudgeMessageField
+					theme={theme}
+					value={newSessionMessage}
+					onChange={setNewSessionMessage}
+					maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
+					label="New Session Message"
+					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
+					placeholder="Instructions sent with the first message of every new session..."
+				/>
 
 				{/* Nudge Message */}
 				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={setNudgeMessage} />

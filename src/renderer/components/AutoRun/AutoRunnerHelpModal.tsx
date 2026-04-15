@@ -22,6 +22,8 @@ import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal } from '../ui/Modal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { openUrl } from '../../utils/openUrl';
+import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 
 interface AutoRunnerHelpModalProps {
 	theme: Theme;
@@ -595,6 +597,21 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						</div>
 					</div>
 				</section>
+
+				{/* Read more link */}
+				<div
+					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<button
+						onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/autorun-playbooks'))}
+						className="text-xs hover:opacity-80 transition-colors"
+						style={{ color: theme.colors.accent }}
+					>
+						Read more at docs.runmaestro.ai/autorun-playbooks
+					</button>
+				</div>
 			</div>
 		</Modal>
 	);

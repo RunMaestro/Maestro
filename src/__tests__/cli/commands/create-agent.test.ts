@@ -74,6 +74,7 @@ describe('create-agent command', () => {
 				model: 'gpt-4',
 				effort: 'high',
 				nudge: 'Be concise',
+				newSessionMessage: 'Init context for every session',
 				customPath: '/usr/local/bin/codex',
 				customArgs: '--verbose',
 				contextWindow: '128000',
@@ -84,6 +85,7 @@ describe('create-agent command', () => {
 			expect(sentPayload.customModel).toBe('gpt-4');
 			expect(sentPayload.customEffort).toBe('high');
 			expect(sentPayload.nudgeMessage).toBe('Be concise');
+			expect(sentPayload.newSessionMessage).toBe('Init context for every session');
 			expect(sentPayload.customPath).toBe('/usr/local/bin/codex');
 			expect(sentPayload.customArgs).toBe('--verbose');
 			expect(sentPayload.customContextWindow).toBe(128000);

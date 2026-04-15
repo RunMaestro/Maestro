@@ -187,6 +187,7 @@ describe('useSessionLifecycle', () => {
 					'New Name',
 					undefined, // toolType unchanged
 					'nudge msg',
+					'init msg',
 					'/custom/path',
 					'--arg1',
 					{ MY_VAR: 'value' },
@@ -199,6 +200,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('New Name');
 			expect(updated.nudgeMessage).toBe('nudge msg');
+			expect(updated.newSessionMessage).toBe('init msg');
 			expect(updated.customPath).toBe('/custom/path');
 			expect(updated.customArgs).toBe('--arg1');
 			expect(updated.customEnvVars).toEqual({ MY_VAR: 'value' });
@@ -234,6 +236,7 @@ describe('useSessionLifecycle', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				nudgeMessage: 'old nudge',
+				newSessionMessage: 'old init',
 				customPath: '/old/path',
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -247,6 +250,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('Name Only');
 			expect(updated.nudgeMessage).toBeUndefined();
+			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
 		});
 

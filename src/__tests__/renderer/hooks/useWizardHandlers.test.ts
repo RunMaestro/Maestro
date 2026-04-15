@@ -49,10 +49,8 @@ vi.mock('../../../renderer/constants/app', () => ({
 	getSlashCommandDescription: vi.fn((cmd: string) => `Description for ${cmd}`),
 }));
 
-vi.mock('../../../prompts', async () => {
-	const actual = await vi.importActual('../../../prompts');
-	return { ...actual, autorunSynopsisPrompt: 'Generate a synopsis of all work done.' };
-});
+// autorunSynopsisPrompt is now loaded via IPC (window.maestro.prompts.get)
+// and cached in the hook's module-level cache via loadWizardHandlersPrompts()
 
 vi.mock('../../../shared/synopsis', () => ({
 	parseSynopsis: vi.fn((response: string) => ({

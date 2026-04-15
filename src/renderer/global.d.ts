@@ -243,6 +243,7 @@ type GroupChatData = {
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
+import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -3091,33 +3092,32 @@ interface MaestroAPI {
 
 	// Maestro CLI API (status check + install/update)
 	maestroCli: {
-		checkStatus: () => Promise<{
-			expectedVersion: string;
-			installed: boolean;
-			inPath: boolean;
-			commandPath: string | null;
-			installedVersion: string | null;
-			versionMatch: boolean;
-			needsInstallOrUpdate: boolean;
-			installDir: string;
-			bundledCliPath: string | null;
-		}>;
-		installOrUpdate: () => Promise<{
+		checkStatus: () => Promise<MaestroCliStatus>;
+		installOrUpdate: () => Promise<MaestroCliInstallResult>;
+	};
+
+	prompts: {
+		get: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getAll: () => Promise<{
 			success: boolean;
-			status: {
-				expectedVersion: string;
-				installed: boolean;
-				inPath: boolean;
-				commandPath: string | null;
-				installedVersion: string | null;
-				versionMatch: boolean;
-				needsInstallOrUpdate: boolean;
-				installDir: string;
-				bundledCliPath: string | null;
-			};
-			pathUpdated: boolean;
-			restartRequired: boolean;
-			shellFilesUpdated: string[];
+			prompts?: Array<{
+				id: string;
+				filename: string;
+				description: string;
+				category: string;
+				content: string;
+				isModified: boolean;
+			}>;
+			error?: string;
+		}>;
+		getAllIds: () => Promise<{ success: boolean; ids?: string[]; error?: string }>;
+		save: (id: string, content: string) => Promise<{ success: boolean; error?: string }>;
+		reset: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		listFiles: () => Promise<{
+			success: boolean;
+			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
+			error?: string;
 		}>;
 	};
 }

@@ -145,6 +145,12 @@ beforeEach(() => {
 				args: [],
 			}),
 		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
+			}),
+		},
 	};
 
 	// Spy on addEventListener/removeEventListener for event listener tests
@@ -431,6 +437,83 @@ describe('useRemoteHandlers', () => {
 			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					prompt: 'explain this code',
+				})
+			);
+		});
+
+		it('includes appendSystemPrompt for new sessions (no agentSessionId)', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: expect.any(String),
+				})
+			);
+		});
+
+		it('omits appendSystemPrompt for resumed sessions (has agentSessionId)', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						logs: [],
+						stagedImages: [],
+						agentSessionId: 'existing-session-123',
+					} as any,
+				],
+			});
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: undefined,
 				})
 			);
 		});

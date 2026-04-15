@@ -1,6 +1,7 @@
 ---
 title: Release Notes
 description: Version history and changelog for Maestro releases
+icon: scroll
 ---
 
 # Release Notes

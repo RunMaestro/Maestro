@@ -48,6 +48,7 @@ import type {
 	UsageDashboardData,
 	AchievementData,
 	CreateSessionConfig,
+	DirectorNotesSynopsisResult,
 } from '../types';
 import { AGENT_IDS } from '../../../shared/agentIds';
 
@@ -180,6 +181,10 @@ export interface MessageHandlerCallbacks {
 	triggerCueSubscription: (subscriptionName: string, prompt?: string) => Promise<boolean>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
+	generateDirectorNotesSynopsis: (
+		lookbackDays: number,
+		provider: string
+	) => Promise<DirectorNotesSynopsisResult>;
 	writeToTerminal: (sessionId: string, data: string) => boolean;
 	resizeTerminal: (sessionId: string, cols: number, rows: number) => boolean;
 	spawnTerminalForWeb: (
@@ -427,6 +432,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_achievements':
 				this.handleGetAchievements(client, message);
+				break;
+
+			case 'generate_director_notes_synopsis':
+				this.handleGenerateDirectorNotesSynopsis(client, message);
 				break;
 
 			case 'terminal_write':
@@ -1658,6 +1667,7 @@ export class WebSocketMessageHandler {
 		// Extract optional config fields
 		const config: CreateSessionConfig = {};
 		if (message.nudgeMessage) config.nudgeMessage = message.nudgeMessage as string;
+		if (message.newSessionMessage) config.newSessionMessage = message.newSessionMessage as string;
 		if (message.customPath) config.customPath = message.customPath as string;
 		if (message.customArgs) config.customArgs = message.customArgs as string;
 		if (message.customEnvVars)
@@ -2430,6 +2440,43 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to get achievements: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle generate_director_notes_synopsis - generate AI synopsis via batch-mode agent
+	 */
+	private handleGenerateDirectorNotesSynopsis(client: WebClient, message: WebClientMessage): void {
+		if (!this.callbacks.generateDirectorNotesSynopsis) {
+			this.send(client, {
+				type: 'generate_director_notes_synopsis_result',
+				success: false,
+				error: "Director's Notes synopsis generation not available",
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		const lookbackDays = (message.lookbackDays as number) || 7;
+		const provider = (message.provider as string) || 'claude-code';
+
+		this.callbacks
+			.generateDirectorNotesSynopsis(lookbackDays, provider)
+			.then((result) => {
+				this.send(client, {
+					type: 'generate_director_notes_synopsis_result',
+					...result,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'generate_director_notes_synopsis_result',
+					success: false,
+					error: `Synopsis generation failed: ${error.message}`,
+					requestId: message.requestId,
+				});
 			});
 	}
 

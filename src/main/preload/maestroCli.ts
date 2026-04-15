@@ -1,34 +1,9 @@
 import { ipcRenderer } from 'electron';
+import type { MaestroCliStatus, MaestroCliInstallResult } from '../../shared/maestro-cli';
 
 export interface MaestroCliApi {
-	checkStatus: () => Promise<{
-		expectedVersion: string;
-		installed: boolean;
-		inPath: boolean;
-		commandPath: string | null;
-		installedVersion: string | null;
-		versionMatch: boolean;
-		needsInstallOrUpdate: boolean;
-		installDir: string;
-		bundledCliPath: string | null;
-	}>;
-	installOrUpdate: () => Promise<{
-		success: boolean;
-		status: {
-			expectedVersion: string;
-			installed: boolean;
-			inPath: boolean;
-			commandPath: string | null;
-			installedVersion: string | null;
-			versionMatch: boolean;
-			needsInstallOrUpdate: boolean;
-			installDir: string;
-			bundledCliPath: string | null;
-		};
-		pathUpdated: boolean;
-		restartRequired: boolean;
-		shellFilesUpdated: string[];
-	}>;
+	checkStatus: () => Promise<MaestroCliStatus>;
+	installOrUpdate: () => Promise<MaestroCliInstallResult>;
 }
 
 export function createMaestroCliApi(): MaestroCliApi {

@@ -311,28 +311,31 @@ export const AITab = memo(function AITab({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseOtherTabs?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tabId, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tabId, setOverlayOpen]
 	);
 
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseTabsLeft?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tabId, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tabId, setOverlayOpen]
 	);
 
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseTabsRight?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tabId, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tabId, setOverlayOpen]
 	);
 
 	// Handlers for drag events using stable tabId

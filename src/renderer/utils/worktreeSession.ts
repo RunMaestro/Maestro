@@ -123,6 +123,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		nudgeMessage: isLegacy ? undefined : params.parentSession.nudgeMessage,
+		newSessionMessage: isLegacy ? undefined : params.parentSession.newSessionMessage,
 		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,
 	} as Session;
 }

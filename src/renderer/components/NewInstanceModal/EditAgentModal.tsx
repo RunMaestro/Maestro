@@ -14,7 +14,7 @@ import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidati
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import type { EditAgentModalProps } from './types';
-import { SUPPORTED_AGENTS } from './types';
+import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -37,6 +37,7 @@ export function EditAgentModal({
 }: EditAgentModalProps) {
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
+	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [agent, setAgent] = useState<AgentConfig | null>(null);
 	const [agentConfig, setAgentConfig] = useState<Record<string, any>>({});
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -225,6 +226,7 @@ export function EditAgentModal({
 		if (isOpen && session) {
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
+			setNewSessionMessage(session.newSessionMessage || '');
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
 		}
@@ -299,6 +301,7 @@ export function EditAgentModal({
 			name,
 			providerChanged ? selectedToolType : undefined,
 			nudgeMessage.trim() || undefined,
+			newSessionMessage.trim() || undefined,
 			customPath.trim() || undefined,
 			customArgs.trim() || undefined,
 			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
@@ -311,6 +314,7 @@ export function EditAgentModal({
 		session,
 		instanceName,
 		nudgeMessage,
+		newSessionMessage,
 		customPath,
 		customArgs,
 		customEnvVars,
@@ -519,6 +523,17 @@ export function EditAgentModal({
 						/>
 					)}
 				</div>
+
+				{/* New Session Message */}
+				<NudgeMessageField
+					theme={theme}
+					value={newSessionMessage}
+					onChange={setNewSessionMessage}
+					maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
+					label="New Session Message"
+					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
+					placeholder="Instructions sent with the first message of every new session..."
+				/>
 
 				{/* Nudge Message */}
 				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={setNudgeMessage} />

@@ -22,7 +22,7 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -348,6 +348,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
 				const commandToUse = agent.path ?? agent.command;
 
+				// For NEW sessions, prepare Maestro system prompt
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: activeTab?.id,
+					agentSessionId: tabAgentSessionId,
+				});
+
 				// Determine whether to send the prompt via stdin on Windows to avoid
 				// exceeding the command line length limit. Remote commands may include
 				// substituted slash command prompts that can be very large.
@@ -364,6 +371,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					activeTabId: activeTab?.id,
 					tabAgentSessionId: tabAgentSessionId || 'NEW SESSION',
 					isResume: !!tabAgentSessionId,
+					hasAppendSystemPrompt: !!appendSystemPrompt,
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend.substring(0, 100),
@@ -428,6 +436,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,

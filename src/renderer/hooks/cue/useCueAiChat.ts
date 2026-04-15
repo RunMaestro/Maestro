@@ -7,6 +7,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only — no markdown, no code fences, no bullet lists, no formatting.
 
@@ -105,11 +106,17 @@ export function useCueAiChat({
 			: text;
 
 		try {
+			const appendSystemPrompt = await prepareMaestroSystemPrompt({
+				session,
+				agentSessionId: agentSessionIdRef.current,
+			});
+
 			const spawnConfig = await buildSpawnConfigForAgent({
 				sessionId: spawnSessionIdRef.current,
 				toolType: session.toolType,
 				cwd: projectRoot,
 				prompt,
+				appendSystemPrompt,
 				agentSessionId: agentSessionIdRef.current ?? undefined,
 				sessionCustomPath: session.customPath,
 				sessionCustomArgs: session.customArgs,

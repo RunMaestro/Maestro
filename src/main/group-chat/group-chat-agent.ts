@@ -21,7 +21,7 @@ import {
 } from './group-chat-storage';
 import { appendToLog } from './group-chat-log';
 import { IProcessManager, isModeratorActive } from './group-chat-moderator';
-import { groupChatParticipantPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 
 /**
  * In-memory store for active participant sessions.
@@ -45,7 +45,7 @@ export function getParticipantSystemPrompt(
 	groupChatName: string,
 	logPath: string
 ): string {
-	return groupChatParticipantPrompt
+	return getPrompt('group-chat-participant')
 		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, groupChatName)
 		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 		.replace(/\{\{LOG_PATH\}\}/g, logPath);

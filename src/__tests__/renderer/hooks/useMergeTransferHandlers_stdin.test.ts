@@ -199,6 +199,15 @@ beforeEach(() => {
 		process: {
 			spawn: vi.fn().mockResolvedValue(undefined),
 		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
+			}),
+		},
+		history: {
+			getFilePath: vi.fn().mockResolvedValue(null),
+		},
 	};
 });
 

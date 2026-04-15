@@ -106,6 +106,20 @@ const mockClearError = vi.fn().mockResolvedValue(undefined);
 	agentError: {
 		clearError: mockClearError,
 	},
+	prompts: {
+		get: vi.fn((id: string) => {
+			const prompts: Record<string, string> = {
+				'maestro-system-prompt': 'Mock system prompt for {{CWD}}',
+				'autorun-synopsis': '',
+				'image-only-default': 'Describe this image',
+				'commit-command': '',
+			};
+			if (id in prompts) {
+				return Promise.resolve({ success: true, content: prompts[id] });
+			}
+			return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+		}),
+	},
 };
 
 // Mock gitService
@@ -115,13 +129,8 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
-// Mock prompts
-vi.mock('../../../prompts', () => ({
-	maestroSystemPrompt: 'Mock system prompt for {{CWD}}',
-	autorunSynopsisPrompt: '',
-	imageOnlyDefaultPrompt: 'Describe this image',
-	commitCommandPrompt: '',
-}));
+// Prompt content is now loaded via window.maestro.prompts.get() and cached at module level.
+// The window.maestro.prompts mock is set up below in the window.maestro block.
 
 // Mock substituteTemplateVariables — pass through the template as-is for simplicity
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -144,7 +153,7 @@ function resetStores() {
 	});
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	resetStores();
 	vi.clearAllMocks();
 });

@@ -18,7 +18,8 @@ export interface SearchableSetting {
 		| 'aicommands'
 		| 'ssh'
 		| 'environment'
-		| 'encore';
+		| 'encore'
+		| 'prompts';
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -454,6 +455,20 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Prompts Tab
+// ---------------------------------------------------------------------------
+export const PROMPTS_SETTINGS: SearchableSetting[] = [
+	{
+		id: 'prompts-editor',
+		tab: 'prompts',
+		tabLabel: 'Maestro Prompts',
+		label: 'Maestro Prompts',
+		description: 'Edit core system prompts (wizard, auto run, group chat, context)',
+		keywords: ['prompt', 'system prompt', 'wizard prompt', 'autorun prompt', 'customize'],
+	},
+];
+
+// ---------------------------------------------------------------------------
 // Composed registry
 // ---------------------------------------------------------------------------
 export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
@@ -466,6 +481,7 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...SSH_SETTINGS,
 	...ENVIRONMENT_SETTINGS,
 	...ENCORE_SETTINGS,
+	...PROMPTS_SETTINGS,
 ];
 
 /**

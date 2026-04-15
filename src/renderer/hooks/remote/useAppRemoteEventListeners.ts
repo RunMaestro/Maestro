@@ -426,6 +426,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
 				// Apply optional config fields from CLI/web
 				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
+				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
 				...(config?.customPath && { customPath: config.customPath as string }),
 				...(config?.customArgs && { customArgs: config.customArgs as string }),
 				...(config?.customEnvVars && {

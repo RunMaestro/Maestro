@@ -3,10 +3,29 @@
  * Extracted from useBatchProcessor.ts for reusability.
  */
 
-import { autorunDefaultPrompt } from '../../../prompts';
+let cachedAutorunDefaultPrompt: string = '';
+let batchUtilsPromptsLoaded = false;
+
+export async function loadBatchUtilsPrompts(force = false): Promise<void> {
+	if (batchUtilsPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('autorun-default');
+	if (!result.success) {
+		throw new Error(`Failed to load autorun-default prompt: ${result.error}`);
+	}
+	cachedAutorunDefaultPrompt = result.content!;
+	batchUtilsPromptsLoaded = true;
+	// Update the exported binding so consumers see the loaded value
+	DEFAULT_BATCH_PROMPT = cachedAutorunDefaultPrompt;
+}
+
+function getAutorunDefaultPrompt(): string {
+	return cachedAutorunDefaultPrompt;
+}
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
-export const DEFAULT_BATCH_PROMPT = autorunDefaultPrompt;
+// Uses `let` so the binding can be updated after async IPC load completes
+export let DEFAULT_BATCH_PROMPT: string = getAutorunDefaultPrompt();
 
 // Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ])
 const UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s*\]\s*.+$/gm;

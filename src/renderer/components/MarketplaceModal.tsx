@@ -35,6 +35,7 @@ import {
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 // ============================================================================
 // Types
@@ -1189,6 +1190,16 @@ export function MarketplaceModal({
 												style={{ color: theme.colors.accent }}
 											>
 												github.com/RunMaestro/Maestro-Playbooks
+											</button>
+											<button
+												onClick={() => {
+													openUrl(buildMaestroUrl('https://docs.runmaestro.ai/playbook-exchange'));
+													setShowHelp(false);
+												}}
+												className="text-xs hover:opacity-80 transition-colors mt-2 block"
+												style={{ color: theme.colors.accent }}
+											>
+												Read more at docs.runmaestro.ai/playbook-exchange
 											</button>
 											<div
 												className="mt-3 pt-3 border-t"

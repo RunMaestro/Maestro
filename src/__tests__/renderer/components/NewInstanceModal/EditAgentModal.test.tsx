@@ -293,6 +293,7 @@ describe('EditAgentModal', () => {
 			'Original Name',
 			undefined, // toolType not changed
 			'Be helpful',
+			undefined, // newSessionMessage
 			'/custom/claude',
 			'--verbose',
 			{ API_KEY: 'test-key' },
@@ -441,6 +442,26 @@ describe('EditAgentModal', () => {
 		});
 	});
 
+	it('should show NewSessionMessageField with session new session message', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ newSessionMessage: 'Init instructions' })}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			const textarea = screen.getByPlaceholderText(
+				'Instructions sent with the first message of every new session...'
+			);
+			expect(textarea).toHaveValue('Init instructions');
+		});
+	});
+
 	it('should set workingDirOverride from projectRoot when saving SSH session without explicit override (regression: SSH terminal cwd)', async () => {
 		// Regression test: when an SSH session has no explicit workingDirOverride
 		// (e.g., created before the fix), saving it should populate workingDirOverride
@@ -492,12 +513,13 @@ describe('EditAgentModal', () => {
 			expect.any(String), // sessionId
 			expect.any(String), // name
 			undefined, // toolType not changed
-			expect.anything(), // nudgeMessage
-			expect.anything(), // customPath
-			expect.anything(), // customArgs
-			expect.anything(), // customEnvVars
-			expect.anything(), // model
-			expect.anything(), // contextWindow
+			'Be concise', // nudgeMessage
+			undefined, // newSessionMessage
+			'/custom/claude', // customPath
+			'--verbose', // customArgs
+			{ API_KEY: 'test-key' }, // customEnvVars
+			'claude-sonnet', // model
+			100000, // contextWindow
 			expect.objectContaining({
 				enabled: true,
 				remoteId: 'remote-1',
@@ -556,12 +578,13 @@ describe('EditAgentModal', () => {
 			expect.any(String),
 			expect.any(String),
 			undefined,
-			expect.anything(),
-			expect.anything(),
-			expect.anything(),
-			expect.anything(),
-			expect.anything(),
-			expect.anything(),
+			'Be concise', // nudgeMessage
+			undefined, // newSessionMessage
+			'/custom/claude', // customPath
+			'--verbose', // customArgs
+			{ API_KEY: 'test-key' }, // customEnvVars
+			'claude-sonnet', // model
+			100000, // contextWindow
 			expect.objectContaining({
 				enabled: true,
 				remoteId: 'remote-1',

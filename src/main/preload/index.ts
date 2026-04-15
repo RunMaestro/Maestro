@@ -53,6 +53,7 @@ import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
+import { createPromptsApi } from './prompts';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -204,6 +205,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Maestro CLI API (status + install/update)
 	maestroCli: createMaestroCliApi(),
+	// Core Prompts API (view, edit, reset system prompts)
+	prompts: createPromptsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -284,6 +287,8 @@ export {
 	createWakatimeApi,
 	// Maestro CLI
 	createMaestroCliApi,
+	// Core Prompts
+	createPromptsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -508,3 +513,12 @@ export type {
 	// From wakatime
 	WakatimeApi,
 } from './wakatime';
+export type {
+	// From maestroCli
+	MaestroCliApi,
+} from './maestroCli';
+export type {
+	// From prompts
+	PromptsApi,
+	CorePromptData,
+} from './prompts';

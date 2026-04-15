@@ -10,10 +10,13 @@ import {
 	Moon,
 	Filter,
 	GitMerge,
+	ExternalLink,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface CueHelpContentProps {
 	theme: Theme;
@@ -962,6 +965,21 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					</div>
 				</div>
 			</section>
+
+			{/* Read more link */}
+			<div
+				className="mt-4 pt-3 border-t flex items-center gap-1.5"
+				style={{ borderColor: theme.colors.border }}
+			>
+				<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				<button
+					onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/maestro-cue'))}
+					className="text-xs hover:opacity-80 transition-colors"
+					style={{ color: theme.colors.accent }}
+				>
+					Read more at docs.runmaestro.ai/maestro-cue
+				</button>
+			</div>
 		</div>
 	);
 }

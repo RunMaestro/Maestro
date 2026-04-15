@@ -53,7 +53,13 @@ import type { AgentError } from '../../shared/types';
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
 export type RightPanelTab = 'files' | 'history' | 'autorun';
-export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands';
+export type SettingsTab =
+	| 'general'
+	| 'shortcuts'
+	| 'theme'
+	| 'notifications'
+	| 'aicommands'
+	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
@@ -712,6 +718,10 @@ export interface Session {
 	// Nudge message - appended to every interactive user message (max 1000 chars)
 	// Not visible in UI, but sent to the agent with each message
 	nudgeMessage?: string;
+
+	// New session message - prefixed to the first message when creating a new session/tab
+	// Not visible in UI, but sent to the agent with the initial message only
+	newSessionMessage?: string;
 
 	// Agent error state - set when an agent error is detected
 	// Cleared when user dismisses the error or takes recovery action

@@ -1857,6 +1857,163 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// ============ Director's Notes Synopsis Callback ============
+		server.setGenerateDirectorNotesSynopsisCallback(
+			async (lookbackDays: number, provider: string) => {
+				const processManager = getProcessManager();
+				if (!processManager) {
+					return {
+						success: false,
+						synopsis: '',
+						error: 'Process manager not available',
+					};
+				}
+
+				const { groomContext } = await import('../utils/context-groomer');
+				const { getPrompt } = await import('../prompt-manager');
+				const { AgentDetector } = await import('../agents');
+				const { getAgentConfigsStore } = await import('../stores');
+
+				const agentDetector = new AgentDetector();
+				const agentConfigsStore = getAgentConfigsStore();
+
+				const agent = await agentDetector.getAgent(provider as any);
+				if (!agent || !agent.available) {
+					return {
+						success: false,
+						synopsis: '',
+						error: `Agent "${provider}" is not available.`,
+					};
+				}
+
+				const historyManager = getHistoryManager();
+				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+				const sessionIds = historyManager.listSessionsWithHistory();
+
+				// Build session name map
+				const storedSessions = sessionsStore.get('sessions', []) as Array<{
+					id: string;
+					name?: string;
+				}>;
+				const sessionNameMap = new Map<string, string>();
+				for (const s of storedSessions) {
+					if (s.id && s.name) sessionNameMap.set(s.id, s.name);
+				}
+
+				const sessionManifest: Array<{
+					sessionId: string;
+					displayName: string;
+					historyFilePath: string;
+				}> = [];
+				let agentCount = 0;
+				let entryCount = 0;
+
+				for (const sessionId of sessionIds) {
+					const filePath = historyManager.getHistoryFilePath(sessionId);
+					if (!filePath) continue;
+					const displayName = sessionNameMap.get(sessionId) || sessionId;
+					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
+
+					const entries = historyManager.getEntries(sessionId);
+					let agentHasEntries = false;
+					for (const entry of entries) {
+						if (entry.timestamp >= cutoffTime) {
+							entryCount++;
+							agentHasEntries = true;
+						}
+					}
+					if (agentHasEntries) agentCount++;
+				}
+
+				if (sessionManifest.length === 0) {
+					return {
+						success: true,
+						synopsis: `# Director's Notes\n\n*Generated for the past ${lookbackDays} days*\n\nNo history files found.`,
+						generatedAt: Date.now(),
+						stats: { agentCount: 0, entryCount: 0, durationMs: 0 },
+					};
+				}
+
+				const sanitizeDisplayName = (name: string): string =>
+					name
+						.replace(/[#*_`~\[\]()!|>]/g, '')
+						.replace(/\s+/g, ' ')
+						.trim();
+
+				const manifestLines = sessionManifest
+					.map(
+						(s) =>
+							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
+					)
+					.join('\n');
+
+				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
+				});
+				const nowDate = new Date().toLocaleDateString('en-US', {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
+				});
+
+				const prompt = [
+					getPrompt('director-notes'),
+					'',
+					'---',
+					'',
+					'## Session History Files',
+					'',
+					`Lookback period: ${lookbackDays} days (${cutoffDate} – ${nowDate})`,
+					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
+					`${agentCount} agents had ${entryCount} qualifying entries.`,
+					'',
+					manifestLines,
+				].join('\n');
+
+				try {
+					const allConfigs = agentConfigsStore.get('configs', {});
+					const dnAgentConfigValues = allConfigs[provider] || {};
+
+					const result = await groomContext(
+						{
+							projectRoot: process.cwd(),
+							agentType: provider as any,
+							prompt,
+							readOnlyMode: true,
+							agentConfigValues: dnAgentConfigValues,
+						},
+						processManager,
+						agentDetector
+					);
+
+					const synopsis = result.response.trim();
+					if (!synopsis) {
+						return {
+							success: false,
+							synopsis: '',
+							error: 'Agent returned an empty response.',
+						};
+					}
+
+					return {
+						success: true,
+						synopsis,
+						generatedAt: Date.now(),
+						stats: { agentCount, entryCount, durationMs: result.durationMs },
+					};
+				} catch (err) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return {
+						success: false,
+						synopsis: '',
+						error: `Synopsis generation failed: ${errorMsg}`,
+					};
+				}
+			}
+		);
+
 		return server;
 	};
 }

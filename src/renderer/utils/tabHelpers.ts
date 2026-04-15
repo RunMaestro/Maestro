@@ -2067,10 +2067,15 @@ export function navigateToClosestTerminalTab(session: Session): NavigateToUnifie
 	}
 	if (terminalIndices.length === 0) return null;
 
-	// If already on a terminal tab, stay on it
+	// If already on a terminal tab, cycle to the next terminal tab (wrapping around)
 	const currentIndex = getCurrentUnifiedTabIndex(session, effectiveOrder);
 	if (currentIndex >= 0 && effectiveOrder[currentIndex]?.type === 'terminal') {
-		return navigateToUnifiedTabByIndex(session, currentIndex);
+		if (terminalIndices.length === 1) {
+			return navigateToUnifiedTabByIndex(session, currentIndex);
+		}
+		const currentPos = terminalIndices.indexOf(currentIndex);
+		const nextPos = (currentPos + 1) % terminalIndices.length;
+		return navigateToUnifiedTabByIndex(session, terminalIndices[nextPos]);
 	}
 
 	// Find closest terminal tab by distance from current position

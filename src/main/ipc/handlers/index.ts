@@ -57,6 +57,7 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerFeedbackHandlers } from './feedback';
 import { registerMaestroCliHandlers } from './maestro-cli';
+import { registerPromptsHandlers } from './prompts';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -109,6 +110,7 @@ export type { CueHandlerDependencies };
 export { registerWakatimeHandlers };
 export { registerFeedbackHandlers };
 export { registerMaestroCliHandlers };
+export { registerPromptsHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -305,6 +307,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
 	});
+	// Register Core Prompts handlers (no dependencies needed)
+	registerPromptsHandlers();
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

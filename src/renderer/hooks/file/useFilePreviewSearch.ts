@@ -11,6 +11,7 @@ export interface UseFilePreviewSearchParams {
 	isMarkdown: boolean;
 	isImage: boolean;
 	isCsv: boolean;
+	isJsonl: boolean;
 	isEditableText: boolean;
 	markdownEditMode: boolean;
 	editContent: string;
@@ -44,6 +45,7 @@ export function useFilePreviewSearch({
 	isMarkdown,
 	isImage,
 	isCsv,
+	isJsonl,
 	isEditableText,
 	markdownEditMode,
 	editContent,
@@ -88,7 +90,14 @@ export function useFilePreviewSearch({
 
 	// Highlight search matches in syntax-highlighted code
 	useEffect(() => {
-		if (!searchQuery.trim() || !codeContainerRef.current || isMarkdown || isImage || isCsv) {
+		if (
+			!searchQuery.trim() ||
+			!codeContainerRef.current ||
+			isMarkdown ||
+			isImage ||
+			isCsv ||
+			isJsonl
+		) {
 			setTotalMatches(0);
 			setCurrentMatchIndex(-1);
 			matchElementsRef.current = [];
@@ -172,7 +181,16 @@ export function useFilePreviewSearch({
 			});
 			matchElementsRef.current = [];
 		};
-	}, [searchQuery, fileContent, displayedContentLength, isMarkdown, isImage, isCsv, accentColor]);
+	}, [
+		searchQuery,
+		fileContent,
+		displayedContentLength,
+		isMarkdown,
+		isImage,
+		isCsv,
+		isJsonl,
+		accentColor,
+	]);
 
 	// Search matches in markdown preview mode - use CSS Custom Highlight API
 	useEffect(() => {

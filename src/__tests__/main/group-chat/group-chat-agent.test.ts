@@ -38,6 +38,23 @@ vi.mock('electron-store', () => {
 	};
 });
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const fs = require('fs');
+		const path = require('path');
+		const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+		const filenameMap: Record<string, string> = {
+			'group-chat-participant': 'group-chat-participant.md',
+			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
+		};
+		const filename = filenameMap[id];
+		if (!filename) throw new Error(`Unknown prompt ID in test mock: ${id}`);
+		return fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+	}),
+}));
+
 import {
 	addParticipant,
 	sendToParticipant,

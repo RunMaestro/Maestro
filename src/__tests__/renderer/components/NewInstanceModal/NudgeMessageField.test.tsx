@@ -85,4 +85,21 @@ describe('NudgeMessageField', () => {
 		fireEvent.change(textarea, { target: { value: 'Hello World' } });
 		expect(onChange).toHaveBeenCalledWith('Hello');
 	});
+
+	it('should render custom label, description, and placeholder', () => {
+		render(
+			<NudgeMessageField
+				theme={createTheme()}
+				value=""
+				onChange={vi.fn()}
+				label="New Session Message"
+				description="Custom description text."
+				placeholder="Custom placeholder..."
+			/>
+		);
+
+		expect(screen.getByText('New Session Message')).toBeInTheDocument();
+		expect(screen.getByText('Custom description text.')).toBeInTheDocument();
+		expect(screen.getByPlaceholderText('Custom placeholder...')).toBeInTheDocument();
+	});
 });

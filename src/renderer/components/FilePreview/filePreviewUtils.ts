@@ -61,6 +61,8 @@ const LANGUAGE_MAP: Record<string, string> = {
 	xml: 'xml',
 	csv: 'csv',
 	tsv: 'csv',
+	jsonl: 'jsonl',
+	ndjson: 'jsonl',
 };
 
 /** Map filename extension to syntax highlighting language code */

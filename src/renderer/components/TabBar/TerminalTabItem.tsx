@@ -4,6 +4,8 @@ import { X, Pencil, Terminal, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 /**
  * Props for the TerminalTabItem component.
@@ -83,6 +85,17 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		isOverOverlayRef,
 	} = useTabHoverOverlay({ registerRef });
 
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	const ShortcutHint = ({ keys }: { keys: string[] }) => (
+		<span
+			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+		>
+			{formatShortcutKeys(keys)}
+		</span>
+	);
+
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
 			if (e.button === 1) {
@@ -153,26 +166,29 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseOtherTabs?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tab.id, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsLeft?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsRight?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
 	);
 
 	// Determine icon state color
@@ -382,6 +398,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
+									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -395,6 +412,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
+										{tabShortcuts.closeOtherTabs && (
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+										)}
 									</button>
 								)}
 
@@ -409,6 +429,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
+										{tabShortcuts.closeTabsLeft && (
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+										)}
 									</button>
 								)}
 
@@ -428,6 +451,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Close Tabs to Right
+										{tabShortcuts.closeTabsRight && (
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+										)}
 									</button>
 								)}
 							</div>

@@ -42,6 +42,14 @@ describe('filePreviewUtils', () => {
 			expect(getLanguageFromFilename('data.csv')).toBe('csv');
 		});
 
+		it('returns jsonl for .jsonl files', () => {
+			expect(getLanguageFromFilename('data.jsonl')).toBe('jsonl');
+		});
+
+		it('returns jsonl for .ndjson files', () => {
+			expect(getLanguageFromFilename('stream.ndjson')).toBe('jsonl');
+		});
+
 		it('returns text for unknown extensions', () => {
 			expect(getLanguageFromFilename('file.xyz')).toBe('text');
 		});

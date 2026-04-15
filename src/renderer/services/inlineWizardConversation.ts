@@ -14,11 +14,47 @@ import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
-import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
+
+let cachedWizardInlineIteratePrompt: string | null = null;
+let cachedWizardInlineNewPrompt: string | null = null;
+let inlineWizardConversationPromptsLoaded = false;
+
+export async function loadInlineWizardConversationPrompts(force = false): Promise<void> {
+	if (inlineWizardConversationPromptsLoaded && !force) return;
+
+	const [iterateResult, newResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-inline-iterate'),
+		window.maestro.prompts.get('wizard-inline-new'),
+	]);
+
+	if (!iterateResult.success) {
+		throw new Error(`Failed to load wizard-inline-iterate prompt: ${iterateResult.error}`);
+	}
+	if (!newResult.success) {
+		throw new Error(`Failed to load wizard-inline-new prompt: ${newResult.error}`);
+	}
+	cachedWizardInlineIteratePrompt = iterateResult.content!;
+	cachedWizardInlineNewPrompt = newResult.content!;
+	inlineWizardConversationPromptsLoaded = true;
+}
+
+function getWizardInlineIteratePrompt(): string {
+	if (!inlineWizardConversationPromptsLoaded || cachedWizardInlineIteratePrompt === null) {
+		return '';
+	}
+	return cachedWizardInlineIteratePrompt;
+}
+
+function getWizardInlineNewPrompt(): string {
+	if (!inlineWizardConversationPromptsLoaded || cachedWizardInlineNewPrompt === null) {
+		return '';
+	}
+	return cachedWizardInlineNewPrompt;
+}
 
 /**
  * Extended ExistingDocument interface that includes loaded content.
@@ -201,10 +237,10 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 	// Select the base prompt based on mode
 	let basePrompt: string;
 	if (mode === 'iterate') {
-		basePrompt = wizardInlineIteratePrompt;
+		basePrompt = getWizardInlineIteratePrompt();
 	} else {
 		// 'new' mode uses the new plan prompt
-		basePrompt = wizardInlineNewPrompt;
+		basePrompt = getWizardInlineNewPrompt();
 	}
 
 	// Handle wizard-specific variables that have different semantics from the central template system

@@ -21,6 +21,7 @@ import { useClickOutside } from '../../hooks/ui/useClickOutside';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { MermaidRenderer } from '../MermaidRenderer';
 import { CsvTableRenderer } from '../CsvTableRenderer';
+import { JsonlViewer } from '../JsonlViewer';
 import { getEncoder } from '../../utils/tokenCounter';
 import { remarkFileLinks, buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
@@ -197,6 +198,7 @@ export const FilePreview = React.memo(
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
 		const isCsv = language === 'csv';
+		const isJsonl = language === 'jsonl';
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
@@ -252,6 +254,7 @@ export const FilePreview = React.memo(
 			isMarkdown,
 			isImage,
 			isCsv,
+			isJsonl,
 			isEditableText,
 			markdownEditMode,
 			editContent,
@@ -1165,6 +1168,13 @@ export const FilePreview = React.memo(
 							content={file.content}
 							theme={theme}
 							delimiter={csvDelimiter}
+							searchQuery={searchQuery}
+							onMatchCount={setMatchCount}
+						/>
+					) : isJsonl && !markdownEditMode ? (
+						<JsonlViewer
+							content={file.content}
+							theme={theme}
 							searchQuery={searchQuery}
 							onMatchCount={setMatchCount}
 						/>

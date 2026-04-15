@@ -66,6 +66,7 @@ import {
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
+	registerPromptsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -92,6 +93,8 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
+import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -374,6 +377,64 @@ app.whenReady().then(async () => {
 	processManager = new ProcessManager();
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
+
+	// Initialize core prompts from disk (must happen before features that use them)
+	try {
+		await initializePrompts();
+	} catch (error) {
+		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+		await captureException(error instanceof Error ? error : new Error(String(error)), {
+			operation: 'startup:initializePrompts',
+		});
+		const { dialog } = await import('electron');
+		dialog.showErrorBox(
+			'Startup Error',
+			'Failed to load system prompts. Please reinstall the application.'
+		);
+		app.quit();
+		return;
+	}
+
+	// One-time migration: bake standing instructions into moderator prompt customization
+	const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
+	const migratedKey = 'moderatorStandingInstructionsMigrated';
+
+	if (standingInstructions && !store.get(migratedKey, false)) {
+		try {
+			const currentPrompt = getPrompt('group-chat-moderator-system');
+
+			// Only migrate if the exact standing instructions content isn't already in the prompt
+			if (!currentPrompt.includes(standingInstructions)) {
+				const sectionHeader = '## Standing Instructions';
+				const newSection = `${sectionHeader}\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
+
+				let migratedPrompt: string;
+				if (currentPrompt.includes(sectionHeader)) {
+					migratedPrompt = currentPrompt.replace(
+						/## Standing Instructions[\s\S]*?(?=\n## |\s*$)/,
+						newSection
+					);
+				} else {
+					migratedPrompt = `${currentPrompt}\n\n${newSection}`;
+				}
+				await savePrompt('group-chat-moderator-system', migratedPrompt);
+				logger.info(
+					'Migrated moderator standing instructions into prompt customization',
+					'Startup'
+				);
+			}
+			store.set(migratedKey, true);
+		} catch (err) {
+			await captureException(err instanceof Error ? err : new Error(String(err)), {
+				migratedKey,
+				standingInstructionsSlice: standingInstructions.slice(0, 200),
+			});
+			logger.warn(
+				'Failed to persist migrated moderator standing instructions, will retry next launch',
+				'Startup'
+			);
+		}
+	}
 
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
@@ -831,6 +892,9 @@ function setupIpcHandlers() {
 	// Register BMAD handlers (no dependencies needed)
 	registerBmadHandlers();
 
+	// Register Core Prompts handlers (no dependencies needed)
+	registerPromptsHandlers();
+
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
 		getMainWindow: () => mainWindow,
@@ -893,9 +957,8 @@ function setupIpcHandlers() {
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
 
-	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	// Set up callback for group chat router to get moderator conductor profile
 	setGetModeratorSettingsCallback(() => ({
-		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
 		conductorProfile: (store.get('conductorProfile', '') as string) || '',
 	}));
 

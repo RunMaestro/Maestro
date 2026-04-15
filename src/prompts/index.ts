@@ -1,54 +1,15 @@
 /**
- * Centralized prompts module
+ * Core Prompts Module
  *
- * All prompts are stored as .md files in this directory and compiled
- * to TypeScript at build time by scripts/generate-prompts.mjs.
- *
- * The generated file is at src/generated/prompts.ts
+ * Prompts are loaded from disk at runtime via the prompt-manager.
+ * This file re-exports shared definitions for convenience.
+ * The single source of truth is src/shared/promptDefinitions.ts.
  */
 
 export {
-	// Wizard
-	wizardSystemPrompt,
-	wizardSystemContinuationPrompt,
-	wizardDocumentGenerationPrompt,
-
-	// Inline Wizard
-	wizardInlineSystemPrompt,
-	wizardInlineIteratePrompt,
-	wizardInlineNewPrompt,
-	wizardInlineIterateGenerationPrompt,
-
-	// AutoRun
-	autorunDefaultPrompt,
-	autorunSynopsisPrompt,
-
-	// Input processing
-	imageOnlyDefaultPrompt,
-
-	// Commands
-	commitCommandPrompt,
-
-	// Maestro system prompt
-	maestroSystemPrompt,
-
-	// Group chat prompts
-	groupChatModeratorSystemPrompt,
-	groupChatModeratorSynthesisPrompt,
-	groupChatParticipantPrompt,
-	groupChatParticipantRequestPrompt,
-
-	// Context management
-	contextGroomingPrompt,
-	contextTransferPrompt,
-	contextSummarizePrompt,
-
-	// Tab naming
-	tabNamingPrompt,
-
-	// Director's Notes
-	directorNotesPrompt,
-
-	// Feedback
-	feedbackPrompt,
-} from '../generated/prompts';
+	CORE_PROMPTS,
+	PROMPT_IDS,
+	getPromptFilename,
+	type PromptDefinition,
+	type PromptId,
+} from '../shared/promptDefinitions';

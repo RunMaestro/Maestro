@@ -10,7 +10,7 @@
 
 import type { Session, ToolType, ProcessConfig } from '../types';
 import { createMergedSession } from './tabHelpers';
-import { getStdinFlags } from './spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from './spawnHelpers';
 
 /**
  * Options for creating a session for a specific agent type.
@@ -83,6 +83,8 @@ export interface BuildSpawnConfigOptions {
 	};
 	/** Whether the prompt includes images (default: false) */
 	hasImages?: boolean;
+	/** Maestro system prompt to append (injected via --append-system-prompt) */
+	appendSystemPrompt?: string;
 }
 
 /**
@@ -126,6 +128,7 @@ export async function buildSpawnConfigForAgent(
 		sessionCustomContextWindow,
 		sessionSshRemoteConfig,
 		hasImages = false,
+		appendSystemPrompt,
 	} = options;
 
 	// Fetch the agent configuration from main process
@@ -163,6 +166,7 @@ export async function buildSpawnConfigForAgent(
 		command,
 		args: agentConfig.args || [],
 		prompt,
+		appendSystemPrompt,
 		// Generic spawn options - main process builds agent-specific args
 		agentSessionId,
 		readOnlyMode,
@@ -248,12 +252,16 @@ export async function createSessionForAgent(
 		saveToHistory,
 	});
 
+	// Prepare Maestro system prompt for new sessions
+	const appendSystemPrompt = await prepareMaestroSystemPrompt({ session });
+
 	// Build the spawn configuration
 	const spawnConfig = await buildSpawnConfigForAgent({
 		sessionId: session.id,
 		toolType: agentType,
 		cwd: projectRoot,
 		prompt: initialContext,
+		appendSystemPrompt,
 		// New session - no resume, no read-only mode by default
 		readOnlyMode: false,
 	});

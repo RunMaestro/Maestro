@@ -115,7 +115,7 @@ describe('ShortcutsHelpModal', () => {
 				</TestWrapper>
 			);
 
-			const closeButton = screen.getByRole('button');
+			const closeButton = screen.getAllByRole('button')[0];
 			expect(closeButton).toBeInTheDocument();
 		});
 
@@ -162,7 +162,7 @@ describe('ShortcutsHelpModal', () => {
 				</TestWrapper>
 			);
 
-			const closeButton = screen.getByRole('button');
+			const closeButton = screen.getAllByRole('button')[0];
 			fireEvent.click(closeButton);
 
 			expect(mockOnClose).toHaveBeenCalledTimes(1);

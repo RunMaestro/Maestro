@@ -163,6 +163,15 @@ beforeEach(() => {
 				capabilities: { supportsStreamJsonInput: true },
 			}),
 		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
+			}),
+		},
+		history: {
+			getFilePath: vi.fn().mockResolvedValue(null),
+		},
 	};
 
 	// Spy on addEventListener/removeEventListener for event listener extraction

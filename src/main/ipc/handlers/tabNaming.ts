@@ -21,7 +21,7 @@ import {
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
-import { tabNamingPrompt } from '../../../prompts';
+import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
@@ -120,7 +120,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					}
 
 					// Build the prompt: combine the tab naming prompt with the user's message
-					const fullPrompt = `${tabNamingPrompt}\n\n---\n\nUser's message:\n\n${config.userMessage}`;
+					const fullPrompt = `${getPrompt('tab-naming')}\n\n---\n\nUser's message:\n\n${config.userMessage}`;
 
 					// Build agent arguments - read-only mode, runs in parallel
 					// Filter out --dangerously-skip-permissions from base args since tab naming

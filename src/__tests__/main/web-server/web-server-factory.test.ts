@@ -71,6 +71,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setTriggerCueSubscriptionCallback = vi.fn();
 			setGetUsageDashboardCallback = vi.fn();
 			setGetAchievementsCallback = vi.fn();
+			setGenerateDirectorNotesSynopsisCallback = vi.fn();
 			setWriteToTerminalCallback = vi.fn();
 			setResizeTerminalCallback = vi.fn();
 			setSpawnTerminalForWebCallback = vi.fn();

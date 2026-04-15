@@ -634,6 +634,36 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs[0].id).toBe('tab-2');
 		});
 
+		it('handleCloseOtherTabs kills terminal processes for closed terminal tabs', () => {
+			const sessionId = 'test-session';
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const session = createMockSession({
+				id: sessionId,
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				terminalTabs: [
+					{ id: 'term-1', name: null, shellType: 'zsh', pid: 1 } as any,
+					{ id: 'term-2', name: null, shellType: 'zsh', pid: 2 } as any,
+				],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'terminal', id: 'term-2' },
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: sessionId });
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseOtherTabs();
+			});
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith(`${sessionId}-terminal-term-1`);
+			expect(window.maestro.process.kill).toHaveBeenCalledWith(`${sessionId}-terminal-term-2`);
+			expect(window.maestro.process.kill).toHaveBeenCalledTimes(2);
+		});
+
 		it('handleCloseTabsLeft closes tabs left of active', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
@@ -650,6 +680,31 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-2', 'tab-3']);
 		});
 
+		it('handleCloseTabsLeft kills terminal processes for closed terminal tabs', () => {
+			const sessionId = 'test-session';
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const session = createMockSession({
+				id: sessionId,
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				terminalTabs: [{ id: 'term-1', name: null, shellType: 'zsh', pid: 1 } as any],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: sessionId });
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsLeft();
+			});
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith(`${sessionId}-terminal-term-1`);
+			expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
+		});
+
 		it('handleCloseTabsRight closes tabs right of active', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2' });
@@ -664,6 +719,31 @@ describe('useTabHandlers', () => {
 			const session = getSession();
 			expect(session.aiTabs).toHaveLength(2);
 			expect(session.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'tab-2']);
+		});
+
+		it('handleCloseTabsRight kills terminal processes for closed terminal tabs', () => {
+			const sessionId = 'test-session';
+			const aiTab = createMockAITab({ id: 'ai-1' });
+			const session = createMockSession({
+				id: sessionId,
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				terminalTabs: [{ id: 'term-1', name: null, shellType: 'zsh', pid: 1 } as any],
+				activeTerminalTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: sessionId });
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseTabsRight();
+			});
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith(`${sessionId}-terminal-term-1`);
+			expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
 		});
 
 		it('handleCloseCurrentTab returns file type for active file tab', () => {

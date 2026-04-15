@@ -50,6 +50,7 @@
 							"general-usage",
 							"keyboard-shortcuts",
 							"slash-commands",
+							"prompt-customization",
 							"history",
 							"context-management",
 							"document-graph",
@@ -80,11 +81,15 @@
 							"director-notes",
 							"usage-dashboard",
 							"symphony",
-							"maestro-cue",
-							"maestro-cue-configuration",
-							"maestro-cue-events",
-							"maestro-cue-advanced",
-							"maestro-cue-examples"
+							{
+								"page": "maestro-cue",
+								"pages": [
+									"maestro-cue-configuration",
+									"maestro-cue-events",
+									"maestro-cue-advanced",
+									"maestro-cue-examples"
+								]
+							}
 						]
 					},
 					{

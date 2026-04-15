@@ -27,11 +27,10 @@ import type {
 	BmadCommand,
 } from '../types';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
-import { getStdinFlags } from '../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
-import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 import { filterYoloArgs } from '../utils/agentArgs';
@@ -302,27 +301,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
 				// For NEW sessions (no agentSessionId), prepare Maestro system prompt separately
-				const isNewSession = !tabAgentSessionId;
-				let appendSystemPrompt: string | undefined;
-				if (isNewSession && maestroSystemPrompt) {
-					let gitBranch: string | undefined;
-					if (session.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(session.cwd);
-							gitBranch = status.branch;
-						} catch {
-							// Ignore git errors
-						}
-					}
-
-					appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-						session,
-						gitBranch,
-						groupId: session.groupId,
-						activeTabId: targetTab.id,
-						conductorProfile: deps.conductorProfile,
-					});
-				}
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: targetTab.id,
+					agentSessionId: tabAgentSessionId,
+				});
 
 				const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 					isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
@@ -407,17 +390,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					});
 
 					// For NEW sessions, prepare Maestro system prompt separately
-					const isNewSessionForCommand = !tabAgentSessionId;
-					let appendSystemPromptForCommand: string | undefined;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						appendSystemPromptForCommand = substituteTemplateVariables(maestroSystemPrompt, {
-							session,
-							gitBranch,
-							groupId: session.groupId,
-							activeTabId: targetTab.id,
-							conductorProfile: deps.conductorProfile,
-						});
-					}
+					const appendSystemPromptForCommand = await prepareMaestroSystemPrompt({
+						session,
+						activeTabId: targetTab.id,
+						agentSessionId: tabAgentSessionId,
+					});
 
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(

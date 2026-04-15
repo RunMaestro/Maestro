@@ -33,6 +33,7 @@ import {
 import { useSettings } from '../../../hooks';
 import { captureException } from '../../../utils/sentry';
 import type { Theme, ShellInfo } from '../../../types';
+import type { MaestroCliStatus } from '../../../../shared/maestro-cli';
 import {
 	formatMetaKey,
 	formatEnterToSend,
@@ -47,18 +48,6 @@ export interface GeneralTabProps {
 	theme: Theme;
 	isOpen: boolean;
 }
-
-type MaestroCliStatus = {
-	expectedVersion: string;
-	installed: boolean;
-	inPath: boolean;
-	commandPath: string | null;
-	installedVersion: string | null;
-	versionMatch: boolean;
-	needsInstallOrUpdate: boolean;
-	installDir: string;
-	bundledCliPath: string | null;
-};
 
 export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const {

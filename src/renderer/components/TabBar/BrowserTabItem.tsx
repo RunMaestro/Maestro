@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Globe, X, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 export interface BrowserTabItemProps {
 	tab: BrowserTab;
@@ -94,6 +96,17 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		isOverOverlayRef,
 	} = useTabHoverOverlay({ registerRef });
 
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	const ShortcutHint = ({ keys }: { keys: string[] }) => (
+		<span
+			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+		>
+			{formatShortcutKeys(keys)}
+		</span>
+	);
+
 	const label = useMemo(() => getBrowserTabLabel(tab), [tab]);
 	const host = useMemo(() => getBrowserTabHost(tab.url), [tab.url]);
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
@@ -182,26 +195,29 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseOtherTabs?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tab.id, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsLeft?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsRight?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
 	);
 
 	return (
@@ -375,6 +391,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
+									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -388,6 +405,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 									>
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
+										{tabShortcuts.closeOtherTabs && (
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+										)}
 									</button>
 								)}
 
@@ -402,6 +422,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
+										{tabShortcuts.closeTabsLeft && (
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+										)}
 									</button>
 								)}
 
@@ -421,6 +444,9 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Close Tabs to Right
+										{tabShortcuts.closeTabsRight && (
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+										)}
 									</button>
 								)}
 							</div>

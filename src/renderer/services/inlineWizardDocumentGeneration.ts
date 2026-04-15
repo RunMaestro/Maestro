@@ -14,8 +14,46 @@ import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batc
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
-import { wizardDocumentGenerationPrompt, wizardInlineIterateGenerationPrompt } from '../../prompts';
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+
+let cachedWizardDocumentGenerationPrompt: string | null = null;
+let cachedWizardInlineIterateGenerationPrompt: string | null = null;
+let inlineWizardDocGenPromptsLoaded = false;
+
+export async function loadInlineWizardDocGenPrompts(force = false): Promise<void> {
+	if (inlineWizardDocGenPromptsLoaded && !force) return;
+
+	const [docGenResult, iterateGenResult] = await Promise.all([
+		window.maestro.prompts.get('wizard-document-generation'),
+		window.maestro.prompts.get('wizard-inline-iterate-generation'),
+	]);
+
+	if (!docGenResult.success) {
+		throw new Error(`Failed to load wizard-document-generation prompt: ${docGenResult.error}`);
+	}
+	if (!iterateGenResult.success) {
+		throw new Error(
+			`Failed to load wizard-inline-iterate-generation prompt: ${iterateGenResult.error}`
+		);
+	}
+	cachedWizardDocumentGenerationPrompt = docGenResult.content!;
+	cachedWizardInlineIterateGenerationPrompt = iterateGenResult.content!;
+	inlineWizardDocGenPromptsLoaded = true;
+}
+
+function getWizardDocumentGenerationPrompt(): string {
+	if (!inlineWizardDocGenPromptsLoaded || cachedWizardDocumentGenerationPrompt === null) {
+		return '';
+	}
+	return cachedWizardDocumentGenerationPrompt;
+}
+
+function getWizardInlineIterateGenerationPrompt(): string {
+	if (!inlineWizardDocGenPromptsLoaded || cachedWizardInlineIterateGenerationPrompt === null) {
+		return '';
+	}
+	return cachedWizardInlineIterateGenerationPrompt;
+}
 import { deriveSshRemoteId } from '../components/Wizard/services/phaseGenerator';
 
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
@@ -365,7 +403,9 @@ export function generateDocumentPrompt(
 
 	// Choose the appropriate prompt template based on mode
 	const basePrompt =
-		mode === 'iterate' ? wizardInlineIterateGenerationPrompt : wizardDocumentGenerationPrompt;
+		mode === 'iterate'
+			? getWizardInlineIterateGenerationPrompt()
+			: getWizardDocumentGenerationPrompt();
 
 	// Build the full Auto Run folder path (including subfolder if specified)
 	// Use the user-configured autoRunFolderPath (which may be external to directoryPath)

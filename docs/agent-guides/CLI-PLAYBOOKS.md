@@ -206,7 +206,7 @@ maestro-cli clean playbooks [--dry-run] [--json]
 Create a new agent in the running Maestro desktop app via WebSocket (`withMaestroClient`). Sends a `create_session` message with optional config fields that flow through the full IPC pipeline (messageHandlers → CallbackRegistry → web-server-factory → preload → useRemoteIntegration → useAppRemoteEventListeners).
 
 ```bash
-maestro-cli create-agent <name> -d <cwd> [-t <type>] [-g <group-id>] [--nudge <msg>] [--custom-path <path>] [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] [--context-window <size>] [--provider-path <path>] [--ssh-remote <id>] [--ssh-cwd <path>] [--json]
+maestro-cli create-agent <name> -d <cwd> [-t <type>] [-g <group-id>] [--nudge <msg>] [--new-session-message <msg>] [--custom-path <path>] [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] [--context-window <size>] [--provider-path <path>] [--ssh-remote <id>] [--ssh-cwd <path>] [--json]
 ```
 
 Options:

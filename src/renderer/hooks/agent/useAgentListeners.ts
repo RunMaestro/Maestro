@@ -48,8 +48,28 @@ import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from '../..
 import { getActiveTab, getWriteModeTab } from '../../utils/tabHelpers';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
-import { autorunSynopsisPrompt } from '../../../prompts';
 import type { RightPanelHandle } from '../../components/RightPanel';
+
+let cachedAutorunSynopsisPrompt: string | null = null;
+let agentListenersPromptsLoaded = false;
+
+export async function loadAgentListenersPrompts(force = false): Promise<void> {
+	if (agentListenersPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('autorun-synopsis');
+	if (!result.success) {
+		throw new Error(`Failed to load autorun-synopsis prompt: ${result.error}`);
+	}
+	cachedAutorunSynopsisPrompt = result.content!;
+	agentListenersPromptsLoaded = true;
+}
+
+function getAutorunSynopsisPrompt(): string {
+	if (!agentListenersPromptsLoaded || cachedAutorunSynopsisPrompt === null) {
+		return '';
+	}
+	return cachedAutorunSynopsisPrompt;
+}
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
 // ============================================================================
@@ -389,10 +409,19 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							currentSession.executionQueue.length > 0 &&
 							!(currentSession.state === 'error' && currentSession.agentError)
 						) {
-							queuedItemToProcess = {
-								sessionId: actualSessionId,
-								item: currentSession.executionQueue[0],
-							};
+							const nextItem = currentSession.executionQueue[0];
+							const isNextItemSafeToRun =
+								nextItem.forceParallel ||
+								nextItem.readOnlyMode ||
+								!currentSession.aiTabs?.some(
+									(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
+								);
+							if (isNextItemSafeToRun) {
+								queuedItemToProcess = {
+									sessionId: actualSessionId,
+									item: nextItem,
+								};
+							}
 						}
 
 						const completedTab = tabIdFromSession
@@ -554,7 +583,31 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							}
 
 							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
+								const nextItem = s.executionQueue[0];
+
+								// Guard: non-forceParallel, non-readOnly items must wait
+								// until ALL other tabs are idle to prevent write conflicts
+								const otherTabsBusy = s.aiTabs?.some(
+									(tab) => tab.id !== tabIdFromSession && tab.state === 'busy'
+								);
+								if (!nextItem.forceParallel && !nextItem.readOnlyMode && otherTabsBusy) {
+									// Don't dequeue — mark the exiting tab idle and keep session busy
+									const updatedAiTabs = s.aiTabs.map((tab) =>
+										tabIdFromSession && tab.id === tabIdFromSession
+											? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
+											: tab
+									);
+									const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
+									return {
+										...s,
+										state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
+										busySource: anyTabStillBusy ? s.busySource : undefined,
+										thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
+										aiTabs: updatedAiTabs,
+									};
+								}
+
+								const [, ...remainingQueue] = s.executionQueue;
 
 								const targetTab =
 									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
@@ -583,7 +636,6 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										return {
 											...tab,
 											state: 'idle' as const,
-											// Preserve agentSessionId for session resume
 										};
 									}
 									return tab;
@@ -827,9 +879,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					let SYNOPSIS_PROMPT: string;
 					if (synopsisData.lastSynopsisTime) {
 						const timeAgo = formatRelativeTime(synopsisData.lastSynopsisTime);
-						SYNOPSIS_PROMPT = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
+						SYNOPSIS_PROMPT = `${getAutorunSynopsisPrompt()}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
 					} else {
-						SYNOPSIS_PROMPT = autorunSynopsisPrompt;
+						SYNOPSIS_PROMPT = getAutorunSynopsisPrompt();
 					}
 					const startTime = Date.now();
 					const synopsisTime = Date.now();

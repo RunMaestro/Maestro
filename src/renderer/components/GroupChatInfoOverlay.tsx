@@ -18,6 +18,8 @@ import {
 	ExternalLink,
 	Download,
 } from 'lucide-react';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import type { Theme, GroupChat, GroupChatMessage, GroupChatHistoryEntry } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -338,6 +340,17 @@ export function GroupChatInfoOverlay({
 					>
 						<Download className={`w-4 h-4 ${isExporting ? 'animate-pulse' : ''}`} />
 						{isExporting ? 'Exporting...' : 'Export HTML'}
+					</button>
+					<button
+						onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/group-chat'))}
+						className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm hover:bg-white/5 transition-colors border"
+						style={{
+							borderColor: theme.colors.border,
+							color: theme.colors.accent,
+						}}
+					>
+						<ExternalLink className="w-4 h-4" />
+						Read more
 					</button>
 				</div>
 			</div>

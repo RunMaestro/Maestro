@@ -3359,12 +3359,80 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('term-1');
 		});
 
-		it('stays on current terminal tab if already on one', () => {
+		it('cycles to next terminal tab when already on one', () => {
 			const session = createMockSession({
 				aiTabs: [createMockTab({ id: 'ai-1' })],
 				activeTabId: 'ai-1',
 				inputMode: 'terminal',
 				activeTerminalTabId: 'term-1',
+				terminalTabs: [
+					{
+						id: 'term-1',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '/test',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+					{
+						id: 'term-2',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '/test',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'terminal', id: 'term-2' },
+				],
+			});
+
+			const result = navigateToClosestTerminalTab(session);
+			expect(result).not.toBeNull();
+			expect(result!.type).toBe('terminal');
+			expect(result!.id).toBe('term-2');
+		});
+
+		it('stays on current terminal tab when only one exists', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' })],
+				activeTabId: 'ai-1',
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				terminalTabs: [
+					{
+						id: 'term-1',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '/test',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'terminal', id: 'term-1' },
+				],
+			});
+
+			const result = navigateToClosestTerminalTab(session);
+			expect(result).not.toBeNull();
+			expect(result!.type).toBe('terminal');
+			expect(result!.id).toBe('term-1');
+		});
+
+		it('wraps around to first terminal tab from the last one', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' })],
+				activeTabId: 'ai-1',
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-2',
 				terminalTabs: [
 					{
 						id: 'term-1',

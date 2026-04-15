@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
-import { X, Award, CheckCircle, Trophy } from 'lucide-react';
+import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -7,6 +7,8 @@ import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
@@ -210,6 +212,22 @@ export function ShortcutsHelpModal({
 						No shortcuts found
 					</div>
 				)}
+				{/* Read more link */}
+				<div
+					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<button
+						onClick={() =>
+							openUrl(buildMaestroUrl('https://docs.runmaestro.ai/keyboard-shortcuts'))
+						}
+						className="text-xs hover:opacity-80 transition-colors"
+						style={{ color: theme.colors.accent }}
+					>
+						Read more at docs.runmaestro.ai/keyboard-shortcuts
+					</button>
+				</div>
 			</div>
 		</Modal>
 	);

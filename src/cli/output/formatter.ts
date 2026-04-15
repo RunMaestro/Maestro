@@ -758,6 +758,90 @@ export function formatSshRemotes(remotes: SshRemoteDisplay[]): string {
 	return lines.join('\n');
 }
 
+// Director's Notes History formatting
+export interface DirectorNotesHistoryDisplay {
+	stats: {
+		agentCount: number;
+		autoCount: number;
+		userCount: number;
+		cueCount: number;
+		totalCount: number;
+		lookbackDays: number;
+	};
+	total: number;
+	showing: number;
+	entries: Array<{
+		id: string;
+		type: string;
+		timestamp: number;
+		summary: string;
+		agentName?: string;
+		sourceSessionId: string;
+		success?: boolean;
+		elapsedTimeMs?: number;
+		usageStats?: { totalCostUsd?: number };
+	}>;
+}
+
+export function formatDirectorNotesHistory(
+	data: DirectorNotesHistoryDisplay,
+	lookbackDays: number
+): string {
+	const lines: string[] = [];
+
+	// Header
+	const period =
+		lookbackDays > 0 ? `last ${lookbackDays} day${lookbackDays !== 1 ? 's' : ''}` : 'all time';
+	lines.push(bold(c('cyan', "DIRECTOR'S NOTES — HISTORY")) + dim(` (${period})`));
+	lines.push('');
+
+	// Stats
+	const { stats } = data;
+	lines.push(
+		`  ${c('white', 'Agents:')}   ${stats.agentCount}    ${c('white', 'Entries:')} ${stats.totalCount} ${dim(`(${stats.autoCount} auto, ${stats.userCount} user, ${stats.cueCount} cue)`)}`
+	);
+	lines.push(`  ${c('white', 'Showing:')}  ${data.showing} of ${data.total}`);
+	lines.push('');
+
+	if (data.entries.length === 0) {
+		lines.push(dim('  No entries found for the specified period.'));
+		return lines.join('\n');
+	}
+
+	for (const entry of data.entries) {
+		const date = new Date(entry.timestamp);
+		const dateStr = date.toLocaleDateString();
+		const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const icon =
+			entry.success === true
+				? c('green', '✓')
+				: entry.success === false
+					? c('red', '✗')
+					: c('gray', '•');
+		const typeLabel =
+			entry.type === 'AUTO'
+				? c('blue', '[AUTO]')
+				: entry.type === 'CUE'
+					? c('magenta', '[CUE]')
+					: c('yellow', '[USER]');
+		const agent = entry.agentName
+			? c('white', truncate(entry.agentName, 20))
+			: dim(entry.sourceSessionId.slice(0, 8));
+		const summary = truncate(entry.summary || '', 50);
+		const costStr =
+			entry.usageStats?.totalCostUsd !== undefined
+				? dim(` $${entry.usageStats.totalCostUsd.toFixed(4)}`)
+				: '';
+		const timeElapsed = entry.elapsedTimeMs ? dim(` ${formatDuration(entry.elapsedTimeMs)}`) : '';
+
+		lines.push(
+			`  ${icon} ${dim(`${dateStr} ${timeStr}`)} ${typeLabel} ${agent}  ${summary}${costStr}${timeElapsed}`
+		);
+	}
+
+	return lines.join('\n');
+}
+
 // Error formatting
 export function formatError(message: string): string {
 	return `${c('red', '✗')} ${c('red', 'Error:')} ${message}`;

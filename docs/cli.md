@@ -166,6 +166,7 @@ maestro-cli create-agent "Full Config" -d /workspace \
 	-t claude-code \
 	-g <group-id> \
 	--nudge "Always write tests" \
+	--new-session-message "You are a senior engineer working on project X" \
 	--custom-path /usr/local/bin/claude \
 	--custom-args "--verbose" \
 	--env DEBUG=true --env LOG_LEVEL=info \
@@ -180,22 +181,23 @@ maestro-cli create-agent "Full Config" -d /workspace \
 maestro-cli remove-agent <agent-id>
 ```
 
-| Flag                      | Description                                              | Default       |
-| ------------------------- | -------------------------------------------------------- | ------------- |
-| `-d, --cwd <path>`        | Working directory for the agent (required)               | —             |
-| `-t, --type <type>`       | Agent type (claude-code, codex, opencode, factory-droid) | `claude-code` |
-| `-g, --group <id>`        | Group ID to assign the agent to                          | —             |
-| `--nudge <message>`       | Nudge message appended to every user message             | —             |
-| `--custom-path <path>`    | Custom binary path for the agent CLI                     | —             |
-| `--custom-args <args>`    | Custom CLI arguments                                     | —             |
-| `--env <KEY=VALUE>`       | Environment variable (repeatable)                        | —             |
-| `--model <model>`         | Model override (e.g., sonnet, opus)                      | —             |
-| `--effort <level>`        | Effort/reasoning level override                          | —             |
-| `--context-window <size>` | Context window size in tokens                            | —             |
-| `--provider-path <path>`  | Custom provider path                                     | —             |
-| `--ssh-remote <id>`       | SSH remote ID for remote execution                       | —             |
-| `--ssh-cwd <path>`        | Working directory override on the SSH remote             | —             |
-| `--json`                  | Machine-readable JSON output                             | —             |
+| Flag                              | Description                                              | Default       |
+| --------------------------------- | -------------------------------------------------------- | ------------- |
+| `-d, --cwd <path>`                | Working directory for the agent (required)               | —             |
+| `-t, --type <type>`               | Agent type (claude-code, codex, opencode, factory-droid) | `claude-code` |
+| `-g, --group <id>`                | Group ID to assign the agent to                          | —             |
+| `--nudge <message>`               | Nudge message appended to every user message             | —             |
+| `--new-session-message <message>` | Message prefixed to first message in new sessions        | —             |
+| `--custom-path <path>`            | Custom binary path for the agent CLI                     | —             |
+| `--custom-args <args>`            | Custom CLI arguments                                     | —             |
+| `--env <KEY=VALUE>`               | Environment variable (repeatable)                        | —             |
+| `--model <model>`                 | Model override (e.g., sonnet, opus)                      | —             |
+| `--effort <level>`                | Effort/reasoning level override                          | —             |
+| `--context-window <size>`         | Context window size in tokens                            | —             |
+| `--provider-path <path>`          | Custom provider path                                     | —             |
+| `--ssh-remote <id>`               | SSH remote ID for remote execution                       | —             |
+| `--ssh-cwd <path>`                | Working directory override on the SSH remote             | —             |
+| `--json`                          | Machine-readable JSON output                             | —             |
 
 ### Listing Resources
 
@@ -241,6 +243,47 @@ maestro-cli playbook <playbook-id> --debug
 # Clean orphaned playbooks (for deleted sessions)
 maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
+```
+
+### Prompt Customization
+
+The CLI uses the same core system prompts as the desktop app. When you customize prompts via Settings → **Maestro Prompts**, those customizations are stored in `core-prompts-customizations.json` in the Maestro data directory and are automatically picked up by the CLI during playbook runs.
+
+The prompts most relevant to CLI playbook execution are:
+
+| Prompt ID               | Controls                                      |
+| ----------------------- | --------------------------------------------- |
+| `autorun-default`       | Default Auto Run task execution behavior      |
+| `autorun-synopsis`      | Synopsis generation after task completion     |
+| `commit-command`        | `/commit` command behavior                    |
+| `maestro-system-prompt` | Maestro system context injected into sessions |
+| `context-grooming`      | Context grooming during transfers             |
+
+To customize these prompts, either use the desktop app's **Maestro Prompts** tab or edit the JSON file directly:
+
+```text
+# macOS
+~/Library/Application Support/Maestro/core-prompts-customizations.json
+
+# Linux
+~/.config/Maestro/core-prompts-customizations.json
+
+# Windows
+%APPDATA%\Maestro\core-prompts-customizations.json
+```
+
+The file format is:
+
+```json
+{
+	"prompts": {
+		"autorun-default": {
+			"content": "Your customized prompt content...",
+			"isModified": true,
+			"modifiedAt": "2026-04-11T..."
+		}
+	}
+}
 ```
 
 ### Managing Settings

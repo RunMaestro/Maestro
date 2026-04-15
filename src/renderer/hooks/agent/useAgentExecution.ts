@@ -8,7 +8,7 @@ import type {
 	ToolType,
 } from '../../types';
 import { getActiveTab } from '../../utils/tabHelpers';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { estimateContextUsage } from '../../utils/contextUsage';
 
@@ -190,6 +190,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				// For batch processing, use a unique session ID per task run to avoid contaminating the main AI terminal
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
+
+				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: getActiveTab(session)?.id,
+				});
 
 				// Note: We intentionally do NOT set the session or tab state to 'busy' here.
 				// Batch operations run in isolation and should not affect the main UI state.
@@ -418,6 +424,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 						hasImages: false, // Batch/Auto Run does not send images
 					});
+
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -427,6 +434,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							command: commandToUse,
 							args: agent.args || [],
 							prompt,
+							appendSystemPrompt,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,

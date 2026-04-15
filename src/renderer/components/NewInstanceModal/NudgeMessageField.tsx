@@ -7,6 +7,18 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 	value,
 	onChange,
 	maxLength = NUDGE_MESSAGE_MAX_LENGTH,
+	label = 'Nudge Message',
+	labelSuffix = '(optional)',
+	description = (
+		<>
+			This text is added to{' '}
+			<strong>
+				<u>every message</u>
+			</strong>{' '}
+			you send to the agent (not visible in chat).
+		</>
+	),
+	placeholder = 'Instructions appended to every message you send...',
 }: NudgeMessageFieldProps) {
 	return (
 		<div>
@@ -14,16 +26,14 @@ export const NudgeMessageField = React.memo(function NudgeMessageField({
 				className="block text-xs font-bold opacity-70 uppercase mb-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				Nudge Message <span className="font-normal opacity-50">(optional)</span>
+				{label} <span className="font-normal opacity-50">{labelSuffix}</span>
 			</div>
-			<p className="text-xs opacity-50 mb-2">
-				This text is added to every message you send to the agent (not visible in chat).
-			</p>
+			<p className="text-xs opacity-50 mb-2">{description}</p>
 			<div className="relative">
 				<textarea
 					value={value}
 					onChange={(e) => onChange(e.target.value.slice(0, maxLength))}
-					placeholder="Instructions appended to every message you send..."
+					placeholder={placeholder}
 					className="w-full p-3 pb-8 rounded border bg-transparent outline-none resize-y text-sm"
 					style={{
 						borderColor: theme.colors.border,

@@ -21,14 +21,10 @@ import type { TransferState } from '../../stores/operationStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { getModalActions } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
-import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { gitService } from '../../services/git';
-import { maestroSystemPrompt } from '../../../prompts';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
 // Dependencies interface
@@ -468,41 +464,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 						hasImages: false, // Context transfer never sends images
 					});
 
-					// Build the full prompt with Maestro system prompt for new sessions
 					const effectivePrompt = contextMessage;
 
-					// Get git branch for template substitution
-					let gitBranch: string | undefined;
-					if (targetSession.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(targetSession.cwd);
-							gitBranch = status.branch;
-						} catch (error) {
-							captureException(error, {
-								extra: {
-									cwd: targetSession.cwd,
-									sessionId: targetSessionId,
-									isGitRepo: targetSession.isGitRepo,
-									operation: 'git-status-for-transfer',
-								},
-							});
-						}
-					}
-
-					// Read conductorProfile from settings store at call time
-					const conductorProfile = useSettingsStore.getState().conductorProfile;
-
-					// Prepare Maestro system prompt separately for token-efficient delivery
-					let appendSystemPrompt: string | undefined;
-					if (maestroSystemPrompt) {
-						appendSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-							session: targetSession,
-							gitBranch,
-							groupId: targetSession.groupId,
-							activeTabId: newTabId,
-							conductorProfile,
-						});
-					}
+					const appendSystemPrompt = await prepareMaestroSystemPrompt({
+						session: targetSession,
+						activeTabId: newTabId,
+					});
 
 					// Spawn agent
 					const spawnSessionId = `${targetSessionId}-ai-${newTabId}`;

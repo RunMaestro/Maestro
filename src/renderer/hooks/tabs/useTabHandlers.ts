@@ -23,7 +23,10 @@ import {
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
 } from '../../utils/tabHelpers';
-import { closeTerminalTab as closeTerminalTabHelper } from '../../utils/terminalTabHelpers';
+import {
+	closeTerminalTab as closeTerminalTabHelper,
+	getTerminalSessionId,
+} from '../../utils/terminalTabHelpers';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
 	DEFAULT_BROWSER_TAB_URL,
@@ -963,17 +966,21 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseAllTabs]);
 
 	const performCloseOtherTabs = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const tabsToClose = session.unifiedTabOrder.filter(
+			(ref) => !(ref.type === activeRef.type && ref.id === activeRef.id)
+		);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeRef = getActiveUnifiedRef(s);
-				if (!activeRef) return s;
-
-				const tabsToClose = s.unifiedTabOrder.filter(
-					(ref) => !(ref.type === activeRef.type && ref.id === activeRef.id)
-				);
 
 				let updatedSession = s;
 
@@ -1009,6 +1016,10 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
 	}, []);
 
 	const handleCloseOtherTabs = useCallback(() => {
@@ -1030,20 +1041,24 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseOtherTabs]);
 
 	const performCloseTabsLeft = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const activeIndex = session.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (activeIndex <= 0) return;
+
+		const tabsToClose = session.unifiedTabOrder.slice(0, activeIndex);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeRef = getActiveUnifiedRef(s);
-				if (!activeRef) return s;
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeRef.type && ref.id === activeRef.id
-				);
-				if (activeIndex <= 0) return s;
-
-				const tabsToClose = s.unifiedTabOrder.slice(0, activeIndex);
 
 				let updatedSession = s;
 
@@ -1079,6 +1094,10 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
 	}, []);
 
 	const handleCloseTabsLeft = useCallback(() => {
@@ -1109,20 +1128,24 @@ export function useTabHandlers(): TabHandlersReturn {
 	}, [performCloseTabsLeft]);
 
 	const performCloseTabsRight = useCallback(() => {
-		const { setSessions, activeSessionId } = useSessionStore.getState();
+		const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+
+		const activeRef = getActiveUnifiedRef(session);
+		if (!activeRef) return;
+
+		const activeIndex = session.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (activeIndex < 0 || activeIndex >= session.unifiedTabOrder.length - 1) return;
+
+		const tabsToClose = session.unifiedTabOrder.slice(activeIndex + 1);
+		const terminalTabIds = tabsToClose.filter((r) => r.type === 'terminal').map((r) => r.id);
+
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-
-				const activeRef = getActiveUnifiedRef(s);
-				if (!activeRef) return s;
-
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeRef.type && ref.id === activeRef.id
-				);
-				if (activeIndex < 0 || activeIndex >= s.unifiedTabOrder.length - 1) return s;
-
-				const tabsToClose = s.unifiedTabOrder.slice(activeIndex + 1);
 
 				let updatedSession = s;
 
@@ -1158,6 +1181,10 @@ export function useTabHandlers(): TabHandlersReturn {
 				return updatedSession;
 			})
 		);
+
+		for (const tabId of terminalTabIds) {
+			window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		}
 	}, []);
 
 	const handleCloseTabsRight = useCallback(() => {

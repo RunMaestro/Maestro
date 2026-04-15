@@ -115,6 +115,13 @@ describe('useAgentExecution', () => {
 				}),
 			},
 			process: mockProcess,
+			prompts: {
+				...window.maestro.prompts,
+				get: vi.fn().mockResolvedValue({
+					success: true,
+					content: 'Maestro System Context: {{AGENT_NAME}}',
+				}),
+			},
 		};
 	});
 
@@ -188,6 +195,45 @@ describe('useAgentExecution', () => {
 
 		expect(updatedSession.state).toBe('idle');
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
+	});
+
+	it('includes appendSystemPrompt in batch spawns', async () => {
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.appendSystemPrompt).toBeDefined();
+		expect(typeof spawnConfig.appendSystemPrompt).toBe('string');
+		expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+
+		// Clean up
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
 	});
 
 	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {

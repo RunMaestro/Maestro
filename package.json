@@ -19,13 +19,13 @@
 		"dev": "node scripts/dev.mjs",
 		"dev:prod-data": "USE_PROD_DATA=1 node scripts/dev.mjs",
 		"dev:demo": "MAESTRO_DEMO_DIR=/tmp/maestro-demo npm run dev",
-		"dev:main": "npm run build:prompts && tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development electron .",
-		"dev:main:prod-data": "npm run build:prompts && tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
+		"dev:main": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development electron .",
+		"dev:main:prod-data": "tsc -p tsconfig.main.json && npm run build:preload && NODE_ENV=development USE_PROD_DATA=1 electron .",
 		"dev:renderer": "vite",
 		"dev:web": "vite --config vite.config.web.mts",
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
-		"build": "npm run build:prompts && npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
-		"build:prompts": "node scripts/generate-prompts.mjs",
+		"build": "npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
+		"build:prompts": "echo 'No-op: prompts are now loaded from disk at runtime (see prompt-manager.ts)'",
 		"build:main": "tsc -p tsconfig.main.json",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
@@ -45,7 +45,7 @@
 		"format:all": "prettier --write .",
 		"format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
 		"format:check:all": "prettier --check .",
-		"validate:push": "npm run build:prompts && npm run format:check:all && npm run lint && npm run lint:eslint && npm run test",
+		"validate:push": "npm run format:check:all && npm run lint && npm run lint:eslint && npm run test",
 		"test": "NODE_OPTIONS=--max-old-space-size=8192 vitest run",
 		"test:watch": "NODE_OPTIONS=--max-old-space-size=8192 vitest",
 		"test:coverage": "NODE_OPTIONS=--max-old-space-size=8192 vitest run --coverage",
@@ -107,6 +107,13 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "src/prompts",
+					"to": "prompts/core",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -143,6 +150,13 @@
 					"to": "maestro-cli.js"
 				},
 				{
+					"from": "src/prompts",
+					"to": "prompts/core",
+					"filter": [
+						"*.md"
+					]
+				},
+				{
 					"from": "src/prompts/speckit",
 					"to": "prompts/speckit"
 				},
@@ -169,6 +183,13 @@
 				{
 					"from": "dist/cli/maestro-cli.js",
 					"to": "maestro-cli.js"
+				},
+				{
+					"from": "src/prompts",
+					"to": "prompts/core",
+					"filter": [
+						"*.md"
+					]
 				},
 				{
 					"from": "src/prompts/speckit",

@@ -56,6 +56,7 @@ export interface SessionLifecycleReturn {
 		name: string,
 		toolType?: ToolType,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -118,6 +119,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			name: string,
 			toolType?: ToolType,
 			nudgeMessage?: string,
+			newSessionMessage?: string,
 			customPath?: string,
 			customArgs?: string,
 			customEnvVars?: Record<string, string>,
@@ -136,6 +138,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					const updatedFields: Partial<Session> = {
 						name,
 						nudgeMessage,
+						newSessionMessage,
 						customPath,
 						customArgs,
 						customEnvVars,

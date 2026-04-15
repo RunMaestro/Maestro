@@ -12,6 +12,7 @@ interface CreateAgentOptions {
 	type: string;
 	group?: string;
 	nudge?: string;
+	newSessionMessage?: string;
 	customPath?: string;
 	customArgs?: string;
 	env?: string[];
@@ -94,6 +95,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 
 	// Add optional config fields
 	if (options.nudge) payload.nudgeMessage = options.nudge;
+	if (options.newSessionMessage) payload.newSessionMessage = options.newSessionMessage;
 	if (options.customPath) payload.customPath = options.customPath;
 	if (options.customArgs) payload.customArgs = options.customArgs;
 	if (customEnvVars) payload.customEnvVars = customEnvVars;

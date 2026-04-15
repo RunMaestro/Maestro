@@ -1,6 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import React from 'react';
+
+// Mock batchUtils to provide loaded DEFAULT_BATCH_PROMPT and real validation functions
+vi.mock('../../../renderer/hooks/batch/batchUtils', async () => {
+	const actual = await vi.importActual('../../../renderer/hooks/batch/batchUtils');
+	const fs = await import('fs');
+	const path = await import('path');
+	const content = fs.readFileSync(
+		path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts', 'autorun-default.md'),
+		'utf-8'
+	);
+	return {
+		...actual,
+		DEFAULT_BATCH_PROMPT: content,
+	};
+});
+
 import {
 	BatchRunnerModal,
 	DEFAULT_BATCH_PROMPT,
