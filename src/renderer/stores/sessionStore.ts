@@ -350,6 +350,9 @@ export const selectSessionById =
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
 
+export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
+	state.sessions.some((s) => s.state === 'busy');
+
 // ============================================================================
 // Non-React Access
 // ============================================================================

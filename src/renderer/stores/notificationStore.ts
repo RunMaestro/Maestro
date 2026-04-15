@@ -81,6 +81,14 @@ export interface NotificationStoreActions {
 export type NotificationStore = NotificationStoreState & NotificationStoreActions;
 
 // ============================================================================
+// Selectors
+// ============================================================================
+
+export function selectConfig(s: NotificationStoreState): NotificationConfig {
+	return s.config;
+}
+
+// ============================================================================
 // Store
 // ============================================================================
 
