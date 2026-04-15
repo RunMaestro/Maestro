@@ -594,7 +594,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					}
 					const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
 					if (!commandToUse) {
-						throw new Error(`${session.toolType} agent has no command configured`);
+						throw new Error(`${toolType} agent has no command configured`);
 					}
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
