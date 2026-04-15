@@ -26,6 +26,8 @@ export interface SpinnerProps {
 	style?: CSSProperties;
 	/** Accessible label. Defaults to 'Loading' */
 	ariaLabel?: string;
+	/** Test id for automated tests */
+	testId?: string;
 }
 
 export function Spinner({
@@ -34,6 +36,7 @@ export function Spinner({
 	className = '',
 	style,
 	ariaLabel = 'Loading',
+	testId,
 }: SpinnerProps) {
 	return (
 		<Loader2
@@ -41,6 +44,7 @@ export function Spinner({
 			style={{ width: size, height: size, color, ...style }}
 			aria-label={ariaLabel}
 			role="status"
+			data-testid={testId}
 		/>
 	);
 }
