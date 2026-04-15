@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useCueDirtyStore } from '../../../../renderer/stores/cueDirtyStore';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import {
 	usePipelineState,
 	validatePipelines,
@@ -853,6 +853,9 @@ describe('usePipelineState', () => {
 	it('handleSave with no project root adds validation error', async () => {
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions: [] })));
 
+		// Wait for settingsLoaded flip (Fix #1 gate) before calling handleSave
+		await waitFor(() => expect(mockGetSettings).toHaveBeenCalled());
+
 		// Create a valid pipeline so it doesn't fail on other validations
 		act(() => {
 			result.current.setPipelineState({
@@ -884,6 +887,9 @@ describe('usePipelineState', () => {
 			{ id: 's1', name: 'Agent 1', toolType: 'claude-code', projectRoot: '/test/project' },
 		];
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions })));
+
+		// Wait for settingsLoaded flip (Fix #1 gate) before calling handleSave
+		await waitFor(() => expect(mockGetSettings).toHaveBeenCalled());
 
 		act(() => {
 			result.current.setPipelineState({
