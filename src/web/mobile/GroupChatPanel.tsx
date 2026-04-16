@@ -10,6 +10,7 @@ import { ArrowLeft, Square, Send } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
 import type { GroupChatState, GroupChatMessage } from '../hooks/useWebSocket';
+import { formatTimestamp } from '../../shared/formatters';
 
 export interface GroupChatPanelProps {
 	/** Current group chat state */
@@ -22,23 +23,7 @@ export interface GroupChatPanelProps {
 	onBack: () => void;
 }
 
-/**
- * Format timestamp for display
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	}
-	return (
-		date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-		' ' +
-		date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-	);
-}
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 /**
  * Generate a consistent color for a participant based on their ID

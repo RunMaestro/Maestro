@@ -21,6 +21,7 @@ import { fuzzyMatchWithScore } from '../utils/search';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
+import { estimateTokensFromLogs } from '../../shared/formatters';
 import { getAgentIcon } from '../constants/agentIcons';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
 import { getTabDisplayName } from '../utils/tabHelpers';
@@ -107,14 +108,7 @@ function getSessionDisplayName(session: Session): string {
 	return session.name || session.projectRoot.split('/').pop() || 'Unnamed Session';
 }
 
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokens(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
+const estimateTokens = estimateTokensFromLogs;
 
 /**
  * SendToAgentModal Component

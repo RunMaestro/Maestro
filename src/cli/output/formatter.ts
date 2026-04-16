@@ -1,6 +1,8 @@
 // Human-readable output formatter for CLI
 // Provides beautiful, colored terminal output
 
+import { formatDurationDecimal } from '../../shared/formatters';
+
 // ANSI color codes
 const colors = {
 	reset: '\x1b[0m',
@@ -469,18 +471,7 @@ function formatTokens(count: number): string {
 	return count.toString();
 }
 
-/**
- * Format duration for CLI display (decimal format with ms/s/m/h suffixes).
- * Note: This differs from shared/formatters.ts formatElapsedTime which
- * shows combined units like "5m 12s". This version uses single decimals
- * like "5.2m" for compact CLI output.
- */
-function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
-	return `${(ms / 3600_000).toFixed(1)}h`;
-}
+const formatDuration = formatDurationDecimal;
 
 export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	const lines: string[] = [];

@@ -1,5 +1,6 @@
 import GithubSlugger from 'github-slugger';
 import type { TocEntry } from './types';
+import { formatSize } from '../../../shared/formatters';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -150,10 +151,7 @@ export const isBinaryExtension = (filename: string): boolean => {
 /** Format file size in human-readable format */
 export const formatFileSize = (bytes: number): string => {
 	if (bytes <= 0) return '0 B';
-	const k = 1024;
-	const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
-	return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+	return formatSize(bytes);
 };
 
 /** Format ISO date/time for display */

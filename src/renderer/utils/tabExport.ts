@@ -10,6 +10,10 @@
 import { marked } from 'marked';
 import type { AITab, LogEntry, Theme, UsageStats } from '../types';
 import { getTabDisplayName } from './tabHelpers';
+import {
+	formatDurationCompact,
+	formatTimestamp as formatTimestampShared,
+} from '../../shared/formatters';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -33,23 +37,18 @@ function escapeHtml(text: string): string {
  * Format a timestamp for display
  */
 function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleString();
+	return formatTimestampShared(timestamp, 'full');
 }
 
 /**
- * Format duration from milliseconds
+ * Format duration from log entries by computing span between first and last
  */
 function formatDuration(logs: LogEntry[]): string {
 	if (logs.length < 2) return '0m';
 
 	const firstTimestamp = logs[0].timestamp;
 	const lastTimestamp = logs[logs.length - 1].timestamp;
-	const durationMs = lastTimestamp - firstTimestamp;
-	const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-	const durationMins = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-
-	return durationHours > 0 ? `${durationHours}h ${durationMins}m` : `${durationMins}m`;
+	return formatDurationCompact(lastTimestamp - firstTimestamp);
 }
 
 /**

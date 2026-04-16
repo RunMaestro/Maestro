@@ -22,6 +22,7 @@ import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parsePeekOutput, formatPeekLines } from '../utils/peekOutputParser';
+import { formatTimestamp } from '../../shared/formatters';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -42,7 +43,7 @@ function formatTime(timestamp: number): string {
 	const diff = now - timestamp;
 	if (diff < 60000) return 'just now';
 	if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-	return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	return formatTimestamp(timestamp, 'time');
 }
 
 export function ParticipantCard({

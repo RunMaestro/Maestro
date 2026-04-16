@@ -64,6 +64,7 @@ import {
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
+import { formatDurationCompact as formatDurationMs } from '../../shared/formatters';
 
 // ============================================================================
 // Types
@@ -124,13 +125,6 @@ function formatCacheAge(cacheAgeMs: number | null): string {
 	if (hours > 0) return `${hours}h ago`;
 	if (minutes > 0) return `${minutes}m ago`;
 	return 'just now';
-}
-
-function formatDurationMs(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-	if (totalSeconds < 3600) return `${Math.floor(totalSeconds / 60)}m`;
-	return `${Math.floor(totalSeconds / 3600)}h ${Math.floor((totalSeconds % 3600) / 60)}m`;
 }
 
 function formatDate(isoString: string): string {

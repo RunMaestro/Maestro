@@ -4,23 +4,9 @@ import type { Theme, HistoryEntry } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck, getPillColor, getEntryIcon } from './historyConstants';
+import { formatTimestamp } from '../../../shared/formatters';
 
-// Format timestamp
-const formatTime = (timestamp: number) => {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-};
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;

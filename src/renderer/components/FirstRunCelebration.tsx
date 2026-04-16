@@ -24,6 +24,7 @@ import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { formatDurationVerbose as formatDuration } from '../../shared/formatters';
 
 // 15 minutes in milliseconds - threshold for "Standing Ovation" variation
 const STANDING_OVATION_THRESHOLD_MS = 15 * 60 * 1000;
@@ -56,33 +57,6 @@ interface FirstRunCelebrationProps {
 	isLeaderboardRegistered?: boolean;
 	/** Whether confetti animations are disabled by user preference */
 	disableConfetti?: boolean;
-}
-
-/**
- * Format milliseconds into a human-readable duration string
- */
-function formatDuration(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-
-	if (hours > 0) {
-		const remainingMinutes = minutes % 60;
-		if (remainingMinutes > 0) {
-			return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
-		}
-		return `${hours} hour${hours > 1 ? 's' : ''}`;
-	}
-
-	if (minutes > 0) {
-		const remainingSeconds = seconds % 60;
-		if (remainingSeconds > 0) {
-			return `${minutes} minute${minutes > 1 ? 's' : ''} ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}`;
-		}
-		return `${minutes} minute${minutes > 1 ? 's' : ''}`;
-	}
-
-	return `${seconds} second${seconds > 1 ? 's' : ''}`;
 }
 
 /**

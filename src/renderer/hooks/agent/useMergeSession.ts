@@ -31,6 +31,7 @@ import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
+import { estimateTokensFromLogs } from '../../../shared/formatters';
 
 // Re-export types from the canonical store location
 export type { MergeState, TabMergeState } from '../../stores/operationStore';
@@ -40,15 +41,6 @@ export type { MergeState, TabMergeState } from '../../stores/operationStore';
  * Default: 100,000 tokens (safe for most models)
  */
 const MAX_CONTEXT_TOKENS_WARNING = 100000;
-
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokensFromLogs(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
 
 /**
  * Request to merge two sessions/tabs

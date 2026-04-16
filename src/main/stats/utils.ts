@@ -24,10 +24,15 @@ export const perfMetrics = new PerformanceMetrics(
 );
 
 /**
- * Generate a unique ID for database entries
+ * Generate a unique ID for database entries.
+ *
+ * Uses timestamp-random format (e.g., `1712345-abc123`) rather than UUID
+ * because the stats DB treats this format as a load-bearing invariant
+ * (primary keys, foreign keys, and backward compatibility with existing
+ * data rely on it). Do not replace with generateUUID().
  */
 export function generateId(): string {
-	return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+	return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 /**

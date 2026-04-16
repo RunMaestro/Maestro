@@ -58,15 +58,15 @@ describe('shared/formatters', () => {
 	// ==========================================================================
 	describe('formatNumber', () => {
 		it('should format small numbers', () => {
-			expect(formatNumber(0)).toBe('0.0');
-			expect(formatNumber(1)).toBe('1.0');
-			expect(formatNumber(999)).toBe('999.0');
+			expect(formatNumber(0)).toBe('0');
+			expect(formatNumber(1)).toBe('1');
+			expect(formatNumber(999)).toBe('999');
 		});
 
-		it('should format thousands with k suffix', () => {
-			expect(formatNumber(1000)).toBe('1.0k');
-			expect(formatNumber(1500)).toBe('1.5k');
-			expect(formatNumber(999999)).toBe('1000.0k');
+		it('should format thousands with K suffix', () => {
+			expect(formatNumber(1000)).toBe('1.0K');
+			expect(formatNumber(1500)).toBe('1.5K');
+			expect(formatNumber(999999)).toBe('1000.0K');
 		});
 
 		it('should format millions with M suffix', () => {

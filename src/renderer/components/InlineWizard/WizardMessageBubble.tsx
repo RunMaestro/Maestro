@@ -22,6 +22,7 @@ import {
 	REMARK_GFM_PLUGINS,
 	createWizardBubbleMarkdownComponents,
 } from '../../utils/markdownConfig';
+import { formatTimestamp } from '../../../shared/formatters';
 
 /**
  * Message structure for wizard conversations
@@ -54,14 +55,6 @@ export interface WizardMessageBubbleProps {
 		contextImages?: string[],
 		source?: 'staged' | 'history'
 	) => void;
-}
-
-/**
- * Format timestamp for display
- */
-function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 /**
@@ -184,7 +177,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 					}}
 					data-testid="message-timestamp"
 				>
-					{formatTimestamp(message.timestamp)}
+					{formatTimestamp(message.timestamp, 'time')}
 				</div>
 			</div>
 		</div>

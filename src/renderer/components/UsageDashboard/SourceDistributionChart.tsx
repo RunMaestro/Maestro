@@ -17,6 +17,7 @@ import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
+import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 
 // Metric display mode
 type MetricMode = 'count' | 'duration';
@@ -36,37 +37,6 @@ interface SourceDistributionChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
- * Format large numbers with K/M suffixes
- */
-function formatNumber(num: number): string {
-	if (num >= 1000000) {
-		return `${(num / 1000000).toFixed(1)}M`;
-	}
-	if (num >= 1000) {
-		return `${(num / 1000).toFixed(1)}K`;
-	}
-	return num.toString();
 }
 
 /**

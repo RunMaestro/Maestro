@@ -36,6 +36,7 @@ import { createMergedSession } from '../../utils/tabHelpers';
 import { classifyTransferError } from '../../components/TransferErrorModal';
 import { generateId } from '../../utils/ids';
 import { useOperationStore } from '../../stores/operationStore';
+import { estimateTokensFromLogs } from '../../../shared/formatters';
 import type { TransferState, TransferLastRequest } from '../../stores/operationStore';
 
 // Re-export types from the canonical store location
@@ -46,15 +47,6 @@ export type { TransferState } from '../../stores/operationStore';
  * Default: 100,000 tokens (safe for most models)
  */
 const MAX_CONTEXT_TOKENS_WARNING = 100000;
-
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokensFromLogs(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
 
 /**
  * Request to transfer context to another agent

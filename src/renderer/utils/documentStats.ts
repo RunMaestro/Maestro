@@ -11,6 +11,7 @@
  */
 
 import { parseMarkdownLinks } from './markdownLinkParser';
+import { formatSize } from '../../shared/formatters';
 
 // Browser-compatible path utilities (Node's path module doesn't work in renderer)
 
@@ -85,30 +86,12 @@ const DESCRIPTION_KEYS = [
 ] as const;
 
 /**
- * Format a file size in bytes to a human-readable string
- * @param bytes - File size in bytes
- * @returns Formatted string (e.g., "1.2 KB", "3.4 MB")
+ * Format a file size in bytes to a human-readable string.
+ * Re-exports canonical formatSize with negative-byte handling.
  */
 export function formatFileSize(bytes: number): string {
-	if (bytes < 0) {
-		return '0 B';
-	}
-
-	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-	let unitIndex = 0;
-	let size = bytes;
-
-	while (size >= 1024 && unitIndex < units.length - 1) {
-		size /= 1024;
-		unitIndex++;
-	}
-
-	// Use integer for bytes, 1 decimal for KB and above
-	if (unitIndex === 0) {
-		return `${Math.round(size)} ${units[unitIndex]}`;
-	}
-
-	return `${size.toFixed(1)} ${units[unitIndex]}`;
+	if (bytes < 0) return '0 B';
+	return formatSize(bytes);
 }
 
 /**

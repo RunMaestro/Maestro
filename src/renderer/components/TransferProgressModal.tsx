@@ -23,6 +23,7 @@ import type { GroomingProgress } from '../types/contextMerge';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getAgentDisplayName } from '../services/contextGroomer';
+import { formatElapsedTime } from '../../shared/formatters';
 
 /**
  * Progress stage definition for transfer display
@@ -69,20 +70,6 @@ export interface TransferProgressModalProps {
 	onCancel: () => void;
 	/** Called when the transfer completes successfully and user clicks Done */
 	onComplete?: () => void;
-}
-
-/**
- * Format milliseconds as a readable time string
- */
-function formatElapsedTime(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-
-	if (minutes > 0) {
-		return `${minutes}m ${remainingSeconds}s`;
-	}
-	return `${remainingSeconds}s`;
 }
 
 /**

@@ -10,6 +10,7 @@ import { ArrowDown } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
+import { formatTimestamp } from '../../shared/formatters';
 
 /** Threshold for character-based truncation */
 const CHAR_TRUNCATE_THRESHOLD = 500;
@@ -49,25 +50,7 @@ export interface MessageHistoryProps {
 	sessionState?: string;
 }
 
-/**
- * Format timestamp for display
- * Shows time only for today's messages, date + time for older messages
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-}
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 /**
  * Summarize tool input for display (simplified from desktop TerminalOutput)

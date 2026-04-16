@@ -19,27 +19,10 @@ import { buildApiUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import { HistoryEntry } from '../../shared/types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import { formatElapsedTime } from '../../shared/formatters';
+import { formatElapsedTime, formatTimestamp } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 
-/**
- * Format timestamp for display
- */
-function formatTime(timestamp: number): string {
-	const date = new Date(timestamp);
-	const now = new Date();
-	const isToday = date.toDateString() === now.toDateString();
-
-	if (isToday) {
-		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-	} else {
-		return (
-			date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-			' ' +
-			date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-		);
-	}
-}
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
 
 /**
  * History entry card component

@@ -22,6 +22,7 @@ import { generateParticipantColor, buildParticipantColorMap } from '../utils/par
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -165,11 +166,12 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 
 		// Format timestamp like AI Terminal (outside bubble)
 		// Accepts both ISO string and Unix timestamp
+		// Returns JSX for non-today dates (date on one line, time on another)
 		const formatTimestamp = (timestamp: string | number) => {
 			const date = new Date(timestamp);
 			const today = new Date();
 			const isToday = date.toDateString() === today.toDateString();
-			const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			const time = formatTimestampShared(timestamp, 'time');
 			if (isToday) {
 				return time;
 			}

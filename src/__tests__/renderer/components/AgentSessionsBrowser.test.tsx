@@ -319,7 +319,7 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			// Total tokens = 500 + 200 = 700
-			expect(screen.getByText('700.0')).toBeInTheDocument();
+			expect(screen.getByText('700')).toBeInTheDocument();
 		});
 
 		it('formats thousands with k suffix', async () => {
@@ -348,8 +348,8 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Total = 8000, should be 8.0k
-			expect(screen.getByText('8.0k')).toBeInTheDocument();
+			// Total = 8000, should be 8.0K
+			expect(screen.getByText('8.0K')).toBeInTheDocument();
 		});
 
 		it('formats millions with M suffix', async () => {
@@ -1863,7 +1863,7 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(screen.getByText('$1.23')).toBeInTheDocument();
 			expect(screen.getByText('3m 5s')).toBeInTheDocument();
-			expect(screen.getByText('8.0k')).toBeInTheDocument(); // 5000 + 3000
+			expect(screen.getByText('8.0K')).toBeInTheDocument(); // 5000 + 3000
 			expect(screen.getByText('15')).toBeInTheDocument();
 		});
 
