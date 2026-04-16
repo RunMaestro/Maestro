@@ -267,8 +267,10 @@ export class AgentDetector {
 					// Claude Code: no CLI listing command.
 					// Discover models dynamically from two sources:
 					// 1. Well-known aliases (always valid, resolve to latest in each tier)
+					//    Includes [1m] variants for 1M extended context window
+					//    (requires extra usage enabled at claude.ai/settings/usage)
 					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['sonnet', 'opus', 'haiku'];
+					const models: string[] = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
 					try {
 						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
 						const statsContent = fs.readFileSync(statsPath, 'utf8');
