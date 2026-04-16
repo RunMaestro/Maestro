@@ -87,15 +87,31 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 
 					if (sources.length === 1) {
 						const rawStdout = completionData?.stdout ?? '';
+						const slicedOutput = rawStdout.slice(-SOURCE_OUTPUT_MAX_CHARS);
+						// Per-source output map for named template variables.
+						// Single-chain: just one entry.
+						const perSourceOutputs: Record<string, string> = {
+							[completingName]: slicedOutput,
+						};
+						// Forward any outputs that were forwarded TO this completing
+						// agent from its own upstream. They're carried in the
+						// completionData.forwardedOutputs field (set by the executor
+						// from the triggering event's payload).
+						const upstreamForwarded = (completionData as Record<string, unknown> | undefined)
+							?.forwardedOutputs as Record<string, string> | undefined;
 						const event = createCueEvent('agent.completed', sub.name, {
 							sourceSession: completingName,
 							sourceSessionId: sessionId,
 							status: completionData?.status ?? 'completed',
 							exitCode: completionData?.exitCode ?? null,
 							durationMs: completionData?.durationMs ?? 0,
-							sourceOutput: rawStdout.slice(-SOURCE_OUTPUT_MAX_CHARS),
+							sourceOutput: slicedOutput,
 							outputTruncated: rawStdout.length > SOURCE_OUTPUT_MAX_CHARS,
 							triggeredBy: completionData?.triggeredBy,
+							perSourceOutputs,
+							...(upstreamForwarded && Object.keys(upstreamForwarded).length > 0
+								? { forwardedOutputs: upstreamForwarded }
+								: {}),
 						});
 
 						if (sub.filter && !matchesFilter(event.payload, sub.filter)) {

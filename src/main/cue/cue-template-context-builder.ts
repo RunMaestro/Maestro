@@ -32,23 +32,55 @@ export type CueTemplateContext = NonNullable<TemplateContext['cue']>;
 const enricherRegistry = new Map<CueEventType | '*', CueContextEnricher>();
 
 /** Base enricher — runs for all event types. Populates common fields. */
-enricherRegistry.set('*', (event, subscription, runId) => ({
-	eventType: event.type,
-	eventTimestamp: event.timestamp,
-	triggerName: subscription.name,
-	runId,
-	filePath: String(event.payload.path ?? ''),
-	fileName: String(event.payload.filename ?? ''),
-	fileDir: String(event.payload.directory ?? ''),
-	fileExt: String(event.payload.extension ?? ''),
-	fileChangeType: String(event.payload.changeType ?? ''),
-	sourceSession: String(event.payload.sourceSession ?? ''),
-	sourceOutput: String(event.payload.sourceOutput ?? ''),
-	sourceStatus: String(event.payload.status ?? ''),
-	sourceExitCode: String(event.payload.exitCode ?? ''),
-	sourceDuration: String(event.payload.durationMs ?? ''),
-	sourceTriggeredBy: String(event.payload.triggeredBy ?? ''),
-}));
+/**
+ * Sanitize an agent session name into a valid template variable suffix.
+ * "Agent A" → "AGENT_A", "my-agent" → "MY_AGENT"
+ */
+function sanitizeVarName(name: string): string {
+	return name
+		.toUpperCase()
+		.replace(/[^A-Z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '');
+}
+
+enricherRegistry.set('*', (event, subscription, runId) => {
+	const base: Record<string, string> = {
+		eventType: event.type,
+		eventTimestamp: event.timestamp,
+		triggerName: subscription.name,
+		runId,
+		filePath: String(event.payload.path ?? ''),
+		fileName: String(event.payload.filename ?? ''),
+		fileDir: String(event.payload.directory ?? ''),
+		fileExt: String(event.payload.extension ?? ''),
+		fileChangeType: String(event.payload.changeType ?? ''),
+		sourceSession: String(event.payload.sourceSession ?? ''),
+		sourceOutput: String(event.payload.sourceOutput ?? ''),
+		sourceStatus: String(event.payload.status ?? ''),
+		sourceExitCode: String(event.payload.exitCode ?? ''),
+		sourceDuration: String(event.payload.durationMs ?? ''),
+		sourceTriggeredBy: String(event.payload.triggeredBy ?? ''),
+	};
+
+	// Per-source output variables (e.g. CUE_OUTPUT_AGENT_A) so users can
+	// place individual upstream outputs at specific positions in their prompt.
+	const perSource = event.payload.perSourceOutputs as Record<string, string> | undefined;
+	if (perSource) {
+		for (const [name, output] of Object.entries(perSource)) {
+			base[`output_${sanitizeVarName(name)}`] = output;
+		}
+	}
+
+	// Forwarded outputs from earlier in the chain (e.g. CUE_FORWARDED_AGENT_B).
+	const forwarded = event.payload.forwardedOutputs as Record<string, string> | undefined;
+	if (forwarded) {
+		for (const [name, output] of Object.entries(forwarded)) {
+			base[`forwarded_${sanitizeVarName(name)}`] = output;
+		}
+	}
+
+	return base;
+});
 
 /** task.pending enricher — adds task-specific fields. */
 enricherRegistry.set('task.pending', (event) => ({

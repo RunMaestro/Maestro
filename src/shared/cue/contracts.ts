@@ -78,6 +78,16 @@ export interface CueSubscription {
 	label?: string;
 	fan_in_timeout_minutes?: number;
 	fan_in_timeout_on_fail?: 'break' | 'continue';
+	/** Subset of `source_session` whose output to include in {{CUE_SOURCE_OUTPUT}}.
+	 *  When omitted, all sources' outputs are included (backward-compatible default).
+	 *  Set by the pipeline editor for "passthrough" edges where the source must
+	 *  complete before the target fires but its output should NOT be injected. */
+	include_output_from?: string[];
+	/** Sources whose output should be forwarded through this agent to downstream
+	 *  agents. The output is attached to this agent's completion event payload so
+	 *  agents later in the chain can access it via per-source template variables
+	 *  like {{CUE_OUTPUT_<NAME>}}. */
+	forward_output_from?: string[];
 }
 
 /** Global Cue settings */

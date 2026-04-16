@@ -87,6 +87,26 @@ export interface PipelineEdge {
 	debateConfig?: DebateConfig;
 	/** Per-edge input prompt (used when multiple triggers feed the same agent with different prompts) */
 	prompt?: string;
+	/** Per-edge override: whether this source agent's output is included in
+	 *  {{CUE_SOURCE_OUTPUT}} (and its per-source variable) for the target agent.
+	 *  When undefined, falls back to the target agent's `includeUpstreamOutput`.
+	 *  Set to `false` if this source's output should not appear in the prompt. */
+	includeUpstreamOutput?: boolean;
+	/** Whether this source's output should be forwarded through this agent to
+	 *  downstream agents. When true, the output is attached to this agent's
+	 *  completion event so agents later in the chain can still access it via
+	 *  per-source template variables. Default: false. */
+	forwardOutput?: boolean;
+}
+
+/** Info about an incoming agent→agent edge, used by the config panel to render
+ *  per-source upstream-output toggles. */
+export interface IncomingAgentEdgeInfo {
+	edgeId: string;
+	sourceNodeId: string;
+	sourceSessionName: string;
+	includeUpstreamOutput: boolean;
+	forwardOutput: boolean;
 }
 
 export interface CuePipeline {

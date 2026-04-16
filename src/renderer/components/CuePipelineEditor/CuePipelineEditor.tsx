@@ -162,6 +162,7 @@ function CuePipelineEditorInner({
 		selectedNodeHasOutgoingEdge,
 		hasIncomingAgentEdges,
 		incomingAgentEdgeCount,
+		incomingAgentEdges,
 		incomingTriggerEdges,
 		selectedEdge,
 		selectedEdgePipelineId,
@@ -395,6 +396,7 @@ function CuePipelineEditorInner({
 				selectedNodeHasOutgoingEdge={selectedNodeHasOutgoingEdge}
 				hasIncomingAgentEdges={hasIncomingAgentEdges}
 				incomingAgentEdgeCount={incomingAgentEdgeCount}
+				incomingAgentEdges={incomingAgentEdges}
 				incomingTriggerEdges={incomingTriggerEdges}
 				onUpdateNode={onUpdateNode}
 				onUpdateEdgePrompt={onUpdateEdgePrompt}

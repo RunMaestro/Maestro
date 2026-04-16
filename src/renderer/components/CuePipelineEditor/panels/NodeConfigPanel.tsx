@@ -10,10 +10,12 @@ import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-rea
 import type { Theme } from '../../../types';
 import type {
 	PipelineNode,
+	PipelineEdge,
 	TriggerNodeData,
 	AgentNodeData,
 	CuePipeline,
 	IncomingTriggerEdgeInfo,
+	IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { EVENT_ICONS, EVENT_LABELS } from '../cueEventConstants';
 import { TriggerConfig } from './triggers';
@@ -30,9 +32,12 @@ interface NodeConfigPanelProps {
 	hasIncomingAgentEdges?: boolean;
 	/** Count of incoming agent edges (for fan-in configuration) */
 	incomingAgentEdgeCount?: number;
+	/** Incoming agent edges with source info (for per-edge upstream output toggles) */
+	incomingAgentEdges?: IncomingAgentEdgeInfo[];
 	/** Incoming trigger edges for the selected agent node (for per-edge prompts) */
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
+	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
@@ -55,8 +60,10 @@ export function NodeConfigPanel({
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
+	incomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdge,
 	onUpdateEdgePrompt,
 	onDeleteNode,
 	onSwitchToAgent,
@@ -98,11 +105,11 @@ export function NodeConfigPanel({
 	// single-trigger collapsed mode.
 	const collapsedHeight = (() => {
 		if (isTrigger) return 'auto' as const;
+		// Collapsed mode stays compact — the content wrapper scrolls when
+		// upstream-sources / fan-in cards don't fit. Expanded mode (80%) is
+		// where the user gets full breathing room.
 		const base = hasUpstreamAgents ? 300 : 280;
-		const fanInBoost = hasFanIn ? 130 : 0;
-		// Multi-trigger needs more vertical room so the left rail can show two
-		// rows comfortably before scrolling. We cap the bonus so the panel
-		// can't eat the entire canvas.
+		const fanInBoost = hasFanIn ? 60 : 0;
 		const triggerBoost = hasMultipleTriggers ? Math.min(120, (triggerEdgeCount - 1) * 60) : 0;
 		return base + fanInBoost + triggerBoost;
 	})();
@@ -252,17 +259,13 @@ export function NodeConfigPanel({
 				</div>
 			</div>
 
-			{/* Content
-			 *
-			 * For triggers we let height be intrinsic and allow scroll. For
-			 * agents the inner AgentConfigPanel manages its own scroll regions
-			 * (left rail when multi-trigger, fan-in card overflow), so we use
-			 * `overflow: hidden` here to prevent a redundant outer scrollbar
-			 * fighting with the inner one. */}
+			{/* Content — scrollable for both triggers and agents. Agents need
+			 *  `overflow: auto` so upstream-sources and fan-in cards below the
+			 *  prompts row are reachable even when the panel is collapsed. */}
 			<div
 				style={{
 					flex: isTrigger ? undefined : 1,
-					overflow: isTrigger ? 'auto' : 'hidden',
+					overflow: 'auto',
 					padding: '12px 16px',
 					display: 'flex',
 					flexDirection: 'column',
@@ -280,8 +283,10 @@ export function NodeConfigPanel({
 						hasOutgoingEdge={hasOutgoingEdge}
 						hasIncomingAgentEdges={hasIncomingAgentEdges}
 						incomingAgentEdgeCount={incomingAgentEdgeCount}
+						incomingAgentEdges={incomingAgentEdges}
 						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
+						onUpdateEdge={onUpdateEdge}
 						onUpdateEdgePrompt={onUpdateEdgePrompt}
 						onSwitchToAgent={onSwitchToAgent}
 						expanded={expanded}

@@ -234,7 +234,21 @@ function buildChain(
 
 		const subName = `${pipelineName}-chain-${subscriptions.length}`;
 
-		const shouldInjectSource = targetData.includeUpstreamOutput !== false;
+		// Determine per-edge upstream-output inclusion. Each incoming agent edge
+		// can independently opt out of contributing its output to the target's
+		// {{CUE_SOURCE_OUTPUT}} ("passthrough" semantics: the source must still
+		// complete before the target fires, but its output is not injected).
+		//
+		// Resolution priority: edge.includeUpstreamOutput → node.includeUpstreamOutput → true.
+		const resolveInclude = (edge: PipelineEdge): boolean => {
+			if (edge.includeUpstreamOutput !== undefined) return edge.includeUpstreamOutput;
+			return targetData.includeUpstreamOutput !== false;
+		};
+
+		// How many incoming agent edges actually contribute output?
+		const includedEdges = incomingAgentEdges.filter(resolveInclude);
+		const shouldInjectSource = includedEdges.length > 0;
+
 		const sub: CueSubscription = {
 			name: subName,
 			event: 'agent.completed',
@@ -247,12 +261,39 @@ function buildChain(
 
 		if (incomingAgentEdges.length > 1) {
 			// Fan-in: multiple source sessions
-			sub.source_session = incomingAgentEdges
+			const allSources = incomingAgentEdges
 				.map((e) => {
 					const src = nodeMap.get(e.source);
 					return src ? (src.data as AgentNodeData).sessionName : '';
 				})
 				.filter(Boolean);
+			sub.source_session = allSources;
+
+			// Emit include_output_from when only a subset of sources contribute
+			// output. This lets passthrough edges trigger the fan-in without
+			// injecting their output into the prompt.
+			if (includedEdges.length < incomingAgentEdges.length && includedEdges.length > 0) {
+				sub.include_output_from = includedEdges
+					.map((e) => {
+						const src = nodeMap.get(e.source);
+						return src ? (src.data as AgentNodeData).sessionName : '';
+					})
+					.filter(Boolean);
+			}
+
+			// Emit forward_output_from when at least one edge has forwardOutput=true.
+			// Forwarded outputs are carried through this agent's completion event so
+			// agents further downstream can access them via per-source variables.
+			const forwardedEdges = incomingAgentEdges.filter((e) => e.forwardOutput === true);
+			if (forwardedEdges.length > 0) {
+				sub.forward_output_from = forwardedEdges
+					.map((e) => {
+						const src = nodeMap.get(e.source);
+						return src ? (src.data as AgentNodeData).sessionName : '';
+					})
+					.filter(Boolean);
+			}
+
 			// Per-subscription fan-in timeout overrides
 			if (targetData.fanInTimeoutMinutes != null) {
 				sub.fan_in_timeout_minutes = targetData.fanInTimeoutMinutes;
@@ -318,6 +359,8 @@ export function pipelinesToYaml(
 				record.fan_in_timeout_minutes = sub.fan_in_timeout_minutes;
 			if (sub.fan_in_timeout_on_fail != null)
 				record.fan_in_timeout_on_fail = sub.fan_in_timeout_on_fail;
+			if (sub.include_output_from != null) record.include_output_from = sub.include_output_from;
+			if (sub.forward_output_from != null) record.forward_output_from = sub.forward_output_from;
 
 			// Save prompts as external files.
 			// Use sub.name as the suffix key so multiple triggers targeting the same agent

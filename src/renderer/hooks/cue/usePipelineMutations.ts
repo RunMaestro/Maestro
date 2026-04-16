@@ -104,13 +104,17 @@ export function usePipelineMutations({
 		[selectedNodePipelineId, setPipelineState, setSelectedNodeId]
 	);
 
+	// Edge updates can originate from the edge config panel (selectedEdgePipelineId)
+	// OR from the node config panel's upstream-sources card (selectedNodePipelineId).
+	// Use whichever is available so per-edge toggles work from both contexts.
 	const onUpdateEdge = useCallback(
 		(edgeId: string, updates: Partial<PipelineEdgeType>) => {
-			if (!selectedEdgePipelineId) return;
+			const pipelineId = selectedEdgePipelineId ?? selectedNodePipelineId;
+			if (!pipelineId) return;
 			setPipelineState((prev) => ({
 				...prev,
 				pipelines: prev.pipelines.map((p) => {
-					if (p.id !== selectedEdgePipelineId) return p;
+					if (p.id !== pipelineId) return p;
 					return {
 						...p,
 						edges: p.edges.map((e) => {
@@ -121,7 +125,7 @@ export function usePipelineMutations({
 				}),
 			}));
 		},
-		[selectedEdgePipelineId, setPipelineState]
+		[selectedEdgePipelineId, selectedNodePipelineId, setPipelineState]
 	);
 
 	const onDeleteEdge = useCallback(
