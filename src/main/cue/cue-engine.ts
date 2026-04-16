@@ -101,6 +101,12 @@ export class CueEngine {
 			onLog: deps.onLog,
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth) => {
 				this.pushActivityLog(result);
+				// Carry forwarded outputs from the triggering event through to the
+				// completion notification so downstream agents can access them via
+				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
+				const forwarded = result.event.payload.forwardedOutputs as
+					| Record<string, string>
+					| undefined;
 				this.notifyAgentCompleted(sessionId, {
 					sessionName: result.sessionName,
 					status: result.status,
@@ -109,6 +115,7 @@ export class CueEngine {
 					stdout: result.stdout,
 					triggeredBy: subscriptionName,
 					chainDepth: (chainDepth ?? 0) + 1,
+					forwardedOutputs: forwarded,
 				});
 			},
 			onRunStopped: (result) => {

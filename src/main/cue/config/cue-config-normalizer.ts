@@ -129,6 +129,16 @@ function normalizeSubscription(
 			sub.fan_in_timeout_on_fail === 'break' || sub.fan_in_timeout_on_fail === 'continue'
 				? sub.fan_in_timeout_on_fail
 				: undefined,
+		include_output_from:
+			Array.isArray(sub.include_output_from) &&
+			sub.include_output_from.every((value: unknown) => typeof value === 'string')
+				? (sub.include_output_from as string[])
+				: undefined,
+		forward_output_from:
+			Array.isArray(sub.forward_output_from) &&
+			sub.forward_output_from.every((value: unknown) => typeof value === 'string')
+				? (sub.forward_output_from as string[])
+				: undefined,
 	};
 }
 

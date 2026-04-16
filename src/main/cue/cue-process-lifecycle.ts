@@ -15,6 +15,7 @@ import type { ToolType } from '../../shared/types';
 import { getOutputParser } from '../parsers';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
+import { stripAnsiCodes } from '../../shared/stringUtils';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -92,6 +93,59 @@ function extractCleanStdout(rawStdout: string, toolType: string): string {
 	}
 
 	return textParts.length > 0 ? textParts.join('\n') : rawStdout;
+}
+
+/**
+ * Per-agent stderr noise prefixes. These are informational diagnostics the
+ * agent CLI emits on stderr even for successful runs — e.g. Codex printing
+ * "Reading additional input from stdin..." before it observes EOF. Including
+ * them in the activity-log "Errors" panel is misleading (nothing's wrong), so
+ * we filter them out before storing the run result.
+ *
+ * Matching is intentionally lenient: each entry is a lowercased prefix, tested
+ * after stripping ANSI escapes and trimming whitespace. A line matches if its
+ * normalised form starts with the prefix. This catches variations with
+ * trailing dots, timestamps, extra whitespace, or ANSI dimming that a strict
+ * whole-line regex would miss. Real errors from the agent don't start with
+ * these prefixes, so false-positives are very unlikely.
+ */
+const BENIGN_STDERR_PREFIXES: Partial<Record<string, string[]>> = {
+	codex: [
+		// Codex `exec` writes this to stderr on every run because it supports
+		// piping additional prompt text via stdin. When Cue passes the prompt
+		// as a CLI argument and stdin is /dev/null the read returns EOF and
+		// the message is pure noise. Observed variants include trailing dots
+		// ("..."), ANSI dim codes, and the occasional "OK" suffix.
+		'reading additional input from stdin',
+	],
+};
+
+/**
+ * Strip known-benign lines from stderr before we store it on the run result.
+ * Only applied when the agent type has a matching filter; otherwise returns
+ * stderr unchanged.
+ *
+ * We strip ANSI codes and trim each candidate line before the prefix match so
+ * dimmed / coloured diagnostics are caught alongside plain text. The ORIGINAL
+ * line (with its ANSI and whitespace preserved) is kept if it's NOT noise,
+ * so real errors render with their original formatting.
+ */
+function extractCleanStderr(rawStderr: string, toolType: string): string {
+	if (!rawStderr) return rawStderr;
+	const prefixes = BENIGN_STDERR_PREFIXES[toolType];
+	if (!prefixes || prefixes.length === 0) return rawStderr;
+
+	const lines = rawStderr.split('\n');
+	const kept: string[] = [];
+	for (const line of lines) {
+		const normalised = stripAnsiCodes(line).trim().toLowerCase();
+		if (prefixes.some((prefix) => normalised.startsWith(prefix))) continue;
+		kept.push(line);
+	}
+	const cleaned = kept.join('\n');
+	// If all that's left is whitespace, collapse to empty so the UI hides the
+	// Errors panel entirely instead of showing an empty red box.
+	return cleaned.trim() ? cleaned : '';
 }
 
 /**
@@ -202,7 +256,7 @@ export function runProcess(
 
 			resolve({
 				stdout: extractCleanStdout(stdout, toolType),
-				stderr,
+				stderr: extractCleanStderr(stderr, toolType),
 				exitCode,
 				status,
 			});

@@ -360,6 +360,95 @@ describe('cue-process-lifecycle', () => {
 				expect(result.stdout).toBe('Parsed output');
 			});
 		});
+
+		describe('stderr cleaning (benign noise filter)', () => {
+			it('strips "Reading additional input from stdin..." from Codex stderr', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Codex emits this diagnostic on stderr on every run — it's
+				// informational, not an error, and should never surface in the
+				// activity log's "Errors" panel.
+				mockChild.stderr.emit('data', 'Reading additional input from stdin...\n');
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(result.stderr).toBe('');
+			});
+
+			it('preserves real Codex errors while dropping benign noise', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stderr.emit(
+					'data',
+					'Reading additional input from stdin...\nError: model rate limited\n'
+				);
+				mockChild.emit('close', 1);
+
+				const result = await resultPromise;
+				expect(result.stderr).toContain('Error: model rate limited');
+				expect(result.stderr).not.toContain('Reading additional input from stdin');
+			});
+
+			it('strips Codex noise with ANSI dim codes', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Simulate a Codex build that wraps the diagnostic in ANSI dimming.
+				mockChild.stderr.emit('data', '\u001b[2mReading additional input from stdin...\u001b[0m\n');
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(result.stderr).toBe('');
+			});
+
+			it('strips Codex noise regardless of trailing text on the same prefix line', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec({ command: 'codex' }),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// A prefix match catches variants with or without trailing dots,
+				// extra whitespace, or future additions to the diagnostic line.
+				mockChild.stderr.emit('data', 'Reading additional input from stdin\n');
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(result.stderr).toBe('');
+			});
+
+			it('does not filter stderr for agents without a noise filter', async () => {
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Even a message that happens to look like Codex noise stays put
+				// for non-Codex agents — filtering is opt-in per agent.
+				mockChild.stderr.emit('data', 'Reading additional input from stdin...\n');
+				mockChild.emit('close', 0);
+
+				const result = await resultPromise;
+				expect(result.stderr).toContain('Reading additional input from stdin');
+			});
+		});
 	});
 
 	describe('stopProcess', () => {

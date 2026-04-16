@@ -134,7 +134,6 @@ export function PromptComposerModal({
 			setValue(initialValue);
 			setShowMentions(false);
 		}
-		 
 	}, [isOpen]);
 
 	// Focus textarea when modal opens

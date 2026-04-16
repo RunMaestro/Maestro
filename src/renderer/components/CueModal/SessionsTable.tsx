@@ -118,6 +118,14 @@ export function SessionsTable({
 										const gs = graphSessions.find((g) => g.sessionId === s.sessionId);
 										const subs = gs?.subscriptions.filter((sub) => sub.enabled !== false) ?? [];
 										if (subs.length === 0 || !s.enabled) return null;
+										// Build a tooltip that makes fan-out semantics explicit. A single sub
+										// with fan_out fires the trigger once and runs every target — clicking
+										// Run Now on any participant row fans out to all of them, which would
+										// otherwise be a surprising side-effect.
+										const fanOutSub = subs.find((sub) => sub.fan_out && sub.fan_out.length > 1);
+										const tooltip = fanOutSub
+											? `Run ${fanOutSub.name} now — fans out to ${fanOutSub.fan_out!.length} agents`
+											: `Run all ${subs.length} subscription(s) now`;
 										return (
 											<button
 												onClick={() => {
@@ -127,7 +135,7 @@ export function SessionsTable({
 												}}
 												className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
 												style={{ color: theme.colors.success }}
-												title={`Run all ${subs.length} subscription(s) now`}
+												title={tooltip}
 											>
 												<Play className="w-3.5 h-3.5" />
 												Run Now

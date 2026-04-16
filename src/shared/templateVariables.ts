@@ -450,6 +450,20 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 	};
 
+	// Add dynamic per-source output variables from the Cue context.
+	// The context builder populates `output_<NAME>` and `forwarded_<NAME>`
+	// keys from the event payload's perSourceOutputs / forwardedOutputs maps.
+	// We expose them as {{CUE_OUTPUT_<NAME>}} and {{CUE_FORWARDED_<NAME>}}.
+	if (context.cue) {
+		for (const [key, value] of Object.entries(context.cue)) {
+			if (key.startsWith('output_') && typeof value === 'string') {
+				replacements[`CUE_${key.toUpperCase()}`] = value;
+			} else if (key.startsWith('forwarded_') && typeof value === 'string') {
+				replacements[`CUE_${key.toUpperCase()}`] = value;
+			}
+		}
+	}
+
 	// Perform case-insensitive replacement
 	let result = template;
 	for (const [key, value] of Object.entries(replacements)) {

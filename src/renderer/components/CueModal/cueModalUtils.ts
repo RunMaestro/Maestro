@@ -36,6 +36,34 @@ export function formatElapsed(startedAt: string): string {
 	return formatDuration(Math.max(0, Date.now() - parsed));
 }
 
+/**
+ * Informational stderr diagnostics that a few agent CLIs emit on every run —
+ * they are NOT actual errors and are misleading when painted red under the
+ * "Errors" header. Matched as case-insensitive line prefixes after trimming,
+ * so minor variants (trailing dots, extra whitespace) are all caught.
+ *
+ * This runs at display time in addition to the backend filter in
+ * `cue-process-lifecycle.ts` so it also covers (a) pre-fix activity-log
+ * entries still in the in-memory ring buffer and (b) any future diagnostic
+ * wording we haven't yet added to the backend allowlist. A display-time
+ * filter is safe because the patterns are intentionally specific — real
+ * errors from any supported agent don't start with any of these strings.
+ */
+const BENIGN_STDERR_LINE_PREFIXES = ['reading additional input from stdin'];
+
+export function cleanStderrForDisplay(rawStderr: string): string {
+	if (!rawStderr) return rawStderr;
+	const lines = rawStderr.split('\n');
+	const kept: string[] = [];
+	for (const line of lines) {
+		const normalised = line.trim().toLowerCase();
+		if (BENIGN_STDERR_LINE_PREFIXES.some((prefix) => normalised.startsWith(prefix))) continue;
+		kept.push(line);
+	}
+	const cleaned = kept.join('\n');
+	return cleaned.trim() ? cleaned : '';
+}
+
 /** Maps subscription names to pipeline info by checking name prefixes. */
 export function buildSubscriptionPipelineMap(
 	pipelines: CuePipeline[]

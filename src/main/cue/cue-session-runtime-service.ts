@@ -200,7 +200,7 @@ export function createCueSessionRuntimeService(
 
 		deps.onLog(
 			'cue',
-			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(config.subscriptions, session.id)} active subscription(s)`
+			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(config.subscriptions, session.id, session.name)} active subscription(s)`
 		);
 	}
 
@@ -255,7 +255,11 @@ export function createCueSessionRuntimeService(
 		initSession({ ...session, projectRoot }, { reason: 'refresh' });
 		const newState = registry.get(sessionId);
 		if (newState) {
-			const activeCount = countActiveSubscriptions(newState.config.subscriptions, sessionId);
+			const activeCount = countActiveSubscriptions(
+				newState.config.subscriptions,
+				sessionId,
+				session.name
+			);
 			return {
 				reloaded: true,
 				configRemoved: false,

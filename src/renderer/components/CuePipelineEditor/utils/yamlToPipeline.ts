@@ -42,6 +42,8 @@ interface GraphSessionInput {
 		label?: string;
 		fan_in_timeout_minutes?: number;
 		fan_in_timeout_on_fail?: 'break' | 'continue';
+		include_output_from?: string[];
+		forward_output_from?: string[];
 	}>;
 }
 
@@ -366,10 +368,27 @@ export function subscriptionsToPipelines(
 				// sessionToNode — if the source and target share a session name
 				// (e.g. Claude → Claude), the overwrite would make the lookup
 				// return the new target instead of the earlier source node.
+				//
+				// Fan-in edge drop fix: a source might not exist in sessionToNode
+				// yet if its subscription appears LATER in the list (e.g.
+				// Trigger→A→C and Trigger→B→C where C's chain-sub is processed
+				// before B's). Fall back to getOrCreateAgentNode which dedupes
+				// via nodeMap — the node is created once and reused when the
+				// source's own subscription is processed later.
+				//
+				// IMPORTANT: do NOT add eagerly-created sources to sessionToNode.
+				// sessionToNode is checked by `alreadyInChain` below; adding it
+				// would cause forceNew=true when the source's own subscription
+				// runs, creating a duplicate node.
 				const resolvedSources: PipelineNode[] = [];
 				for (const sourceSessionName of sourceSessions) {
-					const sourceNode = sessionToNode.get(sourceSessionName);
-					if (sourceNode) resolvedSources.push(sourceNode);
+					const sourceNode =
+						sessionToNode.get(sourceSessionName) ??
+						getOrCreateAgentNode(sourceSessionName, sessions, nodeMap, {
+							x: LAYOUT.firstAgentX,
+							y: LAYOUT.baseY,
+						});
+					resolvedSources.push(sourceNode);
 				}
 
 				// Force a new node when this session already appeared earlier in the chain
@@ -410,14 +429,32 @@ export function subscriptionsToPipelines(
 					(targetNode.data as AgentNodeData).fanInTimeoutOnFail = sub.fan_in_timeout_on_fail;
 				}
 
-				// Create edges from pre-resolved source(s) to target
+				// Create edges from pre-resolved source(s) to target.
+				// If include_output_from is specified, mark edges whose source is
+				// NOT in the list with includeUpstreamOutput=false.
+				// If forward_output_from is specified, mark matching edges with
+				// forwardOutput=true.
+				const includeSet = sub.include_output_from ? new Set(sub.include_output_from) : null;
+				const forwardSet = sub.forward_output_from ? new Set(sub.forward_output_from) : null;
 				for (const sourceNode of resolvedSources) {
-					edges.push({
+					const sourceName =
+						sourceNode.type === 'agent' ? (sourceNode.data as AgentNodeData).sessionName : '';
+					const edge: PipelineEdge = {
 						id: `edge-${edgeCount++}`,
 						source: sourceNode.id,
 						target: targetNode.id,
 						mode: 'pass' as EdgeMode,
-					});
+					};
+					// Only set the flag when there's an explicit include list and
+					// this source isn't in it — absence of the flag means "include"
+					// (backward-compatible default).
+					if (includeSet && !includeSet.has(sourceName)) {
+						edge.includeUpstreamOutput = false;
+					}
+					if (forwardSet && forwardSet.has(sourceName)) {
+						edge.forwardOutput = true;
+					}
+					edges.push(edge);
 				}
 			}
 		}

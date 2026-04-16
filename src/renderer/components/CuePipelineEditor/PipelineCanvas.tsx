@@ -27,6 +27,7 @@ import type {
 	TriggerNodeData,
 	AgentNodeData,
 	CuePipelineSessionInfo as SessionInfo,
+	IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import type { CueSettings } from '../../../shared/cue';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
@@ -95,6 +96,7 @@ export interface PipelineCanvasProps {
 	selectedNodeHasOutgoingEdge: boolean;
 	hasIncomingAgentEdges: boolean;
 	incomingAgentEdgeCount: number;
+	incomingAgentEdges: IncomingAgentEdgeInfo[];
 	incomingTriggerEdges: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
 	onUpdateEdgePrompt: (edgeId: string, prompt: string) => void;
@@ -153,6 +155,7 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	selectedNodeHasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
+	incomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
 	onUpdateEdgePrompt,
@@ -397,8 +400,10 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 							hasOutgoingEdge={selectedNodeHasOutgoingEdge}
 							hasIncomingAgentEdges={hasIncomingAgentEdges}
 							incomingAgentEdgeCount={incomingAgentEdgeCount}
+							incomingAgentEdges={incomingAgentEdges}
 							incomingTriggerEdges={incomingTriggerEdges}
 							onUpdateNode={onUpdateNode}
+							onUpdateEdge={onUpdateEdge}
 							onUpdateEdgePrompt={onUpdateEdgePrompt}
 							onDeleteNode={onDeleteNode}
 							onSwitchToAgent={onSwitchToSession}

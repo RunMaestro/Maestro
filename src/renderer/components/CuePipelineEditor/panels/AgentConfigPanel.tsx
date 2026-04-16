@@ -10,10 +10,13 @@ import { ExternalLink } from 'lucide-react';
 import type { Theme } from '../../../types';
 import {
 	CUE_COLOR,
+	sanitizeVarName,
 	type PipelineNode,
+	type PipelineEdge,
 	type AgentNodeData,
 	type TriggerNodeData,
 	type CuePipeline,
+	type IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../hooks/utils';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
@@ -28,8 +31,10 @@ interface AgentConfigPanelProps {
 	hasOutgoingEdge?: boolean;
 	hasIncomingAgentEdges?: boolean;
 	incomingAgentEdgeCount?: number;
+	incomingAgentEdges?: IncomingAgentEdgeInfo[];
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<AgentNodeData>) => void;
+	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
 	expanded?: boolean;
@@ -42,8 +47,10 @@ export function AgentConfigPanel({
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
+	incomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdge,
 	onUpdateEdgePrompt,
 	onSwitchToAgent,
 	expanded,
@@ -160,8 +167,12 @@ export function AgentConfigPanel({
 				style={{
 					display: 'flex',
 					gap: 12,
+					// When upstream-sources or fan-in cards sit below, the prompts
+					// row must not greedily eat all available height. Use flex: 1
+					// with a sane minHeight so the row shrinks and the panel scrolls
+					// if needed, keeping the cards reachable.
 					flex: 1,
-					minHeight: 0,
+					minHeight: hasIncomingAgentEdges ? 100 : 0,
 					minWidth: 0,
 				}}
 			>
@@ -222,26 +233,27 @@ export function AgentConfigPanel({
 								}}
 							>
 								Input Prompt
-								{hasIncomingAgentEdges && data.includeUpstreamOutput !== false && (
-									<span
-										style={{
-											fontWeight: 400,
-											color: theme.colors.textDim,
-											fontSize: 10,
-										}}
-									>
-										(optional)
-									</span>
-								)}
+								{hasIncomingAgentEdges &&
+									incomingAgentEdges?.some((e) => e.includeUpstreamOutput) && (
+										<span
+											style={{
+												fontWeight: 400,
+												color: theme.colors.textDim,
+												fontSize: 10,
+											}}
+										>
+											(optional)
+										</span>
+									)}
 							</span>
 							<textarea
 								value={localInputPrompt}
 								onChange={handleInputPromptChange}
 								placeholder={
-									hasIncomingAgentEdges && data.includeUpstreamOutput !== false
+									hasIncomingAgentEdges && incomingAgentEdges?.some((e) => e.includeUpstreamOutput)
 										? 'Optional — upstream output is auto-included. Add instructions to guide how the agent processes it.'
 										: hasIncomingAgentEdges
-											? 'Instructions for this agent. Use {{CUE_SOURCE_OUTPUT}} to include upstream output.'
+											? 'Instructions for this agent. Use per-source variables from the card below.'
 											: hasGitHubTrigger
 												? 'Use {{CUE_GH_URL}}, {{CUE_GH_NUMBER}}, {{CUE_GH_TITLE}}, {{CUE_GH_BODY}} etc. for GitHub context...'
 												: 'Prompt sent when this agent receives data from the pipeline...'
@@ -256,44 +268,6 @@ export function AgentConfigPanel({
 								}}
 							/>
 						</label>
-						{hasIncomingAgentEdges && (
-							<label
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									gap: 6,
-									fontSize: 11,
-									color: theme.colors.textDim,
-									cursor: 'pointer',
-									marginTop: 4,
-									flexShrink: 0,
-								}}
-							>
-								<input
-									type="checkbox"
-									checked={data.includeUpstreamOutput !== false}
-									onChange={(e) =>
-										onUpdateNode(node.id, {
-											includeUpstreamOutput: e.target.checked,
-										} as Partial<AgentNodeData>)
-									}
-									style={{ accentColor: CUE_COLOR }}
-								/>
-								<span>
-									Auto-include upstream output
-									<span
-										style={{
-											color: theme.colors.textDim,
-											fontSize: 10,
-											marginLeft: 4,
-											opacity: 0.7,
-										}}
-									>
-										— use {'{{CUE_SOURCE_OUTPUT}}'} to control placement
-									</span>
-								</span>
-							</label>
-						)}
 						<div
 							style={{
 								color: theme.colors.textDim,
@@ -375,6 +349,193 @@ export function AgentConfigPanel({
 					</div>
 				</div>
 			</div>
+
+			{/* Upstream Sources — per-source output controls */}
+			{hasIncomingAgentEdges && incomingAgentEdges && incomingAgentEdges.length > 0 && (
+				<div
+					style={{
+						padding: '10px 12px',
+						backgroundColor: `${CUE_COLOR}08`,
+						border: `1px solid ${theme.colors.border}`,
+						borderRadius: 6,
+						display: 'flex',
+						flexDirection: 'column',
+						gap: 6,
+						flexShrink: 0,
+					}}
+				>
+					<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+						<div style={{ fontSize: 11, fontWeight: 600, color: theme.colors.textMain }}>
+							Upstream Sources
+						</div>
+						<div
+							style={{
+								fontSize: 10,
+								color: theme.colors.textDim,
+								backgroundColor: `${CUE_COLOR}15`,
+								padding: '2px 8px',
+								borderRadius: 10,
+							}}
+						>
+							{incomingAgentEdges.length} source{incomingAgentEdges.length !== 1 ? 's' : ''}
+						</div>
+					</div>
+					<div style={{ color: theme.colors.textDim, fontSize: 10 }}>
+						Control how each upstream agent's output flows through this node
+					</div>
+
+					{/* Per-source rows */}
+					{incomingAgentEdges.map((edge) => {
+						const varSuffix = sanitizeVarName(edge.sourceSessionName);
+						const editable = !!onUpdateEdge;
+						return (
+							<div
+								key={edge.edgeId}
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									gap: 10,
+									padding: '6px 8px',
+									backgroundColor: theme.colors.bgMain,
+									borderRadius: 4,
+									border: `1px solid ${theme.colors.border}`,
+								}}
+							>
+								{/* Source name */}
+								<div
+									style={{
+										fontSize: 11,
+										fontWeight: 500,
+										color: theme.colors.textMain,
+										minWidth: 80,
+										flex: '0 0 auto',
+									}}
+								>
+									{edge.sourceSessionName}
+								</div>
+
+								{/* Include toggle */}
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: 4,
+										fontSize: 10,
+										color: edge.includeUpstreamOutput
+											? theme.colors.textMain
+											: theme.colors.textDim,
+										cursor: editable ? 'pointer' : 'default',
+										opacity: editable ? 1 : 0.5,
+										flex: '0 0 auto',
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={edge.includeUpstreamOutput}
+										disabled={!editable}
+										onChange={(e) => {
+											onUpdateEdge!(edge.edgeId, {
+												includeUpstreamOutput: e.target.checked,
+											});
+										}}
+										style={{ accentColor: CUE_COLOR }}
+									/>
+									Include
+								</label>
+
+								{/* Forward toggle */}
+								<label
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										gap: 4,
+										fontSize: 10,
+										color: edge.forwardOutput ? theme.colors.textMain : theme.colors.textDim,
+										cursor: editable ? 'pointer' : 'default',
+										opacity: editable ? 1 : 0.5,
+										flex: '0 0 auto',
+									}}
+								>
+									<input
+										type="checkbox"
+										checked={edge.forwardOutput}
+										disabled={!editable}
+										onChange={(e) => {
+											onUpdateEdge!(edge.edgeId, {
+												forwardOutput: e.target.checked,
+											});
+										}}
+										style={{ accentColor: CUE_COLOR }}
+									/>
+									Forward
+								</label>
+
+								{/* Per-source variable token chips */}
+								<div
+									style={{
+										display: 'flex',
+										gap: 4,
+										marginLeft: 'auto',
+										flexShrink: 0,
+										alignItems: 'center',
+									}}
+								>
+									{edge.includeUpstreamOutput && (
+										<code
+											style={{
+												fontSize: 9,
+												color: CUE_COLOR,
+												backgroundColor: `${CUE_COLOR}10`,
+												padding: '1px 5px',
+												borderRadius: 3,
+												userSelect: 'all',
+											}}
+										>
+											{'{{'}CUE_OUTPUT_{varSuffix}
+											{'}}'}
+										</code>
+									)}
+									{edge.forwardOutput && (
+										<code
+											style={{
+												fontSize: 9,
+												color: theme.colors.textDim,
+												backgroundColor: `${theme.colors.textDim}15`,
+												padding: '1px 5px',
+												borderRadius: 3,
+												userSelect: 'all',
+											}}
+										>
+											{'{{'}CUE_FORWARDED_{varSuffix}
+											{'}}'}
+										</code>
+									)}
+									{!edge.includeUpstreamOutput && !edge.forwardOutput && (
+										<span
+											style={{
+												fontSize: 9,
+												color: theme.colors.textDim,
+												opacity: 0.6,
+												fontStyle: 'italic',
+											}}
+										>
+											trigger only
+										</span>
+									)}
+								</div>
+							</div>
+						);
+					})}
+
+					{/* Combined variable hint */}
+					{incomingAgentEdges.some((e) => e.includeUpstreamOutput) && (
+						<div style={{ fontSize: 10, color: theme.colors.textDim, opacity: 0.7 }}>
+							{'{{CUE_SOURCE_OUTPUT}}'} combines all included sources. Use per-source variables
+							above for fine-grained placement.
+						</div>
+					)}
+				</div>
+			)}
 
 			{/* Fan-in Settings — full width below prompts */}
 			{(incomingAgentEdgeCount ?? 0) > 1 && (

@@ -5,7 +5,12 @@ import {
 	type CueSessionStatus,
 	type CueSettings,
 } from './cue-types';
-import { countActiveSubscriptions, toSessionStatus, type SessionState } from './cue-session-state';
+import {
+	countActiveSubscriptions,
+	isSubscriptionParticipant,
+	toSessionStatus,
+	type SessionState,
+} from './cue-session-state';
 
 export interface CueQueryServiceDeps {
 	enabled: () => boolean;
@@ -45,7 +50,11 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 						toolType: session.toolType,
 						projectRoot: session.projectRoot,
 						enabled: true,
-						subscriptionCount: countActiveSubscriptions(state.config.subscriptions, sessionId),
+						subscriptionCount: countActiveSubscriptions(
+							state.config.subscriptions,
+							sessionId,
+							session.name
+						),
 						activeRuns: deps.getActiveRunCount(sessionId),
 						state,
 					})
@@ -65,7 +74,11 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 							toolType: session.toolType,
 							projectRoot: session.projectRoot,
 							enabled: false,
-							subscriptionCount: countActiveSubscriptions(config.subscriptions, session.id),
+							subscriptionCount: countActiveSubscriptions(
+								config.subscriptions,
+								session.id,
+								session.name
+							),
 							activeRuns: 0,
 						})
 					);
@@ -89,12 +102,14 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 					sessionId,
 					sessionName: session.name,
 					toolType: session.toolType,
-					// Only report subscriptions that belong to this session. A subscription
-					// with no agent_id is unbound (legacy / shared) and surfaces under every
-					// session sharing this project root; one with an agent_id is owned
-					// exclusively by that session.
-					subscriptions: state.config.subscriptions.filter(
-						(sub) => !sub.agent_id || sub.agent_id === sessionId
+					// Report every subscription the session participates in: unbound
+					// (legacy / shared), owned (agent_id match), or fan-out target
+					// (session name / id appears in the owner's fan_out list). Fan-out
+					// targets must appear here so the dashboard can surface each
+					// participating agent with Status=Active and a Run Now button —
+					// otherwise a 1-trigger → N-agents pipeline shows only the owner.
+					subscriptions: state.config.subscriptions.filter((sub) =>
+						isSubscriptionParticipant(sub, sessionId, session.name)
 					),
 				});
 			}
@@ -109,8 +124,8 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 						sessionId: session.id,
 						sessionName: session.name,
 						toolType: session.toolType,
-						subscriptions: config.subscriptions.filter(
-							(sub) => !sub.agent_id || sub.agent_id === session.id
+						subscriptions: config.subscriptions.filter((sub) =>
+							isSubscriptionParticipant(sub, session.id, session.name)
 						),
 					});
 				}

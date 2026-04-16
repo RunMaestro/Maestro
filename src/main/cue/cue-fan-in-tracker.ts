@@ -67,6 +67,41 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 	const fanInCreatedAt = new Map<string, number>();
 
 	/**
+	 * Build filtered output maps from a completed set of fan-in sources.
+	 * Shared by both the success path and timeout-continue path.
+	 */
+	function buildFilteredOutputs(
+		completions: FanInSourceCompletion[],
+		sub: CueSubscription
+	): {
+		outputCompletions: FanInSourceCompletion[];
+		perSourceOutputs: Record<string, string>;
+		forwardedOutputs: Record<string, string>;
+	} {
+		const includeSet = sub.include_output_from ? new Set(sub.include_output_from) : null;
+		const outputCompletions = includeSet
+			? completions.filter((c) => includeSet.has(c.sessionName) || includeSet.has(c.sessionId))
+			: completions;
+
+		const perSourceOutputs: Record<string, string> = {};
+		for (const c of outputCompletions) {
+			perSourceOutputs[c.sessionName] = c.output;
+		}
+
+		const forwardSet = sub.forward_output_from ? new Set(sub.forward_output_from) : null;
+		const forwardedOutputs: Record<string, string> = {};
+		if (forwardSet) {
+			for (const c of completions) {
+				if (forwardSet.has(c.sessionName) || forwardSet.has(c.sessionId)) {
+					forwardedOutputs[c.sessionName] = c.output;
+				}
+			}
+		}
+
+		return { outputCompletions, perSourceOutputs, forwardedOutputs };
+	}
+
+	/**
 	 * Resolve a user-authored `sources` list (names or IDs, possibly mixed) to a
 	 * deduped set of canonical session IDs. This is the source of truth for
 	 * fan-in completion counting — the raw `sources.length` is NOT reliable
@@ -124,12 +159,19 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			fanInTrackers.delete(key);
 			fanInCreatedAt.delete(key);
 
+			const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
+				completions,
+				sub
+			);
+
 			const event = createCueEvent('agent.completed', sub.name, {
 				completedSessions: completions.map((c) => c.sessionId),
 				timedOutSessions: timedOutSources,
 				sourceSession: completions.map((c) => c.sessionName).join(', '),
-				sourceOutput: completions.map((c) => c.output).join('\n---\n'),
-				outputTruncated: completions.some((c) => c.truncated),
+				sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
+				outputTruncated: outputCompletions.some((c) => c.truncated),
+				perSourceOutputs,
+				...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
 				partial: true,
 			});
 			const maxChainDepth =
@@ -224,11 +266,18 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			fanInCreatedAt.delete(key);
 
 			const completions = [...tracker.values()];
+			const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
+				completions,
+				sub
+			);
+
 			const event = createCueEvent('agent.completed', sub.name, {
 				completedSessions: completions.map((c) => c.sessionId),
 				sourceSession: completions.map((c) => c.sessionName).join(', '),
-				sourceOutput: completions.map((c) => c.output).join('\n---\n'),
-				outputTruncated: completions.some((c) => c.truncated),
+				sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
+				outputTruncated: outputCompletions.some((c) => c.truncated),
+				perSourceOutputs,
+				...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
 			});
 			const maxChainDepth =
 				completions.length > 0 ? Math.max(...completions.map((c) => c.chainDepth)) : 0;
