@@ -13,16 +13,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	Music,
-	X,
-	Loader2,
-	Bot,
-	Settings,
-	FolderOpen,
-	ChevronRight,
-	RefreshCw,
-} from 'lucide-react';
+import { Music, X, Bot, Settings, FolderOpen, ChevronRight, RefreshCw } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, AgentConfig } from '../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -337,13 +330,9 @@ export function AgentCreationDialog({
 							Create Symphony Agent
 						</h2>
 					</div>
-					<button
-						onClick={onClose}
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="Close (Esc)"
-					>
+					<GhostIconButton onClick={onClose} padding="p-1.5" title="Close (Esc)">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content - scrollable */}
@@ -377,7 +366,7 @@ export function AgentCreationDialog({
 
 						{ac.isDetecting ? (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={24} color={theme.colors.accent} />
 							</div>
 						) : ac.detectedAgents.length === 0 ? (
 							<div className="text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -446,19 +435,18 @@ export function AgentCreationDialog({
 													>
 														Available
 													</span>
-													<button
+													<GhostIconButton
 														onClick={(e) => {
 															e.stopPropagation();
 															handleRefreshAgent(agent.id);
 														}}
-														className="p-1 rounded hover:bg-white/10 transition-colors"
 														title="Refresh detection"
-														style={{ color: theme.colors.textDim }}
+														color={theme.colors.textDim}
 													>
 														<RefreshCw
 															className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
 														/>
-													</button>
+													</GhostIconButton>
 												</div>
 											</div>
 
@@ -647,7 +635,7 @@ export function AgentCreationDialog({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

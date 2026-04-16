@@ -25,6 +25,9 @@ import {
 	ArrowUpFromLine,
 	Edit3,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
+import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
 import type { Theme, Session, LogEntry, UsageStats } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -726,17 +729,18 @@ export function AgentSessionsBrowser({
 				<div className="flex items-center gap-4">
 					{viewingSession ? (
 						<>
-							<button
+							<GhostIconButton
 								onClick={clearViewingSession}
-								className="p-1.5 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
+								padding="p-1.5"
+								color={theme.colors.textDim}
+								ariaLabel="Go back"
 							>
 								<ChevronLeft className="w-5 h-5" />
-							</button>
+							</GhostIconButton>
 							{/* Star button for detail view */}
-							<button
+							<GhostIconButton
 								onClick={(e) => toggleStar(viewingSession.sessionId, e)}
-								className="p-1.5 rounded hover:bg-white/10 transition-colors"
+								padding="p-1.5"
 								title={
 									starredSessions.has(viewingSession.sessionId)
 										? 'Remove from favorites'
@@ -754,7 +758,7 @@ export function AgentSessionsBrowser({
 											: 'transparent',
 									}}
 								/>
-							</button>
+							</GhostIconButton>
 							<div className="flex flex-col min-w-0">
 								{/* Session name with edit button */}
 								{renamingSessionId === viewingSession.sessionId ? (
@@ -792,18 +796,18 @@ export function AgentSessionsBrowser({
 										>
 											{viewingSession.sessionName}
 										</span>
-										<button
+										<GhostIconButton
 											onClick={(e) => {
 												e.stopPropagation();
 												setRenamingSessionId(viewingSession.sessionId);
 												setRenameValue(viewingSession.sessionName || '');
 												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
+											padding="p-0.5"
 											title="Rename session"
 										>
 											<Edit3 className="w-3 h-3" style={{ color: theme.colors.accent }} />
-										</button>
+										</GhostIconButton>
 									</div>
 								) : (
 									<div className="flex items-center gap-1.5">
@@ -814,18 +818,18 @@ export function AgentSessionsBrowser({
 										>
 											{viewingSession.sessionId.toUpperCase()}
 										</span>
-										<button
+										<GhostIconButton
 											onClick={(e) => {
 												e.stopPropagation();
 												setRenamingSessionId(viewingSession.sessionId);
 												setRenameValue('');
 												setTimeout(() => renameInputRef.current?.focus(), 50);
 											}}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
+											padding="p-0.5"
 											title="Add session name"
 										>
 											<Edit3 className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-										</button>
+										</GhostIconButton>
 									</div>
 								)}
 								{/* Show UUID underneath the custom name */}
@@ -1181,7 +1185,7 @@ export function AgentSessionsBrowser({
 
 						{messagesLoading && messages.length === 0 && (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						)}
 					</div>
@@ -1324,12 +1328,7 @@ export function AgentSessionsBrowser({
 												}
 											}}
 										/>
-										{isSearching && (
-											<Loader2
-												className="w-4 h-4 animate-spin"
-												style={{ color: theme.colors.textDim }}
-											/>
-										)}
+										{isSearching && <Spinner size={16} color={theme.colors.textDim} />}
 										{search && !isSearching && (
 											<button
 												onClick={() => handleSearchChange('')}
@@ -1473,20 +1472,18 @@ export function AgentSessionsBrowser({
 					>
 						{loading ? (
 							<div className="flex items-center justify-center py-12">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						) : filteredSessions.length === 0 ? (
-							<div className="flex flex-col items-center justify-center py-12 px-4">
-								<List
-									className="w-12 h-12 mb-4 opacity-30"
-									style={{ color: theme.colors.textDim }}
-								/>
-								<p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
-									{sessions.length === 0
+							<EmptyStatePlaceholder
+								theme={theme}
+								icon={<List className="w-12 h-12" />}
+								title={
+									sessions.length === 0
 										? `No ${agentId === 'claude-code' ? 'Claude' : 'agent'} sessions found for this project`
-										: 'No sessions match your search'}
-								</p>
-							</div>
+										: 'No sessions match your search'
+								}
+							/>
 						) : (
 							<div className="py-2">
 								{filteredSessions.map((session, i) => (
@@ -1518,10 +1515,7 @@ export function AgentSessionsBrowser({
 									<div className="py-4 flex justify-center items-center">
 										{isLoadingMoreSessions ? (
 											<div className="flex items-center gap-2">
-												<Loader2
-													className="w-4 h-4 animate-spin"
-													style={{ color: theme.colors.accent }}
-												/>
+												<Spinner size={16} color={theme.colors.accent} />
 												<span className="text-xs" style={{ color: theme.colors.textDim }}>
 													Loading more sessions...
 												</span>

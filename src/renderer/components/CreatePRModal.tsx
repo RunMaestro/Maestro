@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, GitPullRequest, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { X, GitPullRequest, AlertTriangle, ExternalLink } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -228,9 +230,9 @@ export function CreatePRModal({
 							Create Pull Request
 						</h2>
 					</div>
-					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content */}
@@ -301,7 +303,7 @@ export function CreatePRModal({
 							className="flex items-center gap-2 text-sm"
 							style={{ color: theme.colors.textDim }}
 						>
-							<Loader2 className="w-4 h-4 animate-spin" />
+							<Spinner size={16} />
 							Checking GitHub CLI...
 						</div>
 					)}
@@ -472,7 +474,7 @@ export function CreatePRModal({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

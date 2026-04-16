@@ -8,7 +8,8 @@ import React, {
 	useImperativeHandle,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Loader2, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import {
@@ -736,10 +737,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					{/* Loading more indicator */}
 					{isLoadingMore && (
 						<div className="flex items-center justify-center py-4 gap-2">
-							<Loader2
-								className="w-3.5 h-3.5 animate-spin"
-								style={{ color: theme.colors.accent }}
-							/>
+							<Spinner size={14} color={theme.colors.accent} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								Loading more...
 							</span>

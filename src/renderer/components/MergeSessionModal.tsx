@@ -16,6 +16,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { Search, ChevronRight, ChevronDown, GitMerge, Clipboard, Check, X } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, Session } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -601,15 +602,13 @@ export function MergeSessionModal({
 							Merge "{sourceTab ? getTabDisplayName(sourceTab) : 'Context'}" Into
 						</h2>
 					</div>
-					<button
-						type="button"
+					<GhostIconButton
 						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close merge dialog"
+						ariaLabel="Close merge dialog"
+						color={theme.colors.textDim}
 					>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}

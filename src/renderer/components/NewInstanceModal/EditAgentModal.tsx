@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { AlertTriangle, Copy, Check, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -414,15 +415,9 @@ export function EditAgentModal({
 							{copiedId ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
 							<span>{session.id.slice(0, 8)}</span>
 						</button>
-						<button
-							type="button"
-							onClick={onClose}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-							aria-label="Close modal"
-						>
+						<GhostIconButton onClick={onClose} ariaLabel="Close modal" color={theme.colors.textDim}>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 			}

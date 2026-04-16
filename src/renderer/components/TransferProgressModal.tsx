@@ -17,7 +17,9 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { X, Check, Loader2, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { X, Check, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, ToolType } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -99,7 +101,7 @@ ElapsedTimeDisplay.displayName = 'ElapsedTimeDisplay';
 /**
  * Animated spinner component
  */
-function Spinner({ theme }: { theme: Theme }) {
+function CircularSpinner({ theme }: { theme: Theme }) {
 	return (
 		<div className="relative">
 			<div
@@ -366,15 +368,19 @@ export function TransferProgressModal({
 						{isComplete ? 'Transfer Complete' : 'Transferring Context...'}
 					</h2>
 					{isComplete && (
-						<button
-							type="button"
-							onClick={() => onComplete?.() || onCancel()}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-							aria-label="Close modal"
+						<GhostIconButton
+							onClick={() => {
+								if (onComplete) {
+									onComplete();
+								} else {
+									onCancel();
+								}
+							}}
+							ariaLabel="Close modal"
+							color={theme.colors.textDim}
 						>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					)}
 				</div>
 
@@ -397,7 +403,7 @@ export function TransferProgressModal({
 								<Check className="w-6 h-6" style={{ color: theme.colors.success }} />
 							</div>
 						) : (
-							<Spinner theme={theme} />
+							<CircularSpinner theme={theme} />
 						)}
 					</div>
 
@@ -457,10 +463,7 @@ export function TransferProgressModal({
 												<Check className="w-3 h-3" style={{ color: '#fff' }} />
 											</div>
 										) : isActive ? (
-											<Loader2
-												className="w-5 h-5 animate-spin"
-												style={{ color: theme.colors.accent }}
-											/>
+											<Spinner size={20} color={theme.colors.accent} />
 										) : (
 											<div
 												className="w-5 h-5 rounded-full border-2"

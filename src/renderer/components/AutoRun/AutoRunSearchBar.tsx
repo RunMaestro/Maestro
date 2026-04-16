@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -119,14 +120,9 @@ export function AutoRunSearchBar({
 					</button>
 				</>
 			)}
-			<button
-				onClick={onClose}
-				className="p-1 rounded hover:bg-white/10 transition-colors"
-				style={{ color: theme.colors.textDim }}
-				title="Close search (Esc)"
-			>
+			<GhostIconButton onClick={onClose} title="Close search (Esc)" color={theme.colors.textDim}>
 				<X className="w-4 h-4" />
-			</button>
+			</GhostIconButton>
 		</div>
 	);
 }

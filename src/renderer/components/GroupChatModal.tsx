@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Settings, ChevronDown, Check } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import { isBetaAgent } from '../../shared/agentMetadata';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -242,15 +243,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								Beta
 							</span>
 						</div>
-						<button
-							type="button"
-							onClick={onClose}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-							aria-label="Close modal"
-						>
+						<GhostIconButton onClick={onClose} ariaLabel="Close modal" color={theme.colors.textDim}>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					</div>
 				) : undefined
 			}

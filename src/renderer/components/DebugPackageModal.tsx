@@ -9,7 +9,8 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Package, Check, Loader2, FolderOpen, AlertCircle, Copy } from 'lucide-react';
+import { Package, Check, FolderOpen, AlertCircle, Copy } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -239,11 +240,11 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 
 			{loading ? (
 				<div className="flex items-center justify-center py-8">
-					<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+					<Spinner size={24} color={theme.colors.accent} />
 				</div>
 			) : generationState === 'generating' ? (
 				<div className="flex flex-col items-center justify-center py-8 gap-4">
-					<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+					<Spinner size={32} color={theme.colors.accent} />
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Collecting diagnostic information...
 					</p>

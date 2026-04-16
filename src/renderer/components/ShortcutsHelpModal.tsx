@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -73,13 +74,9 @@ export function ShortcutsHelpModal({
 						{searchQuery ? `${filteredCount} / ${totalShortcuts}` : totalShortcuts}
 					</span>
 				</div>
-				<button
-					onClick={onClose}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-				>
+				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 					<X className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 			</div>
 
 			{hasNoAgents && (

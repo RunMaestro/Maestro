@@ -12,7 +12,6 @@ import {
 	Trophy,
 	Mail,
 	User,
-	Loader2,
 	Check,
 	AlertCircle,
 	ExternalLink,
@@ -22,6 +21,8 @@ import {
 	Send,
 	DownloadCloud,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, AutoRunStats, LeaderboardRegistration, KeyboardMasteryStats } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -797,13 +798,9 @@ export function LeaderboardRegistrationModal({
 								: 'Register for Leaderboard'}
 						</h2>
 					</div>
-					<button
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
+					<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 						<X className="w-4 h-4" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content */}
@@ -1148,7 +1145,7 @@ export function LeaderboardRegistrationModal({
 								>
 									{isResending ? (
 										<>
-											<Loader2 className="w-3.5 h-3.5 animate-spin" />
+											<Spinner size={14} />
 											Sending...
 										</>
 									) : (
@@ -1307,7 +1304,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{submitState === 'submitting' ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Pushing...
 									</>
 								) : (
@@ -1336,7 +1333,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{isSyncing ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Pulling...
 									</>
 								) : (

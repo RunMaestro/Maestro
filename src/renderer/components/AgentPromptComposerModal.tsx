@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, FileText, Variable, ChevronDown, ChevronRight } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -151,13 +152,9 @@ export function AgentPromptComposerModal({
 						</span>
 					</div>
 					<div className="flex items-center gap-3">
-						<button
-							onClick={handleDone}
-							className="p-1.5 rounded hover:bg-white/10 transition-colors"
-							title="Close (Escape)"
-						>
+						<GhostIconButton onClick={handleDone} padding="p-1.5" title="Close (Escape)">
 							<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 

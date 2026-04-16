@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, Loader2, RotateCw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink, Globe, RotateCw } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { BrowserTab, Theme } from '../../types';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
@@ -442,11 +443,7 @@ export const BrowserTabView = React.memo(function BrowserTabView({
 						style={{ color: theme.colors.textMain }}
 						title={tab.isLoading ? 'Stop' : 'Reload'}
 					>
-						{tab.isLoading ? (
-							<Loader2 className="w-4 h-4 animate-spin" />
-						) : (
-							<RotateCw className="w-4 h-4" />
-						)}
+						{tab.isLoading ? <Spinner size={16} /> : <RotateCw className="w-4 h-4" />}
 					</button>
 					<form className="flex-1 min-w-0" onSubmit={handleSubmit}>
 						<label className="sr-only" htmlFor={`browser-tab-address-${tab.id}`}>

@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { Loader2, Rocket, Compass, X } from 'lucide-react';
+import { Rocket, Compass, X } from 'lucide-react';
+import { Spinner } from '../../ui/Spinner';
 import type { Theme } from '../../../types';
 import { useWizard } from '../WizardContext';
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
@@ -535,11 +536,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'ready' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Rocket className="w-5 h-5" />
-						)}
+						{launchingButton === 'ready' ? <Spinner size={20} /> : <Rocket className="w-5 h-5" />}
 						{launchingButton === 'ready' ? 'Launching...' : "I'm Ready to Go"}
 					</button>
 
@@ -559,11 +556,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'tour' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Compass className="w-5 h-5" />
-						)}
+						{launchingButton === 'tour' ? <Spinner size={20} /> : <Compass className="w-5 h-5" />}
 						{launchingButton === 'tour' ? 'Launching...' : 'Walk Me Through the Interface'}
 					</button>
 				</div>

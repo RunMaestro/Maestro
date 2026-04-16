@@ -15,6 +15,8 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Search, ArrowRight, X, Loader2, Circle } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, Session, ToolType } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -454,15 +456,9 @@ export function SendToAgentModal({
 							Send Context to Agent
 						</h2>
 					</div>
-					<button
-						type="button"
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close dialog"
-					>
+					<GhostIconButton onClick={onClose} ariaLabel="Close dialog" color={theme.colors.textDim}>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}
@@ -596,7 +592,7 @@ export function SendToAgentModal({
 												aria-hidden="true"
 											>
 												{session.status === 'idle' && <Circle className="w-2 h-2 fill-current" />}
-												{session.status === 'busy' && <Loader2 className="w-3 h-3 animate-spin" />}
+												{session.status === 'busy' && <Spinner size={12} />}
 												{getStatusLabel(session.status)}
 											</div>
 

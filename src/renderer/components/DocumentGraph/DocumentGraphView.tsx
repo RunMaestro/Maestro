@@ -20,7 +20,6 @@ import {
 	ExternalLink,
 	RefreshCw,
 	Search,
-	Loader2,
 	ChevronDown,
 	Sliders,
 	AlertCircle,
@@ -32,6 +31,7 @@ import {
 	ChevronLeft,
 	ChevronRight,
 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -1686,7 +1686,7 @@ export function DocumentGraphView({
 				>
 					{loading ? (
 						<div className="h-full flex flex-col items-center justify-center gap-8">
-							<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+							<Spinner size={32} color={theme.colors.accent} />
 							<div className="flex flex-col items-center gap-4">
 								<p className="text-sm" style={{ color: theme.colors.textDim }}>
 									{progress
@@ -1925,7 +1925,7 @@ export function DocumentGraphView({
 										className="flex items-center gap-2 text-xs"
 										style={{ color: theme.colors.textDim }}
 									>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Loading preview...
 									</div>
 								) : previewError ? (
@@ -2015,11 +2015,7 @@ export function DocumentGraphView({
 								onMouseLeave={(e) => !loadingMore && (e.currentTarget.style.opacity = '1')}
 								title={`Load ${Math.min(LOAD_MORE_INCREMENT, totalDocuments - loadedDocuments)} more documents`}
 							>
-								{loadingMore ? (
-									<Loader2 className="w-3 h-3 animate-spin" />
-								) : (
-									<ChevronDown className="w-3 h-3" />
-								)}
+								{loadingMore ? <Spinner size={12} /> : <ChevronDown className="w-3 h-3" />}
 								{loadingMore
 									? 'Loading...'
 									: `Load more (${totalDocuments - loadedDocuments} remaining)`}
@@ -2035,7 +2031,7 @@ export function DocumentGraphView({
 								}}
 								title="Scanning for documents that link to the current graph"
 							>
-								<Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={12} color={theme.colors.accent} />
 								<span>
 									Scanning backlinks
 									{backlinkProgress && ` (${backlinkProgress.scanned}/${backlinkProgress.total})`}

@@ -15,6 +15,7 @@ import {
 	Trash2,
 	Bot,
 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
@@ -826,14 +827,14 @@ function SessionListInner(props: SessionListProps) {
 						<div className="flex items-center">
 							{/* Hamburger Menu */}
 							<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
-								<button
+								<GhostIconButton
 									onClick={() => setMenuOpen(!menuOpen)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
+									padding="p-2"
 									title="Menu"
+									color={theme.colors.textDim}
 								>
 									<Menu className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<div
@@ -859,16 +860,12 @@ function SessionListInner(props: SessionListProps) {
 					</>
 				) : (
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
-						<button
-							onClick={() => setMenuOpen(!menuOpen)}
-							className="p-2 rounded hover:bg-white/10 transition-colors"
-							title="Menu"
-						>
+						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
 								style={{ color: theme.colors.accent }}
 							/>
-						</button>
+						</GhostIconButton>
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div

@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback } from 'react';
 import { Share2, Copy, Check, ExternalLink } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -180,24 +181,22 @@ export function GistPublishModal({
 							style={{ color: theme.colors.textMain }}
 							onClick={(e) => (e.target as HTMLInputElement).select()}
 						/>
-						<button
-							type="button"
+						<GhostIconButton
 							onClick={handleCopyUrl}
-							className="p-1.5 rounded hover:bg-white/10 transition-colors"
-							style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
+							padding="p-1.5"
 							title="Copy URL"
+							color={copied ? theme.colors.success : theme.colors.textDim}
 						>
 							{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-						</button>
-						<button
-							type="button"
+						</GhostIconButton>
+						<GhostIconButton
 							onClick={handleOpenGist}
-							className="p-1.5 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
+							padding="p-1.5"
 							title="Open in browser"
+							color={theme.colors.textDim}
 						>
 							<ExternalLink className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					</div>
 
 					<p className="text-xs" style={{ color: theme.colors.textDim }}>

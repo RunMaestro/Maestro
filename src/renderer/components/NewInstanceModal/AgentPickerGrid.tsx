@@ -1,5 +1,6 @@
 import React from 'react';
 import { RefreshCw, ChevronRight, AlertTriangle } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentConfigPanel } from '../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../shared/agentMetadata';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
@@ -171,20 +172,18 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 														Not Found
 													</span>
 												)}
-												<button
-													type="button"
+												<GhostIconButton
 													onClick={(e) => {
 														e.stopPropagation();
 														onRefreshAgent(agent.id);
 													}}
-													className="p-1 rounded hover:bg-white/10 transition-colors"
 													title="Refresh detection"
-													style={{ color: theme.colors.textDim }}
+													color={theme.colors.textDim}
 												>
 													<RefreshCw
 														className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
 													/>
-												</button>
+												</GhostIconButton>
 											</>
 										) : (
 											<span

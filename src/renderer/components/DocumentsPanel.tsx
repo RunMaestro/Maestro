@@ -12,6 +12,7 @@ import {
 	Folder,
 	CheckSquare,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, BatchDocumentEntry } from '../types';
 import { generateId } from '../utils/ids';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -484,13 +485,9 @@ function DocumentSelectorModal({
 						>
 							<RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
 						</button>
-						<button
-							onClick={onClose}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-						>
+						<GhostIconButton onClick={onClose} color={theme.colors.textDim}>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 

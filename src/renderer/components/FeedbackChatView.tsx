@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ImagePlus,
-	Loader2,
 	MessageSquareHeart,
 	Send,
 	X,
@@ -28,6 +27,7 @@ import {
 	Check,
 	Copy,
 } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -517,7 +517,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	if (ghAuth.checking) {
 		return (
 			<div className="flex flex-col items-center gap-3 py-8 px-6">
-				<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+				<Spinner size={24} color={theme.colors.accent} />
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
 					Checking GitHub CLI...
 				</p>
@@ -674,7 +674,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 			<div className="flex flex-col gap-4 p-6">
 				{searchingIssues ? (
 					<div className="flex flex-col items-center gap-3 py-8">
-						<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+						<Spinner size={24} color={theme.colors.accent} />
 						<p className="text-xs" style={{ color: theme.colors.textDim }}>
 							Searching for similar existing issues...
 						</p>
@@ -750,7 +750,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 											title="Subscribe and add your feedback as a comment"
 										>
 											{subscribingTo === issue.number ? (
-												<Loader2 className="w-3 h-3 animate-spin" />
+												<Spinner size={12} />
 											) : (
 												<ThumbsUp className="w-3 h-3" />
 											)}
@@ -825,7 +825,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							className="flex items-center gap-1 text-[10px]"
 							style={{ color: theme.colors.textDim }}
 						>
-							<Loader2 className="w-3 h-3 animate-spin" />
+							<Spinner size={12} />
 							Checking for similar issues...
 						</span>
 					)}
@@ -843,11 +843,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-40 shrink-0"
 							style={{ backgroundColor: theme.colors.success, color: '#000' }}
 						>
-							{step === 'submitting' ? (
-								<Loader2 className="w-3 h-3 animate-spin" />
-							) : (
-								<Check className="w-3 h-3" />
-							)}
+							{step === 'submitting' ? <Spinner size={12} /> : <Check className="w-3 h-3" />}
 							Submit Feedback
 						</button>
 					)}
@@ -902,7 +898,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
-							<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.accent }} />
+							<Spinner size={16} color={theme.colors.accent} />
 						</div>
 					</div>
 				)}
@@ -966,7 +962,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 										title="Subscribe and add your feedback as a comment"
 									>
 										{subscribingTo === issue.number ? (
-											<Loader2 className="w-3 h-3 animate-spin" />
+											<Spinner size={12} />
 										) : (
 											<ThumbsUp className="w-3 h-3" />
 										)}
@@ -1125,11 +1121,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 							title="Send message"
 						>
-							{isLoading ? (
-								<Loader2 className="w-4 h-4 animate-spin" />
-							) : (
-								<Send className="w-4 h-4" />
-							)}
+							{isLoading ? <Spinner size={16} /> : <Send className="w-4 h-4" />}
 						</button>
 						{/* Submit button — appears when ready */}
 						{isReady && (
@@ -1141,11 +1133,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 								style={{ backgroundColor: theme.colors.success, color: '#000' }}
 								title="Submit feedback as GitHub issue"
 							>
-								{step === 'submitting' ? (
-									<Loader2 className="w-3.5 h-3.5 animate-spin" />
-								) : (
-									<Check className="w-3.5 h-3.5" />
-								)}
+								{step === 'submitting' ? <Spinner size={14} /> : <Check className="w-3.5 h-3.5" />}
 								Submit
 							</button>
 						)}

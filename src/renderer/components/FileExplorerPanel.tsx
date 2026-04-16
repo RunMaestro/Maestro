@@ -21,9 +21,9 @@ import {
 	Edit2,
 	Trash2,
 	AlertTriangle,
-	Loader2,
 	Search,
 } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Session, Theme, FocusArea } from '../types';
 import type { FileNode } from '../types/fileTree';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -114,7 +114,7 @@ function FileTreeLoadingProgress({
 	return (
 		<div className="flex flex-col items-center justify-center gap-3 py-8">
 			{/* Animated spinner */}
-			<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+			<Spinner size={24} color={theme.colors.accent} />
 
 			{/* Status text */}
 			<div className="text-center">

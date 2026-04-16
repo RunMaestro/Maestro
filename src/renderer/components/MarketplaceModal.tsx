@@ -13,7 +13,6 @@ import {
 	RefreshCw,
 	X,
 	Search,
-	Loader2,
 	Package,
 	ArrowLeft,
 	ChevronDown,
@@ -23,6 +22,8 @@ import {
 	HelpCircle,
 	Github,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -335,13 +336,9 @@ function PlaybookDetailView({
 				style={{ borderColor: theme.colors.border }}
 			>
 				{/* Back button */}
-				<button
-					onClick={onBack}
-					className="p-1.5 rounded hover:bg-white/10 transition-colors"
-					title="Back to list (Esc)"
-				>
+				<GhostIconButton onClick={onBack} padding="p-1.5" title="Back to list (Esc)">
 					<ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-				</button>
+				</GhostIconButton>
 
 				{/* Playbook title and category */}
 				<div className="flex-1 min-w-0">
@@ -625,7 +622,7 @@ function PlaybookDetailView({
 						<style>{proseStyles}</style>
 						{isLoadingDocument ? (
 							<div className="flex items-center justify-center h-32">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={24} color={theme.colors.accent} />
 							</div>
 						) : (
 							<div className="prose prose-sm max-w-none" style={{ color: theme.colors.textMain }}>
@@ -699,7 +696,7 @@ function PlaybookDetailView({
 					>
 						{isImporting ? (
 							<span className="flex items-center gap-2">
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Importing...
 							</span>
 						) : (
@@ -1246,14 +1243,14 @@ export function MarketplaceModal({
 									/>
 								</button>
 								{/* Close button */}
-								<button
+								<GhostIconButton
 									onClick={onClose}
-									className="p-1.5 rounded hover:bg-white/10 transition-colors"
+									padding="p-1.5"
 									title="Close (Esc)"
-									aria-label="Close marketplace"
+									ariaLabel="Close marketplace"
 								>
 									<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-								</button>
+								</GhostIconButton>
 							</div>
 						</div>
 

@@ -36,6 +36,7 @@
 
 import React, { useRef, useEffect, ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
 
@@ -165,15 +166,13 @@ export function Modal({
 								</h2>
 							</div>
 							{showCloseButton && (
-								<button
-									type="button"
+								<GhostIconButton
 									onClick={onClose}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
-									aria-label="Close modal"
+									ariaLabel="Close modal"
+									color={theme.colors.textDim}
 								>
 									<X className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 							)}
 						</div>
 					))}

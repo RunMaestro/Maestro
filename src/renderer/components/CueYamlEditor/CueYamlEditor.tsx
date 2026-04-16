@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle, XCircle, Zap, LayoutDashboard, GitFork, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { CuePattern } from '../../constants/cuePatterns';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -271,15 +272,9 @@ export function CueYamlEditor({
 					</button>
 				</div>
 			</div>
-			<button
-				type="button"
-				onClick={handleClose}
-				className="p-1 rounded hover:bg-white/10 transition-colors"
-				style={{ color: theme.colors.textDim }}
-				aria-label="Close modal"
-			>
+			<GhostIconButton onClick={handleClose} ariaLabel="Close modal" color={theme.colors.textDim}>
 				<X className="w-4 h-4" />
-			</button>
+			</GhostIconButton>
 		</div>
 	) : undefined;
 

@@ -14,7 +14,9 @@
  */
 
 import { useState, useEffect, memo, useCallback } from 'react';
-import { X, Check, Loader2, AlertTriangle, Wand2 } from 'lucide-react';
+import { X, Check, AlertTriangle, Wand2 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { SummarizeProgress, SummarizeResult } from '../types/contextMerge';
 import { formatElapsedTime } from '../../shared/formatters';
@@ -216,15 +218,13 @@ export const SummarizeProgressOverlay = memo(function SummarizeProgressOverlay({
 								)}
 							</div>
 							{!isComplete && (
-								<button
-									type="button"
+								<GhostIconButton
 									onClick={handleCancelClick}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
 									title="Cancel"
+									color={theme.colors.textDim}
 								>
 									<X className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 							)}
 						</div>
 
@@ -265,10 +265,7 @@ export const SummarizeProgressOverlay = memo(function SummarizeProgressOverlay({
 											{isCompleted ? (
 												<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
 											) : isActive ? (
-												<Loader2
-													className="w-3 h-3 animate-spin"
-													style={{ color: theme.colors.accent }}
-												/>
+												<Spinner size={12} color={theme.colors.accent} />
 											) : (
 												<div
 													className="w-3 h-3 rounded-full border"

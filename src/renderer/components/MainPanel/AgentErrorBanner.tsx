@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertCircle, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { AgentError, Theme } from '../../types';
 
 interface AgentErrorBannerProps {
@@ -43,13 +44,9 @@ export const AgentErrorBanner = React.memo(function AgentErrorBanner({
 					</button>
 				)}
 				{onClear && error.recoverable && (
-					<button
-						onClick={onClear}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						title="Dismiss error"
-					>
+					<GhostIconButton onClick={onClear} title="Dismiss error">
 						<X className="w-4 h-4" style={{ color: theme.colors.error }} />
-					</button>
+					</GhostIconButton>
 				)}
 			</div>
 		</div>

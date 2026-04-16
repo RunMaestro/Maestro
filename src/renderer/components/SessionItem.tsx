@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Zap } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -319,12 +320,12 @@ export const SessionItem = memo(function SessionItem({
 								/>
 							</button>
 						) : (
-							<button
+							<GhostIconButton
 								onClick={(e) => {
 									e.stopPropagation();
 									onToggleBookmark();
 								}}
-								className="p-0.5 rounded hover:bg-white/10 transition-colors"
+								padding="p-0.5"
 								title="Remove bookmark"
 							>
 								<Bookmark
@@ -332,7 +333,7 @@ export const SessionItem = memo(function SessionItem({
 									style={{ color: theme.colors.accent }}
 									fill={theme.colors.accent}
 								/>
-							</button>
+							</GhostIconButton>
 						))}
 
 					{/* AI Status Indicator with Unread Badge */}

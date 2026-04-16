@@ -11,6 +11,7 @@
 import React, { type ReactNode } from 'react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Search, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { searchSettings, type SearchableSetting } from './searchableSettings';
 
@@ -117,13 +118,9 @@ export function SettingsSearchInput({
 					>
 						{results.length}
 					</span>
-					<button
-						onClick={onClear}
-						className="p-0.5 rounded hover:bg-white/10 transition-colors"
-						aria-label="Clear search"
-					>
+					<GhostIconButton onClick={onClear} padding="p-0.5" ariaLabel="Clear search">
 						<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</>
 			)}
 			{!isActive && (

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+
+import { Spinner } from '../ui/Spinner';
 import { TerminalOutput } from '../TerminalOutput';
 import {
 	TerminalView,
@@ -405,7 +406,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					style={{ backgroundColor: theme.colors.bgMain }}
 				>
 					<div className="flex flex-col items-center gap-3">
-						<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+						<Spinner size={32} color={theme.colors.accent} />
 						<div className="text-center">
 							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 								Loading{' '}

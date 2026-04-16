@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
-import { Loader2, Image, X, Search } from 'lucide-react';
+import { Image, X, Search } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import { imageCache } from '../../hooks';
 import type { Theme } from '../../types';
 
@@ -213,7 +214,7 @@ export const AttachmentImage = memo(function AttachmentImage({
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading image...
 				</span>
