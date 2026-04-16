@@ -562,7 +562,10 @@ describe('PromptComposerModal', () => {
 			const textarea = screen.getByPlaceholderText(
 				'Write your prompt here... (@ to reference files)'
 			) as HTMLTextAreaElement;
-			expect(textarea.value).toBe('Second');
+			// The composer only syncs initialValue when isOpen transitions —
+			// while already open, the composer owns the value to prevent
+			// useDeferredValue lag from overwriting in-progress edits.
+			expect(textarea.value).toBe('First');
 		});
 	});
 
