@@ -104,7 +104,6 @@ import type {
 	ToggleCueSubscriptionCallback,
 	TriggerCueSubscriptionCallback,
 	GetCueActivityCallback,
-	TriggerCueSubscriptionCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
 	GetUsageDashboardCallback,
@@ -548,10 +547,6 @@ export class WebServer {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
-	}
-
-	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
-		this.callbackRegistry.setTriggerCueSubscriptionCallback(callback);
 	}
 
 	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {

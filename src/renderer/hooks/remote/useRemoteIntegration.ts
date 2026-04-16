@@ -893,7 +893,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				sourceAgentId?: string
 			) => {
 				try {
-					const result = await cueService.triggerSubscription(subscriptionName, prompt, sourceAgentId);
+					const result = await cueService.triggerSubscription(
+						subscriptionName,
+						prompt,
+						sourceAgentId
+					);
 					window.maestro.process.sendRemoteTriggerCueSubscriptionResponse(responseChannel, result);
 				} catch (error) {
 					console.error('[Remote Cue Trigger] Failed:', subscriptionName, error);
