@@ -241,11 +241,22 @@ describe('useBatchHandlers', () => {
 			expect(callArgs.groups).toEqual([{ id: 'g1', name: 'Group 1' }]);
 		});
 
-		it('passes spawnAgentForSession as onSpawnAgent', () => {
+		it('passes onSpawnAgent wrapper that marks Auto Run batch spawns', async () => {
 			renderHook(() => useBatchHandlers(createDeps()));
 
 			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
-			expect(callArgs.onSpawnAgent).toBe(mockSpawnAgentForSession);
+			expect(callArgs.onSpawnAgent).not.toBe(mockSpawnAgentForSession);
+
+			await callArgs.onSpawnAgent('session-1', 'Do work', '/tmp/worktree');
+
+			expect(mockSpawnAgentForSession).toHaveBeenCalledWith(
+				'session-1',
+				'Do work',
+				'/tmp/worktree',
+				{
+					isAutoRun: true,
+				}
+			);
 		});
 
 		it('passes audio feedback settings from store', () => {

@@ -170,7 +170,7 @@ describe('useAgentExecution', () => {
 				outputTokens: 3,
 				totalCostUsd: 0.02,
 			});
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 
 		const resultData = await spawnPromise;
