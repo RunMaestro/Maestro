@@ -10,28 +10,9 @@
 
 import { ipcRenderer } from 'electron';
 
-/**
- * Capability flags that determine what features are available for each agent.
- * This is a simplified version for the renderer - full definition in agent-capabilities.ts
- */
-export interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-}
+import type { AgentCapabilities } from '../../shared/types';
+
+export type { AgentCapabilities };
 
 /**
  * Agent configuration

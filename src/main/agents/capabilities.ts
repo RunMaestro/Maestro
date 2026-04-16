@@ -7,120 +7,17 @@
  * - Handle agent differences in a consistent way
  *
  * When adding a new agent, define its capabilities here.
+ *
+ * The AgentCapabilities interface and DEFAULT_CAPABILITIES constant are
+ * defined canonically in src/shared/types.ts and re-exported here so that
+ * existing `from './capabilities'` imports keep working.
  */
 
-/**
- * Capability flags that determine what features are available for each agent.
- */
-export interface AgentCapabilities {
-	/** Agent supports resuming existing sessions (e.g., --resume flag) */
-	supportsResume: boolean;
+import type { AgentCapabilities } from '../../shared/types';
+import { DEFAULT_CAPABILITIES } from '../../shared/types';
 
-	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
-	supportsReadOnlyMode: boolean;
-
-	/** Agent outputs JSON-formatted responses (for parsing) */
-	supportsJsonOutput: boolean;
-
-	/** Agent provides a session ID for conversation continuity */
-	supportsSessionId: boolean;
-
-	/** Agent can accept image inputs (screenshots, diagrams, etc.) */
-	supportsImageInput: boolean;
-
-	/** Agent can accept image inputs when resuming an existing session */
-	supportsImageInputOnResume: boolean;
-
-	/** Agent supports slash commands (e.g., /help, /compact) */
-	supportsSlashCommands: boolean;
-
-	/** Agent stores session history in a discoverable location */
-	supportsSessionStorage: boolean;
-
-	/** Agent provides cost/pricing information */
-	supportsCostTracking: boolean;
-
-	/** Agent provides token usage statistics */
-	supportsUsageStats: boolean;
-
-	/** Agent supports batch/headless mode (non-interactive) */
-	supportsBatchMode: boolean;
-
-	/** Agent requires a prompt to start (no eager spawn on session creation) */
-	requiresPromptToStart: boolean;
-
-	/** Agent streams responses in real-time */
-	supportsStreaming: boolean;
-
-	/** Agent provides distinct "result" messages when done */
-	supportsResultMessages: boolean;
-
-	/** Agent supports selecting different models (e.g., --model flag) */
-	supportsModelSelection: boolean;
-
-	/** Agent supports --input-format stream-json for image input via stdin */
-	supportsStreamJsonInput: boolean;
-
-	/** Agent emits streaming thinking/reasoning content that can be displayed */
-	supportsThinkingDisplay: boolean;
-
-	/** Agent can receive merged context from other sessions/tabs */
-	supportsContextMerge: boolean;
-
-	/** Agent can export its context for transfer to other sessions/agents */
-	supportsContextExport: boolean;
-
-	/** Agent supports inline wizard structured output conversations */
-	supportsWizard: boolean;
-
-	/** Agent can serve as a group chat moderator */
-	supportsGroupChatModeration: boolean;
-
-	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
-	usesJsonLineOutput: boolean;
-
-	/** Agent uses a combined input+output context window (vs separate limits) */
-	usesCombinedContextWindow: boolean;
-
-	/** Agent supports --append-system-prompt for separate system prompt delivery */
-	supportsAppendSystemPrompt: boolean;
-
-	/** How images should be handled on resume when -i flag is not available.
-	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
-	 * undefined: Use default image handling (or no special resume handling needed). */
-	imageResumeMode?: 'prompt-embed';
-}
-
-/**
- * Default capabilities - safe defaults for unknown agents.
- * All capabilities disabled by default (conservative approach).
- */
-export const DEFAULT_CAPABILITIES: AgentCapabilities = {
-	supportsResume: false,
-	supportsReadOnlyMode: false,
-	supportsJsonOutput: false,
-	supportsSessionId: false,
-	supportsImageInput: false,
-	supportsImageInputOnResume: false,
-	supportsSlashCommands: false,
-	supportsSessionStorage: false,
-	supportsCostTracking: false,
-	supportsUsageStats: false,
-	supportsBatchMode: false,
-	requiresPromptToStart: false,
-	supportsStreaming: false,
-	supportsResultMessages: false,
-	supportsModelSelection: false,
-	supportsStreamJsonInput: false,
-	supportsThinkingDisplay: false,
-	supportsContextMerge: false,
-	supportsContextExport: false,
-	supportsWizard: false,
-	supportsGroupChatModeration: false,
-	usesJsonLineOutput: false,
-	usesCombinedContextWindow: false,
-	supportsAppendSystemPrompt: false,
-};
+export type { AgentCapabilities };
+export { DEFAULT_CAPABILITIES };
 
 /**
  * Capability definitions for each supported agent.

@@ -1,5 +1,7 @@
 // Type definitions for Maestro renderer
 
+import type { AgentCapabilities } from '../../shared/types';
+
 // Re-export context merge types
 export * from './contextMerge';
 
@@ -787,32 +789,7 @@ export interface AgentConfigOption {
 	argBuilder?: (value: any) => string[];
 }
 
-export interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection?: boolean;
-	supportsStreamJsonInput?: boolean;
-	supportsThinkingDisplay?: boolean;
-	supportsContextMerge?: boolean;
-	supportsContextExport?: boolean;
-	supportsWizard?: boolean;
-	supportsGroupChatModeration?: boolean;
-	usesJsonLineOutput?: boolean;
-	usesCombinedContextWindow?: boolean;
-	supportsAppendSystemPrompt?: boolean;
-}
+export type { AgentCapabilities };
 
 export interface AgentConfig {
 	id: string;

@@ -87,32 +87,7 @@ interface AgentConfigOption {
 	options?: string[];
 }
 
-interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-	supportsThinkingDisplay: boolean;
-	supportsContextMerge: boolean;
-	supportsContextExport: boolean;
-	supportsWizard: boolean;
-	supportsGroupChatModeration: boolean;
-	usesJsonLineOutput: boolean;
-	usesCombinedContextWindow: boolean;
-	supportsAppendSystemPrompt: boolean;
-}
+type AgentCapabilities = import('../shared/types').AgentCapabilities;
 
 interface AgentConfig {
 	id: string;
@@ -128,32 +103,6 @@ interface AgentConfig {
 	yoloModeArgs?: string[];
 	readOnlyCliEnforced?: boolean;
 	capabilities?: AgentCapabilities;
-}
-
-interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-	supportsContextMerge: boolean;
-	supportsContextExport: boolean;
-	supportsWizard: boolean;
-	supportsGroupChatModeration: boolean;
-	usesJsonLineOutput: boolean;
-	usesCombinedContextWindow: boolean;
-	supportsAppendSystemPrompt: boolean;
 }
 
 interface DirectoryEntry {
