@@ -289,9 +289,11 @@ describe('TerminalOutput', () => {
 		});
 
 		it('keeps all logs visible when searching (highlight-only, no filter)', () => {
+			// NOTE: use a source that isn't collapsed into response groups (stdout/stderr
+			// are merged by `collapsedLogs`), so each log produces its own DOM item.
 			const logs: LogEntry[] = [
-				createLogEntry({ text: 'This contains hello world', source: 'stdout' }),
-				createLogEntry({ text: 'This does not match', source: 'stdout' }),
+				createLogEntry({ text: 'This contains hello world', source: 'tool' }),
+				createLogEntry({ text: 'This does not match', source: 'tool' }),
 			];
 
 			const session = createDefaultSession({

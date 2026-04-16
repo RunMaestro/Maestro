@@ -35,7 +35,6 @@ export interface SpawnGroupChatAgentConfig {
 	/** Resolved custom env vars to inject */
 	customEnvVars?: Record<string, string>;
 	/** Agent config values (used for context window resolution) */
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	agentConfigValues?: Record<string, any>;
 	/** SSH remote config (from chat moderator or matching session); null/undefined = local */
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
