@@ -672,6 +672,12 @@ describe('generateInlineWizardPreviewProseStyles', () => {
 		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
 	});
 
+	it('should scope Bionify selectors to descendant prose blocks only', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view .prose .bionify-word');
+		expect(css).not.toContain('.doc-gen-view.prose, .doc-gen-view .prose .bionify-word');
+	});
+
 	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
 		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
 		expect(css).toContain(

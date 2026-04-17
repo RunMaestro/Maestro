@@ -670,10 +670,12 @@ describe('MessageHistory', () => {
 			);
 		});
 
-		it('applies Bionify emphasis only to AI markdown messages when enabled', () => {
+		it('applies Bionify emphasis only to stdout messages when enabled', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ source: 'stdout', text: 'Readable prose output' }),
 				createLogEntry({ source: 'user', text: 'Plain input text' }),
+				createLogEntry({ source: 'stderr', text: 'Failure details' }),
+				createLogEntry({ source: 'system', text: 'System update' }),
 			];
 			const { container } = render(
 				<MessageHistory logs={logs} inputMode="ai" enableBionifyReadingMode={true} />
@@ -683,6 +685,10 @@ describe('MessageHistory', () => {
 			expect(
 				screen.getByText('Plain input text').querySelector('.bionify-word-emphasis')
 			).toBeNull();
+			expect(
+				screen.getByText('Failure details').querySelector('.bionify-word-emphasis')
+			).toBeNull();
+			expect(screen.getByText('System update').querySelector('.bionify-word-emphasis')).toBeNull();
 		});
 
 		it('applies error styles to stderr message container', () => {

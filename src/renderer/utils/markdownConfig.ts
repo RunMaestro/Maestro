@@ -543,6 +543,7 @@ export function generateInlineWizardPreviewProseStyles(
 ): string {
 	const c = theme.colors;
 	const s = scopeSelector ? `${scopeSelector}.prose, ${scopeSelector} .prose` : '.prose';
+	const bionifySelector = scopeSelector ? `${scopeSelector} .prose` : '.prose';
 	const isStreaming = variant === 'streaming';
 
 	const heading1Size = isStreaming ? '1.75em' : '2em';
@@ -617,7 +618,7 @@ export function generateInlineWizardPreviewProseStyles(
       list-style-type: none;
       margin-left: -1.5em;
     }
-    ${getBionifyReadingModeStyles(s, theme)}
+    ${getBionifyReadingModeStyles(bionifySelector, theme)}
   `;
 }
 

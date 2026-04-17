@@ -74,7 +74,7 @@ export function normalizeReaderLanguage(lang: string | undefined): string {
 
 export function parseTextWithCodeBlocks(text: string): WebReaderTextSegment[] {
 	const segments: WebReaderTextSegment[] = [];
-	const codeBlockRegex = /```([^\n\r`]*)\n?([\s\S]*?)```/g;
+	const codeBlockRegex = /(`{3,})([^\n\r`]*)\n?([\s\S]*?)\1/g;
 
 	let lastIndex = 0;
 	let match: RegExpExecArray | null;
@@ -90,8 +90,8 @@ export function parseTextWithCodeBlocks(text: string): WebReaderTextSegment[] {
 			}
 		}
 
-		let language = (match[1] || '').trim();
-		let code = match[2] || '';
+		let language = (match[2] || '').trim();
+		let code = match[3] || '';
 
 		if (!code.trim() && language.includes(' ')) {
 			const [languageToken, ...inlineCodeParts] = language.split(/\s+/);
@@ -134,6 +134,8 @@ export function parseTextWithCodeBlocks(text: string): WebReaderTextSegment[] {
 }
 
 function isMarkdownPreviewable(content: string): boolean {
+	// This deliberately checks only fence-marker parity. It does not validate full
+	// fence structure, and should stay aligned with the lighter-weight parser above.
 	const codeBlockMatches = content.match(/```/g);
 	if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
 		return false;

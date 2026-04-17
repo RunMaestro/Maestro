@@ -207,7 +207,9 @@ describe('BroadcastService', () => {
 			expect(dashboardClient.socket.send).toHaveBeenCalledTimes(1);
 			expect(sessionClient.socket.send).toHaveBeenCalledTimes(1);
 		});
+	});
 
+	describe('Bionify Reading Mode Sync (Desktop → Web)', () => {
 		it('should broadcast bionify reading mode changes with the correct payload', () => {
 			const client = createMockClient('client-1');
 			clients.set('client-1', client);

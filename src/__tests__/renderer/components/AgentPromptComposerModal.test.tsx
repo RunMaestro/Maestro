@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentPromptComposerModal } from '../../../renderer/components/AgentPromptComposerModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react
@@ -110,6 +111,7 @@ describe('AgentPromptComposerModal', () => {
 		theme = createTestTheme();
 		vi.clearAllMocks();
 		mockAutocompleteState.isOpen = false;
+		useSettingsStore.setState({ bionifyReadingMode: false });
 	});
 
 	afterEach(() => {
@@ -181,6 +183,8 @@ describe('AgentPromptComposerModal', () => {
 
 	describe('reading-mode exclusions', () => {
 		it('keeps the prompt textarea out of bionify reading mode', () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
 			renderWithLayerStack(
 				<AgentPromptComposerModal
 					isOpen={true}

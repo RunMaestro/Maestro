@@ -841,6 +841,36 @@ export const FilePreview = React.memo(
 
 		// Track if content is truncated for display
 		const isContentTruncated = file?.content && displayContent.length < file.content.length;
+		const hasActiveSearch = searchQuery.trim().length > 0;
+		// Keep rendered text nodes intact while search is active so preview matches remain findable.
+		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
+		const truncationBanner = isContentTruncated ? (
+			<div
+				className="px-4 py-2 flex items-center gap-2 text-sm"
+				style={{
+					backgroundColor: theme.colors.warning + '20',
+					borderBottom: `1px solid ${theme.colors.warning}40`,
+					color: theme.colors.warning,
+				}}
+			>
+				<AlertTriangle className="w-4 h-4 flex-shrink-0" />
+				<span>
+					Large file preview truncated. Showing first {formatFileSize(LARGE_FILE_PREVIEW_LIMIT)} of{' '}
+					{formatFileSize(file?.content.length ?? 0)}.
+				</span>
+				<button
+					className="px-2 py-0.5 rounded text-xs font-medium hover:brightness-125 transition-all"
+					style={{
+						backgroundColor: theme.colors.warning + '30',
+						border: `1px solid ${theme.colors.warning}60`,
+						color: theme.colors.warning,
+					}}
+					onClick={() => setShowFullContent(true)}
+				>
+					Load full file
+				</button>
+			</div>
+		) : null;
 
 		// Calculate task counts for markdown files
 		const taskCounts = useMemo(() => {
@@ -900,7 +930,7 @@ export const FilePreview = React.memo(
 				customLanguageRenderers: {
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
-				enableBionifyReadingMode: bionifyReadingMode,
+				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
 				onExternalLinkClick: (href) => {
 					if (/^file:\/\//.test(href)) {
@@ -952,7 +982,7 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
-		}, [bionifyReadingMode, onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
+		}, [effectiveBionifyReadingMode, onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
 
 		// Extract directory path without filename
 		const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
@@ -2393,45 +2423,21 @@ export const FilePreview = React.memo(
 							</ReactMarkdown>
 						</div>
 					) : isReadableText && !markdownEditMode ? (
-						<BionifyTextBlock
-							ref={markdownContainerRef}
-							className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
-							style={{ color: theme.colors.textMain }}
-							enabled={bionifyReadingMode}
-						>
-							{displayContent}
-						</BionifyTextBlock>
+						<div ref={codeContainerRef}>
+							{truncationBanner}
+							<BionifyTextBlock
+								ref={markdownContainerRef}
+								className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
+								style={{ color: theme.colors.textMain }}
+								enabled={effectiveBionifyReadingMode}
+								restOpacity={theme.mode === 'light' ? 0.9 : 0.96}
+							>
+								{displayContent}
+							</BionifyTextBlock>
+						</div>
 					) : (
 						<div ref={codeContainerRef}>
-							{/* Large file truncation banner */}
-							{isContentTruncated && (
-								<div
-									className="px-4 py-2 flex items-center gap-2 text-sm"
-									style={{
-										backgroundColor: theme.colors.warning + '20',
-										borderBottom: `1px solid ${theme.colors.warning}40`,
-										color: theme.colors.warning,
-									}}
-								>
-									<AlertTriangle className="w-4 h-4 flex-shrink-0" />
-									<span>
-										Large file preview truncated. Showing first{' '}
-										{formatFileSize(LARGE_FILE_PREVIEW_LIMIT)} of{' '}
-										{formatFileSize(file.content.length)}.
-									</span>
-									<button
-										className="px-2 py-0.5 rounded text-xs font-medium hover:brightness-125 transition-all"
-										style={{
-											backgroundColor: theme.colors.warning + '30',
-											border: `1px solid ${theme.colors.warning}60`,
-											color: theme.colors.warning,
-										}}
-										onClick={() => setShowFullContent(true)}
-									>
-										Load full file
-									</button>
-								</div>
-							)}
+							{truncationBanner}
 							<SyntaxHighlighter
 								language={language}
 								style={getSyntaxStyle(theme.mode)}

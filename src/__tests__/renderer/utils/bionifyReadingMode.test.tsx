@@ -53,10 +53,26 @@ describe('bionifyReadingMode', () => {
 		);
 	});
 
+	it('injects a single shared style block for repeated readable-text wrappers', () => {
+		render(
+			<>
+				<BionifyTextBlock enabled={true}>First block</BionifyTextBlock>
+				<BionifyTextBlock enabled={true}>Second block</BionifyTextBlock>
+			</>
+		);
+
+		expect(document.querySelectorAll('#maestro-bionify-reading-mode-styles')).toHaveLength(1);
+	});
+
 	it('exposes scoped reading-mode styles for prose containers', () => {
 		expect(getBionifyReadingModeStyles('.custom-scope')).toContain('.custom-scope .bionify-word');
 		expect(getBionifyReadingModeStyles('.custom-scope')).toContain(
 			'.custom-scope .bionify-word-rest'
 		);
+		expect(
+			getBionifyReadingModeStyles('.custom-scope', {
+				mode: 'light',
+			} as any)
+		).toContain('opacity: 0.9');
 	});
 });

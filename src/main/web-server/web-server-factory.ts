@@ -208,7 +208,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		});
 
 		server.setGetBionifyReadingModeCallback(() => {
-			return settingsStore.get('bionifyReadingMode', false) as boolean;
+			return settingsStore.get<boolean>('bionifyReadingMode', false);
 		});
 
 		// Set up callback for web server to fetch custom AI commands

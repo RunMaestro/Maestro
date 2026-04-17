@@ -26,6 +26,30 @@ const BIONIFY_SKIPPED_TAGS = new Set([
 	'textarea',
 ]);
 const DEFAULT_BIONIFY_SCOPE_SELECTOR = '.bionify-text-block';
+const DEFAULT_BIONIFY_REST_OPACITY = 0.96;
+const BIONIFY_STYLE_ID = 'maestro-bionify-reading-mode-styles';
+let hasInjectedBionifyStyles = false;
+
+function resolveBionifyRestOpacity(theme?: Theme): number {
+	return theme?.mode === 'light' ? 0.9 : DEFAULT_BIONIFY_REST_OPACITY;
+}
+
+function ensureBionifyStylesInjected(): void {
+	if (hasInjectedBionifyStyles || typeof document === 'undefined') {
+		return;
+	}
+
+	if (document.getElementById(BIONIFY_STYLE_ID)) {
+		hasInjectedBionifyStyles = true;
+		return;
+	}
+
+	const style = document.createElement('style');
+	style.id = BIONIFY_STYLE_ID;
+	style.textContent = getBionifyReadingModeStyles();
+	document.head.appendChild(style);
+	hasInjectedBionifyStyles = true;
+}
 
 function getEmphasisLength(word: string): number {
 	if (word.length <= 3) return 1;
@@ -113,7 +137,9 @@ export function getBionifyReadingModeStyles(
 	scopeSelector: string = DEFAULT_BIONIFY_SCOPE_SELECTOR,
 	theme?: Theme
 ): string {
-	const restOpacity = theme?.mode === 'light' ? 0.9 : 0.96;
+	const restOpacity = theme
+		? String(resolveBionifyRestOpacity(theme))
+		: `var(--bionify-rest-opacity, ${DEFAULT_BIONIFY_REST_OPACITY})`;
 
 	return `
 		${scopeSelector} .bionify-word { display: inline; color: inherit; }
@@ -134,19 +160,24 @@ export function BionifyText({ children, enabled }: BionifyTextProps) {
 interface BionifyTextBlockProps extends HTMLAttributes<HTMLDivElement> {
 	enabled: boolean;
 	children: ReactNode;
+	restOpacity?: number;
 	style?: CSSProperties;
 }
 
 export const BionifyTextBlock = forwardRef<HTMLDivElement, BionifyTextBlockProps>(
 	function BionifyTextBlock(
-		{ children, enabled, className = '', style, ...props },
+		{ children, enabled, className = '', restOpacity, style, ...props },
 		ref: ForwardedRef<HTMLDivElement>
 	) {
+		ensureBionifyStylesInjected();
 		const blockClassName = ['bionify-text-block', className].filter(Boolean).join(' ');
+		const blockStyle = {
+			...style,
+			['--bionify-rest-opacity' as const]: restOpacity ?? DEFAULT_BIONIFY_REST_OPACITY,
+		} as CSSProperties;
 
 		return (
-			<div ref={ref} className={blockClassName} style={style} {...props}>
-				<style>{getBionifyReadingModeStyles()}</style>
+			<div ref={ref} className={blockClassName} style={blockStyle} {...props}>
 				<BionifyText enabled={enabled}>{children}</BionifyText>
 			</div>
 		);

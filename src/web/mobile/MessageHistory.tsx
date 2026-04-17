@@ -254,6 +254,7 @@ export function MessageHistory({
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
+					const isStdoutBionify = enableBionifyReadingMode && source === 'stdout';
 
 					return (
 						<div
@@ -356,7 +357,7 @@ export function MessageHistory({
 									// full response viewer to avoid double-transforming raw text.
 									<WebReadingContent
 										content={displayText}
-										enableBionifyReadingMode={enableBionifyReadingMode}
+										enableBionifyReadingMode={isStdoutBionify}
 										fontSize={13}
 										gap="8px"
 									/>

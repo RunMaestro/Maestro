@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -346,6 +346,43 @@ describe('FilePreview', () => {
 
 			expect(screen.getByText('Readable text preview content')).toBeInTheDocument();
 			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+		});
+
+		it('disables Bionify spans while search is active so readable text remains searchable', async () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'reading mode keeps reading searchable',
+						path: '/test/notes.txt',
+					}}
+					initialSearchQuery="reading"
+				/>
+			);
+
+			await waitFor(() => expect(screen.getByText('1/2')).toBeInTheDocument());
+			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+		});
+
+		it('shows the truncation banner for large readable text previews and can load the full file', () => {
+			const largeContent = 'y'.repeat(200 * 1024);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'large.txt', content: largeContent, path: '/test/large.txt' }}
+				/>
+			);
+
+			expect(screen.getByText(/Large file preview truncated/)).toBeInTheDocument();
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Load full file'));
+
+			expect(screen.queryByText(/Large file preview truncated/)).not.toBeInTheDocument();
 		});
 	});
 

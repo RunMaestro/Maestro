@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	normalizeWebReaderContent,
+	parseTextWithCodeBlocks,
 	type WebReaderTextSegment,
 } from '../../../web/mobile/readingContent';
 
@@ -39,5 +40,13 @@ describe('normalizeWebReaderContent', () => {
 			kind: 'structured',
 			segments: [{ type: 'text', content: '# Heading\n```ts\nconst value = 1;' }],
 		});
+	});
+
+	it('parses fenced code blocks that use more than three backticks', () => {
+		expect(parseTextWithCodeBlocks('intro\n````ts\nconst value = `code`;\n````\noutro')).toEqual([
+			{ type: 'text', content: 'intro\n' },
+			{ type: 'code', content: 'const value = `code`;', language: 'typescript' },
+			{ type: 'text', content: '\noutro' },
+		]);
 	});
 });

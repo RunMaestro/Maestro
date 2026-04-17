@@ -179,6 +179,7 @@ export const WebReadingContent = memo(
 		logContext = 'WebReadingContent',
 	}: WebReadingContentProps) => {
 		const colors = useThemeColors();
+		const { isDark } = useTheme();
 		const normalizedContent = useMemo(() => normalizeWebReaderContent(content), [content]);
 
 		if (normalizedContent.kind === 'markdown' && normalizedContent.markdown) {
@@ -213,6 +214,7 @@ export const WebReadingContent = memo(
 						<BionifyTextBlock
 							key={`${segment.type}-${index}`}
 							enabled={enableBionifyReadingMode}
+							restOpacity={isDark ? 0.96 : 0.9}
 							style={{
 								fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
 								fontSize: `${fontSize}px`,
