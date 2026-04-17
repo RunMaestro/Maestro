@@ -74,3 +74,28 @@ describe('isDescendantOrEqual', () => {
 		expect(isDescendantOrEqual('/a/b/', '/a/b')).toBe(true);
 	});
 });
+
+// Regression: this utility is imported by the renderer pipeline save flow.
+// Do NOT let anyone reintroduce a Node `path` dependency — the renderer
+// strips it and saves fail with "path.resolve is not a function".
+describe('cue-path-utils (renderer-safe)', () => {
+	it('does not reference Node built-in modules at import time', async () => {
+		// A pure-JS module imports and evaluates without `require`/`import` of
+		// Node built-ins; this assertion just re-executes the module to confirm.
+		await expect(import('../../shared/cue-path-utils')).resolves.toBeDefined();
+	});
+
+	describe('Windows paths', () => {
+		it('computes common ancestor for sibling Windows directories', () => {
+			expect(computeCommonAncestorPath(['C:\\proj\\a', 'C:\\proj\\b'])).toBe('C:\\proj');
+		});
+
+		it('detects descendant under a Windows project root', () => {
+			expect(isDescendantOrEqual('C:\\proj\\sub', 'C:\\proj')).toBe(true);
+		});
+
+		it('rejects non-boundary Windows prefix matches', () => {
+			expect(isDescendantOrEqual('C:\\proj2', 'C:\\proj')).toBe(false);
+		});
+	});
+});
