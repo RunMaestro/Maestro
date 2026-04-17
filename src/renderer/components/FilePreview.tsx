@@ -53,7 +53,7 @@ import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../utils/markdownC
 import type { FileNode } from '../types/fileTree';
 import { isImageFile } from '../../shared/gitUtils';
 import { useSettingsStore } from '../stores/settingsStore';
-import { BionifyText } from '../utils/bionifyReadingMode';
+import { BionifyTextBlock } from '../utils/bionifyReadingMode';
 
 // Global cache for loaded images to prevent re-fetching and flickering
 // Maps resolved path -> { dataUrl, dimensions }
@@ -2393,18 +2393,14 @@ export const FilePreview = React.memo(
 							</ReactMarkdown>
 						</div>
 					) : isReadableText && !markdownEditMode ? (
-						<div
+						<BionifyTextBlock
 							ref={markdownContainerRef}
 							className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
 							style={{ color: theme.colors.textMain }}
+							enabled={bionifyReadingMode}
 						>
-							<style>{`
-								.prose .bionify-word { display: inline; }
-								.prose .bionify-word-emphasis { font-weight: 700; }
-								.prose .bionify-word-rest { font-weight: 400; opacity: 0.92; }
-							`}</style>
-							<BionifyText enabled={bionifyReadingMode}>{displayContent}</BionifyText>
-						</div>
+							{displayContent}
+						</BionifyTextBlock>
 					) : (
 						<div ref={codeContainerRef}>
 							{/* Large file truncation banner */}

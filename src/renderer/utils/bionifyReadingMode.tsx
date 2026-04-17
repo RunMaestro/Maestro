@@ -1,4 +1,13 @@
-import React, { Children, cloneElement, isValidElement, type ReactNode } from 'react';
+import React, {
+	Children,
+	cloneElement,
+	forwardRef,
+	isValidElement,
+	type CSSProperties,
+	type ForwardedRef,
+	type HTMLAttributes,
+	type ReactNode,
+} from 'react';
 
 const BIONIFY_WORD_PATTERN = /(\p{L}[\p{L}\p{M}'’-]*)/gu;
 const BIONIFY_SKIPPED_TAGS = new Set([
@@ -15,6 +24,7 @@ const BIONIFY_SKIPPED_TAGS = new Set([
 	'svg',
 	'textarea',
 ]);
+const DEFAULT_BIONIFY_SCOPE_SELECTOR = '.bionify-text-block';
 
 function getEmphasisLength(word: string): number {
 	if (word.length <= 3) return 1;
@@ -98,6 +108,16 @@ export function renderBionifyChildren(children: ReactNode, enabled: boolean): Re
 	return Children.map(children, (child, index) => transformBionifyNode(child, enabled, index));
 }
 
+export function getBionifyReadingModeStyles(
+	scopeSelector: string = DEFAULT_BIONIFY_SCOPE_SELECTOR
+): string {
+	return `
+		${scopeSelector} .bionify-word { display: inline; }
+		${scopeSelector} .bionify-word-emphasis { font-weight: 700; }
+		${scopeSelector} .bionify-word-rest { font-weight: 400; opacity: 0.92; }
+	`;
+}
+
 interface BionifyTextProps {
 	children: ReactNode;
 	enabled: boolean;
@@ -106,3 +126,25 @@ interface BionifyTextProps {
 export function BionifyText({ children, enabled }: BionifyTextProps) {
 	return <>{renderBionifyChildren(children, enabled)}</>;
 }
+
+interface BionifyTextBlockProps extends HTMLAttributes<HTMLDivElement> {
+	enabled: boolean;
+	children: ReactNode;
+	style?: CSSProperties;
+}
+
+export const BionifyTextBlock = forwardRef<HTMLDivElement, BionifyTextBlockProps>(
+	function BionifyTextBlock(
+		{ children, enabled, className = '', style, ...props },
+		ref: ForwardedRef<HTMLDivElement>
+	) {
+		const blockClassName = ['bionify-text-block', className].filter(Boolean).join(' ');
+
+		return (
+			<div ref={ref} className={blockClassName} style={style} {...props}>
+				<style>{getBionifyReadingModeStyles()}</style>
+				<BionifyText enabled={enabled}>{children}</BionifyText>
+			</div>
+		);
+	}
+);

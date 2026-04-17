@@ -10,8 +10,7 @@ import type { FileNode } from '../types/fileTree';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
-import { REMARK_GFM_PLUGINS } from '../utils/markdownConfig';
-import { BionifyText } from '../utils/bionifyReadingMode';
+import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdownConfig';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -292,6 +291,12 @@ export const MarkdownRenderer = memo(
 			return content;
 		}, [content, allowRawHtml]);
 
+		const withReadableTransforms = (children: React.ReactNode) =>
+			applyReadableTextTransforms(children, {
+				theme,
+				enableBionifyReadingMode,
+			});
+
 		return (
 			<div
 				className={`prose prose-sm max-w-none text-sm ${className}`}
@@ -387,49 +392,31 @@ export const MarkdownRenderer = memo(
 							);
 						},
 						p: ({ node: _node, children, ...props }: any) => (
-							<p {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</p>
+							<p {...props}>{withReadableTransforms(children)}</p>
 						),
 						li: ({ node: _node, children, ...props }: any) => (
-							<li {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</li>
+							<li {...props}>{withReadableTransforms(children)}</li>
 						),
 						blockquote: ({ node: _node, children, ...props }: any) => (
-							<blockquote {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</blockquote>
+							<blockquote {...props}>{withReadableTransforms(children)}</blockquote>
 						),
 						h1: ({ node: _node, children, ...props }: any) => (
-							<h1 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h1>
+							<h1 {...props}>{withReadableTransforms(children)}</h1>
 						),
 						h2: ({ node: _node, children, ...props }: any) => (
-							<h2 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h2>
+							<h2 {...props}>{withReadableTransforms(children)}</h2>
 						),
 						h3: ({ node: _node, children, ...props }: any) => (
-							<h3 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h3>
+							<h3 {...props}>{withReadableTransforms(children)}</h3>
 						),
 						h4: ({ node: _node, children, ...props }: any) => (
-							<h4 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h4>
+							<h4 {...props}>{withReadableTransforms(children)}</h4>
 						),
 						h5: ({ node: _node, children, ...props }: any) => (
-							<h5 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h5>
+							<h5 {...props}>{withReadableTransforms(children)}</h5>
 						),
 						h6: ({ node: _node, children, ...props }: any) => (
-							<h6 {...props}>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
-							</h6>
+							<h6 {...props}>{withReadableTransforms(children)}</h6>
 						),
 						img: ({ node: _node, src, alt, ...props }: any) => {
 							// Use LocalImage component to handle file:// URLs via IPC
@@ -470,7 +457,7 @@ export const MarkdownRenderer = memo(
 									...(style || {}),
 								}}
 							>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+								{withReadableTransforms(children)}
 							</th>
 						),
 						td: ({ node: _node, style, children, ...props }: any) => (
@@ -486,7 +473,7 @@ export const MarkdownRenderer = memo(
 									...(style || {}),
 								}}
 							>
-								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+								{withReadableTransforms(children)}
 							</td>
 						),
 						// Strip event handler attributes (e.g. onToggle) that rehype-raw may

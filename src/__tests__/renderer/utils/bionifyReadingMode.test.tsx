@@ -1,7 +1,12 @@
 import React from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { BionifyText, renderBionifyText } from '../../../renderer/utils/bionifyReadingMode';
+import {
+	BionifyText,
+	BionifyTextBlock,
+	getBionifyReadingModeStyles,
+	renderBionifyText,
+} from '../../../renderer/utils/bionifyReadingMode';
 
 describe('bionifyReadingMode', () => {
 	it('leaves content unchanged when disabled', () => {
@@ -32,5 +37,26 @@ describe('bionifyReadingMode', () => {
 		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
 		expect(document.querySelector('a .bionify-word')).not.toBeInTheDocument();
 		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+	});
+
+	it('renders a reusable readable text block wrapper for plain-text surfaces', () => {
+		render(
+			<BionifyTextBlock enabled={true} className="prose" data-testid="reading-block">
+				Plain text blocks stay selectable.
+			</BionifyTextBlock>
+		);
+
+		expect(screen.getByTestId('reading-block')).toHaveClass('bionify-text-block');
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+		expect(screen.getByTestId('reading-block')).toHaveTextContent(
+			'Plain text blocks stay selectable.'
+		);
+	});
+
+	it('exposes scoped reading-mode styles for prose containers', () => {
+		expect(getBionifyReadingModeStyles('.custom-scope')).toContain('.custom-scope .bionify-word');
+		expect(getBionifyReadingModeStyles('.custom-scope')).toContain(
+			'.custom-scope .bionify-word-rest'
+		);
 	});
 });

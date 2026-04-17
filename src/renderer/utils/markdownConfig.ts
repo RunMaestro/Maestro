@@ -331,6 +331,24 @@ function highlightSearchMatches(
 	return processChild(children, 0);
 }
 
+export function applyReadableTextTransforms(
+	children: React.ReactNode,
+	options: Pick<MarkdownComponentsOptions, 'enableBionifyReadingMode' | 'searchHighlight'> & {
+		theme: Theme;
+	}
+): React.ReactNode {
+	const { theme, searchHighlight, enableBionifyReadingMode = false } = options;
+	const highlighted =
+		searchHighlight && searchHighlight.query.trim()
+			? highlightSearchMatches(children, searchHighlight, theme)
+			: children;
+
+	return React.createElement(BionifyText, {
+		enabled: enableBionifyReadingMode,
+		children: highlighted,
+	});
+}
+
 export function createMarkdownComponents(options: MarkdownComponentsOptions): Partial<Components> {
 	const {
 		theme,
@@ -348,19 +366,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	// Reset match counter at start of each render
 	globalMatchCounter = 0;
 
-	// Helper to wrap children with search highlighting
-	const withHighlight = (children: React.ReactNode): React.ReactNode => {
-		if (!searchHighlight || !searchHighlight.query.trim()) {
-			return children;
-		}
-		return highlightSearchMatches(children, searchHighlight, theme);
-	};
-
 	const withReadableTransforms = (children: React.ReactNode): React.ReactNode => {
-		const highlighted = withHighlight(children);
-		return React.createElement(BionifyText, {
-			enabled: enableBionifyReadingMode,
-			children: highlighted,
+		return applyReadableTextTransforms(children, {
+			theme,
+			searchHighlight,
+			enableBionifyReadingMode,
 		});
 	};
 
