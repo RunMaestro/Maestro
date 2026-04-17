@@ -8,6 +8,7 @@ import React, {
 	type HTMLAttributes,
 	type ReactNode,
 } from 'react';
+import type { Theme } from '../types';
 
 const BIONIFY_WORD_PATTERN = /(\p{L}[\p{L}\p{M}'’-]*)/gu;
 const BIONIFY_SKIPPED_TAGS = new Set([
@@ -109,12 +110,15 @@ export function renderBionifyChildren(children: ReactNode, enabled: boolean): Re
 }
 
 export function getBionifyReadingModeStyles(
-	scopeSelector: string = DEFAULT_BIONIFY_SCOPE_SELECTOR
+	scopeSelector: string = DEFAULT_BIONIFY_SCOPE_SELECTOR,
+	theme?: Theme
 ): string {
+	const restOpacity = theme?.mode === 'light' ? 0.9 : 0.96;
+
 	return `
-		${scopeSelector} .bionify-word { display: inline; }
-		${scopeSelector} .bionify-word-emphasis { font-weight: 700; }
-		${scopeSelector} .bionify-word-rest { font-weight: 400; opacity: 0.92; }
+		${scopeSelector} .bionify-word { display: inline; color: inherit; }
+		${scopeSelector} .bionify-word-emphasis { font-weight: 600; color: inherit; }
+		${scopeSelector} .bionify-word-rest { font-weight: 400; color: inherit; opacity: ${restOpacity}; }
 	`;
 }
 

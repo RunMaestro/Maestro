@@ -22,7 +22,7 @@ import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
-import { BionifyText } from './bionifyReadingMode';
+import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 
 // ============================================================================
 // Types
@@ -163,9 +163,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} th { background-color: ${colors.bgActivity}; font-weight: bold; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
-    ${s} .bionify-word { display: inline; }
-    ${s} .bionify-word-emphasis { font-weight: 700; }
-    ${s} .bionify-word-rest { font-weight: 400; opacity: 0.92; }
+    ${getBionifyReadingModeStyles(s, theme)}
   `.trim();
 
 	// Add checkbox styles if requested
@@ -619,6 +617,7 @@ export function generateInlineWizardPreviewProseStyles(
       list-style-type: none;
       margin-left: -1.5em;
     }
+    ${getBionifyReadingModeStyles(s, theme)}
   `;
 }
 
