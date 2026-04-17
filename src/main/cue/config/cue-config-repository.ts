@@ -180,11 +180,17 @@ export function pruneOrphanedPromptFiles(
 /**
  * Watches both canonical and legacy Cue config paths.
  * Debounces onChange by 1 second.
+ *
+ * Uses a `torn` flag and instance check so any event that slips past
+ * `watcher.close()` (chokidar emits an `unlink` for in-flight events on some
+ * platforms) is rejected — preventing a stale watcher from triggering a
+ * refresh on a session that has been torn down or re-registered.
  */
 export function watchCueConfigFile(projectRoot: string, onChange: () => void): () => void {
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const legacyPath = path.join(projectRoot, LEGACY_CUE_CONFIG_PATH);
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+	let torn = false;
 
 	const watcher = chokidar.watch([canonicalPath, legacyPath], {
 		persistent: true,
@@ -192,11 +198,13 @@ export function watchCueConfigFile(projectRoot: string, onChange: () => void): (
 	});
 
 	const debouncedOnChange = () => {
+		if (torn) return;
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 		}
 		debounceTimer = setTimeout(() => {
 			debounceTimer = null;
+			if (torn) return;
 			onChange();
 		}, 1000);
 	};
@@ -206,8 +214,10 @@ export function watchCueConfigFile(projectRoot: string, onChange: () => void): (
 	watcher.on('unlink', debouncedOnChange);
 
 	return () => {
+		torn = true;
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
+			debounceTimer = null;
 		}
 		watcher.close();
 	};

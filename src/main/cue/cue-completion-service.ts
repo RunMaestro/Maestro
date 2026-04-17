@@ -7,6 +7,7 @@ import {
 	SOURCE_OUTPUT_MAX_CHARS,
 	type FanInSourceCompletion,
 } from './cue-output-filter';
+import { sliceTailByChars } from './cue-text-utils';
 import {
 	createCueEvent,
 	type AgentCompletionData,
@@ -93,7 +94,7 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 
 					if (sources.length === 1) {
 						const rawStdout = completionData?.stdout ?? '';
-						const slicedOutput = rawStdout.slice(-SOURCE_OUTPUT_MAX_CHARS);
+						const slicedOutput = sliceTailByChars(rawStdout, SOURCE_OUTPUT_MAX_CHARS);
 						const completion: FanInSourceCompletion = {
 							sessionId,
 							sessionName: completingName,

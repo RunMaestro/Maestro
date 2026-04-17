@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Session, EncoreFeatureFlags } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
+import { notifyToast } from '../stores/notificationStore';
 
 /**
  * useCueAutoDiscovery — auto-discovers .maestro/cue.yaml files for sessions.
@@ -21,6 +22,10 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 	const prevSessionIdsRef = useRef<Set<string>>(new Set());
 	const prevMaestroCueEnabledRef = useRef<boolean>(encoreFeatures.maestroCue);
 	const initialScanDoneRef = useRef(false);
+	// Serializes in-flight enable/disable IPC calls so rapid toggles
+	// (ON → OFF → ON) can't interleave and leave the engine in a state
+	// that disagrees with the observed flag value.
+	const toggleChainRef = useRef<Promise<void>>(Promise.resolve());
 
 	// Track session additions and removals — always runs regardless of encore flag
 	useEffect(() => {
@@ -64,7 +69,9 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 		prevSessionIdsRef.current = currentIds;
 	}, [sessions, sessionsLoaded]);
 
-	// Track encore feature toggle
+	// Track encore feature toggle. Queues enable/disable calls on a single
+	// chain so rapid ON/OFF/ON toggles always apply in the order the user
+	// triggered them — not in IPC-response order.
 	useEffect(() => {
 		if (!sessionsLoaded) return;
 
@@ -74,28 +81,45 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 
 		if (wasEnabled === isEnabled) return;
 
-		if (isEnabled) {
-			window.maestro.cue
-				.enable()
-				.then(() =>
-					Promise.all(
-						sessions
-							.filter((session) => !!session.projectRoot)
-							.map((session) =>
-								window.maestro.cue
-									.refreshSession(session.id, session.projectRoot)
-									.catch((err) =>
-										console.error('[CueAutoDiscovery] Failed to refresh session:', err)
-									)
-							)
-					)
-				)
-				.catch((err) => console.error('[CueAutoDiscovery] Failed to enable Cue:', err));
-		} else {
-			// Feature was just disabled — stop the engine
-			window.maestro.cue
-				.disable()
-				.catch((err) => console.error('[CueAutoDiscovery] Failed to disable Cue:', err));
-		}
+		const sessionsSnapshot = sessions.filter((session) => !!session.projectRoot);
+
+		toggleChainRef.current = toggleChainRef.current.then(async () => {
+			if (isEnabled) {
+				try {
+					await window.maestro.cue.enable();
+					await Promise.all(
+						sessionsSnapshot.map((session) =>
+							window.maestro.cue
+								.refreshSession(session.id, session.projectRoot)
+								.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err))
+						)
+					);
+				} catch (err) {
+					console.error('[CueAutoDiscovery] Failed to enable Cue:', err);
+					notifyToast({
+						type: 'error',
+						title: 'Cue engine failed to start',
+						message:
+							err instanceof Error
+								? err.message
+								: 'Re-toggle Maestro Cue in Settings → Encore Features to retry.',
+					});
+				}
+			} else {
+				try {
+					await window.maestro.cue.disable();
+				} catch (err) {
+					console.error('[CueAutoDiscovery] Failed to disable Cue:', err);
+					notifyToast({
+						type: 'error',
+						title: 'Cue engine failed to stop',
+						message:
+							err instanceof Error
+								? err.message
+								: 'The engine may still be running. Restart the app if issues persist.',
+					});
+				}
+			}
+		});
 	}, [encoreFeatures.maestroCue, sessions, sessionsLoaded]);
 }

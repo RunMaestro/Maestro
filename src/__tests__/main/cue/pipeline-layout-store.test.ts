@@ -1,0 +1,174 @@
+/**
+ * Tests for pipeline-layout-store, focusing on the v1 → v2 migration path.
+ * These guard against regressions in the shape-versioning logic that lets
+ * older installs keep their layout when the per-project scoping shipped.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipeline-types';
+
+// electron's app.getPath is mocked via the module loader so the store writes
+// into a scratch directory under $TMPDIR rather than the real userData path.
+let scratchDir = '';
+
+vi.mock('electron', () => ({
+	app: {
+		getPath: (_name: string) => scratchDir,
+	},
+}));
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
+// Import AFTER vi.mock so the module picks up the stubbed electron.
+let savePipelineLayout: typeof import('../../../main/cue/pipeline-layout-store').savePipelineLayout;
+let loadPipelineLayout: typeof import('../../../main/cue/pipeline-layout-store').loadPipelineLayout;
+
+beforeEach(async () => {
+	scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-layout-test-'));
+	// Re-import fresh so the cached file path inside the store is reset for
+	// each test. Vitest's module graph keeps one instance across tests in the
+	// same file otherwise, which causes the first test's scratch path to
+	// leak into the second.
+	vi.resetModules();
+	const storeModule = await import('../../../main/cue/pipeline-layout-store');
+	savePipelineLayout = storeModule.savePipelineLayout;
+	loadPipelineLayout = storeModule.loadPipelineLayout;
+});
+
+afterEach(() => {
+	if (scratchDir && fs.existsSync(scratchDir)) {
+		fs.rmSync(scratchDir, { recursive: true, force: true });
+	}
+});
+
+describe('pipeline-layout-store — v1 → v2 migration', () => {
+	it('returns null when no layout file exists', () => {
+		expect(loadPipelineLayout()).toBeNull();
+	});
+
+	it('migrates a v1 legacy file by folding top-level fields into the default project key', () => {
+		const legacy = {
+			pipelines: [],
+			selectedPipelineId: 'p1',
+			viewport: { x: 10, y: 20, zoom: 1.5 },
+			writtenRoots: ['/projects/foo'],
+		};
+		fs.writeFileSync(
+			path.join(scratchDir, 'cue-pipeline-layout.json'),
+			JSON.stringify(legacy),
+			'utf-8'
+		);
+
+		const loaded = loadPipelineLayout();
+		expect(loaded).not.toBeNull();
+		expect(loaded!.version).toBe(2);
+		expect(loaded!.perProject).toBeDefined();
+		expect(loaded!.perProject![PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY]).toEqual({
+			selectedPipelineId: 'p1',
+			viewport: { x: 10, y: 20, zoom: 1.5 },
+		});
+		// Preserves the original top-level fields as v1 fallback
+		expect(loaded!.selectedPipelineId).toBe('p1');
+		expect(loaded!.viewport).toEqual({ x: 10, y: 20, zoom: 1.5 });
+	});
+
+	it('leaves v2 files alone on load', () => {
+		const v2 = {
+			version: 2,
+			pipelines: [],
+			selectedPipelineId: 'p1',
+			viewport: { x: 0, y: 0, zoom: 1 },
+			perProject: {
+				'/projects/alpha': {
+					selectedPipelineId: 'alpha-1',
+					viewport: { x: 100, y: 200, zoom: 0.8 },
+				},
+			},
+		};
+		fs.writeFileSync(
+			path.join(scratchDir, 'cue-pipeline-layout.json'),
+			JSON.stringify(v2),
+			'utf-8'
+		);
+
+		const loaded = loadPipelineLayout();
+		expect(loaded!.version).toBe(2);
+		expect(loaded!.perProject!['/projects/alpha']).toEqual({
+			selectedPipelineId: 'alpha-1',
+			viewport: { x: 100, y: 200, zoom: 0.8 },
+		});
+	});
+
+	it('adds an empty perProject map when v1 file has no legacy state to migrate', () => {
+		const empty = { pipelines: [], selectedPipelineId: null };
+		fs.writeFileSync(
+			path.join(scratchDir, 'cue-pipeline-layout.json'),
+			JSON.stringify(empty),
+			'utf-8'
+		);
+
+		const loaded = loadPipelineLayout();
+		expect(loaded!.version).toBe(2);
+		expect(loaded!.perProject).toEqual({});
+	});
+
+	it('returns null on corrupt JSON instead of throwing', () => {
+		fs.writeFileSync(
+			path.join(scratchDir, 'cue-pipeline-layout.json'),
+			'{{ not valid json',
+			'utf-8'
+		);
+		expect(loadPipelineLayout()).toBeNull();
+	});
+});
+
+describe('pipeline-layout-store — save', () => {
+	it('stamps version 2 on every write', () => {
+		savePipelineLayout({
+			pipelines: [],
+			selectedPipelineId: null,
+			perProject: {},
+		});
+		const raw = fs.readFileSync(path.join(scratchDir, 'cue-pipeline-layout.json'), 'utf-8');
+		expect(JSON.parse(raw).version).toBe(2);
+	});
+
+	it('preserves the perProject map across save cycles', () => {
+		const withPerProject = {
+			pipelines: [],
+			selectedPipelineId: 'p1',
+			viewport: { x: 1, y: 2, zoom: 1 },
+			perProject: {
+				'/proj/a': {
+					selectedPipelineId: 'a-1',
+					viewport: { x: 50, y: 60, zoom: 1.2 },
+				},
+				'/proj/b': {
+					selectedPipelineId: 'b-1',
+					viewport: { x: -10, y: -20, zoom: 0.5 },
+				},
+			},
+		};
+		savePipelineLayout(withPerProject);
+
+		const loaded = loadPipelineLayout();
+		expect(loaded!.perProject!['/proj/a']).toEqual(withPerProject.perProject['/proj/a']);
+		expect(loaded!.perProject!['/proj/b']).toEqual(withPerProject.perProject['/proj/b']);
+	});
+
+	it('initializes perProject to an empty object when not provided', () => {
+		// Simulates a caller that omits perProject — the store should coerce
+		// it rather than leaving it undefined on disk.
+		savePipelineLayout({
+			pipelines: [],
+			selectedPipelineId: null,
+		} as Parameters<typeof savePipelineLayout>[0]);
+		const raw = fs.readFileSync(path.join(scratchDir, 'cue-pipeline-layout.json'), 'utf-8');
+		expect(JSON.parse(raw).perProject).toEqual({});
+	});
+});

@@ -330,6 +330,103 @@ describe('Cue IPC Handlers', () => {
 				'prompt body 2'
 			);
 		});
+
+		// Security-hardening tests: reject malformed prompt-file keys that
+		// could write outside the .maestro/prompts/ directory. The handler
+		// validates and throws synchronously from inside the async callback —
+		// vi.mock's `withIpcErrorLogging` preserves the rejection.
+		describe('prompt-file path hardening', () => {
+			it('rejects empty string keys', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '': 'x' },
+					})
+				).rejects.toThrow(/must be a non-empty string/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects absolute paths', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '/etc/passwd.md': 'x' },
+					})
+				).rejects.toThrow(/must be a relative path/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths with parent-directory segments', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '../../escape.md': 'x' },
+					})
+				).rejects.toThrow(/parent-directory segment/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths that resolve outside .maestro/prompts/', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { 'not-prompts/file.md': 'x' },
+					})
+				).rejects.toThrow(/resolves outside the .maestro\/prompts directory/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths with mixed-in parent segments that pre-normalize to a valid location', async () => {
+				// 'prompts/../../escape.md' — .split('/') catches the '..'
+				// segment before path.resolve normalizes it away.
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '.maestro/prompts/../../escape.md': 'x' },
+					})
+				).rejects.toThrow(/parent-directory segment/);
+			});
+
+			it('rejects non-.md extensions', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '.maestro/prompts/payload.sh': 'x' },
+					})
+				).rejects.toThrow(/must end with .md/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+			});
+
+			it('normalizes Windows backslash paths to forward-slash before writing', async () => {
+				// Only meaningful on non-Windows, where path.sep is '/'. Windows
+				// already accepts both separators via path.resolve.
+				if (process.platform === 'win32') return;
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await handler(null, {
+					projectRoot: '/projects/test',
+					content: 'subscriptions: []',
+					promptFiles: { '.maestro\\prompts\\sub.md': 'body' },
+				});
+				// Normalized separator is stored as the written-file key.
+				expect(writeCuePromptFile).toHaveBeenCalledWith(
+					'/projects/test',
+					'.maestro/prompts/sub.md',
+					'body'
+				);
+			});
+		});
 	});
 
 	describe('cue:deleteYaml', () => {

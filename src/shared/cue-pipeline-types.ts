@@ -147,10 +147,51 @@ interface PipelineViewport {
 	zoom: number;
 }
 
-export interface PipelineLayoutState {
-	pipelines: CuePipeline[];
+/**
+ * Per-project view state. Each entry stores the selected pipeline and
+ * viewport for one project root, so switching between projects restores the
+ * user's prior focus instead of sharing a global selection that no longer
+ * matches. Node positions live on the pipelines themselves (not here) and
+ * are already project-scoped because each pipeline is owned by one project.
+ */
+export interface PipelineProjectViewState {
 	selectedPipelineId: string | null;
 	viewport?: PipelineViewport;
+}
+
+/**
+ * The `__default__` key is used when no active project root is available
+ * (e.g. no sessions configured yet) so the editor still has somewhere to
+ * persist viewport/selection before the user picks a project.
+ */
+export const PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY = '__default__';
+
+export interface PipelineLayoutState {
+	/**
+	 * Schema version. Legacy files (v1) have no version field — the loader
+	 * translates them into v2 on first read. Bump this only on breaking
+	 * changes to the shape; additive changes should stay at 2 with optional
+	 * fields so older clients keep loading.
+	 */
+	version?: 2;
+	pipelines: CuePipeline[];
+	/**
+	 * @deprecated v1 field kept for backward-compatible reads. New writes
+	 * use `perProject` keyed by project root. Readers should treat this as
+	 * a fallback for the default project key only.
+	 */
+	selectedPipelineId: string | null;
+	/**
+	 * @deprecated v1 field kept for backward-compatible reads. Same
+	 * fallback semantics as `selectedPipelineId`.
+	 */
+	viewport?: PipelineViewport;
+	/**
+	 * Per-project-root view state. When present, overrides the top-level
+	 * `selectedPipelineId` / `viewport` for any project key that has an
+	 * entry. Projects without an entry fall back to the v1 fields.
+	 */
+	perProject?: Record<string, PipelineProjectViewState>;
 	/**
 	 * Set of project roots that the most recent successful save wrote to.
 	 * Persisted alongside the layout so we can re-seed lastWrittenRootsRef on

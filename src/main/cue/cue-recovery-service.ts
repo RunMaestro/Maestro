@@ -75,6 +75,17 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 			const now = Date.now();
 			const gapMs = now - lastHeartbeat;
 
+			// A negative gap means the system clock jumped backward since the
+			// last heartbeat. Running reconciliation in that state would fire
+			// "missed" events that haven't actually been missed.
+			if (gapMs < 0) {
+				deps.onLog(
+					'cue',
+					`[CUE] Clock moved backward (gap: ${gapMs}ms) — skipping sleep reconciliation`
+				);
+				return;
+			}
+
 			if (gapMs < SLEEP_THRESHOLD_MS) return;
 
 			const gapMinutes = Math.round(gapMs / 60_000);

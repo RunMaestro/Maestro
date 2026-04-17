@@ -178,7 +178,7 @@ describe('useCueAutoDiscovery', () => {
 			expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
 		});
 
-		it('should call disable when maestroCue is toggled OFF', () => {
+		it('should call disable when maestroCue is toggled OFF', async () => {
 			const sessions = [makeSession('s1', '/project/a')];
 
 			useSessionStore.setState({ sessionsLoaded: true });
@@ -189,6 +189,9 @@ describe('useCueAutoDiscovery', () => {
 
 			// Toggle maestroCue OFF
 			rerender({ sessions, encore: makeEncoreFeatures(false) });
+			// Toggle calls are now serialized on a Promise chain, so the
+			// disable fires on the next microtask rather than synchronously.
+			await act(async () => {});
 
 			expect(mockDisable).toHaveBeenCalledTimes(1);
 		});
@@ -232,6 +235,85 @@ describe('useCueAutoDiscovery', () => {
 			rerender({ sessions: updatedSessions, encore: encoreFeatures });
 
 			expect(mockRefreshSession).toHaveBeenCalledWith('s2', '/project/b');
+		});
+	});
+
+	describe('rapid-toggle serialization', () => {
+		// These tests guard the queueing behavior that prevents ON → OFF → ON
+		// toggles from racing when enable/disable IPC calls have different
+		// latencies. Without serialization, a slow enable() resolving after a
+		// fast disable() could leave the engine enabled when the flag says off.
+
+		it('serializes enable/disable calls in flag-change order even when IPC latency varies', async () => {
+			const sessions = [makeSession('s1', '/project/a')];
+			useSessionStore.setState({ sessionsLoaded: true });
+
+			const callOrder: string[] = [];
+			let resolveEnable: (() => void) | undefined;
+			mockEnable.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						callOrder.push('enable:start');
+						resolveEnable = () => {
+							callOrder.push('enable:resolve');
+							resolve();
+						};
+					})
+			);
+			mockDisable.mockImplementationOnce(async () => {
+				callOrder.push('disable:start');
+				callOrder.push('disable:resolve');
+			});
+
+			const { rerender } = renderHook(({ sessions: s, encore }) => useCueAutoDiscovery(s, encore), {
+				initialProps: { sessions, encore: makeEncoreFeatures(false) },
+			});
+
+			// ON → queues enable (which will hang until we resolve it)
+			rerender({ sessions, encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+			// OFF → queues disable. Must NOT execute until enable resolves.
+			rerender({ sessions, encore: makeEncoreFeatures(false) });
+			await act(async () => {});
+
+			// Disable has not started yet; it's waiting in the chain.
+			expect(callOrder).toEqual(['enable:start']);
+			expect(mockDisable).not.toHaveBeenCalled();
+
+			// Resolve enable; disable should then fire in order.
+			await act(async () => {
+				resolveEnable!();
+			});
+			await act(async () => {});
+
+			expect(callOrder).toEqual([
+				'enable:start',
+				'enable:resolve',
+				'disable:start',
+				'disable:resolve',
+			]);
+		});
+
+		it('applies the final flag value when rapid toggles occur', async () => {
+			const sessions = [makeSession('s1', '/project/a')];
+			useSessionStore.setState({ sessionsLoaded: true });
+
+			const { rerender } = renderHook(({ sessions: s, encore }) => useCueAutoDiscovery(s, encore), {
+				initialProps: { sessions, encore: makeEncoreFeatures(false) },
+			});
+
+			// OFF → ON → OFF → ON, firing 3 transitions back-to-back
+			rerender({ sessions, encore: makeEncoreFeatures(true) });
+			rerender({ sessions, encore: makeEncoreFeatures(false) });
+			rerender({ sessions, encore: makeEncoreFeatures(true) });
+			await act(async () => {});
+			// Let the microtask chain drain across all three toggles.
+			await act(async () => {});
+
+			// Every transition must have been observed once — never skipped or
+			// reordered. Final call is enable to match the final flag value.
+			expect(mockEnable).toHaveBeenCalledTimes(2);
+			expect(mockDisable).toHaveBeenCalledTimes(1);
 		});
 	});
 });

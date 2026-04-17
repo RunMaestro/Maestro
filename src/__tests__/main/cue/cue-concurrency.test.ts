@@ -365,7 +365,8 @@ describe('CueEngine Concurrency Control', () => {
 
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
-				expect.stringContaining('Dropping stale queued event')
+				expect.stringContaining('Dropping stale queued event'),
+				expect.objectContaining({ type: 'runFinished', status: 'timeout' })
 			);
 
 			engine.stopAll();
@@ -861,7 +862,8 @@ describe('CueEngine Concurrency Control', () => {
 			// All stale events should have been dropped
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
-				expect.stringContaining('Dropping stale queued event')
+				expect.stringContaining('Dropping stale queued event'),
+				expect.objectContaining({ type: 'runFinished', status: 'timeout' })
 			);
 
 			engine.stopAll();

@@ -21,6 +21,7 @@ import {
 	SOURCE_OUTPUT_MAX_CHARS,
 	type FanInSourceCompletion,
 } from './cue-output-filter';
+import { sliceTailByChars } from './cue-text-utils';
 
 // Re-exports preserve call-site compatibility for existing importers.
 export { SOURCE_OUTPUT_MAX_CHARS, type FanInSourceCompletion };
@@ -180,7 +181,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			tracker.set(completedSessionId, {
 				sessionId: completedSessionId,
 				sessionName: completedSessionName,
-				output: rawOutput.slice(-SOURCE_OUTPUT_MAX_CHARS),
+				output: sliceTailByChars(rawOutput, SOURCE_OUTPUT_MAX_CHARS),
 				truncated: rawOutput.length > SOURCE_OUTPUT_MAX_CHARS,
 				chainDepth: completionData?.chainDepth ?? 0,
 			});

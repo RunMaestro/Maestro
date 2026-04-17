@@ -23,6 +23,7 @@ import { CueAiChat } from './CueAiChat';
 import { YamlTextEditor } from './YamlTextEditor';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
+import { notifyToast } from '../../stores/notificationStore';
 
 interface CueYamlEditorProps {
 	isOpen: boolean;
@@ -143,7 +144,25 @@ export function CueYamlEditor({
 	const handleSave = useCallback(async () => {
 		if (!isValid) return;
 		await cueService.writeYaml(projectRoot, yamlContent);
-		await cueService.refreshSession(sessionId, projectRoot);
+		// Write succeeded, so the YAML IS on disk — but if refreshSession
+		// fails the engine keeps serving the stale config until the next app
+		// start. Surface that as a toast so the user knows to retry rather
+		// than thinking the save silently reverted.
+		try {
+			await cueService.refreshSession(sessionId, projectRoot);
+		} catch (err) {
+			captureException(err, {
+				extra: { operation: 'cueYamlEditor.refreshSession', projectRoot, sessionId },
+			});
+			notifyToast({
+				type: 'warning',
+				title: 'Cue config saved but engine did not reload',
+				message:
+					err instanceof Error
+						? `${err.message} — reopen the editor to retry.`
+						: 'Reopen the editor to retry the reload.',
+			});
+		}
 		onClose();
 	}, [isValid, projectRoot, yamlContent, sessionId, onClose]);
 

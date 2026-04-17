@@ -314,7 +314,8 @@ function MaestroConsoleInner() {
 		setDirectorNotesOpen,
 		// Maestro Cue Modal — cueModalOpen now self-sourced in AppStandaloneModals
 		setCueModalOpen,
-		// Maestro Cue YAML Editor — open state, sessionId, projectRoot, closeCueYamlEditor now self-sourced in AppStandaloneModals
+		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
+		closeCueYamlEditor,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -438,6 +439,13 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!encoreFeatures.usageStats) setUsageDashboardOpen(false);
 	}, [encoreFeatures.usageStats, setUsageDashboardOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.maestroCue) {
+			setCueModalOpen(false);
+			closeCueYamlEditor();
+		}
+	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({

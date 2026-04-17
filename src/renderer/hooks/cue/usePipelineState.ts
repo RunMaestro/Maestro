@@ -196,13 +196,24 @@ export function usePipelineState({
 	// save" symptom — `convertToReactFlowNodes` skips every pipeline whose id
 	// doesn't match the selected id, so a stale selection caused the entire
 	// canvas to render empty until the editor was remounted (tab switch).
+	//
+	// Also clear node/edge selection when the owning pipeline disappears:
+	// composite IDs like `"pipelineId:nodeId"` become unresolvable otherwise
+	// and the config panel renders empty while still occupying layout space.
 	useEffect(() => {
 		const sel = pipelineState.selectedPipelineId;
 		if (sel === null) return;
 		if (pipelineState.pipelines.length === 0) return;
 		if (pipelineState.pipelines.some((p) => p.id === sel)) return;
 		setPipelineState((prev) => ({ ...prev, selectedPipelineId: null }));
-	}, [pipelineState.pipelines, pipelineState.selectedPipelineId]);
+		setSelectedNodeId(null);
+		setSelectedEdgeId(null);
+	}, [
+		pipelineState.pipelines,
+		pipelineState.selectedPipelineId,
+		setSelectedNodeId,
+		setSelectedEdgeId,
+	]);
 
 	// Determine which pipelines have active runs
 	const runningPipelineIds = useMemo(() => {

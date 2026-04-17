@@ -16,6 +16,7 @@ import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
+import { sliceHeadByChars } from './cue-text-utils';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -234,7 +235,7 @@ export function getCueProcessList(): import('./cue-process-lifecycle').CueProces
 export function recordCueHistoryEntry(result: CueRunResult, session: SessionInfo): HistoryEntry {
 	const fullResponse =
 		result.stdout.length > MAX_HISTORY_RESPONSE_LENGTH
-			? result.stdout.substring(0, MAX_HISTORY_RESPONSE_LENGTH)
+			? sliceHeadByChars(result.stdout, MAX_HISTORY_RESPONSE_LENGTH)
 			: result.stdout;
 
 	return {

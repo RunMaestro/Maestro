@@ -12,13 +12,71 @@ import type {
 	CuePipelineState,
 	CueGraphSession,
 	PipelineLayoutState,
+	PipelineProjectViewState,
 } from '../../../shared/cue-pipeline-types';
+import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
 import { mergePipelinesWithSavedLayout } from '../../components/CuePipelineEditor/utils/pipelineLayout';
 import { captureException } from '../../utils/sentry';
 import { cueService } from '../../services/cue';
 
 import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
+
+/**
+ * Resolve the project root of a pipeline by walking its agent nodes and
+ * looking up their sessions. Returns the default key when the pipeline has
+ * no agent nodes or none of them have a known projectRoot.
+ */
+function resolvePipelineProjectKey(
+	pipelineId: string | null,
+	pipelines: CuePipelineState['pipelines'],
+	sessions: SessionInfo[]
+): string {
+	if (!pipelineId) return PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY;
+	const pipeline = pipelines.find((p) => p.id === pipelineId);
+	if (!pipeline) return PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY;
+	const sessionsById = new Map(sessions.map((s) => [s.id, s]));
+	const sessionsByName = new Map(sessions.map((s) => [s.name, s]));
+	for (const node of pipeline.nodes) {
+		if (node.type !== 'agent') continue;
+		const data = node.data as AgentNodeData;
+		const root =
+			sessionsById.get(data.sessionId)?.projectRoot ??
+			sessionsByName.get(data.sessionName)?.projectRoot;
+		if (root) return root;
+	}
+	return PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY;
+}
+
+/**
+ * Pick the per-project view state to apply when restoring layout. Prefers
+ * an entry for the selected pipeline's project root, falls back to the
+ * default key (which holds v1 legacy data after migration), and finally
+ * falls back to the top-level v1 fields so fresh installs still work.
+ */
+function pickProjectViewState(
+	layout: PipelineLayoutState,
+	pipelines: CuePipelineState['pipelines'],
+	sessions: SessionInfo[]
+): PipelineProjectViewState | null {
+	const perProject = layout.perProject ?? {};
+	const projectKey = resolvePipelineProjectKey(
+		layout.selectedPipelineId ?? null,
+		pipelines,
+		sessions
+	);
+	if (perProject[projectKey]) return perProject[projectKey];
+	if (perProject[PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY]) {
+		return perProject[PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY];
+	}
+	if (layout.selectedPipelineId !== undefined || layout.viewport) {
+		return {
+			selectedPipelineId: layout.selectedPipelineId ?? null,
+			viewport: layout.viewport,
+		};
+	}
+	return null;
+}
 
 export interface UsePipelineLayoutParams {
 	reactFlowInstance: ReactFlowInstance;
@@ -73,16 +131,45 @@ export function usePipelineLayout({
 	const pipelineStateRef = useRef(pipelineState);
 	pipelineStateRef.current = pipelineState;
 
+	// Holds the most recently loaded `perProject` map so writes can merge new
+	// state for the active project without clobbering other projects. Updated
+	// during initial restore and after each persist.
+	const perProjectRef = useRef<Record<string, PipelineProjectViewState>>({});
+	const sessionsRef = useRef(sessions);
+	sessionsRef.current = sessions;
+
 	// Debounced layout persistence (positions + viewport + written roots)
 	const persistLayout = useCallback(() => {
 		if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
 		layoutSaveTimerRef.current = setTimeout(() => {
 			const viewport = reactFlowInstance.getViewport();
 			const state = pipelineStateRef.current;
+			// Scope this viewport/selection under the current project (derived
+			// from the selected pipeline's owning agent session). Other
+			// projects' entries are preserved verbatim so switching back to
+			// them later still restores their remembered view.
+			const projectKey = resolvePipelineProjectKey(
+				state.selectedPipelineId,
+				state.pipelines,
+				sessionsRef.current
+			);
+			const nextPerProject: Record<string, PipelineProjectViewState> = {
+				...perProjectRef.current,
+				[projectKey]: {
+					selectedPipelineId: state.selectedPipelineId,
+					viewport,
+				},
+			};
+			perProjectRef.current = nextPerProject;
+
 			const layout: PipelineLayoutState = {
+				version: 2,
 				pipelines: state.pipelines,
+				// Keep top-level fields pointing at the current project so an
+				// older build reading the file still resolves sensible state.
 				selectedPipelineId: state.selectedPipelineId,
 				viewport,
+				perProject: nextPerProject,
 				// Persist the written-roots snapshot so the next mount can
 				// reseed lastWrittenRootsRef even if the originating agent has
 				// been renamed/removed (sessionId/Name lookup would miss the
@@ -171,6 +258,16 @@ export function usePipelineLayout({
 			let pipelinesForRoots: CuePipelineState['pipelines'];
 			if (savedLayout && savedLayout.pipelines) {
 				const merged = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
+				// Seed the per-project cache so future saves don't stomp on
+				// sibling projects' entries.
+				perProjectRef.current = { ...(savedLayout.perProject ?? {}) };
+
+				// Pick per-project view state if the selected pipeline has an
+				// entry; fall back to legacy top-level fields via the helper.
+				const projectView = pickProjectViewState(savedLayout, merged.pipelines, sessions);
+				if (projectView) {
+					merged.selectedPipelineId = projectView.selectedPipelineId;
+				}
 
 				setPipelineState(merged);
 				savedStateRef.current = JSON.stringify(merged.pipelines);
@@ -180,7 +277,9 @@ export function usePipelineLayout({
 				// has measured the restored nodes. Applying it here on a timeout
 				// raced against `fitView` and — more importantly — against node
 				// measurement, which caused the initial canvas to appear empty.
-				if (savedLayout.viewport) {
+				if (projectView?.viewport) {
+					pendingSavedViewportRef.current = projectView.viewport;
+				} else if (savedLayout.viewport) {
 					pendingSavedViewportRef.current = savedLayout.viewport;
 				}
 			} else {

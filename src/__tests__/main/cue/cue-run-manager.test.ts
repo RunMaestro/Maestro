@@ -46,7 +46,7 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `run-${++uuidCounter}`),
 }));
 
-import { updateCueEventStatus } from '../../../main/cue/cue-db';
+import { updateCueEventStatus, safeUpdateCueEventStatus } from '../../../main/cue/cue-db';
 import {
 	createCueRunManager,
 	type CueRunManagerDeps,
@@ -461,6 +461,62 @@ describe('createCueRunManager', () => {
 
 			// onRunCompleted should NOT be called — the engine was shut down
 			expect(deps.onRunCompleted).not.toHaveBeenCalled();
+		});
+
+		it('reset during active run: finalizes DB status when onCueRun resolves after stop', async () => {
+			// Regression test for the activity-log-loss bug: without the fix,
+			// a run completing after engine.stop()/reset() would leave its DB
+			// row stuck at `running` because both onRunCompleted AND
+			// updateCueEventStatus were skipped.
+			let resolveRun: ((val: CueRunResult) => void) | undefined;
+			const deps = createDeps({
+				onCueRun: vi.fn(
+					() =>
+						new Promise<CueRunResult>((resolve) => {
+							resolveRun = resolve;
+						})
+				),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			manager.reset();
+
+			resolveRun!(makeResult({ status: 'completed', stdout: 'hi' }));
+			await vi.advanceTimersByTimeAsync(0);
+
+			// DB status MUST be updated to the final result state so the
+			// activity log doesn't show a phantom never-ending run.
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'completed');
+			// And a log should explain the run was recorded post-stop so
+			// operators can tell this apart from a normal completion.
+			expect(deps.onLog).toHaveBeenCalledWith(
+				'cue',
+				expect.stringContaining('completed after engine stop')
+			);
+		});
+
+		it('reset during active run: preserves failed status when onCueRun resolves with failure after stop', async () => {
+			// Variant of the above covering the failure path — make sure the
+			// final status propagates to the DB regardless of outcome.
+			let resolveRun: ((val: CueRunResult) => void) | undefined;
+			const deps = createDeps({
+				onCueRun: vi.fn(
+					() =>
+						new Promise<CueRunResult>((resolve) => {
+							resolveRun = resolve;
+						})
+				),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			manager.reset();
+
+			resolveRun!(makeResult({ status: 'failed', stderr: 'boom' }));
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(expect.any(String), 'failed');
 		});
 
 		it('stopAll followed by reset: no spurious onRunCompleted', async () => {

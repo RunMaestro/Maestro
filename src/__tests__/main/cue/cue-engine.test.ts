@@ -140,8 +140,12 @@ describe('CueEngine', () => {
 			engine.start();
 			engine.stop();
 
-			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('started'));
-			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('stopped'));
+			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('started'), {
+				type: 'engineStarted',
+			});
+			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('stopped'), {
+				type: 'engineStopped',
+			});
 		});
 
 		it('does not enable when initCueDb throws', () => {
