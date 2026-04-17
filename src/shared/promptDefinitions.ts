@@ -179,8 +179,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 	{
 		id: '_interface-primitives',
 		filename: '_interface-primitives.md',
-		description:
-			'Read / Write / Peek / Poke access model plus an intent→action routing table (recurring tasks → Cue, theme/preference asks → Settings, recall → history, peer coordination → send) and offline fallback rules',
+		description: 'Read / Write / Peek / Poke access model and intent→action routing table',
 		category: 'includes',
 	},
 	{
@@ -199,21 +198,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		id: '_autorun-playbooks',
 		filename: '_autorun-playbooks.md',
 		description:
-			'Auto Run / autorun / auto-run documents — a.k.a. **playbooks** (also: "play book", "auto run doc", "autorun doc", "auto-run doc"). Spec for file naming, the mandatory `- [ ]` checkbox task format, grouping rules, structured artifacts, and Playbook Exchange. Pull this whenever the user mentions any of those terms or asks you to author/modify automation docs',
+			'Spec for Auto Run documents (playbooks): file naming, task format, and Playbook Exchange',
 		category: 'includes',
 	},
 	{
 		id: '_maestro-cli',
 		filename: '_maestro-cli.md',
-		description:
-			'Full `maestro-cli` reference: settings (incl. the Encore feature flags gating workflow + pitch copy), send, list/show, agents, ssh-remotes, auto-run, playbooks, cue, director-notes, prompts, status, open-file, refresh-files, refresh-auto-run',
+		description: 'Full `maestro-cli` reference covering settings, agents, playbooks, cue, and more',
 		category: 'includes',
 	},
 	{
 		id: '_maestro-cue',
 		filename: '_maestro-cue.md',
 		description:
-			'Maestro Cue (event-driven automation, subscriptions, triggers, watchers): event types, `maestro-cue.yaml` schema, pipeline topologies (chain / fan-in / fan-out / forwarding), template variables, and CLI hooks',
+			'Maestro Cue reference: event types, `maestro-cue.yaml` schema, pipeline topologies, and template variables',
 		category: 'includes',
 	},
 	{
