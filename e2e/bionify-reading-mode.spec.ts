@@ -2,9 +2,28 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import type { Page } from '@playwright/test';
 
 function createTempDir(prefix: string): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function shouldWriteDurableScreenshots(): boolean {
+	return process.env.MAESTRO_WRITE_DURABLE_SCREENSHOTS === 'true';
+}
+
+async function writeDurableScreenshot(page: Page, fileName: string): Promise<void> {
+	if (!shouldWriteDurableScreenshots()) {
+		return;
+	}
+
+	const screenshotsDir = path.resolve(__dirname, '../docs/screenshots');
+	fs.mkdirSync(screenshotsDir, { recursive: true });
+
+	await page.screenshot({
+		path: path.join(screenshotsDir, fileName),
+		fullPage: true,
+	});
 }
 
 test.describe('Bionify reading mode prototype', () => {
@@ -205,6 +224,7 @@ Reading mode should emphasize this ${autoRunPhrase}.
 		try {
 			const window = await app.firstWindow();
 			await window.waitForLoadState('domcontentloaded');
+			await window.setViewportSize({ width: 1440, height: 960 });
 			await window.waitForTimeout(1000);
 
 			await expect(window.getByText('Bionify Prototype').first()).toBeVisible();
@@ -227,6 +247,9 @@ Reading mode should emphasize this ${autoRunPhrase}.
 				.toBe(true);
 			await window.keyboard.press('Escape');
 			await expect(settingsDialog).toBeHidden();
+			await window.waitForTimeout(250);
+
+			await writeDurableScreenshot(window, 'bionify-file-preview.png');
 
 			await expect
 				.poll(async () => {
@@ -310,6 +333,12 @@ Reading mode should emphasize this ${autoRunPhrase}.
 
 			expect(terminalCounts.terminalSurfaceWords).toBe(0);
 			expect(terminalCounts.totalTerminalWords).toBe(0);
+
+			await window.getByText('Bionify Prototype').click();
+			await window.locator('text=Auto Run').first().click();
+			await expect(window.locator(`text=${autoRunPhrase}`)).toBeVisible();
+			await window.waitForTimeout(250);
+			await writeDurableScreenshot(window, 'bionify-autorun.png');
 		} finally {
 			await app.close();
 			fs.rmSync(homeDir, { recursive: true, force: true });
