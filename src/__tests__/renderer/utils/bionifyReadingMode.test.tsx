@@ -1,0 +1,36 @@
+import React from 'react';
+import { describe, expect, it } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { BionifyText, renderBionifyText } from '../../../renderer/utils/bionifyReadingMode';
+
+describe('bionifyReadingMode', () => {
+	it('leaves content unchanged when disabled', () => {
+		render(<div>{renderBionifyText('Reading mode stays off.', false)}</div>);
+
+		expect(screen.getByText('Reading mode stays off.')).toBeInTheDocument();
+		expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+	});
+
+	it('wraps readable prose words when enabled', () => {
+		render(<div>{renderBionifyText('Reading mode turns on.', true)}</div>);
+
+		const emphasized = document.querySelectorAll('.bionify-word-emphasis');
+		expect(emphasized.length).toBeGreaterThan(0);
+		expect(screen.getByText('Rea')).toBeInTheDocument();
+		expect(screen.getByText('ding')).toBeInTheDocument();
+	});
+
+	it('preserves inline code and links while transforming surrounding prose', () => {
+		render(
+			<BionifyText enabled={true}>
+				Before <code>const value = 1</code> and <a href="https://example.com">Example Link</a> after
+			</BionifyText>
+		);
+
+		expect(screen.getByText('const value = 1')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Example Link' })).toBeInTheDocument();
+		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+		expect(document.querySelector('a .bionify-word')).not.toBeInTheDocument();
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+	});
+});

@@ -11,6 +11,7 @@ import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks'
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS } from '../utils/markdownConfig';
+import { BionifyText } from '../utils/bionifyReadingMode';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -229,6 +230,8 @@ interface MarkdownRendererProps {
 	allowRawHtml?: boolean;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+	/** Apply Bionify reading-mode emphasis to prose text only when explicitly enabled */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -255,6 +258,7 @@ export const MarkdownRenderer = memo(
 		onFileClick,
 		allowRawHtml = false,
 		sshRemoteId,
+		enableBionifyReadingMode = false,
 	}: MarkdownRendererProps) => {
 		// Memoize file tree indices to avoid O(n) traversal on every render
 		// Only rebuild when fileTree reference changes
@@ -382,6 +386,51 @@ export const MarkdownRenderer = memo(
 								</code>
 							);
 						},
+						p: ({ node: _node, children, ...props }: any) => (
+							<p {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</p>
+						),
+						li: ({ node: _node, children, ...props }: any) => (
+							<li {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</li>
+						),
+						blockquote: ({ node: _node, children, ...props }: any) => (
+							<blockquote {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</blockquote>
+						),
+						h1: ({ node: _node, children, ...props }: any) => (
+							<h1 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h1>
+						),
+						h2: ({ node: _node, children, ...props }: any) => (
+							<h2 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h2>
+						),
+						h3: ({ node: _node, children, ...props }: any) => (
+							<h3 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h3>
+						),
+						h4: ({ node: _node, children, ...props }: any) => (
+							<h4 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h4>
+						),
+						h5: ({ node: _node, children, ...props }: any) => (
+							<h5 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h5>
+						),
+						h6: ({ node: _node, children, ...props }: any) => (
+							<h6 {...props}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</h6>
+						),
 						img: ({ node: _node, src, alt, ...props }: any) => {
 							// Use LocalImage component to handle file:// URLs via IPC
 							// Extract width from data-maestro-width attribute if present
@@ -410,7 +459,7 @@ export const MarkdownRenderer = memo(
 								/>
 							</div>
 						),
-						th: ({ node: _node, style, ...props }: any) => (
+						th: ({ node: _node, style, children, ...props }: any) => (
 							<th
 								{...props}
 								style={{
@@ -420,9 +469,11 @@ export const MarkdownRenderer = memo(
 									whiteSpace: 'nowrap',
 									...(style || {}),
 								}}
-							/>
+							>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</th>
 						),
-						td: ({ node: _node, style, ...props }: any) => (
+						td: ({ node: _node, style, children, ...props }: any) => (
 							<td
 								{...props}
 								style={{
@@ -434,7 +485,9 @@ export const MarkdownRenderer = memo(
 									verticalAlign: 'top',
 									...(style || {}),
 								}}
-							/>
+							>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</td>
 						),
 						// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 						// pass through as strings from AI-generated HTML, which React rejects.

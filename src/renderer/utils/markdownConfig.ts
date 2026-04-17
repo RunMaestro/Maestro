@@ -160,6 +160,9 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} th { background-color: ${colors.bgActivity}; font-weight: bold; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
+    ${s} .bionify-word { display: inline; }
+    ${s} .bionify-word-emphasis { font-weight: 700; }
+    ${s} .bionify-word-rest { font-weight: 400; opacity: 0.92; }
   `.trim();
 
 	// Add checkbox styles if requested
