@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { X, Award, CheckCircle, Trophy, ExternalLink, Search } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
@@ -6,6 +6,7 @@ import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { buildKeysFromEvent } from '../utils/shortcutRecorder';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
@@ -33,6 +34,19 @@ export function ShortcutsHelpModal({
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const filterShortcutButtonRef = useRef<HTMLButtonElement>(null);
+	// Ref mirrors recording state so onBeforeClose stays stable for layer registration.
+	const recordingRef = useRef(recordingFilterShortcut);
+	recordingRef.current = recordingFilterShortcut;
+
+	// Block modal close on Escape while recording — instead, cancel the recording.
+	const handleBeforeClose = useCallback(() => {
+		if (recordingRef.current) {
+			setRecordingFilterShortcut(false);
+			setFilterShortcutKeys([]);
+			return false;
+		}
+		return true;
+	}, []);
 
 	// Combine all shortcuts for display and mastery tracking
 	const allShortcuts = useMemo(
@@ -67,24 +81,8 @@ export function ShortcutsHelpModal({
 			return;
 		}
 
-		const keys = [];
-		if (e.metaKey) keys.push('Meta');
-		if (e.ctrlKey) keys.push('Ctrl');
-		if (e.altKey) keys.push('Alt');
-		if (e.shiftKey) keys.push('Shift');
-		if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
-
-		let mainKey = e.key;
-		if (e.altKey && e.code) {
-			if (e.code.startsWith('Key')) {
-				mainKey = e.code.replace('Key', '').toLowerCase();
-			} else if (e.code.startsWith('Digit')) {
-				mainKey = e.code.replace('Digit', '');
-			} else {
-				mainKey = e.key;
-			}
-		}
-		keys.push(mainKey);
+		const keys = buildKeysFromEvent(e);
+		if (!keys) return;
 
 		setFilterShortcutKeys(keys);
 		setRecordingFilterShortcut(false);
@@ -161,6 +159,7 @@ export function ShortcutsHelpModal({
 							handleFilterRecord(e);
 						}
 					}}
+					onBlur={() => setRecordingFilterShortcut(false)}
 					className={`px-3 py-2 rounded border text-xs font-mono whitespace-nowrap text-center transition-colors ${recordingFilterShortcut ? 'ring-2' : ''}`}
 					style={
 						{
@@ -261,6 +260,7 @@ export function ShortcutsHelpModal({
 			customHeader={customHeader}
 			footer={footer}
 			initialFocusRef={searchInputRef}
+			layerOptions={{ onBeforeClose: handleBeforeClose }}
 		>
 			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
 				{filteredShortcuts.map((sc, i) => {

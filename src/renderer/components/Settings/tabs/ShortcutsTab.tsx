@@ -10,6 +10,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
 import type { Theme, Shortcut } from '../../../types';
 
 export interface ShortcutsTabProps {
@@ -53,28 +54,8 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			return;
 		}
 
-		const keys = [];
-		if (e.metaKey) keys.push('Meta');
-		if (e.ctrlKey) keys.push('Ctrl');
-		if (e.altKey) keys.push('Alt');
-		if (e.shiftKey) keys.push('Shift');
-		if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
-
-		// On macOS, Alt+letter produces special characters (e.g., Alt+L = ¬, Alt+P = π)
-		// Use e.code to get the physical key name when Alt is pressed
-		let mainKey = e.key;
-		if (e.altKey && e.code) {
-			// e.code is like 'KeyL', 'KeyP', 'Digit1', etc.
-			if (e.code.startsWith('Key')) {
-				mainKey = e.code.replace('Key', '').toLowerCase();
-			} else if (e.code.startsWith('Digit')) {
-				mainKey = e.code.replace('Digit', '');
-			} else {
-				// For other keys like Arrow keys, use as-is
-				mainKey = e.key;
-			}
-		}
-		keys.push(mainKey);
+		const keys = buildKeysFromEvent(e);
+		if (!keys) return;
 
 		if (isTabShortcut) {
 			setTabShortcuts({
@@ -100,24 +81,8 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			return;
 		}
 
-		const keys = [];
-		if (e.metaKey) keys.push('Meta');
-		if (e.ctrlKey) keys.push('Ctrl');
-		if (e.altKey) keys.push('Alt');
-		if (e.shiftKey) keys.push('Shift');
-		if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
-
-		let mainKey = e.key;
-		if (e.altKey && e.code) {
-			if (e.code.startsWith('Key')) {
-				mainKey = e.code.replace('Key', '').toLowerCase();
-			} else if (e.code.startsWith('Digit')) {
-				mainKey = e.code.replace('Digit', '');
-			} else {
-				mainKey = e.key;
-			}
-		}
-		keys.push(mainKey);
+		const keys = buildKeysFromEvent(e);
+		if (!keys) return;
 
 		setFilterShortcutKeys(keys);
 		setRecordingFilterShortcut(false);
@@ -221,6 +186,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 							handleFilterRecord(e);
 						}
 					}}
+					onBlur={() => setRecordingFilterShortcut(false)}
 					className={`px-3 py-2 rounded border text-xs font-mono whitespace-nowrap text-center transition-colors ${recordingFilterShortcut ? 'ring-2' : ''}`}
 					style={
 						{
