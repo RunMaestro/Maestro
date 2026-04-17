@@ -4,8 +4,11 @@ import type React from 'react';
  * Build a shortcut key array from a keyboard event.
  * Returns null if only modifier keys are pressed (caller should keep recording).
  *
- * Handles macOS Alt+letter producing special characters (e.g. Alt+L = ¬) by
- * using e.code to recover the physical key name.
+ * When Alt is held, the main key is derived from e.code rather than e.key.
+ * This recovers the physical key name across layouts where Alt rewrites the
+ * character — most notably macOS (Alt+L = ¬, Alt+P = π) but also AltGr-based
+ * layouts on Windows/Linux. Applied unconditionally so recording stays
+ * symmetric with isShortcut's matching path in useKeyboardShortcutHelpers.ts.
  */
 export function buildKeysFromEvent(e: React.KeyboardEvent): string[] | null {
 	if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return null;
