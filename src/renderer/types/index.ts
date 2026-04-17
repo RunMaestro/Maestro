@@ -511,6 +511,7 @@ export interface Session {
 	cwd: string;
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	shellLogs: LogEntry[];
 	workLog: WorkLogItem[];

@@ -1678,6 +1678,7 @@ export function createMergedSession(
 		cwd: projectRoot,
 		fullPath: projectRoot,
 		projectRoot, // Never changes, used for session storage
+		createdAt: Date.now(),
 		isGitRepo: false, // Will be updated by caller if needed
 		aiLogs: [], // Deprecated - logs are in aiTabs
 		shellLogs: [

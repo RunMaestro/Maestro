@@ -20,6 +20,9 @@ vi.mock('../../../../renderer/utils/clipboard', () => ({
 	shell: {
 		openExternal: vi.fn(),
 	},
+	tunnel: {
+		getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
+	},
 };
 
 const mockTheme: Theme = {
@@ -75,6 +78,11 @@ function createDefaultProps(overrides: Partial<Parameters<typeof LiveOverlayPane
 describe('LiveOverlayPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		(window as any).maestro.tunnel.getStatus.mockResolvedValue({
+			isRunning: false,
+			url: null,
+			error: null,
+		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -181,6 +189,25 @@ describe('LiveOverlayPanel', () => {
 		it('shows disconnect title when tunnel is connected', () => {
 			render(<LiveOverlayPanel {...createDefaultProps({ tunnelStatus: 'connected' })} />);
 			expect(screen.getByTitle('Disable remote control')).toBeTruthy();
+		});
+
+		it('keeps connected state when tunnel status confirms process is running', () => {
+			(window as any).maestro.tunnel.getStatus.mockResolvedValue({
+				isRunning: true,
+				url: 'https://tunnel.example.com',
+				error: null,
+			});
+
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({
+						tunnelStatus: 'connected',
+						tunnelUrl: 'https://tunnel.example.com',
+					})}
+				/>
+			);
+
+			expect(screen.getByText(/Remote tunnel active/)).toBeTruthy();
 		});
 	});
 

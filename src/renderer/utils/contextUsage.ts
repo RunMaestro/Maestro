@@ -167,9 +167,20 @@ export function calculateContextDisplay(
 	const raw = calculateContextTokens(usageStats, agentId);
 
 	let tokens = raw;
-	if (raw > contextWindow && fallbackPercentage != null && fallbackPercentage >= 0) {
-		// Accumulated multi-tool turn: derive tokens from preserved percentage
-		tokens = Math.round((fallbackPercentage / 100) * contextWindow);
+	if (raw > contextWindow) {
+		if (
+			fallbackPercentage != null &&
+			Number.isFinite(fallbackPercentage) &&
+			fallbackPercentage >= 0
+		) {
+			// Accumulated multi-tool turn: derive tokens from preserved percentage
+			const boundedFallback = Math.min(100, fallbackPercentage);
+			tokens = Math.round((boundedFallback / 100) * contextWindow);
+		} else {
+			// We don't have a trustworthy fallback percentage yet, so clamp to the
+			// configured window instead of displaying an impossible token total.
+			tokens = contextWindow;
+		}
 	}
 
 	const percentage = tokens <= 0 ? 0 : Math.min(100, Math.round((tokens / contextWindow) * 100));

@@ -1132,6 +1132,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				cwd: directoryPath,
 				fullPath: directoryPath,
 				projectRoot: directoryPath,
+				createdAt: Date.now(),
 				isGitRepo,
 				gitBranches,
 				gitTags,

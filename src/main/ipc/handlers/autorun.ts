@@ -5,6 +5,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -79,19 +80,31 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	const nodes: TreeNode[] = [];
 
+	// Resolve symlinks so symlinked folders/files are classified by target type.
+	// Broken symlinks are skipped (they can't contribute .md files).
+	const resolved = await Promise.all(
+		entries
+			.filter((entry) => !entry.name.startsWith('.'))
+			.map(async (entry) => {
+				const fullPath = path.join(dirPath, entry.name);
+				const type = await resolveDirentType(entry, fullPath);
+				if (type.isBrokenSymlink) return null;
+				return { name: entry.name, isDir: type.isDirectory, isFile: type.isFile };
+			})
+	);
+	const validEntries = resolved.filter((e): e is NonNullable<typeof e> => e !== null);
+
 	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = entries
-		.filter((entry) => !entry.name.startsWith('.'))
-		.sort((a, b) => {
-			if (a.isDirectory() && !b.isDirectory()) return -1;
-			if (!a.isDirectory() && b.isDirectory()) return 1;
-			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-		});
+	const sortedEntries = validEntries.sort((a, b) => {
+		if (a.isDir && !b.isDir) return -1;
+		if (!a.isDir && b.isDir) return 1;
+		return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+	});
 
 	for (const entry of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDirectory()) {
+		if (entry.isDir) {
 			// Recursively scan subdirectory
 			const children = await scanDirectory(path.join(dirPath, entry.name), entryRelativePath);
 			// Only include folders that contain .md files (directly or in subfolders)
@@ -103,7 +116,7 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 					children,
 				});
 			}
-		} else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (entry.isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -162,7 +175,7 @@ async function scanDirectoryRemote(
 					children,
 				});
 			}
-		} else if (!entry.isDirectory && !entry.isSymlink && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (!entry.isDirectory && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -219,14 +232,17 @@ async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
 			continue;
 		}
 
-		if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		const fullPath = path.join(dirPath, entry.name);
+		const resolved = await resolveDirentType(entry, fullPath);
+
+		if (resolved.isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Found a markdown file - return immediately
 			return true;
 		}
 
-		if (entry.isDirectory()) {
-			// Recursively check subdirectory
-			const hasFiles = await checkForMarkdownFiles(path.join(dirPath, entry.name));
+		if (resolved.isDirectory) {
+			// Recursively check subdirectory (follows symlinked folders)
+			const hasFiles = await checkForMarkdownFiles(fullPath);
 			if (hasFiles) {
 				return true;
 			}
@@ -672,8 +688,8 @@ export function registerAutorunHandlers(
 					// Filter files that start with the docName prefix
 					const images = dirResult.data
 						.filter((entry) => {
-							// Only include files (not directories or symlinks)
-							if (entry.isDirectory || entry.isSymlink) {
+							// Only include files (not directories)
+							if (entry.isDirectory) {
 								return false;
 							}
 							// Check if filename starts with docName-
@@ -1206,8 +1222,8 @@ export function registerAutorunHandlers(
 						for (const entry of dirResult.data) {
 							const entryPath = `${dirPath}/${entry.name}`;
 
-							if (entry.isDirectory && !entry.isSymlink) {
-								// Recurse into subdirectory
+							if (entry.isDirectory) {
+								// Recurse into subdirectory (including symlinked dirs)
 								deleted += await deleteBackupsRemoteRecursive(entryPath);
 							} else if (!entry.isDirectory && entry.name.endsWith('.backup.md')) {
 								// Delete backup file

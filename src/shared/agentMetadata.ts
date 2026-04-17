@@ -64,11 +64,7 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
  */
-export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
-	'codex',
-	'opencode',
-	'factory-droid',
-]);
+export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['opencode', 'factory-droid']);
 
 /**
  * Check whether an agent is in beta status.
