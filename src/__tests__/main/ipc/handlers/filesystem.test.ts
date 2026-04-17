@@ -440,11 +440,26 @@ describe('filesystem handlers', () => {
 			// Mock a simple directory structure
 			vi.mocked(fs.readdir)
 				.mockResolvedValueOnce([
-					{ name: 'file1.txt', isDirectory: () => false, isSymbolicLink: () => false },
-					{ name: 'subfolder', isDirectory: () => true, isSymbolicLink: () => false },
+					{
+						name: 'file1.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'subfolder',
+						isDirectory: () => true,
+						isFile: () => false,
+						isSymbolicLink: () => false,
+					},
 				] as any)
 				.mockResolvedValueOnce([
-					{ name: 'file2.txt', isDirectory: () => false, isSymbolicLink: () => false },
+					{
+						name: 'file2.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
 				] as any);
 
 			const handler = registeredHandlers.get('fs:countItems');

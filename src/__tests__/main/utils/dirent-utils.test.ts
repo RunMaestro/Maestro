@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('fs/promises', () => ({
 	default: {
 		stat: vi.fn(),
+		readdir: vi.fn(),
 	},
 }));
 
@@ -101,14 +102,12 @@ describe('readDirWithResolvedTypes', () => {
 
 	it('resolves mixed regular + symlink entries and returns full paths', async () => {
 		// Simulate readdir returning: a directory, a file, a symlink-to-dir, and a broken symlink.
-		const readdirSpy = vi
-			.spyOn(fs, 'readdir')
-			.mockResolvedValue([
-				makeDirent({ name: 'src', isDir: true }),
-				makeDirent({ name: 'readme.md', isFile: true }),
-				makeDirent({ name: 'linked-lib', isSymlink: true }),
-				makeDirent({ name: 'dangling', isSymlink: true }),
-			] as any);
+		vi.mocked(fs.readdir).mockResolvedValue([
+			makeDirent({ name: 'src', isDir: true }),
+			makeDirent({ name: 'readme.md', isFile: true }),
+			makeDirent({ name: 'linked-lib', isSymlink: true }),
+			makeDirent({ name: 'dangling', isSymlink: true }),
+		] as any);
 
 		vi.mocked(fs.stat).mockImplementation((p: any) => {
 			if (p === '/proj/linked-lib') {
@@ -122,7 +121,7 @@ describe('readDirWithResolvedTypes', () => {
 
 		const result = await readDirWithResolvedTypes('/proj');
 
-		expect(readdirSpy).toHaveBeenCalledWith('/proj', { withFileTypes: true });
+		expect(fs.readdir).toHaveBeenCalledWith('/proj', { withFileTypes: true });
 		expect(result).toEqual([
 			{
 				name: 'src',
