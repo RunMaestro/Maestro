@@ -2,6 +2,7 @@ dist/
 release/
 node_modules/
 coverage/
+.worktrees/
 *.min.js
 .gitignore
 .husky/_/

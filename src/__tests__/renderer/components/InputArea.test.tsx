@@ -699,7 +699,7 @@ describe('InputArea', () => {
 
 			// The second command (/help) should have accent background
 			// Find the parent div that has the background style (px-4 py-3 class)
-			const helpCmd = screen.getByText('/help').closest('.px-4');
+			const helpCmd = screen.getByText('/help').closest('button');
 			expect(helpCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
@@ -712,7 +712,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('.px-4');
+			const helpCmd = screen.getByText('/help').closest('button');
 			fireEvent.mouseEnter(helpCmd!);
 
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
@@ -731,7 +731,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const clearCmd = screen.getByText('/clear').closest('.px-4');
+			const clearCmd = screen.getByText('/clear').closest('button');
 			fireEvent.doubleClick(clearCmd!);
 
 			expect(setInputValue).toHaveBeenCalledWith('/clear');
@@ -815,7 +815,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('.px-4');
+			const helpCmd = screen.getByText('/help').closest('button');
 			fireEvent.click(helpCmd!);
 
 			// Single click should update selection
@@ -845,11 +845,11 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			// The second item (/help) should NOT have accent background since index 0 is selected
-			const helpCmd = screen.getByText('/help').closest('.px-4');
+			const helpCmd = screen.getByText('/help').closest('button');
 			// Unselected items don't have the accent color background
 			expect(helpCmd).not.toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 			// First item (selected) should have accent background
-			const clearCmd = screen.getByText('/clear').closest('.px-4');
+			const clearCmd = screen.getByText('/clear').closest('button');
 			expect(clearCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 

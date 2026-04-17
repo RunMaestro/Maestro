@@ -533,6 +533,7 @@ export interface Session {
 	cwd: string;
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs — terminal tabs use xterm.js with direct PTY streaming
 	shellLogs: LogEntry[];

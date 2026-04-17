@@ -547,6 +547,11 @@ export function AgentSessionsBrowser({
 		};
 	}, [aggregateStats]);
 
+	const sessionSinceDate =
+		typeof activeSession?.createdAt === 'number' && activeSession.createdAt > 0
+			? new Date(activeSession.createdAt)
+			: stats.oldestSession;
+
 	// Keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (viewingSession) {
@@ -1246,11 +1251,11 @@ export function AgentSessionsBrowser({
 									</span>
 								</div>
 							)}
-							{stats.oldestSession && (
+							{sessionSinceDate && (
 								<div className="flex items-center gap-2">
 									<Clock className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 									<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-										Since {stats.oldestSession.toLocaleDateString()}
+										Since {sessionSinceDate.toLocaleDateString()}
 									</span>
 								</div>
 							)}
