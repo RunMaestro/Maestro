@@ -45,6 +45,7 @@ export type WsSessionData = SessionData;
 export interface WsRouteCallbacks {
 	getSessions: () => SessionData[];
 	getTheme: () => Theme | null;
+	getBionifyReadingMode: () => boolean;
 	getCustomCommands: () => CustomAICommand[];
 	getAutoRunStates: () => Map<string, AutoRunState>;
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
@@ -148,6 +149,17 @@ export class WsRoute {
 						})
 					);
 				}
+			}
+
+			// Send current global Bionify reading-mode setting
+			if (this.callbacks.getBionifyReadingMode) {
+				connection.socket.send(
+					JSON.stringify({
+						type: 'bionify_reading_mode',
+						enabled: this.callbacks.getBionifyReadingMode(),
+						timestamp: Date.now(),
+					})
+				);
 			}
 
 			// Send custom AI commands

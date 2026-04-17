@@ -89,11 +89,17 @@ interface ThemeUpdateContextValue {
 	desktopTheme: Theme | null;
 	/** Update the theme when received from desktop app */
 	setDesktopTheme: (theme: Theme) => void;
+	/** Current global Bionify reading-mode setting from desktop app */
+	bionifyReadingMode: boolean;
+	/** Update the Bionify reading mode when received from desktop app */
+	setDesktopBionifyReadingMode: (enabled: boolean) => void;
 }
 
 const ThemeUpdateContext = createContext<ThemeUpdateContextValue>({
 	desktopTheme: null,
 	setDesktopTheme: () => {},
+	bionifyReadingMode: false,
+	setDesktopBionifyReadingMode: () => {},
 });
 
 /**
@@ -213,6 +219,7 @@ function LoadingFallback() {
 export function App() {
 	const [offline, setOffline] = useState(isOffline());
 	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(null);
+	const [desktopBionifyReadingMode, setDesktopBionifyReadingMode] = useState(false);
 	const config = useMemo(() => getMaestroConfig(), []);
 
 	const modeContextValue = useMemo(
@@ -225,12 +232,19 @@ export function App() {
 		setDesktopTheme(theme);
 	}, []);
 
+	const handleDesktopBionifyReadingMode = useCallback((enabled: boolean) => {
+		webLogger.debug(`Desktop Bionify reading mode received: ${enabled}`, 'App');
+		setDesktopBionifyReadingMode(enabled);
+	}, []);
+
 	const themeUpdateContextValue = useMemo(
 		() => ({
 			desktopTheme,
 			setDesktopTheme: handleDesktopTheme,
+			bionifyReadingMode: desktopBionifyReadingMode,
+			setDesktopBionifyReadingMode: handleDesktopBionifyReadingMode,
 		}),
-		[desktopTheme, handleDesktopTheme]
+		[desktopTheme, handleDesktopTheme, desktopBionifyReadingMode, handleDesktopBionifyReadingMode]
 	);
 
 	// Register service worker for offline capability

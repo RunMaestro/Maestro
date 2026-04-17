@@ -291,7 +291,7 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 export default function MobileApp() {
 	const colors = useThemeColors();
 	const isOffline = useOfflineStatus();
-	const { setDesktopTheme } = useDesktopTheme();
+	const { setDesktopTheme, setDesktopBionifyReadingMode } = useDesktopTheme();
 
 	// View state persistence and screen tracking (hook consolidates multiple effects)
 	const {
@@ -478,6 +478,7 @@ export default function MobileApp() {
 		hapticTapPattern: HAPTIC_PATTERNS.tap,
 		onResponseComplete: handleResponseComplete,
 		onThemeUpdate: setDesktopTheme,
+		onBionifyReadingModeUpdate: setDesktopBionifyReadingMode,
 		onCustomCommands: setCustomCommands,
 		onAutoRunStateChange: (sessionId, state) => {
 			webLogger.info(
