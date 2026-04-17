@@ -400,6 +400,22 @@ describe('TerminalOutput', () => {
 
 			expect(mockUnregisterLayer).toHaveBeenCalled();
 		});
+
+		it('shows "Plain Text" label on regex toggle when in plain mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: false });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Plain Text')).toBeInTheDocument();
+			expect(screen.queryByText('Regex')).not.toBeInTheDocument();
+		});
+
+		it('shows "Regex" label on regex toggle when in regex mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: true });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Regex')).toBeInTheDocument();
+			expect(screen.queryByText('Plain Text')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('keyboard navigation', () => {

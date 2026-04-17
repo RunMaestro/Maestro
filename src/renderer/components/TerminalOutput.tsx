@@ -1793,7 +1793,10 @@ export const TerminalOutput = memo(
 				`}</style>
 				{/* Output Search */}
 				{outputSearchOpen && (
-					<div className="sticky top-0 z-10 pb-4">
+					<div
+						className="sticky top-0 z-10 px-3 pt-3 pb-4"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
 						<div className="flex items-center gap-2">
 							<button
 								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
@@ -1811,7 +1814,8 @@ export const TerminalOutput = memo(
 								}}
 								title={outputSearchRegex ? 'Switch to plain-text search' : 'Switch to regex search'}
 							>
-								.*
+								<span>.*</span>
+								<span>{outputSearchRegex ? 'Regex' : 'Plain Text'}</span>
 							</button>
 							<input
 								type="text"
