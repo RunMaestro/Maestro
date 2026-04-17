@@ -408,6 +408,103 @@ describe('autorun IPC handlers', () => {
 			expect(result.tree).toHaveLength(2);
 		});
 
+		it('should include symlinked .md files as documents', async () => {
+			vi.mocked(fs.stat).mockImplementation((p: any) => {
+				// First call: the top-level folder. Subsequent calls: symlink resolution.
+				if (p === '/test/folder') {
+					return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+				}
+				// Symlink target is a file
+				return Promise.resolve({ isDirectory: () => false, isFile: () => true } as any);
+			});
+
+			vi.mocked(fs.readdir).mockResolvedValue([
+				{
+					name: 'linked-doc.md',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+				{
+					name: 'real.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			] as any);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/test/folder');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual(['linked-doc', 'real']);
+		});
+
+		it('should recurse into symlinked folders containing .md files', async () => {
+			vi.mocked(fs.stat).mockImplementation((p: any) => {
+				if (p === '/test/folder') {
+					return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+				}
+				// Symlink target is a directory
+				return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+			});
+
+			// Root contains a symlinked folder; the folder contains nested.md
+			vi.mocked(fs.readdir)
+				.mockResolvedValueOnce([
+					{
+						name: 'linked-folder',
+						isDirectory: () => false,
+						isFile: () => false,
+						isSymbolicLink: () => true,
+					},
+				] as any)
+				.mockResolvedValueOnce([
+					{
+						name: 'nested.md',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+				] as any);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/test/folder');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toContain('linked-folder/nested');
+		});
+
+		it('should skip broken symlinks silently', async () => {
+			vi.mocked(fs.stat).mockImplementation((p: any) => {
+				if (p === '/test/folder') {
+					return Promise.resolve({ isDirectory: () => true, isFile: () => false } as any);
+				}
+				return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+			});
+
+			vi.mocked(fs.readdir).mockResolvedValue([
+				{
+					name: 'broken',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+				{
+					name: 'real.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			] as any);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/test/folder');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual(['real']);
+		});
+
 		it('should exclude dotfiles', async () => {
 			vi.mocked(fs.stat).mockResolvedValue({
 				isDirectory: () => true,

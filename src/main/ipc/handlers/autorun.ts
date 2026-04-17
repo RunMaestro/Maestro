@@ -5,6 +5,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -79,24 +80,16 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	const nodes: TreeNode[] = [];
 
-	// Resolve symlinks: determine actual target type for each entry
+	// Resolve symlinks so symlinked folders/files are classified by target type.
+	// Broken symlinks are skipped (they can't contribute .md files).
 	const resolved = await Promise.all(
 		entries
 			.filter((entry) => !entry.name.startsWith('.'))
 			.map(async (entry) => {
-				let isDir = entry.isDirectory();
-				let isFile = entry.isFile();
-				if (entry.isSymbolicLink()) {
-					try {
-						const targetStat = await fs.stat(path.join(dirPath, entry.name));
-						isDir = targetStat.isDirectory();
-						isFile = targetStat.isFile();
-					} catch {
-						// Broken symlink — skip
-						return null;
-					}
-				}
-				return { name: entry.name, isDir, isFile };
+				const fullPath = path.join(dirPath, entry.name);
+				const type = await resolveDirentType(entry, fullPath);
+				if (type.isBrokenSymlink) return null;
+				return { name: entry.name, isDir: type.isDirectory, isFile: type.isFile };
 			})
 	);
 	const validEntries = resolved.filter((e): e is NonNullable<typeof e> => e !== null);
@@ -239,14 +232,17 @@ async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
 			continue;
 		}
 
-		if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		const fullPath = path.join(dirPath, entry.name);
+		const resolved = await resolveDirentType(entry, fullPath);
+
+		if (resolved.isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Found a markdown file - return immediately
 			return true;
 		}
 
-		if (entry.isDirectory()) {
-			// Recursively check subdirectory
-			const hasFiles = await checkForMarkdownFiles(path.join(dirPath, entry.name));
+		if (resolved.isDirectory) {
+			// Recursively check subdirectory (follows symlinked folders)
+			const hasFiles = await checkForMarkdownFiles(fullPath);
 			if (hasFiles) {
 				return true;
 			}

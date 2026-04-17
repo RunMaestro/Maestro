@@ -221,11 +221,22 @@ export async function readDirRemote(
 	// A second command identifies symlinks whose targets are directories so
 	// that consumers can recurse into them.  The marker line __SYMDIR__
 	// separates the two outputs.
+	//
+	// Glob patterns used for the symlink scan:
+	//   /*          — non-dotfiles
+	//   /.[!.]*     — dotfiles (one leading dot), excluding the "." entry
+	//   /..?*       — names starting with ".." followed by more chars, excluding ".."
+	// We avoid a plain "/.*" because it matches "." and ".." on most shells.
+	// Unmatched globs are passed literally, but [ -L ] fails on them so nothing
+	// spurious is printed. Errors are redirected to /dev/null regardless.
 	const escapedPath = shellEscape(dirPath);
+	const symlinkScan =
+		`for f in ${escapedPath}/* ${escapedPath}/.[!.]* ${escapedPath}/..?*; ` +
+		`do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null`;
 	const remoteCommand =
 		`ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"; ` +
 		`echo "__SYMDIR__"; ` +
-		`for f in ${escapedPath}/* ${escapedPath}/.*; do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null`;
+		symlinkScan;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 

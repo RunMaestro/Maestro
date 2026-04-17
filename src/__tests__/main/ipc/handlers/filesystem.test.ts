@@ -169,6 +169,72 @@ describe('filesystem handlers', () => {
 			);
 		});
 
+		it('should resolve symlinks pointing to directories', async () => {
+			const mockEntries = [
+				{
+					name: 'linked-folder',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(fs.stat).toHaveBeenCalledWith(expect.stringContaining('linked-folder'));
+			expect(result).toHaveLength(1);
+			expect(result[0].name).toBe('linked-folder');
+			expect(result[0].isDirectory).toBe(true);
+			expect(result[0].isFile).toBe(false);
+		});
+
+		it('should resolve symlinks pointing to regular files', async () => {
+			const mockEntries = [
+				{
+					name: 'linked-doc.md',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => false,
+				isFile: () => true,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].isDirectory).toBe(false);
+			expect(result[0].isFile).toBe(true);
+		});
+
+		it('should surface broken symlinks as files so they remain visible', async () => {
+			const mockEntries = [
+				{
+					name: 'broken-link',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			];
+			vi.mocked(fs.readdir).mockResolvedValue(mockEntries as any);
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:readDir');
+			const result = await handler!({}, '/test/path');
+
+			expect(result[0].isDirectory).toBe(false);
+			expect(result[0].isFile).toBe(true);
+		});
+
 		it('should normalize local entry names to NFC Unicode form', async () => {
 			const nfdName = 'caf\u00e9'.normalize('NFD');
 			const nfcName = 'caf\u00e9'.normalize('NFC');
@@ -385,6 +451,60 @@ describe('filesystem handlers', () => {
 			const result = await handler!({}, '/test/folder');
 
 			expect(result).toEqual({ fileCount: 2, folderCount: 1 });
+		});
+
+		it('should count symlinked folders as folders and recurse into them', async () => {
+			// Root: one file, one symlinked folder. Symlinked folder contains one file.
+			vi.mocked(fs.readdir)
+				.mockResolvedValueOnce([
+					{
+						name: 'file1.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+					{
+						name: 'linked-folder',
+						isDirectory: () => false,
+						isFile: () => false,
+						isSymbolicLink: () => true,
+					},
+				] as any)
+				.mockResolvedValueOnce([
+					{
+						name: 'nested.txt',
+						isDirectory: () => false,
+						isFile: () => true,
+						isSymbolicLink: () => false,
+					},
+				] as any);
+			// fs.stat is only called for the symlink
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+
+			const handler = registeredHandlers.get('fs:countItems');
+			const result = await handler!({}, '/test/folder');
+
+			expect(result).toEqual({ fileCount: 2, folderCount: 1 });
+		});
+
+		it('should count broken symlinks as files', async () => {
+			vi.mocked(fs.readdir).mockResolvedValueOnce([
+				{
+					name: 'broken',
+					isDirectory: () => false,
+					isFile: () => false,
+					isSymbolicLink: () => true,
+				},
+			] as any);
+			vi.mocked(fs.stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+			const handler = registeredHandlers.get('fs:countItems');
+			const result = await handler!({}, '/test/folder');
+
+			expect(result).toEqual({ fileCount: 1, folderCount: 0 });
 		});
 
 		it('should count items in remote directory via SSH', async () => {

@@ -32,6 +32,7 @@ import {
 	deleteRemote,
 	countItemsRemote,
 } from '../../utils/remote-fs';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
 
 /**
@@ -121,26 +122,14 @@ export function registerFilesystemHandlers(): void {
 		// Include full path for recursive directory scanning (e.g., document graph)
 		// Resolve symlinks via fs.stat() so symlinked dirs/files are properly classified
 		return Promise.all(
-			entries.map(async (entry: any) => {
+			entries.map(async (entry) => {
 				const fullPath = path.join(dirPath, entry.name);
-				let isDirectory = entry.isDirectory();
-				let isFile = entry.isFile();
-
-				if (entry.isSymbolicLink()) {
-					try {
-						const targetStat = await fs.stat(fullPath);
-						isDirectory = targetStat.isDirectory();
-						isFile = targetStat.isFile();
-					} catch {
-						// Broken symlink — treat as file so it still appears
-						isFile = true;
-					}
-				}
-
+				const resolved = await resolveDirentType(entry, fullPath);
 				return {
 					name: entry.name.normalize('NFC'),
-					isDirectory,
-					isFile,
+					isDirectory: resolved.isDirectory,
+					// Broken symlinks are shown as files so they still appear in the browser
+					isFile: resolved.isFile || resolved.isBrokenSymlink,
 					path: fullPath,
 				};
 			})
@@ -418,19 +407,13 @@ export function registerFilesystemHandlers(): void {
 			const countRecursive = async (dir: string) => {
 				const entries = await fs.readdir(dir, { withFileTypes: true });
 				for (const entry of entries) {
-					let isDir = entry.isDirectory();
-					if (entry.isSymbolicLink()) {
-						try {
-							const targetStat = await fs.stat(path.join(dir, entry.name));
-							isDir = targetStat.isDirectory();
-						} catch {
-							// Broken symlink — count as file
-						}
-					}
-					if (isDir) {
+					const fullPath = path.join(dir, entry.name);
+					const resolved = await resolveDirentType(entry, fullPath);
+					if (resolved.isDirectory) {
 						folderCount++;
-						await countRecursive(path.join(dir, entry.name));
+						await countRecursive(fullPath);
 					} else {
+						// Files, symlinks-to-files, and broken symlinks all count as files
 						fileCount++;
 					}
 				}
