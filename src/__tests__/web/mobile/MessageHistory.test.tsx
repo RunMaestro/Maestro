@@ -655,6 +655,21 @@ describe('MessageHistory', () => {
 			expect(messageContent.tagName.toLowerCase()).toBe('p');
 		});
 
+		it('applies Bionify emphasis only to AI markdown messages when enabled', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ source: 'stdout', text: 'Readable prose output' }),
+				createLogEntry({ source: 'user', text: 'Plain input text' }),
+			];
+			const { container } = render(
+				<MessageHistory logs={logs} inputMode="ai" enableBionifyReadingMode={true} />
+			);
+
+			expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
+			expect(
+				screen.getByText('Plain input text').querySelector('.bionify-word-emphasis')
+			).toBeNull();
+		});
+
 		it('applies error styles to stderr message container', () => {
 			// Stderr messages use MobileMarkdownRenderer too, but the outer container has error styling
 			const logs: LogEntry[] = [createLogEntry({ source: 'stderr', text: 'Error content' })];

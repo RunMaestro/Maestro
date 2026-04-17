@@ -36,6 +36,8 @@ export interface MessageHistoryProps {
 	maxHeight?: string;
 	/** Callback when user taps a message */
 	onMessageTap?: (entry: LogEntry) => void;
+	/** Whether to apply Bionify reading mode to long-form AI output */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -67,6 +69,7 @@ export function MessageHistory({
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
+	enableBionifyReadingMode = false,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -348,7 +351,10 @@ export function MessageHistory({
 									</div>
 								) : (
 									// AI responses: render as formatted markdown
-									<MobileMarkdownRenderer content={displayText} />
+									<MobileMarkdownRenderer
+										content={displayText}
+										enableBionifyReadingMode={enableBionifyReadingMode}
+									/>
 								)}
 								{/* Show truncation indicator at end of text */}
 								{isTruncatable && !isExpanded && (

@@ -26,6 +26,7 @@ import type { LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { BionifyTextBlock } from '../../renderer/utils/bionifyReadingMode';
 
 /**
  * Represents a response item that can be navigated to
@@ -61,6 +62,8 @@ export interface ResponseViewerProps {
 	onClose: () => void;
 	/** Session name for display context */
 	sessionName?: string;
+	/** Whether to apply Bionify reading mode to plain-text response segments */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -238,6 +241,7 @@ export function ResponseViewer({
 	isLoading = false,
 	onClose,
 	sessionName,
+	enableBionifyReadingMode = false,
 }: ResponseViewerProps) {
 	const colors = useThemeColors();
 	const { isDark } = useTheme();
@@ -955,8 +959,9 @@ export function ResponseViewer({
 
 								// Regular text segment
 								return (
-									<div
+									<BionifyTextBlock
 										key={index}
+										enabled={enableBionifyReadingMode}
 										style={{
 											fontFamily:
 												'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
@@ -968,7 +973,7 @@ export function ResponseViewer({
 										}}
 									>
 										{segment.content}
-									</div>
+									</BionifyTextBlock>
 								);
 							})}
 						</div>

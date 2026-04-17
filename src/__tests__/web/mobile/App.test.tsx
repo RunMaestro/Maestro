@@ -33,6 +33,7 @@ const mockIsDashboard = vi.fn(() => true);
 const mockIsSession = vi.fn(() => false);
 const mockGoToDashboard = vi.fn();
 const mockSetDesktopTheme = vi.fn();
+const mockSetDesktopBionifyReadingMode = vi.fn();
 
 vi.mock('../../../web/main', () => ({
 	useOfflineStatus: () => mockIsOffline(),
@@ -44,7 +45,9 @@ vi.mock('../../../web/main', () => ({
 	}),
 	useDesktopTheme: () => ({
 		desktopTheme: null,
+		bionifyReadingMode: false,
 		setDesktopTheme: mockSetDesktopTheme,
+		setDesktopBionifyReadingMode: mockSetDesktopBionifyReadingMode,
 	}),
 }));
 

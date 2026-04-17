@@ -293,6 +293,19 @@ describe('ResponseViewer', () => {
 			render(<ResponseViewer isOpen={true} response={createMockResponse()} onClose={vi.fn()} />);
 			expect(screen.getByRole('heading', { name: 'Response' })).toBeInTheDocument();
 		});
+
+		it('applies Bionify emphasis to plain-text response segments when enabled', () => {
+			const { container } = render(
+				<ResponseViewer
+					isOpen={true}
+					response={createMockResponse({ text: 'Readable prose response.' })}
+					enableBionifyReadingMode={true}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
+		});
 	});
 
 	describe('ANSI code stripping', () => {
@@ -350,6 +363,22 @@ describe('ResponseViewer', () => {
 			expect(highlighters).toHaveLength(2);
 			expect(highlighters[0]).toHaveAttribute('data-language', 'javascript');
 			expect(highlighters[1]).toHaveAttribute('data-language', 'python');
+		});
+
+		it('does not bionify code blocks when reading mode is enabled', () => {
+			const { container } = render(
+				<ResponseViewer
+					isOpen={true}
+					response={createMockResponse({ text: 'Intro\n```ts\nconst value = 1;\n```' })}
+					enableBionifyReadingMode={true}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
+			expect(
+				screen.getByTestId('syntax-highlighter').querySelector('.bionify-word-emphasis')
+			).toBeNull();
 		});
 
 		it('shows language label for code blocks', () => {
