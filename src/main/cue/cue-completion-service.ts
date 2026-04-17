@@ -1,6 +1,12 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import { describeFilter, matchesFilter } from './cue-filter';
-import { SOURCE_OUTPUT_MAX_CHARS, type CueFanInTracker } from './cue-fan-in-tracker';
+import { type CueFanInTracker } from './cue-fan-in-tracker';
+import {
+	buildFilteredOutputs,
+	mergeUpstreamForwarded,
+	SOURCE_OUTPUT_MAX_CHARS,
+	type FanInSourceCompletion,
+} from './cue-output-filter';
 import {
 	createCueEvent,
 	type AgentCompletionData,
@@ -88,28 +94,41 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 					if (sources.length === 1) {
 						const rawStdout = completionData?.stdout ?? '';
 						const slicedOutput = rawStdout.slice(-SOURCE_OUTPUT_MAX_CHARS);
-						// Per-source output map for named template variables.
-						// Single-chain: just one entry.
-						const perSourceOutputs: Record<string, string> = {
-							[completingName]: slicedOutput,
+						const completion: FanInSourceCompletion = {
+							sessionId,
+							sessionName: completingName,
+							output: slicedOutput,
+							truncated: rawStdout.length > SOURCE_OUTPUT_MAX_CHARS,
+							chainDepth: completionData?.chainDepth ?? 0,
 						};
-						// Forward any outputs that were forwarded TO this completing
-						// agent from its own upstream. They're carried in the
-						// completionData.forwardedOutputs field (set by the engine
-						// from the triggering event's payload).
-						const upstreamForwarded = completionData?.forwardedOutputs;
+						// Honor include_output_from / forward_output_from on single-
+						// source subscriptions via the shared filter. Previously this
+						// path bypassed both lists, so any UI toggle silently no-op'd
+						// for 1-source chains; the fan-in path already filtered.
+						const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
+							[completion],
+							sub
+						);
+						// Preserve pass-through of upstream-forwarded data — but filter
+						// by forward_output_from when the list is set so user intent
+						// is respected through the full chain.
+						const mergedForwarded = mergeUpstreamForwarded(
+							forwardedOutputs,
+							completionData?.forwardedOutputs,
+							sub
+						);
 						const event = createCueEvent('agent.completed', sub.name, {
 							sourceSession: completingName,
 							sourceSessionId: sessionId,
 							status: completionData?.status ?? 'completed',
 							exitCode: completionData?.exitCode ?? null,
 							durationMs: completionData?.durationMs ?? 0,
-							sourceOutput: slicedOutput,
-							outputTruncated: rawStdout.length > SOURCE_OUTPUT_MAX_CHARS,
+							sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
+							outputTruncated: outputCompletions.some((c) => c.truncated),
 							triggeredBy: completionData?.triggeredBy,
 							perSourceOutputs,
-							...(upstreamForwarded && Object.keys(upstreamForwarded).length > 0
-								? { forwardedOutputs: upstreamForwarded }
+							...(Object.keys(mergedForwarded).length > 0
+								? { forwardedOutputs: mergedForwarded }
 								: {}),
 						});
 

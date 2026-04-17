@@ -1212,4 +1212,126 @@ describe('CueEngine completion chains', () => {
 			engine.stop();
 		});
 	});
+
+	// Regression: until the single-source completion path was wired through
+	// the shared output filter, `include_output_from` and `forward_output_from`
+	// silently no-op'd for 1-source subscriptions. Any UI control that writes
+	// those fields must take effect on both fan-in and single-source chains.
+	describe('single-source filter (include/forward) regression', () => {
+		it('honors include_output_from: [] by emptying perSourceOutputs', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'on-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'follow up',
+						source_session: 'agent-a',
+						include_output_from: [],
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', { stdout: 'should be dropped' });
+
+			const request = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			const event = request.event as CueEvent;
+			expect(event.payload.perSourceOutputs).toEqual({});
+			expect(event.payload.sourceOutput).toBe('');
+			engine.stop();
+		});
+
+		it('honors forward_output_from by populating forwardedOutputs with own output', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'on-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'follow up',
+						source_session: 'agent-a',
+						forward_output_from: ['Agent A'],
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', { sessionName: 'Agent A', stdout: 'own output' });
+
+			const request = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			const event = request.event as CueEvent;
+			expect(event.payload.forwardedOutputs).toEqual({ 'Agent A': 'own output' });
+			engine.stop();
+		});
+
+		it('passes through upstream-forwarded data when forward_output_from is unset', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'on-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'follow up',
+						source_session: 'agent-a',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				stdout: 'own',
+				forwardedOutputs: { 'Agent X': 'x-output' },
+			});
+
+			const request = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			const event = request.event as CueEvent;
+			expect(event.payload.forwardedOutputs).toEqual({ 'Agent X': 'x-output' });
+			engine.stop();
+		});
+
+		it('filters upstream-forwarded data by forward_output_from when set', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'on-done',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'follow up',
+						source_session: 'agent-a',
+						forward_output_from: ['Agent X'],
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				stdout: 'own',
+				forwardedOutputs: { 'Agent X': 'x-output', 'Agent Y': 'y-output' },
+			});
+
+			const request = (deps.onCueRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			const event = request.event as CueEvent;
+			expect(event.payload.forwardedOutputs).toEqual({ 'Agent X': 'x-output' });
+			engine.stop();
+		});
+	});
 });

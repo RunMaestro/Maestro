@@ -258,4 +258,24 @@ describe('pipelineToYamlSubscriptions — per-edge upstream output', () => {
 			expect(chainSub!.prompt).toContain('{{CUE_SOURCE_OUTPUT}}');
 		});
 	});
+
+	// Regression gate: the authored prompt stored on AgentNodeData must never
+	// accumulate injected tokens when emitting YAML. If this breaks, every
+	// save would duplicate the prepended prefix.
+	describe('prompt accumulation regression', () => {
+		it('does not mutate the pipeline node inputPrompt on emit', () => {
+			const pipeline = makePipeline({
+				nodes: [
+					triggerNode('t1'),
+					agentNode('a1', 's1', 'Agent A', 'build'),
+					agentNode('a2', 's2', 'Agent B', 'author'),
+				],
+				edges: [edge('e1', 't1', 'a1'), edge('e2', 'a1', 'a2')],
+			});
+			const before = (pipeline.nodes[2].data as { inputPrompt?: string }).inputPrompt;
+			pipelineToYamlSubscriptions(pipeline);
+			const after = (pipeline.nodes[2].data as { inputPrompt?: string }).inputPrompt;
+			expect(after).toBe(before);
+		});
+	});
 });

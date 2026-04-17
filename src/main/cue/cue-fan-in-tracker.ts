@@ -16,17 +16,14 @@ import {
 	type CueSettings,
 	type CueSubscription,
 } from './cue-types';
+import {
+	buildFilteredOutputs,
+	SOURCE_OUTPUT_MAX_CHARS,
+	type FanInSourceCompletion,
+} from './cue-output-filter';
 
-export const SOURCE_OUTPUT_MAX_CHARS = 5000;
-
-/** Stored data for a single fan-in source completion */
-export interface FanInSourceCompletion {
-	sessionId: string;
-	sessionName: string;
-	output: string;
-	truncated: boolean;
-	chainDepth: number;
-}
+// Re-exports preserve call-site compatibility for existing importers.
+export { SOURCE_OUTPUT_MAX_CHARS, type FanInSourceCompletion };
 
 export interface CueFanInDeps {
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -65,41 +62,6 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 	const fanInTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** Tracks when the first completion arrived for each tracker key (for cleanup staleness checks). */
 	const fanInCreatedAt = new Map<string, number>();
-
-	/**
-	 * Build filtered output maps from a completed set of fan-in sources.
-	 * Shared by both the success path and timeout-continue path.
-	 */
-	function buildFilteredOutputs(
-		completions: FanInSourceCompletion[],
-		sub: CueSubscription
-	): {
-		outputCompletions: FanInSourceCompletion[];
-		perSourceOutputs: Record<string, string>;
-		forwardedOutputs: Record<string, string>;
-	} {
-		const includeSet = sub.include_output_from ? new Set(sub.include_output_from) : null;
-		const outputCompletions = includeSet
-			? completions.filter((c) => includeSet.has(c.sessionName) || includeSet.has(c.sessionId))
-			: completions;
-
-		const perSourceOutputs: Record<string, string> = {};
-		for (const c of outputCompletions) {
-			perSourceOutputs[c.sessionName] = c.output;
-		}
-
-		const forwardSet = sub.forward_output_from ? new Set(sub.forward_output_from) : null;
-		const forwardedOutputs: Record<string, string> = {};
-		if (forwardSet) {
-			for (const c of completions) {
-				if (forwardSet.has(c.sessionName) || forwardSet.has(c.sessionId)) {
-					forwardedOutputs[c.sessionName] = c.output;
-				}
-			}
-		}
-
-		return { outputCompletions, perSourceOutputs, forwardedOutputs };
-	}
 
 	/**
 	 * Resolve a user-authored `sources` list (names or IDs, possibly mixed) to a
