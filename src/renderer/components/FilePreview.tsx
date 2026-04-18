@@ -65,6 +65,7 @@ const imageCache = new Map<
 
 // Cache cleanup interval (clear entries older than 10 minutes)
 const IMAGE_CACHE_TTL = 10 * 60 * 1000;
+const BIONIFY_BUTTON_LABEL = 'B';
 
 // Clean up old cache entries periodically
 setInterval(() => {
@@ -1898,7 +1899,9 @@ export const FilePreview = React.memo(
 										}
 										aria-pressed={surfaceBionifyReadingMode}
 									>
-										<Wand2 className={headerIconClass} />
+										<span className="text-[12px] font-black leading-none">
+											{BIONIFY_BUTTON_LABEL}
+										</span>
 									</button>
 								)}
 								{/* Toggle between edit and preview/view mode - for any editable text file */}

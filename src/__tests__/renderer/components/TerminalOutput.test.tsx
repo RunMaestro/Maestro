@@ -1314,6 +1314,34 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTitle(/Show plain text/)).toBeInTheDocument();
 		});
 
+		it('shows and toggles the Bionify button for AI responses', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: '# Heading\n\nReadable information block', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(
+				<TerminalOutput
+					{...createDefaultProps({
+						session,
+						markdownEditMode: false,
+					})}
+				/>
+			);
+
+			expect(screen.getByTitle('Enable Bionify for this tab')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Enable Bionify for this tab'));
+			});
+
+			expect(screen.getByTitle('Disable Bionify for this tab')).toBeInTheDocument();
+		});
+
 		it('calls setMarkdownEditMode when toggle is clicked', async () => {
 			const setMarkdownEditMode = vi.fn();
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];

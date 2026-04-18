@@ -1,15 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import {
-	ChevronDown,
-	ChevronRight,
-	RefreshCw,
-	FolderOpen,
-	Plus,
-	Folder,
-	Wand2,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, FolderOpen, Plus, Folder } from 'lucide-react';
 import type { Theme } from '../types';
 import { useClickOutside } from '../hooks';
+const BIONIFY_BUTTON_LABEL = 'B';
 
 // Tree node type for folder structure
 export interface DocTreeNode {
@@ -385,7 +378,9 @@ export function AutoRunDocumentSelector({
 						}
 						aria-pressed={bionifyEnabled}
 					>
-						<Wand2 className="w-4 h-4" />
+						<span className="text-[12px] font-black leading-none">
+							{BIONIFY_BUTTON_LABEL}
+						</span>
 					</button>
 				)}
 
