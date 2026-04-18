@@ -280,12 +280,27 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// Start if not already running
 			if (!webServer.isActive()) {
 				logger.info('Starting web server', 'WebServer');
-				const { port, url } = await webServer.start();
+				const { port, token, url } = await webServer.start();
 				logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
+
+				// Refresh CLI discovery file so the CLI can reconnect after a
+				// stop/start cycle (ensureCliServer only runs once at app launch).
+				writeCliServerInfo({
+					port,
+					token,
+					pid: process.pid,
+					startedAt: Date.now(),
+				});
 				return { success: true, url };
 			}
 
-			// Already running
+			// Already running — refresh discovery file in case it's stale
+			writeCliServerInfo({
+				port: webServer.getPort(),
+				token: webServer.getSecurityToken(),
+				pid: process.pid,
+				startedAt: Date.now(),
+			});
 			return { success: true, url: webServer.getSecureUrl() };
 		} catch (error: any) {
 			logger.error(`Failed to start web server: ${error.message}`, 'WebServer');
