@@ -90,6 +90,15 @@ describe('agent-definitions', () => {
 			expect(config.tools).toBeDefined();
 			expect(config.tools.question).toBe(false);
 		});
+
+		it('should have claude-code with batchModeEnvVars disabling background tasks', () => {
+			// Background tasks in CLI batch mode silently fail because the session exits
+			// before async work completes. batchModeEnvVars is applied only by the CLI
+			// spawners, not by the desktop UI path (see #861).
+			const claudeCode = AGENT_DEFINITIONS.find((def) => def.id === 'claude-code');
+			expect(claudeCode?.batchModeEnvVars).toBeDefined();
+			expect(claudeCode?.batchModeEnvVars?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+		});
 	});
 
 	describe('getAgentDefinition', () => {

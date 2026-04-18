@@ -101,6 +101,7 @@ export interface AgentConfig extends BaseAgentConfig {
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
+	batchModeEnvVars?: Record<string, string>; // Env vars applied ONLY to CLI batch spawns (maestro-cli send). Not applied to desktop UI or --live path. Use for settings that only make sense in short-lived non-interactive sessions (e.g., disabling background tasks).
 }
 
 /**
@@ -142,6 +143,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet
+		// Batch-mode env vars (CLI `maestro-cli send` default path only — not --live, not desktop UI).
+		// Background tasks cannot complete before a short-lived batch session exits, so results are lost (#861).
+		batchModeEnvVars: {
+			CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+		},
 		configOptions: [
 			{
 				key: 'model',
