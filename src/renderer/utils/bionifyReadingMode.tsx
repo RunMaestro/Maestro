@@ -312,9 +312,13 @@ export function BionifyText({
 	if (!normalizedConfig.enabled) {
 		return <>{children}</>;
 	}
+	ensureBionifyStylesInjected();
 
 	return (
-		<span style={buildBionifyCssVars(normalizedConfig.intensity, theme)}>
+		<span
+			className="bionify-text-block"
+			style={buildBionifyCssVars(normalizedConfig.intensity, theme)}
+		>
 			{renderBionifyChildren(children, normalizedConfig)}
 		</span>
 	);

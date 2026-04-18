@@ -616,7 +616,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setBionifyIntensity: (value) => {
-			const clamped = Math.max(0.6, Math.min(1.5, value));
+			const numericValue = Number(value);
+			const clamped = Number.isFinite(numericValue)
+				? Math.max(0.6, Math.min(1.5, numericValue))
+				: 1;
 			set({ bionifyIntensity: clamped });
 			window.maestro.settings.set('bionifyIntensity', clamped);
 		},
@@ -1518,11 +1521,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['bionifyReadingMode'] !== undefined)
 			patch.bionifyReadingMode = allSettings['bionifyReadingMode'] as boolean;
 
-		if (allSettings['bionifyIntensity'] !== undefined)
-			patch.bionifyIntensity = Math.max(
-				0.6,
-				Math.min(1.5, allSettings['bionifyIntensity'] as number)
-			);
+		if (allSettings['bionifyIntensity'] !== undefined) {
+			const savedIntensity = allSettings['bionifyIntensity'];
+			if (typeof savedIntensity === 'number' && Number.isFinite(savedIntensity)) {
+				patch.bionifyIntensity = Math.max(0.6, Math.min(1.5, savedIntensity));
+			}
+		}
 
 		if (allSettings['bionifyAlgorithm'] !== undefined)
 			patch.bionifyAlgorithm = allSettings['bionifyAlgorithm'] as string;

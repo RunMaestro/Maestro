@@ -472,9 +472,13 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			await settingsDialog.getByRole('button', { name: 'Bionify' }).click();
 			await expect
 				.poll(async () => {
-					return await window.evaluate(() => {
-						return document.querySelectorAll('.bionify-word-emphasis').length;
-					});
+					return await window.evaluate((snippet) => {
+						const blocks = Array.from(
+							document.querySelectorAll('div, section, article, main, aside')
+						);
+						const chatSurface = blocks.find((node) => node.textContent?.includes(snippet));
+						return chatSurface?.querySelectorAll('.bionify-word-emphasis').length ?? 0;
+					}, 'ai chat prose clearly');
 				})
 				.toBeGreaterThan(0);
 			await expect
@@ -488,9 +492,11 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			await expect(settingsDialog).toBeHidden();
 			await writeDurableScreenshot(window, 'bionify-ai-chat-after.png');
 
-			const aiChatStyleMetrics = await window.evaluate(() => {
-				const emphasis = document.querySelector('.bionify-word-emphasis');
-				const rest = document.querySelector('.bionify-word-rest');
+			const aiChatStyleMetrics = await window.evaluate((snippet) => {
+				const blocks = Array.from(document.querySelectorAll('div, section, article, main, aside'));
+				const chatSurface = blocks.find((node) => node.textContent?.includes(snippet));
+				const emphasis = chatSurface?.querySelector('.bionify-word-emphasis');
+				const rest = chatSurface?.querySelector('.bionify-word-rest');
 				if (!emphasis || !rest) {
 					return null;
 				}
@@ -500,7 +506,7 @@ Reading mode should emphasize this ${autoRunPhrase}.
 					emphasisWeight: emphasisStyle.fontWeight,
 					restOpacity: restStyle.opacity,
 				};
-			});
+			}, 'ai chat prose clearly');
 
 			expect(aiChatStyleMetrics).toEqual({
 				emphasisWeight: expect.stringMatching(/7|8/),
