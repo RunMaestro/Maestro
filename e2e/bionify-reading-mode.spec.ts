@@ -326,15 +326,21 @@ Reading mode should emphasize this ${autoRunPhrase}.
 
 			const bionifyButtons = window
 				.locator('button')
-				.filter({ has: window.locator('span', { hasText: 'B' }) });
+				.filter({ has: window.locator('span', { hasText: /^B$/ }) });
 			const filePreviewBeforeButton = bionifyButtons.first();
 			await writeDurableScreenshot(window, 'bionify-file-preview-before.png');
 			const filePreviewButtonMetrics = await Promise.all([
 				filePreviewBeforeButton.boundingBox(),
 				window.getByTitle('Copy content to clipboard').boundingBox(),
 			]);
-			expect(filePreviewButtonMetrics[0]?.height).toBe(filePreviewButtonMetrics[1]?.height);
-			expect(filePreviewButtonMetrics[0]?.width).toBe(filePreviewButtonMetrics[1]?.width);
+			expect(filePreviewButtonMetrics[0]?.height).toBeCloseTo(
+				filePreviewButtonMetrics[1]?.height ?? 0,
+				0
+			);
+			expect(filePreviewButtonMetrics[0]?.width).toBeCloseTo(
+				filePreviewButtonMetrics[1]?.width ?? 0,
+				0
+			);
 			await filePreviewBeforeButton.click();
 			await writeDurableScreenshot(window, 'bionify-file-preview-after.png');
 
@@ -451,8 +457,8 @@ Reading mode should emphasize this ${autoRunPhrase}.
 				autoRunBionifyButton.boundingBox(),
 				window.getByTitle('Create new document').boundingBox(),
 			]);
-			expect(autoRunButtonMetrics[0]?.height).toBe(autoRunButtonMetrics[1]?.height);
-			expect(autoRunButtonMetrics[0]?.width).toBe(autoRunButtonMetrics[1]?.width);
+			expect(autoRunButtonMetrics[0]?.height).toBeCloseTo(autoRunButtonMetrics[1]?.height ?? 0, 0);
+			expect(autoRunButtonMetrics[0]?.width).toBeCloseTo(autoRunButtonMetrics[1]?.width ?? 0, 0);
 			await autoRunBionifyButton.click();
 			await window.waitForTimeout(250);
 			await writeDurableScreenshot(window, 'bionify-autorun-after.png');

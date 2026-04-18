@@ -1906,6 +1906,8 @@ export function getSettingsActions() {
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
 		setBionifyReadingMode: state.setBionifyReadingMode,
+		setBionifyIntensity: state.setBionifyIntensity,
+		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
 		setTerminalWidth: state.setTerminalWidth,

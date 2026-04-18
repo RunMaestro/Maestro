@@ -1,15 +1,20 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import {
 	BionifyText,
 	BionifyTextBlock,
 	type BionifyRenderConfig,
 	getBionifyReadingModeStyles,
+	resetBionifyStylesForTests,
 	renderBionifyText,
 } from '../../../renderer/utils/bionifyReadingMode';
 
 describe('bionifyReadingMode', () => {
+	beforeEach(() => {
+		resetBionifyStylesForTests();
+	});
+
 	it('leaves content unchanged when disabled', () => {
 		render(<div>{renderBionifyText('Reading mode stays off.', false)}</div>);
 

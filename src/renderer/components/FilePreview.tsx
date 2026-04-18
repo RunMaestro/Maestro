@@ -993,7 +993,17 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
-		}, [effectiveBionifyReadingMode, onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
+		}, [
+			effectiveBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
+			onFileClick,
+			theme,
+			cwd,
+			file,
+			showRemoteImages,
+			sshRemoteId,
+		]);
 
 		// Extract directory path without filename
 		const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';

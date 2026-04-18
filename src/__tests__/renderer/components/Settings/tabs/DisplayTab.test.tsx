@@ -227,8 +227,20 @@ describe('DisplayTab', () => {
 
 			const input = screen.getByLabelText('Bionify algorithm');
 			fireEvent.change(input, { target: { value: '+ 1 1 2 2 0.55' } });
+			fireEvent.blur(input);
 
 			expect(mockSetBionifyAlgorithm).toHaveBeenLastCalledWith('+ 1 1 2 2 0.55');
+		});
+
+		it('shows validation feedback and avoids persisting invalid algorithm input', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.change(input, { target: { value: '- 0 1 1' } });
+			fireEvent.blur(input);
+
+			expect(screen.getByText(/Enter `\+\|-/)).toBeInTheDocument();
+			expect(mockSetBionifyAlgorithm).not.toHaveBeenCalled();
 		});
 
 		it('opens an info modal with the upstream algorithm breakdown', () => {
@@ -240,7 +252,7 @@ describe('DisplayTab', () => {
 			expect(dialog).toBeInTheDocument();
 			expect(within(dialog).getAllByText(/- 0 1 1 2 0.4/).length).toBeGreaterThan(0);
 			expect(within(dialog).getByText(/common english words/i)).toBeInTheDocument();
-			expect(within(dialog).getByText(/fraction of words/i)).toBeInTheDocument();
+			expect(within(dialog).getByText(/fraction of each word/i)).toBeInTheDocument();
 		});
 	});
 

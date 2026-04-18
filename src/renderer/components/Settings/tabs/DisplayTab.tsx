@@ -17,6 +17,8 @@ import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
 import { Modal } from '../../ui/Modal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 
+const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
+
 export interface DisplayTabProps {
 	theme: Theme;
 }
@@ -64,6 +66,15 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	const [fontLoading, setFontLoading] = useState(false);
 	const [fontsLoaded, setFontsLoaded] = useState(false);
 	const [showBionifyInfoModal, setShowBionifyInfoModal] = useState(false);
+	const [bionifyAlgorithmDraft, setBionifyAlgorithmDraft] = useState(bionifyAlgorithm);
+
+	const isBionifyAlgorithmValid = BIONIFY_ALGORITHM_PATTERN.test(bionifyAlgorithmDraft.trim());
+
+	const commitBionifyAlgorithmDraft = () => {
+		if (isBionifyAlgorithmValid && bionifyAlgorithmDraft.trim() !== bionifyAlgorithm) {
+			setBionifyAlgorithm(bionifyAlgorithmDraft.trim());
+		}
+	};
 
 	const loadFonts = async () => {
 		if (fontsLoaded) return; // Don't reload if already loaded
@@ -270,13 +281,19 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					id="bionify-algorithm-input"
 					aria-label="Bionify algorithm"
 					type="text"
-					value={bionifyAlgorithm}
-					onChange={(event) => setBionifyAlgorithm(event.target.value)}
+					value={bionifyAlgorithmDraft}
+					onChange={(event) => setBionifyAlgorithmDraft(event.target.value)}
+					onBlur={commitBionifyAlgorithmDraft}
+					onKeyDown={(event) => {
+						if (event.key === 'Enter') {
+							event.currentTarget.blur();
+						}
+					}}
 					className="w-full px-3 py-2 rounded text-sm outline-none focus-visible:ring-1 focus-visible:ring-white/30"
 					style={{
 						backgroundColor: theme.colors.bgMain,
 						color: theme.colors.textMain,
-						border: `1px solid ${theme.colors.border}`,
+						border: `1px solid ${isBionifyAlgorithmValid ? theme.colors.border : theme.colors.warning}`,
 					}}
 					placeholder="- 0 1 1 2 0.4"
 					spellCheck={false}
@@ -285,6 +302,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0 1 1 2
 					0.4`
 				</p>
+				{!isBionifyAlgorithmValid && (
+					<p className="text-xs mt-2" style={{ color: theme.colors.warning }}>
+						Enter `+|- len1 len2 len3 len4 fraction`, for example `- 0 1 1 2 0.4`.
+					</p>
+				)}
 			</div>
 
 			<div>
@@ -673,7 +695,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						</p>
 						<ul className="list-disc pl-5 space-y-2" style={{ color: theme.colors.textDim }}>
 							<li>The next four numbers control highlighted characters for words of length 1-4.</li>
-							<li>The final value is a fraction of words with length 5 or more.</li>
+							<li>
+								The final value is a fraction of each word&apos;s characters to emphasize (for
+								example, `0.4` highlights the first 40% of characters in words longer than 4
+								letters).
+							</li>
 							<li>
 								Current default: `- 0 1 1 2 0.4`, which skips common words and highlights the first
 								40% of longer words.

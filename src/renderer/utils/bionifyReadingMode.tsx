@@ -124,7 +124,7 @@ function normalizeBionifyConfig(
 
 function resolveBionifyRestOpacity(intensity: number, theme?: Theme): number {
 	const baseOpacity = theme?.mode === 'light' ? 0.73 : DEFAULT_BIONIFY_REST_OPACITY;
-	return Number(clamp(baseOpacity - (intensity - 1) * 1, 0.2, 0.9).toFixed(2));
+	return Number(clamp(baseOpacity - (intensity - 1), 0.2, 0.9).toFixed(2));
 }
 
 function resolveBionifyEmphasisWeight(intensity: number): number {
@@ -154,6 +154,13 @@ function ensureBionifyStylesInjected(): void {
 	style.textContent = getBionifyReadingModeStyles();
 	document.head.appendChild(style);
 	hasInjectedBionifyStyles = true;
+}
+
+export function resetBionifyStylesForTests(): void {
+	hasInjectedBionifyStyles = false;
+	if (typeof document !== 'undefined') {
+		document.getElementById(BIONIFY_STYLE_ID)?.remove();
+	}
 }
 
 function getEmphasisLength(word: string, algorithm: ParsedBionifyAlgorithm): number {
