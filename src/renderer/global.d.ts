@@ -78,58 +78,16 @@ interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
 }
 
-interface AgentConfigOption {
-	key: string;
-	type: 'checkbox' | 'text' | 'number' | 'select';
-	label: string;
-	description: string;
-	default: any;
-	options?: string[];
-}
-
+type AgentConfigOption = import('../shared/types').AgentConfigOption;
 type AgentCapabilities = import('../shared/types').AgentCapabilities;
+type AgentConfig = import('../shared/types').AgentConfig;
 
-interface AgentConfig {
-	id: string;
-	name: string;
-	binaryName?: string;
-	available: boolean;
-	path?: string;
-	customPath?: string;
-	command: string;
-	args?: string[];
-	hidden?: boolean;
-	configOptions?: AgentConfigOption[];
-	yoloModeArgs?: string[];
-	readOnlyCliEnforced?: boolean;
-	capabilities?: AgentCapabilities;
-}
+type DirectoryEntry = import('../shared/types').DirectoryEntry;
+type ShellInfo = import('../shared/types').ShellInfo;
 
-interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
+type UsageStats = import('../shared/types').UsageStats;
 
-interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
-
-interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
-
-type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
 /**
  * Result type for reading session messages from agent storage.

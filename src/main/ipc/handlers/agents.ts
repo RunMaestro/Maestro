@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { AgentConfigsData } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -142,13 +143,6 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
 	return commandList;
-}
-
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
 }
 
 /**

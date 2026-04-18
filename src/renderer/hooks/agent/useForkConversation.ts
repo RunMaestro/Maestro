@@ -152,6 +152,9 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
+					if (!commandToUse) {
+						throw new Error(`${session.toolType} agent has no command configured`);
+					}
 
 					const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({

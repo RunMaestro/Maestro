@@ -10,6 +10,10 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { UsageStats } from '../../shared/types';
+
+// Re-export for consumers that import from preload
+export type { UsageStats } from '../../shared/types';
 
 /**
  * Helper to log via the main process logger.
@@ -97,18 +101,7 @@ export interface ActiveProcess {
 	childProcesses?: Array<{ pid: number; command: string }>;
 }
 
-/**
- * Usage statistics from AI responses
- */
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
+// UsageStats imported and re-exported from shared/types above
 
 /**
  * Agent error information

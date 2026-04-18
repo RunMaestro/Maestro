@@ -28,17 +28,10 @@ import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import type { BootstrapSettings } from '../../stores/types';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
-
-/**
- * Interface for bootstrap settings (custom storage location)
- */
-interface BootstrapSettings {
-	customSyncPath?: string;
-	iCloudSyncEnabled?: boolean; // Legacy - kept for backwards compatibility
-}
 
 /**
  * Dependencies required for system handlers

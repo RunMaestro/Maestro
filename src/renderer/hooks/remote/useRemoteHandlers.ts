@@ -346,7 +346,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				// Include tab ID in targetSessionId for proper output routing
 				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
-				const commandToUse = agent.path ?? agent.command;
+				const commandToUse = agent.path ?? agent.command ?? '';
 
 				// For NEW sessions, prepare Maestro system prompt
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({

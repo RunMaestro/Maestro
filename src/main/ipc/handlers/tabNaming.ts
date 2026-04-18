@@ -11,6 +11,7 @@
 
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
+import type { AgentConfigsData } from '../../stores/types';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger';
 import {
@@ -41,12 +42,7 @@ const handlerOpts = (
 	...extra,
 });
 
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
-}
+// AgentConfigsData imported from stores/types
 
 /**
  * Dependencies required for tab naming handler registration

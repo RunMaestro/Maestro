@@ -88,15 +88,9 @@ export interface UsageTotals {
 	reasoningTokens: number;
 }
 
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number;
-}
+// Import and re-export UsageStats from canonical location
+import type { UsageStats } from '../../shared/types';
+export type { UsageStats } from '../../shared/types';
 
 export interface SpawnResult {
 	pid: number;

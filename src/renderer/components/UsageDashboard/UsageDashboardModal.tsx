@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
@@ -67,28 +68,7 @@ type SectionId =
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 
 // Stats time range type matching the backend API
-type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
-
-// Aggregation data shape from the stats API
-interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byLocation: { local: number; remote: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	// Session lifecycle stats
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	// Per-provider per-day breakdown for provider comparison
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	// Per-session per-day breakdown for agent usage chart
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-}
+// StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
 type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';

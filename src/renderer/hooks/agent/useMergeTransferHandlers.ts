@@ -453,6 +453,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
+					if (!commandToUse) {
+						throw new Error(`${targetSession.toolType} agent has no command configured`);
+					}
 
 					// Determine whether to send the prompt via stdin on Windows to avoid
 					// exceeding the command line length limit. Context transfer prompts

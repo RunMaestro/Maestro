@@ -78,13 +78,7 @@ async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
 	}
 }
 
-/**
- * Bootstrap settings store for custom storage location.
- * This is the same store used in main/index.ts for settings sync.
- */
-interface BootstrapSettings {
-	customSyncPath?: string;
-}
+import type { BootstrapSettings } from '../stores/types';
 
 const bootstrapStore = new Store<BootstrapSettings>({
 	name: 'maestro-bootstrap',

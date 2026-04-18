@@ -15,6 +15,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
+import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -106,21 +107,7 @@ function handlerOpts(operation: string, context: string = LOG_CONTEXT) {
 	return { context, operation, logSuccess: false };
 }
 
-/**
- * Claude session origin types
- */
-type ClaudeSessionOrigin = 'user' | 'auto';
-
-interface ClaudeSessionOriginInfo {
-	origin: ClaudeSessionOrigin;
-	sessionName?: string;
-	starred?: boolean;
-	contextUsage?: number;
-}
-
-interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
-}
+// ClaudeSessionOriginInfo and ClaudeSessionOriginsData imported from stores/types
 
 /**
  * Dependencies required for Claude handlers

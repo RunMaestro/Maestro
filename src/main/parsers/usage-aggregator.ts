@@ -6,7 +6,8 @@
  * and allow parsers to use it without importing node-pty dependencies.
  */
 
-import type { ToolType } from '../../shared/types';
+import type { ToolType, UsageStats } from '../../shared/types';
+export type { UsageStats } from '../../shared/types';
 import {
 	DEFAULT_CONTEXT_WINDOWS,
 	COMBINED_CONTEXT_AGENTS,
@@ -27,23 +28,7 @@ export interface ModelStats {
 	contextWindow?: number;
 }
 
-/**
- * Usage statistics extracted from model usage data
- */
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	/**
-	 * Reasoning/thinking tokens (separate from outputTokens)
-	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
-	 * These are already included in outputTokens but tracked separately for UI display.
-	 */
-	reasoningTokens?: number;
-}
+// UsageStats imported and re-exported from shared/types above
 
 /**
  * Calculate total context tokens based on agent-specific semantics.

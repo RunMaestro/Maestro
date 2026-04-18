@@ -15,24 +15,9 @@
 import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-
-/**
- * Auto Run session data shape from the API
- */
-interface AutoRunSession {
-	id: string;
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	duration: number;
-	tasksTotal?: number;
-	tasksCompleted?: number;
-	projectPath?: string;
-}
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */

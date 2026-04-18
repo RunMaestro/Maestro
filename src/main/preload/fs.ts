@@ -9,16 +9,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Directory entry information
- */
-export interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
+import type { DirectoryEntry } from '../../shared/types';
+export type { DirectoryEntry } from '../../shared/types';
 
 /**
  * File stat information

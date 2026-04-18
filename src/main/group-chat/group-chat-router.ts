@@ -57,7 +57,7 @@ export { setGetCustomShellPathCallback };
 /**
  * Session info for matching @mentions to available Maestro sessions.
  */
-export interface SessionInfo {
+export interface GroupChatSessionInfo {
 	id: string;
 	name: string;
 	toolType: string;
@@ -80,7 +80,7 @@ export interface SessionInfo {
 /**
  * Callback type for getting available sessions from the renderer.
  */
-export type GetSessionsCallback = () => SessionInfo[];
+export type GetSessionsCallback = () => GroupChatSessionInfo[];
 
 /**
  * Callback type for getting custom environment variables for an agent.

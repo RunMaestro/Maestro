@@ -289,7 +289,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				? filterYoloArgs(agent.args || [], agent)
 				: [...(agent.args || [])];
 
-			const commandToUse = agent.path ?? agent.command;
+			const commandToUse = agent.path ?? agent.command ?? '';
 
 			// Check if this is a message with images but no text
 			const hasImages = item.images && item.images.length > 0;

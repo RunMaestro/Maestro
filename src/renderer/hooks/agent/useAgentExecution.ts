@@ -187,6 +187,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					return { success: false };
 				}
 
+				// Validate command before registering listeners to avoid leaked subscriptions
+				const commandToUse = agent.path || agent.command;
+				if (!commandToUse) {
+					throw new Error(`${session.toolType} agent has no command configured`);
+				}
+
 				// For batch processing, use a unique session ID per task run to avoid contaminating the main AI terminal
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
@@ -418,7 +424,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 					// Spawn the agent for batch processing
 					// Use effectiveCwd which may be a worktree path for parallel execution
-					const commandToUse = agent.path || agent.command;
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
@@ -509,6 +514,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					return { success: false };
 				}
 
+				// Validate command before registering listeners to avoid leaked subscriptions
+				const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
+				if (!commandToUse) {
+					throw new Error(`${toolType} agent has no command configured`);
+				}
+
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
 
@@ -589,7 +600,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							effectiveSessionSshRemoteConfig = mainSession.sessionSshRemoteConfig;
 						}
 					}
-					const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
