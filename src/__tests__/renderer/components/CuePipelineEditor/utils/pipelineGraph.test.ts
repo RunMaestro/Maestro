@@ -262,6 +262,29 @@ describe('convertToReactFlowNodes', () => {
 		expect((nodes[0].data as { label: string }).label).toBe('Heartbeat');
 	});
 
+	it('threads subscriptionName from TriggerNodeData to TriggerNodeDataProps', () => {
+		// Regression guard: if this thread-through breaks, the Play button
+		// on chain triggers silently falls back to pipelineName and fires
+		// the wrong subscription — that's the GitHub-trigger-unreachable bug.
+		const trigger = makeTrigger('t1', 'github.pull_request');
+		(trigger.data as TriggerNodeData).subscriptionName = 'Pipeline 1-chain-2';
+		const pipeline = makePipeline('p1', { nodes: [trigger] });
+		const nodes = convertToReactFlowNodes([pipeline], 'p1');
+		expect((nodes[0].data as { subscriptionName?: string }).subscriptionName).toBe(
+			'Pipeline 1-chain-2'
+		);
+	});
+
+	it('leaves subscriptionName undefined when not stamped on the node data', () => {
+		// Never-saved pipelines don't have a subscription yet — the TriggerNode
+		// component's Play button is hidden (isSaved=false) in that case, and
+		// the fallback to pipelineName handles any legacy data that slips through.
+		const trigger = makeTrigger('t1', 'time.heartbeat');
+		const pipeline = makePipeline('p1', { nodes: [trigger] });
+		const nodes = convertToReactFlowNodes([pipeline], 'p1');
+		expect((nodes[0].data as { subscriptionName?: string }).subscriptionName).toBeUndefined();
+	});
+
 	it('calls onConfigureNode callback and passes it to node data', () => {
 		const callback = vi.fn();
 		const pipeline = makePipeline('p1', { nodes: [makeTrigger('t1', 'file.changed')] });

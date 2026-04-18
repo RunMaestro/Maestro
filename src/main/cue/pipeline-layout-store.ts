@@ -77,11 +77,26 @@ function migrateLegacyLayout(layout: PipelineLayoutState): PipelineLayoutState {
 
 export function savePipelineLayout(layout: PipelineLayoutState): void {
 	const filePath = getLayoutFilePath();
+	// Deduplicate pipelines by `id` before persisting — the renderer's save
+	// path writes `state.pipelines` verbatim, so the file naturally drops
+	// entries for deleted pipelines on every save. Dedup here is a defensive
+	// backstop so a buggy caller that sends duplicate IDs (e.g. a race
+	// between two persistLayout calls) can't grow the file with ghost
+	// entries. Last write wins, matching the in-memory semantics.
+	const seenIds = new Set<string>();
+	const dedupedPipelines: typeof layout.pipelines = [];
+	for (let i = layout.pipelines.length - 1; i >= 0; i--) {
+		const p = layout.pipelines[i];
+		if (seenIds.has(p.id)) continue;
+		seenIds.add(p.id);
+		dedupedPipelines.unshift(p);
+	}
 	// Always stamp the version so we know the on-disk shape and never
 	// accidentally treat a freshly-written file as legacy on next load.
 	const normalized: PipelineLayoutState = {
 		...layout,
 		version: 2,
+		pipelines: dedupedPipelines,
 		perProject: layout.perProject ?? {},
 	};
 	fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), 'utf-8');

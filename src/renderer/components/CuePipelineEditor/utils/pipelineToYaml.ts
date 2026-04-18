@@ -194,20 +194,36 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 			buildChain(agent, pipeline.name, subscriptions, outgoing, incoming, nodeMap, visited);
 			chainIndex = subscriptions.length;
 		} else {
-			// Fan-out: multiple targets from trigger
+			// Fan-out: multiple targets from trigger.
 			sub.fan_out = agentTargets.map((a) => (a.data as AgentNodeData).sessionName);
-			// Resolve per-agent prompts from edge prompt → agent inputPrompt fallback
+			// Resolve per-agent prompts from edge prompt → agent inputPrompt fallback.
 			const perAgentPrompts = agentTargets.map((agent) => {
 				const edge = triggerOutgoing.find((e) => e.target === agent.id);
 				return edge?.prompt ?? (agent.data as AgentNodeData).inputPrompt ?? '';
 			});
-			// Use per-agent prompts if they differ; otherwise collapse to single prompt
 			const allSame = perAgentPrompts.every((p) => p === perAgentPrompts[0]);
 			if (allSame) {
+				// All fan-out targets share the same prompt — keep the single
+				// `prompt` path so we externalize it to one file in the record
+				// assembly step below.
 				sub.prompt = perAgentPrompts[0];
 			} else {
-				sub.prompt = perAgentPrompts[0];
-				sub.fan_out_prompts = perAgentPrompts;
+				// Per-agent prompts differ. Externalize each to its own `.md`
+				// file (written in the record assembly step) and emit
+				// `fan_out_prompt_files` pointing at them. This keeps the UI↔YAML
+				// mapping symmetric — one file per agent, mirroring what the
+				// editor shows — instead of the old inline `fan_out_prompts`
+				// array which bloated the YAML and read asymmetrically.
+				sub.prompt = perAgentPrompts[0]; // engine fallback if files go missing
+				sub.fan_out_prompts = perAgentPrompts; // carries content to assembly
+				sub.fan_out_prompt_files = agentTargets.map((agent) => {
+					const agentName = (agent.data as AgentNodeData).sessionName;
+					// Suffix uniquely per-agent so two agents with the same
+					// pipeline+event don't collide on disk. Agent names can
+					// duplicate in pathological cases; `fan_out` preserves
+					// positional order so files are still addressable by index.
+					return cuePromptFilePath(agentName, pipeline.name);
+				});
 			}
 			subscriptions.push(sub);
 
@@ -293,14 +309,20 @@ function buildChain(
 		}
 
 		if (incomingAgentEdges.length > 1) {
-			// Fan-in: multiple source sessions
-			const allSources = incomingAgentEdges
-				.map((e) => {
-					const src = nodeMap.get(e.source);
-					return src ? (src.data as AgentNodeData).sessionName : '';
-				})
-				.filter(Boolean);
+			// Fan-in: multiple source sessions.
+			// Emit names (legacy) AND ids (new). IDs are authoritative on load;
+			// names remain for human readability and for downgrading to older
+			// versions of Maestro that don't know the new field.
+			const sourceData = incomingAgentEdges.map((e) => {
+				const src = nodeMap.get(e.source);
+				return src ? (src.data as AgentNodeData) : null;
+			});
+			const allSources = sourceData.map((d) => d?.sessionName ?? '').filter(Boolean);
+			const allSourceIds = sourceData.map((d) => d?.sessionId ?? '').filter(Boolean);
 			sub.source_session = allSources;
+			if (allSourceIds.length === allSources.length && allSourceIds.length > 0) {
+				sub.source_session_ids = allSourceIds;
+			}
 
 			// Emit include_output_from when only a subset of sources contribute
 			// output. This lets passthrough edges trigger the fan-in without
@@ -336,6 +358,9 @@ function buildChain(
 			}
 		} else {
 			sub.source_session = fromAgentData.sessionName;
+			if (fromAgentData.sessionId) {
+				sub.source_session_ids = fromAgentData.sessionId;
+			}
 		}
 
 		subscriptions.push(sub);
@@ -358,9 +383,6 @@ export function pipelinesToYaml(
 	const promptFiles = new Map<string, string>();
 
 	for (const pipeline of pipelines) {
-		// Pipeline metadata comment
-		comments.push(`# Pipeline: ${pipeline.name} (color: ${pipeline.color})`);
-
 		const subs = pipelineToYamlSubscriptions(pipeline);
 
 		// Build maps from subscription name to the agent node that owns it
@@ -377,6 +399,13 @@ export function pipelinesToYaml(
 			const agentId = subAgentIdMap.get(sub.name);
 			if (agentId) record.agent_id = agentId;
 
+			// Persist the owning pipeline's name and color so they round-trip
+			// through YAML. `pipeline_name` is authoritative for grouping —
+			// editing a subscription's `name` no longer breaks pipeline
+			// membership. `pipeline_color` keeps colors stable across reloads.
+			if (pipeline.name) record.pipeline_name = pipeline.name;
+			if (pipeline.color) record.pipeline_color = pipeline.color;
+
 			if (sub.label) record.label = sub.label;
 			if (sub.interval_minutes != null) record.interval_minutes = sub.interval_minutes;
 			if (sub.schedule_times != null) record.schedule_times = sub.schedule_times;
@@ -385,8 +414,17 @@ export function pipelinesToYaml(
 			if (sub.repo != null) record.repo = sub.repo;
 			if (sub.poll_minutes != null) record.poll_minutes = sub.poll_minutes;
 			if (sub.source_session != null) record.source_session = sub.source_session;
+			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.fan_out != null) record.fan_out = sub.fan_out;
-			if (sub.fan_out_prompts != null) record.fan_out_prompts = sub.fan_out_prompts;
+			// Per-agent fan-out prompts: prefer externalized files over the
+			// legacy inline array. Emitting both would be redundant — the
+			// normalizer resolves files into the same runtime slots as
+			// inline prompts, so only one needs to reach the YAML.
+			if (sub.fan_out_prompt_files != null) {
+				record.fan_out_prompt_files = sub.fan_out_prompt_files;
+			} else if (sub.fan_out_prompts != null) {
+				record.fan_out_prompts = sub.fan_out_prompts;
+			}
 			if (sub.filter != null) record.filter = sub.filter;
 			if (sub.fan_in_timeout_minutes != null)
 				record.fan_in_timeout_minutes = sub.fan_in_timeout_minutes;
@@ -402,10 +440,27 @@ export function pipelinesToYaml(
 			const agentName = subAgentMap.get(sub.name) ?? 'agent';
 			const promptSuffix = sub.name === pipeline.name ? pipeline.name : sub.name;
 
-			if (sub.prompt) {
+			// When fan-out targets carry different prompts, each agent's prompt
+			// lives in its own file (`fan_out_prompt_files`). In that case we
+			// skip the single `prompt_file` emission entirely — `sub.prompt` is
+			// kept only as an engine fallback, not as a canonical source of
+			// truth on disk.
+			if (sub.prompt && !sub.fan_out_prompt_files) {
 				const filePath = cuePromptFilePath(agentName, promptSuffix);
 				record.prompt_file = filePath;
 				promptFiles.set(filePath, sub.prompt);
+			}
+
+			// Write one `.md` file per fan-out agent when we've chosen the
+			// externalized shape. Empty strings are written through too so
+			// the file-path → prompt positional mapping in `fan_out` stays
+			// intact (normalizer reads back `""` from missing/empty files).
+			if (sub.fan_out_prompt_files && sub.fan_out_prompts) {
+				for (let i = 0; i < sub.fan_out_prompt_files.length; i++) {
+					const filePath = sub.fan_out_prompt_files[i];
+					const content = sub.fan_out_prompts[i] ?? '';
+					promptFiles.set(filePath, content);
+				}
 			}
 
 			if (sub.output_prompt) {

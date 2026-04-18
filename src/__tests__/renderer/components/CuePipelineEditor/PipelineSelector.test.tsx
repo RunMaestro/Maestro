@@ -147,9 +147,9 @@ describe('PipelineSelector', () => {
 		const swatches = screen.getAllByTitle(/^#/);
 		expect(swatches.length).toBe(12);
 
-		// Click a swatch
-		fireEvent.click(swatches[2]); // yellow #eab308
-		expect(onChangePipelineColor).toHaveBeenCalledWith('p1', '#eab308');
+		// Click a swatch at index 2 in the canonical PIPELINE_COLORS palette
+		fireEvent.click(swatches[2]); // amber #f59e0b
+		expect(onChangePipelineColor).toHaveBeenCalledWith('p1', '#f59e0b');
 	});
 
 	it('should apply custom textColor and borderColor', () => {

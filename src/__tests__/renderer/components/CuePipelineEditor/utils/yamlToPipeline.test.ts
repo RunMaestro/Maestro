@@ -878,3 +878,88 @@ describe('auto-injected source output prefix stripping', () => {
 		expect((testerNode!.data as { inputPrompt?: string }).inputPrompt).toBeUndefined();
 	});
 });
+
+describe('trigger node subscriptionName population', () => {
+	// Regression guard for the "GitHub chain trigger Play button fires the
+	// wrong sub" bug. Every trigger node must carry the subscription name it
+	// represents so the UI can fire the correct sub — using pipeline.name
+	// alone only matched the first trigger, leaving chain triggers (GitHub
+	// PR/Issue polls, scheduled, etc.) unreachable from the editor.
+	it('stamps each trigger node with its owning subscription name', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'Pipeline 1',
+				event: 'app.startup',
+				enabled: true,
+				prompt: 'startup',
+				agent_id: 's1',
+				pipeline_name: 'Pipeline 1',
+			},
+			{
+				name: 'Pipeline 1-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'scheduled',
+				schedule_times: ['00:00'],
+				agent_id: 's1',
+				pipeline_name: 'Pipeline 1',
+			},
+			{
+				name: 'Pipeline 1-chain-2',
+				event: 'github.pull_request',
+				enabled: true,
+				prompt: 'review PR',
+				repo: 'owner/repo',
+				poll_minutes: 1,
+				agent_id: 's1',
+				pipeline_name: 'Pipeline 1',
+			},
+		];
+		const sessions = [
+			{
+				id: 's1',
+				name: 'Worker',
+				toolType: 'claude-code' as const,
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		expect(pipelines).toHaveLength(1);
+
+		const triggerNodes = pipelines[0].nodes.filter((n) => n.type === 'trigger');
+		expect(triggerNodes).toHaveLength(3);
+
+		const subNames = triggerNodes
+			.map((n) => (n.data as { subscriptionName?: string }).subscriptionName)
+			.sort();
+		expect(subNames).toEqual(['Pipeline 1', 'Pipeline 1-chain-1', 'Pipeline 1-chain-2']);
+	});
+
+	it('single-trigger pipelines also stamp the subscription name on the trigger node', () => {
+		const subs: CueSubscription[] = [
+			{
+				name: 'solo',
+				event: 'app.startup',
+				enabled: true,
+				prompt: 'x',
+				agent_id: 's1',
+				pipeline_name: 'solo',
+			},
+		];
+		const sessions = [
+			{
+				id: 's1',
+				name: 'agent',
+				toolType: 'claude-code' as const,
+				cwd: '/tmp',
+				projectRoot: '/tmp',
+			},
+		];
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const triggerNode = pipelines[0].nodes.find((n) => n.type === 'trigger')!;
+		expect((triggerNode.data as { subscriptionName?: string }).subscriptionName).toBe('solo');
+	});
+});

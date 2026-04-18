@@ -351,7 +351,12 @@ describe('pipelinesToYaml', () => {
 		});
 
 		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
-		expect(yamlStr).toContain('# Pipeline: test-pipeline (color: #06b6d4)');
+		// Pipeline identity is carried by the `pipeline_name` / `pipeline_color`
+		// fields on each subscription (authoritative, round-tripped). The
+		// human-only `# Pipeline: X (color: Y)` header was removed to
+		// eliminate the duplicate source of truth.
+		expect(yamlStr).toContain('pipeline_name: test-pipeline');
+		expect(yamlStr).toContain("pipeline_color: '#06b6d4'");
 		expect(yamlStr).toContain('subscriptions:');
 		expect(yamlStr).toContain('name: test-pipeline');
 		expect(yamlStr).toContain('event: time.heartbeat');
@@ -481,8 +486,8 @@ describe('pipelinesToYaml', () => {
 		});
 
 		const { yaml: yamlStr } = pipelinesToYaml([p1, p2]);
-		expect(yamlStr).toContain('# Pipeline: pipeline-a');
-		expect(yamlStr).toContain('# Pipeline: pipeline-b');
+		expect(yamlStr).toContain('pipeline_name: pipeline-a');
+		expect(yamlStr).toContain('pipeline_name: pipeline-b');
 		expect(yamlStr).toContain('name: pipeline-a');
 		expect(yamlStr).toContain('name: pipeline-b');
 	});
@@ -1284,5 +1289,116 @@ describe('fan-out to fan-in pipeline', () => {
 		expect(fanInSub).toBeDefined();
 		expect(fanInSub!).not.toHaveProperty('fan_in_timeout_minutes');
 		expect(fanInSub!).not.toHaveProperty('fan_in_timeout_on_fail');
+	});
+});
+
+describe('fan-out per-agent prompt externalization', () => {
+	// Regression guard for the "one prompt file for three fan-out agents"
+	// asymmetry: when fan-out targets have different prompts, each agent's
+	// prompt must live in its own .md file (`fan_out_prompt_files`) rather
+	// than being crammed into an inline `fan_out_prompts` array in the YAML.
+
+	function makeFanOutPipeline(prompts: [string, string, string]) {
+		return makePipeline({
+			name: 'Pipeline 1',
+			nodes: [
+				{
+					id: 'trigger-1',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'app.startup', label: 'Startup', config: {} },
+				},
+				{
+					id: 'agent-1',
+					type: 'agent',
+					position: { x: 300, y: 0 },
+					data: {
+						sessionId: 's1',
+						sessionName: 'Codex 1',
+						toolType: 'codex',
+						inputPrompt: prompts[0],
+					},
+				},
+				{
+					id: 'agent-2',
+					type: 'agent',
+					position: { x: 300, y: 100 },
+					data: {
+						sessionId: 's2',
+						sessionName: 'OpenCode 1',
+						toolType: 'opencode',
+						inputPrompt: prompts[1],
+					},
+				},
+				{
+					id: 'agent-3',
+					type: 'agent',
+					position: { x: 300, y: 200 },
+					data: {
+						sessionId: 's3',
+						sessionName: 'Claude 1',
+						toolType: 'claude-code',
+						inputPrompt: prompts[2],
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 'trigger-1', target: 'agent-1', mode: 'pass' },
+				{ id: 'e2', source: 'trigger-1', target: 'agent-2', mode: 'pass' },
+				{ id: 'e3', source: 'trigger-1', target: 'agent-3', mode: 'pass' },
+			],
+		});
+	}
+
+	it('emits fan_out_prompt_files (not inline fan_out_prompts) when per-agent prompts differ', () => {
+		const pipeline = makeFanOutPipeline(['codex work', 'opencode work', 'claude work']);
+		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
+
+		expect(yamlStr).toContain('fan_out_prompt_files:');
+		// Inline array MUST NOT be emitted when files take over — that was the
+		// asymmetric legacy shape.
+		expect(yamlStr).not.toMatch(/^\s*fan_out_prompts:/m);
+
+		// One .md per agent, content matches.
+		expect(promptFiles.get('.maestro/prompts/codex_1-pipeline_1.md')).toBe('codex work');
+		expect(promptFiles.get('.maestro/prompts/opencode_1-pipeline_1.md')).toBe('opencode work');
+		expect(promptFiles.get('.maestro/prompts/claude_1-pipeline_1.md')).toBe('claude work');
+	});
+
+	it('collapses to a single prompt_file when all fan-out agents share the same prompt', () => {
+		const pipeline = makeFanOutPipeline(['shared', 'shared', 'shared']);
+		const { yaml: yamlStr, promptFiles } = pipelinesToYaml([pipeline]);
+
+		expect(yamlStr).toContain('prompt_file:');
+		expect(yamlStr).not.toContain('fan_out_prompt_files:');
+		expect(yamlStr).not.toMatch(/^\s*fan_out_prompts:/m);
+		// Exactly one prompt file, content "shared".
+		const entries = Array.from(promptFiles.entries());
+		expect(entries).toHaveLength(1);
+		expect(entries[0][1]).toBe('shared');
+	});
+
+	it('writes an empty file for agents with empty prompts to preserve positional mapping', () => {
+		const pipeline = makeFanOutPipeline(['has content', '', 'also content']);
+		const { promptFiles } = pipelinesToYaml([pipeline]);
+
+		// Middle agent gets an empty file — dropping the entry would shift
+		// the positional mapping against `fan_out` and mis-route prompts at
+		// runtime.
+		expect(promptFiles.get('.maestro/prompts/codex_1-pipeline_1.md')).toBe('has content');
+		expect(promptFiles.get('.maestro/prompts/opencode_1-pipeline_1.md')).toBe('');
+		expect(promptFiles.get('.maestro/prompts/claude_1-pipeline_1.md')).toBe('also content');
+	});
+
+	it('does not emit a redundant single prompt_file when per-agent files are in use', () => {
+		// `sub.prompt` is retained as an engine fallback but must NOT appear
+		// as `prompt_file` in the record — that would double-write the first
+		// agent's prompt to two files and confuse readers.
+		const pipeline = makeFanOutPipeline(['a', 'b', 'c']);
+		const { yaml: yamlStr } = pipelinesToYaml([pipeline]);
+
+		const lines = yamlStr.split('\n');
+		const promptFileLines = lines.filter((l) => /^\s{4}prompt_file:/.test(l));
+		expect(promptFileLines).toHaveLength(0);
 	});
 });

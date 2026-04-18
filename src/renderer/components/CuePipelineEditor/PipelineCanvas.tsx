@@ -33,6 +33,7 @@ import type { CueSettings } from '../../../shared/cue';
 import { TriggerNode, type TriggerNodeDataProps } from './nodes/TriggerNode';
 import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
 import { CliOutputNode } from './nodes/CliOutputNode';
+import { ErrorNode } from './nodes/ErrorNode';
 import { edgeTypes } from './edges/PipelineEdge';
 import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
@@ -45,6 +46,7 @@ const nodeTypes = {
 	trigger: TriggerNode,
 	agent: AgentNode,
 	cli_output: CliOutputNode,
+	error: ErrorNode,
 };
 
 export interface PipelineCanvasProps {

@@ -20,6 +20,7 @@ import {
 	deleteCueConfigFile,
 	readCueConfigFile,
 	pruneOrphanedPromptFiles,
+	removeEmptyPromptsDir,
 	writeCueConfigFile,
 	writeCuePromptFile,
 } from '../../cue/config/cue-config-repository';
@@ -297,13 +298,25 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 					if (Array.isArray(subs)) {
 						for (const sub of subs) {
 							if (!sub || typeof sub !== 'object') continue;
-							const pf = (sub as Record<string, unknown>).prompt_file;
-							const opf = (sub as Record<string, unknown>).output_prompt_file;
+							const rec = sub as Record<string, unknown>;
+							const pf = rec.prompt_file;
+							const opf = rec.output_prompt_file;
 							if (typeof pf === 'string' && pf.length > 0 && !path.isAbsolute(pf)) {
 								keepPaths.add(pf);
 							}
 							if (typeof opf === 'string' && opf.length > 0 && !path.isAbsolute(opf)) {
 								keepPaths.add(opf);
+							}
+							// `fan_out_prompt_files` is a positional array of per-agent
+							// prompt files. Each entry must survive the prune or the
+							// next save would re-create it unnecessarily.
+							const fopf = rec.fan_out_prompt_files;
+							if (Array.isArray(fopf)) {
+								for (const entry of fopf) {
+									if (typeof entry === 'string' && entry.length > 0 && !path.isAbsolute(entry)) {
+										keepPaths.add(entry);
+									}
+								}
 							}
 						}
 					}
@@ -324,18 +337,35 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// (with valid YAML) will catch up.
 				if (parseSucceeded) {
 					pruneOrphanedPromptFiles(options.projectRoot, keepPaths);
+					// If the user saved an empty pipeline state (no prompts left)
+					// collapse `.maestro/prompts/` too so the on-disk footprint
+					// matches the empty UI. Non-empty dirs are left alone.
+					if (keepPaths.size === 0) {
+						removeEmptyPromptsDir(options.projectRoot);
+					}
 				}
 			}
 		)
 	);
 
-	// Delete a session's cue.yaml config file
+	// Delete a session's cue.yaml config file. Also prunes every `.md` file
+	// under `.maestro/prompts/` (keep-set is empty since there are no
+	// subscriptions left to reference any prompt) and removes the prompts
+	// directory if it ends up empty. Without this, "Remove Cue configuration"
+	// left orphaned prompt files behind and the `.maestro` footprint never
+	// shrank.
 	ipcMain.handle(
 		'cue:deleteYaml',
 		withIpcErrorLogging(
 			handlerOpts('deleteYaml'),
 			async (options: { projectRoot: string }): Promise<boolean> => {
-				return deleteCueConfigFile(options.projectRoot);
+				const deleted = deleteCueConfigFile(options.projectRoot);
+				// Run prompt cleanup regardless of whether the yaml file was
+				// present — if the user deleted cue.yaml by hand and then
+				// invokes this, we still want orphaned prompts cleaned up.
+				pruneOrphanedPromptFiles(options.projectRoot, []);
+				removeEmptyPromptsDir(options.projectRoot);
+				return deleted;
 			}
 		)
 	);

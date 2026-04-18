@@ -2,6 +2,7 @@ import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
 import { findAncestorCueConfigRoot, loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
+import { clearGitHubSeenForSubscription } from './cue-db';
 import {
 	countActiveSubscriptions,
 	hasTimeBasedSubscriptions,
@@ -272,11 +273,33 @@ export function createCueSessionRuntimeService(
 		registry.clearScheduledForSession(sessionId);
 	}
 
+	/**
+	 * Collects the stable GitHub-seen subscription IDs (`${sessionId}:${name}`)
+	 * for every `github.*` subscription in a session's current config. Used
+	 * on refresh/remove to diff against the post-reload set and clear seen
+	 * rows for subscriptions the user has deleted, so `cue_github_seen`
+	 * doesn't grow indefinitely.
+	 */
+	function collectGitHubSubIds(sessionId: string): Set<string> {
+		const ids = new Set<string>();
+		const state = registry.get(sessionId);
+		if (!state) return ids;
+		for (const sub of state.config.subscriptions) {
+			if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
+				ids.add(`${sessionId}:${sub.name}`);
+			}
+		}
+		return ids;
+	}
+
 	function refreshSession(
 		sessionId: string,
 		projectRoot: string
 	): { reloaded: boolean; configRemoved: boolean; sessionName?: string; activeCount?: number } {
 		const hadSession = registry.has(sessionId);
+		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
+		// post-reload set and clear seen rows for removed GitHub subscriptions.
+		const oldGitHubIds = collectGitHubSubIds(sessionId);
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
 
@@ -294,6 +317,17 @@ export function createCueSessionRuntimeService(
 		initSession({ ...session, projectRoot }, { reason: 'refresh' });
 		const newState = registry.get(sessionId);
 		if (newState) {
+			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
+			// rows for any that are gone. Without this, deleted GitHub polls
+			// leave DB rows behind until their `seen_at` ages past the retention
+			// window. Not functionally harmful (rows are keyed by subscription
+			// ID so they don't collide with new subs) but they accumulate.
+			const newGitHubIds = collectGitHubSubIds(sessionId);
+			for (const id of oldGitHubIds) {
+				if (!newGitHubIds.has(id)) {
+					clearGitHubSeenForSubscription(id);
+				}
+			}
 			const activeCount = countActiveSubscriptions(
 				newState.config.subscriptions,
 				sessionId,
@@ -305,6 +339,11 @@ export function createCueSessionRuntimeService(
 				sessionName: session.name,
 				activeCount,
 			};
+		}
+
+		// Config is gone — clear every GitHub-seen row for the old subs.
+		for (const id of oldGitHubIds) {
+			clearGitHubSeenForSubscription(id);
 		}
 
 		if (hadSession) {
@@ -325,12 +364,21 @@ export function createCueSessionRuntimeService(
 	}
 
 	function removeSessionInternal(sessionId: string): void {
+		// Capture GitHub-seen IDs before teardown since teardown unregisters
+		// the session and we won't be able to read its subscriptions anymore.
+		const oldGitHubIds = collectGitHubSubIds(sessionId);
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
 		deps.clearQueue(sessionId);
 		// Removing a session means its app.startup history is no longer relevant —
 		// if the same session id is re-added later (rare), we want startup to fire.
 		registry.clearStartupForSession(sessionId);
+
+		// Clear every GitHub-seen row for this session's subscriptions. The
+		// session is going away entirely, so none of them should remain.
+		for (const id of oldGitHubIds) {
+			clearGitHubSeenForSubscription(id);
+		}
 
 		const pendingWatcher = pendingYamlWatchers.get(sessionId);
 		if (pendingWatcher) {

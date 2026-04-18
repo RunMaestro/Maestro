@@ -11,11 +11,13 @@ import type {
 	TriggerNodeData,
 	AgentNodeData,
 	CliOutputNodeData,
+	ErrorNodeData,
 } from '../../../../shared/cue-pipeline-types';
 import type { Theme } from '../../../../shared/theme-types';
 import type { TriggerNodeDataProps } from '../nodes/TriggerNode';
 import type { AgentNodeDataProps } from '../nodes/AgentNode';
 import type { CliOutputNodeDataProps } from '../nodes/CliOutputNode';
+import type { ErrorNodeDataProps } from '../nodes/ErrorNode';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
 
 // ─── Trigger config summary ──────────────────────────────────────────────────
@@ -189,6 +191,10 @@ export function convertToReactFlowNodes(
 					onConfigure: onConfigureNode,
 					onTriggerPipeline: triggerOptions?.onTriggerPipeline,
 					pipelineName: pipeline.name,
+					// Thread the trigger's owning subscription name through to the
+					// Play button. Populated by yamlToPipeline on load; absent on
+					// never-saved pipelines (Play button is hidden in that case).
+					subscriptionName: triggerData.subscriptionName,
 					isSaved: triggerOptions?.isSaved,
 					isRunning: triggerOptions?.runningPipelineIds?.has(pipeline.id),
 					fanOutCount: fanOutCount > 1 ? fanOutCount : undefined,
@@ -256,6 +262,24 @@ export function convertToReactFlowNodes(
 					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
 					data: nodeData,
 					dragHandle: '.drag-handle',
+				});
+			} else if (pNode.type === 'error') {
+				const errData = pNode.data as ErrorNodeData;
+				const nodeData: ErrorNodeDataProps = {
+					compositeId,
+					message: errData.message,
+					unresolvedId: errData.unresolvedId,
+					unresolvedName: errData.unresolvedName,
+					subscriptionName: errData.subscriptionName,
+					theme,
+				};
+				nodes.push({
+					id: compositeId,
+					type: 'error',
+					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					data: nodeData,
+					dragHandle: '.drag-handle',
+					selectable: false,
 				});
 			}
 		}

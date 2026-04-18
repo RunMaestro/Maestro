@@ -53,8 +53,24 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 
 	const hasPrompt = typeof subRecord.prompt === 'string';
 	const hasPromptFile = typeof subRecord.prompt_file === 'string';
-	if (!hasPrompt && !hasPromptFile) {
-		errors.push(`${prefix}: "prompt" or "prompt_file" is required`);
+	// A fan-out subscription can carry its prompts per-target via
+	// `fan_out_prompt_files` (file references, preferred) or
+	// `fan_out_prompts` (legacy inline array). Either satisfies the "prompt
+	// required" check even when the shared `prompt` / `prompt_file` fields
+	// are absent — otherwise the loader's lenient partition rejects the
+	// subscription and the whole pipeline disappears from the UI on save.
+	const hasFanOutPromptFiles =
+		Array.isArray(subRecord.fan_out_prompt_files) &&
+		subRecord.fan_out_prompt_files.length > 0 &&
+		subRecord.fan_out_prompt_files.every((value: unknown) => typeof value === 'string');
+	const hasFanOutPrompts =
+		Array.isArray(subRecord.fan_out_prompts) &&
+		subRecord.fan_out_prompts.length > 0 &&
+		subRecord.fan_out_prompts.every((value: unknown) => typeof value === 'string');
+	if (!hasPrompt && !hasPromptFile && !hasFanOutPromptFiles && !hasFanOutPrompts) {
+		errors.push(
+			`${prefix}: "prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required`
+		);
 	}
 
 	validateEventSpecificFields(subRecord, prefix, errors);

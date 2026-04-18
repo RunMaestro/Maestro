@@ -54,6 +54,15 @@ export interface TriggerNodeData {
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
 	};
+	/** Name of the underlying Cue subscription this trigger represents on disk.
+	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-
+	 *  trigger pipeline maps to a distinct subscription — the first keeps the
+	 *  pipeline name (e.g. "Pipeline 1"), subsequent triggers carry the
+	 *  `-chain-N` suffix (e.g. "Pipeline 1-chain-2"). The trigger's Play
+	 *  button uses this field to fire the correct subscription; without it,
+	 *  all Play buttons would fire the first sub only. Undefined for
+	 *  never-saved pipelines — the Play button is hidden until save. */
+	subscriptionName?: string;
 }
 
 export interface AgentNodeData {
@@ -74,13 +83,35 @@ export interface CliOutputNodeData {
 	target: string;
 }
 
-export type PipelineNodeType = 'trigger' | 'agent' | 'cli_output';
+/**
+ * Data for an "error" node rendered in place of an unresolved agent. The
+ * loader emits these when a chain/target session reference in the YAML
+ * cannot be matched to any live session — `agent_id` points to a deleted
+ * session, `source_session_ids` misses, and name-based fallback also
+ * misses. Showing a visible error beats silently picking a wrong agent
+ * (which is how the "two agents swapped" bug manifested). Save is blocked
+ * while any error node is present in a pipeline.
+ */
+export interface ErrorNodeData {
+	reason: 'missing-target' | 'missing-source';
+	/** The subscription (or chain sub) that produced the unresolved reference. */
+	subscriptionName: string;
+	/** The stable ID from YAML that failed to resolve (may be undefined when
+	 *  YAML only had a legacy name). */
+	unresolvedId?: string;
+	/** The legacy session name from YAML that also failed to resolve. */
+	unresolvedName?: string;
+	/** Short human-readable description shown on the node. */
+	message: string;
+}
+
+export type PipelineNodeType = 'trigger' | 'agent' | 'cli_output' | 'error';
 
 export interface PipelineNode {
 	id: string;
 	type: PipelineNodeType;
 	position: PipelineNodePosition;
-	data: TriggerNodeData | AgentNodeData | CliOutputNodeData;
+	data: TriggerNodeData | AgentNodeData | CliOutputNodeData | ErrorNodeData;
 }
 
 export interface PipelineEdge {

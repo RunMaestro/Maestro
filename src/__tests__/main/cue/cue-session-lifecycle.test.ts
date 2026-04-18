@@ -35,6 +35,7 @@ vi.mock('../../../main/cue/cue-file-watcher', () => ({
 }));
 
 // Mock cue-db
+const mockClearGitHubSeenForSubscription = vi.fn();
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: vi.fn(),
 	closeCueDb: vi.fn(),
@@ -45,6 +46,8 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	clearGitHubSeenForSubscription: (...args: unknown[]) =>
+		mockClearGitHubSeenForSubscription(...args),
 }));
 
 // Mock reconciler
@@ -664,6 +667,107 @@ describe('CueEngine session lifecycle', () => {
 			// After two calls, session should appear exactly once in the registry
 			// (not duplicated). The registry snapshot size is 1.
 			expect(registry.snapshot().size).toBe(1);
+		});
+
+		it('removeSession clears cue_github_seen rows for all GitHub subscriptions', () => {
+			// Regression guard: without this, deleting a GitHub-polling session
+			// left rows in cue_github_seen that only expired via age-based
+			// prune. The deleted sub's subscription_id (`${sessionId}:${name}`)
+			// must be passed to clearGitHubSeenForSubscription on remove.
+			mockClearGitHubSeenForSubscription.mockClear();
+
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'watch-prs',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: 'review',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'watch-issues',
+						event: 'github.issue',
+						enabled: true,
+						prompt: 'triage',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'ignore-this',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: '',
+						interval_minutes: 1,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.removeSession('session-1');
+
+			// Exactly the two GitHub subs were cleared; the heartbeat sub
+			// contributes no seen rows and must not appear in the calls.
+			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id).sort();
+			expect(cleared).toEqual(['session-1:watch-issues', 'session-1:watch-prs']);
+		});
+
+		it('refreshSession clears cue_github_seen rows only for subs that were removed', () => {
+			mockClearGitHubSeenForSubscription.mockClear();
+
+			// Initial config has two GitHub subs.
+			const initialConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'keep-me',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'drop-me',
+						event: 'github.issue',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(initialConfig);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// User edits YAML, removes the `drop-me` subscription.
+			const updatedConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'keep-me',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(updatedConfig);
+
+			// refreshSession fires on YAML hot-reload. The `keep-me` sub is
+			// still present so its seen rows must stay; only `drop-me`'s
+			// subscription_id is cleared.
+			engine.refreshSession('session-1', '/projects/test');
+
+			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id);
+			expect(cleared).toEqual(['session-1:drop-me']);
 		});
 
 		it('removeSession clears startup keys so re-adding the session can re-fire', () => {

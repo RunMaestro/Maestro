@@ -81,6 +81,34 @@ function normalizeSubscription(
 		outputPromptSpec?.inline ??
 		(outputPromptSpec?.file ? readPromptFile(projectRoot, outputPromptSpec.file) : undefined);
 
+	// Resolve per-agent fan-out prompts. `fan_out_prompt_files` takes
+	// precedence over inline `fan_out_prompts` — each slot is expanded from
+	// its `.md` file so the runtime dispatch path keeps reading one
+	// authoritative field (`fan_out_prompts[i]`). Falls back to the inline
+	// array for legacy YAML written before Commit 7. When neither field is
+	// present (e.g. a shared-prompt fan-out), `fan_out_prompts` stays
+	// undefined and dispatch uses the shared `prompt`.
+	const fanOutPromptFiles =
+		Array.isArray(sub.fan_out_prompt_files) &&
+		sub.fan_out_prompt_files.every((value: unknown) => typeof value === 'string')
+			? (sub.fan_out_prompt_files as string[])
+			: undefined;
+	const inlineFanOutPrompts =
+		Array.isArray(sub.fan_out_prompts) &&
+		sub.fan_out_prompts.every((value: unknown) => typeof value === 'string')
+			? (sub.fan_out_prompts as string[])
+			: undefined;
+	const resolvedFanOutPrompts = fanOutPromptFiles
+		? fanOutPromptFiles.map((filePath, i) => {
+				const fromFile = readPromptFile(projectRoot, filePath);
+				if (typeof fromFile === 'string') return fromFile;
+				// File missing/unreadable — fall back to the inline array at
+				// the same index (if a caller dual-wrote both) or an empty
+				// string. Dispatch still has `prompt` as a final fallback.
+				return inlineFanOutPrompts?.[i] ?? '';
+			})
+		: inlineFanOutPrompts;
+
 	return {
 		name: String(sub.name ?? ''),
 		event: String(sub.event ?? '') as CueSubscription['event'],
@@ -108,12 +136,15 @@ function normalizeSubscription(
 			typeof sub.source_session === 'string' || Array.isArray(sub.source_session)
 				? (sub.source_session as string | string[])
 				: undefined,
-		fan_out: Array.isArray(sub.fan_out) ? sub.fan_out : undefined,
-		fan_out_prompts:
-			Array.isArray(sub.fan_out_prompts) &&
-			sub.fan_out_prompts.every((value: unknown) => typeof value === 'string')
-				? (sub.fan_out_prompts as string[])
+		source_session_ids:
+			typeof sub.source_session_ids === 'string' ||
+			(Array.isArray(sub.source_session_ids) &&
+				sub.source_session_ids.every((value: unknown) => typeof value === 'string'))
+				? (sub.source_session_ids as string | string[])
 				: undefined,
+		fan_out: Array.isArray(sub.fan_out) ? sub.fan_out : undefined,
+		fan_out_prompts: resolvedFanOutPrompts,
+		fan_out_prompt_files: fanOutPromptFiles,
 		filter: normalizeFilter(sub.filter),
 		repo: typeof sub.repo === 'string' ? sub.repo : undefined,
 		poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,
@@ -145,6 +176,21 @@ function normalizeSubscription(
 			typeof (sub.cli_output as Record<string, unknown>).target === 'string' &&
 			((sub.cli_output as Record<string, unknown>).target as string).trim() !== ''
 				? { target: String((sub.cli_output as Record<string, unknown>).target).trim() }
+				: undefined,
+		// Passthrough the per-pipeline color so the renderer can round-trip
+		// it through `cue:getGraphData`. Only hex strings of the form
+		// `#RRGGBB` are accepted; malformed values are dropped here rather
+		// than rendering a bad color on load.
+		pipeline_color:
+			typeof sub.pipeline_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(sub.pipeline_color)
+				? sub.pipeline_color
+				: undefined,
+		// Passthrough the per-pipeline name so the renderer groups
+		// subscriptions by the explicit field rather than the brittle
+		// suffix convention.
+		pipeline_name:
+			typeof sub.pipeline_name === 'string' && sub.pipeline_name.length > 0
+				? sub.pipeline_name
 				: undefined,
 	};
 }

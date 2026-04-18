@@ -33,10 +33,17 @@ export function mergePipelinesWithSavedLayout(
 
 	const mergedPipelines = livePipelines.map((pipeline) => {
 		const savedProps = savedPipelineProps.get(pipeline.id);
+		// Name: saved layout wins (users can rename without needing to re-save YAML).
+		// Color: YAML is authoritative since `pipeline_color` is persisted there.
+		// We only fall back to the layout-JSON color when the live pipeline has
+		// no color at all (never happens in practice — palette fallback always
+		// yields a value — but defensive against future refactors).
+		const mergedName = savedProps?.name ?? pipeline.name;
+		const mergedColor = pipeline.color || savedProps?.color || pipeline.color;
 		return {
 			...pipeline,
-			// Restore saved name and color so they don't change on reload
-			...(savedProps && { name: savedProps.name, color: savedProps.color }),
+			name: mergedName,
+			color: mergedColor,
 			nodes: pipeline.nodes.map((node) => {
 				const savedPos = savedPositions.get(`${pipeline.id}:${node.id}`);
 				return savedPos ? { ...node, position: savedPos } : node;

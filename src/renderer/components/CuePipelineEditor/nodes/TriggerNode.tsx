@@ -11,10 +11,16 @@ export interface TriggerNodeDataProps {
 	label: string;
 	configSummary: string;
 	onConfigure?: (compositeId: string) => void;
-	/** Callback to manually trigger this pipeline */
-	onTriggerPipeline?: (pipelineName: string) => void;
-	/** Pipeline name for triggering */
+	/** Callback to manually trigger the subscription owned by this trigger node. */
+	onTriggerPipeline?: (subscriptionName: string) => void;
+	/** The pipeline this node belongs to — shown in the Play button's aria-label. */
 	pipelineName?: string;
+	/** The Cue subscription this specific trigger node owns. In multi-trigger
+	 *  pipelines, distinct trigger nodes map to distinct subscriptions
+	 *  (`pipeline.name`, `pipeline.name-chain-1`, etc.). The Play button MUST
+	 *  fire this sub name — firing the pipeline name only matches the first
+	 *  trigger, leaving chain triggers (e.g. GitHub PR polls) unreachable. */
+	subscriptionName?: string;
 	/** Whether the pipeline config is saved (play only works when saved) */
 	isSaved?: boolean;
 	/** Whether this pipeline is currently running */
@@ -148,18 +154,25 @@ export const TriggerNode = memo(function TriggerNode({
 					gap: 2,
 				}}
 			>
-				{/* Play button — only when pipeline is saved */}
-				{data.isSaved && data.onTriggerPipeline && data.pipelineName && (
+				{/* Play button — only when pipeline is saved. Fires THIS trigger's
+				 *  subscription (sub name populated by yamlToPipeline on load).
+				 *  Falls back to pipelineName only for legacy pipelines where the
+				 *  sub name wasn't stamped on the node; for post-fix data this
+				 *  correctly targets per-trigger chain subs like "Pipeline 1-chain-2". */}
+				{data.isSaved && data.onTriggerPipeline && (data.subscriptionName || data.pipelineName) && (
 					<button
 						type="button"
 						onClick={(e) => {
 							e.stopPropagation();
 							if (!data.isRunning) {
-								data.onTriggerPipeline!(data.pipelineName!);
+								const target = data.subscriptionName ?? data.pipelineName!;
+								data.onTriggerPipeline!(target);
 							}
 						}}
 						disabled={data.isRunning}
-						aria-label={data.isRunning ? 'Running' : `Run ${data.pipelineName}`}
+						aria-label={
+							data.isRunning ? 'Running' : `Run ${data.subscriptionName ?? data.pipelineName}`
+						}
 						style={{
 							display: 'flex',
 							alignItems: 'center',

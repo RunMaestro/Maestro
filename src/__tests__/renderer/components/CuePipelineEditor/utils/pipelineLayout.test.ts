@@ -152,13 +152,15 @@ describe('mergePipelinesWithSavedLayout', () => {
 		expect(triggerNode?.position).toEqual({ x: 0, y: 0 });
 	});
 
-	it('restores saved color and name over live-derived values', () => {
-		// Live pipelines get colors from parse order (the bug scenario)
+	it('restores saved name but keeps YAML-authoritative live color', () => {
+		// YAML now carries `pipeline_color`, so live pipeline color is
+		// authoritative. Layout JSON color is stale metadata and must not
+		// override a valid live color (otherwise YAML edits get clobbered
+		// on reload, and Commit 3's color persistence is defeated).
 		const livePipelines = [
 			makePipeline({ id: 'p1', name: 'Pipeline 1', color: '#06b6d4' }),
 			makePipeline({ id: 'p2', name: 'Pipeline 2', color: '#8b5cf6' }),
 		];
-		// Saved layout has different (original) colors and names
 		const savedLayout: PipelineLayoutState = {
 			pipelines: [
 				makePipeline({ id: 'p1', name: 'My Custom Name', color: '#ef4444' }),
@@ -169,10 +171,12 @@ describe('mergePipelinesWithSavedLayout', () => {
 
 		const result = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
 
+		// Name still flows from layout JSON (user rename without YAML re-save).
 		expect(result.pipelines[0].name).toBe('My Custom Name');
-		expect(result.pipelines[0].color).toBe('#ef4444');
 		expect(result.pipelines[1].name).toBe('Another Name');
-		expect(result.pipelines[1].color).toBe('#22c55e');
+		// Color is YAML-authoritative — live values win.
+		expect(result.pipelines[0].color).toBe('#06b6d4');
+		expect(result.pipelines[1].color).toBe('#8b5cf6');
 	});
 
 	it('keeps live color and name when no saved layout match exists', () => {
