@@ -402,4 +402,225 @@ describe('usePipelineLayout', () => {
 			})
 		);
 	});
+
+	describe('selection-validity guards (vanishing-pipeline regression)', () => {
+		// The "pipeline vanishes after save and reappears on modal reopen"
+		// symptom was a stale `selectedPipelineId` surviving through the
+		// load-or-persist paths. `convertToReactFlowNodes` filters out every
+		// pipeline whose id doesn't match the selection, so a stale selection
+		// renders the canvas completely blank. The safety net in
+		// usePipelineState catches it post-hoc, but these guards make sure
+		// stale selections never ENTER pipelineState (load-path) or the
+		// on-disk layout JSON (persist-path) in the first place.
+
+		it('persistLayout normalizes a stale selectedPipelineId to null before writing', () => {
+			const params = createDefaultParams({
+				pipelineState: {
+					pipelines: [makePipeline('pipeline-MyPipe') as any],
+					selectedPipelineId: 'pipeline-STALE-TIMESTAMP', // doesn't match
+				},
+			});
+			const { result } = renderHook(() => usePipelineLayout(params));
+
+			act(() => {
+				result.current.persistLayout();
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+
+			const saveCall = (window as any).maestro.cue.savePipelineLayout.mock.calls[0][0];
+			// Stale selection must NOT reach disk — would set up the next
+			// reload to blank the canvas via pickProjectViewState.
+			expect(saveCall.selectedPipelineId).toBeNull();
+			// Every perProject entry written must also have a null or valid
+			// selectedPipelineId.
+			for (const entry of Object.values(
+				saveCall.perProject as Record<string, { selectedPipelineId: string | null }>
+			)) {
+				if (entry.selectedPipelineId !== null) {
+					expect(saveCall.pipelines.map((p: { id: string }) => p.id)).toContain(
+						entry.selectedPipelineId
+					);
+				}
+			}
+		});
+
+		it('persistLayout preserves a valid selectedPipelineId when it matches a live pipeline', () => {
+			const params = createDefaultParams({
+				pipelineState: {
+					pipelines: [makePipeline('pipeline-A') as any, makePipeline('pipeline-B') as any],
+					selectedPipelineId: 'pipeline-B',
+				},
+			});
+			const { result } = renderHook(() => usePipelineLayout(params));
+			act(() => {
+				result.current.persistLayout();
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			const saveCall = (window as any).maestro.cue.savePipelineLayout.mock.calls[0][0];
+			expect(saveCall.selectedPipelineId).toBe('pipeline-B');
+		});
+
+		it('persistLayout passes null through untouched (All Pipelines view)', () => {
+			const params = createDefaultParams({
+				pipelineState: {
+					pipelines: [makePipeline('pipeline-A') as any],
+					selectedPipelineId: null,
+				},
+			});
+			const { result } = renderHook(() => usePipelineLayout(params));
+			act(() => {
+				result.current.persistLayout();
+			});
+			act(() => {
+				vi.advanceTimersByTime(500);
+			});
+			const saveCall = (window as any).maestro.cue.savePipelineLayout.mock.calls[0][0];
+			expect(saveCall.selectedPipelineId).toBeNull();
+		});
+
+		it('load path ignores a stale perProject selectedPipelineId', async () => {
+			// A perProject entry stored under an older id scheme (e.g.
+			// timestamp ids from before the name-based id fix) would
+			// otherwise leak into pipelineState via pickProjectViewState,
+			// blanking the canvas until the safety net fires.
+			const livePipelines = [makePipeline('pipeline-MyPipe')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+
+			// merge returns the first live pipeline as the fallback.
+			mockMergePipelinesWithSavedLayout.mockReturnValue({
+				pipelines: livePipelines,
+				selectedPipelineId: 'pipeline-MyPipe',
+			} as any);
+
+			const savedLayout = {
+				version: 2,
+				pipelines: [{ id: 'pipeline-STALE', name: 'MyPipe', nodes: [], edges: [] }],
+				selectedPipelineId: null,
+				perProject: {
+					'/projects/realroot': {
+						selectedPipelineId: 'pipeline-STALE-TIMESTAMP',
+						viewport: { x: 10, y: 20, zoom: 1 },
+					},
+				},
+			};
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(savedLayout);
+
+			const setPipelineState = vi.fn();
+			const params = createDefaultParams({
+				graphSessions: [makeGraphSession('s1')],
+				sessions: [
+					{
+						id: 's1',
+						name: 'Session s1',
+						toolType: 'claude-code',
+						projectRoot: '/projects/realroot',
+					} as any,
+				],
+				setPipelineState,
+			});
+			renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			// setPipelineState was called with merged state. The selection
+			// must NOT be the stale perProject value — it must be either
+			// null or a valid live pipeline id.
+			expect(setPipelineState).toHaveBeenCalledTimes(1);
+			const callArg = setPipelineState.mock.calls[0][0];
+			if (callArg.selectedPipelineId !== null) {
+				expect(livePipelines.map((p) => p.id)).toContain(callArg.selectedPipelineId);
+			}
+		});
+
+		it('load path honors a valid perProject selectedPipelineId', async () => {
+			const livePipelines = [makePipeline('pipeline-A'), makePipeline('pipeline-B')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			mockMergePipelinesWithSavedLayout.mockReturnValue({
+				pipelines: livePipelines,
+				selectedPipelineId: 'pipeline-A',
+			} as any);
+
+			const savedLayout = {
+				version: 2,
+				pipelines: livePipelines,
+				selectedPipelineId: 'pipeline-B',
+				perProject: {
+					'/projects/realroot': {
+						selectedPipelineId: 'pipeline-B', // valid — matches pipeline-B
+						viewport: { x: 0, y: 0, zoom: 1 },
+					},
+				},
+			};
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(savedLayout);
+
+			const setPipelineState = vi.fn();
+			const params = createDefaultParams({
+				graphSessions: [makeGraphSession('s1')],
+				sessions: [
+					{
+						id: 's1',
+						name: 'Session s1',
+						toolType: 'claude-code',
+						projectRoot: '/projects/realroot',
+					} as any,
+				],
+				setPipelineState,
+			});
+			renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			const callArg = setPipelineState.mock.calls[0][0];
+			expect(callArg.selectedPipelineId).toBe('pipeline-B');
+		});
+
+		it('load path honors an explicit null perProject selectedPipelineId (All Pipelines)', async () => {
+			const livePipelines = [makePipeline('pipeline-A')];
+			mockGraphSessionsToPipelines.mockReturnValue(livePipelines as any);
+			mockMergePipelinesWithSavedLayout.mockReturnValue({
+				pipelines: livePipelines,
+				selectedPipelineId: 'pipeline-A',
+			} as any);
+
+			const savedLayout = {
+				version: 2,
+				pipelines: livePipelines,
+				selectedPipelineId: null,
+				perProject: {
+					'/projects/realroot': {
+						selectedPipelineId: null,
+						viewport: { x: 0, y: 0, zoom: 1 },
+					},
+				},
+			};
+			(window as any).maestro.cue.loadPipelineLayout.mockResolvedValue(savedLayout);
+
+			const setPipelineState = vi.fn();
+			const params = createDefaultParams({
+				graphSessions: [makeGraphSession('s1')],
+				sessions: [
+					{
+						id: 's1',
+						name: 'Session s1',
+						toolType: 'claude-code',
+						projectRoot: '/projects/realroot',
+					} as any,
+				],
+				setPipelineState,
+			});
+			renderHook(() => usePipelineLayout(params));
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			const callArg = setPipelineState.mock.calls[0][0];
+			expect(callArg.selectedPipelineId).toBeNull();
+		});
+	});
 });

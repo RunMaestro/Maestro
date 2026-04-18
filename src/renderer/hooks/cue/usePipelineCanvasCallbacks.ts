@@ -308,9 +308,15 @@ export function usePipelineCanvasCallbacks({
 				} else if (pipelines.length > 0) {
 					targetPipeline = pipelines[0];
 				} else {
+					// Ad-hoc first-pipeline creation on drop. ID must align with
+					// the form yamlToPipeline generates on reload
+					// (`pipeline-${baseName}`) so the first save+reopen cycle
+					// matches positions correctly — same reason as the explicit
+					// `createPipeline` path in `usePipelineCrud.ts`.
+					const name = 'Pipeline 1';
 					targetPipeline = {
-						id: `pipeline-${Date.now()}`,
-						name: 'Pipeline 1',
+						id: `pipeline-${name}`,
+						name,
 						color: getNextPipelineColor([]),
 						nodes: [],
 						edges: [],

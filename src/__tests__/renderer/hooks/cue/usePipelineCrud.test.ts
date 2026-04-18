@@ -96,6 +96,34 @@ describe('usePipelineCrud', () => {
 			const state = h.getState();
 			expect(state.pipelines[2].name).toBe('Pipeline 4');
 		});
+
+		it('assigns id of the form `pipeline-${name}` (matches yamlToPipeline reload id)', () => {
+			// Regression guard for the "snap-back to grid on first save+reopen"
+			// bug: if createPipeline used a timestamp id (e.g. pipeline-1741234567890),
+			// the first persistLayout would write positions under that timestamp
+			// id; the next reopen would regenerate the id as `pipeline-${name}`
+			// and the position lookup would miss, snapping all nodes to the
+			// auto-layout default. yamlToPipeline uses `pipeline-${baseName}` on
+			// reload (see `subscriptionsToPipelines` in yamlToPipeline.ts), so
+			// createPipeline must match that form from day one.
+			const h: Hooks = setup();
+			act(() => h.result.current.createPipeline());
+			const state = h.getState();
+			expect(state.pipelines[0].id).toBe('pipeline-Pipeline 1');
+		});
+
+		it('id tracks the auto-incremented name across successive creates', () => {
+			const h: Hooks = setup();
+			act(() => h.result.current.createPipeline());
+			act(() => h.result.current.createPipeline());
+			act(() => h.result.current.createPipeline());
+			const state = h.getState();
+			expect(state.pipelines.map((p) => p.id)).toEqual([
+				'pipeline-Pipeline 1',
+				'pipeline-Pipeline 2',
+				'pipeline-Pipeline 3',
+			]);
+		});
 	});
 
 	describe('deletePipeline', () => {

@@ -51,9 +51,19 @@ export function usePipelineCrud({
 					maxNum = Math.max(maxNum, parseInt(match[1], 10));
 				}
 			}
+			const name = `Pipeline ${maxNum + 1}`;
 			const newPipeline: CuePipeline = {
-				id: `pipeline-${Date.now()}`,
-				name: `Pipeline ${maxNum + 1}`,
+				// ID must match the form yamlToPipeline generates on reload
+				// (`pipeline-${baseName}`). If we used `pipeline-${Date.now()}`
+				// here, the first save would persist node positions keyed by
+				// the timestamp id; the next open would load the pipeline
+				// under the name-derived id, the position lookup would miss,
+				// and every node would snap back to the LAYOUT auto-layout.
+				// See `yamlToPipeline.ts` (the canonical reload-side id) and
+				// `mergePipelinesWithSavedLayout` (the merge that depends on
+				// these ids lining up).
+				id: `pipeline-${name}`,
+				name,
 				color: getNextPipelineColor(prev.pipelines),
 				nodes: [],
 				edges: [],
