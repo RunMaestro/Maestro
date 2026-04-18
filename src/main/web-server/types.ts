@@ -294,6 +294,11 @@ export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type GetThemeCallback = () => Theme | null;
 
 /**
+ * Callback type for fetching the current global Bionify reading-mode setting.
+ */
+export type GetBionifyReadingModeCallback = () => boolean;
+
+/**
  * Callback type for fetching custom AI commands.
  */
 export type GetCustomCommandsCallback = () => CustomAICommand[];

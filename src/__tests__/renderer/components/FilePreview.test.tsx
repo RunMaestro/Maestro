@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -17,6 +18,7 @@ vi.mock('lucide-react', () => ({
 	Loader2: () => <span data-testid="loader-icon">Loader2</span>,
 	Image: () => <span data-testid="image-icon">Image</span>,
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
+	Wand2: () => <span data-testid="wand-icon">Wand2</span>,
 	Save: () => <span data-testid="save-icon">Save</span>,
 	Edit: () => <span data-testid="edit-icon">Edit</span>,
 	AlertTriangle: () => <span data-testid="alert-icon">AlertTriangle</span>,
@@ -188,6 +190,7 @@ const defaultProps = {
 describe('FilePreview', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSettingsStore.setState({ bionifyReadingMode: false });
 		// Reset useClickOutside call counter so each test starts fresh
 		useClickOutsideCallCount = 0;
 		mockContainerClickOutside.callback = null;
@@ -307,6 +310,144 @@ describe('FilePreview', () => {
 			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTitle('Open in Default App')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('readable text preview', () => {
+		it('applies Bionify spans to .txt previews when reading mode is enabled', () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'Readable text preview content',
+						path: '/test/notes.txt',
+					}}
+				/>
+			);
+
+			expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+			expect(container.textContent).toContain('Readable text preview content');
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+		});
+
+		it('keeps readable .txt previews plain when reading mode is disabled', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'Readable text preview content',
+						path: '/test/notes.txt',
+					}}
+				/>
+			);
+
+			expect(screen.getByText('Readable text preview content')).toBeInTheDocument();
+			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+		});
+
+		it('disables Bionify spans while search is active so readable text remains searchable', async () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'reading mode keeps reading searchable',
+						path: '/test/notes.txt',
+					}}
+					initialSearchQuery="reading"
+				/>
+			);
+
+			await waitFor(() => expect(screen.getByText('1/2')).toBeInTheDocument());
+			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+		});
+
+		it('shows the truncation banner for large readable text previews and can load the full file', () => {
+			const largeContent = 'Readable paragraph with plenty of words for truncation. '.repeat(4000);
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'large.txt', content: largeContent, path: '/test/large.txt' }}
+				/>
+			);
+
+			expect(screen.getByText(/Large file preview truncated/)).toBeInTheDocument();
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Load full file'));
+
+			expect(screen.queryByText(/Large file preview truncated/)).not.toBeInTheDocument();
+		});
+
+		it('allows Bionify to be toggled from the file preview header', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'Readable text preview content',
+						path: '/test/notes.txt',
+					}}
+				/>
+			);
+
+			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByTitle('Enable Bionify for this preview'));
+
+			expect(screen.getByTitle('Disable Bionify for this preview')).toBeInTheDocument();
+			expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+		});
+
+		it('routes .mdx files through markdown preview instead of readable text preview', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.mdx',
+						content: '# MDX heading',
+						path: '/test/notes.mdx',
+					}}
+				/>
+			);
+
+			expect(screen.getByTestId('markdown-content')).toBeInTheDocument();
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+		});
+
+		it('does not treat files with code extensions as readable-text basenames', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'README.ts',
+						content: 'const value = true;',
+						path: '/test/README.ts',
+					}}
+				/>
+			);
+
+			expect(screen.getByTestId('syntax-highlighter')).toBeInTheDocument();
+		});
+
+		it('does not treat other basename-style code files as readable text', () => {
+			const files = [
+				{ name: 'LICENSE.py', content: 'print("license")', path: '/test/LICENSE.py' },
+				{ name: 'TODO.js', content: 'console.log("todo")', path: '/test/TODO.js' },
+			];
+
+			for (const file of files) {
+				const { unmount } = render(<FilePreview {...defaultProps} file={file} />);
+				expect(screen.getByTestId('syntax-highlighter')).toBeInTheDocument();
+				unmount();
+			}
 		});
 	});
 

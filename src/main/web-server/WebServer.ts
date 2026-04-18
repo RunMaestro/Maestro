@@ -64,6 +64,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	GetThemeCallback,
+	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
 } from './types';
@@ -287,6 +288,10 @@ export class WebServer {
 		this.callbackRegistry.setGetThemeCallback(callback);
 	}
 
+	setGetBionifyReadingModeCallback(callback: GetBionifyReadingModeCallback): void {
+		this.callbackRegistry.setGetBionifyReadingModeCallback(callback);
+	}
+
 	setGetCustomCommandsCallback(callback: GetCustomCommandsCallback): void {
 		this.callbackRegistry.setGetCustomCommandsCallback(callback);
 	}
@@ -437,6 +442,7 @@ export class WebServer {
 		this.wsRoute.setCallbacks({
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getTheme: () => this.callbackRegistry.getTheme(),
+			getBionifyReadingMode: () => this.callbackRegistry.getBionifyReadingMode(),
 			getCustomCommands: () => this.callbackRegistry.getCustomCommands(),
 			getAutoRunStates: () => this.liveSessionManager.getAutoRunStates(),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -542,6 +548,10 @@ export class WebServer {
 
 	broadcastThemeChange(theme: Theme): void {
 		this.broadcastService.broadcastThemeChange(theme);
+	}
+
+	broadcastBionifyReadingModeChange(enabled: boolean): void {
+		this.broadcastService.broadcastBionifyReadingModeChange(enabled);
 	}
 
 	broadcastCustomCommands(commands: CustomAICommand[]): void {

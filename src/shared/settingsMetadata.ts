@@ -202,6 +202,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	bionifyReadingMode: {
+		description:
+			'Apply Bionify reading emphasis to opted-in long-form reading surfaces like File Preview and Auto Run.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	showHiddenFiles: {
 		description: 'Show dotfiles and hidden files in the file explorer.',
 		type: 'boolean',

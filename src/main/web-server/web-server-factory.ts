@@ -207,6 +207,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return getThemeById(themeId);
 		});
 
+		server.setGetBionifyReadingModeCallback(() => {
+			return settingsStore.get<boolean>('bionifyReadingMode', false);
+		});
+
 		// Set up callback for web server to fetch custom AI commands
 		server.setGetCustomCommandsCallback(() => {
 			const customCommands = settingsStore.get('customAICommands', []) as Array<{

@@ -25,6 +25,7 @@ import {
 	Loader2,
 	Image,
 	Globe,
+	Wand2,
 	Save,
 	Edit,
 	AlertTriangle,
@@ -52,6 +53,8 @@ import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../utils/markdownConfig';
 import type { FileNode } from '../types/fileTree';
 import { isImageFile } from '../../shared/gitUtils';
+import { useSettingsStore } from '../stores/settingsStore';
+import { BionifyTextBlock } from '../utils/bionifyReadingMode';
 
 // Global cache for loaded images to prevent re-fetching and flickering
 // Maps resolved path -> { dataUrl, dimensions }
@@ -62,6 +65,7 @@ const imageCache = new Map<
 
 // Cache cleanup interval (clear entries older than 10 minutes)
 const IMAGE_CACHE_TTL = 10 * 60 * 1000;
+const BIONIFY_BUTTON_LABEL = 'B';
 
 // Clean up old cache entries periodically
 setInterval(() => {
@@ -161,6 +165,7 @@ const getLanguageFromFilename = (filename: string): string => {
 		jsx: 'jsx',
 		json: 'json',
 		md: 'markdown',
+		mdx: 'markdown',
 		py: 'python',
 		rb: 'ruby',
 		go: 'go',
@@ -184,6 +189,30 @@ const getLanguageFromFilename = (filename: string): string => {
 	};
 	return languageMap[ext || ''] || 'text';
 };
+
+const READABLE_TEXT_EXTENSIONS = new Set(['txt', 'text', 'rst', 'adoc', 'asc']);
+const READABLE_TEXT_BASENAMES = new Set([
+	'readme',
+	'changelog',
+	'contributing',
+	'license',
+	'copying',
+	'authors',
+	'notice',
+	'todo',
+]);
+
+function isReadableTextPreview(filename: string): boolean {
+	const lowerFilename = filename.toLowerCase();
+	const dotIndex = lowerFilename.lastIndexOf('.');
+
+	if (dotIndex !== -1) {
+		const ext = lowerFilename.slice(dotIndex + 1);
+		return READABLE_TEXT_EXTENSIONS.has(ext);
+	}
+
+	return READABLE_TEXT_BASENAMES.has(lowerFilename);
+}
 
 // Check if content appears to be binary (contains null bytes or high concentration of non-printable chars)
 const isBinaryContent = (content: string): boolean => {
@@ -767,12 +796,15 @@ export const FilePreview = React.memo(
 
 		// Track if content has been modified
 		const hasChanges = markdownEditMode && editContent !== file?.content;
+		const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const [surfaceBionifyOverride, setSurfaceBionifyOverride] = useState<boolean | null>(null);
 
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 		// Compute derived values - must be before any early returns but after hooks
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
+		const isReadableText = file ? !isMarkdown && isReadableTextPreview(file.name) : false;
 		const isCsv = language === 'csv';
 		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
@@ -812,6 +844,37 @@ export const FilePreview = React.memo(
 
 		// Track if content is truncated for display
 		const isContentTruncated = file?.content && displayContent.length < file.content.length;
+		const hasActiveSearch = searchQuery.trim().length > 0;
+		// Keep rendered text nodes intact while search is active so preview matches remain findable.
+		const surfaceBionifyReadingMode = surfaceBionifyOverride ?? bionifyReadingMode;
+		const effectiveBionifyReadingMode = surfaceBionifyReadingMode && !hasActiveSearch;
+		const truncationBanner = isContentTruncated ? (
+			<div
+				className="px-4 py-2 flex items-center gap-2 text-sm"
+				style={{
+					backgroundColor: theme.colors.warning + '20',
+					borderBottom: `1px solid ${theme.colors.warning}40`,
+					color: theme.colors.warning,
+				}}
+			>
+				<AlertTriangle className="w-4 h-4 flex-shrink-0" />
+				<span>
+					Large file preview truncated. Showing first {formatFileSize(LARGE_FILE_PREVIEW_LIMIT)} of{' '}
+					{formatFileSize(file?.content.length ?? 0)}.
+				</span>
+				<button
+					className="px-2 py-0.5 rounded text-xs font-medium hover:brightness-125 transition-all"
+					style={{
+						backgroundColor: theme.colors.warning + '30',
+						border: `1px solid ${theme.colors.warning}60`,
+						color: theme.colors.warning,
+					}}
+					onClick={() => setShowFullContent(true)}
+				>
+					Load full file
+				</button>
+			</div>
+		) : null;
 
 		// Calculate task counts for markdown files
 		const taskCounts = useMemo(() => {
@@ -827,6 +890,10 @@ export const FilePreview = React.memo(
 			if (!isMarkdown || !file?.content) return [];
 			return extractHeadings(file.content);
 		}, [isMarkdown, file?.content]);
+
+		useEffect(() => {
+			setSurfaceBionifyOverride(null);
+		}, [file?.path]);
 
 		const scrollMarkdownToBoundary = useCallback((direction: 'top' | 'bottom') => {
 			// Use contentRef which is the actual scrollable container
@@ -871,6 +938,7 @@ export const FilePreview = React.memo(
 				customLanguageRenderers: {
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
+				enableBionifyReadingMode: effectiveBionifyReadingMode,
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
 				onExternalLinkClick: (href) => {
 					if (/^file:\/\//.test(href)) {
@@ -922,7 +990,7 @@ export const FilePreview = React.memo(
 				// Fixes MAESTRO-8Q
 				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			};
-		}, [onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
+		}, [effectiveBionifyReadingMode, onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
 
 		// Extract directory path without filename
 		const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
@@ -1191,7 +1259,14 @@ export const FilePreview = React.memo(
 
 		// Highlight search matches in syntax-highlighted code
 		useEffect(() => {
-			if (!searchQuery.trim() || !codeContainerRef.current || isMarkdown || isImage || isCsv) {
+			if (
+				!searchQuery.trim() ||
+				!codeContainerRef.current ||
+				isMarkdown ||
+				isReadableText ||
+				isImage ||
+				isCsv
+			) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(0);
 				matchElementsRef.current = [];
@@ -1275,12 +1350,25 @@ export const FilePreview = React.memo(
 				});
 				matchElementsRef.current = [];
 			};
-		}, [searchQuery, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
+		}, [
+			searchQuery,
+			file?.content,
+			isMarkdown,
+			isReadableText,
+			isImage,
+			isCsv,
+			theme.colors.accent,
+		]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
-			if (!isMarkdown || markdownEditMode || !searchQuery.trim() || !markdownContainerRef.current) {
-				if (isMarkdown && !markdownEditMode) {
+			if (
+				(!isMarkdown && !isReadableText) ||
+				markdownEditMode ||
+				!searchQuery.trim() ||
+				!markdownContainerRef.current
+			) {
+				if ((isMarkdown || isReadableText) && !markdownEditMode) {
 					setTotalMatches(0);
 					setCurrentMatchIndex(0);
 					matchElementsRef.current = [];
@@ -1394,6 +1482,7 @@ export const FilePreview = React.memo(
 			searchQuery,
 			file?.content,
 			isMarkdown,
+			isReadableText,
 			markdownEditMode,
 			currentMatchIndex,
 			theme.colors.accent,
@@ -1792,6 +1881,27 @@ export const FilePreview = React.memo(
 										title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
 									>
 										<Globe className={headerIconClass} />
+									</button>
+								)}
+								{!markdownEditMode && (isMarkdown || isReadableText) && (
+									<button
+										onClick={() =>
+											setSurfaceBionifyOverride((current) => !(current ?? bionifyReadingMode))
+										}
+										className={headerBtnClass}
+										style={{
+											color: surfaceBionifyReadingMode ? theme.colors.accent : theme.colors.textDim,
+										}}
+										title={
+											surfaceBionifyReadingMode
+												? 'Disable Bionify for this preview'
+												: 'Enable Bionify for this preview'
+										}
+										aria-pressed={surfaceBionifyReadingMode}
+									>
+										<span className="text-[12px] font-black leading-none">
+											{BIONIFY_BUTTON_LABEL}
+										</span>
 									</button>
 								)}
 								{/* Toggle between edit and preview/view mode - for any editable text file */}
@@ -2341,37 +2451,22 @@ export const FilePreview = React.memo(
 								{file.content}
 							</ReactMarkdown>
 						</div>
+					) : isReadableText && !markdownEditMode ? (
+						<div>
+							{truncationBanner}
+							<BionifyTextBlock
+								ref={markdownContainerRef}
+								className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
+								style={{ color: theme.colors.textMain }}
+								enabled={effectiveBionifyReadingMode}
+								restOpacity={theme.mode === 'light' ? 0.9 : 0.96}
+							>
+								{displayContent}
+							</BionifyTextBlock>
+						</div>
 					) : (
 						<div ref={codeContainerRef}>
-							{/* Large file truncation banner */}
-							{isContentTruncated && (
-								<div
-									className="px-4 py-2 flex items-center gap-2 text-sm"
-									style={{
-										backgroundColor: theme.colors.warning + '20',
-										borderBottom: `1px solid ${theme.colors.warning}40`,
-										color: theme.colors.warning,
-									}}
-								>
-									<AlertTriangle className="w-4 h-4 flex-shrink-0" />
-									<span>
-										Large file preview truncated. Showing first{' '}
-										{formatFileSize(LARGE_FILE_PREVIEW_LIMIT)} of{' '}
-										{formatFileSize(file.content.length)}.
-									</span>
-									<button
-										className="px-2 py-0.5 rounded text-xs font-medium hover:brightness-125 transition-all"
-										style={{
-											backgroundColor: theme.colors.warning + '30',
-											border: `1px solid ${theme.colors.warning}60`,
-											color: theme.colors.warning,
-										}}
-										onClick={() => setShowFullContent(true)}
-									>
-										Load full file
-									</button>
-								</div>
-							)}
+							{truncationBanner}
 							<SyntaxHighlighter
 								language={language}
 								style={getSyntaxStyle(theme.mode)}

@@ -22,6 +22,7 @@ import { getSyntaxStyle } from './syntaxTheme';
 import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 
 // ============================================================================
 // Types
@@ -70,6 +71,8 @@ export interface MarkdownComponentsOptions {
 		borderRadius?: string;
 		backgroundColor?: string;
 	};
+	/** Apply Bionify reading-mode emphasis to readable prose nodes only */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -160,6 +163,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} th { background-color: ${colors.bgActivity}; font-weight: bold; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
+    ${getBionifyReadingModeStyles(s, theme)}
   `.trim();
 
 	// Add checkbox styles if requested
@@ -325,6 +329,24 @@ function highlightSearchMatches(
 	return processChild(children, 0);
 }
 
+export function applyReadableTextTransforms(
+	children: React.ReactNode,
+	options: Pick<MarkdownComponentsOptions, 'enableBionifyReadingMode' | 'searchHighlight'> & {
+		theme: Theme;
+	}
+): React.ReactNode {
+	const { theme, searchHighlight, enableBionifyReadingMode = false } = options;
+	const highlighted =
+		searchHighlight && searchHighlight.query.trim()
+			? highlightSearchMatches(children, searchHighlight, theme)
+			: children;
+
+	return React.createElement(BionifyText, {
+		enabled: enableBionifyReadingMode,
+		children: highlighted,
+	});
+}
+
 export function createMarkdownComponents(options: MarkdownComponentsOptions): Partial<Components> {
 	const {
 		theme,
@@ -336,45 +358,47 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
+		enableBionifyReadingMode = false,
 	} = options;
 
 	// Reset match counter at start of each render
 	globalMatchCounter = 0;
 
-	// Helper to wrap children with search highlighting
-	const withHighlight = (children: React.ReactNode): React.ReactNode => {
-		if (!searchHighlight || !searchHighlight.query.trim()) {
-			return children;
-		}
-		return highlightSearchMatches(children, searchHighlight, theme);
+	const withReadableTransforms = (children: React.ReactNode): React.ReactNode => {
+		return applyReadableTextTransforms(children, {
+			theme,
+			searchHighlight,
+			enableBionifyReadingMode,
+		});
 	};
 
 	const components: Partial<Components> = {
 		// Override paragraph to apply search highlighting
-		p: ({ children }: any) => React.createElement('p', null, withHighlight(children)),
+		p: ({ children }: any) => React.createElement('p', null, withReadableTransforms(children)),
 
 		// Override headings to apply search highlighting
-		h1: ({ children }: any) => React.createElement('h1', null, withHighlight(children)),
-		h2: ({ children }: any) => React.createElement('h2', null, withHighlight(children)),
-		h3: ({ children }: any) => React.createElement('h3', null, withHighlight(children)),
-		h4: ({ children }: any) => React.createElement('h4', null, withHighlight(children)),
-		h5: ({ children }: any) => React.createElement('h5', null, withHighlight(children)),
-		h6: ({ children }: any) => React.createElement('h6', null, withHighlight(children)),
+		h1: ({ children }: any) => React.createElement('h1', null, withReadableTransforms(children)),
+		h2: ({ children }: any) => React.createElement('h2', null, withReadableTransforms(children)),
+		h3: ({ children }: any) => React.createElement('h3', null, withReadableTransforms(children)),
+		h4: ({ children }: any) => React.createElement('h4', null, withReadableTransforms(children)),
+		h5: ({ children }: any) => React.createElement('h5', null, withReadableTransforms(children)),
+		h6: ({ children }: any) => React.createElement('h6', null, withReadableTransforms(children)),
 
 		// Override list items to apply search highlighting
-		li: ({ children }: any) => React.createElement('li', null, withHighlight(children)),
+		li: ({ children }: any) => React.createElement('li', null, withReadableTransforms(children)),
 
 		// Override table cells to apply search highlighting
-		td: ({ children }: any) => React.createElement('td', null, withHighlight(children)),
-		th: ({ children }: any) => React.createElement('th', null, withHighlight(children)),
+		td: ({ children }: any) => React.createElement('td', null, withReadableTransforms(children)),
+		th: ({ children }: any) => React.createElement('th', null, withReadableTransforms(children)),
 
 		// Override blockquote to apply search highlighting
 		blockquote: ({ children }: any) =>
-			React.createElement('blockquote', null, withHighlight(children)),
+			React.createElement('blockquote', null, withReadableTransforms(children)),
 
 		// Override strong/em to apply search highlighting
-		strong: ({ children }: any) => React.createElement('strong', null, withHighlight(children)),
-		em: ({ children }: any) => React.createElement('em', null, withHighlight(children)),
+		strong: ({ children }: any) =>
+			React.createElement('strong', null, withReadableTransforms(children)),
+		em: ({ children }: any) => React.createElement('em', null, withReadableTransforms(children)),
 		// Block code: extract code element from <pre><code>...</code></pre> and render with SyntaxHighlighter
 		pre: ({ children }: any) => {
 			const codeElement = React.Children.toArray(children).find(
@@ -519,6 +543,7 @@ export function generateInlineWizardPreviewProseStyles(
 ): string {
 	const c = theme.colors;
 	const s = scopeSelector ? `${scopeSelector}.prose, ${scopeSelector} .prose` : '.prose';
+	const bionifySelector = scopeSelector ? `${scopeSelector} .prose` : '.prose';
 	const isStreaming = variant === 'streaming';
 
 	const heading1Size = isStreaming ? '1.75em' : '2em';
@@ -593,6 +618,7 @@ export function generateInlineWizardPreviewProseStyles(
       list-style-type: none;
       margin-left: -1.5em;
     }
+    ${getBionifyReadingModeStyles(bionifySelector, theme)}
   `;
 }
 

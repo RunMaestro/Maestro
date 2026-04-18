@@ -26,6 +26,7 @@ import {
 	type SessionExitMessage,
 	type UserInputMessage,
 	type ThemeMessage,
+	type BionifyReadingModeMessage,
 	type CustomCommandsMessage,
 	type AutoRunStateMessage,
 	type TabsChangedMessage,
@@ -954,6 +955,37 @@ describe('useWebSocket', () => {
 			});
 
 			expect(onThemeUpdate).toHaveBeenCalledWith(theme);
+		});
+
+		it('handles bionify_reading_mode message', () => {
+			const onBionifyReadingModeUpdate = vi.fn();
+			const { result } = renderHook(() =>
+				useWebSocket({ handlers: { onBionifyReadingModeUpdate } })
+			);
+
+			act(() => {
+				result.current.connect();
+			});
+
+			const ws = MockWebSocket.getLastInstance();
+			act(() => {
+				ws.simulateOpen();
+				ws.simulateMessage({
+					type: 'connected',
+					clientId: 'client-123',
+					message: 'Connected',
+					authenticated: true,
+				} as ConnectedMessage);
+			});
+
+			act(() => {
+				ws.simulateMessage({
+					type: 'bionify_reading_mode',
+					enabled: true,
+				} as BionifyReadingModeMessage);
+			});
+
+			expect(onBionifyReadingModeUpdate).toHaveBeenCalledWith(true);
 		});
 
 		it('handles custom_commands message', () => {

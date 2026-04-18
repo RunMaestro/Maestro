@@ -31,6 +31,8 @@ import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
+const BIONIFY_BUTTON_LABEL = 'B';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -125,6 +127,8 @@ interface LogItemProps {
 	onShowErrorDetails?: (error: AgentError) => void;
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
+	bionifyReadingMode: boolean;
+	onToggleBionifyReadingMode: () => void;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
 }
@@ -165,6 +169,8 @@ const LogItemComponent = memo(
 		onFileClick,
 		onShowErrorDetails,
 		onSaveToFile,
+		bionifyReadingMode,
+		onToggleBionifyReadingMode,
 		userMessageAlignment,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
@@ -526,6 +532,7 @@ const LogItemComponent = memo(
 										content={log.text}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -640,6 +647,7 @@ const LogItemComponent = memo(
 											content={displayText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -723,6 +731,7 @@ const LogItemComponent = memo(
 											content={filteredText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -798,6 +807,7 @@ const LogItemComponent = memo(
 										content={filteredText}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -832,6 +842,21 @@ const LogItemComponent = memo(
 								}
 							>
 								{markdownEditMode ? <Eye className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+							</button>
+						)}
+						{log.source !== 'user' && isAIMode && !markdownEditMode && (
+							<button
+								onClick={onToggleBionifyReadingMode}
+								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+								style={{ color: bionifyReadingMode ? theme.colors.accent : theme.colors.textDim }}
+								title={
+									bionifyReadingMode
+										? 'Disable Bionify for this tab'
+										: 'Enable Bionify for this tab'
+								}
+								aria-pressed={bionifyReadingMode}
+							>
+								<span className="text-[12px] font-black leading-none">{BIONIFY_BUTTON_LABEL}</span>
 							</button>
 						)}
 						{/* Replay button for user messages in AI mode */}
@@ -949,6 +974,7 @@ const LogItemComponent = memo(
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
+			prevProps.bionifyReadingMode === nextProps.bionifyReadingMode &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment
 		);
@@ -1078,6 +1104,13 @@ export const TerminalOutput = memo(
 			userMessageAlignment = 'right',
 			onOpenInTab,
 		} = props;
+		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const [bionifyOverride, setBionifyOverride] = useState<boolean | null>(null);
+		const effectiveBionifyReadingMode = bionifyOverride ?? globalBionifyReadingMode;
+
+		useEffect(() => {
+			setBionifyOverride(null);
+		}, [session.id, session.activeTabId]);
 
 		// Use the forwarded ref if provided, otherwise create a local one
 		const localRef = useRef<HTMLDivElement>(null);
@@ -1752,6 +1785,10 @@ export const TerminalOutput = memo(
 							onFileClick={onFileClick}
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
+							bionifyReadingMode={effectiveBionifyReadingMode}
+							onToggleBionifyReadingMode={() =>
+								setBionifyOverride((current) => !(current ?? globalBionifyReadingMode))
+							}
 							userMessageAlignment={userMessageAlignment}
 						/>
 					))}

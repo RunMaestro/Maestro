@@ -21,6 +21,7 @@ import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
+import { BionifyText, getBionifyReadingModeStyles } from '../../renderer/utils/bionifyReadingMode';
 
 /**
  * Props for MobileMarkdownRenderer
@@ -30,6 +31,8 @@ export interface MobileMarkdownRendererProps {
 	content: string;
 	/** Optional custom font size (default: 13px) */
 	fontSize?: number;
+	/** Whether Bionify reading mode should be applied to prose nodes */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -186,7 +189,7 @@ CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
  * Renders markdown content with full GFM support for mobile displays.
  */
 export const MobileMarkdownRenderer = memo(
-	({ content, fontSize = 13 }: MobileMarkdownRendererProps) => {
+	({ content, fontSize = 13, enableBionifyReadingMode = false }: MobileMarkdownRendererProps) => {
 		const colors = useThemeColors();
 		const { isDark } = useTheme();
 		const syntaxStyle = isDark ? vscDarkPlus : vs;
@@ -202,6 +205,7 @@ export const MobileMarkdownRenderer = memo(
 				}}
 			>
 				<style>{`
+          ${getBionifyReadingModeStyles('.mobile-markdown-content')}
           .mobile-markdown-content li > p:first-of-type {
             display: inline;
             margin: 0;
@@ -287,7 +291,11 @@ export const MobileMarkdownRenderer = memo(
 						},
 
 						// Paragraphs
-						p: ({ children }) => <p style={{ margin: '8px 0' }}>{children}</p>,
+						p: ({ children }) => (
+							<p style={{ margin: '8px 0' }}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</p>
+						),
 
 						// Headings
 						h1: ({ children }) => (
@@ -299,7 +307,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textMain,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h1>
 						),
 						h2: ({ children }) => (
@@ -311,7 +319,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textMain,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h2>
 						),
 						h3: ({ children }) => (
@@ -323,7 +331,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textMain,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h3>
 						),
 						h4: ({ children }) => (
@@ -335,7 +343,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textMain,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h4>
 						),
 						h5: ({ children }) => (
@@ -347,7 +355,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textMain,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h5>
 						),
 						h6: ({ children }) => (
@@ -359,7 +367,7 @@ export const MobileMarkdownRenderer = memo(
 									color: colors.textDim,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</h6>
 						),
 
@@ -374,7 +382,11 @@ export const MobileMarkdownRenderer = memo(
 								{children}
 							</ol>
 						),
-						li: ({ children }) => <li style={{ margin: '4px 0' }}>{children}</li>,
+						li: ({ children }) => (
+							<li style={{ margin: '4px 0' }}>
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
+							</li>
+						),
 
 						// Blockquotes
 						blockquote: ({ children }) => (
@@ -387,7 +399,7 @@ export const MobileMarkdownRenderer = memo(
 									fontStyle: 'italic',
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</blockquote>
 						),
 
@@ -428,7 +440,7 @@ export const MobileMarkdownRenderer = memo(
 									fontWeight: 600,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</th>
 						),
 						td: ({ children }) => (
@@ -438,7 +450,7 @@ export const MobileMarkdownRenderer = memo(
 									borderBottom: `1px solid ${colors.border}`,
 								}}
 							>
-								{children}
+								<BionifyText enabled={enableBionifyReadingMode}>{children}</BionifyText>
 							</td>
 						),
 

@@ -199,6 +199,7 @@ export interface SettingsStoreState {
 	rightPanelWidth: number;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
+	bionifyReadingMode: boolean;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	terminalWidth: number;
@@ -282,6 +283,7 @@ export interface SettingsStoreActions {
 	setRightPanelWidth: (value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
+	setBionifyReadingMode: (value: boolean) => void;
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
 	setTerminalWidth: (value: number) => void;
@@ -427,6 +429,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		rightPanelWidth: 384,
 		markdownEditMode: false,
 		chatRawTextMode: false,
+		bionifyReadingMode: false,
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
@@ -599,6 +602,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setChatRawTextMode: (value) => {
 			set({ chatRawTextMode: value });
 			window.maestro.settings.set('chatRawTextMode', value);
+		},
+
+		setBionifyReadingMode: (value) => {
+			set({ bionifyReadingMode: value });
+			window.maestro.settings.set('bionifyReadingMode', value);
 		},
 
 		setShowHiddenFiles: (value) => {
@@ -1490,6 +1498,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['chatRawTextMode'] !== undefined)
 			patch.chatRawTextMode = allSettings['chatRawTextMode'] as boolean;
 
+		if (allSettings['bionifyReadingMode'] !== undefined)
+			patch.bionifyReadingMode = allSettings['bionifyReadingMode'] as boolean;
+
 		if (allSettings['showHiddenFiles'] !== undefined)
 			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
@@ -1868,6 +1879,7 @@ export function getSettingsActions() {
 		setRightPanelWidth: state.setRightPanelWidth,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
+		setBionifyReadingMode: state.setBionifyReadingMode,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
 		setTerminalWidth: state.setTerminalWidth,

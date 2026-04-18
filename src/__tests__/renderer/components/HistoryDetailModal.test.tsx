@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { HistoryDetailModal } from '../../../renderer/components/HistoryDetailModal';
 import type { Theme, HistoryEntry } from '../../../renderer/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
@@ -81,6 +82,7 @@ describe('HistoryDetailModal', () => {
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 		mockWriteText.mockClear();
+		useSettingsStore.setState({ bionifyReadingMode: false });
 	});
 
 	afterEach(() => {
@@ -257,6 +259,26 @@ describe('HistoryDetailModal', () => {
 
 			// Should render without error
 			expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+		});
+
+		it('applies reading mode to prose while preserving code and link text when enabled', () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						fullResponse: 'Hello `code sample` [example link](https://example.com) world',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+			expect(screen.getByText('code sample')).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'example link' })).toBeInTheDocument();
+			expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+			expect(document.querySelector('a .bionify-word')).not.toBeInTheDocument();
 		});
 	});
 

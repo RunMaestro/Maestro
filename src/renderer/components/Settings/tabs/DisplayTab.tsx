@@ -31,6 +31,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setMaxLogBuffer,
 		maxOutputLines,
 		setMaxOutputLines,
+		bionifyReadingMode,
+		setBionifyReadingMode,
 		userMessageAlignment,
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
@@ -197,6 +199,23 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				<p className="text-xs opacity-50 mt-2">
 					Position your messages on the left or right side of the chat. AI responses appear on the
 					opposite side.
+				</p>
+			</div>
+
+			<div>
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Reading Mode</div>
+				<ToggleButtonGroup
+					options={[
+						{ value: 'off', label: 'Off' },
+						{ value: 'on', label: 'Bionify' },
+					]}
+					value={bionifyReadingMode ? 'on' : 'off'}
+					onChange={(value) => setBionifyReadingMode(value === 'on')}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Applies Bionify-style emphasis only to opted-in long-form readers like File Preview and
+					Auto Run. Terminals, logs, and chat input stay unchanged.
 				</p>
 			</div>
 

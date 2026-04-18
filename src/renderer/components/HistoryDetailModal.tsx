@@ -28,6 +28,7 @@ import { calculateContextDisplay } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -65,6 +66,7 @@ export function HistoryDetailModal({
 	onFileClick,
 }: HistoryDetailModalProps) {
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -522,6 +524,7 @@ export function HistoryDetailModal({
 						cwd={cwd}
 						projectRoot={projectRoot}
 						onFileClick={onFileClick}
+						enableBionifyReadingMode={bionifyReadingMode}
 					/>
 				</div>
 
