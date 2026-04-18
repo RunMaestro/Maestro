@@ -56,6 +56,7 @@ describe('web handlers', () => {
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			getPort: vi.fn().mockReturnValue(8080),
 			start: vi.fn().mockResolvedValue({ port: 8080, url: 'http://localhost:8080' }),
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
