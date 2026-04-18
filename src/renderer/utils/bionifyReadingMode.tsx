@@ -25,13 +25,118 @@ const BIONIFY_SKIPPED_TAGS = new Set([
 	'svg',
 	'textarea',
 ]);
+const BIONIFY_COMMON_WORDS = new Set([
+	'a',
+	'an',
+	'and',
+	'as',
+	'at',
+	'be',
+	'by',
+	'for',
+	'from',
+	'if',
+	'in',
+	'is',
+	'it',
+	'of',
+	'on',
+	'or',
+	'the',
+	'to',
+	'with',
+]);
 const DEFAULT_BIONIFY_SCOPE_SELECTOR = '.bionify-text-block';
-const DEFAULT_BIONIFY_REST_OPACITY = 0.96;
+const DEFAULT_BIONIFY_REST_OPACITY = 0.65;
+const DEFAULT_BIONIFY_INTENSITY = 1;
+export const DEFAULT_BIONIFY_ALGORITHM = '- 0 1 1 2 0.4';
 const BIONIFY_STYLE_ID = 'maestro-bionify-reading-mode-styles';
 let hasInjectedBionifyStyles = false;
 
-function resolveBionifyRestOpacity(theme?: Theme): number {
-	return theme?.mode === 'light' ? 0.9 : DEFAULT_BIONIFY_REST_OPACITY;
+interface ParsedBionifyAlgorithm {
+	highlightCommonWords: boolean;
+	fixedLengths: [number, number, number, number];
+	fallbackFraction: number;
+}
+
+export interface BionifyRenderConfig {
+	enabled: boolean;
+	intensity?: number;
+	algorithm?: string;
+}
+
+const DEFAULT_PARSED_BIONIFY_ALGORITHM: ParsedBionifyAlgorithm = {
+	highlightCommonWords: false,
+	fixedLengths: [0, 1, 1, 2],
+	fallbackFraction: 0.4,
+};
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+function parseBionifyAlgorithm(algorithm?: string): ParsedBionifyAlgorithm {
+	if (!algorithm?.trim()) {
+		return DEFAULT_PARSED_BIONIFY_ALGORITHM;
+	}
+
+	const parts = algorithm.trim().split(/\s+/);
+	if (parts.length !== 6 || !['+', '-'].includes(parts[0])) {
+		return DEFAULT_PARSED_BIONIFY_ALGORITHM;
+	}
+
+	const fixedLengths = parts.slice(1, 5).map((value) => Number.parseInt(value, 10));
+	const fallbackFraction = Number.parseFloat(parts[5]);
+
+	if (
+		fixedLengths.some((value) => Number.isNaN(value) || value < 0) ||
+		Number.isNaN(fallbackFraction) ||
+		fallbackFraction < 0 ||
+		fallbackFraction > 1
+	) {
+		return DEFAULT_PARSED_BIONIFY_ALGORITHM;
+	}
+
+	return {
+		highlightCommonWords: parts[0] === '+',
+		fixedLengths: fixedLengths as ParsedBionifyAlgorithm['fixedLengths'],
+		fallbackFraction,
+	};
+}
+
+function normalizeBionifyConfig(
+	config: boolean | BionifyRenderConfig
+): Required<BionifyRenderConfig> {
+	if (typeof config === 'boolean') {
+		return {
+			enabled: config,
+			intensity: DEFAULT_BIONIFY_INTENSITY,
+			algorithm: DEFAULT_BIONIFY_ALGORITHM,
+		};
+	}
+
+	return {
+		enabled: config.enabled,
+		intensity: clamp(config.intensity ?? DEFAULT_BIONIFY_INTENSITY, 0.6, 1.5),
+		algorithm: config.algorithm?.trim() || DEFAULT_BIONIFY_ALGORITHM,
+	};
+}
+
+function resolveBionifyRestOpacity(intensity: number, theme?: Theme): number {
+	const baseOpacity = theme?.mode === 'light' ? 0.73 : DEFAULT_BIONIFY_REST_OPACITY;
+	return Number(clamp(baseOpacity - (intensity - 1) * 1, 0.2, 0.9).toFixed(2));
+}
+
+function resolveBionifyEmphasisWeight(intensity: number): number {
+	return Math.round(clamp(700 + (intensity - 1) * 260, 650, 820));
+}
+
+function buildBionifyCssVars(intensity: number, theme?: Theme): CSSProperties {
+	return {
+		['--bionify-intensity' as const]: String(intensity),
+		['--bionify-rest-opacity' as const]: String(resolveBionifyRestOpacity(intensity, theme)),
+		['--bionify-emphasis-weight' as const]: String(resolveBionifyEmphasisWeight(intensity)),
+	} as CSSProperties;
 }
 
 function ensureBionifyStylesInjected(): void {
@@ -51,15 +156,29 @@ function ensureBionifyStylesInjected(): void {
 	hasInjectedBionifyStyles = true;
 }
 
-function getEmphasisLength(word: string): number {
-	if (word.length <= 3) return 1;
-	if (word.length <= 6) return 2;
-	if (word.length <= 9) return 3;
-	return 4;
+function getEmphasisLength(word: string, algorithm: ParsedBionifyAlgorithm): number {
+	if (!algorithm.highlightCommonWords && BIONIFY_COMMON_WORDS.has(word.toLowerCase())) {
+		return 0;
+	}
+
+	const directRule = algorithm.fixedLengths[word.length - 1];
+	if (directRule !== undefined) {
+		return Math.min(directRule, word.length);
+	}
+
+	return Math.min(Math.max(1, Math.ceil(word.length * algorithm.fallbackFraction)), word.length);
 }
 
-function renderBionifyWord(word: string, key: string): ReactNode {
-	const emphasisLength = Math.min(getEmphasisLength(word), word.length);
+function renderBionifyWord(
+	word: string,
+	key: string,
+	algorithm: ParsedBionifyAlgorithm
+): ReactNode {
+	const emphasisLength = getEmphasisLength(word, algorithm);
+	if (emphasisLength <= 0) {
+		return word;
+	}
+
 	const emphasis = word.slice(0, emphasisLength);
 	const rest = word.slice(emphasisLength);
 
@@ -71,11 +190,16 @@ function renderBionifyWord(word: string, key: string): ReactNode {
 	);
 }
 
-export function renderBionifyText(content: string, enabled: boolean): ReactNode {
-	if (!enabled || !content) {
+export function renderBionifyText(
+	content: string,
+	config: boolean | BionifyRenderConfig
+): ReactNode {
+	const normalizedConfig = normalizeBionifyConfig(config);
+	if (!normalizedConfig.enabled || !content) {
 		return content;
 	}
 
+	const algorithm = parseBionifyAlgorithm(normalizedConfig.algorithm);
 	const parts: ReactNode[] = [];
 	let lastIndex = 0;
 
@@ -87,7 +211,7 @@ export function renderBionifyText(content: string, enabled: boolean): ReactNode 
 			parts.push(content.slice(lastIndex, index));
 		}
 
-		parts.push(renderBionifyWord(word, `bionify-${index}`));
+		parts.push(renderBionifyWord(word, `bionify-${index}`, algorithm));
 		lastIndex = index + word.length;
 	}
 
@@ -102,9 +226,13 @@ export function renderBionifyText(content: string, enabled: boolean): ReactNode 
 	return parts;
 }
 
-function transformBionifyNode(node: ReactNode, enabled: boolean, index: number): ReactNode {
+function transformBionifyNode(
+	node: ReactNode,
+	config: Required<BionifyRenderConfig>,
+	index: number
+): ReactNode {
 	if (typeof node === 'string') {
-		return renderBionifyText(node, enabled);
+		return renderBionifyText(node, config);
 	}
 
 	if (!isValidElement(node)) {
@@ -122,63 +250,112 @@ function transformBionifyNode(node: ReactNode, enabled: boolean, index: number):
 		return node;
 	}
 
-	return cloneElement(node, { key: node.key ?? index }, renderBionifyChildren(children, enabled));
+	return cloneElement(node, { key: node.key ?? index }, renderBionifyChildren(children, config));
 }
 
-export function renderBionifyChildren(children: ReactNode, enabled: boolean): ReactNode {
-	if (!enabled) {
+export function renderBionifyChildren(
+	children: ReactNode,
+	config: boolean | BionifyRenderConfig
+): ReactNode {
+	const normalizedConfig = normalizeBionifyConfig(config);
+	if (!normalizedConfig.enabled) {
 		return children;
 	}
 
-	return Children.map(children, (child, index) => transformBionifyNode(child, enabled, index));
+	return Children.map(children, (child, index) =>
+		transformBionifyNode(child, normalizedConfig, index)
+	);
 }
 
 export function getBionifyReadingModeStyles(
 	scopeSelector: string = DEFAULT_BIONIFY_SCOPE_SELECTOR,
 	theme?: Theme
 ): string {
-	const restOpacity = theme
-		? String(resolveBionifyRestOpacity(theme))
-		: `var(--bionify-rest-opacity, ${DEFAULT_BIONIFY_REST_OPACITY})`;
+	const fallbackRestOpacity = theme
+		? resolveBionifyRestOpacity(DEFAULT_BIONIFY_INTENSITY, theme)
+		: DEFAULT_BIONIFY_REST_OPACITY;
 
 	return `
 		${scopeSelector} .bionify-word { display: inline; color: inherit; }
-		${scopeSelector} .bionify-word-emphasis { font-weight: 600; color: inherit; }
-		${scopeSelector} .bionify-word-rest { font-weight: 400; color: inherit; opacity: ${restOpacity}; }
+		${scopeSelector} .bionify-word-emphasis {
+			font-weight: var(--bionify-emphasis-weight, 700) !important;
+			color: inherit !important;
+		}
+		${scopeSelector} .bionify-word-rest {
+			font-weight: 400 !important;
+			color: inherit !important;
+			opacity: var(--bionify-rest-opacity, ${fallbackRestOpacity}) !important;
+		}
 	`;
 }
 
-interface BionifyTextProps {
+interface BionifyTextProps extends BionifyRenderConfig {
 	children: ReactNode;
-	enabled: boolean;
+	theme?: Theme;
 }
 
-export function BionifyText({ children, enabled }: BionifyTextProps) {
-	return <>{renderBionifyChildren(children, enabled)}</>;
+export function BionifyText({
+	children,
+	enabled,
+	intensity = DEFAULT_BIONIFY_INTENSITY,
+	algorithm = DEFAULT_BIONIFY_ALGORITHM,
+	theme,
+}: BionifyTextProps) {
+	const normalizedConfig = normalizeBionifyConfig({ enabled, intensity, algorithm });
+	if (!normalizedConfig.enabled) {
+		return <>{children}</>;
+	}
+
+	return (
+		<span style={buildBionifyCssVars(normalizedConfig.intensity, theme)}>
+			{renderBionifyChildren(children, normalizedConfig)}
+		</span>
+	);
 }
 
-interface BionifyTextBlockProps extends HTMLAttributes<HTMLDivElement> {
-	enabled: boolean;
+interface BionifyTextBlockProps extends HTMLAttributes<HTMLDivElement>, BionifyRenderConfig {
 	children: ReactNode;
 	restOpacity?: number;
 	style?: CSSProperties;
+	theme?: Theme;
 }
 
 export const BionifyTextBlock = forwardRef<HTMLDivElement, BionifyTextBlockProps>(
 	function BionifyTextBlock(
-		{ children, enabled, className = '', restOpacity, style, ...props },
+		{
+			children,
+			enabled,
+			className = '',
+			intensity = DEFAULT_BIONIFY_INTENSITY,
+			algorithm = DEFAULT_BIONIFY_ALGORITHM,
+			restOpacity,
+			style,
+			theme,
+			...props
+		},
 		ref: ForwardedRef<HTMLDivElement>
 	) {
 		ensureBionifyStylesInjected();
+		const normalizedConfig = normalizeBionifyConfig({ enabled, intensity, algorithm });
 		const blockClassName = ['bionify-text-block', className].filter(Boolean).join(' ');
 		const blockStyle = {
 			...style,
-			['--bionify-rest-opacity' as const]: restOpacity ?? DEFAULT_BIONIFY_REST_OPACITY,
+			...buildBionifyCssVars(normalizedConfig.intensity, theme),
+			...(restOpacity !== undefined
+				? { ['--bionify-rest-opacity' as const]: String(restOpacity) }
+				: {}),
 		} as CSSProperties;
 
 		return (
 			<div ref={ref} className={blockClassName} style={blockStyle} {...props}>
-				<BionifyText enabled={enabled}>{children}</BionifyText>
+				<BionifyText
+					enabled={normalizedConfig.enabled}
+					intensity={normalizedConfig.intensity}
+					algorithm={normalizedConfig.algorithm}
+					theme={theme}
+				>
+					{children}
+				</BionifyText>
 			</div>
 		);
 	}

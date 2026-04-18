@@ -200,6 +200,8 @@ export interface SettingsStoreState {
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
 	bionifyReadingMode: boolean;
+	bionifyIntensity: number;
+	bionifyAlgorithm: string;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	terminalWidth: number;
@@ -284,6 +286,8 @@ export interface SettingsStoreActions {
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
 	setBionifyReadingMode: (value: boolean) => void;
+	setBionifyIntensity: (value: number) => void;
+	setBionifyAlgorithm: (value: string) => void;
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
 	setTerminalWidth: (value: number) => void;
@@ -430,6 +434,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		bionifyReadingMode: false,
+		bionifyIntensity: 1,
+		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
@@ -607,6 +613,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setBionifyReadingMode: (value) => {
 			set({ bionifyReadingMode: value });
 			window.maestro.settings.set('bionifyReadingMode', value);
+		},
+
+		setBionifyIntensity: (value) => {
+			const clamped = Math.max(0.6, Math.min(1.5, value));
+			set({ bionifyIntensity: clamped });
+			window.maestro.settings.set('bionifyIntensity', clamped);
+		},
+
+		setBionifyAlgorithm: (value) => {
+			set({ bionifyAlgorithm: value });
+			window.maestro.settings.set('bionifyAlgorithm', value);
 		},
 
 		setShowHiddenFiles: (value) => {
@@ -1500,6 +1517,15 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['bionifyReadingMode'] !== undefined)
 			patch.bionifyReadingMode = allSettings['bionifyReadingMode'] as boolean;
+
+		if (allSettings['bionifyIntensity'] !== undefined)
+			patch.bionifyIntensity = Math.max(
+				0.6,
+				Math.min(1.5, allSettings['bionifyIntensity'] as number)
+			);
+
+		if (allSettings['bionifyAlgorithm'] !== undefined)
+			patch.bionifyAlgorithm = allSettings['bionifyAlgorithm'] as string;
 
 		if (allSettings['showHiddenFiles'] !== undefined)
 			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;

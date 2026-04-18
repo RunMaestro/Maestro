@@ -25,7 +25,6 @@ import {
 	Loader2,
 	Image,
 	Globe,
-	Wand2,
 	Save,
 	Edit,
 	AlertTriangle,
@@ -797,6 +796,8 @@ export const FilePreview = React.memo(
 		// Track if content has been modified
 		const hasChanges = markdownEditMode && editContent !== file?.content;
 		const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 		const [surfaceBionifyOverride, setSurfaceBionifyOverride] = useState<boolean | null>(null);
 
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
@@ -939,6 +940,8 @@ export const FilePreview = React.memo(
 					mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 				},
 				enableBionifyReadingMode: effectiveBionifyReadingMode,
+				bionifyIntensity,
+				bionifyAlgorithm,
 				onFileClick: (filePath, options) => onFileClick?.(filePath, options),
 				onExternalLinkClick: (href) => {
 					if (/^file:\/\//.test(href)) {
@@ -998,7 +1001,7 @@ export const FilePreview = React.memo(
 		const showPath = showStatsBar && !!directoryPath;
 		const headerIconClass = 'w-4 h-4';
 		const headerBtnClass =
-			'p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
+			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -2459,7 +2462,9 @@ export const FilePreview = React.memo(
 								className="prose prose-sm max-w-none whitespace-pre-wrap break-words"
 								style={{ color: theme.colors.textMain }}
 								enabled={effectiveBionifyReadingMode}
-								restOpacity={theme.mode === 'light' ? 0.9 : 0.96}
+								intensity={bionifyIntensity}
+								algorithm={bionifyAlgorithm}
+								theme={theme}
 							>
 								{displayContent}
 							</BionifyTextBlock>

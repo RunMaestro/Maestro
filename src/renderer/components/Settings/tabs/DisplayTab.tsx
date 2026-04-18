@@ -7,13 +7,15 @@
  */
 
 import { useState } from 'react';
-import { Sparkles, AlertTriangle, AppWindow } from 'lucide-react';
+import { Sparkles, AlertTriangle, AppWindow, HelpCircle } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
 import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
+import { Modal } from '../../ui/Modal';
+import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
 
 export interface DisplayTabProps {
 	theme: Theme;
@@ -33,6 +35,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setMaxOutputLines,
 		bionifyReadingMode,
 		setBionifyReadingMode,
+		bionifyIntensity,
+		setBionifyIntensity,
+		bionifyAlgorithm,
+		setBionifyAlgorithm,
 		userMessageAlignment,
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
@@ -57,6 +63,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
 	const [fontLoading, setFontLoading] = useState(false);
 	const [fontsLoaded, setFontsLoaded] = useState(false);
+	const [showBionifyInfoModal, setShowBionifyInfoModal] = useState(false);
 
 	const loadFonts = async () => {
 		if (fontsLoaded) return; // Don't reload if already loaded
@@ -216,6 +223,67 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				<p className="text-xs opacity-50 mt-2">
 					Applies Bionify-style emphasis only to opted-in long-form readers like File Preview and
 					Auto Run. Terminals, logs, and chat input stay unchanged.
+				</p>
+			</div>
+
+			<div>
+				<div
+					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>Intensity</span>
+					<button
+						type="button"
+						onClick={() => setShowBionifyInfoModal(true)}
+						className="inline-flex items-center justify-center rounded transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+						style={{ width: '20px', height: '20px', color: theme.colors.textDim }}
+						aria-label="Info"
+						title="Bionify algorithm info"
+					>
+						<HelpCircle className="w-3.5 h-3.5" />
+					</button>
+				</div>
+				<ToggleButtonGroup
+					options={[
+						{ value: 0.85, label: 'Soft' },
+						{ value: 1, label: 'Default' },
+						{ value: 1.35, label: 'Strong' },
+					]}
+					value={bionifyIntensity}
+					onChange={setBionifyIntensity}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Controls how hard the emphasis hits. Strong increases emphasis weight and fades the
+					remaining characters more aggressively.
+				</p>
+			</div>
+
+			<div>
+				<label
+					htmlFor="bionify-algorithm-input"
+					className="block text-xs font-bold opacity-70 uppercase mb-2"
+				>
+					Bionify Algorithm
+				</label>
+				<input
+					id="bionify-algorithm-input"
+					aria-label="Bionify algorithm"
+					type="text"
+					value={bionifyAlgorithm}
+					onChange={(event) => setBionifyAlgorithm(event.target.value)}
+					className="w-full px-3 py-2 rounded text-sm outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+					style={{
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+						border: `1px solid ${theme.colors.border}`,
+					}}
+					placeholder="- 0 1 1 2 0.4"
+					spellCheck={false}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0 1 1 2
+					0.4`
 				</p>
 			</div>
 
@@ -578,6 +646,42 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				onHonorGitignoreChange={setLocalHonorGitignore}
 				onReset={() => setLocalHonorGitignore(true)}
 			/>
+
+			{showBionifyInfoModal && (
+				<Modal
+					theme={theme}
+					title="Bionify Algorithm Reference"
+					priority={MODAL_PRIORITIES.GROUP_CHAT_INFO}
+					onClose={() => setShowBionifyInfoModal(false)}
+					width={520}
+					maxHeight="70vh"
+					closeOnBackdropClick
+				>
+					<div className="space-y-4 text-sm" style={{ color: theme.colors.textMain }}>
+						<div
+							className="rounded border px-3 py-2 font-mono text-sm"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							- 0 1 1 2 0.4
+						</div>
+						<p style={{ color: theme.colors.textDim }}>
+							The first character is `-` or `+`. `-` skips common english words like `a`, `and`, and
+							`the`. `+` highlights every word.
+						</p>
+						<ul className="list-disc pl-5 space-y-2" style={{ color: theme.colors.textDim }}>
+							<li>The next four numbers control highlighted characters for words of length 1-4.</li>
+							<li>The final value is a fraction of words with length 5 or more.</li>
+							<li>
+								Current default: `- 0 1 1 2 0.4`, which skips common words and highlights the first
+								40% of longer words.
+							</li>
+						</ul>
+					</div>
+				</Modal>
+			)}
 		</div>
 	);
 }

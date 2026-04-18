@@ -93,7 +93,14 @@ Reading mode should emphasize this ${autoRunPhrase}.
 					agentSessionId: null,
 					name: 'Main',
 					starred: false,
-					logs: [],
+					logs: [
+						{
+							id: 'ai-log-bionify',
+							timestamp: now,
+							source: 'stdout',
+							text: '# AI Chat\n\nReading mode should emphasize this ai chat prose clearly.',
+						},
+					],
 					inputValue: 'Chat input plain text remains editable.',
 					stagedImages: [],
 					createdAt: now,
@@ -130,6 +137,59 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			autoRunEditScrollPos: 0,
 			autoRunPreviewScrollPos: 0,
 			autoRunCursorPosition: 0,
+		};
+
+		const aiChatSession = {
+			id: 'session-bionify-ai-chat',
+			name: 'Bionify AI Chat',
+			toolType: 'codex',
+			state: 'idle',
+			cwd: projectDir,
+			fullPath: projectDir,
+			projectRoot: projectDir,
+			aiLogs: [],
+			shellLogs: [],
+			workLog: [],
+			contextUsage: 0,
+			inputMode: 'ai',
+			aiPid: 0,
+			terminalPid: 0,
+			port: 0,
+			isLive: false,
+			changedFiles: [],
+			isGitRepo: false,
+			fileTree: [],
+			fileExplorerExpanded: [],
+			fileExplorerScrollPos: 0,
+			executionQueue: [],
+			activeTimeMs: 0,
+			fileTreeAutoRefreshInterval: 180,
+			aiTabs: [
+				{
+					id: 'ai-tab-chat-only',
+					agentSessionId: null,
+					name: 'Chat Only',
+					starred: false,
+					logs: [
+						{
+							id: 'ai-log-chat-only',
+							timestamp: now,
+							source: 'stdout',
+							text: '# AI Chat\n\nReading mode should emphasize this ai chat prose clearly.',
+						},
+					],
+					inputValue: 'Chat input plain text remains editable.',
+					stagedImages: [],
+					createdAt: now,
+					state: 'idle',
+				},
+			],
+			activeTabId: 'ai-tab-chat-only',
+			closedTabHistory: [],
+			filePreviewTabs: [],
+			activeFileTabId: null,
+			unifiedTabOrder: [{ type: 'ai', id: 'ai-tab-chat-only' }],
+			unifiedClosedTabHistory: [],
 		};
 
 		const terminalSession = {
@@ -206,7 +266,7 @@ Reading mode should emphasize this ${autoRunPhrase}.
 		fs.mkdirSync(userDataPath, { recursive: true });
 		fs.writeFileSync(
 			path.join(userDataPath, 'maestro-sessions.json'),
-			JSON.stringify({ sessions: [readingSession, terminalSession] }, null, '\t'),
+			JSON.stringify({ sessions: [readingSession, aiChatSession, terminalSession] }, null, '\t'),
 			'utf-8'
 		);
 		fs.writeFileSync(
@@ -237,19 +297,46 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			const settingsDialog = window.locator('[role="dialog"][aria-label="Settings"]');
 			await expect(settingsDialog).toBeVisible();
 			await settingsDialog.locator('button[title="Display"]').click();
-			await settingsDialog.getByRole('button', { name: 'Bionify' }).click();
+			await writeDurableScreenshot(window, 'bionify-settings-default.png');
+			await settingsDialog.getByRole('button', { name: 'Strong' }).click();
+			await settingsDialog.getByLabel('Bionify algorithm').fill('+ 1 1 2 2 0.55');
+			await settingsDialog.getByLabel('Bionify algorithm').press('Tab');
 			await expect
 				.poll(async () => {
 					return await window.evaluate(async () => {
-						return await window.maestro.settings.get('bionifyReadingMode');
+						return {
+							intensity: await window.maestro.settings.get('bionifyIntensity'),
+							algorithm: await window.maestro.settings.get('bionifyAlgorithm'),
+						};
 					});
 				})
-				.toBe(true);
+				.toEqual({
+					intensity: 1.35,
+					algorithm: '+ 1 1 2 2 0.55',
+				});
+			await settingsDialog.getByRole('button', { name: 'Info' }).click();
+			const infoDialog = window.getByRole('dialog', { name: 'Bionify Algorithm Reference' });
+			await expect(infoDialog).toBeVisible();
+			await writeDurableScreenshot(window, 'bionify-settings-info.png');
+			await infoDialog.getByRole('button', { name: 'Close modal' }).click();
+			await expect(infoDialog).toBeHidden();
 			await window.keyboard.press('Escape');
 			await expect(settingsDialog).toBeHidden();
 			await window.waitForTimeout(250);
 
-			await writeDurableScreenshot(window, 'bionify-file-preview.png');
+			const bionifyButtons = window
+				.locator('button')
+				.filter({ has: window.locator('span', { hasText: 'B' }) });
+			const filePreviewBeforeButton = bionifyButtons.first();
+			await writeDurableScreenshot(window, 'bionify-file-preview-before.png');
+			const filePreviewButtonMetrics = await Promise.all([
+				filePreviewBeforeButton.boundingBox(),
+				window.getByTitle('Copy content to clipboard').boundingBox(),
+			]);
+			expect(filePreviewButtonMetrics[0]?.height).toBe(filePreviewButtonMetrics[1]?.height);
+			expect(filePreviewButtonMetrics[0]?.width).toBe(filePreviewButtonMetrics[1]?.width);
+			await filePreviewBeforeButton.click();
+			await writeDurableScreenshot(window, 'bionify-file-preview-after.png');
 
 			await expect
 				.poll(async () => {
@@ -313,6 +400,27 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			expect(counts.codeWords).toBe(0);
 			expect(counts.composerWords).toBe(0);
 
+			const previewStyleMetrics = await window.evaluate((snippet) => {
+				const blocks = Array.from(document.querySelectorAll('div, section, article, main, aside'));
+				const fileSurface = blocks.find((node) => node.textContent?.includes(snippet));
+				const emphasis = fileSurface?.querySelector('.bionify-word-emphasis');
+				const rest = fileSurface?.querySelector('.bionify-word-rest');
+				if (!emphasis || !rest) {
+					return null;
+				}
+				const emphasisStyle = window.getComputedStyle(emphasis);
+				const restStyle = window.getComputedStyle(rest);
+				return {
+					emphasisWeight: emphasisStyle.fontWeight,
+					restOpacity: restStyle.opacity,
+				};
+			}, previewPhrase);
+
+			expect(previewStyleMetrics).toEqual({
+				emphasisWeight: expect.stringMatching(/7|8/),
+				restOpacity: expect.stringMatching(/^0\.[2-5]/),
+			});
+
 			await window.getByText('Bionify Terminal Exclusion').click();
 			await expect(window.getByText(terminalSnippet)).toBeVisible();
 
@@ -337,8 +445,61 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			await window.getByText('Bionify Prototype').click();
 			await window.locator('text=Auto Run').first().click();
 			await expect(window.locator(`text=${autoRunPhrase}`)).toBeVisible();
+			await writeDurableScreenshot(window, 'bionify-autorun-before.png');
+			const autoRunBionifyButton = bionifyButtons.nth(1);
+			const autoRunButtonMetrics = await Promise.all([
+				autoRunBionifyButton.boundingBox(),
+				window.getByTitle('Create new document').boundingBox(),
+			]);
+			expect(autoRunButtonMetrics[0]?.height).toBe(autoRunButtonMetrics[1]?.height);
+			expect(autoRunButtonMetrics[0]?.width).toBe(autoRunButtonMetrics[1]?.width);
+			await autoRunBionifyButton.click();
 			await window.waitForTimeout(250);
-			await writeDurableScreenshot(window, 'bionify-autorun.png');
+			await writeDurableScreenshot(window, 'bionify-autorun-after.png');
+
+			await window.getByText('Bionify AI Chat').click();
+			await expect(window.getByText('ai chat prose clearly')).toBeVisible();
+			await writeDurableScreenshot(window, 'bionify-ai-chat-before.png');
+			await window.keyboard.press('Meta+,');
+			await expect(settingsDialog).toBeVisible();
+			await settingsDialog.locator('button[title="Display"]').click();
+			await settingsDialog.getByRole('button', { name: 'Bionify' }).click();
+			await expect
+				.poll(async () => {
+					return await window.evaluate(() => {
+						return document.querySelectorAll('.bionify-word-emphasis').length;
+					});
+				})
+				.toBeGreaterThan(0);
+			await expect
+				.poll(async () => {
+					return await window.evaluate(async () => {
+						return await window.maestro.settings.get('bionifyReadingMode');
+					});
+				})
+				.toBe(true);
+			await window.keyboard.press('Escape');
+			await expect(settingsDialog).toBeHidden();
+			await writeDurableScreenshot(window, 'bionify-ai-chat-after.png');
+
+			const aiChatStyleMetrics = await window.evaluate(() => {
+				const emphasis = document.querySelector('.bionify-word-emphasis');
+				const rest = document.querySelector('.bionify-word-rest');
+				if (!emphasis || !rest) {
+					return null;
+				}
+				const emphasisStyle = window.getComputedStyle(emphasis);
+				const restStyle = window.getComputedStyle(rest);
+				return {
+					emphasisWeight: emphasisStyle.fontWeight,
+					restOpacity: restStyle.opacity,
+				};
+			});
+
+			expect(aiChatStyleMetrics).toEqual({
+				emphasisWeight: expect.stringMatching(/7|8/),
+				restOpacity: expect.stringMatching(/^0\.[2-5]/),
+			});
 		} finally {
 			await app.close();
 			fs.rmSync(homeDir, { recursive: true, force: true });

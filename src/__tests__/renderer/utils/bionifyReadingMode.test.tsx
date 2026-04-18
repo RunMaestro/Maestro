@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import {
 	BionifyText,
 	BionifyTextBlock,
+	type BionifyRenderConfig,
 	getBionifyReadingModeStyles,
 	renderBionifyText,
 } from '../../../renderer/utils/bionifyReadingMode';
@@ -25,6 +26,33 @@ describe('bionifyReadingMode', () => {
 		expect(screen.getByText('ding')).toBeInTheDocument();
 	});
 
+	it('applies the configured algorithm to longer words', () => {
+		const config: BionifyRenderConfig = {
+			enabled: true,
+			algorithm: '- 0 1 1 2 0.4',
+			intensity: 1,
+		};
+
+		render(<div>{renderBionifyText('clearly', config)}</div>);
+
+		expect(screen.getByText('cle')).toBeInTheDocument();
+		expect(screen.getByText('arly')).toBeInTheDocument();
+	});
+
+	it('does not emphasize common words when the algorithm disables them', () => {
+		const config: BionifyRenderConfig = {
+			enabled: true,
+			algorithm: '- 0 1 1 2 0.4',
+			intensity: 1,
+		};
+
+		const { container } = render(<div>{renderBionifyText('and clearly', config)}</div>);
+
+		expect(container).toHaveTextContent('and clearly');
+		expect(screen.queryByText('a')).not.toBeInTheDocument();
+		expect(screen.getByText('cle')).toBeInTheDocument();
+	});
+
 	it('preserves inline code and links while transforming surrounding prose', () => {
 		render(
 			<BionifyText enabled={true}>
@@ -41,7 +69,13 @@ describe('bionifyReadingMode', () => {
 
 	it('renders a reusable readable text block wrapper for plain-text surfaces', () => {
 		render(
-			<BionifyTextBlock enabled={true} className="prose" data-testid="reading-block">
+			<BionifyTextBlock
+				enabled={true}
+				className="prose"
+				data-testid="reading-block"
+				intensity={1.2}
+				algorithm="- 0 1 1 2 0.4"
+			>
 				Plain text blocks stay selectable.
 			</BionifyTextBlock>
 		);
@@ -51,6 +85,10 @@ describe('bionifyReadingMode', () => {
 		expect(screen.getByTestId('reading-block')).toHaveTextContent(
 			'Plain text blocks stay selectable.'
 		);
+		expect(screen.getByTestId('reading-block')).toHaveStyle({
+			'--bionify-intensity': '1.2',
+			'--bionify-rest-opacity': '0.45',
+		});
 	});
 
 	it('injects a single shared style block for repeated readable-text wrappers', () => {
@@ -69,10 +107,12 @@ describe('bionifyReadingMode', () => {
 		expect(getBionifyReadingModeStyles('.custom-scope')).toContain(
 			'.custom-scope .bionify-word-rest'
 		);
+		expect(getBionifyReadingModeStyles('.custom-scope')).toContain('font-weight: var(');
+		expect(getBionifyReadingModeStyles('.custom-scope')).toContain('!important');
 		expect(
 			getBionifyReadingModeStyles('.custom-scope', {
 				mode: 'light',
 			} as any)
-		).toContain('opacity: 0.9');
+		).toContain('opacity: var(--bionify-rest-opacity, 0.73)');
 	});
 });

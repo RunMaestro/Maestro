@@ -231,6 +231,10 @@ interface MarkdownRendererProps {
 	sshRemoteId?: string;
 	/** Apply Bionify reading-mode emphasis to prose text only when explicitly enabled */
 	enableBionifyReadingMode?: boolean;
+	/** Visual intensity for Bionify emphasis */
+	bionifyIntensity?: number;
+	/** Algorithm string controlling Bionify highlight lengths */
+	bionifyAlgorithm?: string;
 }
 
 /**
@@ -258,6 +262,8 @@ export const MarkdownRenderer = memo(
 		allowRawHtml = false,
 		sshRemoteId,
 		enableBionifyReadingMode = false,
+		bionifyIntensity,
+		bionifyAlgorithm,
 	}: MarkdownRendererProps) => {
 		// Memoize file tree indices to avoid O(n) traversal on every render
 		// Only rebuild when fileTree reference changes
@@ -295,6 +301,8 @@ export const MarkdownRenderer = memo(
 			applyReadableTextTransforms(children, {
 				theme,
 				enableBionifyReadingMode,
+				bionifyIntensity,
+				bionifyAlgorithm,
 			});
 
 		return (

@@ -73,6 +73,10 @@ export interface MarkdownComponentsOptions {
 	};
 	/** Apply Bionify reading-mode emphasis to readable prose nodes only */
 	enableBionifyReadingMode?: boolean;
+	/** Visual intensity for Bionify emphasis */
+	bionifyIntensity?: number;
+	/** Algorithm string controlling Bionify highlight lengths */
+	bionifyAlgorithm?: string;
 }
 
 /**
@@ -331,11 +335,20 @@ function highlightSearchMatches(
 
 export function applyReadableTextTransforms(
 	children: React.ReactNode,
-	options: Pick<MarkdownComponentsOptions, 'enableBionifyReadingMode' | 'searchHighlight'> & {
+	options: Pick<
+		MarkdownComponentsOptions,
+		'enableBionifyReadingMode' | 'searchHighlight' | 'bionifyIntensity' | 'bionifyAlgorithm'
+	> & {
 		theme: Theme;
 	}
 ): React.ReactNode {
-	const { theme, searchHighlight, enableBionifyReadingMode = false } = options;
+	const {
+		theme,
+		searchHighlight,
+		enableBionifyReadingMode = false,
+		bionifyIntensity,
+		bionifyAlgorithm,
+	} = options;
 	const highlighted =
 		searchHighlight && searchHighlight.query.trim()
 			? highlightSearchMatches(children, searchHighlight, theme)
@@ -343,6 +356,9 @@ export function applyReadableTextTransforms(
 
 	return React.createElement(BionifyText, {
 		enabled: enableBionifyReadingMode,
+		intensity: bionifyIntensity,
+		algorithm: bionifyAlgorithm,
+		theme,
 		children: highlighted,
 	});
 }
@@ -359,6 +375,8 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		searchHighlight,
 		codeBlockStyle,
 		enableBionifyReadingMode = false,
+		bionifyIntensity,
+		bionifyAlgorithm,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -369,6 +387,8 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 			theme,
 			searchHighlight,
 			enableBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 		});
 	};
 
@@ -844,6 +864,7 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child,
     ${s} li > p:first-child > strong:first-child, ${s} li > p:first-child > b:first-child, ${s} li > p:first-child > em:first-child, ${s} li > p:first-child > code:first-child, ${s} li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { font-weight: normal; }
+    ${getBionifyReadingModeStyles(s, theme)}
   `;
 }
 

@@ -524,6 +524,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
 	);
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 	const [previewBionifyOverride, setPreviewBionifyOverride] = useState<boolean | null>(null);
 	const errorDocumentName =
 		batchRunState?.errorDocumentIndex !== undefined
@@ -1466,6 +1468,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
 			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
@@ -1496,6 +1500,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		};
 	}, [
 		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		theme,
 		folderPath,
 		sshRemoteId,
@@ -1517,6 +1523,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
 			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			onFileClick: handleFileClick,
 			onExternalLinkClick: (href) => {
 				if (/^https?:\/\/|^mailto:/.test(href)) {
@@ -1548,6 +1556,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	}, [
 		theme,
 		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		folderPath,
 		sshRemoteId,
 		openLightboxByFilename,
