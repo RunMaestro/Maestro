@@ -208,6 +208,54 @@ describe('usePipelinePersistence', () => {
 		});
 	});
 
+	describe('handleSave - error-node gate', () => {
+		it('blocks save with a warning toast when a pipeline contains an unresolved-agent error node', async () => {
+			const errorNode: PipelineNode = {
+				id: 'error-target-sub',
+				type: 'error',
+				position: { x: 0, y: 0 },
+				data: {
+					reason: 'missing-target',
+					subscriptionName: 'sub',
+					unresolvedId: 'deleted-uuid',
+					message: 'Target agent no longer exists.',
+				},
+			};
+			const h = setup({
+				pipelines: [pipeline('p1', 'Broken Pipeline', [triggerNode('t1'), errorNode])],
+				sessions: [{ id: 'session-x', name: 'X', toolType: 'x', projectRoot: '/r' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			expect(mockWriteYaml).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: expect.stringContaining('unresolved'),
+				})
+			);
+		});
+
+		it('allows save when no error nodes are present', async () => {
+			const h = setup({
+				pipelines: [
+					pipeline(
+						'p1',
+						'A',
+						[triggerNode('t1'), agentNode('a1', 'Alpha')],
+						[{ id: 'e1', source: 't1', target: 'a1' }]
+					),
+				],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/r' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			expect(mockWriteYaml).toHaveBeenCalled();
+		});
+	});
+
 	describe('handleSave - validation', () => {
 		it('sets validationErrors and does not enter saving state when errors exist', async () => {
 			const h = setup({

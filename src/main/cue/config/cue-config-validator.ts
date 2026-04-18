@@ -53,8 +53,41 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 
 	const hasPrompt = typeof subRecord.prompt === 'string';
 	const hasPromptFile = typeof subRecord.prompt_file === 'string';
-	if (!hasPrompt && !hasPromptFile) {
-		errors.push(`${prefix}: "prompt" or "prompt_file" is required`);
+	// A fan-out subscription can carry its prompts per-target via
+	// `fan_out_prompt_files` (file references, preferred) or
+	// `fan_out_prompts` (legacy inline array). Either satisfies the "prompt
+	// required" check even when the shared `prompt` / `prompt_file` fields
+	// are absent — otherwise the loader's lenient partition rejects the
+	// subscription and the whole pipeline disappears from the UI on save.
+	//
+	// If either field is *present* we validate its elements strictly and
+	// surface an explicit error on malformed entries — rather than silently
+	// treating a malformed array as "absent" and letting dispatch fall
+	// through to the shared prompt with no indication anything's wrong.
+	let hasFanOutPromptFiles = false;
+	if (subRecord.fan_out_prompt_files !== undefined) {
+		if (!Array.isArray(subRecord.fan_out_prompt_files)) {
+			errors.push(`${prefix}: "fan_out_prompt_files" must be an array of strings when provided`);
+		} else if (!subRecord.fan_out_prompt_files.every((v: unknown) => typeof v === 'string')) {
+			errors.push(`${prefix}: "fan_out_prompt_files" must contain only strings`);
+		} else if (subRecord.fan_out_prompt_files.length > 0) {
+			hasFanOutPromptFiles = true;
+		}
+	}
+	let hasFanOutPrompts = false;
+	if (subRecord.fan_out_prompts !== undefined) {
+		if (!Array.isArray(subRecord.fan_out_prompts)) {
+			errors.push(`${prefix}: "fan_out_prompts" must be an array of strings when provided`);
+		} else if (!subRecord.fan_out_prompts.every((v: unknown) => typeof v === 'string')) {
+			errors.push(`${prefix}: "fan_out_prompts" must contain only strings`);
+		} else if (subRecord.fan_out_prompts.length > 0) {
+			hasFanOutPrompts = true;
+		}
+	}
+	if (!hasPrompt && !hasPromptFile && !hasFanOutPromptFiles && !hasFanOutPrompts) {
+		errors.push(
+			`${prefix}: "prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required`
+		);
 	}
 
 	validateEventSpecificFields(subRecord, prefix, errors);

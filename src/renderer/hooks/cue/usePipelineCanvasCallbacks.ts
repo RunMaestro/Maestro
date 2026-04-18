@@ -36,7 +36,7 @@ import type {
 	CueEventType,
 } from '../../../shared/cue-pipeline-types';
 import { getNextPipelineColor } from '../../components/CuePipelineEditor/pipelineColors';
-import { DEFAULT_EVENT_PROMPTS } from '../../components/CuePipelineEditor/cueEventConstants';
+import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 import { DEFAULT_TRIGGER_LABELS } from '../../components/CuePipelineEditor/utils/pipelineValidation';
 
 /** Delay before selecting a dropped node — lets ReactFlow mount the new node
@@ -157,33 +157,65 @@ export function usePipelineCanvasCallbacks({
 				const targetNode = pipeline.nodes.find((n) => n.id === targetNodeId);
 				if (!targetNode || targetNode.type === 'trigger') return prev;
 
-				const newEdge = {
+				const newEdge: {
+					id: string;
+					source: string;
+					target: string;
+					mode: 'pass';
+					prompt?: string;
+				} = {
 					id: `edge-${Date.now()}`,
 					source: sourceNodeId,
 					target: targetNodeId,
-					mode: 'pass' as const,
+					mode: 'pass',
 				};
 
-				// Auto-populate default prompt when connecting a GitHub trigger to an agent
-				// that doesn't have a prompt yet
 				let updatedNodes = pipeline.nodes;
+				let updatedEdges = pipeline.edges;
+
 				if (sourceNode?.type === 'trigger' && targetNode.type === 'agent') {
 					const triggerData = sourceNode.data as TriggerNodeData;
 					const agentData = targetNode.data as AgentNodeData;
-					const defaultPrompt = DEFAULT_EVENT_PROMPTS[triggerData.eventType];
-					const hasExistingPrompt = !!agentData.inputPrompt?.trim();
-					const hasEdgePrompts = pipeline.edges.some(
-						(e) => e.target === targetNodeId && !!e.prompt?.trim()
-					);
+					const defaultPrompt = defaultPromptFor(triggerData.eventType);
 
-					if (defaultPrompt && !hasExistingPrompt && !hasEdgePrompts) {
-						updatedNodes = pipeline.nodes.map((n) => {
-							if (n.id !== targetNodeId) return n;
-							return {
-								...n,
-								data: { ...n.data, inputPrompt: defaultPrompt },
-							};
-						});
+					const existingTriggerEdges = pipeline.edges.filter((e) => {
+						if (e.target !== targetNodeId) return false;
+						const src = pipeline.nodes.find((n) => n.id === e.source);
+						return src?.type === 'trigger';
+					});
+
+					if (existingTriggerEdges.length === 0) {
+						// First incoming trigger — single-trigger mode. Seed the agent
+						// node's inputPrompt so AgentConfigPanel's single-trigger
+						// textarea has something helpful. Leave newEdge.prompt
+						// undefined so save uses inputPrompt and user edits target the
+						// same field. The moment a second trigger is connected below,
+						// inputPrompt is migrated onto this edge and cleared.
+						if (defaultPrompt && !agentData.inputPrompt?.trim()) {
+							updatedNodes = pipeline.nodes.map((n) => {
+								if (n.id !== targetNodeId) return n;
+								return { ...n, data: { ...n.data, inputPrompt: defaultPrompt } };
+							});
+						}
+					} else {
+						// Second+ incoming trigger — now in multi-trigger mode. Give the
+						// new edge its own template prompt and migrate any legacy
+						// inputPrompt onto the existing edges that don't have their own
+						// prompt yet, then clear inputPrompt so it can never leak.
+						newEdge.prompt = defaultPrompt;
+
+						if (agentData.inputPrompt?.trim()) {
+							const legacyPrompt = agentData.inputPrompt;
+							updatedEdges = pipeline.edges.map((e) =>
+								existingTriggerEdges.some((te) => te.id === e.id) && !e.prompt
+									? { ...e, prompt: legacyPrompt }
+									: e
+							);
+							updatedNodes = pipeline.nodes.map((n) => {
+								if (n.id !== targetNodeId) return n;
+								return { ...n, data: { ...n.data, inputPrompt: undefined } };
+							});
+						}
 					}
 				}
 
@@ -191,7 +223,7 @@ export function usePipelineCanvasCallbacks({
 					...prev,
 					pipelines: prev.pipelines.map((p) => {
 						if (p.id !== sourcePipelineId) return p;
-						return { ...p, nodes: updatedNodes, edges: [...p.edges, newEdge] };
+						return { ...p, nodes: updatedNodes, edges: [...updatedEdges, newEdge] };
 					}),
 				};
 			});
@@ -276,9 +308,15 @@ export function usePipelineCanvasCallbacks({
 				} else if (pipelines.length > 0) {
 					targetPipeline = pipelines[0];
 				} else {
+					// Ad-hoc first-pipeline creation on drop. ID must align with
+					// the form yamlToPipeline generates on reload
+					// (`pipeline-${baseName}`) so the first save+reopen cycle
+					// matches positions correctly — same reason as the explicit
+					// `createPipeline` path in `usePipelineCrud.ts`.
+					const name = 'Pipeline 1';
 					targetPipeline = {
-						id: `pipeline-${Date.now()}`,
-						name: 'Pipeline 1',
+						id: `pipeline-${name}`,
+						name,
 						color: getNextPipelineColor([]),
 						nodes: [],
 						edges: [],

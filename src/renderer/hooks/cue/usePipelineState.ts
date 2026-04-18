@@ -83,6 +83,26 @@ export interface UsePipelineStateReturn {
 	showSettings: boolean;
 	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
 	runningPipelineIds: Set<string>;
+	/**
+	 * Per-pipeline set of `sessionName`s whose agents are currently executing a
+	 * Cue run. Used to animate ONLY the edges that feed into a running agent
+	 * rather than every edge in a pipeline that happens to have any run active.
+	 *
+	 * Key: `pipeline.id`. Value: set of agent `sessionName`s that appear in an
+	 * `ActiveRunInfo` entry whose subscription belongs to this pipeline.
+	 * Empty/absent when no runs are active for the pipeline.
+	 */
+	runningAgentsByPipeline: Map<string, Set<string>>;
+	/**
+	 * Per-pipeline set of exact subscription names that currently have at
+	 * least one active run. Used to animate ONLY the trigger node whose
+	 * subscription actually fired — rather than every trigger in a pipeline
+	 * where any sub is running.
+	 *
+	 * Key: `pipeline.id`. Value: set of full `subscriptionName` strings
+	 * (not stripped) so per-trigger matching is exact.
+	 */
+	runningSubscriptionsByPipeline: Map<string, Set<string>>;
 	persistLayout: () => void;
 	/** Saved viewport awaiting application once ReactFlow has measured nodes. */
 	pendingSavedViewportRef: React.MutableRefObject<Viewport | null>;
@@ -215,7 +235,8 @@ export function usePipelineState({
 		setSelectedEdgeId,
 	]);
 
-	// Determine which pipelines have active runs
+	// Determine which pipelines have active runs. Used for pipeline-level UI
+	// affordances (trigger Play button "Running" state, badges).
 	const runningPipelineIds = useMemo(() => {
 		const ids = new Set<string>();
 		if (!activeRuns || activeRuns.length === 0) return ids;
@@ -229,6 +250,56 @@ export function usePipelineState({
 			}
 		}
 		return ids;
+	}, [activeRuns, pipelineState.pipelines]);
+
+	// Per-pipeline set of running agent session names. Used by
+	// `convertToReactFlowEdges` to animate only the edges feeding into a
+	// currently-running agent, instead of every edge in a pipeline that
+	// happens to have any run active.
+	//
+	// Keyed by pipeline id (not name) so the mapping is stable against
+	// rename. Values store `sessionName` because that's what `ActiveRunInfo`
+	// carries; the edge-matching step compares against agent nodes' `sessionName`.
+	const runningAgentsByPipeline = useMemo(() => {
+		const map = new Map<string, Set<string>>();
+		if (!activeRuns || activeRuns.length === 0) return map;
+		for (const run of activeRuns) {
+			const baseName = run.subscriptionName.replace(/-chain-\d+$/, '').replace(/-fanin$/, '');
+			for (const pipeline of pipelineState.pipelines) {
+				if (pipeline.name !== baseName) continue;
+				let set = map.get(pipeline.id);
+				if (!set) {
+					set = new Set<string>();
+					map.set(pipeline.id, set);
+				}
+				set.add(run.sessionName);
+			}
+		}
+		return map;
+	}, [activeRuns, pipelineState.pipelines]);
+
+	// Per-pipeline set of exact subscription names with active runs. Used by
+	// `convertToReactFlowNodes` to animate only the trigger node whose
+	// subscription fired — not every trigger in a multi-trigger pipeline
+	// when any sub is running. We store the FULL subscription name (e.g.
+	// "Pipeline 1-chain-2") so trigger nodes can match exactly via their
+	// own `subscriptionName` field (populated by yamlToPipeline on load).
+	const runningSubscriptionsByPipeline = useMemo(() => {
+		const map = new Map<string, Set<string>>();
+		if (!activeRuns || activeRuns.length === 0) return map;
+		for (const run of activeRuns) {
+			const baseName = run.subscriptionName.replace(/-chain-\d+$/, '').replace(/-fanin$/, '');
+			for (const pipeline of pipelineState.pipelines) {
+				if (pipeline.name !== baseName) continue;
+				let set = map.get(pipeline.id);
+				if (!set) {
+					set = new Set<string>();
+					map.set(pipeline.id, set);
+				}
+				set.add(run.subscriptionName);
+			}
+		}
+		return map;
 	}, [activeRuns, pipelineState.pipelines]);
 
 	return {
@@ -245,6 +316,8 @@ export function usePipelineState({
 		showSettings,
 		setShowSettings,
 		runningPipelineIds,
+		runningAgentsByPipeline,
+		runningSubscriptionsByPipeline,
 		persistLayout,
 		pendingSavedViewportRef,
 		handleSave: persistence.handleSave,

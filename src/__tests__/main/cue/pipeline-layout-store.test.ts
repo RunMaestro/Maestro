@@ -181,4 +181,51 @@ describe('pipeline-layout-store — save', () => {
 		const raw = fs.readFileSync(path.join(scratchDir, 'cue-pipeline-layout.json'), 'utf-8');
 		expect(JSON.parse(raw).perProject).toEqual({});
 	});
+
+	it('deduplicates pipelines by id (last write wins)', () => {
+		// Defensive backstop: a race between two persistLayout calls could in
+		// theory produce duplicate IDs in the in-memory list. The on-disk
+		// layout must never carry duplicates — dedup keeps the LAST occurrence
+		// of each id (matching in-memory "last write wins" semantics) while
+		// preserving the relative order of the entries we keep.
+		savePipelineLayout({
+			pipelines: [
+				{ id: 'p1', name: 'First Version', color: '#111111', nodes: [], edges: [] },
+				{ id: 'p2', name: 'Other', color: '#222222', nodes: [], edges: [] },
+				{ id: 'p1', name: 'Second Version', color: '#333333', nodes: [], edges: [] },
+			],
+			selectedPipelineId: null,
+		} as Parameters<typeof savePipelineLayout>[0]);
+		const raw = fs.readFileSync(path.join(scratchDir, 'cue-pipeline-layout.json'), 'utf-8');
+		const parsed = JSON.parse(raw);
+		expect(parsed.pipelines).toHaveLength(2);
+		const p1 = parsed.pipelines.find((p: { id: string }) => p.id === 'p1');
+		expect(p1.name).toBe('Second Version');
+		expect(p1.color).toBe('#333333');
+		// Order invariant: the kept entries keep their relative positions from
+		// the input (p2 came between the two p1s, and the surviving p1 is the
+		// latter). So the output must be [p2, p1] — not [p1, p2].
+		expect(parsed.pipelines.map((p: { id: string }) => p.id)).toEqual(['p2', 'p1']);
+	});
+
+	it('drops pipelines the renderer no longer knows about (self-cleaning on save)', () => {
+		// End-to-end: write a two-pipeline layout, then write again with only
+		// one pipeline. The dropped pipeline must NOT reappear on reload.
+		savePipelineLayout({
+			pipelines: [
+				{ id: 'p1', name: 'Alpha', color: '#06b6d4', nodes: [], edges: [] },
+				{ id: 'p2', name: 'Bravo', color: '#8b5cf6', nodes: [], edges: [] },
+			],
+			selectedPipelineId: 'p1',
+		} as Parameters<typeof savePipelineLayout>[0]);
+
+		savePipelineLayout({
+			pipelines: [{ id: 'p1', name: 'Alpha', color: '#06b6d4', nodes: [], edges: [] }],
+			selectedPipelineId: 'p1',
+		} as Parameters<typeof savePipelineLayout>[0]);
+
+		const loaded = loadPipelineLayout();
+		expect(loaded!.pipelines).toHaveLength(1);
+		expect(loaded!.pipelines[0].id).toBe('p1');
+	});
 });

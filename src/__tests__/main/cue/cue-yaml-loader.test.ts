@@ -622,7 +622,74 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file"')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
+			);
+		});
+
+		it('accepts a fan-out subscription with fan_out_prompt_files and no prompt/prompt_file', () => {
+			// Regression: Commit 7 externalized per-agent fan-out prompts to
+			// individual files. The validator USED to require `prompt` or
+			// `prompt_file`, so these YAMLs were rejected by the lenient
+			// loader partition — which caused the entire pipeline to vanish
+			// from the UI when the user saved differing per-agent prompts.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B', 'C'],
+						fan_out_prompt_files: [
+							'.maestro/prompts/a.md',
+							'.maestro/prompts/b.md',
+							'.maestro/prompts/c.md',
+						],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('accepts a fan-out subscription with legacy inline fan_out_prompts', () => {
+			// Same requirement for the older inline array shape.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'legacy-fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B'],
+						fan_out_prompts: ['do A', 'do B'],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('rejects a fan-out subscription with empty fan_out_prompt_files array', () => {
+			// Empty array carries no prompts — don't let it slip past the
+			// "at least one prompt source" check.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'empty-fan-out-files',
+						event: 'app.startup',
+						fan_out: ['A'],
+						fan_out_prompt_files: [],
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 
@@ -1686,7 +1753,11 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file" is required')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 

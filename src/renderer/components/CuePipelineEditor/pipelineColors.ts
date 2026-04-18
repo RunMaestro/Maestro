@@ -1,35 +1,15 @@
 /**
  * Pipeline color utilities for the visual Cue pipeline editor.
+ *
+ * The palette and next-color assignment live in `shared/cue-pipeline-types.ts`
+ * so the YAML load path and the renderer creation path share a single source
+ * of truth. This module re-exports those primitives and owns renderer-only
+ * helpers (e.g. per-agent color lookup).
  */
 
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 
-/** 12 visually distinct colors suitable for dark backgrounds */
-export const PIPELINE_COLORS: string[] = [
-	'#ef4444', // red
-	'#f97316', // orange
-	'#eab308', // yellow
-	'#22c55e', // green
-	'#06b6d4', // cyan
-	'#3b82f6', // blue
-	'#8b5cf6', // violet
-	'#d946ef', // fuchsia
-	'#ec4899', // pink
-	'#f43f5e', // rose
-	'#14b8a6', // teal
-	'#84cc16', // lime
-];
-
-/** Returns the first unused color from the palette, cycling if all used. */
-export function getNextPipelineColor(pipelines: CuePipeline[]): string {
-	const usedColors = new Set(pipelines.map((p) => p.color));
-	for (const color of PIPELINE_COLORS) {
-		if (!usedColors.has(color)) {
-			return color;
-		}
-	}
-	return PIPELINE_COLORS[pipelines.length % PIPELINE_COLORS.length];
-}
+export { PIPELINE_COLORS, getNextPipelineColor } from '../../../shared/cue-pipeline-types';
 
 /** Returns array of pipeline colors that reference the given agent session ID. */
 export function getPipelineColorForAgent(

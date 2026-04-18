@@ -63,6 +63,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
 // Mock crypto

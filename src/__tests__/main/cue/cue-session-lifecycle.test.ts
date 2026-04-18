@@ -13,12 +13,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 
-// Mock the yaml loader
+// Mock the yaml loader. Tests that need to exercise the "parse-error" or
+// "invalid" branches of loadCueConfigDetailed can override `mockDetailedResult`
+// to return the relevant shape; otherwise the helper mirrors the old
+// ok-or-missing semantics driven by `mockLoadCueConfig`.
 const mockLoadCueConfig = vi.fn<(projectRoot: string) => CueConfig | null>();
+type DetailedResult =
+	| { ok: true; config: CueConfig; warnings: string[] }
+	| { ok: false; reason: 'missing' }
+	| { ok: false; reason: 'parse-error'; message: string }
+	| { ok: false; reason: 'invalid'; errors: string[] };
+let mockDetailedResult: DetailedResult | null = null;
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfig: (...args: unknown[]) => mockLoadCueConfig(args[0] as string),
 	loadCueConfigDetailed: (...args: unknown[]) => {
+		if (mockDetailedResult) return mockDetailedResult;
 		const config = mockLoadCueConfig(args[0] as string);
 		return config
 			? { ok: true as const, config, warnings: [] as string[] }
@@ -35,6 +45,7 @@ vi.mock('../../../main/cue/cue-file-watcher', () => ({
 }));
 
 // Mock cue-db
+const mockClearGitHubSeenForSubscription = vi.fn();
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: vi.fn(),
 	closeCueDb: vi.fn(),
@@ -45,6 +56,8 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	clearGitHubSeenForSubscription: (...args: unknown[]) =>
+		mockClearGitHubSeenForSubscription(...args),
 }));
 
 // Mock reconciler
@@ -66,12 +79,14 @@ describe('CueEngine session lifecycle', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		mockDetailedResult = null;
 		mockWatchCueYaml.mockReturnValue(vi.fn());
 		mockCreateCueFileWatcher.mockReturnValue(vi.fn());
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		mockDetailedResult = null;
 	});
 
 	it('removeSession clears queued events', async () => {
@@ -664,6 +679,225 @@ describe('CueEngine session lifecycle', () => {
 			// After two calls, session should appear exactly once in the registry
 			// (not duplicated). The registry snapshot size is 1.
 			expect(registry.snapshot().size).toBe(1);
+		});
+
+		it('removeSession clears cue_github_seen rows for all GitHub subscriptions', () => {
+			// Regression guard: without this, deleting a GitHub-polling session
+			// left rows in cue_github_seen that only expired via age-based
+			// prune. The deleted sub's subscription_id (`${sessionId}:${name}`)
+			// must be passed to clearGitHubSeenForSubscription on remove.
+			mockClearGitHubSeenForSubscription.mockClear();
+
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'watch-prs',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: 'review',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'watch-issues',
+						event: 'github.issue',
+						enabled: true,
+						prompt: 'triage',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'ignore-this',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: '',
+						interval_minutes: 1,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			engine.removeSession('session-1');
+
+			// Exactly the two GitHub subs were cleared; the heartbeat sub
+			// contributes no seen rows and must not appear in the calls.
+			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id).sort();
+			expect(cleared).toEqual(['session-1:watch-issues', 'session-1:watch-prs']);
+		});
+
+		it('refreshSession clears cue_github_seen rows only for subs that were removed', () => {
+			mockClearGitHubSeenForSubscription.mockClear();
+
+			// Initial config has two GitHub subs.
+			const initialConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'keep-me',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'drop-me',
+						event: 'github.issue',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(initialConfig);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// User edits YAML, removes the `drop-me` subscription.
+			const updatedConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'keep-me',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(updatedConfig);
+
+			// refreshSession fires on YAML hot-reload. The `keep-me` sub is
+			// still present so its seen rows must stay; only `drop-me`'s
+			// subscription_id is cleared.
+			engine.refreshSession('session-1', '/projects/test');
+
+			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id);
+			expect(cleared).toEqual(['session-1:drop-me']);
+			// Explicit invariant: the surviving subscription's seen rows must
+			// not be cleared. Redundant with the strict-equality check above,
+			// but makes the intent obvious and catches future regressions
+			// where someone loosens the above to `toEqual(expect.arrayContaining(...))`.
+			expect(cleared).not.toContain('session-1:keep-me');
+		});
+
+		it('refreshSession PRESERVES cue_github_seen rows on parse errors (mid-edit YAML)', () => {
+			// Regression guard: parse/validation errors are transient — the
+			// user is mid-edit and will fix shortly. Clearing seen rows in
+			// that window would cause the GitHub poller to re-notify for
+			// every already-seen PR/issue on the next successful load.
+			// Only file-truly-missing should clear.
+			mockClearGitHubSeenForSubscription.mockClear();
+			const initialConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'watch-prs',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(initialConfig);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// User saves a malformed YAML — parse error. Loader returns
+			// parse-error, NOT missing.
+			mockLoadCueConfig.mockReturnValue(null);
+			mockDetailedResult = {
+				ok: false,
+				reason: 'parse-error',
+				message: 'bad indentation',
+			};
+			engine.refreshSession('session-1', '/projects/test');
+
+			// NOTHING cleared — the broken config will be fixed momentarily
+			// and we don't want to lose seen state.
+			expect(mockClearGitHubSeenForSubscription).not.toHaveBeenCalled();
+		});
+
+		it('refreshSession PRESERVES cue_github_seen rows on validation errors', () => {
+			mockClearGitHubSeenForSubscription.mockClear();
+			const initialConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'watch-issues',
+						event: 'github.issue',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(initialConfig);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			mockLoadCueConfig.mockReturnValue(null);
+			mockDetailedResult = {
+				ok: false,
+				reason: 'invalid',
+				errors: ['subscriptions[0]: missing required field'],
+			};
+			engine.refreshSession('session-1', '/projects/test');
+
+			expect(mockClearGitHubSeenForSubscription).not.toHaveBeenCalled();
+		});
+
+		it('refreshSession CLEARS cue_github_seen rows when the config file is truly gone', () => {
+			// Positive-path counterpart to the parse-error/invalid tests above.
+			// When the config is actually missing from disk (user deleted
+			// cue.yaml, or the session moved away from its project root), we
+			// SHOULD clear the seen rows — otherwise the GitHub poller retains
+			// stale state for a session that no longer has any subs.
+			mockClearGitHubSeenForSubscription.mockClear();
+			const initialConfig = createMockConfig({
+				subscriptions: [
+					{
+						name: 'watch-prs',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+					{
+						name: 'watch-issues',
+						event: 'github.issue',
+						enabled: true,
+						prompt: '',
+						repo: 'org/repo',
+						poll_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(initialConfig);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// Config is gone. Both loader paths return the 'missing' shape.
+			mockLoadCueConfig.mockReturnValue(null);
+			mockDetailedResult = { ok: false, reason: 'missing' };
+			engine.refreshSession('session-1', '/projects/test');
+
+			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id).sort();
+			// BOTH GitHub subs' seen rows cleared; no heartbeat/non-github
+			// subs are involved here so the entire old GitHub-sub set
+			// should appear exactly once.
+			expect(cleared).toEqual(['session-1:watch-issues', 'session-1:watch-prs']);
 		});
 
 		it('removeSession clears startup keys so re-adding the session can re-fire', () => {

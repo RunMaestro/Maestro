@@ -18,6 +18,8 @@ const mockReadFileSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockMkdirSync = vi.fn();
 const mockUnlinkSync = vi.fn();
+const mockReaddirSync = vi.fn();
+const mockRmdirSync = vi.fn();
 
 vi.mock('fs', () => ({
 	existsSync: (...args: unknown[]) => mockExistsSync(...args),
@@ -25,6 +27,12 @@ vi.mock('fs', () => ({
 	writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
 	mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
 	unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
+	readdirSync: (...args: unknown[]) => mockReaddirSync(...args),
+	rmdirSync: (...args: unknown[]) => mockRmdirSync(...args),
+}));
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
 }));
 
 vi.mock('chokidar', () => ({
@@ -37,6 +45,7 @@ vi.mock('chokidar', () => ({
 import {
 	deleteCueConfigFile,
 	readCueConfigFile,
+	removeEmptyPromptsDir,
 	resolveCueConfigPath,
 	writeCueConfigFile,
 	writeCuePromptFile,
@@ -233,6 +242,49 @@ describe('cue-config-repository', () => {
 				writeCuePromptFile(PROJECT_ROOT, '.maestro/prompts/../../etc/passwd', 'content')
 			).toThrow('resolves outside the prompts directory');
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('removeEmptyPromptsDir', () => {
+		it('removes .maestro/prompts/ when it exists and is empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue([]);
+
+			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
+
+			expect(removed).toBe(true);
+			expect(mockRmdirSync).toHaveBeenCalledWith(PROMPTS_DIR);
+		});
+
+		it('leaves the directory alone when non-empty', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue(['stray.txt']);
+
+			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
+
+			expect(removed).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it('returns false when the directory does not exist', () => {
+			mockExistsSync.mockReturnValue(false);
+
+			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
+
+			expect(removed).toBe(false);
+			expect(mockRmdirSync).not.toHaveBeenCalled();
+		});
+
+		it('swallows rmdirSync errors and returns false', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReaddirSync.mockReturnValue([]);
+			mockRmdirSync.mockImplementation(() => {
+				throw new Error('EACCES');
+			});
+
+			const removed = removeEmptyPromptsDir(PROJECT_ROOT);
+
+			expect(removed).toBe(false);
 		});
 	});
 });

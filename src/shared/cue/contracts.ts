@@ -68,8 +68,28 @@ export interface CueSubscription {
 	schedule_days?: CueScheduleDay[];
 	watch?: string;
 	source_session?: string | string[];
+	/** Stable session ID(s) for chain subscriptions (event === 'agent.completed').
+	 *  Dual-written alongside `source_session` (session names) for backward
+	 *  compatibility. On load, IDs are preferred; names are consulted only
+	 *  when IDs are absent OR reference a deleted session. Using stable IDs
+	 *  protects chain edges from breaking when an upstream agent is renamed. */
+	source_session_ids?: string | string[];
 	fan_out?: string[];
+	/** Per-target prompts for a fan-out subscription, one string per entry in
+	 *  `fan_out`. Legacy inline shape — kept for round-tripping YAML written
+	 *  by older versions or edited by hand. New writes prefer
+	 *  `fan_out_prompt_files` so each agent's prompt lives in its own `.md`
+	 *  file, mirroring what the UI shows per-agent. The normalizer resolves
+	 *  `fan_out_prompt_files` into this field at load time so the runtime
+	 *  dispatch path keeps reading one authoritative place. */
 	fan_out_prompts?: string[];
+	/** External `.md` file paths for per-agent fan-out prompts, one entry
+	 *  per `fan_out` target (positional). Takes precedence over
+	 *  `fan_out_prompts` on read: the normalizer resolves each file into the
+	 *  corresponding `fan_out_prompts[i]` slot. Emitted by the editor when
+	 *  fan-out targets have different prompts so each agent's prompt lives
+	 *  in its own file instead of bloating the YAML. */
+	fan_out_prompt_files?: string[];
 	filter?: Record<string, string | number | boolean>;
 	repo?: string;
 	poll_minutes?: number;
@@ -91,6 +111,22 @@ export interface CueSubscription {
 	cli_output?: {
 		target: string;
 	};
+	/** Hex color of the visual pipeline this subscription belongs to
+	 *  (e.g. `#06b6d4`). All subscriptions in the same pipeline share this
+	 *  value. When absent on load, the renderer falls back to palette-order
+	 *  derivation; the next save re-stamps a value. Persisting this in YAML
+	 *  keeps colors stable across Dashboard tab switches, modal reopens, and
+	 *  app restarts. Must be a 7-character hex string (`#RRGGBB`). */
+	pipeline_color?: string;
+	/** Name of the visual pipeline this subscription belongs to.
+	 *  Authoritative for grouping subscriptions into pipelines on load.
+	 *  All subscriptions in one pipeline share the same value. Decouples
+	 *  pipeline membership from the subscription-name convention
+	 *  (`<name>`, `<name>-chain-N`), so editing a single subscription's
+	 *  `name` no longer splits a pipeline or loses its chain links. When
+	 *  absent on load (legacy YAML), the loader falls back to parsing the
+	 *  `-chain-N` suffix off subscription names. */
+	pipeline_name?: string;
 }
 
 /** Global Cue settings */

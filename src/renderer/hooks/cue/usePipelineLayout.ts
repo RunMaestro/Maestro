@@ -144,19 +144,34 @@ export function usePipelineLayout({
 		layoutSaveTimerRef.current = setTimeout(() => {
 			const viewport = reactFlowInstance.getViewport();
 			const state = pipelineStateRef.current;
+			// Normalize the selection BEFORE computing the project key or
+			// writing. A `selectedPipelineId` that doesn't point at any live
+			// pipeline must never be persisted — on next load it would bypass
+			// the merge fallback via `pickProjectViewState` and blank the
+			// canvas (`convertToReactFlowNodes` filters out every pipeline
+			// whose id doesn't match the selection). This can happen when
+			// ids regenerate on save-reload and a stale perProject entry
+			// from a prior id scheme lingers, or when the safety-net reset
+			// races against a debounced persist. Treat any unresolvable
+			// selection as "All Pipelines" (null).
+			const selectionIsValid =
+				state.selectedPipelineId === null ||
+				state.pipelines.some((p) => p.id === state.selectedPipelineId);
+			const safeSelectedId = selectionIsValid ? state.selectedPipelineId : null;
+
 			// Scope this viewport/selection under the current project (derived
 			// from the selected pipeline's owning agent session). Other
 			// projects' entries are preserved verbatim so switching back to
 			// them later still restores their remembered view.
 			const projectKey = resolvePipelineProjectKey(
-				state.selectedPipelineId,
+				safeSelectedId,
 				state.pipelines,
 				sessionsRef.current
 			);
 			const nextPerProject: Record<string, PipelineProjectViewState> = {
 				...perProjectRef.current,
 				[projectKey]: {
-					selectedPipelineId: state.selectedPipelineId,
+					selectedPipelineId: safeSelectedId,
 					viewport,
 				},
 			};
@@ -167,7 +182,7 @@ export function usePipelineLayout({
 				pipelines: state.pipelines,
 				// Keep top-level fields pointing at the current project so an
 				// older build reading the file still resolves sensible state.
-				selectedPipelineId: state.selectedPipelineId,
+				selectedPipelineId: safeSelectedId,
 				viewport,
 				perProject: nextPerProject,
 				// Persist the written-roots snapshot so the next mount can
@@ -266,7 +281,26 @@ export function usePipelineLayout({
 				// entry; fall back to legacy top-level fields via the helper.
 				const projectView = pickProjectViewState(savedLayout, merged.pipelines, sessions);
 				if (projectView) {
-					merged.selectedPipelineId = projectView.selectedPipelineId;
+					// Validate projectView.selectedPipelineId against live
+					// pipelines before assigning — pickProjectViewState returns
+					// the stored value verbatim and has no view onto the
+					// just-loaded pipelines. A stale id (e.g. a pre-upgrade
+					// timestamp id, or a perProject entry written under an
+					// old scheme) would otherwise cause `convertToReactFlowNodes`
+					// to skip every pipeline and render a blank canvas. When
+					// the saved id is null ("All Pipelines"), honor that.
+					// When the saved id is truthy but doesn't match any live
+					// pipeline, fall through to merge's fallback (first
+					// pipeline's id) instead of blanking.
+					const saved = projectView.selectedPipelineId;
+					if (saved === null) {
+						merged.selectedPipelineId = null;
+					} else if (merged.pipelines.some((p) => p.id === saved)) {
+						merged.selectedPipelineId = saved;
+					}
+					// else: leave merged.selectedPipelineId as set by
+					// mergePipelinesWithSavedLayout (which fell back to the
+					// first pipeline's id).
 				}
 
 				setPipelineState(merged);

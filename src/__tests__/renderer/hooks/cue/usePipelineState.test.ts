@@ -850,6 +850,144 @@ describe('usePipelineState', () => {
 		expect(result.current.runningPipelineIds.size).toBe(0);
 	});
 
+	it('runningAgentsByPipeline groups running session names under the owning pipeline id', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'My Pipeline', sessionName: 'Alice' },
+						{ subscriptionName: 'My Pipeline-chain-1', sessionName: 'Bob' },
+						{ subscriptionName: 'Other Pipeline', sessionName: 'Carol' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'p1', name: 'My Pipeline' }),
+					makePipeline({ id: 'p2', name: 'Other Pipeline' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+
+		const p1Agents = result.current.runningAgentsByPipeline.get('p1');
+		const p2Agents = result.current.runningAgentsByPipeline.get('p2');
+		expect(p1Agents).toBeDefined();
+		expect([...p1Agents!].sort()).toEqual(['Alice', 'Bob']);
+		expect(p2Agents).toBeDefined();
+		expect([...p2Agents!]).toEqual(['Carol']);
+	});
+
+	it('runningAgentsByPipeline strips -chain-N and -fanin suffixes when matching to pipelines', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'Pipeline-chain-3', sessionName: 'DeepAgent' },
+						{ subscriptionName: 'Pipeline-fanin', sessionName: 'Aggregator' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [makePipeline({ id: 'p1', name: 'Pipeline' })],
+				selectedPipelineId: null,
+			});
+		});
+
+		const agents = result.current.runningAgentsByPipeline.get('p1');
+		expect(agents).toBeDefined();
+		expect([...agents!].sort()).toEqual(['Aggregator', 'DeepAgent']);
+	});
+
+	it('runningAgentsByPipeline is an empty map when no activeRuns', () => {
+		const { result } = renderHook(() => usePipelineState(createDefaultParams({ activeRuns: [] })));
+		expect(result.current.runningAgentsByPipeline.size).toBe(0);
+	});
+
+	it('runningSubscriptionsByPipeline carries exact subscription names (no suffix stripping)', () => {
+		// Used by trigger-node animation: each trigger node knows its exact
+		// subscription name (e.g. "Pipeline 1-chain-2") and compares against
+		// the pipeline's running-subs set. Stripping the suffix would collapse
+		// chain triggers with the initial trigger — making every trigger icon
+		// spin when any sub in the pipeline runs (the pre-fix bug).
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'Pipeline 1', sessionName: 'Alice' },
+						{ subscriptionName: 'Pipeline 1-chain-2', sessionName: 'Bob' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [makePipeline({ id: 'p1', name: 'Pipeline 1' })],
+				selectedPipelineId: null,
+			});
+		});
+
+		const subs = result.current.runningSubscriptionsByPipeline.get('p1');
+		expect(subs).toBeDefined();
+		expect([...subs!].sort()).toEqual(['Pipeline 1', 'Pipeline 1-chain-2']);
+	});
+
+	it('runningSubscriptionsByPipeline is empty when no activeRuns', () => {
+		const { result } = renderHook(() => usePipelineState(createDefaultParams({ activeRuns: [] })));
+		expect(result.current.runningSubscriptionsByPipeline.size).toBe(0);
+	});
+
+	it('runningSubscriptionsByPipeline does not include pipelines with no matching runs', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [{ subscriptionName: 'Alpha', sessionName: 'A' }],
+				})
+			)
+		);
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'pAlpha', name: 'Alpha' }),
+					makePipeline({ id: 'pBravo', name: 'Bravo' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+		expect(result.current.runningSubscriptionsByPipeline.has('pAlpha')).toBe(true);
+		expect(result.current.runningSubscriptionsByPipeline.has('pBravo')).toBe(false);
+	});
+
+	it('runningAgentsByPipeline does not include pipelines with no matching active runs', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [{ subscriptionName: 'Alpha', sessionName: 'A1' }],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'pAlpha', name: 'Alpha' }),
+					makePipeline({ id: 'pBravo', name: 'Bravo' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+
+		expect(result.current.runningAgentsByPipeline.has('pAlpha')).toBe(true);
+		expect(result.current.runningAgentsByPipeline.has('pBravo')).toBe(false);
+	});
+
 	it('handleSave with no project root adds validation error', async () => {
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions: [] })));
 

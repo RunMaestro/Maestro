@@ -111,6 +111,31 @@ export function usePipelinePersistence({
 			return;
 		}
 
+		// Block save when any pipeline contains an unresolved-agent error node.
+		// These are emitted by yamlToPipeline when `agent_id` / `source_session_ids`
+		// reference deleted sessions. Persisting a pipeline in that state would
+		// let the heuristic fallback silently pick a wrong agent (the "two
+		// agents swapped" failure mode). Surface a toast and refuse to write.
+		const pipelinesWithErrors = pipelineState.pipelines.filter((p) =>
+			p.nodes.some((n) => n.type === 'error')
+		);
+		if (pipelinesWithErrors.length > 0) {
+			// Clear any stale validation errors from a previous save attempt so
+			// the banner doesn't keep showing rules the user has already fixed
+			// while the unresolved-agent toast is the actionable blocker.
+			setValidationErrors([]);
+			notifyToast({
+				type: 'warning',
+				title: 'Resolve unresolved agents before saving',
+				message: `Pipeline${pipelinesWithErrors.length > 1 ? 's' : ''} ${pipelinesWithErrors
+					.map((p) => `"${p.name}"`)
+					.join(
+						', '
+					)} contain${pipelinesWithErrors.length > 1 ? '' : 's'} an unresolved agent reference. Reassign or remove the affected subscription and try again.`,
+			});
+			return;
+		}
+
 		// Validate graph shape first
 		const errors = validatePipelines(pipelineState.pipelines);
 

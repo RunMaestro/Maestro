@@ -136,6 +136,8 @@ function CuePipelineEditorInner({
 		showSettings,
 		setShowSettings,
 		runningPipelineIds,
+		runningAgentsByPipeline,
+		runningSubscriptionsByPipeline,
 		persistLayout,
 		pendingSavedViewportRef,
 		handleSave,
@@ -221,6 +223,7 @@ function CuePipelineEditorInner({
 					onTriggerPipeline,
 					isSaved: !isDirty,
 					runningPipelineIds,
+					runningSubscriptionsByPipeline,
 				},
 				theme,
 				stableYOffsets
@@ -232,6 +235,7 @@ function CuePipelineEditorInner({
 			onTriggerPipeline,
 			isDirty,
 			runningPipelineIds,
+			runningSubscriptionsByPipeline,
 			theme,
 			stableYOffsets,
 		]
@@ -252,14 +256,14 @@ function CuePipelineEditorInner({
 			convertToReactFlowEdges(
 				pipelineState.pipelines,
 				pipelineState.selectedPipelineId,
-				runningPipelineIds,
 				selectedEdgeId,
-				theme
+				theme,
+				runningAgentsByPipeline
 			),
 		[
 			pipelineState.pipelines,
 			pipelineState.selectedPipelineId,
-			runningPipelineIds,
+			runningAgentsByPipeline,
 			selectedEdgeId,
 			theme,
 		]
