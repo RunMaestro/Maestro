@@ -373,6 +373,7 @@ const LogItemComponent = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+		const showBionifyTabToggle = log.source !== 'user' && isAIMode && !markdownEditMode;
 
 		return (
 			<div
@@ -407,7 +408,7 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 ${showBionifyTabToggle ? 'pr-14' : ''} rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
@@ -426,6 +427,19 @@ const LogItemComponent = memo(
 									: theme.colors.border,
 					}}
 				>
+					{showBionifyTabToggle && (
+						<button
+							onClick={onToggleBionifyReadingMode}
+							className="absolute top-2 right-2 z-10 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+							style={{ color: bionifyReadingMode ? theme.colors.accent : theme.colors.textDim }}
+							title={
+								bionifyReadingMode ? 'Disable Bionify for this tab' : 'Enable Bionify for this tab'
+							}
+							aria-pressed={bionifyReadingMode}
+						>
+							<span className="text-[12px] font-black leading-none">{BIONIFY_BUTTON_LABEL}</span>
+						</button>
+					)}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -842,21 +856,6 @@ const LogItemComponent = memo(
 								}
 							>
 								{markdownEditMode ? <Eye className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-							</button>
-						)}
-						{log.source !== 'user' && isAIMode && !markdownEditMode && (
-							<button
-								onClick={onToggleBionifyReadingMode}
-								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-								style={{ color: bionifyReadingMode ? theme.colors.accent : theme.colors.textDim }}
-								title={
-									bionifyReadingMode
-										? 'Disable Bionify for this tab'
-										: 'Enable Bionify for this tab'
-								}
-								aria-pressed={bionifyReadingMode}
-							>
-								<span className="text-[12px] font-black leading-none">{BIONIFY_BUTTON_LABEL}</span>
 							</button>
 						)}
 						{/* Replay button for user messages in AI mode */}
