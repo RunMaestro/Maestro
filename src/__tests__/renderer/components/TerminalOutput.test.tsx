@@ -1342,6 +1342,31 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTitle('Disable Bionify for this tab')).toBeInTheDocument();
 		});
 
+		it('absolutely positions the Bionify button in the top-right of AI response cards', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: '# Heading\n\nReadable information block', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(
+				<TerminalOutput
+					{...createDefaultProps({
+						session,
+						markdownEditMode: false,
+					})}
+				/>
+			);
+
+			const bionifyButton = screen.getByTitle('Enable Bionify for this tab');
+			expect(bionifyButton).toHaveClass('absolute');
+			expect(bionifyButton).toHaveClass('top-2');
+			expect(bionifyButton).toHaveClass('right-2');
+		});
+
 		it('calls setMarkdownEditMode when toggle is clicked', async () => {
 			const setMarkdownEditMode = vi.fn();
 			const logs: LogEntry[] = [createLogEntry({ text: '# Heading', source: 'stdout' })];
