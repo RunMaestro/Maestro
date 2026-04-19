@@ -1,6 +1,7 @@
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
 import { findAncestorCueConfigRoot, loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
+import { resolveCueConfigPath } from './config/cue-config-repository';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
 import { clearGitHubSeenForSubscription } from './cue-db';
 import {
@@ -188,9 +189,16 @@ export function createCueSessionRuntimeService(
 		// of truth: this session is NOT the config owner and the dashboard
 		// will surface the string as a red-triangle tooltip. Subscriptions
 		// with an explicit `agent_id` continue to fan out regardless.
+		// Filter to sessions that would actually load a cue.yaml at their
+		// projectRoot — otherwise a config-less agent could win the implicit
+		// first-in-list race, become the "owner", and silently disable
+		// automation for the whole projectRoot.
+		const candidates = deps
+			.getSessions()
+			.filter((s) => resolveCueConfigPath(s.projectRoot) !== null);
 		const ownershipWarning = computeOwnershipWarning({
 			session,
-			allSessions: deps.getSessions(),
+			candidates,
 			config,
 			configFromAncestor: Boolean(ancestorRoot),
 		});

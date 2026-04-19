@@ -104,13 +104,21 @@ export interface OwnershipCandidate {
  * single source of truth: presence means the Cue dashboard shows a red `!`
  * and uses the string as the tooltip; absence means no indicator.
  *
+ * `candidates` must be pre-filtered by the caller to only include sessions
+ * that would actually load this same cue.yaml — i.e. sessions whose
+ * `projectRoot` contains a readable cue config. Sessions without a config
+ * must not be included, otherwise a config-less agent could "win" the
+ * implicit-first race and silently disable automation for the workspace.
+ *
  * Ownership resolution:
  *   • `configFromAncestor` true → always `undefined`. Ancestor configs already
  *     filter to subscriptions explicitly targeting this session, so the gate
  *     doesn't apply.
  *   • `owner_agent_id` set and matches some candidate (by id or name) sharing
- *     the session's `projectRoot` → that candidate owns; other candidates in
- *     the same root get a tooltip pointing to the owner.
+ *     the session's `projectRoot` → the first matching candidate owns; other
+ *     candidates in the same root get a tooltip pointing to the owner. If
+ *     multiple candidates match by name (display-name collision), this picks
+ *     the first deterministically and tells non-winners to use the full id.
  *   • `owner_agent_id` set but matches nobody in the session's `projectRoot`
  *     → every candidate in that root gets a tooltip about the bad value.
  *   • `owner_agent_id` unset and >1 candidate shares the root → first in the
@@ -118,32 +126,31 @@ export interface OwnershipCandidate {
  */
 export function computeOwnershipWarning(params: {
 	session: OwnershipCandidate;
-	allSessions: OwnershipCandidate[];
+	candidates: OwnershipCandidate[];
 	config: CueConfig;
 	configFromAncestor: boolean;
 }): string | undefined {
 	if (params.configFromAncestor) return undefined;
 
-	const { session, allSessions, config } = params;
+	const { session, candidates, config } = params;
 	const explicitOwner = config.settings.owner_agent_id?.trim();
+	const sameRoot = candidates.filter((s) => s.projectRoot === session.projectRoot);
 
 	if (explicitOwner) {
-		const ownerExists = allSessions.some(
-			(s) =>
-				s.projectRoot === session.projectRoot &&
-				(s.id === explicitOwner || s.name === explicitOwner)
-		);
-		if (!ownerExists) {
+		const matches = sameRoot.filter((s) => s.id === explicitOwner || s.name === explicitOwner);
+		if (matches.length === 0) {
 			return `settings.owner_agent_id "${explicitOwner}" does not match any agent in this projectRoot — unowned subscriptions are disabled until this is fixed.`;
 		}
-		const isOwner = explicitOwner === session.id || explicitOwner === session.name;
-		if (!isOwner) {
-			return `settings.owner_agent_id targets "${explicitOwner}" — unowned subscriptions run on that agent instead.`;
+		const owner = matches[0];
+		if (owner.id === session.id) return undefined;
+		const sessionAlsoMatches = session.id === explicitOwner || session.name === explicitOwner;
+		if (sessionAlsoMatches) {
+			return `settings.owner_agent_id "${explicitOwner}" matches multiple agents in this projectRoot — "${owner.name}" (id ${owner.id}) was selected. Use its full id to target a different one.`;
 		}
-		return undefined;
+		return `settings.owner_agent_id targets "${explicitOwner}" — unowned subscriptions run on that agent instead.`;
 	}
 
-	const firstForRoot = allSessions.find((s) => s.projectRoot === session.projectRoot);
+	const firstForRoot = sameRoot[0];
 	if (firstForRoot && firstForRoot.id !== session.id) {
 		return `"${firstForRoot.name}" was selected as the owner of this projectRoot (no settings.owner_agent_id set — first agent wins). Set settings.owner_agent_id in cue.yaml to choose a different owner.`;
 	}

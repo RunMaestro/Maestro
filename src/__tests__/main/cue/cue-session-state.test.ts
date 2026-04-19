@@ -117,7 +117,7 @@ describe('computeOwnershipWarning', () => {
 		const session = makeCandidate();
 		const result = computeOwnershipWarning({
 			session,
-			allSessions: [session],
+			candidates: [session],
 			config: makeConfig(),
 			configFromAncestor: false,
 		});
@@ -129,7 +129,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session1,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig(),
 			configFromAncestor: false,
 		});
@@ -141,7 +141,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session2,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig(),
 			configFromAncestor: false,
 		});
@@ -154,7 +154,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session1,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig({ owner_agent_id: 'session-1' }),
 			configFromAncestor: false,
 		});
@@ -166,7 +166,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session1,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig({ owner_agent_id: 'Opus' }),
 			configFromAncestor: false,
 		});
@@ -178,7 +178,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session2,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig({ owner_agent_id: 'Opus' }),
 			configFromAncestor: false,
 		});
@@ -192,13 +192,13 @@ describe('computeOwnershipWarning', () => {
 
 		const result1 = computeOwnershipWarning({
 			session: session1,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config,
 			configFromAncestor: false,
 		});
 		const result2 = computeOwnershipWarning({
 			session: session2,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config,
 			configFromAncestor: false,
 		});
@@ -217,7 +217,7 @@ describe('computeOwnershipWarning', () => {
 		});
 		const result = computeOwnershipWarning({
 			session,
-			allSessions: [session, outsider],
+			candidates: [session, outsider],
 			config: makeConfig({ owner_agent_id: 'Opus' }),
 			configFromAncestor: false,
 		});
@@ -229,7 +229,7 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session2,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig({ owner_agent_id: 'NonExistentAgent' }),
 			configFromAncestor: true,
 		});
@@ -241,10 +241,48 @@ describe('computeOwnershipWarning', () => {
 		const session2 = makeCandidate({ id: 'session-2', name: 'Sonnet' });
 		const result = computeOwnershipWarning({
 			session: session2,
-			allSessions: [session1, session2],
+			candidates: [session1, session2],
 			config: makeConfig({ owner_agent_id: '   ' }),
 			configFromAncestor: false,
 		});
 		expect(result).toContain('"Opus" was selected as the owner');
+	});
+
+	it('config-less candidates are excluded by the caller; the real Cue agent becomes owner', () => {
+		// Simulates the P1 bug: a config-less agent appears earlier in the
+		// session list. The caller is expected to filter it out before calling
+		// this utility — only "configured" is passed in — so the real agent
+		// wins the first-in-list race.
+		const configured = makeCandidate({ id: 'session-real', name: 'Obsidian' });
+		const result = computeOwnershipWarning({
+			session: configured,
+			candidates: [configured],
+			config: makeConfig(),
+			configFromAncestor: false,
+		});
+		expect(result).toBeUndefined();
+	});
+
+	it('owner_agent_id matched by two agents sharing a display name: first wins, others get a hint to use the full id', () => {
+		const first = makeCandidate({ id: 'session-1', name: 'Assistant' });
+		const second = makeCandidate({ id: 'session-2', name: 'Assistant' });
+
+		const firstResult = computeOwnershipWarning({
+			session: first,
+			candidates: [first, second],
+			config: makeConfig({ owner_agent_id: 'Assistant' }),
+			configFromAncestor: false,
+		});
+		expect(firstResult).toBeUndefined();
+
+		const secondResult = computeOwnershipWarning({
+			session: second,
+			candidates: [first, second],
+			config: makeConfig({ owner_agent_id: 'Assistant' }),
+			configFromAncestor: false,
+		});
+		expect(secondResult).toContain('matches multiple agents');
+		expect(secondResult).toContain('(id session-1)');
+		expect(secondResult).toContain('Use its full id');
 	});
 });
