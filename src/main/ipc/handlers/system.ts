@@ -344,7 +344,25 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	ipcMain.handle('tunnel:getStatus', async () => {
-		return tunnelManager.getStatus();
+		const status = tunnelManager.getStatus();
+		if (!status.isRunning || !status.url) return status;
+
+		// Append the web server's token path so the URL stays usable.
+		// tunnelManager itself is token-agnostic — composition happens here,
+		// matching tunnel:start above.
+		const webServer = getWebServer();
+		const serverUrl = webServer?.getSecureUrl();
+		if (!serverUrl) return status;
+
+		try {
+			const tokenPath = new URL(serverUrl).pathname;
+			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
+				return { ...status, url: status.url + tokenPath };
+			}
+		} catch {
+			// Malformed server URL — fall back to bare tunnel URL
+		}
+		return status;
 	});
 
 	// ============ DevTools Handlers ============
