@@ -76,14 +76,14 @@ When a user asks you to add, modify, or debug a Cue subscription:
 
 ### Shared Workspaces: `settings.owner_agent_id`
 
-When two or more agents are registered against the same project root (for example, an Opus and a Sonnet agent both pointing at the same Obsidian vault), _unowned_ subscriptions (no explicit `agent_id`) would otherwise fire once per agent. To prevent this:
+When two or more agents are registered against the same project root (for example, an Opus and a Sonnet agent both pointing at the same Obsidian vault), every subscription in `cue.yaml` is either **pinned to a single agent** or **disabled** — there is no mode where an unowned subscription broadcasts to every agent in the root. Which state applies depends on `owner_agent_id` and the per-subscription `agent_id`:
 
-- Set `settings.owner_agent_id` to the agent's internal id (UUID) **or** its display name (e.g. `Obsidian`). Only that agent will fire unowned subscriptions.
-- If unset and multiple agents share the project root, Maestro picks the first agent in the session list as the implicit owner; non-winner agents are flagged with a red warning in the Cue dashboard naming who won and pointing to `owner_agent_id` as the override.
-- If `owner_agent_id` is set but no agent in the project root matches it, every agent there is flagged with a red warning and unowned subscriptions stop firing — fix the value to recover.
-- Subscriptions that already carry an explicit `agent_id` continue to fan out independently of ownership.
+- **Always prefer explicit `agent_id` per subscription** when you want a specific agent (or several, via chains / fan-out) to run work in a shared workspace. That is the reliable way to target multiple agents from one `cue.yaml`.
+- **Set `settings.owner_agent_id`** to the agent's internal id (UUID) **or** display name to pin every _unowned_ subscription (no `agent_id`) to that agent. Prefer the UUID when two agents share a display name — a name with multiple matches is flagged as ambiguous and unowned subs are disabled until it's resolved.
+- **If `owner_agent_id` is unset and >1 agent shares the root**, the first agent in the session list is picked as a deterministic fallback owner; non-winners are flagged in the Cue dashboard with a red warning pointing to `owner_agent_id`. Do not rely on this fallback — set `owner_agent_id` explicitly.
+- **If `owner_agent_id` is set but no agent in the root matches it**, every agent there is flagged and unowned subscriptions are disabled until the value is fixed.
 
-When writing a `cue.yaml` that might live in a shared workspace, add `owner_agent_id` proactively (use `{{MAESTRO_CLI_PATH}} list agents` to discover ids and names) unless the user explicitly wants every agent to run the unowned subs.
+When authoring `cue.yaml` for a workspace that may be registered under more than one agent, set `owner_agent_id` proactively. Use `{{MAESTRO_CLI_PATH}} list agents` to discover ids and names.
 
 ### Natural-Language → YAML Recipes
 

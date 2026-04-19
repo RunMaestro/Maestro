@@ -141,12 +141,12 @@ export function computeOwnershipWarning(params: {
 		if (matches.length === 0) {
 			return `settings.owner_agent_id "${explicitOwner}" does not match any agent in this projectRoot — unowned subscriptions are disabled until this is fixed.`;
 		}
+		if (matches.length > 1) {
+			const matchingIds = matches.map((s) => s.id).join(', ');
+			return `settings.owner_agent_id "${explicitOwner}" is ambiguous — matches ${matches.length} agents in this projectRoot (ids: ${matchingIds}). Unowned subscriptions are disabled until this is fixed; use a full agent id to disambiguate.`;
+		}
 		const owner = matches[0];
 		if (owner.id === session.id) return undefined;
-		const sessionAlsoMatches = session.id === explicitOwner || session.name === explicitOwner;
-		if (sessionAlsoMatches) {
-			return `settings.owner_agent_id "${explicitOwner}" matches multiple agents in this projectRoot — "${owner.name}" (id ${owner.id}) was selected. Use its full id to target a different one.`;
-		}
 		return `settings.owner_agent_id targets "${explicitOwner}" — unowned subscriptions run on that agent instead.`;
 	}
 

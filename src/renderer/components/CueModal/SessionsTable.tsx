@@ -75,13 +75,15 @@ export function SessionsTable({
 								<span className="inline-flex items-center gap-1.5">
 									{s.ownershipWarning && (
 										<span
+											role="img"
 											title={s.ownershipWarning}
-											aria-label="Cue ownership conflict"
+											aria-label={`Cue ownership conflict: ${s.ownershipWarning}`}
 											className="inline-flex"
 										>
 											<AlertTriangle
 												className="w-3.5 h-3.5 flex-shrink-0"
 												style={{ color: theme.colors.error }}
+												aria-hidden="true"
 											/>
 										</span>
 									)}

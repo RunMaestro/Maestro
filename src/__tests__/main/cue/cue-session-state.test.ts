@@ -263,7 +263,7 @@ describe('computeOwnershipWarning', () => {
 		expect(result).toBeUndefined();
 	});
 
-	it('owner_agent_id matched by two agents sharing a display name: first wins, others get a hint to use the full id', () => {
+	it('owner_agent_id matched by two agents sharing a display name is ambiguous: both disabled, both warned', () => {
 		const first = makeCandidate({ id: 'session-1', name: 'Assistant' });
 		const second = makeCandidate({ id: 'session-2', name: 'Assistant' });
 
@@ -273,7 +273,10 @@ describe('computeOwnershipWarning', () => {
 			config: makeConfig({ owner_agent_id: 'Assistant' }),
 			configFromAncestor: false,
 		});
-		expect(firstResult).toBeUndefined();
+		expect(firstResult).toContain('is ambiguous');
+		expect(firstResult).toContain('matches 2 agents');
+		expect(firstResult).toContain('session-1');
+		expect(firstResult).toContain('session-2');
 
 		const secondResult = computeOwnershipWarning({
 			session: second,
@@ -281,8 +284,19 @@ describe('computeOwnershipWarning', () => {
 			config: makeConfig({ owner_agent_id: 'Assistant' }),
 			configFromAncestor: false,
 		});
-		expect(secondResult).toContain('matches multiple agents');
-		expect(secondResult).toContain('(id session-1)');
-		expect(secondResult).toContain('Use its full id');
+		expect(secondResult).toContain('is ambiguous');
+	});
+
+	it('owner_agent_id set to a UUID still wins unambiguously even if display names collide', () => {
+		const first = makeCandidate({ id: 'session-1', name: 'Assistant' });
+		const second = makeCandidate({ id: 'session-2', name: 'Assistant' });
+
+		const result = computeOwnershipWarning({
+			session: second,
+			candidates: [first, second],
+			config: makeConfig({ owner_agent_id: 'session-2' }),
+			configFromAncestor: false,
+		});
+		expect(result).toBeUndefined();
 	});
 });
