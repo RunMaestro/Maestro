@@ -783,6 +783,12 @@ function setupIpcHandlers() {
 		safeSend,
 		getMaxEntries: () => store.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
+		getSessionById: (id: string) => {
+			const sessions = (sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+				(s) => typeof s === 'object' && s !== null
+			);
+			return sessions.find((s) => s.id === id);
+		},
 	});
 
 	// Director's Notes - unified history + synopsis generation

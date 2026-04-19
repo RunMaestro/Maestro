@@ -376,7 +376,9 @@ export function NewInstanceModal({
 		// Get SSH remote configuration for this session (stored per-session, not per-agent)
 		const sshRemoteConfig = agentSshRemoteConfigs[selectedAgent];
 		// Convert to session-level format: ALWAYS pass explicitly to override any agent-level config
-		// For new sessions, this ensures consistent behavior with the UI selection
+		// For new sessions, this ensures consistent behavior with the UI selection.
+		// `shareHistoryToProjectDir` persists regardless of SSH enablement so it also
+		// applies to agents that run locally but are controlled from another Maestro.
 		const sessionSshRemoteConfig =
 			sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId
 				? {
@@ -387,8 +389,13 @@ export function NewInstanceModal({
 						workingDirOverride:
 							sshRemoteConfig.workingDirOverride || expandedWorkingDir || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
+						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
-				: { enabled: false, remoteId: null };
+				: {
+						enabled: false,
+						remoteId: null,
+						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
+					};
 
 		onCreate(
 			selectedAgent,

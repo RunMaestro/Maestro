@@ -174,6 +174,12 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		safeSend: createSafeSend(deps.getMainWindow),
 		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
+		getSessionById: (id: string) => {
+			const sessions = (
+				deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>
+			).filter((s) => typeof s === 'object' && s !== null);
+			return sessions.find((s) => s.id === id);
+		},
 	});
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,

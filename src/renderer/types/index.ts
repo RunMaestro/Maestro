@@ -773,7 +773,8 @@ export interface Session {
 		enabled: boolean; // Whether SSH is enabled for this session
 		remoteId: string | null; // SSH remote config ID to use
 		workingDirOverride?: string; // Override remote working directory
-		syncHistory?: boolean; // Whether to sync history to .maestro/history/ on the remote
+		syncHistory?: boolean; // When SSH is enabled: push entries to the remote's .maestro/history/
+		shareHistoryToProjectDir?: boolean; // Mirror entries to the local project's .maestro/history/ (independent of SSH; for remote-controlled agents)
 	};
 
 	// SSH connection status - runtime only, not persisted

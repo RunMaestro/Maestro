@@ -583,6 +583,16 @@ export interface AgentSshRemoteConfig {
 
 	/** Sync history entries to .maestro/history/ on the remote host (opt-in, default: false) */
 	syncHistory?: boolean;
+
+	/**
+	 * Mirror every new history entry for this agent to
+	 * <projectRoot>/.maestro/history/history-<hostname>.jsonl on *this* machine's
+	 * local filesystem. Meant for agents that run here locally but are controlled
+	 * by another Maestro instance over SSH — the controller reads the project's
+	 * `.maestro/history/` dir and sees entries generated on this side.
+	 * Independent of `enabled` / `syncHistory`.
+	 */
+	shareHistoryToProjectDir?: boolean;
 }
 
 // ============================================================================
