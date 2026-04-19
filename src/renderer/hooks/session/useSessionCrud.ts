@@ -66,7 +66,8 @@ export interface UseSessionCrudReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		groupId?: string
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -139,7 +140,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
-			}
+			},
+			groupId?: string
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -258,6 +260,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customProviderPath,
 					sessionSshRemoteConfig,
 					autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
+					groupId,
 				};
 
 				setSessions((prev) => [...prev, newSession]);
