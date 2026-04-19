@@ -406,6 +406,28 @@ describe('FilePreview', () => {
 			expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
 		});
 
+		it('uses the same square toolbar geometry for the Bionify toggle as sibling header buttons', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'notes.txt',
+						content: 'Readable text preview content',
+						path: '/test/notes.txt',
+					}}
+				/>
+			);
+
+			const bionifyButton = screen.getByTitle('Enable Bionify for this preview');
+			const clipboardButton = screen.getByTitle('Copy content to clipboard');
+
+			expect(bionifyButton.className).toContain('inline-flex');
+			expect(bionifyButton.className).toContain('justify-center');
+			expect(bionifyButton.className).toContain('min-w-9');
+			expect(bionifyButton.className).toContain('min-h-9');
+			expect(bionifyButton.className).toBe(clipboardButton.className);
+		});
+
 		it('routes .mdx files through markdown preview instead of readable text preview', () => {
 			render(
 				<FilePreview

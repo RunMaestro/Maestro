@@ -209,6 +209,20 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'editor',
 	},
+	bionifyIntensity: {
+		description:
+			'Visual strength of Bionify emphasis. Higher values increase emphasis weight and lower the opacity of trailing characters.',
+		type: 'number',
+		default: 1,
+		category: 'editor',
+	},
+	bionifyAlgorithm: {
+		description:
+			'Algorithm string controlling highlighted characters per word length. Format: "+|- len1 len2 len3 len4 fraction".',
+		type: 'string',
+		default: '- 0 1 1 2 0.4',
+		category: 'editor',
+	},
 	showHiddenFiles: {
 		description: 'Show dotfiles and hidden files in the file explorer.',
 		type: 'boolean',

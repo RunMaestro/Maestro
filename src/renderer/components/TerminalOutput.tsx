@@ -128,6 +128,8 @@ interface LogItemProps {
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
 	bionifyReadingMode: boolean;
+	bionifyIntensity: number;
+	bionifyAlgorithm: string;
 	onToggleBionifyReadingMode: () => void;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
@@ -170,6 +172,8 @@ const LogItemComponent = memo(
 		onShowErrorDetails,
 		onSaveToFile,
 		bionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		onToggleBionifyReadingMode,
 		userMessageAlignment,
 	}: LogItemProps) => {
@@ -547,6 +551,8 @@ const LogItemComponent = memo(
 										theme={theme}
 										onCopy={copyToClipboard}
 										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -662,6 +668,8 @@ const LogItemComponent = memo(
 											theme={theme}
 											onCopy={copyToClipboard}
 											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -746,6 +754,8 @@ const LogItemComponent = memo(
 											theme={theme}
 											onCopy={copyToClipboard}
 											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -822,6 +832,8 @@ const LogItemComponent = memo(
 										theme={theme}
 										onCopy={copyToClipboard}
 										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -974,6 +986,8 @@ const LogItemComponent = memo(
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
 			prevProps.bionifyReadingMode === nextProps.bionifyReadingMode &&
+			prevProps.bionifyIntensity === nextProps.bionifyIntensity &&
+			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment
 		);
@@ -1104,6 +1118,8 @@ export const TerminalOutput = memo(
 			onOpenInTab,
 		} = props;
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const globalBionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 		const [bionifyOverride, setBionifyOverride] = useState<boolean | null>(null);
 		const effectiveBionifyReadingMode = bionifyOverride ?? globalBionifyReadingMode;
 
@@ -1785,6 +1801,8 @@ export const TerminalOutput = memo(
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
 							bionifyReadingMode={effectiveBionifyReadingMode}
+							bionifyIntensity={globalBionifyIntensity}
+							bionifyAlgorithm={globalBionifyAlgorithm}
 							onToggleBionifyReadingMode={() =>
 								setBionifyOverride((current) => !(current ?? globalBionifyReadingMode))
 							}
