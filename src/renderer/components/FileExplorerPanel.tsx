@@ -1365,7 +1365,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						style={{
 							backgroundColor: theme.colors.bgSidebar,
 							borderColor: theme.colors.border,
-							minWidth: '180px',
+							minWidth: '200px',
 							top: overlayPosition.top,
 							left: overlayPosition.left,
 							transform: 'translateX(-100%)',
@@ -1403,7 +1403,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 												: 'transparent',
 									}}
 								>
-									<span>{option.label}</span>
+									<span className="whitespace-nowrap">{option.label}</span>
 									{autoRefreshInterval === option.value && (
 										<Check className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									)}
