@@ -952,13 +952,12 @@ describe('FileExplorerPanel', () => {
 		it('applies indentation to nested items via paddingLeft', () => {
 			const session = createMockSession({ fileExplorerExpanded: ['src'] });
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
-			// Virtualized tree uses paddingLeft for indentation
-			// index.ts is a file at depth 1, so paddingLeft = 8 + max(0, 1-1)*16 = 8px
-			// (files use depth-1 to align icons with parent folder icons)
+			// Virtualized tree uses paddingLeft for indentation: 8 + depth * 16
+			// index.ts is at depth 1, so paddingLeft = 8 + 1*16 = 24px
 			const nestedItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('index.ts')
 			);
-			expect(nestedItem).toHaveStyle({ paddingLeft: '8px' });
+			expect(nestedItem).toHaveStyle({ paddingLeft: '24px' });
 		});
 
 		it('displays file name with truncate class', () => {
