@@ -14,6 +14,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { AgentSessionsBrowser } from '../AgentSessionsBrowser';
 import { MemoryViewer } from '../MemoryViewer';
 import { TabBar } from '../TabBar';
+import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
@@ -152,6 +153,9 @@ export const MainPanel = React.memo(
 
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
+		// tab is rendered, so this points to that one (or null if no browser tab is active).
+		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -434,6 +438,63 @@ export const MainPanel = React.memo(
 			[resolveBuffer, props.onSendTextToAgent]
 		);
 
+		// Browser content action wrappers — extract the rendered text of a browser tab
+		// (activating it first if necessary) and delegate to the App-level text handlers.
+		const resolveBrowserContent = useCallback(
+			async (
+				tabId: string
+			): Promise<{ content: string; displayName: string; url: string } | null> => {
+				if (!activeSession) return null;
+				const browserTab = activeSession.browserTabs?.find((t) => t.id === tabId);
+				if (!browserTab) return null;
+				const isAlreadyActive =
+					activeSession.activeBrowserTabId === tabId &&
+					activeSession.inputMode === 'ai' &&
+					!activeSession.activeFileTabId;
+				if (!isAlreadyActive) {
+					// Switch to the requested browser tab so it gets mounted, then wait briefly
+					// for the BrowserTabView to register its imperative handle on the next tick.
+					onBrowserTabSelect?.(tabId);
+					for (let i = 0; i < 20; i++) {
+						await new Promise((r) => setTimeout(r, 50));
+						if (browserViewRef.current?.getTabId() === tabId) break;
+					}
+				}
+				const handle = browserViewRef.current;
+				if (!handle || handle.getTabId() !== tabId) return null;
+				const content = await handle.getContent();
+				const displayName =
+					(browserTab.title && browserTab.title.trim()) ||
+					(() => {
+						try {
+							return new URL(browserTab.url).host || browserTab.url;
+						} catch {
+							return browserTab.url || 'Browser Tab';
+						}
+					})();
+				return { content, displayName, url: browserTab.url };
+			},
+			[activeSession, onBrowserTabSelect]
+		);
+
+		const handleCopyBrowserContent = useCallback(
+			async (tabId: string) => {
+				const resolved = await resolveBrowserContent(tabId);
+				if (!resolved) return;
+				props.onCopyText?.(resolved.content, 'Page Content');
+			},
+			[resolveBrowserContent, props.onCopyText]
+		);
+
+		const handleSendBrowserContentToAgent = useCallback(
+			async (tabId: string) => {
+				const resolved = await resolveBrowserContent(tabId);
+				if (!resolved) return;
+				props.onSendTextToAgent?.(resolved.content, resolved.displayName);
+			},
+			[resolveBrowserContent, props.onSendTextToAgent]
+		);
+
 		// Handler for input focus - select session in sidebar
 		// Memoized to avoid recreating on every render
 		const handleInputFocus = useCallback(() => {
@@ -675,6 +736,10 @@ export const MainPanel = React.memo(
 									onSendTerminalBufferToAgent={
 										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
 									}
+									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+									onSendBrowserContentToAgent={
+										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+									}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 								/>
@@ -715,6 +780,7 @@ export const MainPanel = React.memo(
 							handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
 							handleFilePreviewReload={handleFilePreviewReload}
 							handleBrowserTabUpdate={onBrowserTabUpdate}
+							browserViewRef={browserViewRef}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}

@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { BrowserTabView } from '../../../../renderer/components/MainPanel/BrowserTabView';
+import {
+	BrowserTabView,
+	type BrowserTabViewHandle,
+} from '../../../../renderer/components/MainPanel/BrowserTabView';
 import type { BrowserTab, Theme } from '../../../../renderer/types';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../../renderer/utils/browserTabPersistence';
 
@@ -464,5 +467,59 @@ describe('BrowserTabView', () => {
 				isLoading: true,
 			})
 		);
+	});
+
+	describe('imperative handle: getContent', () => {
+		it('returns document.body.innerText via webview.executeJavaScript after dom-ready', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => mockTab.url);
+			webview.getTitle = vi.fn(() => mockTab.title ?? '');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 1);
+			webview.executeJavaScript = vi.fn().mockResolvedValue('hello world');
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			const content = await ref.current!.getContent();
+			expect(webview.executeJavaScript).toHaveBeenCalledWith(
+				'(document.body && document.body.innerText) || ""'
+			);
+			expect(content).toBe('hello world');
+		});
+
+		it('returns the empty string when executeJavaScript rejects', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			const webview = getWebview();
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => mockTab.url);
+			webview.getTitle = vi.fn(() => mockTab.title ?? '');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 1);
+			webview.executeJavaScript = vi.fn().mockRejectedValue(new Error('cross-origin'));
+
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+
+			const content = await ref.current!.getContent();
+			expect(content).toBe('');
+		});
+
+		it('exposes the current tab id via getTabId', async () => {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			render(<BrowserTabView ref={ref} tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+
+			expect(ref.current!.getTabId()).toBe('browser-1');
+		});
 	});
 });

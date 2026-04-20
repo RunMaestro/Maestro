@@ -58,6 +58,8 @@ export interface MainPanelContentProps {
 	handleFilePreviewSearchQueryChange: (searchQuery: string) => void;
 	handleFilePreviewReload: () => void;
 	handleBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
+	/** Ref registry for the currently-mounted BrowserTabView — used to extract the active tab's content */
+	browserViewRef?: React.MutableRefObject<import('./BrowserTabView').BrowserTabViewHandle | null>;
 
 	// Terminal mounting props
 	terminalViewRefs: React.MutableRefObject<
@@ -254,6 +256,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleFilePreviewSearchQueryChange,
 		handleFilePreviewReload,
 		handleBrowserTabUpdate,
+		browserViewRef,
 		terminalViewRefs,
 		mountedTerminalSessionIds,
 		mountedTerminalSessionsRef,
@@ -403,6 +406,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			{/* Skip rendering when loading remote file - loading state takes over entire main area */}
 			{activeSession.inputMode === 'ai' && activeBrowserTabId && activeBrowserTab ? (
 				<BrowserTabView
+					ref={(handle) => {
+						if (browserViewRef) browserViewRef.current = handle;
+					}}
 					tab={activeBrowserTab}
 					theme={theme}
 					onUpdateTab={(tabId, updates) =>

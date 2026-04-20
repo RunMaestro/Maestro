@@ -66,6 +66,8 @@ function TabBarInner({
 	onCopyTerminalBuffer,
 	onPublishTerminalBufferGist,
 	onSendTerminalBufferToAgent,
+	onCopyBrowserContent,
+	onSendBrowserContentToAgent,
 	colorBlindMode,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
@@ -574,6 +576,8 @@ function TabBarInner({
 										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
 										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
 										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+										onCopyContent={onCopyBrowserContent}
+										onSendContentToAgent={onSendBrowserContentToAgent}
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}

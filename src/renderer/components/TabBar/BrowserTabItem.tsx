@@ -1,6 +1,14 @@
 import React, { useCallback, memo, useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Globe, X, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import {
+	Globe,
+	X,
+	ChevronsLeft,
+	ChevronsRight,
+	Clipboard,
+	ArrowRightCircle,
+	Check,
+} from 'lucide-react';
 import type { BrowserTab, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -26,6 +34,10 @@ export interface BrowserTabItemProps {
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
+	/** Copy the rendered text of the page to the clipboard. */
+	onCopyContent?: (tabId: string) => void;
+	/** Send the rendered text of the page to another agent. */
+	onSendContentToAgent?: (tabId: string) => void;
 	totalTabs?: number;
 	tabIndex?: number;
 	shortcutHint?: number | null;
@@ -76,11 +88,14 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onCopyContent,
+	onSendContentToAgent,
 	totalTabs,
 	tabIndex,
 	shortcutHint,
 }: BrowserTabItemProps) {
 	const [faviconFailed, setFaviconFailed] = useState(false);
+	const [urlCopied, setUrlCopied] = useState(false);
 	const {
 		isHovered,
 		overlayOpen,
@@ -219,6 +234,38 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 		},
 		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
 	);
+	const handleCopyContentClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyContent?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCopyContent, tab.id, setOverlayOpen]
+	);
+	const handleSendContentToAgentClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSendContentToAgent?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onSendContentToAgent, tab.id, setOverlayOpen]
+	);
+	const handleCopyUrlClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			const url = tab.url || 'about:blank';
+			navigator.clipboard
+				.writeText(url)
+				.then(() => {
+					setUrlCopied(true);
+					setTimeout(() => setUrlCopied(false), 1500);
+				})
+				.catch((err) => {
+					console.error('Failed to copy URL:', err);
+				});
+		},
+		[tab.url]
+	);
 
 	return (
 		<div
@@ -334,6 +381,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
 								minWidth: '220px',
+								maxWidth: '320px',
 							}}
 						>
 							<div className="px-3 py-2 border-b" style={{ borderColor: theme.colors.border }}>
@@ -343,11 +391,32 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 								>
 									{label}
 								</div>
-								<div
-									className="text-[11px] truncate mt-0.5"
-									style={{ color: theme.colors.textDim }}
-								>
-									{tab.url || 'about:blank'}
+								<div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+									<button
+										type="button"
+										onClick={handleCopyUrlClick}
+										className="shrink-0 p-0.5 rounded hover:bg-white/10 transition-colors"
+										title={urlCopied ? 'Copied!' : 'Copy URL'}
+										aria-label={urlCopied ? 'URL copied' : 'Copy URL'}
+									>
+										{urlCopied ? (
+											<Check
+												className="w-3 h-3"
+												style={{ color: theme.colors.success || theme.colors.textDim }}
+											/>
+										) : (
+											<Clipboard className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+										)}
+									</button>
+									<button
+										type="button"
+										onClick={handleCopyUrlClick}
+										className="text-[11px] truncate min-w-0 flex-1 text-left hover:underline"
+										style={{ color: theme.colors.textDim }}
+										title={urlCopied ? 'Copied!' : `${tab.url || 'about:blank'} (click to copy)`}
+									>
+										{tab.url || 'about:blank'}
+									</button>
 								</div>
 							</div>
 
@@ -382,6 +451,36 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 										)}
 										<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 									</>
+								)}
+
+								{/* Content actions — operate on the rendered text of the page */}
+								{onCopyContent && (
+									<button
+										onClick={handleCopyContentClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Content: Copy to Clipboard
+									</button>
+								)}
+
+								{onSendContentToAgent && (
+									<button
+										onClick={handleSendContentToAgentClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ArrowRightCircle
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
+										Content: Send to Agent
+									</button>
+								)}
+
+								{(onCopyContent || onSendContentToAgent) && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 								)}
 
 								<button
