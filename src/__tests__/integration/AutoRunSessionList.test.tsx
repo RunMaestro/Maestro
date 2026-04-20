@@ -16,7 +16,6 @@ import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import { createMockTheme } from '../helpers/mockTheme';
 import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
-import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 
 // Helper to wrap component in LayerStackProvider with custom rerender

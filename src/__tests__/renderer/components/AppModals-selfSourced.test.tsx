@@ -13,7 +13,6 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { Session, Shortcut, Group, GroupChat } from '../../../renderer/types';
-import type { Session, Shortcut, Group, GroupChat } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
