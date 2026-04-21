@@ -1116,4 +1116,128 @@ describe('createCueRunManager', () => {
 			expect(deps.onLog).toHaveBeenCalledWith('cue', expect.stringContaining('Phase 3 skipped'));
 		});
 	});
+
+	// ─── Phase 15A additions ────────────────────────────────────────────────
+	// Output-prompt second-phase scenarios that live in the run-manager (the
+	// executor is a single-phase spawner; the chained "main task → output
+	// prompt" phase is orchestrated here).
+
+	describe('output prompt phase — failure and stop interactions', () => {
+		it('preserves main-task stdout when the output prompt returns a non-completed status', async () => {
+			const onCueRun = vi.fn<(req: { subscriptionName: string }) => Promise<CueRunResult>>();
+			// Call 1 = main task (completes with real stdout). Call 2 = output
+			// prompt phase, returns failed — run-manager must fall back to the
+			// main task output and log a warning instead of overwriting the
+			// result.stdout with the empty output-prompt stdout.
+			onCueRun
+				.mockResolvedValueOnce(makeResult({ status: 'completed', stdout: 'MAIN_TASK_OUTPUT' }))
+				.mockResolvedValueOnce(
+					makeResult({ status: 'failed', stdout: '', stderr: 'output prompt died' })
+				);
+
+			const deps = createDeps({ onCueRun });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'main-prompt', createEvent(), 'test-sub', 'output-prompt-body');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(onCueRun).toHaveBeenCalledTimes(2);
+			// The second call receives the main-task stdout as context.
+			expect(onCueRun.mock.calls[1][0]).toMatchObject({
+				subscriptionName: 'test-sub:output',
+			});
+			// onRunCompleted carries the MAIN task output — not the failed
+			// output-prompt's empty string.
+			expect(deps.onRunCompleted).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ stdout: 'MAIN_TASK_OUTPUT', status: 'completed' }),
+				'test-sub',
+				undefined
+			);
+			// Warning explaining the fallback was surfaced to the activity log.
+			expect(
+				(deps.onLog as ReturnType<typeof vi.fn>).mock.calls.some(
+					(call) =>
+						call[0] === 'cue' && typeof call[1] === 'string' && /output prompt failed/.test(call[1])
+				)
+			).toBe(true);
+		});
+
+		it('survives an output-prompt onCueRun that rejects (exception path)', async () => {
+			const onCueRun = vi.fn<(req: { subscriptionName: string }) => Promise<CueRunResult>>();
+			onCueRun
+				.mockResolvedValueOnce(makeResult({ status: 'completed', stdout: 'MAIN_OK' }))
+				.mockRejectedValueOnce(new Error('spawn ENOENT'));
+
+			const deps = createDeps({ onCueRun });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'main', createEvent(), 'test-sub', 'out-prompt');
+			await vi.advanceTimersByTimeAsync(0);
+
+			// The outer catch treats the rejection as a run failure — main task
+			// output is discarded because the `await outputResult` line threw
+			// before the stdout reassignment could happen.
+			expect(deps.onRunCompleted).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({
+					status: 'failed',
+					stderr: expect.stringContaining('spawn ENOENT'),
+				}),
+				'test-sub',
+				undefined
+			);
+		});
+
+		it('stopRun during output-prompt phase kills BOTH the parent and the output-prompt child process', async () => {
+			const mainDeferred: { resolve?: (r: CueRunResult) => void } = {};
+			const outputDeferred: { resolve?: (r: CueRunResult) => void } = {};
+
+			const onCueRun = vi.fn((req: { runId: string; subscriptionName: string }) => {
+				if (req.subscriptionName === 'test-sub') {
+					return new Promise<CueRunResult>((res) => {
+						mainDeferred.resolve = (r) => res({ ...r, runId: req.runId });
+					});
+				}
+				return new Promise<CueRunResult>((res) => {
+					outputDeferred.resolve = (r) => res({ ...r, runId: req.runId });
+				});
+			});
+
+			const onStopCueRun = vi.fn(() => true);
+			const deps = createDeps({ onCueRun, onStopCueRun });
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'main', createEvent(), 'test-sub', 'out-prompt');
+			// Let the main task complete; run-manager now dispatches the
+			// output-prompt phase.
+			mainDeferred.resolve!(makeResult({ status: 'completed', stdout: 'MAIN_OK' }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(onCueRun).toHaveBeenCalledTimes(2);
+
+			// The output-prompt spawn is now in-flight. The active run carries
+			// the output-prompt child's processRunId so stopRun can signal both.
+			const parentRunId = manager.getActiveRuns()[0].runId;
+			const run = manager.getActiveRunMap().get(parentRunId)!;
+			expect(run.processRunId).toBeDefined();
+			expect(run.processRunId).not.toBe(parentRunId);
+
+			// User hits stop.
+			const stopped = manager.stopRun(parentRunId);
+			expect(stopped).toBe(true);
+			expect(onStopCueRun).toHaveBeenCalledWith(parentRunId);
+			expect(onStopCueRun).toHaveBeenCalledWith(run.processRunId!);
+
+			expect(deps.onRunStopped).toHaveBeenCalledTimes(1);
+			expect(deps.onRunStopped).toHaveBeenCalledWith(
+				expect.objectContaining({ status: 'stopped' })
+			);
+
+			// Output-prompt resolves late — the run-manager must skip
+			// onRunCompleted because stopRun already cleaned up.
+			outputDeferred.resolve!(makeResult({ status: 'completed', stdout: 'LATE' }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(deps.onRunCompleted).not.toHaveBeenCalled();
+		});
+	});
 });

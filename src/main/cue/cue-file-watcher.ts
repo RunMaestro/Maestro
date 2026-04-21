@@ -32,6 +32,13 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 		persistent: true,
 	});
 
+	// Pre-compute the normalized project root (with trailing separator) so the
+	// per-event guard below can do a cheap prefix check. `path.resolve` does not
+	// follow symlinks — a link inside projectRoot pointing outside would slip
+	// through this guard. That is an accepted project-trust limitation, not a
+	// Cue concern (the validator already rejects `../` patterns up-front).
+	const normalizedRoot = path.resolve(projectRoot) + path.sep;
+
 	const handleEvent = (changeType: 'change' | 'add' | 'unlink') => (filePath: string) => {
 		const existingTimer = debounceTimers.get(filePath);
 		if (existingTimer) {
@@ -44,6 +51,22 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 				debounceTimers.delete(filePath);
 
 				const absolutePath = path.resolve(projectRoot, filePath);
+
+				// Defense-in-depth: even if the validator rejected `../` patterns,
+				// a misconfigured watch glob combined with chokidar's symlink
+				// following could produce an event whose resolved path escapes the
+				// project root. Drop those events with a warn log instead of
+				// dispatching an arbitrary-file trigger.
+				if (!absolutePath.startsWith(normalizedRoot)) {
+					if (config.onLog) {
+						config.onLog(
+							'warn',
+							`[CUE] Dropped file event outside projectRoot: ${absolutePath} (trigger: ${triggerName})`
+						);
+					}
+					return;
+				}
+
 				const event = createCueEvent('file.changed', triggerName, {
 					path: absolutePath,
 					filename: path.basename(filePath),

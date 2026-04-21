@@ -8,6 +8,30 @@ import {
 } from '../../../shared/cue';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
+	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
+	// via chokidar, so any pattern that escapes the project root (via `..`
+	// segments, an absolute POSIX path, or a Windows drive letter) would allow
+	// watching arbitrary files on disk. Reject those shapes up-front — the
+	// runtime guard in `cue-file-watcher.ts` is the defense-in-depth backstop.
+	const segments = pattern.split(/[\\/]/);
+	if (segments.includes('..')) {
+		errors.push(
+			`${prefix}: "watch" pattern "${pattern}" is not allowed (contains ".." path traversal)`
+		);
+		return;
+	}
+	if (pattern.startsWith('/') || pattern.startsWith('\\')) {
+		errors.push(
+			`${prefix}: "watch" pattern "${pattern}" is not allowed (absolute paths are not permitted)`
+		);
+		return;
+	}
+	if (/^[A-Za-z]:[\\/]/.test(pattern)) {
+		errors.push(
+			`${prefix}: "watch" pattern "${pattern}" is not allowed (Windows drive paths are not permitted)`
+		);
+		return;
+	}
 	try {
 		picomatch(pattern);
 	} catch (error) {

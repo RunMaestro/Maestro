@@ -109,6 +109,20 @@ export function initCueDb(
 	}
 
 	db = new Database(dbPath);
+
+	// Tighten permissions so only the current user can read/write the DB. On
+	// NTFS/Windows POSIX modes are largely ignored (near no-op); on network
+	// mounts without POSIX support chmod can throw EPERM/ENOTSUP. Either way
+	// this is best-effort — log and continue rather than failing DB init.
+	try {
+		fs.chmodSync(dbPath, 0o600);
+	} catch (err) {
+		log(
+			'warn',
+			`chmod 0o600 failed on ${dbPath}: ${err instanceof Error ? err.message : String(err)}`
+		);
+	}
+
 	db.pragma('journal_mode = WAL');
 
 	// Create tables

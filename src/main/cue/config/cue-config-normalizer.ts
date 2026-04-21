@@ -31,11 +31,19 @@ export interface CueConfigDocument {
 }
 
 function readPromptFile(projectRoot: string, promptFile: string): string | undefined {
-	const resolvedPromptPath = path.isAbsolute(promptFile)
-		? promptFile
-		: path.join(projectRoot, promptFile);
+	// Defense-in-depth path containment: the YAML that specifies `prompt_file`
+	// is project-owned, but a typo or hand-edit of `../../etc/passwd` should not
+	// cause an arbitrary host file to be slurped and later substituted into an
+	// agent prompt. Mirror the write-side guard in `cue-config-repository.ts`.
+	const normalizedRoot = path.resolve(projectRoot);
+	const absPath = path.isAbsolute(promptFile)
+		? path.resolve(promptFile)
+		: path.resolve(normalizedRoot, promptFile);
+	if (!absPath.startsWith(normalizedRoot + path.sep)) {
+		return undefined;
+	}
 	try {
-		return fs.readFileSync(resolvedPromptPath, 'utf-8');
+		return fs.readFileSync(absPath, 'utf-8');
 	} catch {
 		return undefined;
 	}

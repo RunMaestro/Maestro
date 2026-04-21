@@ -405,7 +405,6 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 		// but pathological YAML or a future refactor could break that — log
 		// loudly so the failure mode is visible instead of silent.
 		if (targetNodeBySubName.has(name)) {
-			// eslint-disable-next-line no-console
 			console.warn(
 				`[CUE] Duplicate sub name "${name}" while building source_sub map — earlier owner may not get its source_sub populated`
 			);
