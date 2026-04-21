@@ -45,20 +45,29 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	// differences (NFC vs NFD), and symlinks that could otherwise escape the
 	// root without tripping a lowercase `startsWith` guard. `path.relative`
 	// returns '' when the paths are equal (treated as inside — reading the
-	// root directory as a file will simply fail downstream) and a path
-	// starting with `..` when the target escapes the root.
+	// root directory as a file will simply fail downstream), a `..`-prefixed
+	// path for POSIX escapes, and an absolute path on Windows when `realPath`
+	// lives on a different drive or UNC share (no common base) — so we reject
+	// any absolute rel too.
+	let canonicalPath: string;
 	try {
 		const realRoot = fs.realpathSync.native(normalizedRoot);
 		const realPath = fs.realpathSync.native(absPath);
 		const rel = path.relative(realRoot, realPath);
-		if (rel !== '' && rel.split(path.sep)[0] === '..') {
+		if (rel !== '' && (path.isAbsolute(rel) || rel.split(path.sep)[0] === '..')) {
 			return undefined;
 		}
+		canonicalPath = realPath;
 	} catch {
 		return undefined;
 	}
 	try {
-		return fs.readFileSync(absPath, 'utf-8');
+		// Read the canonicalized path, not absPath. If `promptFile` was a symlink
+		// that pointed inside the root at check time, reading `absPath` would
+		// re-follow the symlink at read time — letting an attacker swap the
+		// symlink's target between the check and the read. Reading `realPath`
+		// pins us to the file we actually validated.
+		return fs.readFileSync(canonicalPath, 'utf-8');
 	} catch {
 		return undefined;
 	}
