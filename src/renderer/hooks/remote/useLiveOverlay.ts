@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
 import { useClickOutside } from '../ui';
+import { logger } from '../../utils/logger';
 
 /**
  * Tunnel status states for remote access via Cloudflare tunnel
@@ -176,7 +177,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 			try {
 				await window.maestro.tunnel.stop();
 			} catch (error) {
-				console.error('[handleTunnelToggle] Failed to stop tunnel:', error);
+				logger.error('[handleTunnelToggle] Failed to stop tunnel:', undefined, error);
 				// Continue anyway - we still want to update UI state
 			}
 			setTunnelStatus('off');
@@ -199,7 +200,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 					setTunnelError(result.error || 'Failed to start tunnel');
 				}
 			} catch (error) {
-				console.error('[handleTunnelToggle] Failed to start tunnel:', error);
+				logger.error('[handleTunnelToggle] Failed to start tunnel:', undefined, error);
 				setTunnelStatus('error');
 				setTunnelError(error instanceof Error ? error.message : 'Failed to start tunnel');
 			}
@@ -216,7 +217,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		try {
 			await window.maestro.tunnel.stop();
 		} catch (error) {
-			console.error('[restartTunnel] Failed to stop tunnel:', error);
+			logger.error('[restartTunnel] Failed to stop tunnel:', undefined, error);
 		}
 
 		try {
@@ -229,7 +230,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 				setTunnelError(result.error || 'Failed to restart tunnel');
 			}
 		} catch (error) {
-			console.error('[restartTunnel] Failed to restart tunnel:', error);
+			logger.error('[restartTunnel] Failed to restart tunnel:', undefined, error);
 			setTunnelStatus('error');
 			setTunnelError(error instanceof Error ? error.message : 'Failed to restart tunnel');
 		}

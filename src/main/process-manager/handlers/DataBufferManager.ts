@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { DATA_BUFFER_FLUSH_INTERVAL, DATA_BUFFER_SIZE_THRESHOLD } from '../constants';
 import type { ManagedProcess } from '../types';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Manages data buffering for process output to reduce IPC event frequency.
@@ -53,6 +54,7 @@ export class DataBufferManager {
 			try {
 				this.emitter.emit('data', sessionId, managedProcess.dataBuffer);
 			} catch (err) {
+				void captureException(err);
 				logger.error('[ProcessManager] Error flushing data buffer', 'ProcessManager', {
 					sessionId,
 					error: String(err),

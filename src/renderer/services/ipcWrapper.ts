@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 /**
  * IPC Wrapper Utility
  *
@@ -96,7 +97,7 @@ export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<
 	try {
 		result = await options.call();
 	} catch (error) {
-		console.error(`${options.errorContext} error:`, error);
+		logger.error(`${options.errorContext} error:`, undefined, error);
 		if (options.rethrow) {
 			// Caller is responsible for handling/reporting.
 			throw error;

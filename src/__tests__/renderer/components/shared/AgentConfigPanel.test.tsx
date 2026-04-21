@@ -8,7 +8,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
-import type { Theme, AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+
+import { createMockTheme } from '../../../helpers/mockTheme';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -42,28 +44,6 @@ vi.mock('lucide-react', () => ({
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
-
-function createMockTheme(): Theme {
-	return {
-		id: 'test-theme',
-		name: 'Test Theme',
-		colors: {
-			bgMain: '#1a1a1a',
-			bgSidebar: '#252525',
-			bgActivity: '#333333',
-			textMain: '#ffffff',
-			textDim: '#888888',
-			accent: '#6366f1',
-			border: '#333333',
-			success: '#22c55e',
-			error: '#ef4444',
-			warning: '#f59e0b',
-			contextFree: '#22c55e',
-			contextMedium: '#f59e0b',
-			contextHigh: '#ef4444',
-		},
-	};
-}
 
 function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {

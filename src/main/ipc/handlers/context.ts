@@ -26,6 +26,7 @@ import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -83,7 +84,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 	const { getProcessManager, getAgentDetector, agentConfigsStore } = deps;
 
 	logger.info('Registering context IPC handlers', LOG_CONTEXT);
-	console.log('[ContextMerge] Registering context IPC handlers (v2 with response collection)');
+	logger.info('[ContextMerge] Registering context IPC handlers (v2 with response collection)');
 
 	// Get context from a stored agent session
 	ipcMain.handle(
@@ -117,6 +118,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					});
 					return result;
 				} catch (error) {
+					void captureException(error);
 					logger.error('Failed to read session messages', LOG_CONTEXT, {
 						agentId,
 						projectRoot,
@@ -205,12 +207,11 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					projectRoot,
 					agentType,
 				});
-				console.log(
-					'[ContextMerge] Creating grooming session:',
+				logger.info('[ContextMerge] Creating grooming session:', undefined, [
 					groomerSessionId,
 					'for',
-					agentType
-				);
+					agentType,
+				]);
 
 				// Get agent configuration
 				const agent = await agentDetector.getAgent(agentType);
@@ -263,7 +264,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					groomerSessionId,
 					pid: spawnResult.pid,
 				});
-				console.log('[ContextMerge] Grooming session created, pid:', spawnResult.pid);
+				logger.info('[ContextMerge] Grooming session created, pid:', undefined, spawnResult.pid);
 
 				return groomerSessionId;
 			}
@@ -271,7 +272,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 	);
 
 	// Send grooming prompt to a session and wait for the response
-	console.log('[ContextMerge] About to register context:sendGroomingPrompt handler');
+	logger.info('[ContextMerge] About to register context:sendGroomingPrompt handler');
 	try {
 		ipcMain.handle(
 			'context:sendGroomingPrompt',
@@ -340,12 +341,11 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 									chunkCount,
 									totalLength: responseBuffer.length,
 								});
-								console.log(
-									'[ContextMerge] Data chunk',
+								logger.info('[ContextMerge] Data chunk', undefined, [
 									chunkCount,
 									'received, total length:',
-									responseBuffer.length
-								);
+									responseBuffer.length,
+								]);
 							}
 						};
 
@@ -394,7 +394,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 							sessionId,
 							promptLength: prompt.length,
 						});
-						console.log('[ContextMerge] Prompt written to process, waiting for response...');
+						logger.info('[ContextMerge] Prompt written to process, waiting for response...');
 
 						// Set up idle check - if no data for 5 seconds and we have content, consider it done
 						// This handles cases where the process doesn't cleanly exit
@@ -435,9 +435,14 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				}
 			)
 		);
-		console.log('[ContextMerge] Successfully registered context:sendGroomingPrompt handler');
+		logger.info('[ContextMerge] Successfully registered context:sendGroomingPrompt handler');
 	} catch (error) {
-		console.error('[ContextMerge] Failed to register context:sendGroomingPrompt handler:', error);
+		void captureException(error);
+		logger.error(
+			'[ContextMerge] Failed to register context:sendGroomingPrompt handler:',
+			undefined,
+			error
+		);
 	}
 
 	// Cleanup grooming session
@@ -485,6 +490,7 @@ async function cleanupGroomingSessionInternal(
 		processManager.kill(sessionId);
 		logger.debug('Killed grooming session process', LOG_CONTEXT, { sessionId });
 	} catch (error) {
+		void captureException(error);
 		// Process may have already exited
 		logger.debug('Could not kill grooming session (may have already exited)', LOG_CONTEXT, {
 			sessionId,

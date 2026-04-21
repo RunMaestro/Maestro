@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatHeader } from '../../../renderer/components/GroupChatHeader';
 import type { Theme, Shortcut } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 vi.mock('lucide-react', () => ({
 	Info: ({ className }: { className?: string }) => (
 		<span data-testid="info-icon" className={className}>
@@ -30,16 +31,6 @@ vi.mock('lucide-react', () => ({
 		</span>
 	),
 }));
-
-const mockTheme = {
-	colors: {
-		bgSidebar: '#1e1e1e',
-		border: '#333',
-		textMain: '#fff',
-		textDim: '#999',
-		success: '#4caf50',
-	},
-} as Theme;
 
 const mockShortcuts: Record<string, Shortcut> = {
 	toggleRightPanel: { id: 'toggleRightPanel', label: 'Toggle right panel', keys: ['Cmd', 'B'] },

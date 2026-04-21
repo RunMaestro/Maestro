@@ -65,6 +65,13 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	buildSshCommand: vi.fn(),
 }));
 
+// Mock platform detection so we can toggle isWindows() per test
+vi.mock('../../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => true),
+	isLinux: vi.fn(() => false),
+}));
+
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
 
@@ -106,9 +113,11 @@ describe('Tab Naming IPC Handlers', () => {
 		readOnlyArgs: ['--permission-mode', 'plan'],
 	};
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
+		const { isWindows } = await import('../../../../shared/platformDetection');
+		(isWindows as Mock).mockReturnValue(false);
 
 		// Capture handler registrations
 		(ipcMain.handle as Mock).mockImplementation(
@@ -541,6 +550,114 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Tab Name');
+		});
+
+		it('sets sendPromptViaStdinRaw on Windows to avoid ENAMETOOLONG', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw on non-Windows platforms', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(false);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw on Windows when SSH is enabled', async () => {
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+
+			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
+			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			(getSshRemoteConfig as Mock).mockReturnValue({
+				config: { id: 'r1', host: 'h', port: 22 },
+				source: 'session',
+			});
+			(buildSshCommand as Mock).mockResolvedValue({ command: 'ssh', args: [] });
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'message',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('uses stdin for prompt when SSH remote is configured', async () => {

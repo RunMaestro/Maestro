@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { MainPanelContent } from '../../../../renderer/components/MainPanel/MainPanelContent';
 import type { Session, Theme, AITab, FilePreviewTab } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(
@@ -81,15 +82,6 @@ vi.mock('../../../../renderer/components/TerminalView', () => {
 		createTabPidChangeHandler: vi.fn(() => vi.fn()),
 	};
 });
-
-const mockTheme = {
-	colors: {
-		bgMain: '#1a1a1a',
-		accent: '#3b82f6',
-		textMain: '#ffffff',
-		textDim: '#888888',
-	},
-} as Theme;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
 	return {

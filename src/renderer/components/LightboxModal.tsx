@@ -6,6 +6,7 @@ import { ConfirmModal } from './ConfirmModal';
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWriteImage } from '../utils/clipboard';
+import { logger } from '../utils/logger';
 
 interface LightboxModalProps {
 	image: string;
@@ -43,7 +44,7 @@ export function LightboxModal({
 				setTimeout(() => setCopied(false), 2000);
 			}
 		} catch (err) {
-			console.error('Failed to copy image to clipboard:', err);
+			logger.error('Failed to copy image to clipboard:', undefined, err);
 		}
 	};
 

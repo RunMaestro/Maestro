@@ -4,6 +4,7 @@ import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
+import { logger } from '../utils/logger';
 
 interface NotificationsPanelProps {
 	osNotificationsEnabled: boolean;
@@ -65,7 +66,7 @@ export function NotificationsPanel({
 
 		const cleanup = window.maestro.notification.onCommandCompleted((completedId) => {
 			if (completedId === testNotificationId) {
-				console.log('[Notification] Command completed, id:', completedId);
+				logger.info('[Notification] Command completed, id:', undefined, completedId);
 				setTestNotificationId(null);
 				setTestStatus('success');
 			}
@@ -157,11 +158,15 @@ export function NotificationsPanel({
 						{testNotificationId !== null ? (
 							<button
 								onClick={async () => {
-									console.log('[Notification] Stop test button clicked, id:', testNotificationId);
+									logger.info(
+										'[Notification] Stop test button clicked, id:',
+										undefined,
+										testNotificationId
+									);
 									try {
 										await window.maestro.notification.stopSpeak(testNotificationId);
 									} catch (err) {
-										console.error('[Notification] Stop error:', err);
+										logger.error('[Notification] Stop error:', undefined, err);
 									}
 									setTestNotificationId(null);
 									setTestStatus('idle');
@@ -179,7 +184,11 @@ export function NotificationsPanel({
 						) : (
 							<button
 								onClick={async () => {
-									console.log('[Notification] Test button clicked, command:', audioFeedbackCommand);
+									logger.info(
+										'[Notification] Test button clicked, command:',
+										undefined,
+										audioFeedbackCommand
+									);
 									setTestStatus('running');
 									setTestError(null);
 									try {
@@ -187,7 +196,7 @@ export function NotificationsPanel({
 											"Howdy, I'm Maestro, here to conduct your agentic tools into a well-tuned symphony.",
 											audioFeedbackCommand
 										);
-										console.log('[Notification] Speak result:', result);
+										logger.info('[Notification] Speak result:', undefined, result);
 										if (result.success && result.notificationId) {
 											setTestNotificationId(result.notificationId);
 											// Don't change status to 'success' yet - stay in 'running'
@@ -199,7 +208,7 @@ export function NotificationsPanel({
 											setTestError(result.error || 'Command failed');
 										}
 									} catch (err) {
-										console.error('[Notification] Speak error:', err);
+										logger.error('[Notification] Speak error:', undefined, err);
 										setTestStatus('error');
 										setTestError(String(err));
 									}

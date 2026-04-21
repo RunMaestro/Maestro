@@ -12,14 +12,14 @@
 
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
-import type { CueEvent, CueRunResult, CueSettings, CueSubscription } from './cue-types';
+import type { CueCommand, CueEvent, CueRunResult, CueSettings, CueSubscription } from './cue-types';
 import { updateCueEventStatus, safeRecordCueEvent, safeUpdateCueEventStatus } from './cue-db';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
 import { sliceHeadByChars } from './cue-text-utils';
 import { captureException } from '../utils/sentry';
-import { execFileNoThrow } from '../utils/execFile';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
+import { runMaestroCliSend } from './cue-cli-executor';
 
 /** Phase of a run in the state machine: running → stopping | finished */
 export type RunPhase = 'running' | 'stopping' | 'finished';
@@ -43,6 +43,8 @@ export interface QueuedEvent {
 	queuedAt: number;
 	chainDepth?: number;
 	cliOutput?: { target: string };
+	action?: CueSubscription['action'];
+	command?: CueCommand;
 }
 
 export interface CueRunManagerDeps {
@@ -55,6 +57,8 @@ export interface CueRunManagerDeps {
 		subscriptionName: string;
 		event: CueEvent;
 		timeoutMs: number;
+		action?: CueSubscription['action'];
+		command?: CueCommand;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -81,7 +85,9 @@ export interface CueRunManager {
 		subscriptionName: string,
 		outputPrompt?: string,
 		chainDepth?: number,
-		cliOutput?: { target: string }
+		cliOutput?: { target: string },
+		action?: CueSubscription['action'],
+		command?: CueCommand
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -177,7 +183,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				entry.subscriptionName,
 				entry.outputPrompt,
 				entry.chainDepth,
-				entry.cliOutput
+				entry.cliOutput,
+				entry.action,
+				entry.command
 			);
 		}
 
@@ -194,7 +202,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 		subscriptionName: string,
 		outputPrompt?: string,
 		chainDepth?: number,
-		cliOutput?: { target: string }
+		cliOutput?: { target: string },
+		action?: CueSubscription['action'],
+		command?: CueCommand
 	): Promise<void> {
 		const sessionName = getSessionName(sessionId);
 		const settings = deps.getSessionSettings(sessionId);
@@ -243,6 +253,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				subscriptionName,
 				event,
 				timeoutMs,
+				action,
+				command,
 			});
 			if (!activeRuns.has(runId)) {
 				// Engine was stopped (or run was cleared) while onCueRun was in
@@ -272,8 +284,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
 
-			// Execute output prompt if the main task succeeded and an output prompt is configured
-			if (outputPrompt && result.status === 'completed') {
+			// Execute output prompt if the main task succeeded and an output prompt is configured.
+			// Skipped for `action: command` runs — output_prompt is an AI follow-up, not a
+			// shell/cli concept.
+			if (outputPrompt && result.status === 'completed' && action !== 'command') {
 				deps.onLog(
 					'cue',
 					`[CUE] "${subscriptionName}" executing output prompt for downstream handoff`
@@ -379,8 +393,12 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				}
 			}
 
-			// Phase 3: CLI Output delivery — shell out to maestro-cli send --live
-			if (cliOutput && result.status === 'completed') {
+			// Phase 3: legacy cli_output delivery — shell out to maestro-cli send --live.
+			// New code should use a downstream `action: command` subscription with
+			// `command.mode: 'cli'` instead; this path remains for YAML files that
+			// haven't been re-saved through the editor yet. Skipped for command actions
+			// (the action itself is the work, not a side effect).
+			if (cliOutput && result.status === 'completed' && action !== 'command') {
 				deps.onLog(
 					'cue',
 					`[CUE] "${subscriptionName}" Phase 3: delivering CLI output to target="${cliOutput.target}" (stdout length=${result.stdout.length})`
@@ -400,26 +418,19 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						},
 						cue: cueContext,
 					};
-					const resolvedTarget = substituteTemplateVariables(cliOutput.target, templateContext);
-					if (!resolvedTarget || resolvedTarget.trim() === '') {
+					const resolvedTarget = substituteTemplateVariables(
+						cliOutput.target,
+						templateContext
+					).trim();
+					if (!resolvedTarget) {
 						deps.onLog(
 							'warn',
 							`[CUE] "${subscriptionName}" CLI output target resolved to empty string (raw="${cliOutput.target}") — skipping delivery`
 						);
 					} else {
-						const truncatedOutput = sliceHeadByChars(result.stdout, 100_000);
-						const cliScriptPath = require('path').join(
-							process.resourcesPath ?? '',
-							'maestro-cli.js'
-						);
-						const cliResult = await execFileNoThrow(
-							process.execPath,
-							[cliScriptPath, 'send', resolvedTarget, truncatedOutput, '--live'],
-							undefined,
-							{ timeout: 30_000 }
-						);
-						if (cliResult.exitCode !== 0) {
-							throw new Error(`CLI exited with code ${cliResult.exitCode}: ${cliResult.stderr}`);
+						const sendResult = await runMaestroCliSend(resolvedTarget, result.stdout);
+						if (!sendResult.ok) {
+							throw new Error(`CLI exited with code ${sendResult.exitCode}: ${sendResult.stderr}`);
 						}
 						deps.onLog(
 							'cue',
@@ -497,7 +508,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			subscriptionName: string,
 			outputPrompt?: string,
 			chainDepth?: number,
-			cliOutput?: { target: string }
+			cliOutput?: { target: string },
+			action?: CueSubscription['action'],
+			command?: CueCommand
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -527,6 +540,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					queuedAt: Date.now(),
 					chainDepth,
 					cliOutput,
+					action,
+					command,
 				});
 
 				deps.onLog(
@@ -545,7 +560,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				subscriptionName,
 				outputPrompt,
 				chainDepth,
-				cliOutput
+				cliOutput,
+				action,
+				command
 			);
 		},
 

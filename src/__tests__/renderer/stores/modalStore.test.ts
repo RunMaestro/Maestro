@@ -410,6 +410,7 @@ describe('modalStore', () => {
 				'renameTab',
 				'renameGroup',
 				'agentSessions',
+				'memoryViewer',
 				'queueBrowser',
 				'batchRunner',
 				'autoRunSetup',

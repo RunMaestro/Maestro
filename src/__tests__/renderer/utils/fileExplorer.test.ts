@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	shouldOpenExternally,
 	loadFileTree,
@@ -350,7 +351,7 @@ describe('fileExplorer utils', () => {
 			const error = new Error('Permission denied');
 			vi.mocked(window.maestro.fs.readDir).mockRejectedValue(error);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			await expect(loadFileTree('/restricted')).rejects.toThrow('Permission denied');
 			consoleSpy.mockRestore();
 		});
@@ -505,7 +506,7 @@ describe('fileExplorer utils', () => {
 			]);
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]); // Empty children
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -526,7 +527,7 @@ describe('fileExplorer utils', () => {
 					{ name: 'guide.md', isFile: true, isDirectory: false, path: '/project/docs/guide.md' }, // duplicate child
 				]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -546,7 +547,7 @@ describe('fileExplorer utils', () => {
 				{ name: nfdName, isFile: true, isDirectory: false }, // same visual name, different Unicode form
 			]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -567,7 +568,7 @@ describe('fileExplorer utils', () => {
 					{ name: nfdName, isFile: true, isDirectory: false }, // NFD duplicate in child
 				]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();

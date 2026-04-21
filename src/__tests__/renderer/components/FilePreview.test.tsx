@@ -4,6 +4,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -166,19 +167,6 @@ vi.mock('../../../renderer/utils/remarkFrontmatterTable', () => ({
 vi.mock('../../../shared/gitUtils', () => ({
 	isImageFile: (filename: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(filename),
 }));
-
-const mockTheme = {
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		textMain: '#eee',
-		textDim: '#888',
-		border: '#333',
-		accent: '#4a9eff',
-		success: '#22c55e',
-	},
-};
 
 const defaultProps = {
 	file: { name: 'test.md', content: '# Hello World', path: '/test/test.md' },

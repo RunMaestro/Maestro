@@ -278,6 +278,83 @@ export async function readDirRemote(
 }
 
 /**
+ * Directory entry with stat metadata. Returned by {@link listDirWithStatsRemote}.
+ */
+export interface RemoteDirEntryWithStats {
+	/** File name (basename, no leading directory) */
+	name: string;
+	/** File size in bytes */
+	size: number;
+	/** Modification time as Unix timestamp (milliseconds) */
+	mtime: number;
+}
+
+/**
+ * List files in a remote directory along with their size and mtime in a **single**
+ * SSH call.
+ *
+ * Why this exists: firing `statRemote` per file via `Promise.all` opens one SSH
+ * connection per file, which is rejected by sshd's `MaxStartups` limit (default
+ * 10:30:100) once you go past ~30 concurrent files. This utility runs `stat` on
+ * all files in the directory in one round-trip so large session directories
+ * (hundreds of entries) list reliably.
+ *
+ * Only regular files are returned (directories and symlinks are skipped). The
+ * optional `nameSuffix` filters by extension (e.g. `.jsonl`).
+ */
+export async function listDirWithStatsRemote(
+	dirPath: string,
+	sshRemote: SshRemoteConfig,
+	options?: { nameSuffix?: string },
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteDirEntryWithStats[]>> {
+	const escapedPath = shellEscape(dirPath);
+	// Build a glob pattern passed to the remote shell. If no suffix is given,
+	// match every non-hidden file in the directory.
+	const glob = options?.nameSuffix ? `*${options.nameSuffix}` : '*';
+
+	// Portable bulk stat: GNU (`stat --printf`) falls back to BSD (`stat -f`).
+	// Output format: <size>|<mtime-seconds>|<name>\n
+	// Using `|` as a separator — both UUID-style session names and common
+	// filenames never contain it, and neither does whitespace in tab form.
+	// The leading `cd` scopes `*.jsonl` expansion to the target dir so file
+	// names come back as basenames rather than full paths.
+	const remoteCommand =
+		`cd ${escapedPath} 2>/dev/null || exit 0; ` +
+		`if stat --version >/dev/null 2>&1; then ` +
+		`stat --printf='%s|%Y|%n\\n' ${glob} 2>/dev/null || true; ` +
+		`else ` +
+		`stat -f '%z|%m|%N' ${glob} 2>/dev/null || true; ` +
+		`fi`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to list directory with stats: ${dirPath}`,
+		};
+	}
+
+	const entries: RemoteDirEntryWithStats[] = [];
+	const lines = result.stdout.split('\n');
+	for (const line of lines) {
+		if (!line) continue;
+		// Name may contain `|` in pathological cases; split on first two pipes only.
+		const firstPipe = line.indexOf('|');
+		const secondPipe = firstPipe >= 0 ? line.indexOf('|', firstPipe + 1) : -1;
+		if (firstPipe < 0 || secondPipe < 0) continue;
+		const size = parseInt(line.slice(0, firstPipe), 10);
+		const mtimeSeconds = parseInt(line.slice(firstPipe + 1, secondPipe), 10);
+		const name = line.slice(secondPipe + 1);
+		if (!name || isNaN(size) || isNaN(mtimeSeconds)) continue;
+		entries.push({ name, size, mtime: mtimeSeconds * 1000 });
+	}
+
+	return { success: true, data: entries };
+}
+
+/**
  * Read file contents from a remote host via SSH.
  *
  * Executes `cat` on the remote to read the file contents.

@@ -12,6 +12,7 @@ import { AutoRunnerHelpModal } from '../../../renderer/components/AutoRun/AutoRu
 import type { Theme } from '../../../renderer/types';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the layer stack context
 const mockRegisterLayer = vi.fn(() => 'layer-123');
 const mockUnregisterLayer = vi.fn();
@@ -42,26 +43,6 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2d2d2d',
-		border: '#444444',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#007acc',
-		error: '#ff4444',
-		success: '#44ff44',
-		warning: '#ffaa00',
-		cursor: '#ffffff',
-		selection: '#264f78',
-		terminalBackground: '#000000',
-	},
-};
 
 describe('AutoRunnerHelpModal', () => {
 	const mockOnClose = vi.fn();

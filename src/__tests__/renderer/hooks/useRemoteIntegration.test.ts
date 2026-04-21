@@ -46,6 +46,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteNewAITabWithPromptHandler:
+		| ((sessionId: string, prompt: string, responseChannel: string) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -94,12 +97,25 @@ describe('useRemoteIntegration', () => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
 		}),
+		onRemoteNewAITabWithPrompt: vi.fn().mockImplementation((handler) => {
+			onRemoteNewAITabWithPromptHandler = handler;
+			return () => {};
+		}),
+		sendRemoteNewAITabWithPromptResponse: vi.fn(),
 		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		onRemoteRefreshFileTree: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteOpenBrowserTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteOpenTerminalTabResponse: vi.fn(),
 		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -212,6 +228,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteStarTabHandler = undefined;
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
+		onRemoteNewAITabWithPromptHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -590,6 +607,73 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+		});
+	});
+
+	describe('remote new AI tab with prompt', () => {
+		it('creates tab, dispatches remoteCommand, and acks true on idle session', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-1');
+			});
+
+			expect(deps.setSessions).toHaveBeenCalled();
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: { sessionId: 'session-1', command: 'Hello', inputMode: 'ai' },
+				})
+			);
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan-1', true);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('acks false and skips dispatch when session is missing', () => {
+			const deps = createDeps({ sessions: [] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('nonexistent', 'Hello', 'chan-missing');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'chan-missing',
+				false
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('acks false and skips dispatch when session is busy', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-busy');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'chan-busy',
+				false
+			);
+
+			dispatchEventSpy.mockRestore();
 		});
 	});
 

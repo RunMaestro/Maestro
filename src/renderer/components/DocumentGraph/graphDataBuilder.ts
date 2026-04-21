@@ -13,7 +13,7 @@ import {
 	type ParseMarkdownLinksOptions,
 } from '../../utils/markdownLinkParser';
 import { computeDocumentStats, DocumentStats } from '../../utils/documentStats';
-import { getRendererPerfMetrics } from '../../utils/logger';
+import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Performance metrics instance for graph data building
@@ -65,7 +65,7 @@ let reverseLinkIndexCache: CachedReverseLinkIndex | null = null;
 export function clearGraphDataCache(): void {
 	parsedFileCache.clear();
 	reverseLinkIndexCache = null;
-	console.log('[DocumentGraph] Cache cleared');
+	logger.info('[DocumentGraph] Cache cleared');
 }
 
 /**
@@ -77,7 +77,7 @@ export function invalidateCacheForFiles(filePaths: string[]): void {
 	}
 	// Invalidate reverse index since links may have changed
 	reverseLinkIndexCache = null;
-	console.log(`[DocumentGraph] Invalidated cache for ${filePaths.length} file(s)`);
+	logger.info(`[DocumentGraph] Invalidated cache for ${filePaths.length} file(s)`);
 }
 
 /**
@@ -376,7 +376,7 @@ async function scanMarkdownFiles(
 				);
 			}
 			// Log error but continue scanning other directories for non-root failures
-			console.warn(`Failed to scan directory ${currentPath}:`, error);
+			logger.warn(`Failed to scan directory ${currentPath}:`, undefined, error);
 		}
 	}
 
@@ -399,7 +399,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 
 	const buildStart = perfMetrics.start();
 
-	console.log('[DocumentGraph] Building graph from focus file (outgoing links only):', {
+	logger.info('[DocumentGraph] Building graph from focus file (outgoing links only):', undefined, {
 		rootPath,
 		focusFile,
 		maxDepth,
@@ -410,7 +410,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	// Step 0: Scan all markdown files upfront (fast - just directory traversal, no content parsing)
 	// This enables wiki-link resolution in the preview panel for files not yet loaded in the graph
 	const allMarkdownFiles = await scanMarkdownFiles(rootPath, onProgress, sshRemoteId);
-	console.log(`[DocumentGraph] Found ${allMarkdownFiles.length} markdown files in ${rootPath}`);
+	logger.info(`[DocumentGraph] Found ${allMarkdownFiles.length} markdown files in ${rootPath}`);
 
 	// Build parse options with file tree for fallback link resolution
 	const parseOptions: ParseMarkdownLinksOptions = { allFiles: allMarkdownFiles };
@@ -425,7 +425,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	// Step 1: Parse the focus file first (use SSH-aware parsing)
 	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, parseOptions);
 	if (!focusParsed) {
-		console.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
+		logger.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
 		return {
 			nodes: [],
 			edges: [],
@@ -517,7 +517,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	const parsedFiles = Array.from(parsedFileMap.values());
 	const loadedPaths = new Set(parsedFileMap.keys());
 
-	console.log('[DocumentGraph] BFS traversal complete (outgoing only):', {
+	logger.info('[DocumentGraph] BFS traversal complete (outgoing only):', undefined, {
 		focusFile,
 		filesLoaded: parsedFiles.length,
 		maxDepth,
@@ -629,8 +629,9 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 			? PERFORMANCE_THRESHOLDS.GRAPH_BUILD_SMALL
 			: PERFORMANCE_THRESHOLDS.GRAPH_BUILD_LARGE;
 	if (totalBuildTime > threshold) {
-		console.warn(
+		logger.warn(
 			`[DocumentGraph] buildGraphData took ${totalBuildTime.toFixed(0)}ms (threshold: ${threshold}ms)`,
+			undefined,
 			{
 				totalDocuments: visited.size,
 				nodeCount: documentNodes.length,
@@ -648,7 +649,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 		let aborted = false;
 
 		const runScan = async () => {
-			console.log('[DocumentGraph] Starting background backlink scan...');
+			logger.info('[DocumentGraph] Starting background backlink scan...');
 			const scanStart = perfMetrics.start();
 
 			try {
@@ -656,7 +657,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 				const allFiles = await scanMarkdownFiles(rootPath, undefined, sshRemoteId);
 				const totalFiles = allFiles.length;
 
-				console.log(`[DocumentGraph] Backlink scan: found ${totalFiles} markdown files to check`);
+				logger.info(`[DocumentGraph] Backlink scan: found ${totalFiles} markdown files to check`);
 
 				// Track which new nodes/edges we discover
 				const newNodes: GraphNode[] = [];
@@ -669,7 +670,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 
 				for (const filePath of allFiles) {
 					if (aborted) {
-						console.log('[DocumentGraph] Backlink scan aborted');
+						logger.info('[DocumentGraph] Backlink scan aborted');
 						return;
 					}
 
@@ -766,17 +767,21 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 					newEdgesFound: newEdges.length,
 				});
 
-				console.log(`[DocumentGraph] Backlink scan complete in ${scanTime.toFixed(0)}ms:`, {
-					filesScanned,
-					newNodesFound: newNodes.length,
-					newEdgesFound: newEdges.length,
-				});
+				logger.info(
+					`[DocumentGraph] Backlink scan complete in ${scanTime.toFixed(0)}ms:`,
+					undefined,
+					{
+						filesScanned,
+						newNodesFound: newNodes.length,
+						newEdgesFound: newEdges.length,
+					}
+				);
 
 				if (!aborted) {
 					onComplete();
 				}
 			} catch (error) {
-				console.error('[DocumentGraph] Backlink scan failed:', error);
+				logger.error('[DocumentGraph] Backlink scan failed:', undefined, error);
 				if (!aborted) {
 					onComplete();
 				}
@@ -868,7 +873,7 @@ export interface ExpandNodeResult {
 export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNodeResult> {
 	const { rootPath, filePath, loadedPaths, maxDepth = 1, sshRemoteId, allMarkdownFiles } = options;
 
-	console.log('[DocumentGraph] Expanding node:', {
+	logger.info('[DocumentGraph] Expanding node:', undefined, {
 		filePath,
 		loadedPaths: loadedPaths.size,
 		maxDepth,
@@ -891,7 +896,7 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 	// Parse the source node to get its outgoing links
 	const sourceParsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId, parseOptions);
 	if (!sourceParsed) {
-		console.warn('[DocumentGraph] Failed to parse source node for expansion:', filePath);
+		logger.warn('[DocumentGraph] Failed to parse source node for expansion:', undefined, filePath);
 		return {
 			newNodes,
 			newEdges,
@@ -1042,7 +1047,7 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 		});
 	}
 
-	console.log('[DocumentGraph] Node expansion complete:', {
+	logger.info('[DocumentGraph] Node expansion complete:', undefined, {
 		filePath,
 		newNodes: newNodes.length,
 		newEdges: newEdges.length,
@@ -1075,7 +1080,7 @@ async function parseFileWithSsh(
 		// Get file stats
 		const stat = await window.maestro.fs.stat(fullPath, sshRemoteId);
 		if (!stat) {
-			console.warn(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
+			logger.warn(`[DocumentGraph] parseFileWithSsh: stat returned null for ${fullPath}`);
 			return null;
 		}
 		const fileSize = stat.size ?? 0;
@@ -1093,7 +1098,7 @@ async function parseFileWithSsh(
 		// Read file content
 		const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 		if (content === null || content === undefined) {
-			console.warn(`[DocumentGraph] parseFileWithSsh: readFile returned null for ${fullPath}`);
+			logger.warn(`[DocumentGraph] parseFileWithSsh: readFile returned null for ${fullPath}`);
 			return null;
 		}
 
@@ -1134,7 +1139,7 @@ async function parseFileWithSsh(
 
 		return parsed;
 	} catch (error) {
-		console.warn(`Failed to parse file ${fullPath}:`, error);
+		logger.warn(`Failed to parse file ${fullPath}:`, undefined, error);
 		return null;
 	}
 }

@@ -18,6 +18,7 @@ import {
 	type IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../hooks/utils';
+import { registerPendingEdit } from '../../../hooks/cue/pendingEditsRegistry';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { EdgePromptRow } from './EdgePromptRow';
 import { CueSelect } from './CueSelect';
@@ -74,18 +75,41 @@ export function AgentConfigPanel({
 		setLocalOutputPrompt(data.outputPrompt ?? '');
 	}, [data.outputPrompt]);
 
-	const { debouncedCallback: debouncedUpdateInput } = useDebouncedCallback((...args: unknown[]) => {
-		const inputPrompt = args[0] as string;
-		onUpdateNode(node.id, { inputPrompt } as Partial<AgentNodeData>);
-	}, 300);
+	const { debouncedCallback: debouncedUpdateInput, flush: flushInput } = useDebouncedCallback(
+		(...args: unknown[]) => {
+			const inputPrompt = args[0] as string;
+			onUpdateNode(node.id, { inputPrompt } as Partial<AgentNodeData>);
+		},
+		300
+	);
 
-	const { debouncedCallback: debouncedUpdateOutput } = useDebouncedCallback(
+	const { debouncedCallback: debouncedUpdateOutput, flush: flushOutput } = useDebouncedCallback(
 		(...args: unknown[]) => {
 			const outputPrompt = args[0] as string;
 			onUpdateNode(node.id, { outputPrompt } as Partial<AgentNodeData>);
 		},
 		300
 	);
+
+	// Flush any pending prompt writes on unmount. Combined with the `key={node.id}`
+	// applied by the parent, this guarantees the user's last keystrokes commit to
+	// THIS node before the component is torn down on selection change — otherwise
+	// the 300ms debounce would race against React unmount and drop the edit.
+	//
+	// Also register with the pending-edits registry so `handleSave` can flush
+	// this panel's pending writes before it reads pipelineState — clicking Save
+	// within 300ms of a keystroke would otherwise persist stale/empty prompts.
+	useEffect(() => {
+		const unregister = registerPendingEdit(() => {
+			flushInput();
+			flushOutput();
+		});
+		return () => {
+			flushInput();
+			flushOutput();
+			unregister();
+		};
+	}, [flushInput, flushOutput]);
 
 	const handleInputPromptChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {

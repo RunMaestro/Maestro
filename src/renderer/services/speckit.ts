@@ -6,6 +6,7 @@
  */
 
 import type { SpecKitCommand, SpecKitMetadata } from '../types';
+import { logger } from '../utils/logger';
 
 /**
  * Get all spec-kit commands from the main process
@@ -18,7 +19,7 @@ export async function getSpeckitCommands(): Promise<SpecKitCommand[]> {
 		}
 		return [];
 	} catch (error) {
-		console.error('[SpecKit] Failed to get commands:', error);
+		logger.error('[SpecKit] Failed to get commands:', undefined, error);
 		return [];
 	}
 }
@@ -34,7 +35,7 @@ export async function getSpeckitMetadata(): Promise<SpecKitMetadata | null> {
 		}
 		return null;
 	} catch (error) {
-		console.error('[SpecKit] Failed to get metadata:', error);
+		logger.error('[SpecKit] Failed to get metadata:', undefined, error);
 		return null;
 	}
 }
@@ -50,7 +51,7 @@ export async function getSpeckitCommand(slashCommand: string): Promise<SpecKitCo
 		}
 		return null;
 	} catch (error) {
-		console.error('[SpecKit] Failed to get command:', error);
+		logger.error('[SpecKit] Failed to get command:', undefined, error);
 		return null;
 	}
 }

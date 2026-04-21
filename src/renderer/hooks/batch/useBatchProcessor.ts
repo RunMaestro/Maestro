@@ -28,6 +28,7 @@ import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
 import type { AgentSpawnErrorKind } from '../agent/useAgentExecution';
+import { logger } from '../../utils/logger';
 
 // Debounce delay for batch state updates (Quick Win 1)
 const BATCH_STATE_DEBOUNCE_MS = 200;
@@ -262,6 +263,23 @@ export function useBatchProcessor({
 	// Error resolution promises to pause batch processing until user action (per session)
 	const errorResolutionRefs = useRef<Record<string, ErrorResolutionEntry>>({});
 
+	// Per-session state for emergency stats/history flush on force-kill.
+	// Whoever deletes the entry first (the loop's normal cleanup, or killBatchRun) is
+	// responsible for writing the final history + endAutoRun. This guards against the
+	// case where killBatchRun calls timeTracking.stopTracking (which zeros the tracker)
+	// before the loop's cleanup reads it, resulting in a 0ms duration being recorded.
+	const autoRunFlushStateRefs = useRef<
+		Record<
+			string,
+			{
+				statsAutoRunId: string | null;
+				sessionName: string;
+				projectPath: string;
+				getCompletedTasks: () => number;
+			}
+		>
+	>({});
+
 	// Track whether the component is still mounted to prevent state updates after unmount
 	const isMountedRef = useRef(false);
 
@@ -282,6 +300,9 @@ export function useBatchProcessor({
 
 			// Clear stop requested refs (though they should already be cleaned up per-session)
 			stopRequestedRefs.current = {};
+
+			// Drop any outstanding Auto Run flush state — nothing to flush against after unmount.
+			autoRunFlushStateRefs.current = {};
 		};
 	}, []);
 
@@ -404,7 +425,7 @@ export function useBatchProcessor({
 
 						broadcastAutoRunState(sessionId, newStateForSession);
 					} catch (error) {
-						console.error('[BatchProcessor:onUpdate] ERROR in debounce callback:', error);
+						logger.error('[BatchProcessor:onUpdate] ERROR in debounce callback:', undefined, error);
 					}
 				},
 				[broadcastAutoRunState]
@@ -781,13 +802,23 @@ export function useBatchProcessor({
 				});
 			} catch (statsError) {
 				// Don't fail the batch if stats tracking fails
-				console.warn('[BatchProcessor] Failed to start stats tracking:', statsError);
+				logger.warn('[BatchProcessor] Failed to start stats tracking:', undefined, statsError);
 			}
 
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
 			let loopIteration = 0;
+
+			// Register this Auto Run for emergency stats/history flush on force-kill.
+			// Populated even if startAutoRun failed (statsAutoRunId null) so killBatchRun can
+			// still write a history entry with the elapsed time the user actually spent.
+			autoRunFlushStateRefs.current[sessionId] = {
+				statsAutoRunId,
+				sessionName: session.name || session.cwd.split('/').pop() || 'Unknown',
+				projectPath: session.cwd,
+				getCompletedTasks: () => totalCompletedTasks,
+			};
 
 			// Per-loop tracking for loop summary
 			let loopStartTime = Date.now();
@@ -930,8 +961,9 @@ export function useBatchProcessor({
 							docCheckedCount = workingCopyResult.checkedCount;
 							docTasksTotal = remainingTasks;
 						} catch (err) {
-							console.error(
+							logger.error(
 								`[BatchProcessor] Failed to create working copy for ${docEntry.filename}:`,
+								undefined,
 								err
 							);
 							// Continue with original document as fallback
@@ -1196,7 +1228,11 @@ export function useBatchProcessor({
 									});
 								} catch (statsError) {
 									// Don't fail the batch if stats tracking fails
-									console.warn('[BatchProcessor] Failed to record task stats:', statsError);
+									logger.warn(
+										'[BatchProcessor] Failed to record task stats:',
+										undefined,
+										statsError
+									);
 								}
 							}
 
@@ -1231,7 +1267,11 @@ export function useBatchProcessor({
 										timeSpent: timeTracking.getElapsedTime(sessionId),
 									})
 									.catch((err: unknown) => {
-										console.warn('[BatchProcessor] Failed to update Symphony progress:', err);
+										logger.warn(
+											'[BatchProcessor] Failed to update Symphony progress:',
+											undefined,
+											err
+										);
 									});
 							}
 
@@ -1309,7 +1349,7 @@ export function useBatchProcessor({
 								window.maestro.notification
 									.speak(shortSummary, audioFeedbackCommandRef.current)
 									.catch((err) => {
-										console.error('[BatchProcessor] Failed to speak synopsis:', err);
+										logger.error('[BatchProcessor] Failed to speak synopsis:', undefined, err);
 									});
 							}
 
@@ -1373,8 +1413,9 @@ export function useBatchProcessor({
 							docContent = taskResult.contentAfterTask;
 						} catch (error) {
 							stopProgressPolling();
-							console.error(
+							logger.error(
 								`[BatchProcessor] Error running task in ${docEntry.filename} for session ${sessionId}:`,
+								undefined,
 								error
 							);
 
@@ -1757,44 +1798,51 @@ export function useBatchProcessor({
 			// Success is true if not stopped and at least some documents completed without stalling
 			const isSuccess = !wasStopped && !allDocsStalled;
 
-			try {
-				await onAddHistoryEntry({
-					type: 'AUTO',
-					timestamp: Date.now(),
-					summary: finalSummary,
-					fullResponse: finalDetails,
-					projectPath: session.cwd,
-					sessionId, // Include sessionId so the summary appears in session's history
-					success: isSuccess,
-					elapsedTimeMs: totalElapsedMs,
-					usageStats:
-						totalInputTokens > 0 || totalOutputTokens > 0
-							? {
-									inputTokens: totalInputTokens,
-									outputTokens: totalOutputTokens,
-									cacheReadInputTokens: 0,
-									cacheCreationInputTokens: 0,
-									totalCostUsd: totalCost,
-									contextWindow: 0,
-								}
-							: undefined,
-					achievementAction: 'openAbout', // Enable clickable link to achievements panel
-				});
-			} catch {
-				// Ignore history errors
-			}
+			// Claim the flush state: if killBatchRun already flushed, skip the history + stats
+			// writes here to avoid clobbering recorded duration with a stale/zero value.
+			const alreadyFlushed = !autoRunFlushStateRefs.current[sessionId];
+			delete autoRunFlushStateRefs.current[sessionId];
 
-			// End stats tracking for this Auto Run session
-			if (statsAutoRunId) {
+			if (!alreadyFlushed) {
 				try {
-					await window.maestro.stats.endAutoRun(
-						statsAutoRunId,
-						totalElapsedMs,
-						totalCompletedTasks
-					);
-				} catch (statsError) {
-					// Don't fail cleanup if stats tracking fails
-					console.warn('[BatchProcessor] Failed to end stats tracking:', statsError);
+					await onAddHistoryEntry({
+						type: 'AUTO',
+						timestamp: Date.now(),
+						summary: finalSummary,
+						fullResponse: finalDetails,
+						projectPath: session.cwd,
+						sessionId, // Include sessionId so the summary appears in session's history
+						success: isSuccess,
+						elapsedTimeMs: totalElapsedMs,
+						usageStats:
+							totalInputTokens > 0 || totalOutputTokens > 0
+								? {
+										inputTokens: totalInputTokens,
+										outputTokens: totalOutputTokens,
+										cacheReadInputTokens: 0,
+										cacheCreationInputTokens: 0,
+										totalCostUsd: totalCost,
+										contextWindow: 0,
+									}
+								: undefined,
+						achievementAction: 'openAbout', // Enable clickable link to achievements panel
+					});
+				} catch {
+					// Ignore history errors
+				}
+
+				// End stats tracking for this Auto Run session
+				if (statsAutoRunId) {
+					try {
+						await window.maestro.stats.endAutoRun(
+							statsAutoRunId,
+							totalElapsedMs,
+							totalCompletedTasks
+						);
+					} catch (statsError) {
+						// Don't fail cleanup if stats tracking fails
+						logger.warn('[BatchProcessor] Failed to end stats tracking:', undefined, statsError);
+					}
 				}
 			}
 
@@ -1901,6 +1949,55 @@ export function useBatchProcessor({
 				'[BatchProcessor:killBatchRun] sessionId must not contain "-batch-"'
 			);
 
+			// 0. Flush Auto Run stats + history BEFORE we tear down timeTracking below.
+			//    stopTracking() deletes the tracker, so elapsed time must be captured now.
+			//    Atomically claiming the ref ensures the loop's normal cleanup won't double-write.
+			const flushState = autoRunFlushStateRefs.current[sessionId];
+			delete autoRunFlushStateRefs.current[sessionId];
+			if (flushState) {
+				const elapsedMs = timeTracking.getElapsedTime(sessionId);
+				const completedTasks = flushState.getCompletedTasks();
+				if (flushState.statsAutoRunId) {
+					try {
+						await window.maestro.stats.endAutoRun(
+							flushState.statsAutoRunId,
+							elapsedMs,
+							completedTasks
+						);
+					} catch (statsError) {
+						logger.warn(
+							'[BatchProcessor:killBatchRun] Failed to end stats tracking:',
+							undefined,
+							statsError
+						);
+					}
+				}
+				try {
+					await onAddHistoryEntry({
+						type: 'AUTO',
+						timestamp: Date.now(),
+						summary: `Auto Run killed: ${completedTasks} task${completedTasks !== 1 ? 's' : ''} in ${formatElapsedTime(elapsedMs)}`,
+						fullResponse: [
+							'**Auto Run Summary**',
+							'',
+							'- **Status:** Killed by user',
+							`- **Tasks Completed:** ${completedTasks}`,
+							`- **Total Duration:** ${formatElapsedTime(elapsedMs)}`,
+						].join('\n'),
+						projectPath: flushState.projectPath,
+						sessionId,
+						success: false,
+						elapsedTimeMs: elapsedMs,
+					});
+				} catch (historyError) {
+					logger.warn(
+						'[BatchProcessor:killBatchRun] Failed to add history entry:',
+						undefined,
+						historyError
+					);
+				}
+			}
+
 			// 1. Kill all active batch processes for this session and wait for termination before cleanup.
 			// Batch process session IDs are generated as: `${sessionId}-batch-${timestamp}`.
 			try {
@@ -1921,7 +2018,7 @@ export function useBatchProcessor({
 
 				await Promise.allSettled(batchProcessIds.map((id) => window.maestro.process.kill(id)));
 			} catch (error) {
-				console.error('[BatchProcessor:killBatchRun] Failed to kill process:', error);
+				logger.error('[BatchProcessor:killBatchRun] Failed to kill process:', undefined, error);
 			}
 
 			// 2. Set stop flag so the processing loop exits if it's still running
@@ -1954,7 +2051,7 @@ export function useBatchProcessor({
 			// 8. Allow system to sleep
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 		},
-		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking]
+		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking, onAddHistoryEntry]
 	);
 
 	/**

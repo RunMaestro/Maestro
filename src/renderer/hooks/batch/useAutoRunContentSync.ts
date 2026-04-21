@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { logger } from '../../utils/logger';
 
 export interface UseAutoRunContentSyncParams {
 	content: string;
@@ -148,7 +149,7 @@ export function useAutoRunContentSync({
 			);
 			setSavedContent(localContent);
 		} catch (err) {
-			console.error('Failed to save:', err);
+			logger.error('Failed to save:', undefined, err);
 		}
 	}, [folderPath, selectedFile, localContent, isDirty, setSavedContent, sshRemoteId]);
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { UpdateStatus } from '../types';
 import {
 	X,
 	Download,
@@ -37,20 +38,6 @@ interface UpdateCheckResult {
 	releases: Release[];
 	releasesUrl: string;
 	assetsReady: boolean;
-	error?: string;
-}
-
-interface UpdateStatus {
-	status:
-		| 'idle'
-		| 'checking'
-		| 'available'
-		| 'not-available'
-		| 'downloading'
-		| 'downloaded'
-		| 'error';
-	info?: { version: string };
-	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;
 }
 

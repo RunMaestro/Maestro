@@ -9,8 +9,8 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { CueHelpContent } from '../../../renderer/components/CueHelpModal';
-import type { Theme } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock formatShortcutKeys to return predictable output
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
@@ -18,26 +18,6 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'test-dark' as Theme['id'],
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2d2d2d',
-		border: '#444444',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#007acc',
-		accentDim: '#007acc40',
-		accentText: '#007acc',
-		accentForeground: '#ffffff',
-		error: '#ff4444',
-		success: '#44ff44',
-		warning: '#ffaa00',
-	},
-};
 
 describe('CueHelpContent', () => {
 	beforeEach(() => {

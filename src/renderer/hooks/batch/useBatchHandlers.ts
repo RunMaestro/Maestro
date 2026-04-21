@@ -34,6 +34,7 @@ import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+import { logger } from '../../utils/logger';
 
 /**
  * Resolve the effective group name for a session, falling back to the parent's group
@@ -330,7 +331,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 					// Submit to leaderboard in background (only if we have an auth token)
 					if (!lbReg.authToken) {
-						console.warn('Leaderboard submission skipped: no auth token');
+						logger.warn('Leaderboard submission skipped: no auth token');
 					} else {
 						window.maestro.leaderboard
 							.submit({
@@ -511,7 +512,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				window.maestro.groupChat
 					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
 					.catch((err) => {
-						console.error('[GroupChat] Failed to report auto run complete:', err);
+						logger.error('[GroupChat] Failed to report auto run complete:', undefined, err);
 						// Surface the failure so the user knows synthesis will not trigger automatically.
 						notifyToast({
 							type: 'error',
@@ -641,20 +642,20 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				targetSessionId ??
 				activeSession?.id ??
 				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : undefined);
-			console.log(
-				'[App:handleStopBatchRun] targetSessionId:',
+			logger.info('[App:handleStopBatchRun] targetSessionId:', undefined, [
 				targetSessionId,
 				'resolved sessionId:',
-				sessionId
-			);
+				sessionId,
+			]);
 			if (!sessionId) return;
 			const session = sessions.find((s) => s.id === sessionId);
 			const agentName = session?.name || 'this session';
 			useModalStore.getState().openModal('confirm', {
 				message: `Stop Auto Run for "${agentName}" after the current task completes?`,
 				onConfirm: () => {
-					console.log(
+					logger.info(
 						'[App:handleStopBatchRun] Confirmation callback executing for sessionId:',
+						undefined,
 						sessionId
 					);
 					stopBatchRun(sessionId);
@@ -666,7 +667,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 	const handleKillBatchRun = useCallback(
 		async (sessionId: string) => {
-			console.log('[App:handleKillBatchRun] Force killing sessionId:', sessionId);
+			logger.info('[App:handleKillBatchRun] Force killing sessionId:', undefined, sessionId);
 			await killBatchRun(sessionId);
 		},
 		[killBatchRun]

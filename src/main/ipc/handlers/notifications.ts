@@ -16,6 +16,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { captureException } from '../../utils/sentry';
 
 // ==========================================================================
 // Constants
@@ -290,6 +291,7 @@ function executeNotificationCommand(text: string, command?: string): ExecuteResu
 			completed,
 		};
 	} catch (error) {
+		void captureException(error);
 		logger.error('Notification error starting command', 'Notification', {
 			error: String(error),
 			command: fullCommand,
@@ -412,6 +414,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					return { success: false, error: 'Notifications not supported' };
 				}
 			} catch (error) {
+				void captureException(error);
 				logger.error('Error showing notification', 'Notification', error);
 				return { success: false, error: String(error) };
 			}
@@ -479,6 +482,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 
 				return { success: true };
 			} catch (error) {
+				void captureException(error);
 				logger.error('Notification error stopping process', 'Notification', {
 					notificationId,
 					error: String(error),

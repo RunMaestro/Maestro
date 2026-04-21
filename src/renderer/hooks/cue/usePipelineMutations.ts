@@ -18,6 +18,7 @@ import type {
 	PipelineEdge as PipelineEdgeType,
 	TriggerNodeData,
 	AgentNodeData,
+	CommandNodeData,
 } from '../../../shared/cue-pipeline-types';
 
 export interface UsePipelineMutationsParams {
@@ -31,7 +32,10 @@ export interface UsePipelineMutationsParams {
 }
 
 export interface UsePipelineMutationsReturn {
-	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
+	onUpdateNode: (
+		nodeId: string,
+		data: Partial<TriggerNodeData | AgentNodeData | CommandNodeData>
+	) => void;
 	onUpdateEdgePrompt: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
 	onUpdateEdge: (edgeId: string, updates: Partial<PipelineEdgeType>) => void;
@@ -46,7 +50,7 @@ export function usePipelineMutations({
 		selection;
 
 	const onUpdateNode = useCallback(
-		(nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => {
+		(nodeId: string, data: Partial<TriggerNodeData | AgentNodeData | CommandNodeData>) => {
 			if (!selectedNodePipelineId) return;
 			setPipelineState((prev) => ({
 				...prev,

@@ -28,6 +28,7 @@ import { MarketplaceFetchError, MarketplaceImportError } from '../../../shared/m
 import { SshRemoteConfig } from '../../../shared/types';
 import { writeFileRemote, mkdirRemote } from '../../utils/remote-fs';
 import type { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
 
 // ============================================================================
 // Constants
@@ -587,6 +588,7 @@ function cleanupLocalManifestWatcher(): void {
 			localManifestWatcher.close();
 			logger.debug('Local manifest watcher cleaned up', LOG_CONTEXT);
 		} catch (error) {
+			void captureException(error);
 			logger.warn('Error closing local manifest watcher', LOG_CONTEXT, { error });
 		}
 		localManifestWatcher = undefined;
@@ -649,6 +651,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					officialManifest = await fetchManifest();
 					await writeCache(app, officialManifest);
 				} catch (error) {
+					void captureException(error);
 					logger.warn('Failed to fetch official manifest from GitHub', LOG_CONTEXT, { error });
 
 					// Fallback to expired cache if available (better than showing nothing)
@@ -702,6 +705,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 				officialManifest = await fetchManifest();
 				await writeCache(app, officialManifest);
 			} catch (error) {
+				void captureException(error);
 				logger.warn('Failed to fetch official manifest during refresh', LOG_CONTEXT, { error });
 
 				// Fallback to existing cache if available (better than showing nothing)
@@ -785,6 +789,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 						officialManifest = await fetchManifest();
 						await writeCache(app, officialManifest);
 					} catch (error) {
+						void captureException(error);
 						logger.warn(
 							'Failed to fetch official manifest during import, continuing with local only',
 							LOG_CONTEXT,
@@ -846,6 +851,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 							LOG_CONTEXT
 						);
 					} catch (error) {
+						void captureException(error);
 						logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
 						// Continue importing other documents
 					}
@@ -872,6 +878,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 									discoveredAssets.push(entry);
 								}
 							} catch (error) {
+								void captureException(error);
 								logger.warn(`Failed to stat local asset candidate: ${entryPath}`, LOG_CONTEXT, {
 									error,
 								});
@@ -937,6 +944,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 								LOG_CONTEXT
 							);
 						} catch (error) {
+							void captureException(error);
 							logger.warn(`Failed to import asset ${assetFilename}`, LOG_CONTEXT, { error });
 							// Continue importing other assets
 						}

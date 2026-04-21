@@ -34,6 +34,7 @@ import {
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { logger } from '../utils/logger';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -110,9 +111,23 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore(selectSessionById(sessionId));
 	const sessions = useSessionStore((state) => state.sessions);
+	// When the current session is a worktree child, worktree config lives on its parent.
+	// Resolve the parent so the WorktreeRunSection can read basePath and list siblings.
+	const worktreeParentSession = useMemo(() => {
+		if (!activeSession) return null;
+		if (activeSession.parentSessionId) {
+			return sessions.find((s) => s.id === activeSession.parentSessionId) ?? activeSession;
+		}
+		return activeSession;
+	}, [activeSession, sessions]);
 	const worktreeChildren = useMemo(
-		() => sessions.filter((s) => s.parentSessionId === sessionId),
-		[sessions, sessionId]
+		() =>
+			worktreeParentSession
+				? sessions.filter(
+						(s) => s.parentSessionId === worktreeParentSession.id && s.id !== sessionId
+					)
+				: [],
+		[sessions, worktreeParentSession, sessionId]
 	);
 
 	const handleOpenWorktreeConfig = useCallback(() => {
@@ -332,7 +347,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			...(worktreeTarget && { worktreeTarget }),
 		};
 
-		console.log('[BatchRunnerModal] handleGo - calling onGo with config:', config);
+		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
 		window.maestro.logger.log('info', 'Go button clicked', 'BatchRunnerModal', {
 			documentsCount: validDocuments.length,
 		});
@@ -588,10 +603,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					/>
 
 					{/* Run in Worktree Section — hidden for non-git repos since worktrees require git */}
-					{activeSession?.isGitRepo && (
+					{worktreeParentSession?.isGitRepo && (
 						<WorktreeRunSection
 							theme={theme}
-							activeSession={activeSession}
+							activeSession={worktreeParentSession}
 							worktreeChildren={worktreeChildren}
 							worktreeTarget={worktreeTarget}
 							onWorktreeTargetChange={setWorktreeTarget}

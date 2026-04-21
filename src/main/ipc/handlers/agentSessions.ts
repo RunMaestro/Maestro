@@ -42,6 +42,7 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -621,6 +622,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
+							void captureException(error);
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT
@@ -974,6 +976,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, { error });
 				}
 			}
@@ -998,6 +1001,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 						sendUpdate(cache, false);
 					}
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, { error });
 				}
 			}

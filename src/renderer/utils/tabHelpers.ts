@@ -536,7 +536,7 @@ export interface CloseTabResult {
  * const result = closeTab(session, 'tab-123');
  * if (result) {
  *   const { closedTab, session: updatedSession } = result;
- *   console.log(`Closed tab at index ${closedTab.index}`);
+ *   logger.info(`Closed tab at index ${closedTab.index}`);
  * }
  *
  * @example
@@ -757,9 +757,9 @@ export interface ReopenTabResult {
  * if (result) {
  *   const { tab, session: updatedSession, wasDuplicate } = result;
  *   if (wasDuplicate) {
- *     console.log(`Switched to existing tab ${tab.id}`);
+ *     logger.info(`Switched to existing tab ${tab.id}`);
  *   } else {
- *     console.log(`Restored tab ${tab.id} from history`);
+ *     logger.info(`Restored tab ${tab.id} from history`);
  *   }
  * }
  */
@@ -848,7 +848,7 @@ export interface CloseFileTabResult {
  * const result = closeFileTab(session, 'file-tab-123');
  * if (result) {
  *   const { closedTabEntry, session: updatedSession } = result;
- *   console.log(`Closed file tab at unified index ${closedTabEntry.unifiedIndex}`);
+ *   logger.info(`Closed file tab at unified index ${closedTabEntry.unifiedIndex}`);
  * }
  */
 export function closeFileTab(session: Session, tabId: string): CloseFileTabResult | null {
@@ -1124,9 +1124,9 @@ export interface ReopenUnifiedClosedTabResult {
  * if (result) {
  *   const { tabType, tabId, session: updatedSession, wasDuplicate } = result;
  *   if (wasDuplicate) {
- *     console.log(`Switched to existing ${tabType} tab ${tabId}`);
+ *     logger.info(`Switched to existing ${tabType} tab ${tabId}`);
  *   } else {
- *     console.log(`Restored ${tabType} tab ${tabId} from history`);
+ *     logger.info(`Restored ${tabType} tab ${tabId} from history`);
  *   }
  * }
  */
@@ -1377,7 +1377,7 @@ export interface SetActiveTabResult {
  * const result = setActiveTab(session, 'tab-456');
  * if (result) {
  *   const { tab, session: updatedSession } = result;
- *   console.log(`Now viewing tab: ${tab.name || tab.agentSessionId}`);
+ *   logger.info(`Now viewing tab: ${tab.name || tab.agentSessionId}`);
  * }
  */
 export function setActiveTab(session: Session, tabId: string): SetActiveTabResult | null {
@@ -1434,7 +1434,7 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
  * @example
  * const busyTab = getWriteModeTab(session);
  * if (busyTab) {
- *   console.log(`Tab ${busyTab.name || busyTab.agentSessionId} is currently writing`);
+ *   logger.info(`Tab ${busyTab.name || busyTab.agentSessionId} is currently writing`);
  *   // Disable input for other tabs
  * }
  */
@@ -1462,7 +1462,7 @@ export function getWriteModeTab(session: Session): AITab | undefined {
  * if (busyTabs.length > 0) {
  *   // Show busy indicator with pills for each busy tab
  *   busyTabs.forEach(tab => {
- *     console.log(`Tab ${tab.name || tab.agentSessionId} is busy`);
+ *     logger.info(`Tab ${tab.name || tab.agentSessionId} is busy`);
  *   });
  * }
  */

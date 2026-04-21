@@ -45,6 +45,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
+import { logger } from '../utils/logger';
 
 /**
  * RetryCountdown component - shows time remaining until auto-retry.
@@ -514,7 +515,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				try {
 					await refreshFileTreeRef.current(sessionIdRef.current);
 				} catch (error) {
-					console.error('[FileExplorer] Auto-refresh failed:', error);
+					logger.error('[FileExplorer] Auto-refresh failed:', undefined, error);
 				} finally {
 					autoRefreshSpinTimeoutRef.current = setTimeout(() => {
 						setIsRefreshing(false);
@@ -888,7 +889,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			for (const node of nodes) {
 				const normalizedName = node.name.normalize('NFC');
 				if (seenNames.has(normalizedName)) {
-					console.warn('[FileExplorer] Duplicate sibling skipped:', currentPath, node.name);
+					logger.warn('[FileExplorer] Duplicate sibling skipped:', undefined, [
+						currentPath,
+						node.name,
+					]);
 					continue;
 				}
 				seenNames.add(normalizedName);
@@ -897,7 +901,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 				// Guard: skip duplicate paths to prevent React key collisions
 				if (seenPaths.has(fullPath)) {
-					console.warn('[FileExplorer] Duplicate path skipped:', fullPath);
+					logger.warn('[FileExplorer] Duplicate path skipped:', undefined, fullPath);
 					continue;
 				}
 				seenPaths.add(fullPath);
@@ -976,7 +980,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					style={{
 						height: `${virtualRow.size}px`,
 						transform: `translateY(${virtualRow.start}px)`,
-						paddingLeft: `${8 + (isFolder ? depth : Math.max(0, depth - 1)) * 16}px`,
+						paddingLeft: `${8 + depth * 16}px`,
 						color: change ? theme.colors.textMain : theme.colors.textDim,
 						borderLeftColor: isKeyboardSelected ? theme.colors.accent : 'transparent',
 						backgroundColor: isKeyboardSelected
@@ -1365,7 +1369,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						style={{
 							backgroundColor: theme.colors.bgSidebar,
 							borderColor: theme.colors.border,
-							minWidth: '180px',
+							minWidth: '200px',
 							top: overlayPosition.top,
 							left: overlayPosition.left,
 							transform: 'translateX(-100%)',
@@ -1403,7 +1407,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 												: 'transparent',
 									}}
 								>
-									<span>{option.label}</span>
+									<span className="whitespace-nowrap">{option.label}</span>
 									{autoRefreshInterval === option.value && (
 										<Check className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									)}

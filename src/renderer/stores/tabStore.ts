@@ -64,12 +64,20 @@ export interface TabStoreState {
 	// Gist publishing state (moved from App.tsx local state)
 	tabGistContent: { filename: string; content: string } | null;
 	fileGistUrls: Record<string, GistInfo>;
+	/**
+	 * Pending terminal buffer content queued for "Send to Agent".
+	 * When set, the shared handleSendToAgent handler uses this buffer text as the
+	 * transferred message body instead of extracting logs from the active AI tab.
+	 * Cleared once the transfer completes or the SendToAgent modal is closed.
+	 */
+	pendingTerminalBufferSend: { content: string; sourceName: string } | null;
 }
 
 export interface TabStoreActions {
 	// === Gist UI state ===
 
 	setTabGistContent: (content: { filename: string; content: string } | null) => void;
+	setPendingTerminalBufferSend: (pending: { content: string; sourceName: string } | null) => void;
 	setFileGistUrls: (urls: Record<string, GistInfo>) => void;
 	setFileGistUrl: (path: string, info: GistInfo) => void;
 	clearFileGistUrl: (path: string) => void;
@@ -303,11 +311,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 	// --- State ---
 	tabGistContent: null,
 	fileGistUrls: {},
+	pendingTerminalBufferSend: null,
 
 	// --- Actions ---
 
 	// Gist UI state
 	setTabGistContent: (content) => set({ tabGistContent: content }),
+
+	setPendingTerminalBufferSend: (pending) => set({ pendingTerminalBufferSend: pending }),
 
 	setFileGistUrls: (urls) => set({ fileGistUrls: urls }),
 

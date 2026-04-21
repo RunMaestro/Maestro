@@ -5,6 +5,7 @@ import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { logger } from '../../utils/logger';
 
 /**
  * History entry for the addHistoryEntry function.
@@ -189,7 +190,7 @@ export function useAgentSessionManagement(
 			// Use provided projectPath (e.g. from history entry) or fall back to activeSession.projectRoot
 			const resolvedProjectRoot = projectPath || activeSession.projectRoot;
 			if (!resolvedProjectRoot) {
-				console.warn('[handleResumeSession] No projectRoot on activeSession', {
+				logger.warn('[handleResumeSession] No projectRoot on activeSession', undefined, {
 					sessionId: activeSession?.id,
 					cwd: activeSession?.cwd,
 				});
@@ -279,7 +280,11 @@ export function useAgentSessionManagement(
 							}
 						}
 					} catch (error) {
-						console.warn('[handleResumeSession] Failed to lookup session metadata:', error);
+						logger.warn(
+							'[handleResumeSession] Failed to lookup session metadata:',
+							undefined,
+							error
+						);
 					}
 				}
 
@@ -345,7 +350,7 @@ export function useAgentSessionManagement(
 				);
 				setActiveAgentSessionId(agentSessionId);
 			} catch (error) {
-				console.error('Failed to resume session:', error);
+				logger.error('Failed to resume session:', undefined, error);
 				const msg =
 					error instanceof Error && error.message.includes('ENOENT')
 						? 'Session file not found on disk'

@@ -26,6 +26,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
+import { logger } from '../utils/logger';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -124,7 +125,7 @@ export const HistoryPanel = React.memo(
 					}
 					// Note: With virtualization, display count is managed automatically
 				} catch (error) {
-					console.error('Failed to load history:', error);
+					logger.error('Failed to load history:', undefined, error);
 					setHistoryEntries([]);
 				} finally {
 					if (!isRefresh) {
@@ -489,7 +490,7 @@ export const HistoryPanel = React.memo(
 						setSelectedIndex(-1);
 					}
 				} catch (error) {
-					console.error('Failed to delete history entry:', error);
+					logger.error('Failed to delete history entry:', undefined, error);
 				}
 			},
 			[session.id, setSelectedIndex]

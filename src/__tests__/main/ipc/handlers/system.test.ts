@@ -827,11 +827,40 @@ describe('system IPC handlers', () => {
 	});
 
 	describe('tunnel:getStatus', () => {
-		it('should return tunnel status', async () => {
-			const mockStatus = {
-				running: true,
+		it('should append web server token path to running tunnel URL', async () => {
+			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/secret-token');
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
 				url: 'https://abc.trycloudflare.com',
-			};
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:getStatus');
+			const result = await handler!({} as any);
+
+			expect(result).toEqual({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com/secret-token',
+				error: null,
+			});
+		});
+
+		it('should not double-append token when URL already contains it', async () => {
+			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/secret-token');
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com/secret-token',
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:getStatus');
+			const result = await handler!({} as any);
+
+			expect(result.url).toBe('https://abc.trycloudflare.com/secret-token');
+		});
+
+		it('should return bare status when tunnel is not running', async () => {
+			const mockStatus = { isRunning: false, url: null, error: null };
 			vi.mocked(mockTunnelManager.getStatus).mockReturnValue(mockStatus);
 
 			const handler = handlers.get('tunnel:getStatus');
@@ -840,17 +869,102 @@ describe('system IPC handlers', () => {
 			expect(result).toEqual(mockStatus);
 		});
 
-		it('should return stopped status', async () => {
-			const mockStatus = {
-				running: false,
-				url: null,
-			};
-			vi.mocked(mockTunnelManager.getStatus).mockReturnValue(mockStatus);
+		it('should return bare tunnel URL when web server is unavailable', async () => {
+			deps.getWebServer = () => null;
+			vi.mocked(ipcMain.handle).mockClear();
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
+				handlers.set(channel, handler);
+			});
+			registerSystemHandlers(deps);
+
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://abc.trycloudflare.com',
+				error: null,
+			});
 
 			const handler = handlers.get('tunnel:getStatus');
 			const result = await handler!({} as any);
 
-			expect(result).toEqual(mockStatus);
+			expect(result.url).toBe('https://abc.trycloudflare.com');
+		});
+	});
+
+	// Regression guard: a previous bug had tunnel:start returning a tokenized
+	// URL while tunnel:getStatus returned a bare one. The renderer polls
+	// getStatus every 500-2000ms, so the bare URL overwrote the good one
+	// within seconds, breaking the QR code and remote access. These tests
+	// lock in the invariant that both channels agree on the URL.
+	describe('tunnel URL consistency between start and getStatus', () => {
+		it('tunnel:start and tunnel:getStatus must return the same URL for the same session', async () => {
+			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/abc-123-token');
+			const bareTunnelUrl = 'https://raise-skins-flickr-wagner.trycloudflare.com';
+
+			vi.mocked(mockTunnelManager.start).mockResolvedValue({
+				success: true,
+				url: bareTunnelUrl,
+			});
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: bareTunnelUrl,
+				error: null,
+			});
+
+			const startHandler = handlers.get('tunnel:start');
+			const statusHandler = handlers.get('tunnel:getStatus');
+
+			const startResult = await startHandler!({} as any);
+			const statusResult = await statusHandler!({} as any);
+
+			expect(startResult.url).toBe(statusResult.url);
+			expect(startResult.url).toBe(`${bareTunnelUrl}/abc-123-token`);
+		});
+
+		it('repeated polling of tunnel:getStatus must not drop the token', async () => {
+			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/persistent-token');
+			const bareTunnelUrl = 'https://xyz.trycloudflare.com';
+
+			vi.mocked(mockTunnelManager.start).mockResolvedValue({
+				success: true,
+				url: bareTunnelUrl,
+			});
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: bareTunnelUrl,
+				error: null,
+			});
+
+			const startHandler = handlers.get('tunnel:start');
+			const statusHandler = handlers.get('tunnel:getStatus');
+
+			const startResult = await startHandler!({} as any);
+			const expectedUrl = `${bareTunnelUrl}/persistent-token`;
+			expect(startResult.url).toBe(expectedUrl);
+
+			// Simulate the renderer's polling loop (useLiveOverlay.ts:131-136).
+			// Every call must return the tokenized URL — never the bare one.
+			for (let i = 0; i < 5; i++) {
+				const pollResult = await statusHandler!({} as any);
+				expect(pollResult.url).toBe(expectedUrl);
+				expect(pollResult.url).not.toBe(bareTunnelUrl);
+			}
+		});
+
+		it('tunnel:getStatus URL must always contain the web server security token path', async () => {
+			mockWebServer.getSecureUrl.mockReturnValue('http://localhost:3000/mandatory-token');
+			vi.mocked(mockTunnelManager.getStatus).mockReturnValue({
+				isRunning: true,
+				url: 'https://tunnel.trycloudflare.com',
+				error: null,
+			});
+
+			const handler = handlers.get('tunnel:getStatus');
+			const result = await handler!({} as any);
+
+			// The token path is required for the web server to accept the request.
+			// Without it, the remote tunnel URL 404s.
+			expect(result.url).toMatch(/\/mandatory-token$/);
 		});
 	});
 

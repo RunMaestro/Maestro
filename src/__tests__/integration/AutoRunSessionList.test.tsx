@@ -14,14 +14,8 @@ import React, { useState, useCallback } from 'react';
 import { SessionList } from '../../renderer/components/SessionList';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
-import type {
-	Session,
-	Group,
-	Theme,
-	Shortcut,
-	BatchRunState,
-	SessionState,
-} from '../../renderer/types';
+import { createMockTheme } from '../helpers/mockTheme';
+import type { Session, Group, Shortcut, BatchRunState, SessionState } from '../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 
 // Helper to wrap component in LayerStackProvider with custom rerender
@@ -173,28 +167,6 @@ vi.mock('../../renderer/hooks/useLiveOverlay', () => ({
 vi.mock('qrcode.react', () => ({
 	QRCodeSVG: () => <div data-testid="qrcode">QR Code</div>,
 }));
-
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		bgSidebar: '#1e1e1e',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 // Setup window.maestro mock
 const setupMaestroMock = () => {

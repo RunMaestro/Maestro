@@ -24,8 +24,9 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { GeneralTab } from '../../../../../renderer/components/Settings/tabs/GeneralTab';
-import type { Theme, ShellInfo } from '../../../../../renderer/types';
+import type { ShellInfo } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock platformUtils
 vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	getOpenInLabel: vi.fn(() => 'Open in Finder'),
@@ -43,6 +44,7 @@ const mockSetShellEnvVars = vi.fn();
 const mockSetGhPath = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetEnterToSendAI = vi.fn();
+const mockSetEnterToSendAIExpanded = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
@@ -77,6 +79,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Input settings
 		enterToSendAI: true,
 		setEnterToSendAI: mockSetEnterToSendAI,
+		enterToSendAIExpanded: false,
+		setEnterToSendAIExpanded: mockSetEnterToSendAIExpanded,
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
@@ -102,27 +106,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		...mockUseSettingsOverrides,
 	}),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockShells: ShellInfo[] = [
 	{ id: 'zsh', name: 'Zsh', path: '/bin/zsh', available: true },

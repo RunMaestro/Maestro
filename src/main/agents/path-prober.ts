@@ -22,6 +22,7 @@ import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { expandTilde, detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'PathProber';
 
@@ -163,13 +164,14 @@ export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
 		env.PATH = merged.join(delim);
 		return env;
 	} catch (err) {
+		void captureException(err);
 		// If shell probing fails, log debug so diagnostics can distinguish
 		// a probe failure from an absent shell PATH, then fall back to base env.
 		try {
 			logger.debug('Shell PATH probe failed; using base expanded env', LOG_CONTEXT, { err });
 		} catch {
 			// Safe fallback if logger is not available
-			console.debug('Shell PATH probe failed; using base expanded env', err);
+			logger.debug('Shell PATH probe failed; using base expanded env', undefined, err);
 		}
 		return env;
 	}
@@ -239,6 +241,7 @@ export async function checkCustomPath(customPath: string): Promise<BinaryDetecti
 
 		return { exists: false };
 	} catch (error) {
+		void captureException(error);
 		logger.debug(`Error checking custom path: ${customPath}`, LOG_CONTEXT, { error });
 		return { exists: false };
 	}

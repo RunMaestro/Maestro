@@ -2,9 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import { WorktreeRunSection } from '../../../renderer/components/WorktreeRunSection';
-import type { Theme, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { gitService } from '../../../renderer/services/git';
+
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock gitService
 vi.mock('../../../renderer/services/git', () => ({
@@ -35,7 +38,6 @@ function createMockTheme(): Theme {
 		},
 	};
 }
-
 // Thin wrapper: configures a worktree parent session with matching cwd and
 // worktreeConfig so the WorktreeRunSection has state to render.
 function createMockSession(overrides: Partial<Session> = {}): Session {

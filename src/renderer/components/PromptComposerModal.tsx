@@ -323,11 +323,20 @@ export function PromptComposerModal({
 			}
 		}
 
-		// Cmd/Ctrl + Enter to send the message
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-			e.preventDefault();
-			handleSend();
-			return;
+		// Send the message. Honors the Expanded AI Interaction Mode setting passed in via `enterToSend`.
+		// When enterToSend === true: plain Enter sends; Shift+Enter inserts newline.
+		// When enterToSend === false: Cmd/Ctrl+Enter sends; plain Enter inserts newline.
+		if (e.key === 'Enter') {
+			if (enterToSend && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+				e.preventDefault();
+				handleSend();
+				return;
+			}
+			if (!enterToSend && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				handleSend();
+				return;
+			}
 		}
 
 		// Tab key inserts a tab character instead of moving focus

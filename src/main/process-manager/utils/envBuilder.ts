@@ -71,12 +71,18 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 			TERM: 'xterm-256color',
 		};
 	} else {
-		const basePath = buildUnixBasePath();
+		// Use the full expanded PATH so common user install locations
+		// (~/.local/bin, ~/.claude/local, ~/.opencode/bin, Homebrew, npm-global, etc.)
+		// are available even when the user's shell doesn't source an rc file that
+		// augments PATH. bash falls through to .bashrc for login+interactive on
+		// Debian, but zsh only sources .zprofile/.zshrc if they exist — users
+		// without those would otherwise see `command not found` for tools like
+		// `claude` and `codex` that live in ~/.local/bin.
 		env = {
 			...process.env,
 			TERM: 'xterm-256color',
 			LANG: process.env.LANG || 'en_US.UTF-8',
-			PATH: basePath,
+			PATH: buildExpandedPath(),
 		};
 		for (const key of STRIPPED_ENV_VARS) {
 			delete env[key];

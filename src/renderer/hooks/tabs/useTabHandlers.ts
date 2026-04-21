@@ -39,6 +39,7 @@ import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTabStore } from '../../stores/tabStore';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Helpers
@@ -608,7 +609,7 @@ export function useTabHandlers(): TabHandlersReturn {
 				})
 			);
 		} catch (error) {
-			console.debug('[handleReloadFileTab] Failed to reload:', error);
+			logger.debug('[handleReloadFileTab] Failed to reload:', undefined, error);
 		}
 	}, []);
 
@@ -663,7 +664,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					);
 				}
 			} catch (error) {
-				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
+				logger.debug('[handleSelectFileTab] Auto-refresh failed:', undefined, error);
 			}
 		}
 	}, []);
@@ -830,7 +831,7 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-				console.debug('[useTabHandlers] handleUnifiedTabReorder', {
+				logger.debug('[useTabHandlers] handleUnifiedTabReorder', undefined, {
 					fromIndex,
 					toIndex,
 					orderLength: s.unifiedTabOrder.length,
@@ -843,7 +844,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					toIndex >= s.unifiedTabOrder.length ||
 					fromIndex === toIndex
 				) {
-					console.debug(
+					logger.debug(
 						'[useTabHandlers] handleUnifiedTabReorder: bounds check failed, returning unchanged'
 					);
 					return s;
@@ -851,7 +852,7 @@ export function useTabHandlers(): TabHandlersReturn {
 				const newOrder = [...s.unifiedTabOrder];
 				const [movedRef] = newOrder.splice(fromIndex, 1);
 				newOrder.splice(toIndex, 0, movedRef);
-				console.debug('[useTabHandlers] handleUnifiedTabReorder: reordered', {
+				logger.debug('[useTabHandlers] handleUnifiedTabReorder: reordered', undefined, {
 					movedRef,
 					newOrder: newOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
 				});
@@ -1313,11 +1314,15 @@ export function useTabHandlers(): TabHandlersReturn {
 					.deleteMessagePair(currentSession.cwd, agentSessionId, logId, log.text)
 					.then((result) => {
 						if (!result.success) {
-							console.warn('[handleDeleteLog] Failed to delete from Claude session:', result.error);
+							logger.warn(
+								'[handleDeleteLog] Failed to delete from Claude session:',
+								undefined,
+								result.error
+							);
 						}
 					})
 					.catch((err) => {
-						console.error('[handleDeleteLog] Error deleting from Claude session:', err);
+						logger.error('[handleDeleteLog] Error deleting from Claude session:', undefined, err);
 					});
 			}
 
@@ -1364,18 +1369,21 @@ export function useTabHandlers(): TabHandlersReturn {
 	// ========================================================================
 
 	const handleRequestTabRename = useCallback((tabId: string) => {
-		console.log('[DEBUG renameTab] handleRequestTabRename called', { tabId });
+		logger.info('[DEBUG renameTab] handleRequestTabRename called', undefined, { tabId });
 		const { setSessions } = useSessionStore.getState();
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) {
-			console.log('[DEBUG renameTab] no session found');
+			logger.info('[DEBUG renameTab] no session found');
 			return;
 		}
 		const tab = session.aiTabs?.find((t) => t.id === tabId);
-		console.log('[DEBUG renameTab] tab found:', !!tab, {
-			aiTabCount: session.aiTabs?.length,
-			tabId,
-		});
+		logger.info('[DEBUG renameTab] tab found:', undefined, [
+			!!tab,
+			{
+				aiTabCount: session.aiTabs?.length,
+				tabId,
+			},
+		]);
 		if (tab) {
 			if (tab.isGeneratingName) {
 				setSessions((prev: Session[]) =>
@@ -1450,11 +1458,11 @@ export function useTabHandlers(): TabHandlersReturn {
 					if (agentId === 'claude-code') {
 						window.maestro.claude
 							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
+							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 					} else {
 						window.maestro.agentSessions
 							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
+							.catch((err) => logger.error('Failed to persist tab starred:', undefined, err));
 					}
 				}
 				return {
@@ -1610,7 +1618,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate back:', error);
+				logger.error('Failed to navigate back:', undefined, error);
 			}
 		}
 	}, []);
@@ -1658,7 +1666,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate forward:', error);
+				logger.error('Failed to navigate forward:', undefined, error);
 			}
 		}
 	}, []);
@@ -1704,7 +1712,7 @@ export function useTabHandlers(): TabHandlersReturn {
 					})
 				);
 			} catch (error) {
-				console.error('Failed to navigate to index:', error);
+				logger.error('Failed to navigate to index:', undefined, error);
 			}
 		}
 	}, []);

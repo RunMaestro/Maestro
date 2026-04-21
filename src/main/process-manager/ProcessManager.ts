@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
+import { captureException } from '../utils/sentry';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -108,6 +109,7 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to write to process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -127,6 +129,7 @@ export class ProcessManager extends EventEmitter {
 			process.ptyProcess.resize(cols, rows);
 			return true;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to resize terminal', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -202,6 +205,7 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to interrupt process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -282,6 +286,7 @@ export class ProcessManager extends EventEmitter {
 			this.processes.delete(sessionId);
 			return true;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to kill process', 'ProcessManager', {
 				sessionId,
 				error: String(error),

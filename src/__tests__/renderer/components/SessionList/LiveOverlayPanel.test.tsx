@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { LiveOverlayPanel } from '../../../../renderer/components/SessionList/LiveOverlayPanel';
 import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -24,23 +25,6 @@ vi.mock('../../../../renderer/utils/clipboard', () => ({
 		getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
 	},
 };
-
-const mockTheme: Theme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
-		bgActivity: '#1e1e3a',
-		textMain: '#e0e0e0',
-		textDim: '#888888',
-		accent: '#e94560',
-		border: '#333333',
-		error: '#ff4444',
-		success: '#00cc66',
-		warning: '#ffaa00',
-	},
-} as Theme;
 
 // ---------------------------------------------------------------------------
 // Helpers

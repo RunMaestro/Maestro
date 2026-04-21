@@ -16,9 +16,11 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	Theme,
 	Shortcut,
@@ -278,26 +280,6 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockLightTheme: Theme = {
 	id: 'github-light',
@@ -905,7 +887,9 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText(formatEnterToSend(false))).toBeInTheDocument();
+			// Both the AI Interaction Mode and Expanded AI Interaction Mode buttons can render
+			// this label depending on their respective settings; assert that at least one is shown.
+			expect(screen.getAllByText(formatEnterToSend(false)).length).toBeGreaterThan(0);
 		});
 	});
 
@@ -1450,7 +1434,7 @@ describe('SettingsModal', () => {
 		it('should handle font detection failure gracefully', async () => {
 			(window.maestro as any).fonts.detect.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'display' })} />);
 
@@ -1476,7 +1460,7 @@ describe('SettingsModal', () => {
 				new Error('Shell detection failed')
 			);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps()} />);
 
@@ -1674,7 +1658,7 @@ describe('SettingsModal', () => {
 			});
 			vi.mocked(window.maestro.notification.stopSpeak).mockRejectedValue(new Error('Stop failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
 
@@ -1704,7 +1688,7 @@ describe('SettingsModal', () => {
 		it('should handle speak error gracefully', async () => {
 			vi.mocked(window.maestro.notification.speak).mockRejectedValue(new Error('Speak failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
 

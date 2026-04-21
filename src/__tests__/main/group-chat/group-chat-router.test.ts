@@ -73,7 +73,7 @@ import {
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
-	type SessionInfo,
+	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
@@ -962,7 +962,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH User Mention Test');
 
 			// Set up a session with SSH config that the router can discover
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-1',
 				name: 'RemoteAgent',
 				toolType: 'claude-code',
@@ -997,7 +997,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH Moderator Mention Test');
 
 			// Set up session with SSH config
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-2',
 				name: 'SSHWorker',
 				toolType: 'claude-code',
@@ -1046,7 +1046,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 
 			// Session without SSH config
-			const localSession: SessionInfo = {
+			const localSession: GroupChatSessionInfo = {
 				id: 'ses-local-1',
 				name: 'LocalAgent',
 				toolType: 'claude-code',

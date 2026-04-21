@@ -835,12 +835,16 @@ export async function generateInlineDocuments(
 					clearTimeout(timeoutId);
 
 					timeoutId = setTimeout(() => {
-						console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
+						logger.error('[InlineWizardDocGen] TIMEOUT fired! Session:', undefined, sessionId);
 						cleanupAll();
 						window.maestro.process
 							.kill(sessionId)
 							.catch((err) =>
-								console.warn('[InlineWizardDocGen] Failed to kill session on timeout:', err)
+								logger.warn(
+									'[InlineWizardDocGen] Failed to kill session on timeout:',
+									undefined,
+									err
+								)
 							);
 						resolve({
 							success: false,
@@ -852,12 +856,12 @@ export async function generateInlineDocuments(
 
 				// Set up timeout (20 minutes for complex generation)
 				let timeoutId = setTimeout(() => {
-					console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
+					logger.error('[InlineWizardDocGen] TIMEOUT fired! Session:', undefined, sessionId);
 					cleanupAll();
 					window.maestro.process
 						.kill(sessionId)
 						.catch((err) =>
-							console.warn('[InlineWizardDocGen] Failed to kill session on timeout:', err)
+							logger.warn('[InlineWizardDocGen] Failed to kill session on timeout:', undefined, err)
 						);
 					resolve({
 						success: false,
@@ -882,7 +886,9 @@ export async function generateInlineDocuments(
 					// Stop watching the subfolder
 					window.maestro.autorun
 						.unwatchFolder(subfolderPath)
-						.catch((err) => console.warn('[InlineWizardDocGen] Failed to unwatch folder:', err));
+						.catch((err) =>
+							logger.warn('[InlineWizardDocGen] Failed to unwatch folder:', undefined, err)
+						);
 				}
 
 				// Set up file watcher for real-time document streaming
@@ -891,12 +897,19 @@ export async function generateInlineDocuments(
 					.watchFolder(subfolderPath, sshRemoteId)
 					.then((watchResult) => {
 						if (watchResult.success) {
-							console.log('[InlineWizardDocGen] Started watching folder:', subfolderPath);
+							logger.info(
+								'[InlineWizardDocGen] Started watching folder:',
+								undefined,
+								subfolderPath
+							);
 
 							// Set up file change listener
 							fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
 								if (data.folderPath === subfolderPath) {
-									console.log('[InlineWizardDocGen] File activity:', data.filename, data.eventType);
+									logger.info('[InlineWizardDocGen] File activity:', undefined, [
+										data.filename,
+										data.eventType,
+									]);
 
 									// Reset timeout on file activity
 									resetTimeout();
@@ -918,20 +931,20 @@ export async function generateInlineDocuments(
 												try {
 													const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 													if (content && typeof content === 'string' && content.length > 0) {
-														console.log(
-															'[InlineWizardDocGen] File read successful:',
+														logger.info('[InlineWizardDocGen] File read successful:', undefined, [
 															filenameWithExt,
 															'size:',
-															content.length
-														);
+															content.length,
+														]);
 
 														// Check if we've already processed this document
 														const alreadyProcessed = documentsFromWatcher.some(
 															(d) => d.filename === filenameWithExt
 														);
 														if (alreadyProcessed) {
-															console.log(
+															logger.info(
 																'[InlineWizardDocGen] Document already processed:',
+																undefined,
 																filenameWithExt
 															);
 															return;
@@ -949,8 +962,9 @@ export async function generateInlineDocuments(
 														return;
 													}
 												} catch (err) {
-													console.log(
+													logger.info(
 														`[InlineWizardDocGen] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
+														undefined,
 														err
 													);
 												}
@@ -960,8 +974,9 @@ export async function generateInlineDocuments(
 											}
 
 											// Even if we couldn't read content, note that file exists
-											console.log(
+											logger.info(
 												'[InlineWizardDocGen] Could not read file content:',
+												undefined,
 												filenameWithExt
 											);
 										};
@@ -971,11 +986,15 @@ export async function generateInlineDocuments(
 								}
 							});
 						} else {
-							console.warn('[InlineWizardDocGen] Could not watch folder:', watchResult.error);
+							logger.warn(
+								'[InlineWizardDocGen] Could not watch folder:',
+								undefined,
+								watchResult.error
+							);
 						}
 					})
 					.catch((err) => {
-						console.warn('[InlineWizardDocGen] Error setting up folder watcher:', err);
+						logger.warn('[InlineWizardDocGen] Error setting up folder watcher:', undefined, err);
 					});
 
 				// Set up data listener
@@ -996,7 +1015,7 @@ export async function generateInlineDocuments(
 							clearTimeout(timeoutId);
 							cleanupAll();
 
-							console.log('[InlineWizardDocGen] Agent exited with code:', code);
+							logger.info('[InlineWizardDocGen] Agent exited with code:', undefined, code);
 
 							if (code === 0) {
 								resolve({
@@ -1083,8 +1102,9 @@ export async function generateInlineDocuments(
 		// If documents were streamed in via file watcher, use those
 		// (they were already created directly by the agent)
 		if (documentsFromWatcher.length > 0) {
-			console.log(
+			logger.info(
 				'[InlineWizardDocGen] Using documents from file watcher:',
+				undefined,
 				documentsFromWatcher.length
 			);
 
@@ -1112,7 +1132,7 @@ export async function generateInlineDocuments(
 						{ playbookId: playbookInfo?.id, playbookName: playbookInfo?.name, subfolderName }
 					);
 				} catch (error) {
-					console.error('[InlineWizardDocGen] Failed to create playbook:', error);
+					logger.error('[InlineWizardDocGen] Failed to create playbook:', undefined, error);
 				}
 			}
 
@@ -1152,7 +1172,7 @@ export async function generateInlineDocuments(
 			callbacks?.onProgress?.('Checking for documents on disk...');
 			const diskDocs = await readDocumentsFromDisk(subfolderPath, sshRemoteId);
 			if (diskDocs.length > 0) {
-				console.log('[InlineWizardDocGen] Found documents on disk:', diskDocs.length);
+				logger.info('[InlineWizardDocGen] Found documents on disk:', undefined, diskDocs.length);
 				documents = diskDocs;
 			}
 		}
@@ -1171,7 +1191,10 @@ export async function generateInlineDocuments(
 				savedDocuments.push(savedDoc);
 				callbacks?.onDocumentComplete?.(savedDoc);
 			} catch (error) {
-				console.error('[InlineWizardDocGen] Failed to save document:', doc.filename, error);
+				logger.error('[InlineWizardDocGen] Failed to save document:', undefined, [
+					doc.filename,
+					error,
+				]);
 				// Continue saving other documents even if one fails
 			}
 		}
@@ -1197,7 +1220,7 @@ export async function generateInlineDocuments(
 					{ playbookId: playbookInfo?.id, playbookName: playbookInfo?.name, subfolderName }
 				);
 			} catch (error) {
-				console.error('[InlineWizardDocGen] Failed to create playbook:', error);
+				logger.error('[InlineWizardDocGen] Failed to create playbook:', undefined, error);
 				// Don't fail the overall operation if playbook creation fails
 			}
 		}
@@ -1215,7 +1238,7 @@ export async function generateInlineDocuments(
 		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-		console.error('[InlineWizardDocGen] Error:', error);
+		logger.error('[InlineWizardDocGen] Error:', undefined, error);
 		callbacks?.onError?.(errorMessage);
 		return {
 			success: false,
@@ -1339,7 +1362,7 @@ async function readDocumentsFromDisk(
 
 		return documents;
 	} catch (error) {
-		console.error('[InlineWizardDocGen] Error reading documents from disk:', error);
+		logger.error('[InlineWizardDocGen] Error reading documents from disk:', undefined, error);
 		return [];
 	}
 }

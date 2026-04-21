@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useSessionStore,
@@ -1441,7 +1442,7 @@ describe('sessionStore', () => {
 		});
 
 		it('logs error when no target tab found', () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const session = createMockSession({
 				id: 'session-1',
 				aiTabs: [], // No tabs!

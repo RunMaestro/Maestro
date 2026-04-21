@@ -50,6 +50,11 @@ enricherRegistry.set('*', (event, subscription, runId) => {
 		sourceExitCode: String(event.payload.exitCode ?? ''),
 		sourceDuration: String(event.payload.durationMs ?? ''),
 		sourceTriggeredBy: String(event.payload.triggeredBy ?? ''),
+		// Unified "triggering agent's session ID" — populated by the completion
+		// service (sourceSessionId) for agent.completed and by the CLI handler
+		// (sourceAgentId) for cli.trigger. Surfaced to users as {{CUE_FROM_AGENT}}
+		// so a single variable references whichever upstream agent fired this run.
+		fromAgent: String(event.payload.sourceSessionId ?? event.payload.sourceAgentId ?? ''),
 	};
 
 	// Per-source output variables (e.g. CUE_OUTPUT_AGENT_A) so users can

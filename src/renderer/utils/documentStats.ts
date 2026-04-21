@@ -12,6 +12,7 @@
 
 import { parseMarkdownLinks } from './markdownLinkParser';
 import { formatSize } from '../../shared/formatters';
+import { logger } from './logger';
 
 // Browser-compatible path utilities (Node's path module doesn't work in renderer)
 
@@ -322,7 +323,7 @@ export function computeDocumentStats(
 		frontMatter = parsed.frontMatter;
 	} catch (error) {
 		// parseMarkdownLinks should never throw, but defensive coding
-		console.warn(`Unexpected error parsing front matter in ${safeFilePath}:`, error);
+		logger.warn(`Unexpected error parsing front matter in ${safeFilePath}:`, undefined, error);
 		frontMatter = {};
 	}
 
@@ -331,7 +332,7 @@ export function computeDocumentStats(
 	try {
 		title = extractTitle(safeContent, safeFilePath, frontMatter);
 	} catch (error) {
-		console.warn(`Failed to extract title from ${safeFilePath}:`, error);
+		logger.warn(`Failed to extract title from ${safeFilePath}:`, undefined, error);
 		title = basename(safeFilePath, extname(safeFilePath));
 	}
 
@@ -339,7 +340,7 @@ export function computeDocumentStats(
 	try {
 		lineCount = countLines(safeContent);
 	} catch (error) {
-		console.warn(`Failed to count lines in ${safeFilePath}:`, error);
+		logger.warn(`Failed to count lines in ${safeFilePath}:`, undefined, error);
 		lineCount = 0;
 	}
 
@@ -347,7 +348,7 @@ export function computeDocumentStats(
 	try {
 		wordCount = countWords(safeContent);
 	} catch (error) {
-		console.warn(`Failed to count words in ${safeFilePath}:`, error);
+		logger.warn(`Failed to count words in ${safeFilePath}:`, undefined, error);
 		wordCount = 0;
 	}
 
@@ -359,7 +360,7 @@ export function computeDocumentStats(
 	try {
 		contentPreview = extractContentPreview(safeContent, title);
 	} catch (error) {
-		console.warn(`Failed to extract content preview from ${safeFilePath}:`, error);
+		logger.warn(`Failed to extract content preview from ${safeFilePath}:`, undefined, error);
 		contentPreview = undefined;
 	}
 

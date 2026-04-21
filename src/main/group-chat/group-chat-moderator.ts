@@ -13,6 +13,7 @@ import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage'
 import { appendToLog, readLog } from './group-chat-log';
 import { getPrompt } from '../prompt-manager';
 import { powerManager } from '../power-manager';
+import { logger } from '../utils/logger';
 
 /**
  * Interface for the process manager dependency.
@@ -118,16 +119,16 @@ export async function spawnModerator(
 	_processManager: IProcessManager,
 	_cwd: string = os.homedir()
 ): Promise<string> {
-	console.log(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
-	console.log(`[GroupChat:Debug] Chat ID: ${chat.id}`);
-	console.log(`[GroupChat:Debug] Chat Name: ${chat.name}`);
-	console.log(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
+	logger.debug(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
+	logger.debug(`[GroupChat:Debug] Chat ID: ${chat.id}`);
+	logger.debug(`[GroupChat:Debug] Chat Name: ${chat.name}`);
+	logger.debug(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
 
 	// Generate a session ID prefix for this group chat's moderator
 	// Each message will use this prefix with a timestamp suffix
 	const sessionIdPrefix = `group-chat-${chat.id}-moderator`;
 
-	console.log(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
+	logger.debug(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
 
 	// Store the session mapping (using prefix as identifier)
 	activeModeratorSessions.set(chat.id, sessionIdPrefix);
@@ -138,9 +139,11 @@ export async function spawnModerator(
 	// Update the group chat with the moderator session ID prefix
 	await updateGroupChat(chat.id, { moderatorSessionId: sessionIdPrefix });
 
-	console.log(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
-	console.log(`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`);
-	console.log(`[GroupChat:Debug] ==========================================`);
+	logger.debug(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
+	logger.debug(
+		`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`
+	);
+	logger.debug(`[GroupChat:Debug] ==========================================`);
 
 	return sessionIdPrefix;
 }

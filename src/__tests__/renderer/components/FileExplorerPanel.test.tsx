@@ -1,10 +1,12 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorerPanel } from '../../../renderer/components/FileExplorerPanel';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -217,26 +219,6 @@ vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
 }));
 
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2d2d2d',
-		bgActivity: '#3d3d3d',
-		bgInput: '#404040',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#4a9eff',
-		border: '#404040',
-		success: '#4caf50',
-		warning: '#ff9800',
-		error: '#f44336',
-		info: '#2196f3',
-		scrollbarThumb: '#666666',
-	},
-};
 
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
 	baseCreateMockSession({
@@ -844,7 +826,7 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('handles auto-refresh errors gracefully', async () => {
-			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const failingRefresh = vi.fn().mockRejectedValue(new Error('network failure'));
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			render(
@@ -858,6 +840,7 @@ describe('FileExplorerPanel', () => {
 			expect(failingRefresh).toHaveBeenCalledTimes(1);
 			expect(errorSpy).toHaveBeenCalledWith(
 				'[FileExplorer] Auto-refresh failed:',
+				undefined,
 				expect.any(Error)
 			);
 
@@ -952,13 +935,12 @@ describe('FileExplorerPanel', () => {
 		it('applies indentation to nested items via paddingLeft', () => {
 			const session = createMockSession({ fileExplorerExpanded: ['src'] });
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
-			// Virtualized tree uses paddingLeft for indentation
-			// index.ts is a file at depth 1, so paddingLeft = 8 + max(0, 1-1)*16 = 8px
-			// (files use depth-1 to align icons with parent folder icons)
+			// Virtualized tree uses paddingLeft for indentation: 8 + depth * 16
+			// index.ts is at depth 1, so paddingLeft = 8 + 1*16 = 24px
 			const nestedItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('index.ts')
 			);
-			expect(nestedItem).toHaveStyle({ paddingLeft: '8px' });
+			expect(nestedItem).toHaveStyle({ paddingLeft: '24px' });
 		});
 
 		it('displays file name with truncate class', () => {

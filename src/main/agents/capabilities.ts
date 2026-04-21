@@ -60,6 +60,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // Uses stream-json, not JSONL
 		usesCombinedContextWindow: false, // Claude has separate input/output limits
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
+		supportsProjectMemory: true, // ~/.claude/projects/<path>/memory/
 	},
 
 	/**
@@ -91,6 +92,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false,
 		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -125,6 +127,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: true, // OpenAI models use combined context window
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -159,6 +162,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -192,6 +196,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -226,6 +231,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -259,6 +265,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -293,6 +300,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 };
 

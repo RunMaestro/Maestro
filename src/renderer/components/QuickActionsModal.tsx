@@ -20,6 +20,7 @@ import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { buildSessionDeepLink } from '../../shared/deep-link-urls';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface QuickAction {
 	id: string;
@@ -62,6 +63,7 @@ interface QuickActionsModalProps {
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen?: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
+	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setGitDiffPreview: (diff: string | null) => void;
 	setGitLogOpen: (open: boolean) => void;
@@ -92,7 +94,11 @@ interface QuickActionsModalProps {
 	onDeleteGroupChat?: (id: string) => void;
 	activeGroupChatId?: string | null;
 	hasActiveSessionCapability?: (
-		capability: 'supportsSessionStorage' | 'supportsSlashCommands' | 'supportsContextMerge'
+		capability:
+			| 'supportsSessionStorage'
+			| 'supportsSlashCommands'
+			| 'supportsContextMerge'
+			| 'supportsProjectMemory'
 	) => boolean;
 	// Merge session
 	onOpenMergeSession?: () => void;
@@ -176,6 +182,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
 		setAgentSessionsOpen,
+		setMemoryViewerOpen,
 		setActiveAgentSessionId,
 		setGitDiffPreview,
 		setGitLogOpen,
@@ -1028,6 +1035,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
+		...(activeSession &&
+		setMemoryViewerOpen &&
+		hasActiveSessionCapability?.('supportsProjectMemory')
+			? [
+					{
+						id: 'openMemoryViewer',
+						label: `View Agent Memories for ${activeSession.name}`,
+						shortcut: shortcuts.openMemoryViewer,
+						action: () => {
+							setMemoryViewerOpen(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(isAiMode && canSummarizeActiveTab && onSummarizeAndContinue
 			? [
 					{
@@ -1131,7 +1153,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 									});
 								}
 							} catch (error) {
-								console.error('Failed to open repository in browser:', error);
+								logger.error('Failed to open repository in browser:', undefined, error);
 								notifyToast({
 									type: 'error',
 									title: 'Error',
@@ -1572,7 +1594,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						})),
 					}))
 				);
-				console.log('[Debug] Reset busy state for all sessions');
+				logger.info('[Debug] Reset busy state for all sessions');
 				setQuickActionOpen(false);
 			},
 		},
@@ -1601,7 +1623,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 									};
 								})
 							);
-							console.log('[Debug] Reset busy state for session:', activeSessionId);
+							logger.info('[Debug] Reset busy state for session:', undefined, activeSessionId);
 							setQuickActionOpen(false);
 						},
 					},
@@ -1612,8 +1634,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			label: 'Debug: Log Session State',
 			subtext: 'Print session state to console',
 			action: () => {
-				console.log(
+				logger.info(
 					'[Debug] All sessions:',
+					undefined,
 					sessions.map((s) => ({
 						id: s.id,
 						name: s.name,
@@ -1680,10 +1703,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					if (installationId) {
 						await safeClipboardWrite(installationId);
 						notifyToast({ type: 'success', title: 'Install GUID Copied', message: installationId });
-						console.log('[Debug] Installation GUID copied to clipboard:', installationId);
+						logger.info(
+							'[Debug] Installation GUID copied to clipboard:',
+							undefined,
+							installationId
+						);
 					} else {
 						notifyToast({ type: 'error', title: 'Error', message: 'No installation GUID found' });
-						console.warn('[Debug] No installation GUID found');
+						logger.warn('[Debug] No installation GUID found');
 					}
 				} catch (err) {
 					notifyToast({
@@ -1691,7 +1718,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						title: 'Error',
 						message: 'Failed to copy installation GUID',
 					});
-					console.error('[Debug] Failed to copy installation GUID:', err);
+					logger.error('[Debug] Failed to copy installation GUID:', undefined, err);
 				}
 				setQuickActionOpen(false);
 			},

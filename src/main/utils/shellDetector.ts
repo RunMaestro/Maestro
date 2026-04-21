@@ -1,12 +1,7 @@
 import { execFileNoThrow } from './execFile';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
-
-export interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
+import type { ShellInfo } from '../../shared/types';
+export type { ShellInfo } from '../../shared/types';
 
 /**
  * Detect available shells on the system

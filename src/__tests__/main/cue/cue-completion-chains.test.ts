@@ -1334,4 +1334,204 @@ describe('CueEngine completion chains', () => {
 			engine.stop();
 		});
 	});
+
+	describe('source_sub filter (self-loop + cross-fire prevention)', () => {
+		// Regression guards for the `Cmd(owner=S) → Agent(S)` class of chain
+		// where both the command run and the agent run emit `agent.completed`
+		// for the same session. Without this filter the chain sub matches
+		// on session alone and either re-triggers itself on the agent's own
+		// completion, or a downstream fan-in fires on the command's completion
+		// before the intended agent has run. See `CueSubscription.source_sub`
+		// docs for the full rationale.
+
+		it('fires when triggeredBy matches a listed source_sub', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'run-agent',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'run after command',
+						source_session: 'agent-a',
+						source_sub: 'the-command-sub',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				triggeredBy: 'the-command-sub',
+			});
+
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			engine.stop();
+		});
+
+		it('skips when triggeredBy is not in source_sub (would be a self-loop)', () => {
+			// Mirrors the Cmd → Agent self-loop scenario: the chain sub's
+			// source_session matches (Agent A is in the same session) but the
+			// completion came from Agent A's OWN run, not from its upstream
+			// command — so the filter must block the re-fire.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'run-agent',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'run after command',
+						source_session: 'agent-a',
+						source_sub: 'the-command-sub',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			// Agent A's own completion — triggeredBy is the chain sub itself,
+			// not the upstream command.
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				triggeredBy: 'run-agent',
+			});
+
+			expect(deps.onCueRun).not.toHaveBeenCalled();
+			engine.stop();
+		});
+
+		it('accepts any upstream name when source_sub is an array and one matches', () => {
+			// Fan-in case: Main depends on both Agent1 and Agent2 via their
+			// respective chain subs. Main's source_sub must accept either
+			// upstream sub name — but NOT e.g. the command sub that ran
+			// before them.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'run-main',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'aggregate',
+						source_session: 'agent-a',
+						source_sub: ['agent1-chain', 'agent2-chain'],
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				triggeredBy: 'agent2-chain',
+			});
+
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			engine.stop();
+		});
+
+		it('skips when triggeredBy is an upstream command, not the expected agent sub', () => {
+			// The cross-fire case. Source session matches (cmd and agent
+			// share owner), but the chain only wants the agent's
+			// completion — not the command's.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'run-main',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'aggregate',
+						source_session: 'agent-a',
+						source_sub: ['agent1-chain', 'agent2-chain'],
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				triggeredBy: 'the-command-sub',
+			});
+
+			expect(deps.onCueRun).not.toHaveBeenCalled();
+			engine.stop();
+		});
+
+		it('accepts any completion when source_sub is absent (legacy behavior)', () => {
+			// Pipelines from older YAML that doesn't carry source_sub must
+			// keep matching on source_session alone, so existing pipelines
+			// don't silently stop firing after the upgrade.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'legacy',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'legacy run',
+						source_session: 'agent-a',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				triggeredBy: 'anything',
+			});
+
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			engine.stop();
+		});
+
+		it('blocks when triggeredBy is undefined and source_sub is configured (external completion)', () => {
+			// `notifyAgentCompleted` is reached only by Cue-tracked runs and
+			// by `exit-listener` for external (non-Cue) process exits. Manual
+			// triggers and bootstrap events dispatch through `dispatchService`
+			// directly, so they never land here. That means an undefined
+			// `triggeredBy` indicates an external completion — bypassing
+			// `source_sub` for those would partially re-open the self-loop /
+			// cross-fire window the filter exists to close.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'run-agent',
+						event: 'agent.completed',
+						enabled: true,
+						prompt: 'run after command',
+						source_session: 'agent-a',
+						source_sub: 'the-command-sub',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			vi.clearAllMocks();
+			engine.notifyAgentCompleted('agent-a', {
+				sessionName: 'Agent A',
+				// triggeredBy omitted intentionally.
+			});
+
+			expect(deps.onCueRun).not.toHaveBeenCalled();
+			engine.stop();
+		});
+	});
 });

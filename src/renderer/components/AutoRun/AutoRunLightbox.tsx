@@ -7,6 +7,7 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ConfirmModal } from '../ConfirmModal';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // AutoRunLightbox - Full-screen image viewer with navigation, copy, delete
@@ -104,7 +105,7 @@ export const AutoRunLightbox = memo(
 					setTimeout(() => setCopied(false), 2000);
 				}
 			} catch (err) {
-				console.error('Failed to copy image to clipboard:', err);
+				logger.error('Failed to copy image to clipboard:', undefined, err);
 			}
 		}, [lightboxFilename, lightboxExternalUrl, attachmentPreviews]);
 

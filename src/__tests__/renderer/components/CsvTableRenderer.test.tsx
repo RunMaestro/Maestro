@@ -3,26 +3,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CsvTableRenderer } from '../../../renderer/components/CsvTableRenderer';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
 	ChevronDown: () => <span data-testid="chevron-down">ChevronDown</span>,
 }));
-
-const mockTheme = {
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		textMain: '#eee',
-		textDim: '#888',
-		border: '#333',
-		accent: '#4a9eff',
-		warning: '#f59e0b',
-		success: '#22c55e',
-		accentForeground: '#fff',
-		bgSidebar: '#111',
-	},
-} as any;
 
 describe('CsvTableRenderer', () => {
 	describe('basic rendering', () => {

@@ -17,6 +17,7 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
+import { logger } from '../../utils/logger';
 
 // Counter for generating stable IDs for env vars
 let envVarIdCounter = 0;
@@ -332,7 +333,7 @@ export function AgentConfigPanel({
 		const maybePromise = onConfigBlur(key, committedValue);
 		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
 			void (maybePromise as Promise<void>).catch((error: unknown) => {
-				console.error(`Failed to persist config field "${key}":`, error);
+				logger.error(`Failed to persist config field "${key}":`, undefined, error);
 			});
 		}
 	};

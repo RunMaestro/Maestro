@@ -36,6 +36,7 @@ import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
+import { logger } from '../../utils/logger';
 
 export interface SshRemotesSectionProps {
 	/** Theme object for styling */
@@ -81,7 +82,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 		setDeletingId(id);
 		const result = await deleteConfig(id);
 		if (!result.success) {
-			console.error('Failed to delete SSH remote:', result.error);
+			logger.error('Failed to delete SSH remote:', undefined, result.error);
 		}
 		setDeletingId(null);
 		// Clear test result for deleted config

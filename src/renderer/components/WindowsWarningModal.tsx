@@ -22,6 +22,7 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface WindowsWarningModalProps {
 	theme: Theme;
@@ -279,7 +280,7 @@ export function exposeWindowsWarningModalDebug(
 ): void {
 	(window as any).__showWindowsWarningModal = () => {
 		setShowWindowsWarning(true);
-		console.log('[WindowsWarningModal] Modal triggered via console command');
+		logger.info('[WindowsWarningModal] Modal triggered via console command');
 	};
 }
 

@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../shared/theme-types';
+import type { UsageStats as BaseUsageStats } from '../../shared/types';
 import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/config';
 import { webLogger } from '../utils/logger';
 
@@ -24,17 +25,9 @@ export type WebSocketState =
 	| 'authenticated';
 
 /**
- * Usage stats for session cost/token tracking
+ * Usage stats for session cost/token tracking (all fields optional in web context)
  */
-export interface UsageStats {
-	inputTokens?: number;
-	outputTokens?: number;
-	cacheReadInputTokens?: number;
-	cacheCreationInputTokens?: number;
-	totalCostUsd?: number;
-	contextWindow?: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
+export type UsageStats = Partial<BaseUsageStats>;
 
 /**
  * AI Tab data for multi-tab support within a Maestro session

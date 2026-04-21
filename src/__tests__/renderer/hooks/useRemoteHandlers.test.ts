@@ -469,7 +469,7 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
-		it('omits appendSystemPrompt for resumed sessions (has agentSessionId)', async () => {
+		it('still passes appendSystemPrompt for resumed sessions (Claude Code does not persist --append-system-prompt across resume)', async () => {
 			const session = createMockSession({
 				inputMode: 'ai',
 				aiTabs: [
@@ -508,7 +508,7 @@ describe('useRemoteHandlers', () => {
 
 			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
-					appendSystemPrompt: undefined,
+					appendSystemPrompt: expect.any(String),
 				})
 			);
 		});

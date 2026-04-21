@@ -159,6 +159,7 @@ beforeEach(() => {
 
 	useSettingsStore.setState({
 		enterToSendAI: true,
+		enterToSendAIExpanded: false,
 	} as any);
 });
 
@@ -1061,8 +1062,8 @@ describe('usePromptComposerHandlers', () => {
 	// handlePromptToggleEnterToSend
 	// ========================================================================
 	describe('handlePromptToggleEnterToSend', () => {
-		it('toggles enterToSendAI from true to false', () => {
-			useSettingsStore.setState({ enterToSendAI: true } as any);
+		it('toggles enterToSendAIExpanded from true to false', () => {
+			useSettingsStore.setState({ enterToSendAIExpanded: true } as any);
 
 			const deps = createDeps();
 			const { result } = renderHook(() => usePromptComposerHandlers(deps));
@@ -1071,11 +1072,11 @@ describe('usePromptComposerHandlers', () => {
 				result.current.handlePromptToggleEnterToSend();
 			});
 
-			expect(useSettingsStore.getState().enterToSendAI).toBe(false);
+			expect(useSettingsStore.getState().enterToSendAIExpanded).toBe(false);
 		});
 
-		it('toggles enterToSendAI from false to true', () => {
-			useSettingsStore.setState({ enterToSendAI: false } as any);
+		it('toggles enterToSendAIExpanded from false to true', () => {
+			useSettingsStore.setState({ enterToSendAIExpanded: false } as any);
 
 			const deps = createDeps();
 			const { result } = renderHook(() => usePromptComposerHandlers(deps));
@@ -1084,11 +1085,11 @@ describe('usePromptComposerHandlers', () => {
 				result.current.handlePromptToggleEnterToSend();
 			});
 
-			expect(useSettingsStore.getState().enterToSendAI).toBe(true);
+			expect(useSettingsStore.getState().enterToSendAIExpanded).toBe(true);
 		});
 
 		it('toggles correctly on repeated calls', () => {
-			useSettingsStore.setState({ enterToSendAI: true } as any);
+			useSettingsStore.setState({ enterToSendAIExpanded: true } as any);
 
 			const deps = createDeps();
 			const { result } = renderHook(() => usePromptComposerHandlers(deps));
@@ -1096,12 +1097,12 @@ describe('usePromptComposerHandlers', () => {
 			act(() => {
 				result.current.handlePromptToggleEnterToSend();
 			});
-			expect(useSettingsStore.getState().enterToSendAI).toBe(false);
+			expect(useSettingsStore.getState().enterToSendAIExpanded).toBe(false);
 
 			act(() => {
 				result.current.handlePromptToggleEnterToSend();
 			});
-			expect(useSettingsStore.getState().enterToSendAI).toBe(true);
+			expect(useSettingsStore.getState().enterToSendAIExpanded).toBe(true);
 		});
 	});
 });

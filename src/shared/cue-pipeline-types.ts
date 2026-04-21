@@ -6,8 +6,13 @@
  * for visual differentiation on the React Flow canvas.
  */
 
-import type { CueEventType, CueGraphSession as SharedCueGraphSession } from './cue';
-export type { CueEventType } from './cue';
+import type {
+	CueCommand,
+	CueCommandMode,
+	CueEventType,
+	CueGraphSession as SharedCueGraphSession,
+} from './cue';
+export type { CueCommand, CueCommandMode, CueEventType } from './cue';
 
 /** Cue brand color — single source of truth for all Cue UI */
 export const CUE_COLOR = '#06b6d4';
@@ -54,6 +59,15 @@ export interface TriggerNodeData {
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
 	};
+	/** Name of the underlying Cue subscription this trigger represents on disk.
+	 *  Populated on load by `yamlToPipeline`. Every trigger node in a multi-
+	 *  trigger pipeline maps to a distinct subscription — the first keeps the
+	 *  pipeline name (e.g. "Pipeline 1"), subsequent triggers carry the
+	 *  `-chain-N` suffix (e.g. "Pipeline 1-chain-2"). The trigger's Play
+	 *  button uses this field to fire the correct subscription; without it,
+	 *  all Play buttons would fire the first sub only. Undefined for
+	 *  never-saved pipelines — the Play button is hidden until save. */
+	subscriptionName?: string;
 }
 
 export interface AgentNodeData {
@@ -70,17 +84,92 @@ export interface AgentNodeData {
 	fanInTimeoutOnFail?: 'break' | 'continue';
 }
 
-export interface CliOutputNodeData {
-	target: string;
+/**
+ * A command node represents a `action: command` subscription. It runs either
+ * an arbitrary shell command (`mode: 'shell'`) in the owning session's project
+ * root, or a structured maestro-cli call (`mode: 'cli'`) such as `send`.
+ */
+export interface CommandNodeData {
+	/** Subscription name (unique within the project's cue.yaml). */
+	name: string;
+	/** Selected sub-mode of the unified command node. */
+	mode: CueCommandMode;
+	/** Shell command (used when `mode === 'shell'`). */
+	shell?: string;
+	/** maestro-cli sub-command name. Only `'send'` is supported today. */
+	cliCommand?: 'send';
+	/** maestro-cli send target session ID (used when `mode === 'cli'`). */
+	cliTarget?: string;
+	/** Optional message override for `mode === 'cli'`. Defaults to {{CUE_SOURCE_OUTPUT}} when blank. */
+	cliMessage?: string;
+	/** Owning session that provides cwd/project root + agent_id binding. */
+	owningSessionId: string;
+	/** Cached owning session name for display. */
+	owningSessionName: string;
 }
 
-export type PipelineNodeType = 'trigger' | 'agent' | 'cli_output';
+/**
+ * Data for an "error" node rendered in place of an unresolved agent. The
+ * loader emits these when a chain/target session reference in the YAML
+ * cannot be matched to any live session — `agent_id` points to a deleted
+ * session, `source_session_ids` misses, and name-based fallback also
+ * misses. Showing a visible error beats silently picking a wrong agent
+ * (which is how the "two agents swapped" bug manifested). Save is blocked
+ * while any error node is present in a pipeline.
+ */
+export interface ErrorNodeData {
+	reason: 'missing-target' | 'missing-source';
+	/** The subscription (or chain sub) that produced the unresolved reference. */
+	subscriptionName: string;
+	/** The stable ID from YAML that failed to resolve (may be undefined when
+	 *  YAML only had a legacy name). */
+	unresolvedId?: string;
+	/** The legacy session name from YAML that also failed to resolve. */
+	unresolvedName?: string;
+	/** Short human-readable description shown on the node. */
+	message: string;
+}
+
+export type PipelineNodeType = 'trigger' | 'agent' | 'command' | 'error';
 
 export interface PipelineNode {
 	id: string;
 	type: PipelineNodeType;
 	position: PipelineNodePosition;
-	data: TriggerNodeData | AgentNodeData | CliOutputNodeData;
+	data: TriggerNodeData | AgentNodeData | CommandNodeData | ErrorNodeData;
+}
+
+/** Convert a CommandNodeData to the wire-format CueCommand object. */
+export function commandNodeDataToCueCommand(data: CommandNodeData): CueCommand | undefined {
+	if (data.mode === 'shell') {
+		return data.shell ? { mode: 'shell', shell: data.shell } : undefined;
+	}
+	if (data.cliTarget) {
+		return {
+			mode: 'cli',
+			cli: {
+				command: 'send',
+				target: data.cliTarget,
+				message: data.cliMessage || undefined,
+			},
+		};
+	}
+	return undefined;
+}
+
+/** Build CommandNodeData from a wire-format CueCommand (for deserialization). */
+export function cueCommandToCommandNodeFields(
+	cmd: CueCommand
+): Pick<CommandNodeData, 'mode' | 'shell' | 'cliCommand' | 'cliTarget' | 'cliMessage'> {
+	if (cmd.mode === 'shell') {
+		return { mode: 'shell', shell: cmd.shell };
+	}
+	return {
+		mode: 'cli',
+		cliCommand: cmd.cli.command,
+		cliTarget: cmd.cli.target,
+		cliMessage: cmd.cli.message,
+	};
 }
 
 export interface PipelineEdge {

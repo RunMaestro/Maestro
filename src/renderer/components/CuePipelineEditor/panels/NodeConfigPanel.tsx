@@ -13,15 +13,16 @@ import type {
 	PipelineEdge,
 	TriggerNodeData,
 	AgentNodeData,
-	CliOutputNodeData,
+	CommandNodeData,
 	CuePipeline,
+	CuePipelineSessionInfo as SessionInfo,
 	IncomingTriggerEdgeInfo,
 	IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { EVENT_ICONS, EVENT_LABELS } from '../cueEventConstants';
 import { TriggerConfig } from './triggers';
 import { AgentConfigPanel } from './AgentConfigPanel';
-import { CliOutputConfigPanel } from './CliOutputConfigPanel';
+import { CommandConfigPanel } from './CommandConfigPanel';
 
 export type { IncomingTriggerEdgeInfo } from '../../../../shared/cue-pipeline-types';
 
@@ -29,6 +30,9 @@ interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
 	theme: Theme;
 	pipelines: CuePipeline[];
+	/** Available sessions — used by CommandConfigPanel's owning-session picker when
+	 *  the command node was dropped without a pre-bound session. */
+	sessions?: SessionInfo[];
 	hasOutgoingEdge?: boolean;
 	/** Whether the selected agent has incoming edges from other agents (not triggers) */
 	hasIncomingAgentEdges?: boolean;
@@ -38,7 +42,10 @@ interface NodeConfigPanelProps {
 	incomingAgentEdges?: IncomingAgentEdgeInfo[];
 	/** Incoming trigger edges for the selected agent node (for per-edge prompts) */
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
-	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
+	onUpdateNode: (
+		nodeId: string,
+		data: Partial<TriggerNodeData | AgentNodeData | CommandNodeData>
+	) => void;
 	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
@@ -59,6 +66,7 @@ export function NodeConfigPanel({
 	selectedNode,
 	theme,
 	pipelines,
+	sessions,
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
@@ -82,10 +90,11 @@ export function NodeConfigPanel({
 	if (!isVisible) return null;
 
 	const isTrigger = selectedNode.type === 'trigger';
-	const isCliOutput = selectedNode.type === 'cli_output';
+	const isCommand = selectedNode.type === 'command';
+	const isAgent = selectedNode.type === 'agent';
 	const triggerData = isTrigger ? (selectedNode.data as TriggerNodeData) : null;
-	const agentData = !isTrigger && !isCliOutput ? (selectedNode.data as AgentNodeData) : null;
-	const cliOutputData = isCliOutput ? (selectedNode.data as CliOutputNodeData) : null;
+	const agentData = isAgent ? (selectedNode.data as AgentNodeData) : null;
+	const commandData = isCommand ? (selectedNode.data as CommandNodeData) : null;
 
 	const Icon = triggerData ? (EVENT_ICONS[triggerData.eventType] ?? Zap) : null;
 	const ExpandIcon = expanded ? ChevronsDown : ChevronsUp;
@@ -112,7 +121,7 @@ export function NodeConfigPanel({
 		// Collapsed mode stays compact — the content wrapper scrolls when
 		// upstream-sources / fan-in cards don't fit. Expanded mode (80%) is
 		// where the user gets full breathing room.
-		if (isCliOutput) return 200;
+		if (isCommand) return commandData?.mode === 'cli' ? 320 : 280;
 		const base = hasUpstreamAgents ? 300 : 280;
 		const fanInBoost = hasFanIn ? 60 : 0;
 		const triggerBoost = hasMultipleTriggers ? Math.min(120, (triggerEdgeCount - 1) * 60) : 0;
@@ -178,10 +187,10 @@ export function NodeConfigPanel({
 							</span>
 						</>
 					)}
-					{isCliOutput && (
+					{isCommand && (
 						<>
 							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
-								CLI Output
+								{commandData?.name || 'command'}
 							</span>
 							<span
 								style={{
@@ -192,11 +201,11 @@ export function NodeConfigPanel({
 									borderRadius: 4,
 								}}
 							>
-								{cliOutputData?.target || 'No target'}
+								{commandData?.mode === 'cli' ? 'cli send' : 'shell'}
 							</span>
 						</>
 					)}
-					{!isTrigger && !isCliOutput && agentData && (
+					{isAgent && agentData && (
 						<>
 							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
 								{agentData.sessionName}
@@ -298,19 +307,19 @@ export function NodeConfigPanel({
 				{isTrigger && (
 					<TriggerConfig node={selectedNode} theme={theme} onUpdateNode={onUpdateNode} />
 				)}
-				{isCliOutput && (
-					<CliOutputConfigPanel
-						nodeId={selectedNode.id}
-						data={selectedNode.data as CliOutputNodeData}
+				{isCommand && (
+					<CommandConfigPanel
+						key={selectedNode.id}
+						node={selectedNode}
 						theme={theme}
-						onUpdateNode={
-							onUpdateNode as unknown as (nodeId: string, data: Partial<CliOutputNodeData>) => void
-						}
-						expanded={expanded}
+						sessions={sessions}
+						onUpdateNode={onUpdateNode}
+						onSwitchToAgent={onSwitchToAgent}
 					/>
 				)}
-				{!isTrigger && !isCliOutput && (
+				{isAgent && (
 					<AgentConfigPanel
+						key={selectedNode.id}
 						node={selectedNode}
 						theme={theme}
 						pipelines={pipelines}

@@ -13,28 +13,9 @@ import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSecondary: '#2a2a2a',
-		bgActivity: '#3a3a3a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		border: '#444444',
-		accent: '#3b82f6',
-		green: '#10b981',
-		yellow: '#f59e0b',
-		red: '#ef4444',
-		orange: '#f97316',
-		scrollbarThumb: '#555555',
-		scrollbarTrack: '#222222',
-	},
-};
 
 // Mock data for testing
 const mockStatsData: StatsAggregation = {

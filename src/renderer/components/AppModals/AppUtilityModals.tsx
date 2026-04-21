@@ -77,6 +77,7 @@ export interface AppUtilityModalsProps {
 	setUsageDashboardOpen?: (open: boolean) => void;
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
+	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setGitDiffPreview: (diff: string | null) => void;
 	setGitLogOpen: (open: boolean) => void;
@@ -115,6 +116,7 @@ export interface AppUtilityModalsProps {
 			| 'supportsSlashCommands'
 			| 'supportsContextMerge'
 			| 'supportsThinkingDisplay'
+			| 'supportsProjectMemory'
 	) => boolean;
 	onOpenMergeSession: () => void;
 	onOpenSendToAgent: () => void;
@@ -303,6 +305,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setUsageDashboardOpen,
 	setActiveRightTab,
 	setAgentSessionsOpen,
+	setMemoryViewerOpen,
 	setActiveAgentSessionId,
 	setGitDiffPreview,
 	setGitLogOpen,
@@ -477,6 +480,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setUsageDashboardOpen={setUsageDashboardOpen}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
+					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
 					setGitDiffPreview={setGitDiffPreview}
 					setGitLogOpen={setGitLogOpen}

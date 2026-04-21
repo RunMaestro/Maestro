@@ -17,6 +17,7 @@ import { create } from 'zustand';
 import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Store Types
@@ -307,7 +308,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 					: getActiveTab(session);
 
 				if (!targetTab) {
-					console.error(
+					logger.error(
 						'[addLogToTab] No target tab found - session has no aiTabs, this should not happen'
 					);
 					return session;

@@ -12,6 +12,7 @@ import {
 	formatDurationCompact,
 	formatTimestamp as formatTimestampShared,
 } from '../../shared/formatters';
+import { logger } from './logger';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -761,7 +762,7 @@ export async function downloadGroupChatExport(
 	try {
 		images = await window.maestro.groupChat.getImages(groupChat.id);
 	} catch (error) {
-		console.warn('Failed to fetch images for export:', error);
+		logger.warn('Failed to fetch images for export:', undefined, error);
 	}
 
 	// Generate HTML

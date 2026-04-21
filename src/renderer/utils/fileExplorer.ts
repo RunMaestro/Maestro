@@ -4,6 +4,7 @@ import {
 } from '../../shared/treeUtils';
 import { isImageFile } from '../../shared/gitUtils';
 import { shouldIgnore, parseGitignoreContent, LOCAL_IGNORE_DEFAULTS } from '../../shared/globUtils';
+import { logger } from './logger';
 
 /**
  * Check if a file should be opened in external app based on extension
@@ -284,7 +285,11 @@ async function loadFileTreeRecursive(
 		for (const entry of entries) {
 			const normalizedName = entry.name.normalize('NFC');
 			if (seen.has(normalizedName)) {
-				console.warn('[loadFileTree] readDir returned duplicate entry:', entry.name, 'in', dirPath);
+				logger.warn('[loadFileTree] readDir returned duplicate entry:', undefined, [
+					entry.name,
+					'in',
+					dirPath,
+				]);
 				continue;
 			}
 			seen.add(normalizedName);
@@ -340,7 +345,7 @@ async function loadFileTreeRecursive(
 			return a.name.localeCompare(b.name);
 		});
 	} catch (error) {
-		console.error('Error loading file tree:', error);
+		logger.error('Error loading file tree:', undefined, error);
 		throw error; // Propagate error to be caught by caller
 	}
 }

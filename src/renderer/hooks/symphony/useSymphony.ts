@@ -17,6 +17,7 @@ import type {
 	SymphonyCategory,
 } from '../../../shared/symphony-types';
 import { SYMPHONY_CATEGORIES } from '../../../shared/symphony-constants';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -191,7 +192,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setSymphonyState(response.state as SymphonyState);
 			}
 		} catch (err) {
-			console.error('Failed to fetch symphony state:', err);
+			logger.error('Failed to fetch symphony state:', undefined, err);
 		}
 	}, []);
 
@@ -208,7 +209,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setIssueCounts(response.counts);
 			}
 		} catch (err) {
-			console.error('Failed to fetch issue counts:', err);
+			logger.error('Failed to fetch issue counts:', undefined, err);
 			setIssueCounts(null);
 		} finally {
 			setIsLoadingIssueCounts(false);
@@ -260,7 +261,7 @@ export function useSymphony(): UseSymphonyReturn {
 					await fetchSymphonyState();
 				}
 			} catch (err) {
-				console.error('Auto-sync failed:', err);
+				logger.error('Auto-sync failed:', undefined, err);
 			}
 		};
 
@@ -287,7 +288,7 @@ export function useSymphony(): UseSymphonyReturn {
 				setRepoIssues(response.issues as SymphonyIssue[]);
 			}
 		} catch (err) {
-			console.error('Failed to fetch issues:', err);
+			logger.error('Failed to fetch issues:', undefined, err);
 		} finally {
 			setIsLoadingIssues(false);
 		}
@@ -307,7 +308,7 @@ export function useSymphony(): UseSymphonyReturn {
 				await window.maestro.symphony.checkPRStatuses();
 				await fetchSymphonyState();
 			} catch (err) {
-				console.error('Failed to refresh symphony:', err);
+				logger.error('Failed to refresh symphony:', undefined, err);
 			} finally {
 				setIsRefreshing(false);
 			}

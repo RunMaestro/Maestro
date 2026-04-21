@@ -30,6 +30,7 @@ import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { logger } from '../../utils/logger';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -260,7 +261,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				onShowFlash(`${resetCount} task${resetCount !== 1 ? 's' : ''} reverted to incomplete`);
 			}
 		} catch (err) {
-			console.error('Failed to save after reset:', err);
+			logger.error('Failed to save after reset:', undefined, err);
 		}
 	}, [
 		folderPath,

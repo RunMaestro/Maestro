@@ -19,27 +19,8 @@ import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../.
 import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#999999',
-		accent: '#007acc',
-		border: '#404040',
-		error: '#f44747',
-		warning: '#cca700',
-		success: '#4ec9b0',
-		textOnAccent: '#ffffff',
-		selectionBg: '#264f78',
-		buttonHover: '#2d2d2d',
-	},
-};
 
 // Helper to create a mock session
 function createMockSession(overrides: Partial<Session> = {}): Session {

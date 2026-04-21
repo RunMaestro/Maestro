@@ -13,6 +13,7 @@ interface SendOptions {
 	readOnly?: boolean;
 	tab?: boolean;
 	live?: boolean;
+	newTab?: boolean;
 }
 
 interface SendResponse {
@@ -76,21 +77,46 @@ export async function send(
 	message: string,
 	options: SendOptions
 ): Promise<void> {
+	// --new-tab requires --live (both are "route through desktop" modes)
+	if (options.newTab && !options.live) {
+		emitErrorJson('--new-tab requires --live', 'INVALID_OPTIONS');
+		process.exit(1);
+	}
+
 	// --live mode: route message through Maestro desktop tab
 	if (options.live) {
 		if (options.session || options.readOnly) {
 			emitErrorJson('--live cannot be combined with --session or --read-only', 'INVALID_OPTIONS');
 			process.exit(1);
 		}
+		// Resolve agent ID early so partial IDs produce the CLI's normal
+		// "ambiguous / not found" error rather than a confusing server-side one.
+		let liveAgentId: string;
+		try {
+			liveAgentId = resolveAgentId(agentIdArg);
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Unknown error';
+			emitErrorJson(msg, 'AGENT_NOT_FOUND');
+			process.exit(1);
+		}
 		try {
 			await withMaestroClient(async (client) => {
-				await client.sendCommand(
-					{ type: 'send_command', sessionId: agentIdArg, command: message, inputMode: 'ai' },
-					'command_result'
-				);
+				if (options.newTab) {
+					// Atomic: create a new AI tab, focus it, and dispatch the prompt
+					await client.sendCommand(
+						{ type: 'new_ai_tab_with_prompt', sessionId: liveAgentId, prompt: message },
+						'new_ai_tab_with_prompt_result'
+					);
+				} else {
+					// Write into the agent's currently-active AI tab
+					await client.sendCommand(
+						{ type: 'send_command', sessionId: liveAgentId, command: message, inputMode: 'ai' },
+						'command_result'
+					);
+				}
 			});
 			const response: SendResponse = {
-				agentId: agentIdArg,
+				agentId: liveAgentId,
 				agentName: 'live',
 				sessionId: null,
 				response: null,
@@ -114,7 +140,7 @@ export async function send(
 				lowerMsg.includes('no such session') ||
 				lowerMsg.includes('unknown session')
 			) {
-				emitErrorJson(`Session not found: ${agentIdArg}`, 'SESSION_NOT_FOUND');
+				emitErrorJson(`Session not found: ${liveAgentId}`, 'SESSION_NOT_FOUND');
 			} else {
 				emitErrorJson(`Command failed: ${msg}`, 'COMMAND_FAILED');
 			}

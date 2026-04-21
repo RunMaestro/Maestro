@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -6,6 +7,7 @@ import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { mockTheme } from '../../helpers/mockTheme';
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
 	(window.maestro as any).devtools = {
@@ -75,26 +77,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'dark',
-	name: 'Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		bgTerminal: '#1a1a2e',
-		textMain: '#eaeaea',
-		textDim: '#888',
-		accent: '#e94560',
-		accentForeground: '#ffffff',
-		error: '#ff6b6b',
-		border: '#333',
-		success: '#4ecdc4',
-		warning: '#ffd93d',
-		terminalCursor: '#e94560',
-	},
-};
 
 // Create mock shortcuts
 const mockShortcuts: Record<string, Shortcut> = {
@@ -822,7 +804,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Debug: Reset Busy State action', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
@@ -838,7 +820,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Debug: Reset Current Session action', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
@@ -847,13 +829,17 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('Debug: Reset Current Session'));
 
 			expect(props.setSessions).toHaveBeenCalled();
-			expect(consoleSpy).toHaveBeenCalledWith('[Debug] Reset busy state for session:', 'session-1');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'[Debug] Reset busy state for session:',
+				undefined,
+				'session-1'
+			);
 
 			consoleSpy.mockRestore();
 		});
 
 		it('handles Debug: Log Session State action', () => {
-			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
@@ -1459,7 +1445,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles error when opening repository in browser', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(gitService.getRemoteBrowserUrl).mockRejectedValueOnce(new Error('Network error'));
 
 			const props = createDefaultProps();
@@ -1470,6 +1456,7 @@ describe('QuickActionsModal', () => {
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
 					'Failed to open repository in browser:',
+					undefined,
 					expect.any(Error)
 				);
 				expect(mockNotifyToast).toHaveBeenCalledWith({

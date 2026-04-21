@@ -6,6 +6,7 @@
  */
 
 import type { OpenSpecCommand, OpenSpecMetadata } from '../types';
+import { logger } from '../utils/logger';
 
 /**
  * Get all OpenSpec commands from the main process
@@ -18,7 +19,7 @@ export async function getOpenSpecCommands(): Promise<OpenSpecCommand[]> {
 		}
 		return [];
 	} catch (error) {
-		console.error('[OpenSpec] Failed to get commands:', error);
+		logger.error('[OpenSpec] Failed to get commands:', undefined, error);
 		return [];
 	}
 }
@@ -34,7 +35,7 @@ export async function getOpenSpecMetadata(): Promise<OpenSpecMetadata | null> {
 		}
 		return null;
 	} catch (error) {
-		console.error('[OpenSpec] Failed to get metadata:', error);
+		logger.error('[OpenSpec] Failed to get metadata:', undefined, error);
 		return null;
 	}
 }
@@ -50,7 +51,7 @@ export async function getOpenSpecCommand(slashCommand: string): Promise<OpenSpec
 		}
 		return null;
 	} catch (error) {
-		console.error('[OpenSpec] Failed to get command:', error);
+		logger.error('[OpenSpec] Failed to get command:', undefined, error);
 		return null;
 	}
 }

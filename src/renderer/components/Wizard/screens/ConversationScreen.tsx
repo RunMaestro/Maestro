@@ -42,6 +42,7 @@ import {
 	createWizardBubbleMarkdownComponents,
 } from '../../../utils/markdownConfig';
 import { formatTimestamp } from '../../../../shared/formatters';
+import { logger } from '../../../utils/logger';
 
 interface ConversationScreenProps {
 	theme: Theme;
@@ -475,13 +476,13 @@ export function ConversationScreen({
 							});
 						}
 					} catch (err) {
-						console.warn(`Failed to read existing doc ${filename}:`, err);
+						logger.warn(`Failed to read existing doc ${filename}:`, undefined, err);
 					}
 				}
 
 				return docs;
 			} catch (error) {
-				console.warn('Failed to fetch existing docs:', error);
+				logger.warn('Failed to fetch existing docs:', undefined, error);
 				return [];
 			}
 		}
@@ -507,7 +508,7 @@ export function ConversationScreen({
 					setConversationStarted(true);
 				}
 			} catch (error) {
-				console.error('Failed to initialize conversation:', error);
+				logger.error('Failed to initialize conversation:', undefined, error);
 				if (mounted) {
 					setConversationError('Failed to initialize conversation. Please try again.');
 				}
@@ -704,7 +705,7 @@ export function ConversationScreen({
 						setThinkingContent('');
 						setToolExecutions([]);
 
-						console.log('[ConversationScreen] onComplete:', {
+						logger.info('[ConversationScreen] onComplete:', undefined, {
 							success: sendResult.success,
 							hasResponse: !!sendResult.response,
 							parseSuccess: sendResult.response?.parseSuccess,
@@ -718,18 +719,21 @@ export function ConversationScreen({
 							// Update confidence level
 							if (sendResult.response.structured) {
 								const newConfidence = sendResult.response.structured.confidence;
-								console.log('[ConversationScreen] Setting confidence to:', newConfidence);
+								logger.info(
+									'[ConversationScreen] Setting confidence to:',
+									undefined,
+									newConfidence
+								);
 								setConfidenceLevel(newConfidence);
 
 								const isReady =
 									sendResult.response.structured.ready &&
 									newConfidence >= READY_CONFIDENCE_THRESHOLD;
-								console.log(
-									'[ConversationScreen] isReady:',
+								logger.info('[ConversationScreen] isReady:', undefined, [
 									isReady,
 									'ready flag:',
-									sendResult.response.structured.ready
-								);
+									sendResult.response.structured.ready,
+								]);
 								setIsReadyToProceed(isReady);
 
 								// Announce response received with confidence (ready state will be announced by effect)
@@ -739,7 +743,7 @@ export function ConversationScreen({
 								}
 							} else {
 								// No structured data - just announce response received
-								console.log('[ConversationScreen] No structured data in response');
+								logger.info('[ConversationScreen] No structured data in response');
 								setAnnouncement('Response received from AI assistant.');
 								setAnnouncementKey((prev) => prev + 1);
 							}
@@ -757,7 +761,7 @@ export function ConversationScreen({
 								containsDeferredResponsePhrase(messageContent) &&
 								!autoContinueTriggeredRef.current
 							) {
-								console.log(
+								logger.info(
 									'[ConversationScreen] Detected deferred response phrase, scheduling auto-continue'
 								);
 								autoContinueTriggeredRef.current = true;
@@ -767,7 +771,7 @@ export function ConversationScreen({
 						}
 					},
 					onError: (error) => {
-						console.error('Conversation error:', error);
+						logger.error('Conversation error:', undefined, error);
 						setConversationError(error);
 						setErrorRetryCount((prev) => prev + 1);
 						// Announce error
@@ -873,7 +877,7 @@ export function ConversationScreen({
 								existingDocs.push({ filename, content: readResult.content });
 							}
 						} catch (err) {
-							console.warn(`Failed to read doc ${filename}:`, err);
+							logger.warn(`Failed to read doc ${filename}:`, undefined, err);
 						}
 					}
 				}
@@ -964,7 +968,7 @@ export function ConversationScreen({
 						}
 					},
 					onError: (error) => {
-						console.error('Conversation error:', error);
+						logger.error('Conversation error:', undefined, error);
 						setConversationError(error);
 						setErrorRetryCount((prev) => prev + 1);
 						setAnnouncement(`Error: ${error}. Please try again.`);

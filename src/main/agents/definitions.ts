@@ -5,8 +5,9 @@
  * This includes CLI arguments, configuration options, and default settings.
  */
 
-import type { AgentCapabilities } from './capabilities';
+import type { AgentCapabilities, AgentConfig as BaseAgentConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+export type { AgentCapabilities } from '../../shared/types';
 
 // ============ Configuration Types ============
 
@@ -73,23 +74,20 @@ export type AgentConfigOption =
 	| SelectConfigOption;
 
 /**
- * Full agent configuration including runtime detection state
+ * Full agent configuration including runtime detection state.
+ * Extends the serializable BaseAgentConfig (from shared/types) with
+ * function-typed fields for CLI argument building (main process only).
  */
-export interface AgentConfig {
-	id: string;
-	name: string;
+export interface AgentConfig extends BaseAgentConfig {
+	// Narrow optionals to required for the main process full config
 	binaryName: string;
 	command: string;
-	args: string[]; // Base args always included (excludes batch mode prefix)
-	available: boolean;
-	path?: string;
-	customPath?: string; // User-specified custom path (shown in UI even if not available)
-	requiresPty?: boolean; // Whether this agent needs a pseudo-terminal
-	configOptions?: AgentConfigOption[]; // Agent-specific configuration
-	hidden?: boolean; // If true, agent is hidden from UI (internal use only)
-	capabilities: AgentCapabilities; // Agent feature capabilities
+	args: string[];
+	capabilities: AgentCapabilities;
+	// Override configOptions with the richer local type that includes argBuilder
+	configOptions?: AgentConfigOption[];
 
-	// Argument builders for dynamic CLI construction
+	// Argument builders for dynamic CLI construction (function-typed, not serializable)
 	// These are optional - agents that don't have them use hardcoded behavior
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
@@ -97,14 +95,12 @@ export interface AgentConfig {
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
-	yoloModeArgs?: string[]; // Args for YOLO/full-access mode (e.g., ['--dangerously-bypass-approvals-and-sandbox'])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
-	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
 }
 
 /**

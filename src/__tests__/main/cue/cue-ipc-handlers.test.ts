@@ -53,6 +53,7 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	deleteCueConfigFile: vi.fn(),
 	writeCuePromptFile: vi.fn(),
 	pruneOrphanedPromptFiles: vi.fn(() => []),
+	removeEmptyPromptsDir: vi.fn(() => false),
 }));
 
 vi.mock('../../../main/cue/pipeline-layout-store', () => ({
@@ -71,6 +72,8 @@ import {
 	writeCueConfigFile,
 	deleteCueConfigFile,
 	writeCuePromptFile,
+	pruneOrphanedPromptFiles,
+	removeEmptyPromptsDir,
 } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import * as yaml from 'js-yaml';
@@ -308,6 +311,40 @@ describe('Cue IPC Handlers', () => {
 			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
 		});
 
+		it('adds fan_out_prompt_files entries to the prune keep-set', async () => {
+			// Regression guard: without this, per-agent fan-out prompt files
+			// would be deleted by pruneOrphanedPromptFiles on every save —
+			// only `prompt_file` and `output_prompt_file` were kept.
+			vi.mocked(yaml.load).mockReturnValue({
+				subscriptions: [
+					{
+						name: 'fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B', 'C'],
+						fan_out_prompt_files: [
+							'.maestro/prompts/a-pipe.md',
+							'.maestro/prompts/b-pipe.md',
+							'.maestro/prompts/c-pipe.md',
+						],
+					},
+				],
+			});
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			await handler(null, { projectRoot: '/projects/test', content: 'ignored-by-mock' });
+
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledTimes(1);
+			const [, keepSet] = vi.mocked(pruneOrphanedPromptFiles).mock.calls[0];
+			const kept = [...(keepSet as Iterable<string>)];
+			expect(kept).toEqual(
+				expect.arrayContaining([
+					'.maestro/prompts/a-pipe.md',
+					'.maestro/prompts/b-pipe.md',
+					'.maestro/prompts/c-pipe.md',
+				])
+			);
+		});
+
 		it('should also write external prompt files when provided', async () => {
 			const content = 'subscriptions: []';
 			const promptFiles = {
@@ -470,6 +507,33 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:deleteYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBe(false);
+		});
+
+		it('prunes all .md prompt files and removes the empty prompts dir', async () => {
+			// The "Remove Cue configuration" button must collapse the project's
+			// `.maestro` footprint — deleting the yaml alone used to leave
+			// orphaned prompt files behind forever.
+			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			await handler(null, { projectRoot: '/projects/test' });
+
+			// Keep-set is empty — everything in .maestro/prompts/ is orphaned.
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
+			// Then collapse the now-empty prompts directory.
+			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
+		});
+
+		it('prunes prompts even when the yaml file was already absent', async () => {
+			// Users sometimes delete cue.yaml by hand, then click the Remove
+			// button. Cleanup must still run so orphaned prompts don't linger.
+			vi.mocked(deleteCueConfigFile).mockReturnValue(false);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			await handler(null, { projectRoot: '/projects/test' });
+
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
+			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
 		});
 	});
 

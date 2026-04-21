@@ -21,6 +21,7 @@ import { formatDurationHuman } from '../../shared/formatters';
 import { Modal } from './ui/Modal';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface AboutModalProps {
 	theme: Theme;
@@ -78,7 +79,7 @@ export function AboutModal({
 				}
 			})
 			.catch((error) => {
-				console.error('Failed to load global agent stats:', error);
+				logger.error('Failed to load global agent stats:', undefined, error);
 				setLoading(false);
 				// On error, mark as complete to stop showing loading state
 				setIsStatsComplete(true);

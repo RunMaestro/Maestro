@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -249,7 +250,7 @@ describe('useSymphonyContribution', () => {
 
 		it('shows error toast and returns early when agent is not found', async () => {
 			mockMaestro.agents.get.mockResolvedValueOnce(null);
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -272,7 +273,7 @@ describe('useSymphonyContribution', () => {
 
 		it('does not create session when agent is not found', async () => {
 			mockMaestro.agents.get.mockResolvedValueOnce(null);
-			vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -315,7 +316,7 @@ describe('useSymphonyContribution', () => {
 				valid: false,
 				error: 'Duplicate session for this path',
 			});
-			vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -339,7 +340,7 @@ describe('useSymphonyContribution', () => {
 				valid: false,
 				error: '',
 			});
-			vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -834,7 +835,7 @@ describe('useSymphonyContribution', () => {
 
 		it('does not throw when registerActive rejects', async () => {
 			mockRegisterActive.mockRejectedValueOnce(new Error('Network error'));
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -851,7 +852,7 @@ describe('useSymphonyContribution', () => {
 		it('logs error when registerActive rejects', async () => {
 			const networkError = new Error('Network error');
 			mockRegisterActive.mockRejectedValueOnce(networkError);
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));
@@ -867,6 +868,7 @@ describe('useSymphonyContribution', () => {
 
 			expect(consoleError).toHaveBeenCalledWith(
 				expect.stringContaining('[Symphony] Failed to register active contribution:'),
+				undefined,
 				networkError
 			);
 			consoleError.mockRestore();
@@ -874,7 +876,7 @@ describe('useSymphonyContribution', () => {
 
 		it('still creates the session even if registerActive fails', async () => {
 			mockRegisterActive.mockRejectedValueOnce(new Error('Unreachable'));
-			vi.spyOn(console, 'error').mockImplementation(() => {});
+			vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSymphonyContribution(deps));

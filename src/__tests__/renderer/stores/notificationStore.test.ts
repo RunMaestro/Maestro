@@ -10,7 +10,17 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { useNotificationStore, notifyToast } from '../../../renderer/stores/notificationStore';
+import { logger } from '../../../renderer/utils/logger';
+import {
+	useNotificationStore,
+	notifyToast,
+	resetToastIdCounter,
+	getNotificationState,
+	getNotificationActions,
+	selectToasts,
+	selectToastCount,
+	selectConfig,
+} from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 
 // ============================================================================
@@ -657,7 +667,7 @@ describe('notificationStore', () => {
 		});
 
 		it('handles speak() rejection gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			mockSpeak.mockRejectedValueOnce(new Error('speak failed'));
 			useNotificationStore.getState().setAudioFeedback(true, 'say');
 			notifyToast({ type: 'info', title: 'Test', message: 'Hello' });
@@ -666,19 +676,21 @@ describe('notificationStore', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'[notificationStore] Custom notification failed:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleSpy.mockRestore();
 		});
 
 		it('handles show() rejection gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			mockShow.mockRejectedValueOnce(new Error('show failed'));
 			notifyToast({ type: 'info', title: 'Test', message: 'Hello' });
 
 			await vi.advanceTimersByTimeAsync(0);
 			expect(consoleSpy).toHaveBeenCalledWith(
 				'[notificationStore] Failed to show OS notification:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleSpy.mockRestore();

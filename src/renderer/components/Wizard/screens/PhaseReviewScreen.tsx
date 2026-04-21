@@ -24,6 +24,7 @@ import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { logger } from '../../../utils/logger';
 
 // Auto-save debounce delay in milliseconds
 const AUTO_SAVE_DELAY = 2000;
@@ -164,7 +165,7 @@ function DocumentReview({
 						setEditedPhase1Content(localContent);
 					}
 				} catch (err) {
-					console.error('Auto-save failed:', err);
+					logger.error('Auto-save failed:', undefined, err);
 				} finally {
 					isSavingRef.current = false;
 
@@ -188,7 +189,7 @@ function DocumentReview({
 								setEditedPhase1Content(pendingContent);
 							}
 						} catch (err) {
-							console.error('Auto-save (pending) failed:', err);
+							logger.error('Auto-save (pending) failed:', undefined, err);
 						} finally {
 							isSavingRef.current = false;
 						}

@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: vi.fn((selector) =>
@@ -35,20 +36,6 @@ vi.mock('../../../../renderer/hooks', () => ({
 vi.mock('../../../../renderer/components/GitStatusWidget', () => ({
 	GitStatusWidget: () => React.createElement('div', { 'data-testid': 'git-status-widget' }),
 }));
-
-const mockTheme = {
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2a2a2a',
-		border: '#3a3a3a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#3b82f6',
-		accentForeground: '#ffffff',
-		error: '#ef4444',
-		warning: '#f59e0b',
-	},
-} as Theme;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
 	return {
@@ -110,6 +97,7 @@ const defaultProps = {
 	getContextColor: vi.fn(() => '#3b82f6'),
 	setGitLogOpen: vi.fn(),
 	setAgentSessionsOpen: vi.fn(),
+	setMemoryViewerOpen: vi.fn(),
 	setActiveAgentSessionId: vi.fn(),
 	onStopBatchRun: vi.fn(),
 	onOpenWorktreeConfig: vi.fn(),

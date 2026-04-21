@@ -14,6 +14,8 @@ import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
+import { openBrowser } from './commands/open-browser';
+import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
@@ -141,6 +143,7 @@ program
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option('-l, --live', 'Send message through Maestro desktop (appears in tab)')
+	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
 	.action(send);
 
 // Open file command - open a file in the Maestro desktop app
@@ -149,6 +152,23 @@ program
 	.description('Open a file as a preview tab in the Maestro desktop app')
 	.option('-s, --session <id>', 'Target session (defaults to active)')
 	.action(openFile);
+
+// Open browser command - open a URL in a browser tab in the Maestro desktop app
+program
+	.command('open-browser <url>')
+	.description('Open a URL as a browser tab in the Maestro desktop app')
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.action(openBrowser);
+
+// Open terminal command - open a new terminal tab in the Maestro desktop app
+program
+	.command('open-terminal')
+	.description('Open a new terminal tab in the Maestro desktop app')
+	.option('-a, --agent <id>', 'Target agent by ID (defaults to active)')
+	.option('--cwd <path>', "Working directory for the terminal (must be within the agent's cwd)")
+	.option('--shell <shell>', 'Shell binary to use (default: zsh)')
+	.option('--name <name>', 'Display name for the tab')
+	.action(openTerminal);
 
 // Refresh files command - refresh the file tree in the Maestro desktop app
 program

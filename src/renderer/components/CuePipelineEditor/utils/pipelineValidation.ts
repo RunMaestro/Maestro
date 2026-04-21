@@ -12,6 +12,7 @@ import type {
 	PipelineNode,
 	TriggerNodeData,
 	AgentNodeData,
+	CommandNodeData,
 	CueEventType,
 } from '../../../../shared/cue-pipeline-types';
 
@@ -92,20 +93,43 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 	for (const pipeline of pipelines) {
 		const triggers = pipeline.nodes.filter((n) => n.type === 'trigger');
 		const agents = pipeline.nodes.filter((n) => n.type === 'agent');
+		const commands = pipeline.nodes.filter((n) => n.type === 'command');
 
 		// Completely empty pipelines cannot be persisted (no subscriptions in YAML).
 		// Silent-skipping them here led to saves that appeared to succeed but
 		// wrote nothing to disk — flag them so the user gets clear feedback.
-		if (triggers.length === 0 && agents.length === 0) {
-			errors.push(`"${pipeline.name}": add a trigger and an agent before saving`);
+		if (triggers.length === 0 && agents.length === 0 && commands.length === 0) {
+			errors.push(`"${pipeline.name}": add a trigger and an agent or command before saving`);
 			continue;
 		}
 
 		if (triggers.length === 0) {
 			errors.push(`"${pipeline.name}": needs at least one trigger`);
 		}
-		if (agents.length === 0) {
-			errors.push(`"${pipeline.name}": needs at least one agent`);
+		if (agents.length === 0 && commands.length === 0) {
+			errors.push(`"${pipeline.name}": needs at least one agent or command`);
+		}
+
+		// Command-node configuration: each command must have an owning agent (the
+		// "cwd/PATH" provider) and a non-empty body (shell or cli target). The
+		// owning-agent requirement comes from the engine's subscription model —
+		// `agent_id` binds the sub to a session, and commands without one can't
+		// be dispatched. Surface this at save time so unbound nodes don't silently
+		// disappear from YAML output.
+		for (const command of commands) {
+			const cmdData = command.data as CommandNodeData;
+			const label = cmdData.name || 'command';
+			if (!cmdData.owningSessionId) {
+				errors.push(
+					`"${pipeline.name}": command "${label}" needs an owning agent — pick one in the config panel`
+				);
+			}
+			if (cmdData.mode === 'shell' && !cmdData.shell?.trim()) {
+				errors.push(`"${pipeline.name}": command "${label}" is missing a shell command`);
+			}
+			if (cmdData.mode === 'cli' && !cmdData.cliTarget?.trim()) {
+				errors.push(`"${pipeline.name}": command "${label}" is missing a target session`);
+			}
 		}
 
 		for (const trigger of triggers) {

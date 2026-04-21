@@ -11,32 +11,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CustomThemeBuilder } from '../../../renderer/components/CustomThemeBuilder';
 import type { Theme, ThemeColors, ThemeId } from '../../../shared/theme-types';
 
+import { mockTheme, mockThemeColors } from '../../helpers/mockTheme';
+
 // ============================================================================
 // Test Fixtures
 // ============================================================================
-
-const mockThemeColors: ThemeColors = {
-	bgMain: '#1a1a2e',
-	bgSidebar: '#16213e',
-	bgActivity: '#0f3460',
-	border: '#555555',
-	textMain: '#e0e0e0',
-	textDim: '#888888',
-	accent: '#8b5cf6',
-	accentDim: '#8b5cf640',
-	accentText: '#a78bfa',
-	accentForeground: '#ffffff',
-	success: '#10b981',
-	warning: '#f59e0b',
-	error: '#ef4444',
-};
-
-const mockTheme: Theme = {
-	id: 'dracula' as ThemeId,
-	name: 'Dracula',
-	mode: 'dark',
-	colors: mockThemeColors,
-};
 
 /**
  * Create a valid theme export JSON string

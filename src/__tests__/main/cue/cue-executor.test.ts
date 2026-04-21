@@ -339,6 +339,7 @@ describe('cue-executor', () => {
 				sourceExitCode: '',
 				sourceDuration: '',
 				sourceTriggeredBy: '',
+				fromAgent: '',
 			});
 
 			// Verify substituteTemplateVariables was called with the inline prompt content

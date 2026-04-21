@@ -27,6 +27,7 @@ import { formatTokensCompact } from '../utils/formatters';
 import { estimateTokensFromLogs } from '../../shared/formatters';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * View modes for the modal
@@ -428,7 +429,7 @@ export function MergeSessionModal({
 			await onMerge(target.sessionId, target.tabId, options);
 			onClose();
 		} catch (error) {
-			console.error('Merge failed:', error);
+			logger.error('Merge failed:', undefined, error);
 		} finally {
 			setIsMerging(false);
 		}

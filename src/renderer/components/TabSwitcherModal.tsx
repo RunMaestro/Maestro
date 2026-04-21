@@ -19,6 +19,7 @@ import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/fo
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -260,11 +261,15 @@ export function TabSwitcherModal({
 					if (effectiveAgentId === 'claude-code') {
 						return window.maestro.claude
 							.updateSessionName(projectRoot, tab.agentSessionId!, tab.name!)
-							.catch((err) => console.warn('[TabSwitcher] Failed to sync tab name:', err));
+							.catch((err) =>
+								logger.warn('[TabSwitcher] Failed to sync tab name:', undefined, err)
+							);
 					} else {
 						return window.maestro.agentSessions
 							.setSessionName(effectiveAgentId, projectRoot, tab.agentSessionId!, tab.name!)
-							.catch((err) => console.warn('[TabSwitcher] Failed to sync tab name:', err));
+							.catch((err) =>
+								logger.warn('[TabSwitcher] Failed to sync tab name:', undefined, err)
+							);
 					}
 				})
 			);

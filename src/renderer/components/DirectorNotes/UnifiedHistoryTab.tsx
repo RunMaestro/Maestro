@@ -28,6 +28,7 @@ import { useListNavigation, useSettings, useThrottledCallback } from '../../hook
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
+import { logger } from '../../utils/logger';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
@@ -305,7 +306,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						setHistoryStats(result.stats);
 					}
 				} catch (error) {
-					console.error('Failed to load unified history:', error);
+					logger.error('Failed to load unified history:', undefined, error);
 					if (!append) {
 						setEntries([]);
 						setGraphEntries([]);

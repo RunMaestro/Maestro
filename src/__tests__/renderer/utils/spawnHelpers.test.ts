@@ -43,15 +43,6 @@ describe('prepareMaestroSystemPrompt', () => {
 		};
 	});
 
-	it('returns undefined when agentSessionId is set (resume)', async () => {
-		const result = await prepareMaestroSystemPrompt({
-			session: baseSession,
-			agentSessionId: 'existing-session-123',
-		});
-		expect(result).toBeUndefined();
-		expect((window as any).maestro.prompts.get).not.toHaveBeenCalled();
-	});
-
 	it('returns undefined when prompt load fails', async () => {
 		(window as any).maestro.prompts.get.mockResolvedValue({
 			success: false,
@@ -70,7 +61,7 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect(result).toBeUndefined();
 	});
 
-	it('returns substituted prompt for new sessions', async () => {
+	it('returns substituted prompt', async () => {
 		const result = await prepareMaestroSystemPrompt({
 			session: baseSession,
 			activeTabId: 'tab-42',
@@ -131,21 +122,16 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect(result).toBeDefined();
 	});
 
-	it('treats null agentSessionId as new session', async () => {
-		const result = await prepareMaestroSystemPrompt({
-			session: baseSession,
-			agentSessionId: null,
-		});
-		expect(result).toBeDefined();
-		expect((window as any).maestro.prompts.get).toHaveBeenCalled();
-	});
-
-	it('treats undefined agentSessionId as new session', async () => {
-		const result = await prepareMaestroSystemPrompt({
-			session: baseSession,
-			agentSessionId: undefined,
-		});
-		expect(result).toBeDefined();
+	it('re-injects prompt on every call (no resume-based skip)', async () => {
+		// Regression: prior impl returned undefined when a legacy `agentSessionId`
+		// was present. Because Claude Code's --append-system-prompt is NOT persisted
+		// into the session transcript, resuming with `--resume` dropped the Maestro
+		// prompt from turn 2 onward. The prompt MUST be re-injected on every spawn.
+		const first = await prepareMaestroSystemPrompt({ session: baseSession });
+		const second = await prepareMaestroSystemPrompt({ session: baseSession });
+		expect(first).toBeDefined();
+		expect(second).toBeDefined();
+		expect((window as any).maestro.prompts.get).toHaveBeenCalledTimes(2);
 	});
 });
 

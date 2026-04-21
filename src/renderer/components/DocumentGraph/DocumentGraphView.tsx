@@ -61,6 +61,7 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import type { FileNode } from '../../types/fileTree';
+import { logger } from '../../utils/logger';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -487,7 +488,7 @@ export function DocumentGraphView({
 				setAllLinksWithExternal((prev) => [...prev, ...newMindMapLinks]);
 				setLoadedDocuments((prev) => prev + updateData.newNodes.length);
 
-				console.log('[DocumentGraph] Added backlinks:', {
+				logger.info('[DocumentGraph] Added backlinks:', undefined, {
 					newNodes: updateData.newNodes.length,
 					newEdges: updateData.newEdges.length,
 					progress: `${updateData.filesScanned}/${updateData.totalFiles}`,
@@ -504,7 +505,7 @@ export function DocumentGraphView({
 		setBacklinksLoading(false);
 		setBacklinkProgress(null);
 		abortBacklinkScanRef.current = null;
-		console.log('[DocumentGraph] Backlink scan complete');
+		logger.info('[DocumentGraph] Backlink scan complete');
 	}, []);
 
 	/**
@@ -529,7 +530,7 @@ export function DocumentGraphView({
 			}
 
 			try {
-				console.log('[DocumentGraph] Building graph data:', {
+				logger.info('[DocumentGraph] Building graph data:', undefined, {
 					rootPath,
 					focusFilePath,
 					includeExternalLinks,
@@ -548,7 +549,7 @@ export function DocumentGraphView({
 				// Store reference to current graph data for backlink scanning
 				currentGraphDataRef.current = graphData;
 
-				console.log('[DocumentGraph] Graph data built (outgoing links only):', {
+				logger.info('[DocumentGraph] Graph data built (outgoing links only):', undefined, {
 					totalDocuments: graphData.totalDocuments,
 					loadedDocuments: graphData.loadedDocuments,
 					nodeCount: graphData.nodes.length,
@@ -597,7 +598,7 @@ export function DocumentGraphView({
 				const mindMapNodes = includeExternalLinks ? allMindMapNodes : docMindMapNodes;
 				const mindMapLinks = includeExternalLinks ? allMindMapLinks : docMindMapLinks;
 
-				console.log('[DocumentGraph] Converted to mind map format:', {
+				logger.info('[DocumentGraph] Converted to mind map format:', undefined, {
 					nodeCount: mindMapNodes.length,
 					linkCount: mindMapLinks.length,
 					docOnlyCount: docMindMapNodes.length,
@@ -624,7 +625,7 @@ export function DocumentGraphView({
 					);
 				}
 			} catch (err) {
-				console.error('Failed to build graph data:', err);
+				logger.error('Failed to build graph data:', undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to load document graph');
 			} finally {
 				setLoading(false);
@@ -680,17 +681,21 @@ export function DocumentGraphView({
 		if (includeExternalLinks) {
 			setNodes(allNodesWithExternal);
 			setLinks(allLinksWithExternal);
-			console.log('[DocumentGraph] Added external links from cache:', {
+			logger.info('[DocumentGraph] Added external links from cache:', undefined, {
 				totalNodes: allNodesWithExternal.length,
 				totalLinks: allLinksWithExternal.length,
 			});
 		} else {
 			setNodes(documentOnlyNodes);
 			setLinks(documentOnlyLinks);
-			console.log('[DocumentGraph] Removed external links (using cached document-only data):', {
-				totalNodes: documentOnlyNodes.length,
-				totalLinks: documentOnlyLinks.length,
-			});
+			logger.info(
+				'[DocumentGraph] Removed external links (using cached document-only data):',
+				undefined,
+				{
+					totalNodes: documentOnlyNodes.length,
+					totalLinks: documentOnlyLinks.length,
+				}
+			);
 		}
 	}, [
 		includeExternalLinks,
@@ -731,7 +736,7 @@ export function DocumentGraphView({
 		if (!isOpen || !rootPath) return;
 
 		window.maestro.documentGraph.watchFolder(rootPath).catch((err) => {
-			console.error('Failed to start document graph file watcher:', err);
+			logger.error('Failed to start document graph file watcher:', undefined, err);
 		});
 
 		const unsubscribe = window.maestro.documentGraph.onFilesChanged((data) => {
@@ -746,7 +751,7 @@ export function DocumentGraphView({
 		return () => {
 			unsubscribe();
 			window.maestro.documentGraph.unwatchFolder(rootPath).catch((err) => {
-				console.error('Failed to stop document graph file watcher:', err);
+				logger.error('Failed to stop document graph file watcher:', undefined, err);
 			});
 		};
 	}, [isOpen, rootPath, debouncedLoadGraphData]);
@@ -810,7 +815,7 @@ export function DocumentGraphView({
 		// Set this node as the new center - triggers re-layout in MindMap
 		setActiveFocusFile(node.filePath);
 
-		console.log('[DocumentGraph] Re-centering graph on:', node.filePath);
+		logger.info('[DocumentGraph] Re-centering graph on:', undefined, node.filePath);
 	}, []);
 
 	/**
@@ -924,7 +929,7 @@ export function DocumentGraphView({
 			setNodes(mindMapNodes);
 			setLinks(mindMapLinks);
 		} catch (err) {
-			console.error('Failed to load more documents:', err);
+			logger.error('Failed to load more documents:', undefined, err);
 		} finally {
 			setLoadingMore(false);
 		}

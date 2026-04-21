@@ -14,6 +14,7 @@ import type { Theme, SpecKitCommand, SpecKitMetadata } from '../types';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface SpecKitCommandsPanelProps {
 	theme: Theme;
@@ -64,7 +65,7 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 					setMetadata(metadataResult.metadata);
 				}
 			} catch (error) {
-				console.error('Failed to load spec-kit commands:', error);
+				logger.error('Failed to load spec-kit commands:', undefined, error);
 			} finally {
 				setIsLoading(false);
 			}
@@ -92,7 +93,7 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 				setEditingCommand(null);
 			}
 		} catch (error) {
-			console.error('Failed to save prompt:', error);
+			logger.error('Failed to save prompt:', undefined, error);
 		}
 	};
 
@@ -107,7 +108,7 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 				);
 			}
 		} catch (error) {
-			console.error('Failed to reset prompt:', error);
+			logger.error('Failed to reset prompt:', undefined, error);
 		}
 	};
 
@@ -124,7 +125,7 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 				}
 			}
 		} catch (error) {
-			console.error('Failed to refresh spec-kit prompts:', error);
+			logger.error('Failed to refresh spec-kit prompts:', undefined, error);
 		} finally {
 			setIsRefreshing(false);
 		}

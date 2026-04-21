@@ -20,6 +20,7 @@ import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
+import { logger } from '../../../utils/logger';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -448,7 +449,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setIsDetecting(false);
 				}
 			} catch (error) {
-				console.error('Failed to detect agents:', error);
+				logger.error('Failed to detect agents:', undefined, error);
 				if (mounted) {
 					if (sshRemoteConfig?.enabled) {
 						setSshConnectionError(
@@ -484,7 +485,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setSshRemotes(configsResult.configs);
 				}
 			} catch (error) {
-				console.error('Failed to load SSH remotes:', error);
+				logger.error('Failed to load SSH remotes:', undefined, error);
 			}
 		}
 		loadSshRemotes();
@@ -696,7 +697,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
 					setAvailableModels(models);
 				} catch (err) {
-					console.error('Failed to load models:', err);
+					logger.error('Failed to load models:', undefined, err);
 				} finally {
 					setLoadingModels(false);
 				}
@@ -790,7 +791,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (err) {
-			console.error('Failed to refresh models:', err);
+			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
 			setLoadingModels(false);
 		}

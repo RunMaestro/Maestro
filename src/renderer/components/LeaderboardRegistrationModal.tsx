@@ -32,6 +32,7 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
@@ -249,11 +250,11 @@ export function LeaderboardRegistrationModal({
 					);
 				} else if (result.status === 'error') {
 					// Don't stop polling on transient errors, just log
-					console.warn('Polling error:', result.error);
+					logger.warn('Polling error:', undefined, result.error);
 				}
 				// 'pending' status - continue polling
 			} catch (error) {
-				console.warn('Poll request failed:', error);
+				logger.warn('Poll request failed:', undefined, error);
 				// Continue polling on network errors
 			}
 		},

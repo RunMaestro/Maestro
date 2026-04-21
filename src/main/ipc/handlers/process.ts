@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
+import type { AgentConfigsData } from '../../stores/types';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -47,12 +48,7 @@ const handlerOpts = (
 	...extra,
 });
 
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
-}
+// AgentConfigsData imported from stores/types
 
 /**
  * Dependencies required for process handler registration

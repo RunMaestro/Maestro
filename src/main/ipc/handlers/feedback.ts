@@ -21,6 +21,7 @@ import {
 } from '../../utils/cliDetection';
 import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -933,6 +934,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 							}
 						}
 					} catch (e) {
+						void captureException(e);
 						logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
 					}
 				}

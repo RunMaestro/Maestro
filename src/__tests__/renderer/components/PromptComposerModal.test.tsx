@@ -7,6 +7,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Session, Group } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock useAtMentionCompletion hook
 const mockGetSuggestions = vi.fn().mockReturnValue([]);
 vi.mock('../../../renderer/hooks/input/useAtMentionCompletion', () => ({
@@ -54,26 +55,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		border: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textFaint: '#555555',
-		accent: '#4a9eff',
-		accentForeground: '#ffffff',
-		buttonBg: '#333333',
-		buttonHover: '#444444',
-		headerBg: '#202020',
-		scrollbarTrack: '#1a1a1a',
-		scrollbarThumb: '#444444',
-	},
-};
 
 const lightTheme: Theme = {
 	id: 'test-light',
@@ -757,6 +738,53 @@ describe('PromptComposerModal', () => {
 			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 
 			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		// When enterToSend=true (Expanded AI Interaction Mode "Enter sends"): plain Enter
+		// sends, Shift+Enter inserts a newline, Cmd/Ctrl+Enter falls through (no-op).
+		describe('when enterToSend is true', () => {
+			it('sends on plain Enter', () => {
+				renderWithProvider(
+					<PromptComposerModal
+						isOpen={true}
+						onClose={onClose}
+						theme={mockTheme}
+						initialValue="Test message"
+						onSubmit={onSubmit}
+						onSend={onSend}
+						enterToSend={true}
+					/>
+				);
+
+				const textarea = screen.getByPlaceholderText(
+					'Write your prompt here... (@ to reference files)'
+				);
+				fireEvent.keyDown(textarea, { key: 'Enter' });
+
+				expect(onSend).toHaveBeenCalledWith('Test message');
+				expect(onClose).toHaveBeenCalled();
+			});
+
+			it('does not send on Shift + Enter (allows newline)', () => {
+				renderWithProvider(
+					<PromptComposerModal
+						isOpen={true}
+						onClose={onClose}
+						theme={mockTheme}
+						initialValue="Test message"
+						onSubmit={onSubmit}
+						onSend={onSend}
+						enterToSend={true}
+					/>
+				);
+
+				const textarea = screen.getByPlaceholderText(
+					'Write your prompt here... (@ to reference files)'
+				);
+				fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+				expect(onSend).not.toHaveBeenCalled();
+			});
 		});
 	});
 

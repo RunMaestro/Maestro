@@ -13,6 +13,7 @@ import {
 } from '../constants/conductorBadges';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface StandingOvationOverlayProps {
 	theme: Theme;
@@ -327,7 +328,7 @@ export function StandingOvationOverlay({
 			}
 		} catch (error) {
 			// Canvas/image generation errors — not clipboard
-			console.error('Failed to generate share image:', error);
+			logger.error('Failed to generate share image:', undefined, error);
 		}
 	}, [generateShareImage]);
 
@@ -340,7 +341,7 @@ export function StandingOvationOverlay({
 			link.href = canvas.toDataURL('image/png');
 			link.click();
 		} catch (error) {
-			console.error('Failed to download image:', error);
+			logger.error('Failed to download image:', undefined, error);
 		}
 	}, [generateShareImage, badge.level]);
 

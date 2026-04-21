@@ -18,6 +18,7 @@ import {
 	type IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { getTriggerConfigSummary } from '../../components/CuePipelineEditor/utils/pipelineGraph';
+import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 
 export type {
 	IncomingTriggerEdgeInfo,
@@ -115,11 +116,15 @@ export function usePipelineSelection({
 				const sourceNode = pipeline.nodes.find((n) => n.id === edge.source);
 				if (sourceNode?.type === 'trigger') {
 					const triggerData = sourceNode.data as TriggerNodeData;
+					// Per-edge prompt takes precedence. Fall back to the event-type
+					// barebones template — NEVER to the agent node's inputPrompt, which
+					// used to leak the first trigger's prompt onto every other trigger
+					// feeding the same agent.
 					triggerEdges.push({
 						edgeId: edge.id,
 						triggerLabel: triggerData.customLabel || triggerData.label,
 						configSummary: getTriggerConfigSummary(triggerData),
-						prompt: edge.prompt ?? (node.data as AgentNodeData).inputPrompt ?? '',
+						prompt: edge.prompt ?? defaultPromptFor(triggerData.eventType),
 					});
 				} else if (sourceNode?.type === 'agent') {
 					const agentData = sourceNode.data as AgentNodeData;

@@ -66,18 +66,40 @@ export default defineConfig(({ mode }) => ({
 		rollupOptions: {
 			// Prevent esbuild from re-minifying xterm's pre-minified code.
 			// Double-minification corrupts variable scoping in requestMode(),
-			// causing "ReferenceError: e is not defined" at runtime.
-			plugins: [
-				{
-					name: 'skip-xterm-minify',
-					renderChunk(code, chunk) {
-						if (chunk.name === 'vendor-xterm') {
-							return { code, map: null };
-						}
-						return null;
+			// causing a "ReferenceError: <letter> is not defined" throw inside
+			// xterm.js's CSI parser when a TUI sends a DECRQM query (CSI ? N $ p).
+			// The throw poisons the parser state, so all subsequent output and
+			// user keystrokes are dropped — the terminal tab appears frozen
+			// (seen with OpenCode on Linux and vim on macOS).
+			//
+			// Vite's esbuild-transpile minifier runs as an `enforce: 'post'`
+			// renderChunk hook, so a plain renderChunk returning the input
+			// unchanged is a no-op. Capture the pre-minify chunk code at
+			// regular renderChunk order, then overwrite the final chunk in
+			// generateBundle (which fires after every renderChunk hook,
+			// including the minifier).
+			plugins: (() => {
+				const xtermPreMinifyCache = new Map<string, string>();
+				return [
+					{
+						name: 'skip-xterm-minify',
+						renderChunk(code, chunk) {
+							if (chunk.name === 'vendor-xterm') {
+								xtermPreMinifyCache.set(chunk.name, code);
+							}
+							return null;
+						},
+						generateBundle(_options, bundle) {
+							for (const asset of Object.values(bundle)) {
+								if (asset.type === 'chunk' && xtermPreMinifyCache.has(asset.name)) {
+									asset.code = xtermPreMinifyCache.get(asset.name)!;
+								}
+							}
+							xtermPreMinifyCache.clear();
+						},
 					},
-				},
-			],
+				];
+			})(),
 			output: {
 				// Manual chunking for better caching and code splitting
 				manualChunks: (id) => {

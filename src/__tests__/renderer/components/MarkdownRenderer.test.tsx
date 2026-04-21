@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MarkdownRenderer } from '../../../renderer/components/MarkdownRenderer';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock react-syntax-highlighter
 vi.mock('react-syntax-highlighter', () => ({
 	Prism: ({ children, language }: { children: string; language?: string }) => (
@@ -45,20 +46,6 @@ vi.mock('../../../renderer/stores/fileExplorerStore', () => ({
 		}),
 	},
 }));
-
-const mockTheme = {
-	id: 'test-theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		bgSidebar: '#111',
-		textMain: '#eee',
-		textDim: '#888',
-		border: '#333',
-		accent: '#4a9eff',
-	},
-} as any;
 
 const defaultProps = {
 	content: '',

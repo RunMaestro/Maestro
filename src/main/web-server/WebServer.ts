@@ -68,6 +68,9 @@ import type {
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
+	OpenBrowserTabCallback,
+	OpenTerminalTabCallback,
+	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	GetThemeCallback,
@@ -425,6 +428,18 @@ export class WebServer {
 		this.callbackRegistry.setRefreshFileTreeCallback(callback);
 	}
 
+	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
+		this.callbackRegistry.setOpenBrowserTabCallback(callback);
+	}
+
+	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
+		this.callbackRegistry.setOpenTerminalTabCallback(callback);
+	}
+
+	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
+		this.callbackRegistry.setNewAITabWithPromptCallback(callback);
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
@@ -726,6 +741,14 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
+			openBrowserTab: async (sessionId: string, url: string) =>
+				this.callbackRegistry.openBrowserTab(sessionId, url),
+			openTerminalTab: async (
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null }
+			) => this.callbackRegistry.openTerminalTab(sessionId, config),
+			newAITabWithPrompt: async (sessionId: string, prompt: string) =>
+				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt),
 			refreshAutoRunDocs: async (sessionId: string) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId),
 			configureAutoRun: async (
@@ -980,6 +1003,7 @@ export class WebServer {
 			this.isRunning = false;
 			logger.info('Server stopped', LOG_CONTEXT);
 		} catch (error) {
+			void captureException(error);
 			logger.error('Failed to stop server', LOG_CONTEXT, error);
 		}
 	}

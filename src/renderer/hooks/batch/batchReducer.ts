@@ -34,9 +34,9 @@ function logTransition(
 	// Uncomment for debugging state transitions:
 	// const stateFrom = _fromState ?? 'IDLE';
 	// if (_valid) {
-	//   console.log(`[BatchStateMachine] ${_sessionId}: ${stateFrom} -> ${_toState} (${_event})`);
+	//   logger.info(`[BatchStateMachine] ${_sessionId}: ${stateFrom} -> ${_toState} (${_event})`);
 	// } else {
-	//   console.warn(`[BatchStateMachine] ${_sessionId}: INVALID transition ${stateFrom} + ${_event} (staying in ${stateFrom})`);
+	//   logger.warn(`[BatchStateMachine] ${_sessionId}: INVALID transition ${stateFrom} + ${_event} (staying in ${stateFrom})`);
 	// }
 }
 

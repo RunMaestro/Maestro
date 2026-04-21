@@ -11,6 +11,7 @@ import {
 } from '../../utils/worktreeDedup';
 import { captureException } from '../../utils/sentry';
 import { countMarkdownTasks } from './batchUtils';
+import { logger } from '../../utils/logger';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -376,9 +377,18 @@ export function useAutoRunHandlers(
 				config.worktreeTarget?.mode === 'create-new' ||
 				config.worktreeTarget?.mode === 'existing-closed'
 			) {
+				// If the active session is itself a worktree child, resolve to its parent so
+				// basePath/cwd used for worktree creation come from the main repo, not the child.
+				let parentForSpawn = activeSession;
+				if (activeSession.parentSessionId) {
+					const parent = selectSessionById(activeSession.parentSessionId)(
+						useSessionStore.getState()
+					);
+					if (parent) parentForSpawn = parent;
+				}
 				// Spawn a worktree agent and dispatch to it
 				try {
-					const newSessionId = await spawnWorktreeAgentAndDispatch(activeSession, config);
+					const newSessionId = await spawnWorktreeAgentAndDispatch(parentForSpawn, config);
 					if (!newSessionId) return; // Error already shown via toast
 					targetSessionId = newSessionId;
 				} catch (err) {
@@ -629,7 +639,7 @@ export function useAutoRunHandlers(
 				}
 				return false;
 			} catch (error) {
-				console.error('Failed to create document:', error);
+				logger.error('Failed to create document:', undefined, error);
 				return false;
 			}
 		},

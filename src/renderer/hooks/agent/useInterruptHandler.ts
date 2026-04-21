@@ -16,6 +16,7 @@ import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -69,7 +70,11 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		try {
 			await cancelPendingSynopsis(activeSession.id);
 		} catch (synopsisErr) {
-			console.warn('[useInterruptHandler] Failed to cancel pending synopsis:', synopsisErr);
+			logger.warn(
+				'[useInterruptHandler] Failed to cancel pending synopsis:',
+				undefined,
+				synopsisErr
+			);
 		}
 
 		try {
@@ -237,12 +242,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 			if (queuedItemToProcess) {
 				setTimeout(() => {
 					processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item).catch(
-						(err) => console.error('[useInterruptHandler] Failed to process queued item:', err)
+						(err) =>
+							logger.error('[useInterruptHandler] Failed to process queued item:', undefined, err)
 					);
 				}, 0);
 			}
 		} catch (error) {
-			console.error('Failed to interrupt process:', error);
+			logger.error('Failed to interrupt process:', undefined, error);
 
 			// If interrupt fails, offer to kill the process
 			const shouldKill = confirm(
@@ -428,15 +434,16 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						setTimeout(() => {
 							processQueuedItem(queuedItemAfterKill!.sessionId, queuedItemAfterKill!.item).catch(
 								(err) =>
-									console.error(
+									logger.error(
 										'[useInterruptHandler] Failed to process queued item after kill:',
+										undefined,
 										err
 									)
 							);
 						}, 0);
 					}
 				} catch (killError: unknown) {
-					console.error('Failed to kill process:', killError);
+					logger.error('Failed to kill process:', undefined, killError);
 					const killErrorMessage =
 						killError instanceof Error ? killError.message : String(killError);
 					const errorLog: LogEntry = {

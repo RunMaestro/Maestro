@@ -20,6 +20,7 @@ import {
 } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
 import { useGroupChatStore } from '../stores/groupChatStore';
+import { logger } from '../utils/logger';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -185,7 +186,7 @@ export function GroupChatRightPanel({
 			try {
 				await window.maestro.groupChat.resetParticipantContext(groupChatId, participantName);
 			} catch (error) {
-				console.error(`Failed to reset context for ${participantName}:`, error);
+				logger.error(`Failed to reset context for ${participantName}:`, undefined, error);
 			}
 		},
 		[groupChatId]
@@ -209,7 +210,7 @@ export function GroupChatRightPanel({
 
 		// Safety check in case preload hasn't been updated yet
 		if (typeof window.maestro.groupChat.getHistory !== 'function') {
-			console.warn('groupChat.getHistory not available - restart dev server to update preload');
+			logger.warn('groupChat.getHistory not available - restart dev server to update preload');
 			setHistoryEntries([]);
 			setIsLoadingHistory(false);
 			return;
@@ -221,7 +222,7 @@ export function GroupChatRightPanel({
 				const entries = await window.maestro.groupChat.getHistory(groupChatId);
 				setHistoryEntries(entries);
 			} catch (error) {
-				console.error('Failed to load group chat history:', error);
+				logger.error('Failed to load group chat history:', undefined, error);
 				setHistoryEntries([]);
 			} finally {
 				setIsLoadingHistory(false);
@@ -237,7 +238,7 @@ export function GroupChatRightPanel({
 
 		// Safety check in case preload hasn't been updated yet
 		if (typeof window.maestro.groupChat.onHistoryEntry !== 'function') {
-			console.warn('groupChat.onHistoryEntry not available - restart dev server to update preload');
+			logger.warn('groupChat.onHistoryEntry not available - restart dev server to update preload');
 			return;
 		}
 

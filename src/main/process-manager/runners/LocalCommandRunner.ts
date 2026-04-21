@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
 import { logger } from '../../utils/logger';
 import type { CommandResult } from '../types';
-import { buildUnixBasePath } from '../utils/envBuilder';
+import { buildExpandedPath } from '../../../shared/pathUtils';
 import {
 	resolveShellPath,
 	buildInteractiveShellArgs,
@@ -78,15 +78,20 @@ export class LocalCommandRunner {
 					TERM: 'xterm-256color',
 				};
 			} else {
-				// Unix: Use minimal env - shell startup files handle PATH setup
-				const basePath = buildUnixBasePath();
+				// Unix: Use an expanded PATH so commands can reach user install
+				// locations (~/.local/bin, ~/.claude/local, ~/.opencode/bin, etc.)
+				// even when the interactive shell doesn't source an rc file that
+				// extends PATH. Matches buildPtyTerminalEnv()'s behavior for
+				// consistency between PTY terminal tabs and single runCommand
+				// invocations — a minimal-config zsh shouldn't see different
+				// resolution between the two paths.
 				env = {
 					HOME: process.env.HOME,
 					USER: process.env.USER,
 					SHELL: process.env.SHELL,
 					TERM: 'xterm-256color',
 					LANG: process.env.LANG || 'en_US.UTF-8',
-					PATH: basePath,
+					PATH: buildExpandedPath(),
 				};
 			}
 

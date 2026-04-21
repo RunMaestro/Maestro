@@ -132,10 +132,12 @@ export function readRemoteEntriesLocal(
 					entries.length > maxEntries ? entries.slice(entries.length - maxEntries) : entries;
 				allEntries.push(...trimmed);
 			} catch (error) {
+				void captureException(error);
 				logger.warn(`Failed to read shared history file ${file}: ${error}`, LOG_CONTEXT);
 			}
 		}
 	} catch (error) {
+		void captureException(error);
 		logger.warn(`Failed to list shared history directory: ${error}`, LOG_CONTEXT);
 	}
 
@@ -227,6 +229,7 @@ export async function readRemoteEntriesSsh(
 					allEntries.push(...trimmed);
 				}
 			} catch (error) {
+				void captureException(error);
 				logger.warn(
 					`Failed to read remote shared history file ${file.name}: ${error}`,
 					LOG_CONTEXT
@@ -236,6 +239,7 @@ export async function readRemoteEntriesSsh(
 
 		return allEntries;
 	} catch (error) {
+		void captureException(error);
 		logger.warn(`Failed to read remote shared history: ${error}`, LOG_CONTEXT);
 		return [];
 	}
@@ -263,6 +267,7 @@ function rotateLocalFile(filePath: string, maxEntries: number): void {
 			LOG_CONTEXT
 		);
 	} catch (error) {
+		void captureException(error);
 		logger.warn(`Failed to rotate shared history file: ${error}`, LOG_CONTEXT);
 	}
 }

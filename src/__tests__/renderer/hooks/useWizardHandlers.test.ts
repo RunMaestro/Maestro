@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -366,7 +367,7 @@ describe('useWizardHandlers', () => {
 				new Error('Discovery failed')
 			);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			renderHook(() => useWizardHandlers(deps));
 
@@ -1027,7 +1028,7 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps({
 				spawnBackgroundSynopsis: vi.fn().mockRejectedValue(new Error('Spawn failed')),
 			});
@@ -1175,7 +1176,7 @@ describe('useWizardHandlers', () => {
 
 			(window as any).maestro.claude.getSkills.mockRejectedValue(new Error('Skill fetch failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
@@ -2002,7 +2003,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(
@@ -2055,7 +2056,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(

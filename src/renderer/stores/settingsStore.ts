@@ -37,6 +37,8 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/
 import { getLevelIndex } from '../constants/keyboardMastery';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import { logger } from '../utils/logger';
+
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
 // ============================================================================
@@ -250,6 +252,7 @@ export interface SettingsStoreState {
 	customThemeColors: ThemeColors;
 	customThemeBaseId: ThemeId;
 	enterToSendAI: boolean;
+	enterToSendAIExpanded: boolean;
 	forcedParallelExecution: boolean;
 	forcedParallelAcknowledged: boolean;
 	defaultSaveToHistory: boolean;
@@ -323,6 +326,7 @@ export interface SettingsStoreState {
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
 	autoRunInactivityTimeoutMin: number;
+	lastSelectedPromptId: string | null;
 }
 
 export interface SettingsStoreActions {
@@ -342,6 +346,7 @@ export interface SettingsStoreActions {
 	setCustomThemeColors: (value: ThemeColors) => void;
 	setCustomThemeBaseId: (value: ThemeId) => void;
 	setEnterToSendAI: (value: boolean) => void;
+	setEnterToSendAIExpanded: (value: boolean) => void;
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
@@ -406,6 +411,7 @@ export interface SettingsStoreActions {
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+	setLastSelectedPromptId: (value: string | null) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -495,7 +501,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 		customThemeBaseId: 'dracula',
-		enterToSendAI: false,
+		enterToSendAI: true,
+		enterToSendAIExpanded: false,
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		defaultSaveToHistory: true,
@@ -569,6 +576,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
 		autoRunInactivityTimeoutMin: 30,
+		lastSelectedPromptId: null,
 
 		// ============================================================================
 		// Simple Setters
@@ -648,6 +656,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setEnterToSendAI: (value) => {
 			set({ enterToSendAI: value });
 			window.maestro.settings.set('enterToSendAI', value);
+		},
+
+		setEnterToSendAIExpanded: (value) => {
+			set({ enterToSendAIExpanded: value });
+			window.maestro.settings.set('enterToSendAIExpanded', value);
 		},
 
 		setForcedParallelExecution: (value) => {
@@ -817,7 +830,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 							try {
 								await window.maestro.live.clearPersistentToken();
 							} catch (clearError) {
-								console.error('[Settings] Failed to clear stale persistent web link:', clearError);
+								logger.error(
+									'[Settings] Failed to clear stale persistent web link:',
+									undefined,
+									clearError
+								);
 							}
 						}
 						return;
@@ -825,13 +842,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					if (!result.success) {
 						// Rollback optimistic update on soft failure
 						set({ persistentWebLink: false });
-						console.warn('[Settings] Failed to persist web link token:', result.message);
+						logger.warn('[Settings] Failed to persist web link token:', undefined, result.message);
 					}
 				} catch (error) {
 					if (requestSeq === persistentWebLinkRequestSeq) {
 						// Rollback optimistic update on hard failure
 						set({ persistentWebLink: false });
-						console.error('[Settings] Failed to persist web link token:', error);
+						logger.error('[Settings] Failed to persist web link token:', undefined, error);
 					}
 				}
 			} else {
@@ -846,13 +863,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 					if (!result.success) {
 						// Rollback optimistic update on soft failure
 						set({ persistentWebLink: true });
-						console.warn('[Settings] Failed to clear persistent web link:', result.message);
+						logger.warn(
+							'[Settings] Failed to clear persistent web link:',
+							undefined,
+							result.message
+						);
 					}
 				} catch (error) {
 					if (requestSeq === persistentWebLinkRequestSeq) {
 						// Clear failed — rollback Zustand to match main-side state
 						set({ persistentWebLink: true });
-						console.error('[Settings] Failed to clear persistent web link:', error);
+						logger.error('[Settings] Failed to clear persistent web link:', undefined, error);
 					}
 					// else: stale — a newer call is in charge, nothing to do
 				}
@@ -1036,6 +1057,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			const clamped = Math.max(1, Math.min(600, Math.round(value)));
 			set({ autoRunInactivityTimeoutMin: clamped });
 			window.maestro.settings.set('autoRunInactivityTimeoutMin', clamped);
+		},
+
+		setLastSelectedPromptId: (value) => {
+			set({ lastSelectedPromptId: value });
+			window.maestro.settings.set('lastSelectedPromptId', value);
 		},
 
 		// ============================================================================
@@ -1498,13 +1524,47 @@ const MAC_ALT_CHAR_MAP: Record<string, string> = {
 };
 
 /**
- * Migrate shortcuts: fix macOS Alt+key special characters and merge with defaults.
- * Returns the migrated+merged shortcuts and whether a migration write is needed.
+ * One-time default remaps: when we change a bundled DEFAULT_SHORTCUTS binding,
+ * users who still had the OLD default bound get migrated to the NEW default. If
+ * they had customized the binding themselves (any other key combo), we leave it
+ * alone.
+ *
+ * Each entry: `shortcut id` → `{ old keys we consider "the old default", new default keys }`.
+ */
+const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[]; toKeys: string[] }> = {
+	// moveToGroup moved off Cmd+Shift+M to free that combo for openMemoryViewer.
+	moveToGroup: {
+		fromKeys: ['Meta', 'Shift', 'm'],
+		toKeys: ['Alt', 'Meta', 'm'],
+	},
+};
+
+function keysEqual(a: string[], b: string[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) return false;
+	}
+	return true;
+}
+
+/**
+ * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
+ * default remaps, and merge with current defaults. Returns the merged shortcuts
+ * (for store state), the raw migrated map (for persistence write-back), and
+ * whether a migration write is needed.
+ *
+ * `migratedRaw` applies BOTH migrations so writing it back makes `needsMigration`
+ * false on the next load. Writing only a partially-migrated map caused an
+ * infinite re-persist loop via the settings file watcher.
  */
 function migrateShortcuts(
 	saved: Record<string, Shortcut>,
 	defaults: Record<string, Shortcut>
-): { shortcuts: Record<string, Shortcut>; needsMigration: boolean } {
+): {
+	shortcuts: Record<string, Shortcut>;
+	migratedRaw: Record<string, Shortcut>;
+	needsMigration: boolean;
+} {
 	const migrated: Record<string, Shortcut> = {};
 	let needsMigration = false;
 
@@ -1519,6 +1579,16 @@ function migrateShortcuts(
 		migrated[id] = { ...shortcut, keys: migratedKeys };
 	}
 
+	// Apply one-time default remaps: if the user still has the OLD default keys
+	// for a remapped shortcut, bump them to the NEW default. Preserve custom bindings.
+	for (const [id, remap] of Object.entries(SHORTCUT_DEFAULT_REMAPS)) {
+		const current = migrated[id];
+		if (current && keysEqual(current.keys, remap.fromKeys)) {
+			migrated[id] = { ...current, keys: remap.toKeys };
+			needsMigration = true;
+		}
+	}
+
 	// Merge: use default labels (in case they changed) but preserve user's custom keys
 	const merged: Record<string, Shortcut> = {};
 	for (const [id, defaultShortcut] of Object.entries(defaults)) {
@@ -1529,7 +1599,7 @@ function migrateShortcuts(
 		};
 	}
 
-	return { shortcuts: merged, needsMigration };
+	return { shortcuts: merged, migratedRaw: migrated, needsMigration };
 }
 
 /**
@@ -1591,6 +1661,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['enterToSendAI'] !== undefined)
 			patch.enterToSendAI = allSettings['enterToSendAI'] as boolean;
+
+		if (allSettings['enterToSendAIExpanded'] !== undefined)
+			patch.enterToSendAIExpanded = allSettings['enterToSendAIExpanded'] as boolean;
 
 		if (allSettings['forcedParallelExecution'] !== undefined)
 			patch.forcedParallelExecution = allSettings['forcedParallelExecution'] as boolean;
@@ -1686,17 +1759,7 @@ export async function loadAllSettings(): Promise<void> {
 			);
 			patch.shortcuts = result.shortcuts;
 			if (result.needsMigration) {
-				// Persist the migrated (but not yet merged) shortcuts so raw saved data is corrected
-				const migratedRaw: Record<string, Shortcut> = {};
-				for (const [id, shortcut] of Object.entries(
-					allSettings['shortcuts'] as Record<string, Shortcut>
-				)) {
-					migratedRaw[id] = {
-						...shortcut,
-						keys: shortcut.keys.map((key) => MAC_ALT_CHAR_MAP[key] || key),
-					};
-				}
-				window.maestro.settings.set('shortcuts', migratedRaw);
+				window.maestro.settings.set('shortcuts', result.migratedRaw);
 			}
 		}
 
@@ -1707,16 +1770,7 @@ export async function loadAllSettings(): Promise<void> {
 			);
 			patch.tabShortcuts = result.shortcuts;
 			if (result.needsMigration) {
-				const migratedRaw: Record<string, Shortcut> = {};
-				for (const [id, shortcut] of Object.entries(
-					allSettings['tabShortcuts'] as Record<string, Shortcut>
-				)) {
-					migratedRaw[id] = {
-						...shortcut,
-						keys: shortcut.keys.map((key) => MAC_ALT_CHAR_MAP[key] || key),
-					};
-				}
-				window.maestro.settings.set('tabShortcuts', migratedRaw);
+				window.maestro.settings.set('tabShortcuts', result.migratedRaw);
 			}
 		}
 
@@ -1777,7 +1831,7 @@ export async function loadAllSettings(): Promise<void> {
 				};
 				window.maestro.settings.set('autoRunStats', stats);
 				window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
-				console.log(
+				logger.info(
 					'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
 				);
 			}
@@ -1989,11 +2043,14 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoRunInactivityTimeoutMin'] !== undefined)
 			patch.autoRunInactivityTimeoutMin = allSettings['autoRunInactivityTimeoutMin'] as number;
 
+		if (allSettings['lastSelectedPromptId'] !== undefined)
+			patch.lastSelectedPromptId = allSettings['lastSelectedPromptId'] as string | null;
+
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
 		useSettingsStore.setState(patch);
 	} catch (error) {
-		console.error('[Settings] Failed to load settings:', error);
+		logger.error('[Settings] Failed to load settings:', undefined, error);
 		// Mark settings as loaded even if there was an error (use defaults)
 		useSettingsStore.setState({ settingsLoaded: true });
 	}

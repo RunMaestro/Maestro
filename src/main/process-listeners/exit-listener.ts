@@ -112,6 +112,7 @@ export function setupExitListener(
 						try {
 							return await groupChatStorage.loadGroupChat(groupChatId);
 						} catch (firstErr) {
+							void captureException(firstErr);
 							debugLog('GroupChat:Debug', ` First chat load failed, retrying after 100ms...`);
 							logger.warn('[GroupChat] Chat load failed, retrying once', 'ProcessListener', {
 								error: String(firstErr),
@@ -344,6 +345,7 @@ export function setupExitListener(
 								);
 								// Don't mark as responded yet - the recovery spawn will complete and trigger this
 							} catch (respawnErr) {
+								void captureException(respawnErr);
 								debugLog('GroupChat:Debug', ` Failed to respawn ${participantName}:`, respawnErr);
 								logger.error(
 									'[GroupChat] Failed to respawn participant for recovery',
@@ -408,6 +410,7 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						}
 					} catch (err) {
+						void captureException(err);
 						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
 						logger.error(
 							'[GroupChat] Failed to load chat for participant output parsing',
@@ -431,6 +434,7 @@ export function setupExitListener(
 								markAndMaybeSynthesize();
 							}
 						} catch (routeErr) {
+							void captureException(routeErr);
 							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
 							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
 								error: String(routeErr),

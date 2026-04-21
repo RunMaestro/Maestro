@@ -77,7 +77,8 @@ function resetStore() {
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 		customThemeBaseId: 'dracula',
-		enterToSendAI: false,
+		enterToSendAI: true,
+		enterToSendAIExpanded: false,
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
@@ -179,7 +180,8 @@ describe('settingsStore', () => {
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
 			expect(state.customThemeBaseId).toBe('dracula');
-			expect(state.enterToSendAI).toBe(false);
+			expect(state.enterToSendAI).toBe(true);
+			expect(state.enterToSendAIExpanded).toBe(false);
 			expect(state.defaultSaveToHistory).toBe(true);
 			expect(state.defaultShowThinking).toBe('off');
 			expect(state.leftSidebarWidth).toBe(256);
@@ -1508,6 +1510,58 @@ describe('settingsStore', () => {
 					}),
 				})
 			);
+		});
+
+		it('persists the default-remap on migration so subsequent loads are stable', async () => {
+			// User still has the OLD default for moveToGroup (Cmd+Shift+M).
+			// The remap should (a) bump their binding to the new default, (b) persist
+			// the new binding to disk so the next load does not re-trigger migration.
+			// Regression test for the crash-and-relaunch loop caused by write
+			// amplification: old code set needsMigration=true but wrote back the
+			// unchanged keys, which the file watcher would pick up and re-trigger.
+			const savedWithOldMoveToGroup = {
+				moveToGroup: {
+					id: 'moveToGroup',
+					label: 'Move to Group',
+					keys: ['Meta', 'Shift', 'm'],
+				},
+			};
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: savedWithOldMoveToGroup,
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.moveToGroup.keys).toEqual(['Alt', 'Meta', 'm']);
+			// The persisted raw value must contain the NEW keys, otherwise the next
+			// load re-detects migration and we re-enter the loop.
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'shortcuts',
+				expect.objectContaining({
+					moveToGroup: expect.objectContaining({
+						keys: ['Alt', 'Meta', 'm'],
+					}),
+				})
+			);
+
+			// Simulate the re-load that the settings file watcher would trigger.
+			// Feed back the value that was just persisted and confirm migration
+			// does not fire a second write.
+			const persistedCall = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts');
+			const persistedShortcuts = persistedCall?.[1] as Record<string, unknown>;
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: persistedShortcuts,
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
+			).toBe(false);
 		});
 
 		it('merges shortcuts: preserves user keys but updates labels from defaults', async () => {

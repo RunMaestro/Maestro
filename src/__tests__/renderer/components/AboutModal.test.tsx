@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AboutModal } from '../../../renderer/components/AboutModal';
 import type { Theme, AutoRunStats } from '../../../renderer/types';
@@ -544,7 +545,7 @@ describe('AboutModal', () => {
 		});
 
 		it('should handle stats loading error gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockRejectedValue(new Error('Failed'));
 
 			render(
@@ -562,13 +563,14 @@ describe('AboutModal', () => {
 
 			expect(consoleErrorSpy).toHaveBeenCalledWith(
 				'Failed to load global agent stats:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleErrorSpy.mockRestore();
 		});
 
 		it('should display "No sessions found" when no stats', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			// Setup the mock to reject BEFORE rendering
 			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockRejectedValue(new Error('Failed'));
 

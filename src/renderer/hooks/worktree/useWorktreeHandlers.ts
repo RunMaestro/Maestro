@@ -25,6 +25,7 @@ import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { buildWorktreeSession } from '../../utils/worktreeSession';
 import { isRecentlyCreatedWorktreePath } from '../../utils/worktreeDedup';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Return type
@@ -236,7 +237,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					}
 				}
 			} catch (err) {
-				console.error('Failed to scan for worktrees:', err);
+				logger.error('Failed to scan for worktrees:', undefined, err);
 			}
 		},
 		[]
@@ -354,7 +355,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				});
 			} catch (err) {
 				recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath);
-				console.error('[WorktreeConfig] Failed to create worktree:', err);
+				logger.error('[WorktreeConfig] Failed to create worktree:', undefined, err);
 				notifyToast({
 					type: 'error',
 					title: 'Failed to Create Worktree',
@@ -551,8 +552,9 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 					}
 				}
 			} catch (err) {
-				console.error(
+				logger.error(
 					`[WorktreeScan] Error scanning ${parentSession.worktreeConfig!.basePath}:`,
+					undefined,
 					err
 				);
 			}
@@ -609,11 +611,11 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		);
 
 		// TODO: Remove debug logging after worktree detection is confirmed working
-		console.warn(
+		logger.warn(
 			`[WT-DEBUG] Effect 2 running. watchableSessions=${watchableSessions.length}, key=${worktreeConfigKey}`
 		);
 		for (const s of watchableSessions) {
-			console.warn(`[WT-DEBUG]   → will watch: ${s.id} at ${s.worktreeConfig!.basePath}`);
+			logger.warn(`[WT-DEBUG]   → will watch: ${s.id} at ${s.worktreeConfig!.basePath}`);
 		}
 
 		// Start chokidar watchers, logging failures so they don't go silent
@@ -621,34 +623,35 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			window.maestro.git
 				.watchWorktreeDirectory(session.id, session.worktreeConfig!.basePath)
 				.then((result) => {
-					console.warn(`[WT-DEBUG] watchWorktreeDirectory result:`, result);
+					logger.warn(`[WT-DEBUG] watchWorktreeDirectory result:`, undefined, result);
 					if (!result.success) {
-						console.error(
+						logger.error(
 							`[WorktreeWatcher] Failed to start watcher for ${session.worktreeConfig!.basePath}:`,
+							undefined,
 							result.error
 						);
 					}
 				})
 				.catch((err) => {
-					console.error(`[WorktreeWatcher] IPC error starting watcher:`, err);
+					logger.error(`[WorktreeWatcher] IPC error starting watcher:`, undefined, err);
 				});
 		}
 
 		// Set up listener for discovered worktrees (from chokidar)
 		const cleanupListener = window.maestro.git.onWorktreeDiscovered(async (data) => {
 			const { sessionId, worktree } = data;
-			console.warn(`[WT-DEBUG] onWorktreeDiscovered fired:`, { sessionId, worktree });
+			logger.warn(`[WT-DEBUG] onWorktreeDiscovered fired:`, undefined, { sessionId, worktree });
 
 			if (
 				recentlyCreatedWorktreePathsRef.current.has(normalizePath(worktree.path)) ||
 				isRecentlyCreatedWorktreePath(worktree.path)
 			) {
-				console.warn(`[WT-DEBUG] SKIPPED: recently created path`);
+				logger.warn(`[WT-DEBUG] SKIPPED: recently created path`);
 				return;
 			}
 
 			if (isSkippableBranch(worktree.branch)) {
-				console.warn(`[WT-DEBUG] SKIPPED: skippable branch ${worktree.branch}`);
+				logger.warn(`[WT-DEBUG] SKIPPED: skippable branch ${worktree.branch}`);
 				return;
 			}
 
@@ -699,7 +702,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		// Listen for worktree removals (e.g., git worktree remove from CLI)
 		const cleanupRemovalListener = window.maestro.git.onWorktreeRemoved((data) => {
 			const { sessionId, worktreePath } = data;
-			console.warn(`[WT-DEBUG] onWorktreeRemoved fired:`, { sessionId, worktreePath });
+			logger.warn(`[WT-DEBUG] onWorktreeRemoved fired:`, undefined, { sessionId, worktreePath });
 
 			const normalizedRemovedPath = normalizePath(worktreePath);
 
@@ -822,7 +825,11 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 							);
 						}
 					} catch (error) {
-						console.error(`[WorktreeScanner] Error scanning ${session.worktreeParentPath}:`, error);
+						logger.error(
+							`[WorktreeScanner] Error scanning ${session.worktreeParentPath}:`,
+							undefined,
+							error
+						);
 					}
 				}
 

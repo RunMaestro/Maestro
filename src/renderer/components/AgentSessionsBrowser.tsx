@@ -43,6 +43,7 @@ import {
 	type ClaudeSession,
 } from '../hooks';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { logger } from '../utils/logger';
 
 type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
@@ -394,7 +395,7 @@ export function AgentSessionsBrowser({
 				// Update the tab if this session is open as a tab
 				onUpdateTab?.(sessionId, { name: trimmedName || null });
 			} catch (error) {
-				console.error('Failed to rename session:', error);
+				logger.error('Failed to rename session:', undefined, error);
 			}
 
 			cancelRename();
@@ -482,7 +483,7 @@ export function AgentSessionsBrowser({
 				);
 				setSearchResults(results);
 			} catch (error) {
-				console.error('Search failed:', error);
+				logger.error('Search failed:', undefined, error);
 				setSearchResults([]);
 			} finally {
 				setIsSearching(false);

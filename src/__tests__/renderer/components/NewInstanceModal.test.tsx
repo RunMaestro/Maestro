@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -1537,7 +1538,7 @@ describe('NewInstanceModal', () => {
 	describe('Error handling', () => {
 		it('should handle agent detection failure gracefully', async () => {
 			vi.mocked(window.maestro.agents.detect).mockRejectedValue(new Error('Detection failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1550,7 +1551,11 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to load agents:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to load agents:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();
@@ -1561,7 +1566,7 @@ describe('NewInstanceModal', () => {
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
 			]);
 			vi.mocked(window.maestro.agents.refresh).mockRejectedValue(new Error('Refresh failed'));
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(
 				<NewInstanceModal
@@ -1583,7 +1588,11 @@ describe('NewInstanceModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to refresh agent:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to refresh agent:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();

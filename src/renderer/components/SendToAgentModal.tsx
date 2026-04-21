@@ -27,6 +27,7 @@ import { estimateTokensFromLogs } from '../../shared/formatters';
 import { getAgentIcon } from '../constants/agentIcons';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * Session availability status for display in the selection list
@@ -305,7 +306,7 @@ export function SendToAgentModal({
 			});
 			onClose();
 		} catch (error) {
-			console.error('Send to session failed:', error);
+			logger.error('Send to session failed:', undefined, error);
 		} finally {
 			setIsSending(false);
 		}

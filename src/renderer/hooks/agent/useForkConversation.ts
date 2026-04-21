@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { Session, LogEntry } from '../../types';
-import { createMergedSession, getTabDisplayName, getActiveTab } from '../../utils/tabHelpers';
+import { createTabAtPosition, getTabDisplayName, getActiveTab } from '../../utils/tabHelpers';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
 import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -8,8 +8,7 @@ import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelp
 export function useForkConversation(
 	sessions: Session[],
 	setSessions: (updater: (prev: Session[]) => Session[]) => void,
-	activeSessionId: string | null,
-	setActiveSessionId: (id: string) => void
+	activeSessionId: string | null
 ) {
 	return useCallback(
 		(logId: string) => {
@@ -19,16 +18,38 @@ export function useForkConversation(
 			const sourceTab = getActiveTab(session);
 			if (!sourceTab) return;
 
-			// 1. Resolve the raw log index from the log ID
+			// 1. Resolve the raw log index from the log ID.
 			//    The caller passes a log ID (not a visual index) so that search-filtering
 			//    and consecutive-entry collapsing in the UI cannot shift the fork point.
 			const rawLogIndex = sourceTab.logs.findIndex((l) => l.id === logId);
 			if (rawLogIndex === -1) return;
 
-			const slicedLogs = sourceTab.logs.slice(0, rawLogIndex + 1);
+			// AI responses may span multiple raw stdout entries when chunks arrive
+			// more than 500ms apart (see useBatchedSessionUpdates). The UI's
+			// `collapsedLogs` merges consecutive non-user/tool/thinking entries into
+			// one visual block keyed by the FIRST entry's id, so the clicked logId
+			// points at the first chunk. Extend endIndex forward through the rest of
+			// that block so the fork context includes the full AI response.
+			let endIndex = rawLogIndex;
+			const clickedSource = sourceTab.logs[rawLogIndex].source;
+			if (clickedSource !== 'user' && clickedSource !== 'tool' && clickedSource !== 'thinking') {
+				while (
+					endIndex + 1 < sourceTab.logs.length &&
+					sourceTab.logs[endIndex + 1].source !== 'user' &&
+					sourceTab.logs[endIndex + 1].source !== 'tool' &&
+					sourceTab.logs[endIndex + 1].source !== 'thinking'
+				) {
+					endIndex++;
+				}
+			}
+
+			const slicedLogs = sourceTab.logs.slice(0, endIndex + 1);
 			if (slicedLogs.length === 0) return;
 
-			// 2. Format sliced logs as context (user, ai, stdout, and tool sources)
+			// 2. Format sliced logs as context (user, ai, stdout, and tool sources).
+			//    In AI mode, AI response text is stored with source='stdout'
+			//    (see useBatchedSessionUpdates), so stdout maps to 'Assistant' here.
+			//    Only source='tool' represents actual tool output.
 			const formattedContext = slicedLogs
 				.filter(
 					(log) =>
@@ -41,11 +62,7 @@ export function useForkConversation(
 				)
 				.map((log) => {
 					const role =
-						log.source === 'user'
-							? 'User'
-							: log.source === 'stdout' || log.source === 'tool'
-								? 'Tool Output'
-								: 'Assistant';
+						log.source === 'user' ? 'User' : log.source === 'tool' ? 'Tool Output' : 'Assistant';
 					return `${role}: ${log.text}`;
 				})
 				.join('\n\n');
@@ -53,7 +70,7 @@ export function useForkConversation(
 			// 3. Build the context message (similar to Send-to-Agent)
 			const sourceDisplayName = getTabDisplayName(sourceTab);
 			const sessionName = session.name || session.projectRoot.split('/').pop() || 'Unknown';
-			const forkName = `Forked: ${sessionName}`;
+			const forkTabName = `Forked: ${sourceDisplayName}`;
 
 			const contextMessage = formattedContext
 				? `# Forked Conversation
@@ -71,12 +88,12 @@ ${formattedContext}
 You are continuing this conversation from the fork point above. Briefly acknowledge the context and ask what the user would like to explore from here.`
 				: 'No context available from the forked conversation.';
 
-			// 4. Create new session via createMergedSession
+			// 4. Create a new AI tab within the existing session, right after the source tab
 			const forkNotice: LogEntry = {
 				id: `fork-notice-${Date.now()}`,
 				timestamp: Date.now(),
 				source: 'system',
-				text: `Forked from "${sessionName}" (tab: "${sourceDisplayName}") at message ${rawLogIndex + 1} of ${sourceTab.logs.length}`,
+				text: `Forked from tab "${sourceDisplayName}" at message ${rawLogIndex + 1} of ${sourceTab.logs.length}`,
 			};
 
 			const userContextLog: LogEntry = {
@@ -86,51 +103,68 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 				text: contextMessage,
 			};
 
-			const { session: newSession, tabId: newTabId } = createMergedSession({
-				name: forkName,
-				projectRoot: session.projectRoot,
-				toolType: session.toolType,
-				mergedLogs: [forkNotice, userContextLog],
-				saveToHistory: true,
+			const tabResult = createTabAtPosition(session, {
+				afterTabId: sourceTab.id,
+				name: forkTabName,
+				logs: [forkNotice, userContextLog],
+				saveToHistory: sourceTab.saveToHistory,
 			});
+			if (!tabResult) return;
 
-			// 5. Mark the new tab as busy (we're about to spawn)
-			const newTab = newSession.aiTabs[0];
-			newTab.state = 'busy';
-			newTab.thinkingStartTime = Date.now();
-			newTab.awaitingSessionId = true;
+			const newTabId = tabResult.tab.id;
+			const sourceTabId = sourceTab.id;
 
-			// Copy relevant session config from source
-			newSession.cwd = session.cwd;
-			newSession.fullPath = session.fullPath;
-			newSession.shellCwd = session.shellCwd || session.cwd;
-			// Update the initial terminal tab's cwd to match the source session
-			if (newSession.terminalTabs?.[0]) {
-				newSession.terminalTabs[0].cwd = session.shellCwd || session.cwd;
-			}
-			newSession.isGitRepo = session.isGitRepo;
-			newSession.customPath = session.customPath;
-			newSession.customArgs = session.customArgs;
-			newSession.customEnvVars = session.customEnvVars;
-			newSession.customModel = session.customModel;
-			newSession.customContextWindow = session.customContextWindow;
-			newSession.customEffort = session.customEffort;
-			newSession.sessionSshRemoteConfig = session.sessionSshRemoteConfig;
-			newSession.groupId = session.groupId;
+			// 5. Commit new tab onto the live session (avoid stale snapshot spread).
+			//    Mark the tab as busy since we're about to spawn.
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== session.id) return s;
+					const hasNewTab = s.aiTabs.some((t) => t.id === newTabId);
+					let updatedTabs = s.aiTabs;
+					const currentOrder = s.unifiedTabOrder || [];
+					let updatedOrder = currentOrder;
+					if (!hasNewTab) {
+						const sourceIdx = s.aiTabs.findIndex((t) => t.id === sourceTabId);
+						const insertIdx = sourceIdx >= 0 ? sourceIdx + 1 : s.aiTabs.length;
+						const busyTab = {
+							...tabResult.tab,
+							state: 'busy' as const,
+							thinkingStartTime: Date.now(),
+							awaitingSessionId: true,
+						};
+						updatedTabs = [...s.aiTabs.slice(0, insertIdx), busyTab, ...s.aiTabs.slice(insertIdx)];
+						const newTabRef = { type: 'ai' as const, id: newTabId };
+						if (!currentOrder.some((ref) => ref.type === 'ai' && ref.id === newTabId)) {
+							const sourceOrderIdx = currentOrder.findIndex(
+								(ref) => ref.type === 'ai' && ref.id === sourceTabId
+							);
+							updatedOrder =
+								sourceOrderIdx >= 0
+									? [
+											...currentOrder.slice(0, sourceOrderIdx + 1),
+											newTabRef,
+											...currentOrder.slice(sourceOrderIdx + 1),
+										]
+									: [...currentOrder, newTabRef];
+						}
+					}
+					return {
+						...s,
+						state: 'busy',
+						busySource: 'ai',
+						thinkingStartTime: Date.now(),
+						aiTabs: updatedTabs,
+						activeTabId: newTabId,
+						activeFileTabId: null,
+						activeBrowserTabId: null,
+						activeTerminalTabId: null,
+						inputMode: 'ai' as const,
+						unifiedTabOrder: updatedOrder,
+					};
+				})
+			);
 
-			// 6. Add new session to state and navigate
-			setSessions((prev) => [
-				...prev,
-				{
-					...newSession,
-					state: 'busy',
-					busySource: 'ai',
-					thinkingStartTime: Date.now(),
-				},
-			]);
-			setActiveSessionId(newSession.id);
-
-			// 7. Toast
+			// 6. Toast
 			const estimatedTokens = slicedLogs
 				.filter((log) => log.text && log.source !== 'system')
 				.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
@@ -139,12 +173,12 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 			notifyToast({
 				type: 'success',
 				title: 'Conversation Forked',
-				message: `"${sessionName}" → "${forkName}"${tokenInfo}`,
-				sessionId: newSession.id,
+				message: `"${sourceDisplayName}" → "${forkTabName}"${tokenInfo}`,
+				sessionId: session.id,
 				tabId: newTabId,
 			});
 
-			// 8. Spawn agent async (follows Send-to-Agent pattern)
+			// 7. Spawn agent async (follows Send-to-Agent pattern)
 			(async () => {
 				try {
 					const agent = await window.maestro.agents.get(session.toolType);
@@ -152,6 +186,9 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
+					if (!commandToUse) {
+						throw new Error(`${session.toolType} agent has no command configured`);
+					}
 
 					const isSshSession = Boolean(session.sessionSshRemoteConfig?.enabled);
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
@@ -163,11 +200,11 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					const effectivePrompt = contextMessage;
 
 					const appendSystemPrompt = await prepareMaestroSystemPrompt({
-						session: newSession,
+						session,
 						activeTabId: newTabId,
 					});
 
-					const spawnSessionId = `${newSession.id}-ai-${newTabId}`;
+					const spawnSessionId = `${session.id}-ai-${newTabId}`;
 					await window.maestro.process.spawn({
 						sessionId: spawnSessionId,
 						toolType: session.toolType,
@@ -189,7 +226,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 				} catch (error) {
 					captureException(error, {
 						extra: {
-							newSessionId: newSession.id,
+							sessionId: session.id,
 							toolType: session.toolType,
 							newTabId,
 							operation: 'fork-conversation-spawn',
@@ -203,7 +240,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					};
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== newSession.id) return s;
+							if (s.id !== session.id) return s;
 							return {
 								...s,
 								state: 'idle',
@@ -226,6 +263,6 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 				}
 			})();
 		},
-		[sessions, activeSessionId, setSessions, setActiveSessionId]
+		[sessions, activeSessionId, setSessions]
 	);
 }

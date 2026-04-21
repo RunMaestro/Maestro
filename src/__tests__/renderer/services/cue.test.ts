@@ -36,10 +36,13 @@ const mockCue = {
 	onActivityUpdate: vi.fn(),
 };
 
+const mockLogger = {
+	log: vi.fn(),
+};
+
 beforeEach(() => {
 	vi.clearAllMocks();
-	(window as any).maestro = { cue: mockCue };
-	vi.spyOn(console, 'error').mockImplementation(() => {});
+	(window as any).maestro = { cue: mockCue, logger: mockLogger };
 });
 
 // ─── Read methods ─────────────────────────────────────────────────────────────
@@ -55,7 +58,12 @@ describe('cueService — read methods', () => {
 		it('returns empty object on error', async () => {
 			mockCue.getSettings.mockRejectedValue(new Error('fail'));
 			expect(await cueService.getSettings()).toEqual({});
-			expect(console.error).toHaveBeenCalledWith('Cue getSettings error:', expect.any(Error));
+			expect(mockLogger.log).toHaveBeenCalledWith(
+				'error',
+				'Cue getSettings error:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 	});
 

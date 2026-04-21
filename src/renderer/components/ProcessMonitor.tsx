@@ -20,6 +20,7 @@ import {
 import type { Session, Group, Theme, GroupChat } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { logger } from '../utils/logger';
 
 interface ProcessMonitorProps {
 	theme: Theme;
@@ -168,7 +169,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			const processes = await window.maestro.process.getActiveProcesses();
 			setActiveProcesses(processes);
 		} catch (error) {
-			console.error('Failed to fetch active processes:', error);
+			logger.error('Failed to fetch active processes:', undefined, error);
 		} finally {
 			setIsLoading(false);
 			// Keep refresh spinner visible for at least 500ms for visual feedback
@@ -191,7 +192,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				// Refresh the process list after killing
 				await fetchActiveProcesses(true);
 			} catch (error) {
-				console.error('Failed to kill process:', error);
+				logger.error('Failed to kill process:', undefined, error);
 			} finally {
 				setIsKilling(false);
 				setKillConfirmProcessId(null);

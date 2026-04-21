@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
 import { X, BarChart3, Calendar, Download, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
@@ -35,7 +36,7 @@ import { ChartErrorBoundary } from './ChartErrorBoundary';
 import type { Theme, Session } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { getRendererPerfMetrics } from '../../utils/logger';
+import { getRendererPerfMetrics, logger } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
 
 // Section IDs for keyboard navigation
@@ -67,28 +68,7 @@ type SectionId =
 const perfMetrics = getRendererPerfMetrics('UsageDashboard');
 
 // Stats time range type matching the backend API
-type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
-
-// Aggregation data shape from the stats API
-interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byLocation: { local: number; remote: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	// Session lifecycle stats
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	// Per-provider per-day breakdown for provider comparison
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	// Per-session per-day breakdown for agent usage chart
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-}
+// StatsTimeRange and StatsAggregation imported from shared/stats-types above
 
 // View mode options for the dashboard
 type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';
@@ -211,8 +191,9 @@ export function UsageDashboardModal({
 
 				// Warn if fetch is slow
 				if (fetchDuration > PERFORMANCE_THRESHOLDS.DASHBOARD_LOAD) {
-					console.warn(
+					logger.warn(
 						`[UsageDashboard] fetchStats took ${fetchDuration.toFixed(0)}ms (threshold: ${PERFORMANCE_THRESHOLDS.DASHBOARD_LOAD}ms)`,
+						undefined,
 						{ timeRange, totalQueries: stats?.totalQueries }
 					);
 				}
@@ -223,7 +204,7 @@ export function UsageDashboardModal({
 					setTimeout(() => setShowNewDataIndicator(false), 3000);
 				}
 			} catch (err) {
-				console.error('Failed to fetch usage stats:', err);
+				logger.error('Failed to fetch usage stats:', undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to load stats');
 				perfMetrics.end(fetchStart, 'fetchStats:error', { timeRange, error: String(err) });
 			} finally {
@@ -473,7 +454,7 @@ export function UsageDashboardModal({
 			const csv = await window.maestro.stats.exportCsv(timeRange);
 			await window.maestro.fs.writeFile(filePath, csv);
 		} catch (err) {
-			console.error('Failed to export CSV:', err);
+			logger.error('Failed to export CSV:', undefined, err);
 		} finally {
 			setIsExporting(false);
 		}

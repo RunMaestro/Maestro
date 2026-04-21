@@ -283,6 +283,7 @@ describe('agent-capabilities', () => {
 				'usesJsonLineOutput',
 				'usesCombinedContextWindow',
 				'supportsAppendSystemPrompt',
+				'supportsProjectMemory',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

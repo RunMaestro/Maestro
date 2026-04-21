@@ -33,6 +33,7 @@ import type { FileTabInfo } from '../hooks/ui/useAppHandlers';
 import type { MainPanelHandle } from './MainPanel';
 import type { FileNode } from '../types/fileTree';
 import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -476,7 +477,7 @@ function AppStandaloneModalsInner({
 									});
 								}
 							} catch (error) {
-								console.error('[DocumentGraph] Failed to open file:', error);
+								logger.error('[DocumentGraph] Failed to open file:', undefined, error);
 							}
 							useFileExplorerStore.getState().setIsGraphViewOpen(false);
 						}}

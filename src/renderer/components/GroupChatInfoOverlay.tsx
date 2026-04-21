@@ -24,6 +24,7 @@ import type { Theme, GroupChat, GroupChatMessage, GroupChatHistoryEntry } from '
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { downloadGroupChatExport } from '../utils/groupChatExport';
+import { logger } from '../utils/logger';
 
 interface GroupChatInfoOverlayProps {
 	theme: Theme;
@@ -129,12 +130,12 @@ export function GroupChatInfoOverlay({
 			try {
 				history = await window.maestro.groupChat.getHistory(groupChat.id);
 			} catch (error) {
-				console.warn('Failed to fetch history for export:', error);
+				logger.warn('Failed to fetch history for export:', undefined, error);
 			}
 
 			await downloadGroupChatExport(groupChat, messages, history, theme);
 		} catch (error) {
-			console.error('Export failed:', error);
+			logger.error('Export failed:', undefined, error);
 		} finally {
 			setIsExporting(false);
 		}

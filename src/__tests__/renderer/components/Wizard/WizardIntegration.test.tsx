@@ -24,8 +24,9 @@ import {
 import { MaestroWizard } from '../../../../renderer/components/Wizard/MaestroWizard';
 import { WizardResumeModal } from '../../../../renderer/components/Wizard/WizardResumeModal';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
-import type { Theme, AgentConfig } from '../../../../renderer/types';
+import type { AgentConfig } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -200,32 +201,6 @@ vi.mock('../../../../renderer/components/Wizard/services/phaseGenerator', () => 
 }));
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'test-dark',
-	name: 'Test Dark',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgActivity: '#2a2a2a',
-		border: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		textFaint: '#555555',
-		accent: '#4a9eff',
-		accentDim: '#3a8eef',
-		accentText: '#ffffff',
-		accentForeground: '#ffffff',
-		buttonBg: '#333333',
-		buttonHover: '#444444',
-		headerBg: '#202020',
-		scrollbarTrack: '#1a1a1a',
-		scrollbarThumb: '#444444',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-	},
-};
 
 // Mock available agents
 const mockAgents: AgentConfig[] = [

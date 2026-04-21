@@ -12,6 +12,7 @@
 
 import { powerSaveBlocker } from 'electron';
 import { logger } from './utils/logger';
+import { captureException } from './utils/sentry';
 
 const CONTEXT = 'PowerManager';
 
@@ -183,6 +184,7 @@ class PowerManager {
 				platform: process.platform,
 			});
 		} catch (error) {
+			void captureException(error);
 			logger.error('Failed to start power save blocker', CONTEXT, error);
 			this.blockerId = null;
 		}
@@ -206,6 +208,7 @@ class PowerManager {
 				logger.debug(`Power save blocker ${this.blockerId} was already stopped`, CONTEXT);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.error('Error stopping power save blocker', CONTEXT, error);
 		} finally {
 			this.blockerId = null;

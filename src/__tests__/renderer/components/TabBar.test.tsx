@@ -5,6 +5,7 @@ import { TabBar } from '../../../renderer/components/TabBar';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -139,25 +140,6 @@ vi.mock('react-dom', async () => {
 });
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2a2a2a',
-		bgActivity: '#3a3a3a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#007acc',
-		border: '#444444',
-		error: '#ff4444',
-		success: '#44ff44',
-		warning: '#ffaa00',
-		vibe: '#ff00ff',
-		agentStatus: '#00ff00',
-	},
-};
 
 // Helper to create tabs
 function createTab(overrides: Partial<AITab> = {}): AITab {

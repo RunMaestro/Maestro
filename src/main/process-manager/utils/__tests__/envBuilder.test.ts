@@ -478,6 +478,28 @@ describe('envBuilder - Global Environment Variables', () => {
 			}
 		});
 
+		it('should include common user install locations in PATH on Unix', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			try {
+				process.env.PATH = '/usr/bin:/bin';
+				const env = buildPtyTerminalEnv({});
+				const pathParts = (env.PATH as string).split(path.delimiter);
+				const home = os.homedir();
+
+				// These directories must be in PATH so tools installed by the user
+				// (claude, codex, opencode installers) are reachable without relying
+				// on the shell sourcing an rc file to extend PATH. Regression test
+				// for zsh-without-.zshrc yielding `command not found`.
+				expect(pathParts).toContain(`${home}/.local/bin`);
+				expect(pathParts).toContain(`${home}/.opencode/bin`);
+				expect(pathParts).toContain(`${home}/.claude/local`);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform });
+			}
+		});
+
 		it('should strip Electron/IDE variables from PTY environment on Unix', () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'linux' });

@@ -67,6 +67,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { formatDurationCompact as formatDurationMs } from '../../shared/formatters';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -1458,7 +1459,7 @@ export function SymphonyModal({
 					);
 				}
 			} catch (error) {
-				console.error('Failed to fetch document:', error);
+				logger.error('Failed to fetch document:', undefined, error);
 				setDocumentPreview(
 					`*Failed to load document: ${error instanceof Error ? error.message : 'Unknown error'}*`
 				);
@@ -1552,7 +1553,7 @@ export function SymphonyModal({
 				setTimeout(() => setPrStatusMessage(null), 5000);
 			}
 		} catch (err) {
-			console.error('Failed to sync contribution:', err);
+			logger.error('Failed to sync contribution:', undefined, err);
 			setPrStatusMessage('Sync failed');
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} finally {
@@ -1583,7 +1584,7 @@ export function SymphonyModal({
 			// Clear message after 5 seconds
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} catch (err) {
-			console.error('Failed to check PR statuses:', err);
+			logger.error('Failed to check PR statuses:', undefined, err);
 			setPrStatusMessage('Failed to check statuses');
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} finally {

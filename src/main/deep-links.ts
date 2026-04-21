@@ -21,6 +21,7 @@ import { app, BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
 import { isWebContentsAvailable } from './utils/safe-send';
 import type { ParsedDeepLink } from '../shared/types';
+import { captureException } from './utils/sentry';
 
 // ============================================================================
 // Constants
@@ -74,6 +75,7 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
 		logger.warn(`Unrecognized deep link resource: ${resource}`, 'DeepLink');
 		return null;
 	} catch (error) {
+		void captureException(error);
 		logger.error('Failed to parse deep link URL', 'DeepLink', { url, error: String(error) });
 		return null;
 	}

@@ -21,6 +21,7 @@ import type {
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -177,15 +178,16 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		);
 
 		if (sessionsWithQueuedItems.length > 0) {
-			console.log(
+			logger.info(
 				`[QueueProcessing] Found ${sessionsWithQueuedItems.length} session(s) with leftover queued items from previous session`
 			);
 
 			// Delay to ensure all refs and handlers are set up
 			const startupTimerId = setTimeout(() => {
 				sessionsWithQueuedItems.forEach((session) => {
-					console.log(
+					logger.info(
 						`[QueueProcessing] Startup recovery for session ${session.id.substring(0, 8)}:`,
+						undefined,
 						{
 							id: session.executionQueue[0].id,
 							tabId: session.executionQueue[0].tabId,

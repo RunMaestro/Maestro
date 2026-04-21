@@ -32,7 +32,7 @@ function getCustomShellPath(): string | undefined {
 
 /**
  * SSH remote configuration type for spawn config.
- * Matches the pattern used in SessionInfo.sshRemoteConfig.
+ * Matches the pattern used in GroupChatSessionInfo.sshRemoteConfig.
  */
 export interface SpawnSshConfig {
 	enabled: boolean;

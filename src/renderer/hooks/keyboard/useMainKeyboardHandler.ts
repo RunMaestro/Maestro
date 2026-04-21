@@ -566,6 +566,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setAgentSessionsOpen(true);
 					trackShortcut('agentSessions');
 				}
+			} else if (ctx.isShortcut(e, 'openMemoryViewer')) {
+				e.preventDefault();
+				if (ctx.hasActiveSessionCapability('supportsProjectMemory')) {
+					ctx.setMemoryViewerOpen(true);
+					trackShortcut('openMemoryViewer');
+				}
 			} else if (ctx.isShortcut(e, 'systemLogs')) {
 				e.preventDefault();
 				ctx.setLogViewerOpen(true);
@@ -1035,8 +1041,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
 					// History filter - handled by HistoryPanel component, just track here
 					trackShortcut('filterHistory');
-				} else if (ctx.activeSession?.inputMode === 'terminal' && !isXtermTarget) {
-					// Terminal search - only when main panel has focus
+				} else if (ctx.activeSession?.inputMode === 'terminal') {
+					// Terminal search — works whether xterm is focused or not. xterm forwards
+					// Cmd+F via attachCustomKeyEventHandler (re-dispatching a synthetic event on
+					// window) so this branch handles both the direct and forwarded cases.
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.openTerminalSearch();
 					trackShortcut('searchTerminal');

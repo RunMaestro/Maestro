@@ -157,6 +157,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'When true, pressing Enter sends messages in AI mode. When false, Ctrl+Enter sends.',
 		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
+	enterToSendAIExpanded: {
+		description:
+			'When true, pressing Enter sends messages in the expanded Prompt Composer. When false, Ctrl+Enter sends.',
+		type: 'boolean',
 		default: false,
 		category: 'editor',
 	},
@@ -648,6 +655,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Suppress the Windows experimental support warning dialog.',
 		type: 'boolean',
 		default: false,
+		category: 'internal',
+	},
+	lastSelectedPromptId: {
+		description:
+			'ID of the prompt most recently edited in Settings → Maestro Prompts. Restored on reopen.',
+		type: 'string',
+		default: null,
 		category: 'internal',
 	},
 };

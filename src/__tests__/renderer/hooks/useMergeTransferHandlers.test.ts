@@ -129,6 +129,7 @@ import {
 	type UseMergeTransferHandlersDeps,
 } from '../../../renderer/hooks/agent/useMergeTransferHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useTabStore } from '../../../renderer/stores/tabStore';
 import { useMergeSessionWithSessions } from '../../../renderer/hooks/agent/useMergeSession';
 import { useSendToAgentWithSessions } from '../../../renderer/hooks/agent/useSendToAgent';
 
@@ -533,6 +534,75 @@ describe('useMergeTransferHandlers', () => {
 					expect((window as any).maestro.process.spawn).toHaveBeenCalled();
 				}
 			});
+		});
+	});
+
+	// ----------------------------------------------------------------
+	// handleSendToAgent — terminal buffer transfer path
+	// ----------------------------------------------------------------
+
+	describe('handleSendToAgent — terminal buffer mode', () => {
+		beforeEach(() => {
+			useTabStore.getState().setPendingTerminalBufferSend(null);
+		});
+
+		it('uses the queued terminal buffer as the transferred message body', async () => {
+			const targetSession = createMockSession({
+				id: 'target-session',
+				name: 'Target Agent',
+				toolType: 'codex',
+			});
+			useSessionStore.setState({
+				sessions: [createMockSession(), targetSession],
+				activeSessionId: 'session-1',
+			});
+
+			useTabStore.getState().setPendingTerminalBufferSend({
+				content: '$ echo hello\nhello',
+				sourceName: 'Terminal 1',
+			});
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useMergeTransferHandlers(deps));
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('target-session', {
+					groomContext: false,
+				} as any);
+			});
+
+			expect(sendResult.success).toBe(true);
+
+			const updatedSessions = useSessionStore.getState().sessions;
+			const updatedTarget = updatedSessions.find((s) => s.id === 'target-session');
+			const newTab = updatedTarget!.aiTabs.find((t) => t.id === sendResult.newTabId);
+			const userMessage = newTab!.logs.find((log) => log.source === 'user');
+
+			expect(userMessage).toBeDefined();
+			expect(userMessage!.text).toContain('Terminal Buffer from "Terminal 1"');
+			expect(userMessage!.text).toContain('$ echo hello');
+			expect(newTab!.name).toBe('From: Terminal 1');
+
+			// Buffer should be cleared after a successful send so later AI-tab sends use the
+			// normal extraction path.
+			expect(useTabStore.getState().pendingTerminalBufferSend).toBeNull();
+		});
+
+		it('clears the queued buffer when the transfer is cancelled', () => {
+			useTabStore.getState().setPendingTerminalBufferSend({
+				content: 'pending',
+				sourceName: 'Terminal 1',
+			});
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useMergeTransferHandlers(deps));
+
+			act(() => {
+				result.current.handleCancelTransfer();
+			});
+
+			expect(useTabStore.getState().pendingTerminalBufferSend).toBeNull();
 		});
 	});
 

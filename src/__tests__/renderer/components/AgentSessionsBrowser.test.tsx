@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -593,7 +594,7 @@ describe('AgentSessionsBrowser', () => {
 		});
 
 		it('handles API error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockRejectedValue(
 				new Error('API Error')
 			);
@@ -603,7 +604,11 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load sessions:', expect.any(Error));
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to load sessions:',
+				undefined,
+				expect.any(Error)
+			);
 			consoleSpy.mockRestore();
 		});
 

@@ -4,6 +4,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	getOpenSpecCommands,
 	getOpenSpecMetadata,
@@ -28,7 +29,7 @@ beforeEach(() => {
 	};
 
 	// Mock console.error to prevent noise in test output
-	vi.spyOn(console, 'error').mockImplementation(() => {});
+	vi.spyOn(logger, 'error').mockImplementation(() => {});
 });
 
 describe('openspec service', () => {
@@ -81,8 +82,9 @@ describe('openspec service', () => {
 			const result = await getOpenSpecCommands();
 
 			expect(result).toEqual([]);
-			expect(console.error).toHaveBeenCalledWith(
+			expect(logger.error).toHaveBeenCalledWith(
 				'[OpenSpec] Failed to get commands:',
+				undefined,
 				expect.any(Error)
 			);
 		});
@@ -136,8 +138,9 @@ describe('openspec service', () => {
 			const result = await getOpenSpecMetadata();
 
 			expect(result).toBeNull();
-			expect(console.error).toHaveBeenCalledWith(
+			expect(logger.error).toHaveBeenCalledWith(
 				'[OpenSpec] Failed to get metadata:',
+				undefined,
 				expect.any(Error)
 			);
 		});
@@ -204,8 +207,9 @@ describe('openspec service', () => {
 			const result = await getOpenSpecCommand('/openspec.proposal');
 
 			expect(result).toBeNull();
-			expect(console.error).toHaveBeenCalledWith(
+			expect(logger.error).toHaveBeenCalledWith(
 				'[OpenSpec] Failed to get command:',
+				undefined,
 				expect.any(Error)
 			);
 		});

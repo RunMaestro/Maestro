@@ -2,6 +2,7 @@ import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
 import { findAncestorCueConfigRoot, loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
 import { createCueEvent, type CueEvent, type CueSubscription } from './cue-types';
+import { clearGitHubSeenForSubscription } from './cue-db';
 import {
 	countActiveSubscriptions,
 	hasTimeBasedSubscriptions,
@@ -52,13 +53,28 @@ export interface CueSessionRuntimeServiceDeps {
 		event: CueEvent,
 		sourceSessionName: string,
 		chainDepth?: number
-	) => void;
+	) => number;
 	clearQueue: (sessionId: string, preserveStartup?: boolean) => void;
 	clearFanInState: (sessionId: string) => void;
 }
 
+/**
+ * Structured outcome of {@link CueSessionRuntimeService.initSession}. Lets
+ * callers (primarily `refreshSession`) distinguish a cleanly-loaded config
+ * from one that is missing on disk vs one that failed parse / validation —
+ * a distinction that matters for cleanup decisions (e.g. we only clear
+ * cue_github_seen rows when the config is truly gone, not when it's merely
+ * malformed and will likely be fixed on the next edit).
+ */
+export type InitSessionOutcome =
+	| { kind: 'disabled' }
+	| { kind: 'loaded' }
+	| { kind: 'missing' }
+	| { kind: 'parse-error' }
+	| { kind: 'invalid' };
+
 export interface CueSessionRuntimeService {
-	initSession(session: SessionInfo, opts: InitSessionOptions): void;
+	initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome;
 	refreshSession(
 		sessionId: string,
 		projectRoot: string
@@ -83,8 +99,8 @@ export function createCueSessionRuntimeService(
 		return deps.getSessions().find((session) => session.id === sessionId);
 	}
 
-	function initSession(session: SessionInfo, opts: InitSessionOptions): void {
-		if (!deps.enabled()) return;
+	function initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome {
+		if (!deps.enabled()) return { kind: 'disabled' };
 
 		// Idempotency guard: tear down any pre-existing registration to prevent
 		// duplicate trigger sources if initSession is called twice for the same
@@ -101,10 +117,31 @@ export function createCueSessionRuntimeService(
 		let loadResult = loadCueConfigDetailed(session.projectRoot);
 		let ancestorRoot: string | undefined;
 
-		// When the session's own directory has no cue.yaml, check ancestor
-		// directories. This enables sub-agents (e.g. project/Digest) to
-		// participate in pipelines defined at a parent root (e.g. project/).
-		if (!loadResult.ok && loadResult.reason === 'missing') {
+		// Walk to an ancestor cue.yaml when the session's own directory has
+		// no pipelines to contribute. This enables sub-agents (e.g.
+		// project/Digest) to participate in pipelines defined at a parent
+		// root (e.g. project/).
+		//
+		// Both shapes of "no local pipelines" must trigger the walk:
+		//   1. Local cue.yaml is missing entirely (fresh sub-agent dir).
+		//   2. Local cue.yaml exists but `subscriptions: []`. This is the
+		//      shape `handleSave` writes when it clears a project whose
+		//      pipelines have moved elsewhere (usually consolidated onto a
+		//      common-ancestor root). Without this branch, the empty-but-
+		//      parseable file short-circuits the fallback — the sub-agent
+		//      sees zero subscriptions even though the ancestor has subs
+		//      explicitly targeting it, and manual triggers dispatch 0.
+		//
+		// A user who deliberately wants an empty-subs file to opt OUT of
+		// ancestor pipelines can set `no_ancestor_fallback: true` on the
+		// local cue.yaml. The fallback also logs whenever it overrides an
+		// existing-but-empty local file so the override is observable.
+		const localFileExistsButEmpty = loadResult.ok && loadResult.config.subscriptions.length === 0;
+		const localOptsOutOfAncestor = loadResult.ok && loadResult.config.no_ancestor_fallback === true;
+		const localHasNoPipelines =
+			((!loadResult.ok && loadResult.reason === 'missing') || localFileExistsButEmpty) &&
+			!localOptsOutOfAncestor;
+		if (localHasNoPipelines) {
 			const ancestor = findAncestorCueConfigRoot(session.projectRoot);
 			if (ancestor) {
 				const ancestorResult = loadCueConfigDetailed(ancestor);
@@ -127,7 +164,9 @@ export function createCueSessionRuntimeService(
 						ancestorRoot = ancestor;
 						deps.onLog(
 							'cue',
-							`[CUE] "${session.name}" using ancestor config from "${ancestor}" (${targeted.length} targeted subscription(s))`
+							localFileExistsButEmpty
+								? `[CUE] "${session.name}" local cue.yaml is empty — overriding with ancestor "${ancestor}" (${targeted.length} targeted subscription(s)). Set no_ancestor_fallback: true on the local file to opt out.`
+								: `[CUE] "${session.name}" using ancestor config from "${ancestor}" (${targeted.length} targeted subscription(s))`
 						);
 					}
 				}
@@ -154,7 +193,7 @@ export function createCueSessionRuntimeService(
 				});
 				pendingYamlWatchers.set(session.id, yamlWatcher);
 			}
-			return;
+			return { kind: loadResult.reason };
 		}
 
 		const config = loadResult.config;
@@ -241,6 +280,7 @@ export function createCueSessionRuntimeService(
 			'cue',
 			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(config.subscriptions, session.id, session.name)} active subscription(s)`
 		);
+		return { kind: 'loaded' };
 	}
 
 	function teardownSession(sessionId: string): void {
@@ -272,11 +312,33 @@ export function createCueSessionRuntimeService(
 		registry.clearScheduledForSession(sessionId);
 	}
 
+	/**
+	 * Collects the stable GitHub-seen subscription IDs (`${sessionId}:${name}`)
+	 * for every `github.*` subscription in a session's current config. Used
+	 * on refresh/remove to diff against the post-reload set and clear seen
+	 * rows for subscriptions the user has deleted, so `cue_github_seen`
+	 * doesn't grow indefinitely.
+	 */
+	function collectGitHubSubIds(sessionId: string): Set<string> {
+		const ids = new Set<string>();
+		const state = registry.get(sessionId);
+		if (!state) return ids;
+		for (const sub of state.config.subscriptions) {
+			if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
+				ids.add(`${sessionId}:${sub.name}`);
+			}
+		}
+		return ids;
+	}
+
 	function refreshSession(
 		sessionId: string,
 		projectRoot: string
 	): { reloaded: boolean; configRemoved: boolean; sessionName?: string; activeCount?: number } {
 		const hadSession = registry.has(sessionId);
+		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
+		// post-reload set and clear seen rows for removed GitHub subscriptions.
+		const oldGitHubIds = collectGitHubSubIds(sessionId);
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
 
@@ -291,9 +353,20 @@ export function createCueSessionRuntimeService(
 			return { reloaded: false, configRemoved: false };
 		}
 
-		initSession({ ...session, projectRoot }, { reason: 'refresh' });
+		const outcome = initSession({ ...session, projectRoot }, { reason: 'refresh' });
 		const newState = registry.get(sessionId);
 		if (newState) {
+			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
+			// rows for any that are gone. Without this, deleted GitHub polls
+			// leave DB rows behind until their `seen_at` ages past the retention
+			// window. Not functionally harmful (rows are keyed by subscription
+			// ID so they don't collide with new subs) but they accumulate.
+			const newGitHubIds = collectGitHubSubIds(sessionId);
+			for (const id of oldGitHubIds) {
+				if (!newGitHubIds.has(id)) {
+					clearGitHubSeenForSubscription(id);
+				}
+			}
 			const activeCount = countActiveSubscriptions(
 				newState.config.subscriptions,
 				sessionId,
@@ -307,6 +380,18 @@ export function createCueSessionRuntimeService(
 			};
 		}
 
+		// Config is gone OR it failed to load. Only clear GitHub-seen rows when
+		// the config is TRULY gone (file missing). Parse / validation errors
+		// usually mean "user is mid-edit and will fix shortly" — keeping seen
+		// rows lets the GitHub poller skip already-seen items once the config
+		// comes back, instead of re-spamming the user on reload.
+		const configTrulyMissing = outcome.kind === 'missing';
+		if (configTrulyMissing) {
+			for (const id of oldGitHubIds) {
+				clearGitHubSeenForSubscription(id);
+			}
+		}
+
 		if (hadSession) {
 			if (!pendingYamlWatchers.has(sessionId)) {
 				const yamlWatcher = watchCueYaml(projectRoot, () => {
@@ -314,23 +399,39 @@ export function createCueSessionRuntimeService(
 				});
 				pendingYamlWatchers.set(sessionId, yamlWatcher);
 			}
+			// Only surface "Config removed" when the session previously had a
+			// config AND the file is truly gone. A parse/validation error on
+			// a previously-valid config is a SEPARATE state ("invalid config")
+			// — the yaml watcher remains armed so the next save reloads.
 			return {
 				reloaded: false,
-				configRemoved: true,
+				configRemoved: configTrulyMissing,
 				sessionName: session.name,
 			};
 		}
 
+		// Session never had a valid config — nothing to mark as removed, and no
+		// GitHub-seen rows to clear that weren't already absent. The refresh
+		// outcome is simply "still no config", not "config removed".
 		return { reloaded: false, configRemoved: false, sessionName: session.name };
 	}
 
 	function removeSessionInternal(sessionId: string): void {
+		// Capture GitHub-seen IDs before teardown since teardown unregisters
+		// the session and we won't be able to read its subscriptions anymore.
+		const oldGitHubIds = collectGitHubSubIds(sessionId);
 		teardownSession(sessionId);
 		registry.unregister(sessionId);
 		deps.clearQueue(sessionId);
 		// Removing a session means its app.startup history is no longer relevant —
 		// if the same session id is re-added later (rare), we want startup to fire.
 		registry.clearStartupForSession(sessionId);
+
+		// Clear every GitHub-seen row for this session's subscriptions. The
+		// session is going away entirely, so none of them should remain.
+		for (const id of oldGitHubIds) {
+			clearGitHubSeenForSubscription(id);
+		}
 
 		const pendingWatcher = pendingYamlWatchers.get(sessionId);
 		if (pendingWatcher) {

@@ -151,7 +151,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} li::marker { color: ${colors.textMain}; }
     ${s} ol li::marker { font-variant-numeric: tabular-nums; font-weight: 400; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
-    ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
+    ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; overflow-wrap: anywhere; }
     ${s} pre { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 1em; border-radius: 6px; overflow-x: auto; ${compactSpacing ? 'margin: 0.35em 0 !important;' : ''} }
     ${s} pre code { background: none; padding: 0; }
     ${s} blockquote { border-left: ${compactSpacing ? '3px' : '4px'} solid ${colors.border}; padding-left: ${compactSpacing ? '0.75em' : '1em'}; margin: ${compactSpacing ? '0.25em 0' : '0.5em 0'} !important; color: ${colors.textDim}; }

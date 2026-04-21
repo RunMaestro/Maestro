@@ -21,6 +21,7 @@ import type {
 	BrowserTab,
 	FilePreviewTab,
 	ThinkingItem,
+	QueuedItem,
 } from '../../types';
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
@@ -57,6 +58,8 @@ export interface MainPanelContentProps {
 	handleFilePreviewSearchQueryChange: (searchQuery: string) => void;
 	handleFilePreviewReload: () => void;
 	handleBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
+	/** Ref registry for the currently-mounted BrowserTabView — used to extract the active tab's content */
+	browserViewRef?: React.MutableRefObject<import('./BrowserTabView').BrowserTabViewHandle | null>;
 
 	// Terminal mounting props
 	terminalViewRefs: React.MutableRefObject<
@@ -66,6 +69,10 @@ export interface MainPanelContentProps {
 	mountedTerminalSessionsRef: React.MutableRefObject<Map<string, Session>>;
 	terminalSearchOpen: boolean;
 	setTerminalSearchOpen: (open: boolean) => void;
+	/** Copy a highlighted terminal selection to the clipboard (right-click menu handler). */
+	onTerminalCopySelection?: (text: string) => void;
+	/** Send a highlighted terminal selection to another agent (right-click menu handler). */
+	onTerminalSendSelectionToAgent?: (tabId: string, text: string) => void;
 
 	// Layout
 	isMobileLandscape: boolean;
@@ -144,6 +151,11 @@ export interface MainPanelContentProps {
 	thinkingItems: ThinkingItem[];
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
+	onForceSendQueuedItem?: (itemId: string) => void;
+	forcedParallelEnabled?: boolean;
+	getForceSendContext?: (
+		item: QueuedItem
+	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 
@@ -248,11 +260,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleFilePreviewSearchQueryChange,
 		handleFilePreviewReload,
 		handleBrowserTabUpdate,
+		browserViewRef,
 		terminalViewRefs,
 		mountedTerminalSessionIds,
 		mountedTerminalSessionsRef,
 		terminalSearchOpen,
 		setTerminalSearchOpen,
+		onTerminalCopySelection,
+		onTerminalSendSelectionToAgent,
 		isMobileLandscape,
 		activeTabContextUsage,
 		contextWarningsEnabled,
@@ -307,6 +322,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		thinkingItems,
 		onStopBatchRun,
 		onRemoveQueuedItem,
+		onForceSendQueuedItem,
+		forcedParallelEnabled,
+		getForceSendContext,
 		onOpenQueueBrowser,
 		showFlashNotification,
 		summarizeProgress,
@@ -394,6 +412,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			{/* Skip rendering when loading remote file - loading state takes over entire main area */}
 			{activeSession.inputMode === 'ai' && activeBrowserTabId && activeBrowserTab ? (
 				<BrowserTabView
+					ref={(handle) => {
+						if (browserViewRef) browserViewRef.current = handle;
+					}}
 					tab={activeBrowserTab}
 					theme={theme}
 					onUpdateTab={(tabId, updates) =>
@@ -546,6 +567,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								maxOutputLines={maxOutputLines}
 								onDeleteLog={onDeleteLog}
 								onRemoveQueuedItem={onRemoveQueuedItem}
+								onForceSendQueuedItem={onForceSendQueuedItem}
+								forcedParallelEnabled={forcedParallelEnabled}
+								getForceSendContext={getForceSendContext}
 								onInterrupt={handleInterrupt}
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}
@@ -718,6 +742,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}
 							onSearchClose={isCurrentSession ? () => setTerminalSearchOpen(false) : undefined}
 							isVisible={isTerminalVisible}
+							onCopySelection={onTerminalCopySelection}
+							onSendSelectionToAgent={onTerminalSendSelectionToAgent}
 						/>
 					</div>
 				);

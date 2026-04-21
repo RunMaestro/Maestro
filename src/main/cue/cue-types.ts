@@ -1,5 +1,9 @@
 import * as crypto from 'crypto';
 export type {
+	CueAction,
+	CueCommand,
+	CueCommandCliCall,
+	CueCommandMode,
 	CueConfig,
 	CueEvent,
 	CueEventType,

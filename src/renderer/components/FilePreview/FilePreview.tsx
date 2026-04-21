@@ -57,6 +57,7 @@ import { FilePreviewHeader } from './FilePreviewHeader';
 import { ImageViewer } from './ImageViewer';
 import { FilePreviewToc } from './FilePreviewToc';
 import { HighlightedCodeEditor } from './HighlightedCodeEditor';
+import { logger } from '../../utils/logger';
 
 export const FilePreview = React.memo(
 	forwardRef<FilePreviewHandle, FilePreviewProps>(function FilePreview(
@@ -475,7 +476,7 @@ export const FilePreview = React.memo(
 						})
 					)
 					.catch((err) => {
-						console.error('Failed to get file stats:', err);
+						logger.error('Failed to get file stats:', undefined, err);
 						setFileStats(null);
 					});
 			}
@@ -495,7 +496,7 @@ export const FilePreview = React.memo(
 					setTokenCount(tokens.length);
 				})
 				.catch((err) => {
-					console.error('Failed to count tokens:', err);
+					logger.error('Failed to count tokens:', undefined, err);
 					setTokenCount(null);
 				});
 		}, [file?.content, isImage, isBinary, isLargeFile]);
@@ -574,7 +575,7 @@ export const FilePreview = React.memo(
 				}
 				showNotification('File Saved');
 			} catch (err) {
-				console.error('Failed to save file:', err);
+				logger.error('Failed to save file:', undefined, err);
 				showNotification('Save Failed');
 			} finally {
 				setIsSaving(false);

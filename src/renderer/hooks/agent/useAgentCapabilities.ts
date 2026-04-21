@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { ToolType } from '../../types';
 import type { AgentCapabilities } from '../../../shared/types';
 import { DEFAULT_CAPABILITIES } from '../../../shared/types';
+import { logger } from '../../utils/logger';
 
 export type { AgentCapabilities };
 export { DEFAULT_CAPABILITIES };
@@ -89,7 +90,7 @@ export function useAgentCapabilities(
 				capabilitiesCache.set(agentId, fullCapabilities);
 				setCapabilities(fullCapabilities);
 			} catch (err) {
-				console.error(`Failed to get capabilities for agent ${agentId}:`, err);
+				logger.error(`Failed to get capabilities for agent ${agentId}:`, undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to load capabilities');
 				// Use defaults on error
 				setCapabilities(DEFAULT_CAPABILITIES);

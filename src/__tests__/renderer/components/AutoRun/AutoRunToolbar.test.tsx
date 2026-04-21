@@ -10,7 +10,8 @@ import {
 	AutoRunToolbar,
 	AutoRunToolbarProps,
 } from '../../../../renderer/components/AutoRun/AutoRunToolbar';
-import type { Theme } from '../../../../renderer/types';
+
+import { createMockTheme } from '../../../helpers/mockTheme';
 
 // jsdom converts shorthand hex colors to rgb() in computed styles.
 // This helper converts a shorthand or full hex color to its rgb() equivalent for assertions.
@@ -27,26 +28,6 @@ const hexToRgb = (hex: string): string => {
 	const b = parseInt(expanded.slice(4, 6), 16);
 	return `rgb(${r}, ${g}, ${b})`;
 };
-
-const createMockTheme = (): Theme => ({
-	id: 'test',
-	name: 'Test',
-	mode: 'dark' as const,
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#fff',
-		textDim: '#888',
-		accent: '#0066ff',
-		accentForeground: '#fff',
-		border: '#333',
-		highlight: '#0066ff33',
-		success: '#0a0',
-		warning: '#fa0',
-		error: '#f00',
-	},
-});
 
 const createDefaultProps = (overrides: Partial<AutoRunToolbarProps> = {}): AutoRunToolbarProps => ({
 	theme: createMockTheme(),

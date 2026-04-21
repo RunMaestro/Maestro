@@ -1,11 +1,16 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
-import { Terminal, GripVertical, Settings } from 'lucide-react';
+import { Terminal, GripVertical, Settings, Send } from 'lucide-react';
 import type { Theme } from '../../../types';
+import type { CueCommandMode } from '../../../../shared/cue-pipeline-types';
 
-export interface CliOutputNodeDataProps {
+export interface CommandNodeDataProps {
 	compositeId: string;
-	target: string;
+	name: string;
+	mode: CueCommandMode;
+	/** Mode-specific summary line shown under the name (e.g. truncated shell command, or `cli send → target`). */
+	summary: string;
+	owningSessionName: string;
 	pipelineColor: string;
 	pipelineCount: number;
 	pipelineColors: string[];
@@ -13,19 +18,21 @@ export interface CliOutputNodeDataProps {
 	theme?: Theme;
 }
 
-export const CliOutputNode = memo(function CliOutputNode({
+export const CommandNode = memo(function CommandNode({
 	data,
 	selected,
-}: NodeProps<CliOutputNodeDataProps>) {
+}: NodeProps<CommandNodeDataProps>) {
 	const theme = data.theme;
 	const accentColor = data.pipelineColor;
+	const ModeIcon = data.mode === 'cli' ? Send : Terminal;
+	const modeLabel = data.mode === 'cli' ? 'CLI' : 'Shell';
 
 	return (
 		<div
 			style={{
-				minWidth: 160,
-				maxWidth: 280,
-				height: 64,
+				minWidth: 180,
+				maxWidth: 320,
+				height: 80,
 				borderRadius: 8,
 				willChange: 'transform',
 				backgroundColor: theme?.colors.bgMain ?? '#1e1e2e',
@@ -41,21 +48,20 @@ export const CliOutputNode = memo(function CliOutputNode({
 				cursor: 'default',
 				transition: 'border-color 0.15s, box-shadow 0.15s',
 				position: 'relative',
-				opacity: 0.9,
 			}}
 		>
 			{/* Drag handle */}
 			<div
 				className="drag-handle"
 				style={{
-					width: 28,
+					width: 32,
 					display: 'flex',
 					alignItems: 'center',
 					justifyContent: 'center',
 					cursor: 'grab',
 					color: theme?.colors.textDim ?? '#555',
 					flexShrink: 0,
-					backgroundColor: `${accentColor}80`,
+					backgroundColor: accentColor,
 					borderRadius: '6px 0 0 6px',
 					transition: 'color 0.15s, filter 0.15s',
 				}}
@@ -69,7 +75,7 @@ export const CliOutputNode = memo(function CliOutputNode({
 				}}
 				title="Drag to move"
 			>
-				<GripVertical size={14} />
+				<GripVertical size={16} />
 			</div>
 
 			{/* Content */}
@@ -79,37 +85,54 @@ export const CliOutputNode = memo(function CliOutputNode({
 					display: 'flex',
 					flexDirection: 'column',
 					justifyContent: 'center',
-					padding: '6px 10px',
+					padding: '8px 10px',
 					overflow: 'hidden',
 				}}
 			>
 				<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-					<Terminal
-						size={13}
+					<ModeIcon
+						size={12}
 						style={{ color: theme?.colors.textDim ?? '#9ca3af', flexShrink: 0 }}
 					/>
 					<span
 						style={{
 							color: theme?.colors.textMain ?? '#e4e4e7',
-							fontSize: 12,
+							fontSize: 13,
 							fontWeight: 600,
 							whiteSpace: 'nowrap',
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							flex: 1,
 						}}
 					>
-						CLI Output
+						{data.name || 'command'}
+					</span>
+					<span
+						style={{
+							fontSize: 9,
+							color: theme?.colors.textDim ?? '#9ca3af',
+							backgroundColor: `${accentColor}20`,
+							padding: '1px 5px',
+							borderRadius: 3,
+							flexShrink: 0,
+						}}
+					>
+						{modeLabel}
 					</span>
 				</div>
 				<span
 					style={{
 						color: theme?.colors.textDim ?? '#6b7280',
-						fontSize: 10,
+						fontSize: 11,
 						marginTop: 2,
+						whiteSpace: 'nowrap',
 						overflow: 'hidden',
 						textOverflow: 'ellipsis',
-						whiteSpace: 'nowrap',
+						fontFamily: 'monospace',
 					}}
+					title={data.summary}
 				>
-					{data.target || 'No target'}
+					{data.summary || '(unconfigured)'}
 				</span>
 			</div>
 
@@ -127,7 +150,7 @@ export const CliOutputNode = memo(function CliOutputNode({
 					color: selected ? accentColor : (theme?.colors.textDim ?? '#555'),
 					flexShrink: 0,
 					padding: '0 6px',
-					marginRight: 10,
+					marginRight: 14,
 					borderRadius: 4,
 					transition: 'color 0.15s',
 				}}
@@ -137,7 +160,26 @@ export const CliOutputNode = memo(function CliOutputNode({
 				}
 				title="Configure"
 			>
-				<Settings size={13} />
+				<Settings size={14} />
+			</div>
+
+			{/* Owning-session pill */}
+			<div
+				style={{
+					position: 'absolute',
+					bottom: -8,
+					right: 8,
+					padding: '1px 6px',
+					borderRadius: 4,
+					backgroundColor: theme?.colors.bgActivity ?? '#2a2a3a',
+					border: `1px solid ${theme?.colors.border ?? '#333'}`,
+					fontSize: 9,
+					color: theme?.colors.textDim ?? '#9ca3af',
+					whiteSpace: 'nowrap',
+				}}
+				title={`Runs in ${data.owningSessionName}'s project root`}
+			>
+				in: {data.owningSessionName}
 			</div>
 
 			<Handle
@@ -147,10 +189,23 @@ export const CliOutputNode = memo(function CliOutputNode({
 					backgroundColor: accentColor,
 					border: `3px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
 					boxShadow: `0 0 0 2px ${accentColor}`,
-					width: 14,
-					height: 14,
+					width: 16,
+					height: 16,
 					zIndex: 10,
-					left: -7,
+					left: -8,
+				}}
+			/>
+			<Handle
+				type="source"
+				position={Position.Right}
+				style={{
+					backgroundColor: accentColor,
+					border: `3px solid ${theme?.colors.bgMain ?? '#1e1e2e'}`,
+					boxShadow: `0 0 0 2px ${accentColor}`,
+					width: 16,
+					height: 16,
+					zIndex: 10,
+					right: -8,
 				}}
 			/>
 		</div>

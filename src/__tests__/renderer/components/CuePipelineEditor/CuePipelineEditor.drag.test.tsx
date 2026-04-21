@@ -149,19 +149,7 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph',
 
 import { CuePipelineEditor } from '../../../../renderer/components/CuePipelineEditor/CuePipelineEditor';
 
-const mockTheme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		border: '#333',
-		textMain: '#e4e4e7',
-		textDim: '#a1a1aa',
-		accent: '#06b6d4',
-		accentForeground: '#fff',
-		success: '#22c55e',
-	},
-} as any;
+import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('CuePipelineEditor drag logic', () => {
 	beforeEach(() => {

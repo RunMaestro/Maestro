@@ -3,23 +3,16 @@
  *
  * Settings tab for browsing and editing core prompts.
  * Edits are saved to customizations file AND applied immediately in memory.
+ *
+ * Layout chrome (split pane, list, editor actions, open-in-finder) is provided by
+ * the shared `DualPaneFileEditor`. This component owns the prompt-specific state,
+ * template autocomplete, preview mode, and help content.
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import {
-	ExternalLink,
-	ChevronDown,
-	ChevronRight,
-	Maximize2,
-	Minimize2,
-	HelpCircle,
-	X,
-	Eye,
-	EyeOff,
-} from 'lucide-react';
+import { ExternalLink, Maximize2, Minimize2, HelpCircle, X, Eye, EyeOff } from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
-import { getOpenInLabel } from '../../../utils/platformUtils';
 import { captureException, captureMessage } from '../../../utils/sentry';
 import { openUrl } from '../../../utils/openUrl';
 import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
@@ -29,6 +22,8 @@ import { TEMPLATE_VARIABLES, substituteTemplateVariables } from '../../../utils/
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
+import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
+import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
 import './MaestroPromptsTab.css';
 
 interface CorePrompt {
@@ -281,6 +276,14 @@ export function MaestroPromptsTab({
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const activeSession = useActiveSession();
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
+	const lastSelectedPromptId = useSettingsStore((s) => s.lastSelectedPromptId);
+	const setLastSelectedPromptId = useSettingsStore((s) => s.setLastSelectedPromptId);
+	// Snapshot the recalled prompt ID once so we don't re-select across rerenders after the
+	// user picks something else in this session.
+	const initialRecalledPromptIdRef = useRef<string | null | undefined>(undefined);
+	if (initialRecalledPromptIdRef.current === undefined) {
+		initialRecalledPromptIdRef.current = lastSelectedPromptId ?? null;
+	}
 
 	const autocomplete = useTemplateAutocomplete({
 		textareaRef: textareaRef as React.RefObject<HTMLTextAreaElement>,
@@ -392,10 +395,13 @@ export function MaestroPromptsTab({
 				}
 				if (result.success && result.prompts) {
 					setPrompts(result.prompts);
-					const initial = initialSelectedPromptId
-						? result.prompts.find((p) => p.id === initialSelectedPromptId)
-						: undefined;
-					const target = initial || result.prompts[0];
+					const findById = (id: string | null | undefined) =>
+						id ? result.prompts!.find((p) => p.id === id) : undefined;
+					const target =
+						findById(initialSelectedPromptId) ||
+						findById(initialRecalledPromptIdRef.current) ||
+						findById(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT) ||
+						result.prompts[0];
 					if (target) {
 						setSelectedPrompt(target);
 						setEditedContent(target.content);
@@ -416,30 +422,23 @@ export function MaestroPromptsTab({
 		})();
 	}, []);
 
-	// Group prompts by category
-	const groupedPrompts = useMemo(() => {
-		const groups: Record<string, CorePrompt[]> = {};
-		for (const prompt of prompts) {
-			if (!groups[prompt.category]) {
-				groups[prompt.category] = [];
-			}
-			groups[prompt.category].push(prompt);
-		}
-		// Sort categories alphabetically by label, prompts alphabetically by id
-		return Object.entries(groups)
-			.sort(([a], [b]) => {
-				const labelA = CATEGORY_INFO[a]?.label ?? a;
-				const labelB = CATEGORY_INFO[b]?.label ?? b;
-				return labelA.localeCompare(labelB);
-			})
-			.map(
-				([category, items]) =>
-					[category, [...items].sort((a, b) => a.id.localeCompare(b.id))] as const
-			);
+	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component)
+	const items = useMemo<DualPaneFileEditorItem[]>(() => {
+		return [...prompts]
+			.sort((a, b) => a.id.localeCompare(b.id))
+			.map((p) => ({
+				id: p.id,
+				label: p.id,
+				description: p.description,
+				category: p.category,
+				isModified: p.isModified,
+			}));
 	}, [prompts]);
 
 	const handleSelectPrompt = useCallback(
-		(prompt: CorePrompt) => {
+		(id: string) => {
+			const prompt = prompts.find((p) => p.id === id);
+			if (!prompt) return;
 			if (hasUnsavedChanges) {
 				const discard = window.confirm('You have unsaved changes. Discard them?');
 				if (!discard) return;
@@ -448,8 +447,9 @@ export function MaestroPromptsTab({
 			setEditedContent(prompt.content);
 			setHasUnsavedChanges(false);
 			setSuccessMessage(null);
+			setLastSelectedPromptId(id);
 		},
-		[hasUnsavedChanges]
+		[prompts, hasUnsavedChanges, setLastSelectedPromptId]
 	);
 
 	const toggleCategory = useCallback((category: string) => {
@@ -544,279 +544,156 @@ export function MaestroPromptsTab({
 		}
 	}, [selectedPrompt]);
 
+	const editorHeaderActions = (
+		<>
+			{isEditorExpanded && (
+				<button
+					className="expand-toggle-button"
+					onClick={() => setShowHelp(true)}
+					title="Prompt reference"
+					style={{
+						color: theme.colors.textDim,
+						borderColor: theme.colors.border,
+					}}
+				>
+					<HelpCircle className="w-3.5 h-3.5" />
+				</button>
+			)}
+			<button
+				className="expand-toggle-button"
+				onClick={handleTogglePreview}
+				disabled={isBuildingPreview}
+				title={
+					isPreviewMode
+						? 'Exit preview (show editable source)'
+						: 'Preview with template variables resolved'
+				}
+				style={{
+					color: isPreviewMode ? theme.colors.accent : theme.colors.textDim,
+					borderColor: isPreviewMode ? theme.colors.accent : theme.colors.border,
+				}}
+			>
+				{isPreviewMode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+			</button>
+			<button
+				className="expand-toggle-button"
+				onClick={() => setIsEditorExpanded((prev) => !prev)}
+				title={isEditorExpanded ? 'Collapse editor' : 'Expand editor'}
+				style={{
+					color: theme.colors.textDim,
+					borderColor: theme.colors.border,
+				}}
+			>
+				{isEditorExpanded ? (
+					<Minimize2 className="w-3.5 h-3.5" />
+				) : (
+					<Maximize2 className="w-3.5 h-3.5" />
+				)}
+			</button>
+		</>
+	);
+
+	const renderEditorBody = useCallback(() => {
+		return isPreviewMode ? (
+			<textarea
+				className="prompt-textarea prompt-textarea-preview"
+				value={previewContent}
+				readOnly
+				spellCheck={false}
+				style={{
+					borderColor: theme.colors.accent,
+					backgroundColor: theme.colors.bgMain,
+					color: theme.colors.textMain,
+				}}
+			/>
+		) : (
+			<>
+				<textarea
+					ref={textareaRef}
+					className="prompt-textarea"
+					value={editedContent}
+					onChange={autocomplete.handleChange}
+					onKeyDown={(e) => {
+						autocomplete.handleKeyDown(e);
+					}}
+					spellCheck={false}
+					style={{
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+				/>
+				<TemplateAutocompleteDropdown
+					ref={autocomplete.autocompleteRef}
+					theme={theme}
+					state={autocomplete.autocompleteState}
+					onSelect={autocomplete.selectVariable}
+				/>
+			</>
+		);
+	}, [isPreviewMode, previewContent, editedContent, autocomplete, theme]);
+
+	const header =
+		!isEditorExpanded && !showHelp ? (
+			<div className="prompts-tab-header">
+				<div className="prompts-tab-header-text">
+					<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
+					<p className="text-xs opacity-50">
+						Customize the system prompts used by Maestro features. Changes take effect immediately.
+						Use <code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to reference other
+						prompt files.
+					</p>
+				</div>
+				<button
+					className="prompts-help-button"
+					onClick={() => setShowHelp(true)}
+					title="Prompt reference"
+					style={{
+						color: theme.colors.textDim,
+						borderColor: theme.colors.border,
+					}}
+				>
+					<HelpCircle className="w-3.5 h-3.5" />
+				</button>
+			</div>
+		) : null;
+
 	return (
 		<div className="maestro-prompts-settings-tab">
-			{!isEditorExpanded && !showHelp && (
-				<div className="prompts-tab-header">
-					<div className="prompts-tab-header-text">
-						<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
-						<p className="text-xs opacity-50">
-							Customize the system prompts used by Maestro features. Changes take effect
-							immediately. Use <code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to
-							reference other prompt files.
-						</p>
-					</div>
-					<button
-						className="prompts-help-button"
-						onClick={() => setShowHelp(true)}
-						title="Prompt reference"
-						style={{
-							color: theme.colors.textDim,
-							borderColor: theme.colors.border,
-						}}
-					>
-						<HelpCircle className="w-3.5 h-3.5" />
-					</button>
-				</div>
-			)}
-
-			<div className="prompts-split-view" style={{ borderColor: theme.colors.border }}>
-				{/* Prompt List */}
-				{!isEditorExpanded && !showHelp && (
-					<div className="prompts-list" style={{ borderColor: theme.colors.border }}>
-						{groupedPrompts.map(([category, categoryPrompts]) => {
-							const isCollapsed = collapsedCategories.has(category);
-							return (
-								<div key={category} className="prompt-category">
-									<button
-										className="category-header"
-										onClick={() => toggleCategory(category)}
-										style={{ color: theme.colors.textDim }}
-									>
-										{isCollapsed ? (
-											<ChevronRight className="w-3 h-3" />
-										) : (
-											<ChevronDown className="w-3 h-3" />
-										)}
-										{CATEGORY_INFO[category]?.label || category}
-									</button>
-									{!isCollapsed &&
-										categoryPrompts.map((prompt) => (
-											<button
-												key={prompt.id}
-												className={`prompt-item ${selectedPrompt?.id === prompt.id ? 'selected' : ''}`}
-												onClick={() => handleSelectPrompt(prompt)}
-												title={prompt.description}
-												style={{
-													backgroundColor:
-														selectedPrompt?.id === prompt.id
-															? theme.colors.accent + '20'
-															: 'transparent',
-													color: theme.colors.textMain,
-												}}
-											>
-												<span className="prompt-name">{prompt.id}</span>
-												{prompt.isModified && (
-													<span
-														className="modified-indicator"
-														style={{ color: theme.colors.accent }}
-													>
-														&bull;
-													</span>
-												)}
-											</button>
-										))}
-								</div>
-							);
-						})}
-					</div>
-				)}
-
-				{/* Help Panel (full-screen) */}
-				{showHelp && (
-					<div className="prompts-help-content">
-						<PromptsHelpPanel theme={theme} onClose={() => setShowHelp(false)} />
-					</div>
-				)}
-
-				{/* Editor Panel */}
-				{!showHelp && (
-					<div className="prompt-editor">
-						{selectedPrompt ? (
-							<>
-								<div className="editor-header">
-									<div className="editor-header-row">
-										<div className="editor-header-text">
-											<h3 style={{ color: theme.colors.textMain }}>{selectedPrompt.id}</h3>
-											{!isEditorExpanded && (
-												<p className="prompt-description" style={{ color: theme.colors.textDim }}>
-													{selectedPrompt.description}
-												</p>
-											)}
-										</div>
-										<div className="editor-header-actions">
-											{isEditorExpanded && (
-												<button
-													className="expand-toggle-button"
-													onClick={() => setShowHelp(true)}
-													title="Prompt reference"
-													style={{
-														color: theme.colors.textDim,
-														borderColor: theme.colors.border,
-													}}
-												>
-													<HelpCircle className="w-3.5 h-3.5" />
-												</button>
-											)}
-											<button
-												className="expand-toggle-button"
-												onClick={handleTogglePreview}
-												disabled={isBuildingPreview}
-												title={
-													isPreviewMode
-														? 'Exit preview (show editable source)'
-														: 'Preview with template variables resolved'
-												}
-												style={{
-													color: isPreviewMode ? theme.colors.accent : theme.colors.textDim,
-													borderColor: isPreviewMode ? theme.colors.accent : theme.colors.border,
-												}}
-											>
-												{isPreviewMode ? (
-													<EyeOff className="w-3.5 h-3.5" />
-												) : (
-													<Eye className="w-3.5 h-3.5" />
-												)}
-											</button>
-											<button
-												className="expand-toggle-button"
-												onClick={() => setIsEditorExpanded((prev) => !prev)}
-												title={isEditorExpanded ? 'Collapse editor' : 'Expand editor'}
-												style={{
-													color: theme.colors.textDim,
-													borderColor: theme.colors.border,
-												}}
-											>
-												{isEditorExpanded ? (
-													<Minimize2 className="w-3.5 h-3.5" />
-												) : (
-													<Maximize2 className="w-3.5 h-3.5" />
-												)}
-											</button>
-										</div>
-									</div>
-									{selectedPrompt.isModified && !isEditorExpanded && (
-										<span
-											className="modified-badge"
-											style={{ backgroundColor: theme.colors.accent }}
-										>
-											Modified
-										</span>
-									)}
-								</div>
-
-								{successMessage && (
-									<div
-										className="success-message"
-										style={{
-											backgroundColor: theme.colors.success + '20',
-											color: theme.colors.success,
-										}}
-									>
-										{successMessage}
-									</div>
-								)}
-
-								{error && (
-									<div
-										className="error-message"
-										style={{
-											backgroundColor: theme.colors.error + '20',
-											color: theme.colors.error,
-										}}
-									>
-										{error}
-									</div>
-								)}
-
-								<div className="prompt-textarea-wrapper">
-									{isPreviewMode ? (
-										<textarea
-											className="prompt-textarea prompt-textarea-preview"
-											value={previewContent}
-											readOnly
-											spellCheck={false}
-											style={{
-												borderColor: theme.colors.accent,
-												backgroundColor: theme.colors.bgMain,
-												color: theme.colors.textMain,
-											}}
-										/>
-									) : (
-										<>
-											<textarea
-												ref={textareaRef}
-												className="prompt-textarea"
-												value={editedContent}
-												onChange={autocomplete.handleChange}
-												onKeyDown={(e) => {
-													autocomplete.handleKeyDown(e);
-												}}
-												spellCheck={false}
-												style={{
-													borderColor: theme.colors.border,
-													backgroundColor: theme.colors.bgMain,
-													color: theme.colors.textMain,
-												}}
-											/>
-											<TemplateAutocompleteDropdown
-												ref={autocomplete.autocompleteRef}
-												theme={theme}
-												state={autocomplete.autocompleteState}
-												onSelect={autocomplete.selectVariable}
-											/>
-										</>
-									)}
-								</div>
-
-								<div className="editor-actions">
-									<button
-										className="save-button"
-										onClick={handleSave}
-										disabled={!hasUnsavedChanges || isSaving}
-										style={{
-											backgroundColor: theme.colors.accent,
-											color: theme.colors.accentForeground,
-										}}
-									>
-										{isSaving ? 'Saving...' : 'Save'}
-									</button>
-									<button
-										className="reset-button"
-										onClick={handleReset}
-										disabled={(!selectedPrompt.isModified && !hasUnsavedChanges) || isResetting}
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-										}}
-									>
-										{isResetting ? 'Resetting...' : 'Reset to Default'}
-									</button>
-									<div className="flex-1" />
-									{promptsPath && (
-										<button
-											className="open-folder-button"
-											onClick={() => window.maestro?.shell?.openPath(promptsPath)}
-											style={{
-												borderColor: theme.colors.border,
-												color: theme.colors.textMain,
-											}}
-											title={promptsPath}
-										>
-											<ExternalLink className="w-3 h-3" />
-											{getOpenInLabel(window.maestro?.platform || 'darwin')}
-										</button>
-									)}
-								</div>
-							</>
-						) : (
-							<div className="no-selection" style={{ color: theme.colors.textDim }}>
-								Select a prompt to edit
-							</div>
-						)}
-					</div>
-				)}
-			</div>
+			<DualPaneFileEditor
+				theme={theme}
+				items={items}
+				selectedId={selectedPrompt?.id ?? null}
+				onSelect={handleSelectPrompt}
+				categories={CATEGORY_INFO}
+				collapsedCategories={collapsedCategories}
+				onToggleCategory={toggleCategory}
+				header={header}
+				helpPanel={<PromptsHelpPanel theme={theme} onClose={() => setShowHelp(false)} />}
+				showHelp={showHelp}
+				isExpanded={isEditorExpanded}
+				emptyStateMessage="Select a prompt to edit"
+				editorTitle={selectedPrompt?.id}
+				editorDescription={selectedPrompt?.description}
+				editorHeaderActions={editorHeaderActions}
+				showModifiedBadge={selectedPrompt?.isModified}
+				renderEditorBody={renderEditorBody}
+				successMessage={successMessage}
+				errorMessage={error}
+				primaryAction={{
+					label: isSaving ? 'Saving...' : 'Save',
+					loading: isSaving,
+					disabled: !hasUnsavedChanges,
+					onClick: handleSave,
+				}}
+				secondaryAction={{
+					label: isResetting ? 'Resetting...' : 'Reset to Default',
+					loading: isResetting,
+					disabled: !selectedPrompt?.isModified && !hasUnsavedChanges,
+					onClick: handleReset,
+				}}
+				openInFinderPath={promptsPath}
+			/>
 		</div>
 	);
 }

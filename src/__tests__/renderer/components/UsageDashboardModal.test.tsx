@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UsageDashboardModal } from '../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import type { Theme } from '../../../renderer/types';
@@ -512,7 +513,7 @@ describe('UsageDashboardModal', () => {
 			mockSaveFile.mockResolvedValue(testFilePath);
 			mockExportCsv.mockRejectedValue(new Error('Export failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
@@ -523,7 +524,11 @@ describe('UsageDashboardModal', () => {
 			fireEvent.click(screen.getByText('Export CSV'));
 
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith('Failed to export CSV:', expect.any(Error));
+				expect(consoleSpy).toHaveBeenCalledWith(
+					'Failed to export CSV:',
+					undefined,
+					expect.any(Error)
+				);
 			});
 
 			consoleSpy.mockRestore();

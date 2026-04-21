@@ -49,8 +49,36 @@ export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 /** All valid GitHub state values */
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
 
+/** What a subscription does when it fires. */
+export type CueAction = 'prompt' | 'command';
+
+/** Sub-mode of a `command` action. */
+export type CueCommandMode = 'shell' | 'cli';
+
 /**
- * A Cue subscription defines a trigger-prompt pairing.
+ * A maestro-cli sub-command. Currently only `send` is supported, but the
+ * shape leaves room for future sub-commands.
+ */
+export interface CueCommandCliCall {
+	command: 'send';
+	/** Session ID (or template variable) to send the message to. */
+	target: string;
+	/** Message body. Defaults to `{{CUE_SOURCE_OUTPUT}}` when omitted. */
+	message?: string;
+}
+
+/**
+ * A `command` action — either an arbitrary shell command (PATH-aware, runs in
+ * the owning session's project root) or a structured maestro-cli call.
+ */
+export type CueCommand = { mode: 'shell'; shell: string } | { mode: 'cli'; cli: CueCommandCliCall };
+
+/**
+ * A Cue subscription defines a trigger-action pairing.
+ *
+ * `action` defaults to `'prompt'` (run an AI agent with the substituted
+ * `prompt`). When `action` is `'command'`, the subscription instead spawns a
+ * shell command or invokes maestro-cli — see {@link CueCommand}.
  *
  * Note: prompt content is always materialized at config-load time. The raw YAML
  * `prompt_file` / `output_prompt_file` fields are resolved by the normalizer and
@@ -63,13 +91,53 @@ export interface CueSubscription {
 	enabled: boolean;
 	prompt: string;
 	output_prompt?: string;
+	/** Action type — defaults to `'prompt'` when omitted. */
+	action?: CueAction;
+	/** Required when `action === 'command'`. */
+	command?: CueCommand;
 	interval_minutes?: number;
 	schedule_times?: string[];
 	schedule_days?: CueScheduleDay[];
 	watch?: string;
 	source_session?: string | string[];
+	/** Stable session ID(s) for chain subscriptions (event === 'agent.completed').
+	 *  Dual-written alongside `source_session` (session names) for backward
+	 *  compatibility. On load, IDs are preferred; names are consulted only
+	 *  when IDs are absent OR reference a deleted session. Using stable IDs
+	 *  protects chain edges from breaking when an upstream agent is renamed. */
+	source_session_ids?: string | string[];
+	/** Subscription name(s) whose completion should fire this chain. Narrows
+	 *  `source_session` matching by `event.payload.triggeredBy` so a chain sub
+	 *  fires ONLY on completions produced by the listed upstream subs.
+	 *
+	 *  Why: `source_session` alone matches any run in that session. When a
+	 *  command node shares a session with its downstream agent (`Schedule →
+	 *  Cmd1(owner S1) → Agent1(S1)`), both Cmd1's and Agent1's completions
+	 *  emit `agent.completed` for S1 — without this filter the chain
+	 *  self-triggers on Agent1's own completion, and downstream fan-in subs
+	 *  cross-fire on Cmd1's completion before Agent1 has run.
+	 *
+	 *  When omitted, falls back to session-only matching (legacy behavior).
+	 *  The pipeline-editor serializer sets this on every chain sub so the
+	 *  runtime can distinguish "this agent's upstream completed" from
+	 *  "something else in the same session completed." */
+	source_sub?: string | string[];
 	fan_out?: string[];
+	/** Per-target prompts for a fan-out subscription, one string per entry in
+	 *  `fan_out`. Legacy inline shape — kept for round-tripping YAML written
+	 *  by older versions or edited by hand. New writes prefer
+	 *  `fan_out_prompt_files` so each agent's prompt lives in its own `.md`
+	 *  file, mirroring what the UI shows per-agent. The normalizer resolves
+	 *  `fan_out_prompt_files` into this field at load time so the runtime
+	 *  dispatch path keeps reading one authoritative place. */
 	fan_out_prompts?: string[];
+	/** External `.md` file paths for per-agent fan-out prompts, one entry
+	 *  per `fan_out` target (positional). Takes precedence over
+	 *  `fan_out_prompts` on read: the normalizer resolves each file into the
+	 *  corresponding `fan_out_prompts[i]` slot. Emitted by the editor when
+	 *  fan-out targets have different prompts so each agent's prompt lives
+	 *  in its own file instead of bloating the YAML. */
+	fan_out_prompt_files?: string[];
 	filter?: Record<string, string | number | boolean>;
 	repo?: string;
 	poll_minutes?: number;
@@ -88,9 +156,31 @@ export interface CueSubscription {
 	 *  agents later in the chain can access it via per-source template variables
 	 *  like {{CUE_OUTPUT_<NAME>}}. */
 	forward_output_from?: string[];
+	/**
+	 * @deprecated Replaced by a downstream `action: command` subscription with
+	 * `command: { mode: 'cli', cli: { command: 'send', target } }`. The
+	 * normalizer migrates legacy YAML automatically; new code should not write
+	 * this field.
+	 */
 	cli_output?: {
 		target: string;
 	};
+	/** Hex color of the visual pipeline this subscription belongs to
+	 *  (e.g. `#06b6d4`). All subscriptions in the same pipeline share this
+	 *  value. When absent on load, the renderer falls back to palette-order
+	 *  derivation; the next save re-stamps a value. Persisting this in YAML
+	 *  keeps colors stable across Dashboard tab switches, modal reopens, and
+	 *  app restarts. Must be a 7-character hex string (`#RRGGBB`). */
+	pipeline_color?: string;
+	/** Name of the visual pipeline this subscription belongs to.
+	 *  Authoritative for grouping subscriptions into pipelines on load.
+	 *  All subscriptions in one pipeline share the same value. Decouples
+	 *  pipeline membership from the subscription-name convention
+	 *  (`<name>`, `<name>-chain-N`), so editing a single subscription's
+	 *  `name` no longer splits a pipeline or loses its chain links. When
+	 *  absent on load (legacy YAML), the loader falls back to parsing the
+	 *  `-chain-N` suffix off subscription names. */
+	pipeline_name?: string;
 }
 
 /** Global Cue settings */
@@ -113,6 +203,13 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 export interface CueConfig {
 	subscriptions: CueSubscription[];
 	settings: CueSettings;
+	/**
+	 * When true, a local cue.yaml with `subscriptions: []` will NOT walk to
+	 * an ancestor cue.yaml looking for shared pipelines. Lets a sub-project
+	 * deliberately opt out of inherited pipelines without having to delete
+	 * the file. Defaults to false (legacy fallback behaviour).
+	 */
+	no_ancestor_fallback?: boolean;
 }
 
 /** An event instance produced by a trigger */

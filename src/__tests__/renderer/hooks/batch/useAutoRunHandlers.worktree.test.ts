@@ -1281,4 +1281,112 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			);
 		});
 	});
+
+	// -----------------------------------------------------------------------
+	// Dispatch from a worktree child session
+	// -----------------------------------------------------------------------
+
+	describe('dispatch originating from a worktree child', () => {
+		it('create-new resolves parent basePath and cwd when active session is a child', async () => {
+			const parent = createMockSession();
+			const child = baseCreateMockSession({
+				id: 'child-session-1',
+				name: 'child-worktree',
+				cwd: '/projects/worktrees/existing-child',
+				fullPath: '/projects/worktrees/existing-child',
+				projectRoot: '/projects/worktrees/existing-child',
+				isGitRepo: true,
+				parentSessionId: parent.id,
+				worktreeBranch: 'existing-child',
+				// Child inherits autoRunFolderPath from parent at build time.
+				autoRunFolderPath: parent.autoRunFolderPath,
+			});
+			const deps = createMockDeps();
+
+			useSessionStore.setState({
+				sessions: [parent, child],
+				activeSessionId: child.id,
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({ success: true });
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'from-child',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(child, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// basePath comes from parent's worktreeConfig, cwd comes from parent repo.
+			expect(window.maestro.git.worktreeSetup).toHaveBeenCalledWith(
+				'/projects/my-repo',
+				'/projects/worktrees/from-child',
+				'from-child',
+				undefined
+			);
+
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.worktreeBranch === 'from-child');
+			expect(newSession).toBeDefined();
+			// New session should be parented to the real parent, not the child.
+			expect(newSession!.parentSessionId).toBe(parent.id);
+		});
+
+		it('existing-closed parents the new session to the resolved parent when active is a child', async () => {
+			const parent = createMockSession();
+			const child = baseCreateMockSession({
+				id: 'child-session-2',
+				name: 'child-worktree',
+				cwd: '/projects/worktrees/existing-child',
+				fullPath: '/projects/worktrees/existing-child',
+				projectRoot: '/projects/worktrees/existing-child',
+				isGitRepo: true,
+				parentSessionId: parent.id,
+				worktreeBranch: 'existing-child',
+				autoRunFolderPath: parent.autoRunFolderPath,
+			});
+			const deps = createMockDeps();
+
+			useSessionStore.setState({
+				sessions: [parent, child],
+				activeSessionId: child.id,
+			} as any);
+
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'sibling']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/projects/worktrees/sibling',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(child, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/sibling');
+			expect(newSession).toBeDefined();
+			expect(newSession!.parentSessionId).toBe(parent.id);
+		});
+	});
 });

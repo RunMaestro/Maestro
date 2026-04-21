@@ -4,6 +4,7 @@ import { shouldOpenExternally, getAllFolderPaths } from '../../utils/fileExplore
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { logger } from '../../utils/logger';
 
 /** Loading state for file preview (shown while fetching remote files) */
 export interface FilePreviewLoading {
@@ -233,7 +234,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					});
 					setActiveFocus('main');
 				} catch (error) {
-					console.error('Failed to read file:', error);
+					logger.error('Failed to read file:', undefined, error);
 				} finally {
 					// Clear loading state
 					useFileExplorerStore.getState().setFilePreviewLoading(null);

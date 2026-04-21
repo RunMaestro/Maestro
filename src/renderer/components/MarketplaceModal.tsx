@@ -38,6 +38,7 @@ import {
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -900,7 +901,7 @@ export function MarketplaceModal({
 			onClose();
 		} else {
 			// Could show an error toast here in future enhancement
-			console.error('Import failed:', result.error);
+			logger.error('Import failed:', undefined, result.error);
 		}
 	}, [
 		selectedPlaybook,

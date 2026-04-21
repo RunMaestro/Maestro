@@ -35,7 +35,7 @@ export interface CueFanInDeps {
 		event: CueEvent,
 		sourceSessionName: string,
 		chainDepth?: number
-	) => void;
+	) => number;
 }
 
 export interface CueFanInTracker {

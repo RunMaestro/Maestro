@@ -1,6 +1,15 @@
 import React, { useCallback, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Pencil, Terminal, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import {
+	X,
+	Pencil,
+	Terminal,
+	ChevronsLeft,
+	ChevronsRight,
+	Clipboard,
+	ArrowRightCircle,
+	Share2,
+} from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
@@ -34,6 +43,12 @@ export interface TerminalTabItemProps {
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
+	/** Copy the full terminal buffer to the clipboard. */
+	onCopyBuffer?: (tabId: string) => void;
+	/** Publish the terminal buffer as a GitHub Gist. */
+	onPublishBufferGist?: (tabId: string) => void;
+	/** Send the terminal buffer to another agent. */
+	onSendBufferToAgent?: (tabId: string) => void;
 	totalTabs?: number;
 	tabIndex?: number;
 	shortcutHint?: number | null;
@@ -66,6 +81,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onCopyBuffer,
+	onPublishBufferGist,
+	onSendBufferToAgent,
 	totalTabs,
 	tabIndex,
 	shortcutHint,
@@ -189,6 +207,30 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			setOverlayOpen(false);
 		},
 		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
+	);
+	const handleCopyBufferClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyBuffer?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCopyBuffer, tab.id, setOverlayOpen]
+	);
+	const handlePublishBufferGistClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onPublishBufferGist?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onPublishBufferGist, tab.id, setOverlayOpen]
+	);
+	const handleSendBufferToAgentClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSendBufferToAgent?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onSendBufferToAgent, tab.id, setOverlayOpen]
 	);
 
 	// Determine icon state color
@@ -385,6 +427,47 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Move to Last Position
+									</button>
+								)}
+
+								{/* Buffer actions — operate on the terminal's full scrollback */}
+								{(onCopyBuffer || onSendBufferToAgent || onPublishBufferGist) && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{onCopyBuffer && (
+									<button
+										onClick={handleCopyBufferClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Buffer: Copy to Clipboard
+									</button>
+								)}
+
+								{onSendBufferToAgent && (
+									<button
+										onClick={handleSendBufferToAgentClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ArrowRightCircle
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
+										Buffer: Send to Agent
+									</button>
+								)}
+
+								{onPublishBufferGist && (
+									<button
+										onClick={handlePublishBufferGistClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Share2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Buffer: Publish as GitHub Gist
 									</button>
 								)}
 

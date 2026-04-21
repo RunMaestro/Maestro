@@ -13,6 +13,7 @@
  */
 
 import { create } from 'zustand';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -237,7 +238,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	if (willTriggerCustomNotification) {
 		if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
 			window.maestro.notification.speak(toast.message, config.audioFeedbackCommand).catch((err) => {
-				console.error('[notificationStore] Custom notification failed:', err);
+				logger.error('[notificationStore] Custom notification failed:', undefined, err);
 			});
 		}
 	}
@@ -270,7 +271,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 			window.maestro.notification
 				.show(notifTitle, notifBody, toast.sessionId, toast.tabId)
 				.catch((err) => {
-					console.error('[notificationStore] Failed to show OS notification:', err);
+					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
 				});
 		}
 	}

@@ -24,6 +24,7 @@ import { useOperationStore, selectIsAnySummarizing } from '../../stores/operatio
 import { useSessionStore } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
+import { logger } from '../../utils/logger';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -416,7 +417,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					}
 				})
 				.catch((err) => {
-					console.error('[handleSummarizeAndContinue] Unexpected error:', err);
+					logger.error('[handleSummarizeAndContinue] Unexpected error:', undefined, err);
 					notifyToast({
 						type: 'error',
 						title: 'Compaction Failed',

@@ -28,9 +28,11 @@ import type { SessionInfo } from '../../shared/types';
 import {
 	createCueEvent,
 	type AgentCompletionData,
+	type CueCommand,
 	type CueConfig,
 	type CueRunResult,
 	type CueEvent,
+	type CueSubscription,
 } from './cue-types';
 import { createCueActivityLog } from './cue-activity-log';
 import type { CueActivityLog } from './cue-activity-log';
@@ -49,11 +51,51 @@ import type { CueQueryService } from './cue-query-service';
 import { createCueSessionRuntimeService } from './cue-session-runtime-service';
 import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
 import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
+import type { SessionState } from './cue-session-state';
 import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { loadCueConfig } from './cue-yaml-loader';
 
 const MAX_CHAIN_DEPTH = 10;
+
+/**
+ * Stable identity key grouping subs that represent parallel branches of the
+ * same visual trigger. Used by manual-trigger dispatch to fire every sibling
+ * sub a scheduled tick would fire — e.g. `Schedule → [Cmd1, Cmd2]` serializes
+ * as two subs sharing event config but targeting different commands; both
+ * must fire together when the user clicks Play.
+ *
+ * Mirrors `triggerGroupKey` in `yamlToPipeline.ts` so the runtime's notion of
+ * "same trigger" matches the editor's collapse rule on load. Any divergence
+ * in event-specific config (different schedule_times, different watch glob,
+ * etc.) yields a distinct key and therefore a distinct group, preserving
+ * author intent when they configured truly independent triggers.
+ */
+function triggerGroupKey(sub: CueSubscription): string {
+	// Sort filter keys so two subs whose filter objects differ only in key
+	// insertion order (hand-written YAML or library-reordered round-trips)
+	// still hash to the same group.
+	const filter = sub.filter
+		? Object.keys(sub.filter)
+				.sort()
+				.reduce<Record<string, unknown>>((acc, k) => {
+					acc[k] = (sub.filter as Record<string, unknown>)[k];
+					return acc;
+				}, {})
+		: null;
+	return JSON.stringify({
+		event: sub.event,
+		schedule_times: sub.schedule_times ?? null,
+		schedule_days: sub.schedule_days ?? null,
+		interval_minutes: sub.interval_minutes ?? null,
+		watch: sub.watch ?? null,
+		repo: sub.repo ?? null,
+		poll_minutes: sub.poll_minutes ?? null,
+		gh_state: sub.gh_state ?? null,
+		label: sub.label ?? null,
+		filter,
+	});
+}
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -65,6 +107,8 @@ export interface CueEngineDeps {
 		subscriptionName: string;
 		event: CueEvent;
 		timeoutMs: number;
+		action?: CueSubscription['action'];
+		command?: CueCommand;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -128,7 +172,7 @@ export class CueEngine {
 			onLog: deps.onLog,
 			getSessions: deps.getSessions,
 			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
-				this.dispatchService.dispatchSubscription(
+				return this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
@@ -146,7 +190,9 @@ export class CueEngine {
 				subscriptionName,
 				outputPrompt,
 				chainDepth,
-				cliOutput
+				cliOutput,
+				action,
+				command
 			) => {
 				this.runManager.execute(
 					sessionId,
@@ -155,7 +201,9 @@ export class CueEngine {
 					subscriptionName,
 					outputPrompt,
 					chainDepth,
-					cliOutput
+					cliOutput,
+					action,
+					command
 				);
 			},
 			onLog: deps.onLog,
@@ -171,7 +219,7 @@ export class CueEngine {
 			onAllowSleep: deps.onAllowSleep,
 			registry: this.registry,
 			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
-				this.dispatchService.dispatchSubscription(
+				return this.dispatchService.dispatchSubscription(
 					ownerSessionId,
 					sub,
 					event,
@@ -385,43 +433,110 @@ export class CueEngine {
 	}
 
 	/**
-	 * Manually trigger a subscription by name, bypassing its event conditions.
-	 * Creates a synthetic event and dispatches through the normal execution path.
-	 * Returns true if the subscription was found and triggered.
+	 * Manually trigger subscription(s) by name, bypassing event conditions.
+	 *
+	 * Resolution:
+	 *   1. Exact `sub.name` match — the anchor.
+	 *   2. If no exact match, treat `subscriptionName` as a `pipeline_name`
+	 *      and use the first initial-trigger sub in that pipeline as the
+	 *      anchor. This handles the pipeline-editor Play button case where
+	 *      a freshly-rebuilt (not-yet-reloaded) trigger node carries only
+	 *      `pipelineName` as its fire target — the serializer's per-branch
+	 *      emission doesn't guarantee any sub is named exactly `pipelineName`
+	 *      (command targets inherit their node's auto-generated name).
+	 *
+	 * Dispatch set:
+	 *   - Initial-trigger anchor (event !== 'agent.completed') with a
+	 *     known `pipeline_name` → fire every sibling sub that shares
+	 *     `pipeline_name` + identical event config. A natural scheduled
+	 *     tick arms each parallel branch sub independently and fires them
+	 *     all simultaneously; manual trigger mirrors that so a fan-out to
+	 *     [Cmd1, Cmd2] fires both commands in one click instead of one.
+	 *   - Chain-sub anchor (agent.completed), OR legacy sub with no
+	 *     `pipeline_name`, OR a `promptOverride` is present → anchor-only.
+	 *     A prompt override is a targeted CLI feature; applying it to
+	 *     unrelated siblings would surprise the caller.
+	 *
+	 * Returns true iff at least one dispatch actually queued a run. Returns
+	 * false when no anchor was found OR every dispatch in the group was
+	 * skipped (empty prompts, missing target sessions, etc.) so the UI can
+	 * surface "didn't run" instead of letting a silent no-op look like
+	 * success.
 	 */
 	triggerSubscription(
 		subscriptionName: string,
 		promptOverride?: string,
 		sourceAgentId?: string
 	): boolean {
+		type OwnedSub = {
+			ownerSessionId: string;
+			state: SessionState;
+			sub: CueSubscription;
+		};
+
+		// Collect every sub the current session scope owns. A sub is owned
+		// by its `agent_id` session when set; unbound subs are owned by
+		// whichever registry entry contains them (filter preserves
+		// existing semantics).
+		const ownedSubs: OwnedSub[] = [];
 		for (const [sessionId, state] of this.registry.snapshot()) {
 			for (const sub of state.config.subscriptions) {
-				if (sub.name !== subscriptionName) continue;
 				if (sub.agent_id && sub.agent_id !== sessionId) continue;
-
-				const event = createCueEvent(sub.event, sub.name, {
-					manual: true,
-					...(sourceAgentId ? { sourceAgentId } : {}),
-					...(promptOverride ? { cliPrompt: promptOverride } : {}),
-				});
-
-				this.deps.onLog(
-					'cue',
-					`[CUE] "${sub.name}" manually triggered${promptOverride ? ' (with prompt override)' : ''}`
-				);
-				state.lastTriggered = event.timestamp;
-				this.dispatchService.dispatchSubscription(
-					sessionId,
-					sub,
-					event,
-					'manual',
-					undefined,
-					promptOverride
-				);
-				return true;
+				ownedSubs.push({ ownerSessionId: sessionId, state, sub });
 			}
 		}
-		return false;
+
+		// Anchor resolution: exact name, then `pipeline_name` fallback.
+		let anchor = ownedSubs.find((x) => x.sub.name === subscriptionName);
+		if (!anchor) {
+			anchor = ownedSubs.find(
+				(x) => x.sub.pipeline_name === subscriptionName && x.sub.event !== 'agent.completed'
+			);
+		}
+		if (!anchor) return false;
+
+		// Decide whether to fire the sibling group or just the anchor.
+		// See method docstring for the rationale on each condition.
+		const shouldFireGroup =
+			anchor.sub.event !== 'agent.completed' && !!anchor.sub.pipeline_name && !promptOverride;
+
+		let toDispatch: OwnedSub[];
+		if (shouldFireGroup) {
+			const anchorKey = triggerGroupKey(anchor.sub);
+			toDispatch = ownedSubs.filter(
+				(x) =>
+					x.sub.pipeline_name === anchor!.sub.pipeline_name &&
+					x.sub.event !== 'agent.completed' &&
+					triggerGroupKey(x.sub) === anchorKey
+			);
+		} else {
+			toDispatch = [anchor];
+		}
+
+		let totalDispatched = 0;
+		for (const { ownerSessionId, state, sub } of toDispatch) {
+			const event = createCueEvent(sub.event, sub.name, {
+				manual: true,
+				...(sourceAgentId ? { sourceAgentId } : {}),
+				...(promptOverride ? { cliPrompt: promptOverride } : {}),
+			});
+
+			this.deps.onLog(
+				'cue',
+				`[CUE] "${sub.name}" manually triggered${promptOverride ? ' (with prompt override)' : ''}`
+			);
+			state.lastTriggered = event.timestamp;
+			const dispatched = this.dispatchService.dispatchSubscription(
+				ownerSessionId,
+				sub,
+				event,
+				'manual',
+				undefined,
+				promptOverride
+			);
+			if (dispatched > 0) totalDispatched++;
+		}
+		return totalDispatched > 0;
 	}
 
 	/** Clears queued events for a session */

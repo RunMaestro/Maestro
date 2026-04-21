@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import React from 'react';
 
@@ -1548,7 +1549,7 @@ describe('Playbook Update Functionality', () => {
 	it('handles update error gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockUpdate = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1573,7 +1574,11 @@ describe('Playbook Update Functionality', () => {
 		fireEvent.click(screen.getByText('Save Update'));
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to update playbook:', expect.any(Error));
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to update playbook:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		consoleError.mockRestore();
@@ -1668,7 +1673,7 @@ describe('Delete Playbook Edge Cases', () => {
 	it('handles delete error gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockDelete = vi.fn().mockRejectedValue(new Error('Delete failed'));
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1689,7 +1694,11 @@ describe('Delete Playbook Edge Cases', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Confirm Delete' }));
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to delete playbook:', expect.any(Error));
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to delete playbook:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		consoleError.mockRestore();
@@ -1733,7 +1742,7 @@ describe('Export Playbook Edge Cases', () => {
 	it('handles export failure gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockResolvedValue({ success: false, error: 'Export failed' });
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1753,7 +1762,11 @@ describe('Export Playbook Edge Cases', () => {
 		fireEvent.click(exportButton);
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to export playbook:', 'Export failed');
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to export playbook:',
+				undefined,
+				'Export failed'
+			);
 		});
 
 		consoleError.mockRestore();
@@ -1762,7 +1775,7 @@ describe('Export Playbook Edge Cases', () => {
 	it('silently ignores export cancelled error', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockResolvedValue({ success: false, error: 'Export cancelled' });
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1794,7 +1807,7 @@ describe('Export Playbook Edge Cases', () => {
 	it('handles export exception gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockExport = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1814,7 +1827,11 @@ describe('Export Playbook Edge Cases', () => {
 		fireEvent.click(exportButton);
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to export playbook:', expect.any(Error));
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to export playbook:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		consoleError.mockRestore();
@@ -1825,7 +1842,7 @@ describe('Import Playbook Edge Cases', () => {
 	it('handles import failure gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Invalid format' });
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1843,7 +1860,11 @@ describe('Import Playbook Edge Cases', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to import playbook:', 'Invalid format');
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to import playbook:',
+				undefined,
+				'Invalid format'
+			);
 		});
 
 		consoleError.mockRestore();
@@ -1852,7 +1873,7 @@ describe('Import Playbook Edge Cases', () => {
 	it('silently ignores import cancelled error', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockResolvedValue({ success: false, error: 'Import cancelled' });
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1882,7 +1903,7 @@ describe('Import Playbook Edge Cases', () => {
 	it('handles import exception gracefully', async () => {
 		const mockPlaybook = createMockPlaybook();
 		const mockPlaybooks: Playbook[] = [mockPlaybook];
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		const mockImport = vi.fn().mockRejectedValue(new Error('Network error'));
 		(window.maestro as Record<string, unknown>).playbooks = {
 			list: vi.fn().mockResolvedValue({ success: true, playbooks: mockPlaybooks }),
@@ -1900,7 +1921,11 @@ describe('Import Playbook Edge Cases', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Import Playbook' }));
 
 		await waitFor(() => {
-			expect(consoleError).toHaveBeenCalledWith('Failed to import playbook:', expect.any(Error));
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to import playbook:',
+				undefined,
+				expect.any(Error)
+			);
 		});
 
 		consoleError.mockRestore();
@@ -2171,7 +2196,7 @@ describe.skip('Worktree Validation Edge Cases', () => {
 	});
 
 	it('handles validation exception gracefully', async () => {
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 		(window.maestro.git as Record<string, unknown>).isRepo = vi.fn().mockResolvedValue(true);
 		(window.maestro.git as Record<string, unknown>).branches = vi
 			.fn()
@@ -2205,6 +2230,7 @@ describe.skip('Worktree Validation Edge Cases', () => {
 			() => {
 				expect(consoleError).toHaveBeenCalledWith(
 					'Failed to validate worktree path:',
+					undefined,
 					expect.any(Error)
 				);
 			},

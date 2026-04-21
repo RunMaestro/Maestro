@@ -21,6 +21,7 @@ import type { ToolType } from '../../../shared/types';
 import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Return type
@@ -429,7 +430,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 					);
 				}
 			} catch (error) {
-				console.warn(`Failed to start moderator for group chat ${id}:`, error);
+				logger.warn(`Failed to start moderator for group chat ${id}:`, undefined, error);
 			}
 
 			// Focus the input after the component renders
@@ -716,7 +717,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 			await window.maestro.groupChat.stopAll(activeGroupChatId);
 		} catch (error) {
-			console.error('[GroupChat] Failed to stop all:', error);
+			logger.error('[GroupChat] Failed to stop all:', undefined, error);
 			notifyToast({
 				type: 'error',
 				title: 'Stop Failed',

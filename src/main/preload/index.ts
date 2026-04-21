@@ -54,6 +54,7 @@ import { createCueApi } from './cue';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
+import { createMemoryApi } from './memory';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -207,6 +208,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	maestroCli: createMaestroCliApi(),
 	// Core Prompts API (view, edit, reset system prompts)
 	prompts: createPromptsApi(),
+	// Per-project Memory API (Claude Code memory viewer)
+	memory: createMemoryApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -289,6 +292,8 @@ export {
 	createMaestroCliApi,
 	// Core Prompts
 	createPromptsApi,
+	// Memory Viewer
+	createMemoryApi,
 };
 
 // Re-export types for TypeScript consumers

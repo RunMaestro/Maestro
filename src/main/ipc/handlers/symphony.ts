@@ -55,6 +55,7 @@ import type {
 	DocumentReference,
 } from '../../../shared/symphony-types';
 import { SymphonyError } from '../../../shared/symphony-types';
+import { captureException } from '../../utils/sentry';
 
 // ============================================================================
 // Constants
@@ -1133,6 +1134,7 @@ export function registerSymphonyHandlers({
 				})),
 			};
 		} catch (error) {
+			void captureException(error);
 			logger.warn('Failed to fetch star counts', LOG_CONTEXT, { error });
 
 			// Fall back to stale cache if available
@@ -2031,6 +2033,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					try {
 						await fs.rm(contribution.localPath, { recursive: true, force: true });
 					} catch (e) {
+						void captureException(e);
 						logger.warn('Failed to cleanup contribution directory', LOG_CONTEXT, { error: e });
 					}
 				}
@@ -2973,6 +2976,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					const content = await fs.readFile(metadataPath, 'utf-8');
 					metadata = JSON.parse(content);
 				} catch (e) {
+					void captureException(e);
 					logger.error('Failed to read contribution metadata', LOG_CONTEXT, {
 						contributionId,
 						error: e,

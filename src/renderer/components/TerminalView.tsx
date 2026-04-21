@@ -14,6 +14,7 @@ import { captureException } from '../utils/sentry';
 import { notifyToast } from '../stores/notificationStore';
 import type { Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -25,6 +26,8 @@ export interface TerminalViewHandle {
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
+	/** Read the full scrollback + visible buffer for the specified terminal tab. */
+	getTerminalBuffer(tabId: string): string;
 }
 
 interface TerminalViewProps {
@@ -41,6 +44,11 @@ interface TerminalViewProps {
 	onSearchClose?: () => void;
 	/** Whether the terminal panel is currently visible (inputMode === 'terminal'). Used to trigger repaint when returning from AI mode. */
 	isVisible?: boolean;
+	/** Copy the highlighted terminal selection to the clipboard. */
+	onCopySelection?: (text: string) => void;
+	/** Send the highlighted terminal selection to another agent. Tab ID is supplied so the
+	 *  handler can derive a display name (e.g. "Terminal 2") for the target agent modal. */
+	onSendSelectionToAgent?: (tabId: string, text: string) => void;
 }
 
 // ============================================================================
@@ -62,6 +70,8 @@ export const TerminalView = memo(
 			searchOpen,
 			onSearchClose,
 			isVisible,
+			onCopySelection,
+			onSendSelectionToAgent,
 		},
 		ref
 	) {
@@ -122,9 +132,16 @@ export const TerminalView = memo(
 			ref,
 			(): TerminalViewHandle => ({
 				clearActiveTerminal() {
-					if (activeTab) {
-						terminalRefs.current.get(activeTab.id)?.clear();
-					}
+					if (!activeTab) return;
+					// xterm.clear() removes scrollback but keeps the current prompt line
+					// exactly where it is — which looks like nothing happened when the user
+					// has just the prompt visible. Also send Ctrl+L to the PTY so the shell
+					// redraws the current line at the top of a fresh screen.
+					terminalRefs.current.get(activeTab.id)?.clear();
+					const terminalSessionId = getTerminalSessionId(session.id, activeTab.id);
+					window.maestro.process.write(terminalSessionId, '\x0c').catch(() => {
+						// Write failures are surfaced by the process exit handler
+					});
 				},
 				focusActiveTerminal() {
 					if (activeTab) {
@@ -142,6 +159,9 @@ export const TerminalView = memo(
 				searchPrevious(): boolean {
 					if (!activeTab) return false;
 					return terminalRefs.current.get(activeTab.id)?.searchPrevious() ?? false;
+				},
+				getTerminalBuffer(tabId: string): string {
+					return terminalRefs.current.get(tabId)?.getBuffer() ?? '';
 				},
 			}),
 			[activeTab]
@@ -314,7 +334,7 @@ export const TerminalView = memo(
 					const tabId = tab.id;
 					if (age < 2000) {
 						// Startup failure — close tab and show error toast
-						console.warn(
+						logger.warn(
 							`[TerminalView] Shell exited ${age}ms after creation (exit code: ${tab.exitCode ?? '?'}). Closing tab.`
 						);
 						setTimeout(() => closeTerminalTab(tabId), 0);
@@ -381,6 +401,12 @@ export const TerminalView = memo(
 							style={{ pointerEvents: isActive ? 'auto' : 'none' }}
 						>
 							<XTerminal
+								onCopySelection={onCopySelection}
+								onSendSelectionToAgent={
+									onSendSelectionToAgent
+										? (text: string) => onSendSelectionToAgent(tab.id, text)
+										: undefined
+								}
 								ref={(handle) => {
 									if (handle) {
 										terminalRefs.current.set(tab.id, handle);

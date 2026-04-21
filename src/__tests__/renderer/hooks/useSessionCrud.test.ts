@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -358,7 +359,7 @@ describe('useSessionCrud', () => {
 
 		it('handles agent not found', async () => {
 			mockMaestro.agents.get.mockResolvedValueOnce(null);
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
@@ -839,7 +840,7 @@ describe('useSessionCrud', () => {
 
 		it('continues even if process kill fails', async () => {
 			mockMaestro.process.kill.mockRejectedValueOnce(new Error('kill failed'));
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			useSessionStore.setState({
 				groups: [{ id: 'grp-1', name: 'Error Group' }],

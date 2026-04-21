@@ -66,6 +66,8 @@ export interface SessionLifecycleReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
+			syncHistory?: boolean;
+			shareHistoryToProjectDir?: boolean;
 		}
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
@@ -129,6 +131,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
+				syncHistory?: boolean;
+				shareHistoryToProjectDir?: boolean;
 			}
 		) => {
 			useSessionStore.getState().setSessions((prev) =>

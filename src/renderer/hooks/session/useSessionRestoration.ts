@@ -22,6 +22,7 @@ import { generateId } from '../../utils/ids';
 import { rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Return type
@@ -86,7 +87,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				const agent = await window.maestro.agents.get(toolType, sshRemoteId);
 				if (!agent) {
-					console.error(`[validateAgentInBackground] Agent not found for toolType: ${toolType}`);
+					logger.error(`[validateAgentInBackground] Agent not found for toolType: ${toolType}`);
 					setSessions((prev) =>
 						prev.map((s) =>
 							s.id === sessionId
@@ -103,7 +104,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				// IPC failures are treated as transient (e.g. main process still
 				// starting). We don't mark the session as 'error' here because the
 				// agent may become available shortly after splash completes.
-				console.warn(`[validateAgentInBackground] Agent validation failed for ${toolType}:`, err);
+				logger.warn(
+					`[validateAgentInBackground] Agent validation failed for ${toolType}:`,
+					undefined,
+					err
+				);
 			}
 		},
 		[]
@@ -141,8 +146,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					)
 				);
 			} catch (error) {
-				console.warn(
+				logger.warn(
 					`[fetchGitInfoInBackground] Failed to fetch git info for session ${sessionId}:`,
+					undefined,
 					error
 				);
 				setSessions((prev) =>
@@ -171,7 +177,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 			// Migration: ensure fileTreeAutoRefreshInterval is set (default 180s for legacy sessions)
 			if (session.fileTreeAutoRefreshInterval == null) {
-				console.warn(
+				logger.warn(
 					`[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s`
 				);
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
@@ -180,8 +186,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
 			// Create a default tab to prevent crashes when code calls .find() on aiTabs
 			if (!session.aiTabs || session.aiTabs.length === 0) {
-				console.error(
+				logger.error(
 					'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+					undefined,
 					session.id
 				);
 				const defaultTabId = generateId();
@@ -226,13 +233,13 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// If inputMode is 'terminal' but a file tab is still active, clear it to prevent
 			// rendering a file preview without a tab bar (orphaned file preview bug).
 			if (session.inputMode !== 'ai' && session.activeFileTabId) {
-				console.warn(
+				logger.warn(
 					`[restoreSession] Session has activeFileTabId='${session.activeFileTabId}' but inputMode='${session.inputMode}' — clearing orphaned file tab reference`
 				);
 				session = { ...session, activeFileTabId: null };
 			}
 			if (session.inputMode !== 'ai' && session.activeBrowserTabId) {
-				console.warn(
+				logger.warn(
 					`[restoreSession] Session has activeBrowserTabId='${session.activeBrowserTabId}' but inputMode='${session.inputMode}' — clearing orphaned browser tab reference`
 				);
 				session = { ...session, activeBrowserTabId: null };
@@ -244,7 +251,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 			// If toolType is 'terminal', migrate to claude-code
 			if (aiAgentType === 'terminal') {
-				console.warn(`[restoreSession] Session has toolType='terminal', migrating to claude-code`);
+				logger.warn(`[restoreSession] Session has toolType='terminal', migrating to claude-code`);
 				aiAgentType = 'claude-code' as ToolType;
 				correctedSession = {
 					...correctedSession,
@@ -316,12 +323,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 							gitRefsCacheTime = Date.now();
 						}
 					} else {
-						console.warn(
+						logger.warn(
 							`[restoreSession] Git info timed out after ${GIT_TIMEOUT_MS}ms for ${correctedSession.cwd}, using persisted values`
 						);
 					}
 				} catch (err) {
-					console.warn('[restoreSession] Git info failed, using persisted values:', err);
+					logger.warn('[restoreSession] Git info failed, using persisted values:', undefined, err);
 				}
 			}
 
@@ -447,7 +454,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				unifiedTabOrder: repairedUnifiedTabOrder,
 			};
 		} catch (error) {
-			console.error(`Error restoring session ${session.id}:`, error);
+			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
 				...session,
 				aiPid: -1,
@@ -526,11 +533,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					const savedGroupChats = await window.maestro.groupChat.list();
 					setGroupChats(savedGroupChats || []);
 				} catch (gcError) {
-					console.error('Failed to load group chats:', gcError);
+					logger.error('Failed to load group chats:', undefined, gcError);
 					setGroupChats([]);
 				}
 			} catch (e) {
-				console.error('Failed to load sessions/groups:', e);
+				logger.error('Failed to load sessions/groups:', undefined, e);
 				setSessions([]);
 				setGroups([]);
 				// Error loading sessions — no file tree to wait for

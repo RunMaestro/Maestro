@@ -17,6 +17,7 @@ import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -434,6 +435,7 @@ export class ChildProcessSpawner {
 					try {
 						this.emitter.emit('raw-stdout', sessionId, output);
 					} catch (err) {
+						void captureException(err);
 						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
 							sessionId,
 							error: String(err),
@@ -523,6 +525,7 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: true };
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});

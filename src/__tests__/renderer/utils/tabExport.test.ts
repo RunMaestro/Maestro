@@ -11,27 +11,8 @@ import { generateTabExportHtml } from '../../../renderer/utils/tabExport';
 import type { AITab, LogEntry, Theme } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#1e1f29',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.1)',
-		accentText: '#bd93f9',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#f1fa8c',
-		error: '#ff5555',
-	},
-};
 
 const mockSession = {
 	name: 'My Session',
@@ -130,15 +111,15 @@ describe('tabExport', () => {
 
 				expect(html).toContain('--bg-primary: #282a36');
 				expect(html).toContain('--bg-secondary: #21222c');
-				expect(html).toContain('--bg-tertiary: #1e1f29');
+				expect(html).toContain('--bg-tertiary: #343746');
 				expect(html).toContain('--text-primary: #f8f8f2');
 				expect(html).toContain('--text-secondary: #6272a4');
 				expect(html).toContain('--text-dim: #6272a4');
 				expect(html).toContain('--border: #44475a');
 				expect(html).toContain('--accent: #bd93f9');
-				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.1)');
+				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.2)');
 				expect(html).toContain('--success: #50fa7b');
-				expect(html).toContain('--warning: #f1fa8c');
+				expect(html).toContain('--warning: #ffb86c');
 				expect(html).toContain('--error: #ff5555');
 			});
 

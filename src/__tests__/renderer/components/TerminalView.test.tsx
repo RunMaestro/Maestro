@@ -23,12 +23,17 @@ import type { Theme } from '../../../renderer/types';
 const mockRefresh = vi.fn();
 const mockFocus = vi.fn();
 const mockWrite = vi.fn();
+const mockXtermClear = vi.fn();
+// Captures the most recent props passed to each mounted XTerminal instance, keyed by
+// sessionId (the `${sessionId}-terminal-${tabId}` string). Used by tests to invoke the
+// forwarded selection callbacks without needing a real xterm context menu.
+const xtermPropsBySessionId = new Map<string, Record<string, unknown>>();
 
 vi.mock('../../../renderer/components/XTerminal', () => {
 	const React = require('react');
 	const XTerminal = React.forwardRef(
 		(
-			_props: Record<string, unknown>,
+			props: Record<string, unknown>,
 			ref: React.Ref<{
 				refresh(): void;
 				focus(): void;
@@ -42,11 +47,12 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				resize(): void;
 			}>
 		) => {
+			xtermPropsBySessionId.set(String(props.sessionId), props);
 			React.useImperativeHandle(ref, () => ({
 				refresh: mockRefresh,
 				focus: mockFocus,
 				write: mockWrite,
-				clear: vi.fn(),
+				clear: mockXtermClear,
 				scrollToBottom: vi.fn(),
 				search: vi.fn().mockReturnValue(false),
 				searchNext: vi.fn().mockReturnValue(false),
@@ -156,6 +162,7 @@ const maestro = () => (window as any).maestro;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	xtermPropsBySessionId.clear();
 	// spawnTerminalTab and onData are not in the global setup mock — add them here
 	maestro().process.spawnTerminalTab = vi.fn().mockResolvedValue({ success: true, pid: 9999 });
 	maestro().process.onData = vi.fn().mockReturnValue(() => {});
@@ -523,6 +530,101 @@ describe('TerminalView — SSH terminal working directory (regression)', () => {
 				}),
 			})
 		);
+	});
+});
+
+describe('TerminalView — selection context menu wiring', () => {
+	it('forwards onCopySelection to XTerminal unchanged', () => {
+		const onCopySelection = vi.fn();
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(
+			<TerminalView
+				{...defaultProps}
+				session={session}
+				isVisible={true}
+				onCopySelection={onCopySelection}
+			/>
+		);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-1');
+		expect(props).toBeTruthy();
+		expect(props!.onCopySelection).toBe(onCopySelection);
+	});
+
+	it('wraps onSendSelectionToAgent so XTerminal receives a tab-scoped callback', () => {
+		// The parent passes (tabId, text) but XTerminal doesn't know its own tabId,
+		// so TerminalView wraps the callback and injects the tab ID. Verify the wrapper
+		// calls the parent handler with the correct tab ID.
+		const onSendSelectionToAgent = vi.fn();
+		const tab = makeTab({ id: 'tab-xyz', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(
+			<TerminalView
+				{...defaultProps}
+				session={session}
+				isVisible={true}
+				onSendSelectionToAgent={onSendSelectionToAgent}
+			/>
+		);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-xyz');
+		expect(props).toBeTruthy();
+		const forwarded = props!.onSendSelectionToAgent as (text: string) => void;
+		expect(typeof forwarded).toBe('function');
+		forwarded('ls -la output');
+		expect(onSendSelectionToAgent).toHaveBeenCalledWith('tab-xyz', 'ls -la output');
+	});
+
+	it('omits onSendSelectionToAgent on the XTerminal when the parent handler is absent', () => {
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-1');
+		expect(props).toBeTruthy();
+		expect(props!.onSendSelectionToAgent).toBeUndefined();
+	});
+});
+
+describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
+	// xterm.clear() only removes scrollback above the current prompt line, which feels
+	// like a no-op when the prompt was already at the top. Sending \x0c (Ctrl+L) to the
+	// PTY makes the shell redraw the prompt on a fresh screen, matching iTerm/VSCode
+	// clear-terminal behavior.
+	it('calls XTerminal.clear and writes \\x0c to the tab PTY when invoked', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+
+		const ref =
+			React.createRef<import('../../../renderer/components/TerminalView').TerminalViewHandle>();
+		render(<TerminalView ref={ref} {...defaultProps} session={session} isVisible={true} />);
+
+		await act(async () => {
+			ref.current?.clearActiveTerminal();
+			await Promise.resolve();
+		});
+
+		expect(mockXtermClear).toHaveBeenCalledTimes(1);
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x0c');
+	});
+
+	it('is a no-op when there is no active terminal tab', () => {
+		const session = makeSession([]);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+
+		const ref =
+			React.createRef<import('../../../renderer/components/TerminalView').TerminalViewHandle>();
+		render(<TerminalView ref={ref} {...defaultProps} session={session} isVisible={true} />);
+
+		ref.current?.clearActiveTerminal();
+
+		expect(mockXtermClear).not.toHaveBeenCalled();
+		expect(maestro().process.write).not.toHaveBeenCalled();
 	});
 });
 

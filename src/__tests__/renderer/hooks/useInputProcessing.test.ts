@@ -1058,6 +1058,50 @@ describe('useInputProcessing', () => {
 			expect(spawnCall.readOnlyMode).toBe(true);
 		});
 
+		it('does NOT force read-only when Auto Run is active AND user force-sends (Cmd+Shift+Enter / Force Send)', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+
+			const runningBatchState: BatchRunState = {
+				...defaultBatchState,
+				isRunning: true,
+				worktreeActive: false,
+			};
+			mockGetBatchState.mockReturnValue(runningBatchState);
+
+			// Idle write tab with an existing agent session so the prompt is sent verbatim.
+			const writeTab = createMockTab({
+				readOnlyMode: false,
+				agentSessionId: 'existing-session-456',
+				state: 'idle',
+			});
+			const session = createMockSession({
+				aiTabs: [writeTab],
+				activeTabId: writeTab.id,
+				state: 'idle',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'fix the migration',
+				activeBatchRunState: runningBatchState,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			// Auto Run normally forces read-only; Force Send must override that.
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('fix the migration');
+			expect(spawnCall.prompt).not.toContain('read-only/plan mode');
+			expect(spawnCall.readOnlyMode).toBeFalsy();
+
+			useSettingsStore.setState({ forcedParallelExecution: false } as any);
+			mockGetBatchState.mockReturnValue(defaultBatchState);
+		});
+
 		it('does not append read-only suffix when in normal write mode', async () => {
 			// Use a tab WITH agentSessionId to skip system prompt prepending
 			const writeTab = createMockTab({

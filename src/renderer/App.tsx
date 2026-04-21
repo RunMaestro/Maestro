@@ -173,6 +173,7 @@ import {
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
 	findNextUnreadSession,
+	getTabDisplayName,
 } from './utils/tabHelpers';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -271,6 +272,9 @@ function MaestroConsoleInner() {
 		setAgentSessionsOpen,
 		activeAgentSessionId,
 		setActiveAgentSessionId,
+		// Memory Viewer (Claude Code per-project memory)
+		memoryViewerOpen,
+		setMemoryViewerOpen,
 		// Batch Runner Modal
 		setBatchRunnerModalOpen,
 		// Auto Run Setup Modal
@@ -376,6 +380,7 @@ function MaestroConsoleInner() {
 		customThemeColors,
 		enterToSendAI,
 		setEnterToSendAI,
+		enterToSendAIExpanded,
 		defaultSaveToHistory,
 		defaultShowThinking,
 		rightPanelWidth,
@@ -1097,13 +1102,8 @@ function MaestroConsoleInner() {
 		setActiveSessionId,
 	});
 
-	// Fork conversation hook - creates a new session from a point in conversation history
-	const handleForkConversation = useForkConversation(
-		sessions,
-		setSessions,
-		activeSessionId,
-		setActiveSessionId
-	);
+	// Fork conversation hook - creates a new tab in the current session from a point in conversation history
+	const handleForkConversation = useForkConversation(sessions, setSessions, activeSessionId);
 
 	// Summarize & Continue hook for context compaction (non-blocking, per-tab)
 	const {
@@ -1344,7 +1344,14 @@ function MaestroConsoleInner() {
 	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
 
 	// Tab export handlers (copy context, export HTML, publish gist) — extracted to useTabExportHandlers
-	const { handleCopyContext, handleExportHtml, handlePublishTabGist } = useTabExportHandlers({
+	const {
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
+		handleCopyText,
+		handlePublishTextAsGist,
+		handleSendTextToAgent,
+	} = useTabExportHandlers({
 		sessionsRef,
 		activeSessionIdRef,
 		themeRef,
@@ -1442,6 +1449,52 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// Force Send: dispatch a queued item immediately with forceParallel=true.
+	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
+	// but as a single click. Only useful when another tab in this agent is busy
+	// AND this tab is idle — processInput(forceParallel:true) then sends now.
+	const handleForceSendQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) return;
+			const item = session.executionQueue.find((i) => i.id === itemId);
+			if (!item) return;
+			const text = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
+			if (!text) return;
+
+			// Remove the item from the queue first so processInput doesn't see a duplicate.
+			updateSessionWith(sessionId, (s) => ({
+				...s,
+				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
+			}));
+
+			// Preserve the item's attached images through the send path.
+			// stagedImages lives on the active tab; processInput reads it below.
+			if (item.images && item.images.length > 0) {
+				setStagedImages(item.images);
+			}
+
+			// Dispatch with forceParallel — same code path as Cmd+Shift+Enter.
+			processInput(text, { forceParallel: true });
+		},
+		[processInput, setStagedImages]
+	);
+
+	// Build (tab→busy summary) lookup used by the Force Send button to decide
+	// visibility and to populate the confirmation modal's "other tabs working"
+	// list. Computed from the current session's tab states at call time.
+	const getForceSendContext = useCallback((item: QueuedItem) => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!session) return null;
+		const targetTab = session.aiTabs.find((t) => t.id === item.tabId);
+		const targetTabBusy = targetTab?.state === 'busy';
+		const otherBusyTabs = session.aiTabs
+			.filter((t) => t.id !== item.tabId && t.state === 'busy')
+			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) }));
+		return { targetTabBusy, otherBusyTabs };
+	}, []);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -2000,6 +2053,7 @@ function MaestroConsoleInner() {
 		setGitLogOpen,
 		setActiveAgentSessionId,
 		setAgentSessionsOpen,
+		setMemoryViewerOpen,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
@@ -2158,6 +2212,7 @@ function MaestroConsoleInner() {
 		// Core state
 		logViewerOpen,
 		agentSessionsOpen,
+		memoryViewerOpen,
 		activeAgentSessionId,
 		activeSession,
 		thinkingItems,
@@ -2226,6 +2281,7 @@ function MaestroConsoleInner() {
 		setGitDiffPreview,
 		setLogViewerOpen,
 		setAgentSessionsOpen,
+		setMemoryViewerOpen,
 		setActiveAgentSessionId,
 		setInputValue,
 		setStagedImages,
@@ -2262,6 +2318,9 @@ function MaestroConsoleInner() {
 		handleStopBatchRun,
 		handleDeleteLog,
 		handleRemoveQueuedItem,
+		handleForceSendQueuedItem,
+		forcedParallelEnabled: settings.forcedParallelExecution,
+		getForceSendContext,
 		handleOpenQueueBrowser,
 
 		// Tab management handlers
@@ -2333,6 +2392,9 @@ function MaestroConsoleInner() {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleCopyText,
+		handlePublishTextAsGist,
+		handleSendTextToAgent,
 		cancelTab,
 		cancelMergeTab,
 		recordShortcutUsage,
@@ -2687,6 +2749,7 @@ function MaestroConsoleInner() {
 					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
+					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
 					setGitDiffPreview={setGitDiffPreview}
 					setGitLogOpen={setGitLogOpen}
@@ -2822,7 +2885,7 @@ function MaestroConsoleInner() {
 					promptSupportsThinking={
 						!activeGroupChatId && hasActiveSessionCapability('supportsThinkingDisplay')
 					}
-					promptEnterToSend={enterToSendAI}
+					promptEnterToSend={enterToSendAIExpanded}
 					onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
 					onCloseQueueBrowser={handleCloseQueueBrowser}
 					onRemoveQueueItem={handleRemoveQueueItem}

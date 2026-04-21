@@ -15,6 +15,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { CueYamlEditor } from '../../../renderer/components/CueYamlEditor';
 import type { Theme } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the Modal component
 vi.mock('../../../renderer/components/ui/Modal', () => ({
 	Modal: ({
@@ -174,27 +175,6 @@ afterEach(() => {
 	vi.restoreAllMocks();
 	(window as any).maestro = existingWindowMaestro;
 });
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 const defaultProps = {
 	isOpen: true,

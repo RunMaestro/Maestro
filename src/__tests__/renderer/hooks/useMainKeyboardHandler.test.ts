@@ -2645,7 +2645,10 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
 		});
 
-		it('should not open terminal search on Ctrl+F when event target is xterm', () => {
+		it('should open terminal search on Ctrl+F even when xterm has focus', () => {
+			// xterm's attachCustomKeyEventHandler intercepts Cmd/Ctrl+F and re-dispatches
+			// a synthetic event on window so the app-level shortcut still fires while the
+			// terminal textarea retains focus. The handler must open search in this case.
 			const { result } = renderHook(() => useMainKeyboardHandler());
 			const mockOpenTerminalSearch = vi.fn();
 
@@ -2678,7 +2681,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(mockOpenTerminalSearch).not.toHaveBeenCalled();
+			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
 			xtermInput.remove();
 		});
 	});

@@ -23,6 +23,7 @@ import { validateNewSession } from '../../utils/sessionValidation';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { DEFAULT_BATCH_PROMPT } from '../../components/BatchRunnerModal';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -66,12 +67,12 @@ export function useSymphonyContribution(
 
 	const handleStartContribution = useCallback(
 		async (data: SymphonyContributionData) => {
-			console.log('[Symphony] Creating session for contribution:', data);
+			logger.info('[Symphony] Creating session for contribution:', undefined, data);
 
 			// Get agent definition
 			const agent = await window.maestro.agents.get(data.agentType);
 			if (!agent) {
-				console.error(`Agent not found: ${data.agentType}`);
+				logger.error(`Agent not found: ${data.agentType}`);
 				notifyToast({
 					type: 'error',
 					title: 'Symphony Error',
@@ -88,7 +89,7 @@ export function useSymphonyContribution(
 				sessions
 			);
 			if (!validation.valid) {
-				console.error(`Session validation failed: ${validation.error}`);
+				logger.error(`Session validation failed: ${validation.error}`);
 				notifyToast({
 					type: 'error',
 					title: 'Agent Creation Failed',
@@ -219,7 +220,7 @@ export function useSymphonyContribution(
 					draftPrUrl: data.draftPrUrl,
 				})
 				.catch((err: unknown) => {
-					console.error('[Symphony] Failed to register active contribution:', err);
+					logger.error('[Symphony] Failed to register active contribution:', undefined, err);
 				});
 
 			// Track stats
@@ -253,11 +254,10 @@ export function useSymphonyContribution(
 
 				// Small delay to ensure session state is fully propagated
 				setTimeout(() => {
-					console.log(
-						'[Symphony] Auto-starting batch run with',
+					logger.info('[Symphony] Auto-starting batch run with', undefined, [
 						batchConfig.documents.length,
-						'documents'
-					);
+						'documents',
+					]);
 					startBatchRun(newId, batchConfig, data.autoRunPath!);
 				}, 500);
 			}

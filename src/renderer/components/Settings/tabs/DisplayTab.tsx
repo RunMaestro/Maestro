@@ -14,6 +14,7 @@ import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
 import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
+import { logger } from '../../../utils/logger';
 
 export interface DisplayTabProps {
 	theme: Theme;
@@ -74,7 +75,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			}
 			setFontsLoaded(true);
 		} catch (error) {
-			console.error('Failed to load fonts:', error);
+			logger.error('Failed to load fonts:', undefined, error);
 		} finally {
 			setFontLoading(false);
 		}

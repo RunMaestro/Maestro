@@ -35,7 +35,8 @@ export function createSafeSend(getMainWindow: GetMainWindow) {
 			}
 		} catch (error) {
 			// Silently ignore - renderer is not available
-			// This can happen during GPU crashes, window closing, or app shutdown
+			// This fires on every clean app shutdown, GPU crash, or mid-window-close;
+			// reporting it to Sentry would generate high-volume noise, not signal.
 			logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
 				error: String(error),
 			});

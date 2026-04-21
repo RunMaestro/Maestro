@@ -24,6 +24,8 @@ export interface SessionSshRemoteConfig {
 	enabled: boolean;
 	remoteId: string | null;
 	workingDirOverride?: string;
+	syncHistory?: boolean;
+	shareHistoryToProjectDir?: boolean;
 }
 
 export interface NewInstanceModalProps {

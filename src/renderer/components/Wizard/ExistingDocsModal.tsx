@@ -12,6 +12,7 @@ import { FileText, Trash2, ArrowRight } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { logger } from '../../utils/logger';
 
 interface ExistingDocsModalProps {
 	theme: Theme;
@@ -80,7 +81,7 @@ export function ExistingDocsModal({
 			// Success - notify parent
 			onStartFresh();
 		} catch (error) {
-			console.error('Failed to delete existing docs:', error);
+			logger.error('Failed to delete existing docs:', undefined, error);
 			setDeleteError(
 				error instanceof Error ? error.message : 'Failed to delete existing documents'
 			);

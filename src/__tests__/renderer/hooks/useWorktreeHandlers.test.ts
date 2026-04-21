@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // Mock gitService before any imports that use it
@@ -1416,7 +1417,7 @@ describe('Effects', () => {
 		});
 
 		it('logs error when watcher IPC call fails', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			mockGit.watchWorktreeDirectory.mockResolvedValueOnce({
 				success: false,
 				error: 'Directory not found',
@@ -1442,6 +1443,7 @@ describe('Effects', () => {
 
 			expect(consoleSpy).toHaveBeenCalledWith(
 				expect.stringContaining('[WorktreeWatcher]'),
+				undefined,
 				expect.stringContaining('Directory not found')
 			);
 

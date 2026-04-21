@@ -91,27 +91,7 @@ vi.mock('../../../../renderer/components/DirectorNotes/OverviewTab', () => ({
 // Import after mocks
 import { DirectorNotesModal } from '../../../../renderer/components/DirectorNotes/DirectorNotesModal';
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
-
+import { mockTheme } from '../../../helpers/mockTheme';
 describe('DirectorNotesModal', () => {
 	let onClose: ReturnType<typeof vi.fn>;
 

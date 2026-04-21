@@ -2,9 +2,10 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
-import type { Theme } from '../../../../renderer/types';
+
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useSettings hook (mutable so individual tests can override)
 const mockDirNotesSettings = vi.hoisted(() => ({
 	provider: 'claude-code' as const,
@@ -158,27 +159,6 @@ vi.mock('../../../../renderer/components/History', () => ({
 		{ label: 'All time', hours: null, bucketCount: 24 },
 	],
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 const mockGetUnifiedHistory = vi.fn();
 const mockHistoryUpdate = vi.fn();

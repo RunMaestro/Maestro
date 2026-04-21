@@ -31,6 +31,7 @@ import {
 	getRepoRootRemote,
 } from '../../utils/remote-git';
 import { readDirRemote } from '../../utils/remote-fs';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[Git]';
 
@@ -1153,6 +1154,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { gitSubdirs };
 				} catch (err) {
+					void captureException(err);
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
 					return { gitSubdirs: [] };
 				}
@@ -1336,6 +1338,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { success: true };
 				} catch (err) {
+					void captureException(err);
 					logger.error(`${LOG_CONTEXT} Failed to watch worktree directory ${worktreePath}: ${err}`);
 					return { success: false, error: String(err) };
 				}

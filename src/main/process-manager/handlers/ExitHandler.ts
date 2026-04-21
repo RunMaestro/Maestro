@@ -7,6 +7,7 @@ import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import { captureException } from '../../utils/sentry';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -261,6 +262,7 @@ export class ExitHandler {
 				this.emitter.emit('usage', sessionId, usageStats);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
 				sessionId,
 				error: String(error),

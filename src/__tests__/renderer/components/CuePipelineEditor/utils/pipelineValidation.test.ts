@@ -9,6 +9,7 @@ import type {
 	PipelineEdge,
 	TriggerNodeData,
 	AgentNodeData,
+	CommandNodeData,
 	CueEventType,
 } from '../../../../../shared/cue-pipeline-types';
 
@@ -46,6 +47,24 @@ function agentNode(id: string, data: Partial<AgentNodeData> = {}): PipelineNode 
 
 function edge(id: string, source: string, target: string, prompt?: string): PipelineEdge {
 	return { id, source, target, mode: 'pass', prompt };
+}
+
+function commandNode(id: string, data: Partial<CommandNodeData> = {}): PipelineNode {
+	return {
+		id,
+		type: 'command',
+		position: { x: 0, y: 0 },
+		data: {
+			name: data.name ?? `cmd-${id}`,
+			mode: data.mode ?? 'shell',
+			shell: data.shell,
+			cliCommand: data.cliCommand,
+			cliTarget: data.cliTarget,
+			cliMessage: data.cliMessage,
+			owningSessionId: data.owningSessionId ?? 'session-owner',
+			owningSessionName: data.owningSessionName ?? 'Owner Session',
+		},
+	};
 }
 
 function pipeline(
@@ -326,6 +345,69 @@ describe('pipelineValidation', () => {
 						),
 					])
 				).toEqual([]);
+			});
+		});
+
+		describe('command nodes', () => {
+			it('flags command with no owning agent (unbound from standalone pill)', () => {
+				const t = triggerNode('t1', 'app.startup');
+				const c = commandNode('c1', {
+					name: 'lint',
+					mode: 'shell',
+					shell: 'npm run lint',
+					owningSessionId: '',
+				});
+				const errors = validatePipelines([
+					pipeline('UnboundCmd', [t, c], [edge('e1', 't1', 'c1')]),
+				]);
+				expect(errors.some((e) => /command "lint" needs an owning agent/.test(e))).toBe(true);
+			});
+
+			it('flags shell-mode command missing a shell body', () => {
+				const t = triggerNode('t1', 'app.startup');
+				const c = commandNode('c1', { name: 'lint', mode: 'shell', shell: '' });
+				const errors = validatePipelines([
+					pipeline('EmptyShell', [t, c], [edge('e1', 't1', 'c1')]),
+				]);
+				expect(errors.some((e) => /missing a shell command/.test(e))).toBe(true);
+			});
+
+			it('flags cli-mode command missing a target session', () => {
+				const t = triggerNode('t1', 'app.startup');
+				const c = commandNode('c1', {
+					name: 'relay',
+					mode: 'cli',
+					cliCommand: 'send',
+					cliTarget: '',
+				});
+				const errors = validatePipelines([pipeline('EmptyCli', [t, c], [edge('e1', 't1', 'c1')])]);
+				expect(errors.some((e) => /missing a target session/.test(e))).toBe(true);
+			});
+
+			it('accepts a well-formed shell command node', () => {
+				const t = triggerNode('t1', 'app.startup');
+				const c = commandNode('c1', {
+					name: 'lint',
+					mode: 'shell',
+					shell: 'npm run lint',
+				});
+				expect(validatePipelines([pipeline('GoodCmd', [t, c], [edge('e1', 't1', 'c1')])])).toEqual(
+					[]
+				);
+			});
+
+			it('accepts pipeline with only command (no agents)', () => {
+				// A trigger -> command pipeline is valid; the old "needs at least one agent"
+				// rule was too strict — command-only pipelines ship work too.
+				const t = triggerNode('t1', 'app.startup');
+				const c = commandNode('c1', {
+					name: 'lint',
+					mode: 'shell',
+					shell: 'echo hi',
+				});
+				expect(validatePipelines([pipeline('CmdOnly', [t, c], [edge('e1', 't1', 'c1')])])).toEqual(
+					[]
+				);
 			});
 		});
 

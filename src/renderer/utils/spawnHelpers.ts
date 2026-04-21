@@ -4,15 +4,20 @@ import { gitService } from '../services/git';
 import { useSettingsStore } from '../stores/settingsStore';
 
 /**
- * Prepare the Maestro system prompt for a new agent session.
+ * Prepare the Maestro system prompt for an agent spawn.
  *
  * Loads the prompt template, resolves git branch, history file path,
  * and conductor profile, then substitutes all template variables.
  *
- * Returns undefined if the session already has an agentSessionId (resume),
- * or if the prompt cannot be loaded.
+ * Must be called on every spawn (fresh AND resume): agents like Claude Code
+ * deliver system prompts via a per-invocation flag (`--append-system-prompt`)
+ * that is NOT persisted into the session transcript, so resuming with
+ * `--resume` does not carry the prompt forward. Skipping on resume silently
+ * drops all Maestro system-prompt content from turn 2 onward.
  *
- * Every spawn site that creates a new interactive or batch session
+ * Returns undefined only if the prompt template cannot be loaded.
+ *
+ * Every spawn site that creates or resumes an interactive or batch session
  * MUST call this and pass the result as `appendSystemPrompt`.
  */
 export async function prepareMaestroSystemPrompt(opts: {
@@ -25,11 +30,7 @@ export async function prepareMaestroSystemPrompt(opts: {
 		sessionSshRemoteConfig?: { enabled: boolean } | null;
 	};
 	activeTabId?: string;
-	agentSessionId?: string | null;
 }): Promise<string | undefined> {
-	// Only inject on new sessions
-	if (opts.agentSessionId) return undefined;
-
 	const result = await window.maestro.prompts.get('maestro-system-prompt');
 	if (!result.success || !result.content) return undefined;
 

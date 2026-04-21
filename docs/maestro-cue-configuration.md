@@ -1,5 +1,5 @@
 ---
-title: Cue Configuration Reference
+title: Cue Configuration
 description: Complete YAML schema reference for .maestro/cue.yaml configuration files.
 icon: file-code
 ---

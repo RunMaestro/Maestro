@@ -54,6 +54,7 @@ import {
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
+import { captureException } from '../utils/sentry';
 
 /**
  * StatsDB manages the SQLite database for usage statistics.
@@ -289,6 +290,7 @@ export class StatsDB {
 				logger.info('Updated VACUUM timestamp in _meta table', LOG_CONTEXT);
 			}
 		} catch (error) {
+			void captureException(error);
 			// Non-fatal - log and continue
 			logger.warn(`Failed to check/update VACUUM schedule: ${error}`, LOG_CONTEXT);
 		}
@@ -390,6 +392,7 @@ export class StatsDB {
 			// Rotate old backups (keep last 7 days)
 			this.rotateOldBackups(7);
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Failed to create daily backup: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -426,6 +429,7 @@ export class StatsDB {
 				logger.info(`Rotated ${removedCount} old daily backup(s)`, LOG_CONTEXT);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Failed to rotate old backups: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -471,6 +475,7 @@ export class StatsDB {
 			// Sort by date descending (newest first)
 			return backups.sort((a, b) => b.date.localeCompare(a.date));
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Failed to list backups: ${error}`, LOG_CONTEXT);
 			return [];
 		}
@@ -515,6 +520,7 @@ export class StatsDB {
 
 			return true;
 		} catch (error) {
+			void captureException(error);
 			logger.error(`Failed to restore from backup: ${error}`, LOG_CONTEXT);
 			return false;
 		}
@@ -596,6 +602,7 @@ export class StatsDB {
 						);
 					}
 				} catch (error) {
+					void captureException(error);
 					logger.warn(`Backup ${backup.date} is unreadable: ${error}, trying next...`, LOG_CONTEXT);
 				}
 			}
@@ -633,6 +640,7 @@ export class StatsDB {
 				logger.debug(`Removed stale SHM file: ${shmPath}`, LOG_CONTEXT);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Failed to remove stale WAL/SHM files for ${dbFilePath}: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -660,6 +668,7 @@ export class StatsDB {
 
 			db.close();
 		} catch (error) {
+			void captureException(error);
 			logger.error(`Failed to open database: ${error}`, LOG_CONTEXT);
 		}
 
@@ -680,6 +689,7 @@ export class StatsDB {
 			logger.info('Database opened after corruption recovery', LOG_CONTEXT);
 			return db;
 		} catch (error) {
+			void captureException(error);
 			logger.error(`Failed to create database after recovery: ${error}`, LOG_CONTEXT);
 			return null;
 		}
@@ -825,6 +835,7 @@ export class StatsDB {
 
 			return Math.min(...timestamps);
 		} catch (error) {
+			void captureException(error);
 			logger.error(`Failed to get earliest timestamp: ${error}`, LOG_CONTEXT);
 			return null;
 		}

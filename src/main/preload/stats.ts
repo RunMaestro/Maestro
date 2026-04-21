@@ -8,69 +8,28 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	QueryEvent,
+	AutoRunSession,
+	AutoRunTask,
+	SessionLifecycleEvent,
+	StatsAggregation,
+} from '../../shared/stats-types';
+export type {
+	QueryEvent,
+	AutoRunSession,
+	AutoRunTask,
+	StatsAggregation,
+} from '../../shared/stats-types';
 
 /**
- * Query event for recording
+ * Session lifecycle event for recording session creation.
+ * Subset of SessionLifecycleEvent from shared/stats-types.
  */
-export interface QueryEvent {
-	sessionId: string;
-	agentType: string;
-	source: 'user' | 'auto';
-	startTime: number;
-	duration: number;
-	projectPath?: string;
-	tabId?: string;
-	isRemote?: boolean;
-}
-
-/**
- * Auto Run session for recording
- */
-export interface AutoRunSession {
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	tasksTotal?: number;
-	projectPath?: string;
-}
-
-/**
- * Auto Run task for recording
- */
-export interface AutoRunTask {
-	autoRunSessionId: string;
-	sessionId: string;
-	agentType: string;
-	taskIndex: number;
-	taskContent?: string;
-	startTime: number;
-	duration: number;
-	success: boolean;
-}
-
-/**
- * Session lifecycle event
- */
-export interface SessionCreatedEvent {
-	sessionId: string;
-	agentType: string;
-	projectPath?: string;
-	createdAt: number;
-	isRemote?: boolean;
-}
-
-/**
- * Aggregation result
- */
-export interface StatsAggregation {
-	totalQueries: number;
-	totalDuration: number;
-	avgDuration: number;
-	byAgent: Record<string, { count: number; duration: number }>;
-	bySource: { user: number; auto: number };
-	byDay: Array<{ date: string; count: number; duration: number }>;
-}
+export type SessionCreatedEvent = Pick<
+	SessionLifecycleEvent,
+	'sessionId' | 'agentType' | 'projectPath' | 'createdAt' | 'isRemote'
+>;
 
 /**
  * Creates the Stats API object for preload exposure

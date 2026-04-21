@@ -72,6 +72,59 @@ subscriptions:
 			expect(result!.subscriptions[0].name).toBe('canonical-sub');
 		});
 
+		it('parses an action: command shell subscription with no prompt', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: lint-on-save
+    event: file.changed
+    watch: 'src/**/*.ts'
+    action: command
+    command:
+      mode: shell
+      shell: npm run lint
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions).toHaveLength(1);
+			const sub = result!.subscriptions[0];
+			expect(sub.action).toBe('command');
+			expect(sub.command).toEqual({ mode: 'shell', shell: 'npm run lint' });
+			// `prompt` is back-filled from the command spec so the dispatch sentinel is non-empty.
+			expect(sub.prompt).toBe('npm run lint');
+		});
+
+		it('parses an action: command cli send subscription', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: relay
+    event: agent.completed
+    source_session: researcher
+    action: command
+    command:
+      mode: cli
+      cli:
+        command: send
+        target: '{{CUE_FROM_AGENT}}'
+        message: 'Result: {{CUE_SOURCE_OUTPUT}}'
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			const sub = result!.subscriptions[0];
+			expect(sub.action).toBe('command');
+			expect(sub.command).toEqual({
+				mode: 'cli',
+				cli: {
+					command: 'send',
+					target: '{{CUE_FROM_AGENT}}',
+					message: 'Result: {{CUE_SOURCE_OUTPUT}}',
+				},
+			});
+		});
+
 		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
 			// Only legacy path exists
 			mockExistsSync.mockImplementation(
@@ -622,7 +675,74 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file"')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
+			);
+		});
+
+		it('accepts a fan-out subscription with fan_out_prompt_files and no prompt/prompt_file', () => {
+			// Regression: Commit 7 externalized per-agent fan-out prompts to
+			// individual files. The validator USED to require `prompt` or
+			// `prompt_file`, so these YAMLs were rejected by the lenient
+			// loader partition — which caused the entire pipeline to vanish
+			// from the UI when the user saved differing per-agent prompts.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B', 'C'],
+						fan_out_prompt_files: [
+							'.maestro/prompts/a.md',
+							'.maestro/prompts/b.md',
+							'.maestro/prompts/c.md',
+						],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('accepts a fan-out subscription with legacy inline fan_out_prompts', () => {
+			// Same requirement for the older inline array shape.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'legacy-fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B'],
+						fan_out_prompts: ['do A', 'do B'],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('rejects a fan-out subscription with empty fan_out_prompt_files array', () => {
+			// Empty array carries no prompts — don't let it slip past the
+			// "at least one prompt source" check.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'empty-fan-out-files',
+						event: 'app.startup',
+						fan_out: ['A'],
+						fan_out_prompt_files: [],
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 
@@ -874,6 +994,167 @@ subscriptions:
 				const ghStateErrors = result.errors.filter((e: string) => e.includes('gh_state'));
 				expect(ghStateErrors).toHaveLength(0);
 			}
+		});
+
+		describe('action: command', () => {
+			it('accepts a shell command subscription with no prompt', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'lint',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'shell', shell: 'npm run lint' },
+						},
+					],
+				});
+				expect(result.valid).toBe(true);
+				expect(result.errors).toHaveLength(0);
+			});
+
+			it('accepts a cli send subscription with target', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'forward',
+							event: 'agent.completed',
+							source_session: 'researcher',
+							action: 'command',
+							command: {
+								mode: 'cli',
+								cli: { command: 'send', target: '{{CUE_FROM_AGENT}}' },
+							},
+						},
+					],
+				});
+				expect(result.valid).toBe(true);
+				expect(result.errors).toHaveLength(0);
+			});
+
+			it('rejects a command subscription missing the command field', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command" is required')])
+				);
+			});
+
+			it('rejects a shell command with empty shell string', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'shell', shell: '   ' },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.shell" is required')])
+				);
+			});
+
+			it('rejects a cli command with missing target', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'agent.completed',
+							source_session: 'a',
+							action: 'command',
+							command: { mode: 'cli', cli: { command: 'send', target: '' } },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.cli.target" is required')])
+				);
+			});
+
+			it('rejects a cli command with unsupported sub-command', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'agent.completed',
+							source_session: 'a',
+							action: 'command',
+							command: { mode: 'cli', cli: { command: 'broadcast', target: 'x' } },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.cli.command" must be "send"')])
+				);
+			});
+
+			it('rejects an unknown action value', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'bad',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							prompt: 'x',
+							action: 'invalid',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"action" must be')])
+				);
+			});
+
+			it('rejects an unknown command.mode', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'bad',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'rocket', shell: 'true' },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.mode" must be')])
+				);
+			});
+
+			it('still requires prompt or prompt_file when action is "prompt" (or omitted)', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'no-prompt',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'prompt',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"prompt", "prompt_file"')])
+				);
+			});
 		});
 	});
 
@@ -1686,7 +1967,11 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file" is required')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 

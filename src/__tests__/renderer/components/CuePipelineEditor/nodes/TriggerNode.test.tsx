@@ -237,6 +237,56 @@ describe('TriggerNode', () => {
 			gearButton.click();
 			expect(onConfigure).toHaveBeenCalledWith('pipeline-1:trigger-0');
 		});
+
+		it("fires the trigger node's OWN subscription (chain sub), not the pipeline name, when clicked", () => {
+			// Regression: multi-trigger pipelines (e.g. startup + scheduled +
+			// GitHub PR all under "Pipeline 1") produce subscriptions named
+			// "Pipeline 1", "Pipeline 1-chain-1", "Pipeline 1-chain-2".
+			// Before this fix, every Play button sent "Pipeline 1" regardless
+			// of which trigger was clicked — chain triggers (including
+			// GitHub PR/Issue polls) were unreachable from the UI.
+			const onTriggerPipeline = vi.fn();
+			const { container } = renderTriggerNode({
+				onTriggerPipeline,
+				pipelineName: 'Pipeline 1',
+				subscriptionName: 'Pipeline 1-chain-2',
+				isSaved: true,
+			});
+
+			const playButton = container.querySelector('[title="Run now"]') as HTMLElement;
+			playButton.click();
+
+			expect(onTriggerPipeline).toHaveBeenCalledTimes(1);
+			expect(onTriggerPipeline).toHaveBeenCalledWith('Pipeline 1-chain-2');
+			expect(onTriggerPipeline).not.toHaveBeenCalledWith('Pipeline 1');
+		});
+
+		it('falls back to pipelineName when subscriptionName is missing (never-saved or legacy state)', () => {
+			// Defensive: single-trigger pipelines that predate the fix still
+			// work because subscriptionName defaults to the pipeline name.
+			const onTriggerPipeline = vi.fn();
+			const { container } = renderTriggerNode({
+				onTriggerPipeline,
+				pipelineName: 'legacy-pipeline',
+				isSaved: true,
+			});
+
+			const playButton = container.querySelector('[title="Run now"]') as HTMLElement;
+			playButton.click();
+
+			expect(onTriggerPipeline).toHaveBeenCalledWith('legacy-pipeline');
+		});
+
+		it('aria-label uses the subscription name so screen readers announce the correct trigger', () => {
+			const { container } = renderTriggerNode({
+				onTriggerPipeline: vi.fn(),
+				pipelineName: 'Pipeline 1',
+				subscriptionName: 'Pipeline 1-chain-2',
+				isSaved: true,
+			});
+			const playButton = container.querySelector('[aria-label="Run Pipeline 1-chain-2"]');
+			expect(playButton).not.toBeNull();
+		});
 	});
 
 	it('should use theme textDim color for config summary when theme provided', () => {

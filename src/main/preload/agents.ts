@@ -9,23 +9,10 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AgentCapabilities, AgentConfig } from '../../shared/types';
 
-import type { AgentCapabilities } from '../../shared/types';
-
-export type { AgentCapabilities };
-
-/**
- * Agent configuration
- */
-export interface AgentConfig {
-	id: string;
-	name: string;
-	command: string;
-	args?: string[];
-	available: boolean;
-	path?: string;
-	capabilities?: AgentCapabilities;
-}
+// Re-export for consumers that import from preload
+export type { AgentCapabilities, AgentConfig } from '../../shared/types';
 
 /**
  * Agent refresh result

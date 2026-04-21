@@ -13,6 +13,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { useWizard } from './Wizard/WizardContext';
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+import { logger } from '../utils/logger';
 
 interface DebugWizardModalProps {
 	theme: Theme;
@@ -64,7 +65,7 @@ export function DebugWizardModal({
 				setError(null);
 			}
 		} catch (err) {
-			console.error('Failed to select directory:', err);
+			logger.error('Failed to select directory:', undefined, err);
 		}
 	}, [agentName]);
 
@@ -121,7 +122,7 @@ export function DebugWizardModal({
 					const taskCount = (content.match(/^-\s*\[\s*[xX ]?\s*\]/gm) || []).length;
 					documents.push({ filename, content, taskCount });
 				} catch (err) {
-					console.warn(`Failed to read ${filename}:`, err);
+					logger.warn(`Failed to read ${filename}:`, undefined, err);
 				}
 			}
 
@@ -147,7 +148,7 @@ export function DebugWizardModal({
 
 			onClose();
 		} catch (err) {
-			console.error('Failed to load documents:', err);
+			logger.error('Failed to load documents:', undefined, err);
 			setError(err instanceof Error ? err.message : 'Unknown error');
 			setLoading(false);
 		}

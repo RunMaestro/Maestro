@@ -9,8 +9,13 @@ import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../../shared/theme-types';
 import type { ITheme } from '@xterm/xterm';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
+import {
+	TerminalSelectionContextMenu,
+	type TerminalSelectionContextMenuState,
+} from './TerminalSelectionContextMenu';
 import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Custom key event handler logic
@@ -179,6 +184,8 @@ export interface XTerminalHandle {
 	searchNext(): boolean;
 	searchPrevious(): boolean;
 	getSelection(): string;
+	/** Read the full scrollback + visible buffer as a newline-joined string (right-trimmed). */
+	getBuffer(): string;
 	resize(): void;
 	/** Force fit + full canvas repaint — call when the terminal becomes visible after being hidden */
 	refresh(): void;
@@ -198,6 +205,10 @@ export interface XTerminalProps {
 	 *  renderer is disposed to free GPU resources; it is re-initialised when the
 	 *  tab becomes active again. Defaults to true. */
 	isActive?: boolean;
+	/** Called when the user chooses "Copy to Clipboard" on the selection right-click menu. */
+	onCopySelection?: (text: string) => void;
+	/** Called when the user chooses "Send to Agent" on the selection right-click menu. */
+	onSendSelectionToAgent?: (text: string) => void;
 }
 
 // ============================================================================
@@ -205,7 +216,18 @@ export interface XTerminalProps {
 // ============================================================================
 
 export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XTerminal(
-	{ sessionId, theme, fontFamily, fontSize = 12, onData, onResize, onTitleChange, isActive = true },
+	{
+		sessionId,
+		theme,
+		fontFamily,
+		fontSize = 12,
+		onData,
+		onResize,
+		onTitleChange,
+		isActive = true,
+		onCopySelection,
+		onSendSelectionToAgent,
+	},
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -226,6 +248,17 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// Link context menu state
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
 	const hoveredLinkRef = useRef<string | null>(null);
+
+	// Selection context menu state
+	const [selectionMenu, setSelectionMenu] = useState<TerminalSelectionContextMenuState | null>(
+		null
+	);
+	// Latest callback refs — the contextmenu listener is registered once in the mount
+	// effect (empty deps) so we can't capture fresh closures; read through refs instead.
+	const onCopySelectionRef = useRef(onCopySelection);
+	onCopySelectionRef.current = onCopySelection;
+	const onSendSelectionToAgentRef = useRef(onSendSelectionToAgent);
+	onSendSelectionToAgentRef.current = onSendSelectionToAgent;
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -258,6 +291,21 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			},
 			getSelection(): string {
 				return terminalRef.current?.getSelection() ?? '';
+			},
+			getBuffer(): string {
+				const term = terminalRef.current;
+				if (!term) return '';
+				const buffer = term.buffer.active;
+				const lines: string[] = [];
+				for (let i = 0; i < buffer.length; i++) {
+					const line = buffer.getLine(i);
+					if (line) lines.push(line.translateToString(true));
+				}
+				// Drop trailing empty lines (xterm pads the viewport even when idle)
+				while (lines.length > 0 && lines[lines.length - 1] === '') {
+					lines.pop();
+				}
+				return lines.join('\n');
 			},
 			resize() {
 				fitAddonRef.current?.fit();
@@ -411,7 +459,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			try {
 				const addon = new WebglAddon();
 				addon.onContextLoss(() => {
-					console.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
+					logger.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
 					addon.dispose();
 					webglAddonRef.current = null;
 					// Force a full repaint so the fallback canvas renderer draws from the internal buffer.
@@ -421,7 +469,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				webglAddonRef.current = addon;
 				webglCtorRef.current = WebglAddon;
 			} catch (err) {
-				console.warn('[XTerminal] WebGL addon failed to load, using canvas renderer:', err);
+				logger.warn(
+					'[XTerminal] WebGL addon failed to load, using canvas renderer:',
+					undefined,
+					err
+				);
 			}
 		};
 
@@ -480,7 +532,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			fitAddon.fit();
 		}
 
-		// Right-click context menu for links
+		// Right-click context menu: prefer the link menu when a URL is hovered;
+		// otherwise show the selection menu when text is highlighted. If neither
+		// applies, let the default context menu show.
 		const termElement = containerRef.current;
 		const handleContextMenu = (e: MouseEvent) => {
 			const url = hoveredLinkRef.current;
@@ -488,6 +542,15 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				e.preventDefault();
 				e.stopPropagation();
 				setLinkMenu({ x: e.clientX, y: e.clientY, url });
+				return;
+			}
+			const hasHandler = !!(onCopySelectionRef.current || onSendSelectionToAgentRef.current);
+			if (!hasHandler) return;
+			const selection = term.getSelection();
+			if (selection) {
+				e.preventDefault();
+				e.stopPropagation();
+				setSelectionMenu({ x: e.clientX, y: e.clientY, selection });
 			}
 		};
 		termElement.addEventListener('contextmenu', handleContextMenu);
@@ -498,7 +561,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				tryLoadWebgl(WebglAddon);
 			})
 			.catch((err) => {
-				console.warn('[XTerminal] WebGL addon import failed, using canvas renderer:', err);
+				logger.warn(
+					'[XTerminal] WebGL addon import failed, using canvas renderer:',
+					undefined,
+					err
+				);
 			});
 
 		if (onTitleChange) {
@@ -596,7 +663,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 					try {
 						const addon = new webglCtorRef.current();
 						addon.onContextLoss(() => {
-							console.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
+							logger.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
 							addon.dispose();
 							webglAddonRef.current = null;
 							term.refresh(0, term.rows - 1);
@@ -614,6 +681,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	}, [isActive]);
 
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
+	const dismissSelectionMenu = useCallback(() => setSelectionMenu(null), []);
 
 	return (
 		<div
@@ -627,6 +695,15 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		>
 			<div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }} />
 			{linkMenu && <LinkContextMenu menu={linkMenu} theme={theme} onDismiss={dismissLinkMenu} />}
+			{selectionMenu && (
+				<TerminalSelectionContextMenu
+					menu={selectionMenu}
+					theme={theme}
+					onDismiss={dismissSelectionMenu}
+					onCopy={onCopySelection}
+					onSendToAgent={onSendSelectionToAgent}
+				/>
+			)}
 		</div>
 	);
 });

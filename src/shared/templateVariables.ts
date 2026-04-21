@@ -93,6 +93,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
+ *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  */
 
 /**
@@ -204,6 +205,9 @@ export interface TemplateContext {
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
+		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
+		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
+		fromAgent?: string;
 	};
 }
 
@@ -230,6 +234,12 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_SOURCE_AGENT_ID}}',
 		description: 'Source agent ID passed via --source-agent-id (cli.trigger events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_FROM_AGENT}}',
+		description:
+			'Upstream agent/session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
@@ -456,6 +466,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
+		CUE_FROM_AGENT: context.cue?.fromAgent || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

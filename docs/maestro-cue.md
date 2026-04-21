@@ -1,5 +1,5 @@
 ---
-title: Maestro Cue
+title: Cue Overview
 description: Event-driven automation that triggers agent prompts in response to file changes, timers, agent completions, GitHub activity, and pending tasks.
 icon: bolt
 ---

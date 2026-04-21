@@ -24,21 +24,33 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-// Mock execFileNoThrow for Phase 3 CLI output delivery
-const mockExecFileNoThrow =
+// Mock runMaestroCliSend for Phase 3 CLI output delivery. We mock the
+// executor-level helper (rather than the low-level execFileNoThrow or `spawn`)
+// so the test stays at the same abstraction level as the run-manager which
+// consumes `runMaestroCliSend` directly. Test assertions still inspect the
+// target/message args the helper was called with.
+interface RunMaestroCliSendResult {
+	ok: boolean;
+	exitCode: number | string;
+	stdout: string;
+	stderr: string;
+	resolvedTarget: string;
+}
+const mockRunMaestroCliSend =
 	vi.fn<
-		(
-			cmd: string,
-			args?: string[],
-			cwd?: string,
-			options?: Record<string, unknown>
-		) => Promise<{ stdout: string; stderr: string; exitCode: number | string }>
+		(target: string, message: string, timeoutMs?: number) => Promise<RunMaestroCliSendResult>
 	>();
-mockExecFileNoThrow.mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+mockRunMaestroCliSend.mockResolvedValue({
+	ok: true,
+	exitCode: 0,
+	stdout: '{}',
+	stderr: '',
+	resolvedTarget: '',
+});
 
-vi.mock('../../../main/utils/execFile', () => ({
-	execFileNoThrow: (...args: unknown[]) =>
-		mockExecFileNoThrow(...(args as Parameters<typeof mockExecFileNoThrow>)),
+vi.mock('../../../main/cue/cue-cli-executor', () => ({
+	runMaestroCliSend: (...args: unknown[]) =>
+		mockRunMaestroCliSend(...(args as Parameters<typeof mockRunMaestroCliSend>)),
 }));
 
 let uuidCounter = 0;
@@ -941,10 +953,16 @@ describe('createCueRunManager', () => {
 
 	describe('Phase 3: CLI Output delivery', () => {
 		beforeEach(() => {
-			mockExecFileNoThrow.mockResolvedValue({ stdout: '{}', stderr: '', exitCode: 0 });
+			mockRunMaestroCliSend.mockResolvedValue({
+				ok: true,
+				exitCode: 0,
+				stdout: '{}',
+				stderr: '',
+				resolvedTarget: '',
+			});
 		});
 
-		it('triggers execFile with correct arguments when run succeeds', async () => {
+		it('triggers runMaestroCliSend with correct arguments when run succeeds', async () => {
 			const deps = createDeps();
 			const manager = createCueRunManager(deps);
 
@@ -959,13 +977,8 @@ describe('createCueRunManager', () => {
 			);
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
-				process.execPath,
-				expect.arrayContaining(['send', 'agent-42', 'output', '--live']),
-				undefined,
-				{ timeout: 30_000 }
-			);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledTimes(1);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledWith('agent-42', 'output');
 		});
 
 		it('skips delivery when target resolves to empty string', async () => {
@@ -978,7 +991,7 @@ describe('createCueRunManager', () => {
 			});
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+			expect(mockRunMaestroCliSend).not.toHaveBeenCalled();
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'warn',
 				expect.stringContaining('target resolved to empty string')
@@ -996,14 +1009,16 @@ describe('createCueRunManager', () => {
 			});
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+			expect(mockRunMaestroCliSend).not.toHaveBeenCalled();
 		});
 
 		it('delivery failure does not change run status', async () => {
-			mockExecFileNoThrow.mockResolvedValue({
+			mockRunMaestroCliSend.mockResolvedValue({
+				ok: false,
+				exitCode: 1,
 				stdout: '',
 				stderr: 'Connection refused',
-				exitCode: 1,
+				resolvedTarget: 'agent-42',
 			});
 			const deps = createDeps();
 			const manager = createCueRunManager(deps);
@@ -1038,13 +1053,8 @@ describe('createCueRunManager', () => {
 			});
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
-				process.execPath,
-				expect.arrayContaining(['send', 'resolved-agent-99', 'output', '--live']),
-				undefined,
-				{ timeout: 30_000 }
-			);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledTimes(1);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledWith('resolved-agent-99', 'output');
 		});
 
 		it('is not called when cliOutput is not provided', async () => {
@@ -1054,10 +1064,14 @@ describe('createCueRunManager', () => {
 			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+			expect(mockRunMaestroCliSend).not.toHaveBeenCalled();
 		});
 
-		it('truncates stdout to 100,000 characters', async () => {
+		it('forwards the full stdout to runMaestroCliSend (truncation happens in the CLI helper)', async () => {
+			// The run-manager no longer truncates inline — truncation is owned
+			// by `runMaestroCliSend` in cue-cli-executor (capped at
+			// CLI_SEND_OUTPUT_MAX_CHARS = 100_000). Validate the run-manager
+			// forwards the raw output unchanged so the helper can cap it.
 			const longOutput = 'x'.repeat(150_000);
 			const deps = createDeps({
 				onCueRun: vi.fn(async () => makeResult({ stdout: longOutput })),
@@ -1069,11 +1083,8 @@ describe('createCueRunManager', () => {
 			});
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
-			const passedArgs = mockExecFileNoThrow.mock.calls[0][1] as string[];
-			// Args: [cli.js, 'send', target, truncated output, '--live']
-			const outputArg = passedArgs.find((a) => a.length > 1000);
-			expect(outputArg?.length).toBe(100_000);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledTimes(1);
+			expect(mockRunMaestroCliSend).toHaveBeenCalledWith('agent-42', longOutput);
 		});
 
 		it('logs success message on delivery', async () => {

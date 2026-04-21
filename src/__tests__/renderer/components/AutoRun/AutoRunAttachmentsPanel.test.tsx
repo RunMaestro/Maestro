@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import { createMockTheme } from '../../../helpers/mockTheme';
 import {
 	AutoRunAttachmentsPanel,
 	AutoRunAttachmentsPanelProps,
@@ -27,26 +28,6 @@ vi.mock('../../../../renderer/components/AutoRun/AttachmentImage', () => ({
 		</div>
 	),
 }));
-
-const createMockTheme = () => ({
-	id: 'test',
-	name: 'Test',
-	mode: 'dark' as const,
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#fff',
-		textDim: '#888',
-		accent: '#0066ff',
-		accentForeground: '#fff',
-		border: '#333',
-		highlight: '#0066ff33',
-		success: '#0a0',
-		warning: '#fa0',
-		error: '#f00',
-	},
-});
 
 const defaultProps: AutoRunAttachmentsPanelProps = {
 	theme: createMockTheme() as any,

@@ -269,7 +269,7 @@ export class ContextGroomingService {
 	 *     targetAgent: 'claude-code',
 	 *     targetProjectRoot: '/my/project',
 	 *   },
-	 *   (progress) => console.log(`${progress.progress}%: ${progress.message}`)
+	 *   (progress) => logger.info(`${progress.progress}%: ${progress.message}`)
 	 * );
 	 */
 	async groomContexts(

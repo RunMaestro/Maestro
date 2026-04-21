@@ -3,6 +3,7 @@ import type { Session, EncoreFeatureFlags } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
+import { logger } from '../utils/logger';
 
 /**
  * useCueAutoDiscovery — auto-discovers .maestro/cue.yaml files for sessions.
@@ -42,7 +43,9 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 				if (session.projectRoot) {
 					window.maestro.cue
 						.refreshSession(session.id, session.projectRoot)
-						.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err));
+						.catch((err) =>
+							logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
+						);
 				}
 			}
 			prevSessionIdsRef.current = currentIds;
@@ -54,7 +57,9 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 			if (!prevIds.has(session.id) && session.projectRoot) {
 				window.maestro.cue
 					.refreshSession(session.id, session.projectRoot)
-					.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err));
+					.catch((err) =>
+						logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
+					);
 			}
 		}
 
@@ -63,7 +68,9 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 			if (!currentIds.has(prevId)) {
 				window.maestro.cue
 					.removeSession(prevId)
-					.catch((err) => console.error('[CueAutoDiscovery] Failed to remove session:', err));
+					.catch((err) =>
+						logger.error('[CueAutoDiscovery] Failed to remove session:', undefined, err)
+					);
 			}
 		}
 
@@ -92,11 +99,13 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 						sessionsSnapshot.map((session) =>
 							window.maestro.cue
 								.refreshSession(session.id, session.projectRoot)
-								.catch((err) => console.error('[CueAutoDiscovery] Failed to refresh session:', err))
+								.catch((err) =>
+									logger.error('[CueAutoDiscovery] Failed to refresh session:', undefined, err)
+								)
 						)
 					);
 				} catch (err) {
-					console.error('[CueAutoDiscovery] Failed to enable Cue:', err);
+					logger.error('[CueAutoDiscovery] Failed to enable Cue:', undefined, err);
 					captureException(err, { extra: { action: 'maestro.cue.enable' } });
 					notifyToast({
 						type: 'error',
@@ -111,7 +120,7 @@ export function useCueAutoDiscovery(sessions: Session[], encoreFeatures: EncoreF
 				try {
 					await window.maestro.cue.disable();
 				} catch (err) {
-					console.error('[CueAutoDiscovery] Failed to disable Cue:', err);
+					logger.error('[CueAutoDiscovery] Failed to disable Cue:', undefined, err);
 					captureException(err, { extra: { action: 'maestro.cue.disable' } });
 					notifyToast({
 						type: 'error',

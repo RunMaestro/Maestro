@@ -19,6 +19,7 @@ import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -604,6 +605,8 @@ export function useModalHandlers(
 
 	const handleCloseSendToAgent = useCallback(() => {
 		getModalActions().setSendToAgentModalOpen(false);
+		// Drop any queued terminal-buffer send so it doesn't bleed into the next open
+		useTabStore.getState().setPendingTerminalBufferSend(null);
 	}, []);
 
 	const handleCloseQueueBrowser = useCallback(() => {

@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ContributorStats, CompletedContribution } from '../../../shared/symphony-types';
 import { formatDurationCompact as formatDuration } from '../../../shared/formatters';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -169,7 +170,7 @@ export function useContributorStats(): UseContributorStatsReturn {
 				setRecentContributions(completedResponse.contributions as CompletedContribution[]);
 			}
 		} catch (err) {
-			console.error('Failed to fetch contributor stats:', err);
+			logger.error('Failed to fetch contributor stats:', undefined, err);
 		} finally {
 			setIsLoading(false);
 		}

@@ -31,6 +31,13 @@ function handleDragStart(e: React.DragEvent, session: AgentSessionInfo) {
 	e.dataTransfer.effectAllowed = 'move';
 }
 
+function handleStandaloneCommandDragStart(e: React.DragEvent) {
+	// Unbound command: user picks the owning session in the config panel after
+	// dropping. The drop handler creates a CommandNode with owningSessionId=''.
+	e.dataTransfer.setData('application/cue-pipeline', JSON.stringify({ type: 'command' }));
+	e.dataTransfer.effectAllowed = 'move';
+}
+
 export const AgentDrawer = memo(function AgentDrawer({
 	isOpen,
 	onClose,
@@ -179,6 +186,66 @@ export const AgentDrawer = memo(function AgentDrawer({
 
 			{/* Agent list */}
 			<div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px 8px' }}>
+				{/* Nodes section — drag the Command pill to add an unbound command
+				 *  node (shell or maestro-cli). The owning agent is picked in the
+				 *  node's config panel after drop. Hidden when the user is searching
+				 *  to avoid clutter. */}
+				{!search.trim() && (
+					<div style={{ marginBottom: 4 }}>
+						<div
+							style={{
+								color: theme.colors.textDim,
+								fontSize: 10,
+								fontWeight: 600,
+								textTransform: 'uppercase',
+								letterSpacing: '0.05em',
+								padding: '8px 4px 4px',
+							}}
+						>
+							Nodes
+						</div>
+						<div
+							data-testid="command-pill"
+							draggable
+							onDragStart={handleStandaloneCommandDragStart}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: 8,
+								padding: '8px 10px',
+								marginBottom: 4,
+								borderRadius: 6,
+								backgroundColor: theme.colors.bgActivity,
+								borderLeft: `3px solid ${theme.colors.warning}`,
+								cursor: 'grab',
+								transition: 'filter 0.15s',
+							}}
+							onMouseEnter={(e) => {
+								(e.currentTarget as HTMLElement).style.filter = 'brightness(1.2)';
+							}}
+							onMouseLeave={(e) => {
+								(e.currentTarget as HTMLElement).style.filter = 'brightness(1)';
+							}}
+						>
+							<Terminal size={14} style={{ color: theme.colors.warning, flexShrink: 0 }} />
+							<div style={{ flex: 1, minWidth: 0 }}>
+								<div
+									style={{
+										color: theme.colors.textMain,
+										fontSize: 12,
+										fontWeight: 500,
+									}}
+								>
+									Command
+								</div>
+								<div style={{ color: theme.colors.textDim, fontSize: 10 }}>
+									shell or maestro-cli
+								</div>
+							</div>
+						</div>
+					</div>
+				)}
+
 				{Array.from(grouped.entries()).map(([key, { label, sessions: agents }]) => (
 					<div key={key}>
 						{grouped.size > 1 && (
@@ -283,74 +350,6 @@ export const AgentDrawer = memo(function AgentDrawer({
 					>
 						{search ? 'No agents match' : 'No agents available'}
 					</div>
-				)}
-
-				{/* CLI Output node */}
-				{!search.trim() && (
-					<>
-						<div
-							style={{
-								height: 1,
-								backgroundColor: theme.colors.border,
-								margin: '8px 4px',
-							}}
-						/>
-						<div
-							style={{
-								color: theme.colors.textDim,
-								fontSize: 10,
-								fontWeight: 600,
-								textTransform: 'uppercase',
-								letterSpacing: '0.05em',
-								padding: '4px 4px 4px',
-							}}
-						>
-							Output
-						</div>
-						<div
-							draggable
-							onDragStart={(e) => {
-								e.dataTransfer.setData(
-									'application/cue-pipeline',
-									JSON.stringify({ type: 'cli_output' })
-								);
-								e.dataTransfer.effectAllowed = 'move';
-							}}
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								gap: 8,
-								padding: '8px 10px',
-								marginBottom: 4,
-								borderRadius: 6,
-								backgroundColor: theme.colors.bgActivity,
-								cursor: 'grab',
-								transition: 'filter 0.15s',
-							}}
-							onMouseEnter={(e) => {
-								(e.currentTarget as HTMLElement).style.filter = 'brightness(1.2)';
-							}}
-							onMouseLeave={(e) => {
-								(e.currentTarget as HTMLElement).style.filter = 'brightness(1)';
-							}}
-						>
-							<Terminal size={14} style={{ color: theme.colors.textDim, flexShrink: 0 }} />
-							<div style={{ flex: 1, minWidth: 0 }}>
-								<div
-									style={{
-										color: theme.colors.textMain,
-										fontSize: 12,
-										fontWeight: 500,
-									}}
-								>
-									CLI Output
-								</div>
-								<div style={{ color: theme.colors.textDim, fontSize: 10 }}>
-									Route agent output to a session via CLI
-								</div>
-							</div>
-						</div>
-					</>
 				)}
 			</div>
 		</div>

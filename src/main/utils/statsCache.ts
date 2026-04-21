@@ -13,6 +13,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+import { captureException } from './sentry';
 
 // Re-export so existing consumers don't need import changes
 export { encodeClaudeProjectPath };
@@ -133,6 +134,7 @@ export async function saveStatsCache(projectPath: string, cache: SessionStatsCac
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save stats cache', 'ClaudeSessions', { projectPath, error });
 	}
 }
@@ -220,6 +222,7 @@ export async function saveGlobalStatsCache(cache: GlobalStatsCache): Promise<voi
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save global stats cache', 'ClaudeSessions', { error });
 	}
 }

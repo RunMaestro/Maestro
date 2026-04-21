@@ -16,6 +16,7 @@ import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import type { EditAgentModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
+import { logger } from '../../utils/logger';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -111,7 +112,7 @@ export function EditAgentModal({
 						.then((models) => {
 							if (!stale) setAvailableModels(models);
 						})
-						.catch((err) => console.error('Failed to load models:', err))
+						.catch((err) => logger.error('Failed to load models:', undefined, err))
 						.finally(() => {
 							if (!stale) setLoadingModels(false);
 						});
@@ -151,7 +152,7 @@ export function EditAgentModal({
 				}
 			})
 			.catch((err) => {
-				console.error('Failed to detect agents:', err);
+				logger.error('Failed to detect agents:', undefined, err);
 				if (!stale) {
 					setAgent(null);
 					setAvailableModels([]);
@@ -180,15 +181,26 @@ export function EditAgentModal({
 					});
 				}
 			})
-			.catch((err) => console.error('Failed to load agent config:', err));
+			.catch((err) => logger.error('Failed to load agent config:', undefined, err));
 
-		// Load SSH remote config from session (per-session, not global)
-		if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig?.remoteId) {
+		// Load SSH remote config from session (per-session, not global).
+		// Always surface the `shareHistoryToProjectDir` flag even when SSH is
+		// disabled, so the checkbox can stay toggled on for locally-executed
+		// agents that are controlled by another Maestro instance over SSH.
+		const persisted = session.sessionSshRemoteConfig;
+		if (persisted?.enabled && persisted.remoteId) {
 			setSshRemoteConfig({
 				enabled: true,
-				remoteId: session.sessionSshRemoteConfig.remoteId,
-				workingDirOverride: session.sessionSshRemoteConfig.workingDirOverride,
-				syncHistory: session.sessionSshRemoteConfig.syncHistory,
+				remoteId: persisted.remoteId,
+				workingDirOverride: persisted.workingDirOverride,
+				syncHistory: persisted.syncHistory,
+				shareHistoryToProjectDir: persisted.shareHistoryToProjectDir,
+			});
+		} else if (persisted?.shareHistoryToProjectDir) {
+			setSshRemoteConfig({
+				enabled: false,
+				remoteId: null,
+				shareHistoryToProjectDir: true,
 			});
 		} else {
 			setSshRemoteConfig(undefined);
@@ -203,7 +215,7 @@ export function EditAgentModal({
 					setSshRemotes(result.configs);
 				}
 			})
-			.catch((err) => console.error('Failed to load SSH remotes:', err));
+			.catch((err) => logger.error('Failed to load SSH remotes:', undefined, err));
 
 		// Load per-session config (stored on the session/agent instance)
 		// When provider changed, clear provider-specific overrides
@@ -281,8 +293,10 @@ export function EditAgentModal({
 				? agentConfig.contextWindow
 				: undefined;
 
-		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config
-		// When disabled or no remoteId, we explicitly pass enabled: false to ensure local execution
+		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
+		// When disabled or no remoteId, we explicitly pass enabled: false to ensure local execution.
+		// `shareHistoryToProjectDir` is preserved independently of SSH enablement so a
+		// locally-executed agent can still be flagged as remote-controlled.
 		const sessionSshRemoteConfig =
 			sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId
 				? {
@@ -293,8 +307,13 @@ export function EditAgentModal({
 						workingDirOverride:
 							sshRemoteConfig.workingDirOverride || session?.projectRoot || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
+						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
-				: { enabled: false, remoteId: null };
+				: {
+						enabled: false,
+						remoteId: null,
+						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
+					};
 
 		// Save with per-session config fields including model, contextWindow, and SSH config
 		onSave(
@@ -336,7 +355,7 @@ export function EditAgentModal({
 			const models = await window.maestro.agents.getModels(selectedToolType, true);
 			setAvailableModels(models);
 		} catch (err) {
-			console.error('Failed to refresh models:', err);
+			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
 			setLoadingModels(false);
 		}
@@ -350,7 +369,7 @@ export function EditAgentModal({
 			const foundAgent = result.agents.find((a: AgentConfig) => a.id === selectedToolType);
 			setAgent(foundAgent || null);
 		} catch (error) {
-			console.error('Failed to refresh agent:', error);
+			logger.error('Failed to refresh agent:', undefined, error);
 		} finally {
 			setRefreshingAgent(false);
 		}
@@ -600,7 +619,11 @@ export function EditAgentModal({
 									void window.maestro.agents
 										.setConfig(selectedToolType, otherConfig)
 										.catch((error) => {
-											console.error(`Failed to persist config for ${selectedToolType}:`, error);
+											logger.error(
+												`Failed to persist config for ${selectedToolType}:`,
+												undefined,
+												error
+											);
 										});
 								}
 							}}

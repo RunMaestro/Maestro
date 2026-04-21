@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { AgentConfigsData } from '../../stores/types';
 import {
 	AgentDetector,
 	AGENT_DEFINITIONS,
@@ -23,6 +24,7 @@ import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-b
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -142,13 +144,6 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
 	return commandList;
-}
-
-/**
- * Interface for agent configuration store data
- */
-interface AgentConfigsData {
-	configs: Record<string, Record<string, any>>;
 }
 
 /**
@@ -1307,6 +1302,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
 					return null;
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
 						error: String(error),
 					});

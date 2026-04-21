@@ -480,6 +480,7 @@ export class AgentDetector {
 				}
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.debug(`Config option discovery failed for ${agentId}:${optionKey}`, LOG_CONTEXT, {
 				error,
 			});

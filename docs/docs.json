@@ -79,6 +79,8 @@
 					"symphony",
 					{
 						"group": "Maestro Cue",
+						"icon": "bolt",
+						"expanded": true,
 						"pages": [
 							"maestro-cue",
 							"maestro-cue-configuration",

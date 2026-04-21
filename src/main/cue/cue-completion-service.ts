@@ -44,6 +44,40 @@ function getMatchingSources(sub: CueSubscription): string[] {
 			: [];
 }
 
+/**
+ * Returns the set of upstream subscription names that may fire this chain.
+ * When empty (no `source_sub` configured), the chain accepts completions from
+ * any run in its source session(s) — legacy behavior.
+ *
+ * `source_sub` narrows matching so a sub fires only on completions produced
+ * by an explicit upstream sub. See the field docs on `CueSubscription` for
+ * the full rationale (prevents command-↔-agent self-loops and fan-in
+ * cross-fire when an agent shares its session with an upstream command).
+ */
+function getAllowedSourceSubs(sub: CueSubscription): string[] {
+	return Array.isArray(sub.source_sub) ? sub.source_sub : sub.source_sub ? [sub.source_sub] : [];
+}
+
+/**
+ * Returns true iff this chain sub's `source_sub` filter allows a completion
+ * produced by the given upstream sub. An unset filter permits everything.
+ *
+ * When `source_sub` IS set, `triggeredBy` must also be set and present in
+ * the allowed list. An undefined `triggeredBy` here in practice means an
+ * external (non-Cue) completion of the source session — e.g. the user
+ * interacting with the agent directly, or a system process exit reported
+ * via exit-listener. Bypassing the filter for those would partially
+ * re-introduce the self-loop / cross-fire behaviour `source_sub` exists
+ * to prevent. Manual triggers and bootstrap events do NOT reach this
+ * function; they dispatch through `dispatchService` directly.
+ */
+function allowsSourceSub(sub: CueSubscription, triggeredBy: string | undefined): boolean {
+	const allowed = getAllowedSourceSubs(sub);
+	if (allowed.length === 0) return true;
+	if (!triggeredBy) return false;
+	return allowed.includes(triggeredBy);
+}
+
 export function createCueCompletionService(deps: CueCompletionServiceDeps): CueCompletionService {
 	return {
 		hasCompletionSubscribers(sessionId: string): boolean {
@@ -91,6 +125,21 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 
 					const sources = getMatchingSources(sub);
 					if (!sources.some((src) => src === sessionId || src === completingName)) continue;
+
+					// Narrow by `source_sub` (upstream subscription name) when configured.
+					// This is the self-loop / cross-fire guard: a chain sub that lists
+					// its upstream sub name only fires on completions produced by that
+					// exact sub, not on any completion in the source session. Without
+					// this, a `Cmd(owner=S) → Agent(S) → Main` chain re-triggers itself
+					// on Agent's own completion and leaks Cmd's completion into Main's
+					// fan-in before Agent has run.
+					if (!allowsSourceSub(sub, completionData?.triggeredBy)) {
+						deps.onLog(
+							'cue',
+							`[CUE] "${sub.name}" skipped — triggeredBy "${completionData?.triggeredBy ?? '(none)'}" not in source_sub`
+						);
+						continue;
+					}
 
 					if (sources.length === 1) {
 						const rawStdout = completionData?.stdout ?? '';

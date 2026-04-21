@@ -9,6 +9,7 @@
 
 import { getEncoding, type Tiktoken } from 'js-tiktoken';
 import { estimateTokenCount } from '../../shared/formatters';
+import { logger } from './logger';
 
 // Lazy-loaded tokenizer encoder (cl100k_base is used by Claude/GPT-4)
 let encoderPromise: Promise<Tiktoken> | null = null;
@@ -32,14 +33,14 @@ export function getEncoder(): Promise<Tiktoken> {
  *
  * @example
  * const count = await countTokens("Hello, world!");
- * console.log(`Text has ${count} tokens`);
+ * logger.info(`Text has ${count} tokens`);
  */
 export async function countTokens(text: string): Promise<number> {
 	try {
 		const encoder = await getEncoder();
 		return encoder.encode(text).length;
 	} catch (error) {
-		console.error('Failed to count tokens:', error);
+		logger.error('Failed to count tokens:', undefined, error);
 		// Fall back to character-based estimate if tokenizer fails
 		return estimateTokens(text);
 	}

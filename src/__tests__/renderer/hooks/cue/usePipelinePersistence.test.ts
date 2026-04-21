@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { usePipelinePersistence } from '../../../../renderer/hooks/cue/usePipelinePersistence';
 import type { UsePipelinePersistenceParams } from '../../../../renderer/hooks/cue/usePipelinePersistence';
+import {
+	registerPendingEdit,
+	__resetPendingEditsRegistryForTests,
+} from '../../../../renderer/hooks/cue/pendingEditsRegistry';
 import type {
 	CuePipeline,
 	CuePipelineState,
@@ -100,9 +104,17 @@ function setup(opts: SetupOpts = {}) {
 		pipelines: opts.pipelines ?? [],
 		selectedPipelineId: null,
 	};
+	// handleSave reads from pipelinesRef (live mirror updated during render by
+	// the composition hook) instead of closure-captured pipelineState, so that
+	// setState writes from `flushAllPendingEdits()` are observable. Tests keep
+	// it in sync with the local `pipelineState` variable below.
+	const pipelinesRef = { current: pipelineState.pipelines };
 	const setPipelineState = vi.fn((u: React.SetStateAction<CuePipelineState>) => {
 		pipelineState =
 			typeof u === 'function' ? (u as (p: CuePipelineState) => CuePipelineState)(pipelineState) : u;
+		// Production code has the composition hook sync this during render;
+		// tests don't re-render on setState, so we sync imperatively here.
+		pipelinesRef.current = pipelineState.pipelines;
 	});
 	let isDirty = true;
 	const setIsDirty = vi.fn((u: React.SetStateAction<boolean>) => {
@@ -115,6 +127,7 @@ function setup(opts: SetupOpts = {}) {
 	const params: UsePipelinePersistenceParams = {
 		state: {
 			pipelineState,
+			pipelinesRef,
 			savedStateRef,
 			lastWrittenRootsRef,
 		},
@@ -160,10 +173,12 @@ describe('usePipelinePersistence', () => {
 		mockReadYaml.mockResolvedValue('yaml-content');
 		mockRefreshSession.mockResolvedValue(undefined);
 		mockGetGraphData.mockResolvedValue([]);
+		__resetPendingEditsRegistryForTests();
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		__resetPendingEditsRegistryForTests();
 	});
 
 	describe('handleSave - Fix #1 settings-loaded gate', () => {
@@ -201,6 +216,54 @@ describe('usePipelinePersistence', () => {
 
 			// flip settingsLoaded true and rerender
 			h.rerender({ ...h.params, deps: { ...h.params.deps, settingsLoaded: true } });
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			expect(mockWriteYaml).toHaveBeenCalled();
+		});
+	});
+
+	describe('handleSave - error-node gate', () => {
+		it('blocks save with a warning toast when a pipeline contains an unresolved-agent error node', async () => {
+			const errorNode: PipelineNode = {
+				id: 'error-target-sub',
+				type: 'error',
+				position: { x: 0, y: 0 },
+				data: {
+					reason: 'missing-target',
+					subscriptionName: 'sub',
+					unresolvedId: 'deleted-uuid',
+					message: 'Target agent no longer exists.',
+				},
+			};
+			const h = setup({
+				pipelines: [pipeline('p1', 'Broken Pipeline', [triggerNode('t1'), errorNode])],
+				sessions: [{ id: 'session-x', name: 'X', toolType: 'x', projectRoot: '/r' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			expect(mockWriteYaml).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: expect.stringContaining('unresolved'),
+				})
+			);
+		});
+
+		it('allows save when no error nodes are present', async () => {
+			const h = setup({
+				pipelines: [
+					pipeline(
+						'p1',
+						'A',
+						[triggerNode('t1'), agentNode('a1', 'Alpha')],
+						[{ id: 'e1', source: 't1', target: 'a1' }]
+					),
+				],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/r' }],
+			});
 			await act(async () => {
 				await h.result.current.handleSave();
 			});
@@ -555,6 +618,79 @@ describe('usePipelinePersistence', () => {
 				await h.result.current.handleDiscard();
 			});
 			expect(h.savedStateRef.current).toBe('[]');
+		});
+	});
+
+	describe('handleSave - pending-edits flush (debounce race)', () => {
+		it('invokes every registered pending-edit flush before reading state', async () => {
+			const flushA = vi.fn();
+			const flushB = vi.fn();
+			registerPendingEdit(flushA);
+			registerPendingEdit(flushB);
+
+			const h = setup({
+				pipelines: [
+					pipeline(
+						'p1',
+						'A',
+						[triggerNode('t1'), agentNode('a1', 'Alpha')],
+						[{ id: 'e1', source: 't1', target: 'a1' }]
+					),
+				],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/r' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+
+			expect(flushA).toHaveBeenCalledTimes(1);
+			expect(flushB).toHaveBeenCalledTimes(1);
+			expect(mockWriteYaml).toHaveBeenCalled();
+		});
+
+		it('observes pipeline mutations written by a flush callback via pipelinesRef', async () => {
+			const pending = pipeline(
+				'p1',
+				'A',
+				[triggerNode('t1'), agentNode('a1', 'Alpha')],
+				[{ id: 'e1', source: 't1', target: 'a1' }]
+			);
+			// Simulate the agent's input prompt being unset in React state at
+			// render time — the panel has a pending debounced write that would
+			// promote it to "Prompt 1" when the flush callback runs. Without
+			// flush-on-save, validatePipelines would see the empty prompt and
+			// reject the save.
+			(pending.nodes[1].data as { inputPrompt: string }).inputPrompt = '';
+
+			const h = setup({
+				pipelines: [pending],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/r' }],
+			});
+
+			// Register a flush that promotes the stale empty prompt to the real
+			// value — exactly what the real debounced callback does via
+			// onUpdateNode → setPipelineState.
+			registerPendingEdit(() => {
+				h.setPipelineState((prev) => ({
+					...prev,
+					pipelines: prev.pipelines.map((p) => ({
+						...p,
+						nodes: p.nodes.map((n) =>
+							n.id === 'a1' ? { ...n, data: { ...(n.data as object), inputPrompt: 'Prompt 1' } } : n
+						),
+					})),
+				}));
+			});
+
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+
+			expect(h.result.current.validationErrors).toEqual([]);
+			expect(mockWriteYaml).toHaveBeenCalled();
+			const saved = (h.getState().pipelines[0].nodes[1].data as { inputPrompt: string })
+				.inputPrompt;
+			expect(saved).toBe('Prompt 1');
 		});
 	});
 });

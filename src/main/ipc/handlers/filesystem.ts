@@ -38,6 +38,7 @@ import {
 	countItemsRemote,
 } from '../../utils/remote-fs';
 import { getSshRemoteById } from '../../stores';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Supported image file extensions for base64 encoding
@@ -519,6 +520,7 @@ export function registerFilesystemHandlers(): void {
 			const base64 = buffer.toString('base64');
 			return `data:${contentType};base64,${base64}`;
 		} catch (error) {
+			void captureException(error);
 			// Return null on failure - let caller handle gracefully
 			logger.warn(`Failed to fetch image from ${url}: ${error}`, 'fs:fetchImageAsBase64');
 			return null;

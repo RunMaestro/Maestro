@@ -385,6 +385,7 @@ describe('MainPanel', () => {
 		// State
 		logViewerOpen: false,
 		agentSessionsOpen: false,
+		memoryViewerOpen: false,
 		activeAgentSessionId: null,
 		activeSession: createSession(),
 		thinkingItems: [] as ThinkingItem[],
@@ -406,6 +407,7 @@ describe('MainPanel', () => {
 		setGitDiffPreview: vi.fn(),
 		setLogViewerOpen: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
+		setMemoryViewerOpen: vi.fn(),
 		setActiveAgentSessionId: vi.fn(),
 		onResumeAgentSession: vi.fn(),
 		onNewAgentSession: vi.fn(),

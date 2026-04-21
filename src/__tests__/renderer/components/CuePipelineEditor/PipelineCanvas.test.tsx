@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
+import { mockTheme } from '../../../helpers/mockTheme';
 import {
 	PipelineCanvas,
 	PipelineCanvasProps,
@@ -43,18 +44,6 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/panels/EdgeConfigPane
 vi.mock('../../../../renderer/components/CuePipelineEditor/panels/CueSettingsPanel', () => ({
 	CueSettingsPanel: () => <div data-testid="cue-settings-panel" />,
 }));
-
-const mockTheme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgActivity: '#16213e',
-		border: '#333',
-		textMain: '#e4e4e7',
-		textDim: '#a1a1aa',
-		accent: '#06b6d4',
-	},
-} as any;
 
 function buildProps(overrides: Partial<PipelineCanvasProps> = {}): PipelineCanvasProps {
 	return {

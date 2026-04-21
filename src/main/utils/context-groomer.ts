@@ -15,6 +15,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
+import { isWindows } from '../../shared/platformDetection';
 import type { AgentDetector } from '../agents';
 
 const LOG_CONTEXT = '[ContextGroomer]';
@@ -33,6 +34,10 @@ export interface GroomingProcessManager {
 		prompt?: string;
 		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
+		// Send prompt as stream-json via stdin (for agents supporting it, e.g. with images)
+		sendPromptViaStdin?: boolean;
+		// Send prompt as raw text via stdin (used on Windows to avoid command-line length limits)
+		sendPromptViaStdinRaw?: boolean;
 		// SSH remote config for running on a remote host
 		sessionSshRemoteConfig?: {
 			enabled: boolean;
@@ -353,6 +358,11 @@ export async function groomContext(
 		processManager.on('exit', onExit);
 		processManager.on('agent-error', onError);
 
+		// On Windows, grooming prompts often exceed cmd.exe's ~8KB command-line
+		// limit (ENAMETOOLONG on spawn). Route the prompt via stdin instead.
+		// SSH sessions have their own stdin handling (ssh-spawn-wrapper), so skip.
+		const useStdinForPrompt = isWindows() && !sessionSshRemoteConfig?.enabled;
+
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
@@ -363,6 +373,7 @@ export async function groomContext(
 			prompt: prompt, // Triggers batch mode (no PTY)
 			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
 			noPromptSeparator: agent.noPromptSeparator,
+			sendPromptViaStdinRaw: useStdinForPrompt,
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)

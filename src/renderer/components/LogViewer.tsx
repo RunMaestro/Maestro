@@ -20,6 +20,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
 import { useSessionStore } from '../stores/sessionStore';
+import { logger } from '../utils/logger';
 
 interface SystemLogEntry {
 	timestamp: number;
@@ -267,7 +268,7 @@ export function LogViewer({
 			// Reverse to show newest first
 			setLogs(systemLogs.reverse());
 		} catch (error) {
-			console.error('Failed to load logs:', error);
+			logger.error('Failed to load logs:', undefined, error);
 		}
 	};
 
@@ -277,7 +278,7 @@ export function LogViewer({
 			setLogs([]);
 			setFilteredLogs([]);
 		} catch (error) {
-			console.error('Failed to clear logs:', error);
+			logger.error('Failed to clear logs:', undefined, error);
 		}
 	};
 

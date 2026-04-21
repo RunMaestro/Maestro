@@ -44,6 +44,7 @@ import { ForcedParallelWarningModal } from '../../ForcedParallelWarningModal';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
+import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -72,6 +73,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Input settings
 		enterToSendAI,
 		setEnterToSendAI,
+		enterToSendAIExpanded,
+		setEnterToSendAIExpanded,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
 		defaultShowThinking,
@@ -222,7 +225,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setSyncMigratedCount(null);
 			})
 			.catch((err) => {
-				console.error('Failed to load sync settings:', err);
+				logger.error('Failed to load sync settings:', undefined, err);
 				setSyncError('Failed to load storage settings');
 				// Report to Sentry so production failures surface in dashboards
 				// rather than only being visible in the user's console.
@@ -242,7 +245,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setShellsLoaded(true);
 			}
 		} catch (error) {
-			console.error('Failed to load shells:', error);
+			logger.error('Failed to load shells:', undefined, error);
 		} finally {
 			setShellsLoading(false);
 		}
@@ -718,6 +721,34 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						{enterToSendAI
 							? 'Press Enter to send. Use Shift+Enter for new line.'
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
+					</p>
+				</div>
+
+				{/* Expanded AI Mode Setting (Prompt Composer) */}
+				<div
+					className="mb-4 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="text-sm font-medium">Expanded AI Interaction Mode</div>
+						<button
+							onClick={() => setEnterToSendAIExpanded(!enterToSendAIExpanded)}
+							className="px-3 py-1.5 rounded text-xs font-mono transition-all"
+							style={{
+								backgroundColor: enterToSendAIExpanded
+									? theme.colors.accentDim
+									: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							{formatEnterToSend(enterToSendAIExpanded)}
+						</button>
+					</div>
+					<p className="text-xs opacity-50">
+						{enterToSendAIExpanded
+							? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
+							: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
 				</div>
 

@@ -13,6 +13,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { TabSwitcherModal } from '../../../renderer/components/TabSwitcherModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -1670,7 +1671,7 @@ describe('TabSwitcherModal', () => {
 		});
 
 		it('handles sync errors gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			// For claude-code sessions (default), it uses window.maestro.claude.updateSessionName
 			vi.mocked(window.maestro.claude.updateSessionName).mockRejectedValue(
@@ -1694,6 +1695,7 @@ describe('TabSwitcherModal', () => {
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
 					'[TabSwitcher] Failed to sync tab name:',
+					undefined,
 					expect.any(Error)
 				);
 			});

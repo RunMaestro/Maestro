@@ -2,28 +2,10 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { HistoryFilterToggle } from '../../../../renderer/components/History';
-import type { Theme, HistoryEntryType } from '../../../../renderer/types';
+import type { HistoryEntryType } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		scrollbar: '#404040',
-		scrollbarHover: '#808080',
-	},
-};
 
 describe('HistoryFilterToggle', () => {
 	it('renders AUTO and USER filter buttons', () => {

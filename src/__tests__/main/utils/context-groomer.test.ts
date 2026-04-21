@@ -25,6 +25,13 @@ vi.mock('../../../main/utils/agent-args', () => ({
 	),
 }));
 
+// Mock platform detection so we can toggle isWindows() per test
+vi.mock('../../../shared/platformDetection', () => ({
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => true),
+	isLinux: vi.fn(() => false),
+}));
+
 // Mock uuid to return predictable values
 vi.mock('uuid', () => ({
 	v4: vi.fn(() => 'test-uuid'),
@@ -41,6 +48,7 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../../main/utils/agent-args';
+import { isWindows } from '../../../shared/platformDetection';
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
@@ -63,7 +71,6 @@ function createMockProcessManager(): GroomingProcessManager & {
 	_emitError: (sessionId: string, error: unknown) => void;
 } {
 	const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
-	let lastSpawnConfig: Record<string, unknown> | null = null;
 
 	return {
 		_handlers: handlers,
@@ -81,8 +88,6 @@ function createMockProcessManager(): GroomingProcessManager & {
 			for (const fn of fns) fn(sessionId, error);
 		},
 		spawn(config: Record<string, unknown>) {
-			lastSpawnConfig = config;
-			// Store on the instance for test assertions
 			(this as any)._lastSpawnConfig = config;
 
 			// Schedule data + exit to resolve the promise
@@ -120,6 +125,7 @@ describe('groomContext', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWindows).mockReturnValue(false);
 		mockPM = createMockProcessManager();
 		agent = makeAgent();
 	});
@@ -274,6 +280,50 @@ describe('groomContext', () => {
 		expect(config).not.toHaveProperty('sessionCustomPath');
 		expect(config).not.toHaveProperty('sessionCustomArgs');
 		expect(config).not.toHaveProperty('sessionCustomEnvVars');
+	});
+
+	it('sets sendPromptViaStdinRaw=true on Windows to avoid ENAMETOOLONG', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(true);
+	});
+
+	it('does NOT set sendPromptViaStdinRaw on non-Windows platforms', async () => {
+		vi.mocked(isWindows).mockReturnValue(false);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(false);
+	});
+
+	it('does NOT set sendPromptViaStdinRaw on Windows when SSH is enabled', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		const detector = createMockAgentDetector(agent);
+
+		await groomContext(
+			{
+				projectRoot: '/project',
+				agentType: 'claude-code',
+				prompt: 'summarize',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			},
+			mockPM,
+			detector
+		);
+
+		expect(mockPM._lastSpawnConfig!.sendPromptViaStdinRaw).toBe(false);
 	});
 
 	it('passes SSH remote config through to spawn', async () => {

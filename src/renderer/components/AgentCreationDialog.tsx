@@ -23,6 +23,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -170,7 +171,7 @@ export function AgentCreationDialog({
 				const models = await window.maestro.agents.getModels(agentId, force);
 				setAvailableModels((prev) => ({ ...prev, [agentId]: models || [] }));
 			} catch (err) {
-				console.error('Failed to load models for', agentId, err);
+				logger.error('Failed to load models for', undefined, [agentId, err]);
 			} finally {
 				setLoadingModels((prev) => ({ ...prev, [agentId]: false }));
 			}
@@ -215,7 +216,7 @@ export function AgentCreationDialog({
 			try {
 				await ac.refreshAgent();
 			} catch (err) {
-				console.error('Failed to refresh agent:', err);
+				logger.error('Failed to refresh agent:', undefined, err);
 			} finally {
 				setRefreshingAgent(null);
 			}

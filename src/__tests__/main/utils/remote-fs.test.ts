@@ -7,6 +7,7 @@ import {
 	writeFileRemote,
 	existsRemote,
 	mkdirRemote,
+	listDirWithStatsRemote,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -348,6 +349,166 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to parse stat output');
+		});
+	});
+
+	describe('listDirWithStatsRemote', () => {
+		it('parses pipe-separated stat output into entries with ms-resolution mtime', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'56943|1776365005|0196d5fb.jsonl\n' +
+					'524327|1776179531|019e42cb.jsonl\n' +
+					'1024|1776000000|partial.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote/project/sessions',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: '0196d5fb.jsonl', size: 56943, mtime: 1776365005000 },
+				{ name: '019e42cb.jsonl', size: 524327, mtime: 1776179531000 },
+				{ name: 'partial.jsonl', size: 1024, mtime: 1776000000000 },
+			]);
+		});
+
+		it('issues exactly one SSH call for a dir with many files', async () => {
+			// Simulate 300 session files coming back in a single stat response — the
+			// key property that separates this implementation from the previous
+			// per-file stat fan-out that tripped OpenSSH MaxStartups.
+			const lines: string[] = [];
+			for (let i = 0; i < 300; i++) {
+				lines.push(`${1000 + i}|${1_776_000_000 + i}|session-${i}.jsonl`);
+			}
+			const deps = createMockDeps({
+				stdout: lines.join('\n') + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote/sessions',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toHaveLength(300);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+		});
+
+		it('applies the nameSuffix filter to the remote glob', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote('/remote/sessions', baseConfig, { nameSuffix: '.jsonl' }, deps);
+
+			const execMock = deps.execSsh as ReturnType<typeof vi.fn>;
+			const sshArgs: string[] = execMock.mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			expect(remoteCommand).toContain('*.jsonl');
+		});
+
+		it('falls back to matching all files when nameSuffix is not provided', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await listDirWithStatsRemote('/remote/sessions', baseConfig, undefined, deps);
+
+			const execMock = deps.execSsh as ReturnType<typeof vi.fn>;
+			const sshArgs: string[] = execMock.mock.calls[0][1];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			// Glob is just `*` (no suffix) and the command should not contain
+			// a stray `*.` token that would restrict matches.
+			expect(remoteCommand).toMatch(/\s\*\s/);
+		});
+
+		it('returns an empty array when the remote directory is missing', async () => {
+			// The shell wrapper uses `cd ... || exit 0`, so the command exits cleanly
+			// with no output when the directory doesn't exist.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote('/nonexistent', baseConfig, undefined, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([]);
+		});
+
+		it('skips malformed lines instead of failing the whole listing', async () => {
+			const deps = createMockDeps({
+				// Middle line is junk; the other two must still come through.
+				stdout: '100|1000|good.jsonl\ngarbage-line\n200|2000|also-good.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'good.jsonl', size: 100, mtime: 1000000 },
+				{ name: 'also-good.jsonl', size: 200, mtime: 2000000 },
+			]);
+		});
+
+		it('preserves pipe characters that appear inside a filename', async () => {
+			// Names are split on only the first two `|` separators so a pipe in
+			// the filename itself does not corrupt the entry.
+			const deps = createMockDeps({
+				stdout: '42|1700|weird|name.jsonl\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([{ name: 'weird|name.jsonl', size: 42, mtime: 1700000 }]);
+		});
+
+		it('returns an error result when the SSH command itself fails', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'ssh: connection refused',
+				exitCode: 255,
+			});
+
+			const result = await listDirWithStatsRemote(
+				'/remote',
+				baseConfig,
+				{ nameSuffix: '.jsonl' },
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('connection refused');
 		});
 	});
 
