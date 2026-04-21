@@ -39,16 +39,22 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	const absPath = path.isAbsolute(promptFile)
 		? path.resolve(promptFile)
 		: path.resolve(normalizedRoot, promptFile);
-	// Windows (NTFS) and macOS (APFS/HFS+ default) are case-insensitive
-	// filesystems — `/Users/Foo/proj/.maestro/x.md` and
-	// `/Users/foo/proj/.maestro/x.md` refer to the same file but a
-	// case-sensitive `startsWith` would false-negative reject the latter.
-	// Lower-case both sides on those platforms to match filesystem semantics;
-	// on Linux (case-sensitive) the raw comparison is correct.
-	const caseInsensitiveFs = process.platform === 'win32' || process.platform === 'darwin';
-	const cmpRoot = caseInsensitiveFs ? normalizedRoot.toLowerCase() : normalizedRoot;
-	const cmpPath = caseInsensitiveFs ? absPath.toLowerCase() : absPath;
-	if (!cmpPath.startsWith(cmpRoot + path.sep)) {
+	// Canonicalize both paths via realpath before the containment check. This
+	// asks the OS for the true path and handles, in one shot: case-insensitive
+	// filesystems (macOS APFS/HFS+, Windows NTFS), Unicode normalization
+	// differences (NFC vs NFD), and symlinks that could otherwise escape the
+	// root without tripping a lowercase `startsWith` guard. `path.relative`
+	// returns '' when the paths are equal (treated as inside — reading the
+	// root directory as a file will simply fail downstream) and a path
+	// starting with `..` when the target escapes the root.
+	try {
+		const realRoot = fs.realpathSync.native(normalizedRoot);
+		const realPath = fs.realpathSync.native(absPath);
+		const rel = path.relative(realRoot, realPath);
+		if (rel !== '' && rel.split(path.sep)[0] === '..') {
+			return undefined;
+		}
+	} catch {
 		return undefined;
 	}
 	try {
