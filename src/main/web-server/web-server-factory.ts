@@ -628,6 +628,38 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
+		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+				return false;
+			}
+
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:openBrowserTab', sessionId, url);
+			return true;
+		});
+
+		server.setOpenTerminalTabCallback(
+			async (sessionId: string, config: { cwd?: string; shell?: string; name?: string | null }) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for openTerminalTab', 'WebServer');
+					return false;
+				}
+
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for openTerminalTab', 'WebServer');
+					return false;
+				}
+				mainWindow.webContents.send('remote:openTerminalTab', sessionId, config);
+				return true;
+			}
+		);
+
 		server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {

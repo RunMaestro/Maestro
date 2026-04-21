@@ -476,6 +476,33 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote open browser tab from CLI/web interface
+		 */
+		onRemoteOpenBrowserTab: (callback: (sessionId: string, url: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, url: string) => callback(sessionId, url);
+			ipcRenderer.on('remote:openBrowserTab', handler);
+			return () => ipcRenderer.removeListener('remote:openBrowserTab', handler);
+		},
+
+		/**
+		 * Subscribe to remote open terminal tab from CLI/web interface
+		 */
+		onRemoteOpenTerminalTab: (
+			callback: (
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null }
+			) => callback(sessionId, config);
+			ipcRenderer.on('remote:openTerminalTab', handler);
+			return () => ipcRenderer.removeListener('remote:openTerminalTab', handler);
+		},
+
+		/**
 		 * Subscribe to remote refresh auto-run docs from web interface
 		 */
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {

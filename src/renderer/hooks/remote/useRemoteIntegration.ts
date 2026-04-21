@@ -480,6 +480,38 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote open browser tab from CLI/web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenBrowserTab(
+			(sessionId: string, url: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openBrowserTab', {
+						detail: { sessionId, url },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote open terminal tab from CLI/web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteOpenTerminalTab(
+			(sessionId: string, config: { cwd?: string; shell?: string; name?: string | null }) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:openTerminalTab', {
+						detail: { sessionId, config },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle remote refresh auto-run docs from web/CLI interface
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onRemoteRefreshAutoRunDocs((sessionId: string) => {

@@ -75,6 +75,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		toggleBookmark: vi.fn().mockResolvedValue(true),
 		openFileTab: vi.fn().mockResolvedValue(true),
 		refreshFileTree: vi.fn().mockResolvedValue(true),
+		openBrowserTab: vi.fn().mockResolvedValue(true),
+		openTerminalTab: vi.fn().mockResolvedValue(true),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -658,6 +660,144 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('Invalid file path');
 			expect(callbacks.openFileTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Open Browser Tab (Web → Desktop)', () => {
+		it('should forward open browser tab with sessionId and url', async () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+			expect(response.url).toBe('https://example.com/');
+		});
+
+		it('should reject missing sessionId or url', () => {
+			handler.handleMessage(client, { type: 'open_browser_tab', sessionId: 'session-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or url');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject invalid URL', () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'not a url',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid URL');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-http(s) protocols', () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'file:///etc/passwd',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unsupported URL protocol');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.openBrowserTab as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('open_browser_tab_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Open Terminal Tab (Web → Desktop)', () => {
+		it('should forward open terminal tab with sessionId', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
+					cwd: undefined,
+					shell: undefined,
+					name: undefined,
+				});
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should forward optional shell and name', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				shell: 'bash',
+				name: 'build logs',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
+					cwd: undefined,
+					shell: 'bash',
+					name: 'build logs',
+				});
+			});
+		});
+
+		it('should reject cwd outside the agent working directory', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				cwd: '/home/user/project/../../etc',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid cwd');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject missing sessionId', () => {
+			handler.handleMessage(client, { type: 'open_terminal_tab' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
 		});
 	});
 

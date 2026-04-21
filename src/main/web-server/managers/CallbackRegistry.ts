@@ -23,6 +23,9 @@ import type {
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
+	OpenBrowserTabCallback,
+	OpenTerminalTabCallback,
+	OpenTerminalTabConfig,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	GetThemeCallback,
@@ -97,6 +100,8 @@ export interface WebServerCallbacks {
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
+	openBrowserTab: OpenBrowserTabCallback | null;
+	openTerminalTab: OpenTerminalTabCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	getHistory: GetHistoryCallback | null;
@@ -153,6 +158,8 @@ export class CallbackRegistry {
 		toggleBookmark: null,
 		openFileTab: null,
 		refreshFileTree: null,
+		openBrowserTab: null,
+		openTerminalTab: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		getHistory: null,
@@ -277,6 +284,16 @@ export class CallbackRegistry {
 	async refreshFileTree(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.refreshFileTree) return false;
 		return this.callbacks.refreshFileTree(sessionId);
+	}
+
+	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
+		if (!this.callbacks.openBrowserTab) return false;
+		return this.callbacks.openBrowserTab(sessionId, url);
+	}
+
+	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
+		if (!this.callbacks.openTerminalTab) return false;
+		return this.callbacks.openTerminalTab(sessionId, config);
 	}
 
 	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
@@ -572,6 +589,14 @@ export class CallbackRegistry {
 
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbacks.refreshFileTree = callback;
+	}
+
+	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
+		this.callbacks.openBrowserTab = callback;
+	}
+
+	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
+		this.callbacks.openTerminalTab = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {

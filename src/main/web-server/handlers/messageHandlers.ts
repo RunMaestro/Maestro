@@ -122,6 +122,11 @@ export interface MessageHandlerCallbacks {
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
+	openBrowserTab: (sessionId: string, url: string) => Promise<boolean>;
+	openTerminalTab: (
+		sessionId: string,
+		config: { cwd?: string; shell?: string; name?: string | null }
+	) => Promise<boolean>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -292,6 +297,14 @@ export class WebSocketMessageHandler {
 
 			case 'open_file_tab':
 				this.handleOpenFileTab(client, message);
+				break;
+
+			case 'open_browser_tab':
+				this.handleOpenBrowserTab(client, message);
+				break;
+
+			case 'open_terminal_tab':
+				this.handleOpenTerminalTab(client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -1344,6 +1357,137 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to open file tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_browser_tab message - open a URL in a browser tab
+	 */
+	private handleOpenBrowserTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const url = message.url as string;
+		logger.info(
+			`[Web] Received open_browser_tab message: session=${sessionId}, url=${url}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'open_browser_tab_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId || !url) {
+			sendErrorResult('Missing sessionId or url');
+			return;
+		}
+
+		// Only http(s) URLs are allowed in browser tabs; everything else is rejected
+		// (mailto:, file:, javascript:, etc. would be unsafe or nonsensical here).
+		let parsed: URL;
+		try {
+			parsed = new URL(url);
+		} catch {
+			sendErrorResult('Invalid URL');
+			return;
+		}
+		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+			sendErrorResult(`Unsupported URL protocol: ${parsed.protocol}`);
+			return;
+		}
+
+		if (!this.callbacks.openBrowserTab) {
+			sendErrorResult('Browser tab opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openBrowserTab(sessionId, parsed.toString())
+			.then((success) => {
+				this.send(client, {
+					type: 'open_browser_tab_result',
+					success,
+					sessionId,
+					url: parsed.toString(),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to open browser tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_terminal_tab message - open a new terminal tab
+	 */
+	private handleOpenTerminalTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const cwd = typeof message.cwd === 'string' ? (message.cwd as string) : undefined;
+		const shell = typeof message.shell === 'string' ? (message.shell as string) : undefined;
+		const rawName = message.name;
+		const name = typeof rawName === 'string' ? rawName : rawName === null ? null : undefined;
+		logger.info(
+			`[Web] Received open_terminal_tab message: session=${sessionId}, cwd=${cwd ?? ''}, shell=${
+				shell ?? ''
+			}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'open_terminal_tab_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId) {
+			sendErrorResult('Missing sessionId');
+			return;
+		}
+
+		// If a cwd is provided, confine it to the agent working directory
+		// (same rule as open_file_tab — prevents spawning a shell outside scope).
+		let resolvedCwd: string | undefined;
+		if (cwd) {
+			const sessions = this.callbacks.getSessions?.();
+			const session = sessions?.find((s) => s.id === sessionId);
+			if (!session?.cwd) {
+				sendErrorResult('Session not found or has no working directory');
+				return;
+			}
+			const sessionRoot = path.resolve(session.cwd);
+			const resolved = path.resolve(sessionRoot, cwd);
+			if (!resolved.startsWith(sessionRoot + path.sep) && resolved !== sessionRoot) {
+				sendErrorResult('Invalid cwd: path is outside the agent working directory');
+				return;
+			}
+			resolvedCwd = resolved;
+		}
+
+		if (!this.callbacks.openTerminalTab) {
+			sendErrorResult('Terminal tab opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name })
+			.then((success) => {
+				this.send(client, {
+					type: 'open_terminal_tab_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to open terminal tab: ${error.message}`);
 			});
 	}
 
