@@ -208,6 +208,20 @@ if (crashReportingEnabled && !isDevelopment) {
 				tracesSampleRate: 0,
 				// Filter out sensitive data
 				beforeSend(event) {
+					// Drop unfixable Windows drive-root noise: EBUSY/EPERM on always-locked
+					// system files (pagefile.sys, hiberfil.sys, DumpStack.log.tmp, ...) that
+					// show up when users point watchers at C:\ or similar. See MAESTRO-G5/G6.
+					const firstException = event.exception?.values?.[0];
+					const exceptionValue = firstException?.value ?? '';
+					if (
+						/^(EBUSY|EPERM): [^,]+, lstat /i.test(exceptionValue) &&
+						/(pagefile\.sys|hiberfil\.sys|swapfile\.sys|DumpStack\.log|System Volume Information)/i.test(
+							exceptionValue
+						)
+					) {
+						return null;
+					}
+
 					// Remove any potential sensitive data from the event
 					if (event.user) {
 						delete event.user.ip_address;
