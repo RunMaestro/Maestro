@@ -896,8 +896,13 @@ export async function routeModeratorResponse(
 
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
-		logger.debug(`[GroupChat:Debug] ERROR: Group chat not found!`);
-		throw new Error(`Group chat not found: ${groupChatId}`);
+		// Benign race: the group chat was deleted while a moderator process was still
+		// running. The exit handler routes here on process exit; nothing left to do.
+		logger.info(
+			`[GroupChat] Skipping moderator routing — chat ${groupChatId} no longer exists`,
+			'GroupChatRouter'
+		);
+		return;
 	}
 
 	logger.debug(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);

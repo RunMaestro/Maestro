@@ -350,18 +350,18 @@ describe('group-chat-agent', () => {
 			expect(isParticipantActive(chat.id, 'Client')).toBe(false);
 		});
 
-		it('throws for unknown participant', async () => {
+		it('is a no-op for unknown participant (idempotent)', async () => {
 			const chat = await createTestChatWithModerator('Unknown Remove Test');
 
-			await expect(removeParticipant(chat.id, 'Unknown', mockProcessManager)).rejects.toThrow(
-				/not found/i
-			);
+			await expect(
+				removeParticipant(chat.id, 'Unknown', mockProcessManager)
+			).resolves.toBeUndefined();
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (idempotent)', async () => {
 			await expect(
 				removeParticipant('non-existent-id', 'Client', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('handles removal when process manager not provided', async () => {

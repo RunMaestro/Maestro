@@ -595,10 +595,10 @@ describe('group-chat-router', () => {
 			);
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (benign race on moderator exit)', async () => {
 			await expect(
 				routeModeratorResponse('non-existent-id', 'Hello', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('works without process manager (log only)', async () => {

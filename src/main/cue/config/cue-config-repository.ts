@@ -18,6 +18,7 @@ import {
 	MAESTRO_DIR,
 } from '../../../shared/maestro-paths';
 import { captureException } from '../../utils/sentry';
+import { logger } from '../../utils/logger';
 
 /**
  * Resolve the cue config file path, preferring `.maestro/cue.yaml`
@@ -233,6 +234,16 @@ export function watchCueConfigFile(
 	const watcher = chokidar.watch([canonicalPath, legacyPath], {
 		persistent: true,
 		ignoreInitial: true,
+	});
+
+	// Swallow chokidar errors (EISDIR on WSL network paths, ENOENT races, permission
+	// changes). Without a listener, these bubble as unhandled promise rejections and
+	// crash the main process. The watcher recovers on its own for transient issues.
+	watcher.on('error', (error) => {
+		logger.warn(
+			`[Cue] Config file watcher error for ${projectRoot}: ${String(error)}`,
+			'CueConfig'
+		);
 	});
 
 	const debouncedOnChange = () => {

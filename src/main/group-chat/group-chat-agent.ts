@@ -212,16 +212,14 @@ export async function removeParticipant(
 	participantName: string,
 	processManager?: IProcessManager
 ): Promise<void> {
+	// Removal is idempotent: the UI may fire this for a stale participant that was
+	// already removed (e.g. a duplicate click, or removal via another code path).
+	// Treat chat-missing and participant-missing as no-ops rather than throwing.
 	const chat = await loadGroupChat(groupChatId);
-	if (!chat) {
-		throw new Error(`Group chat not found: ${groupChatId}`);
-	}
+	if (!chat) return;
 
-	// Find the participant to get session info before removal
 	const participant = await getParticipant(groupChatId, participantName);
-	if (!participant) {
-		throw new Error(`Participant '${participantName}' not found in group chat`);
-	}
+	if (!participant) return;
 
 	// Get the session ID from our active sessions map
 	const key = getParticipantKey(groupChatId, participantName);

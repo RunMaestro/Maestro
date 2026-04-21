@@ -504,6 +504,13 @@ export class HistoryManager {
 			}
 		});
 
+		// fs.watch emits 'error' when the watched directory becomes unavailable
+		// (removed, permission change, network volume disconnect). Without a listener
+		// the EventEmitter throws as an unhandled exception and crashes the main process.
+		this.watcher.on('error', (err) => {
+			logger.warn(`History watcher error: ${String(err)}`, LOG_CONTEXT);
+		});
+
 		logger.info('Started watching history directory', LOG_CONTEXT);
 	}
 
