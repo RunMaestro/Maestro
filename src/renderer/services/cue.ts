@@ -12,6 +12,7 @@ import type {
 	CueGraphSession,
 	CueRunResult,
 } from '../../shared/cue/contracts';
+import type { CueLogPayload } from '../../shared/cue-log-types';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -212,7 +213,7 @@ export const cueService = {
 
 	// ── Event passthrough ─────────────────────────────────────────────────────
 
-	onActivityUpdate(callback: (data: CueRunResult) => void): () => void {
+	onActivityUpdate(callback: (data: CueLogPayload) => void): () => void {
 		return window.maestro.cue.onActivityUpdate(callback);
 	},
 };

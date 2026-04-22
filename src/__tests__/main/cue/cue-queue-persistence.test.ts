@@ -160,8 +160,16 @@ describe('cue-queue-persistence', () => {
 			expect(dropped?.[2]).toMatchObject({ reason: 'session-missing' });
 			expect((dropped?.[2] as { sessionId?: unknown }).sessionId).toBeUndefined();
 			// Missing-session drops ALSO get recorded in cue_events for audit.
+			// Status is persisted as a valid CueRunStatus ('timeout'); the
+			// precise reason lives in the payload so the status column keeps
+			// matching its typed union downstream.
 			const events = getSharedDb().getRecentCueEvents(0);
-			expect(events.some((e) => e.id === 'ghost' && e.status === 'missing-session')).toBe(true);
+			const ghostEvent = events.find((e) => e.id === 'ghost');
+			expect(ghostEvent?.status).toBe('timeout');
+			expect(JSON.parse(ghostEvent?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'session-missing',
+			});
 		});
 
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {
@@ -170,9 +178,15 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'stale', makeEntry({ queuedAt: NOW - 20 * 60 * 1000 }));
 			const restored = p.restoreAll();
 			expect(restored.size).toBe(0);
-			// cue_events has a timeout row for the dropped entry
+			// cue_events has a timeout row for the dropped entry. Status is
+			// 'timeout' (a valid CueRunStatus); reason goes in the payload.
 			const events = getSharedDb().getRecentCueEvents(0);
-			expect(events.some((e) => e.id === 'stale' && e.status === 'timeout')).toBe(true);
+			const staleEvent = events.find((e) => e.id === 'stale');
+			expect(staleEvent?.status).toBe('timeout');
+			expect(JSON.parse(staleEvent?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'stale',
+			});
 			const dropped = onLog.mock.calls.find(
 				(c) => c[2] && (c[2] as { type?: string }).type === 'queueDropped'
 			);
@@ -208,7 +222,12 @@ describe('cue-queue-persistence', () => {
 			);
 			expect(dropped?.[2]).toMatchObject({ reason: 'malformed' });
 			const events = getSharedDb().getRecentCueEvents(0);
-			expect(events.some((e) => e.id === 'bad' && e.status === 'malformed')).toBe(true);
+			const badEvent = events.find((e) => e.id === 'bad');
+			expect(badEvent?.status).toBe('timeout');
+			expect(JSON.parse(badEvent?.payload ?? '{}')).toMatchObject({
+				droppedFromQueue: true,
+				reason: 'malformed',
+			});
 		});
 
 		it('emits queueRestored per session with correct count', () => {

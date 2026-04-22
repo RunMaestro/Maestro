@@ -60,7 +60,7 @@ describe('cue-heartbeat', () => {
 
 	it('does not call Sentry after 1 or 2 consecutive failures', () => {
 		mockUpdateHeartbeat.mockImplementation(() => {
-			throw new Error('db locked');
+			throw new Error('SQLITE_BUSY: database is locked');
 		});
 		const hb = createCueHeartbeat();
 		hb.start(); // attempt #1 — failure
@@ -71,7 +71,7 @@ describe('cue-heartbeat', () => {
 
 	it('reports exactly once per failure run at the threshold', () => {
 		mockUpdateHeartbeat.mockImplementation(() => {
-			throw new Error('db locked');
+			throw new Error('SQLITE_BUSY: database is locked');
 		});
 		const hb = createCueHeartbeat();
 		hb.start();
@@ -91,7 +91,7 @@ describe('cue-heartbeat', () => {
 	it('resets the counter on first success after a failure run', () => {
 		let fail = true;
 		mockUpdateHeartbeat.mockImplementation(() => {
-			if (fail) throw new Error('db locked');
+			if (fail) throw new Error('SQLITE_BUSY: database is locked');
 		});
 		const hb = createCueHeartbeat();
 		hb.start(); // #1 fail
@@ -110,7 +110,7 @@ describe('cue-heartbeat', () => {
 
 	it('stop() clears the failure counter', () => {
 		mockUpdateHeartbeat.mockImplementation(() => {
-			throw new Error('db locked');
+			throw new Error('SQLITE_BUSY: database is locked');
 		});
 		const hb = createCueHeartbeat();
 		hb.start();
@@ -125,6 +125,26 @@ describe('cue-heartbeat', () => {
 		expect(mockCaptureException).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS); // #3 → reports
 		expect(mockCaptureException).toHaveBeenCalledTimes(1);
+		hb.stop();
+	});
+
+	it('reports unexpected (non-DB-lock) errors immediately without waiting for the threshold', () => {
+		// Novel failure modes — a programming error, a type mismatch, a
+		// permission problem — should not hide behind the 3-tick threshold
+		// that exists specifically for SQLite lock races. Surface them on
+		// the first occurrence so the field data from Sentry flags them.
+		mockUpdateHeartbeat.mockImplementation(() => {
+			throw new Error('something completely unexpected went wrong');
+		});
+		const onFailure = vi.fn();
+		const hb = createCueHeartbeat({ onFailure });
+		hb.start(); // attempt #1 — single failure
+		expect(mockCaptureException).toHaveBeenCalledTimes(1);
+		expect(mockCaptureException).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({ operation: 'cue:heartbeat', consecutiveFailures: 1 })
+		);
+		expect(onFailure).toHaveBeenCalledWith({ type: 'heartbeatFailure', consecutiveFailures: 1 });
 		hb.stop();
 	});
 

@@ -39,6 +39,30 @@ export interface CueHeartbeatHooks {
 	onFailure?: (payload: CueLogPayload & { type: 'heartbeatFailure' }) => void;
 }
 
+/**
+ * Recognize the transient SQLite busy/lock signatures that the
+ * HEARTBEAT_FAILURE_REPORT_THRESHOLD exists to absorb (WAL-busy, macOS
+ * sleep-wake races). Anything unrecognized is treated as unexpected and
+ * surfaces to Sentry immediately rather than hiding behind the threshold.
+ */
+function isRecoverableHeartbeatError(err: unknown): boolean {
+	if (!err || typeof err !== 'object') return false;
+	const code = (err as { code?: unknown }).code;
+	if (
+		code === 'SQLITE_BUSY' ||
+		code === 'SQLITE_BUSY_RECOVERY' ||
+		code === 'SQLITE_BUSY_SNAPSHOT' ||
+		code === 'SQLITE_BUSY_TIMEOUT' ||
+		code === 'SQLITE_LOCKED' ||
+		code === 'SQLITE_LOCKED_SHAREDCACHE'
+	) {
+		return true;
+	}
+	const message = (err as { message?: unknown }).message;
+	if (typeof message !== 'string') return false;
+	return /\bdatabase is locked\b|\bSQLITE_BUSY\b|\bSQLITE_LOCKED\b/i.test(message);
+}
+
 export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => void)): CueHeartbeat {
 	// Back-compat: early wiring passed a bare onTick callback. Accept either.
 	const hooks: CueHeartbeatHooks =
@@ -52,10 +76,23 @@ export function createCueHeartbeat(hooksOrOnTick?: CueHeartbeatHooks | (() => vo
 			consecutiveFailures = 0;
 		} catch (err) {
 			consecutiveFailures++;
-			// Report exactly once per run of failures (strict equality). Runs
-			// that recover before the threshold never reach Sentry; ongoing
-			// failures are represented by a single event, not a storm.
-			if (consecutiveFailures === HEARTBEAT_FAILURE_REPORT_THRESHOLD) {
+			if (isRecoverableHeartbeatError(err)) {
+				// Transient DB lock / sleep-wake race: report exactly once per
+				// run of failures (strict equality). Runs that recover before
+				// the threshold never reach Sentry; ongoing failures are
+				// represented by a single event, not a storm.
+				if (consecutiveFailures === HEARTBEAT_FAILURE_REPORT_THRESHOLD) {
+					void captureException(err, {
+						operation: 'cue:heartbeat',
+						consecutiveFailures,
+					});
+					hooks.onFailure?.({ type: 'heartbeatFailure', consecutiveFailures });
+				}
+			} else {
+				// Unexpected shape — don't let it hide behind the threshold
+				// that exists for recognized recoverable errors. Surface it to
+				// Sentry on the first occurrence so we notice novel failure
+				// modes instead of waiting for three ticks of silence.
 				void captureException(err, {
 					operation: 'cue:heartbeat',
 					consecutiveFailures,

@@ -132,13 +132,18 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 
 		/**
 		 * Record a restore-path drop in `cue_events` so users see WHY a
-		 * queued run never fired. Matches the stale-drop pattern used below;
-		 * wrapped in try/catch so a DB write failure during restore doesn't
-		 * abort the entire restore loop.
+		 * queued run never fired. Wrapped in try/catch so a DB write failure
+		 * during restore doesn't abort the entire restore loop.
+		 *
+		 * The event's `status` column is typed as CueRunStatus downstream, so
+		 * all restore drops are persisted as 'timeout' (the closest valid
+		 * run-status for "was queued, never ran"). The precise drop cause
+		 * lives in the payload under `reason`, matching the CueLogPayload
+		 * `queueDropped` reason enum.
 		 */
 		function recordRestoredDrop(
 			row: CueQueuedEventRecord,
-			status: 'timeout' | 'missing-session' | 'malformed',
+			reason: 'stale' | 'malformed' | 'session-missing',
 			extraPayload: Record<string, unknown> = {}
 		): void {
 			try {
@@ -148,8 +153,8 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					triggerName: row.subscriptionName,
 					sessionId: row.sessionId,
 					subscriptionName: row.subscriptionName,
-					status,
-					payload: JSON.stringify({ droppedFromQueue: true, ...extraPayload }),
+					status: 'timeout',
+					payload: JSON.stringify({ droppedFromQueue: true, reason, ...extraPayload }),
 				});
 			} catch {
 				// safeRecordCueEvent already reports to Sentry; swallow here.
@@ -162,7 +167,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			// inspecting history after deleting/recreating a session still
 			// sees what happened to their queued events.
 			if (!knownSessions.has(row.sessionId)) {
-				recordRestoredDrop(row, 'missing-session', { reason: 'session-missing' });
+				recordRestoredDrop(row, 'session-missing');
 				safeRemoveQueuedEvent(row.id);
 				droppedMissingSession++;
 				continue;
@@ -172,7 +177,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			const ageMs = currentTime - row.queuedAt;
 			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
 			if (timeoutMs > 0 && ageMs > timeoutMs) {
-				recordRestoredDrop(row, 'timeout', { queuedForMs: ageMs });
+				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
 				safeRemoveQueuedEvent(row.id);
 				droppedStale++;
 				continue;
@@ -194,7 +199,6 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 					`[CUE] Dropping malformed persisted queue row (id=${row.id}): ${errorMessage}`
 				);
 				recordRestoredDrop(row, 'malformed', {
-					reason: 'malformed',
 					parseError: errorMessage,
 				});
 				safeRemoveQueuedEvent(row.id);

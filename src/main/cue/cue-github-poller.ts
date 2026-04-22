@@ -115,12 +115,13 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			await execFileAsync(cmd, ['--version']);
 			ghCommand = cmd;
 		} catch (err) {
-			onLog('warn', `[CUE] GitHub CLI (gh) not found — skipping "${triggerName}"`);
 			// `gh` not being installed is expected in some environments, so the
-			// Sentry report only fires for non-ENOENT shapes (signals something
-			// unusual happened during path resolution).
+			// Sentry report fires for every shape EXCEPT ENOENT. Errors without
+			// a `code` (e.g. unexpected throws from `resolveGhPath`) used to slip
+			// through the old `code && code !== 'ENOENT'` guard silently.
 			const code = (err as { code?: string } | undefined)?.code;
-			if (code && code !== 'ENOENT') {
+			onLog('warn', `[CUE] GitHub CLI (gh) not found — skipping "${triggerName}"`);
+			if (code !== 'ENOENT') {
 				void captureException(err, { operation: 'cue:github:resolveGh', triggerName });
 			}
 			return null;

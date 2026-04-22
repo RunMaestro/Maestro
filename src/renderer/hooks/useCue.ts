@@ -132,30 +132,20 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 		mountedRef.current = true;
 		refresh();
 
-		// Subscribe to real-time activity updates. Payload may be a full
-		// CueRunResult (legacy shape, dispatched for run lifecycle events) OR a
-		// structured CueLogPayload the main process emits for non-run signals
-		// (12B queueOverflow, 12C rateLimitBackoff, etc.). We narrow by the
-		// `type` discriminator and surface user-facing ones as toasts.
-		const unsubscribe = cueService.onActivityUpdate((payload: unknown) => {
-			if (payload && typeof payload === 'object' && 'type' in payload) {
-				const tag = (payload as { type: string }).type;
-				if (tag === 'queueOverflow') {
-					const p = payload as unknown as {
-						sessionName: string;
-						subscriptionName: string;
-						queuedAt: number;
-					};
-					// Append the queuedAt timestamp suffix so back-to-back drops
-					// produce distinct toast titles rather than collapsing into
-					// one — the user needs to see every drop.
-					const stamp = new Date(p.queuedAt).toLocaleTimeString();
-					notifyToast({
-						type: 'warning',
-						title: `Cue queue overflow: ${p.sessionName} (${stamp})`,
-						message: `Oldest queued "${p.subscriptionName}" event was dropped — raise queue_size or max_concurrent to avoid loss.`,
-					});
-				}
+		// Subscribe to real-time activity updates. The payload is a typed
+		// CueLogPayload discriminated union — narrow via `payload.type` to
+		// surface user-facing events (queueOverflow, …) as toasts.
+		const unsubscribe = cueService.onActivityUpdate((payload) => {
+			if (payload?.type === 'queueOverflow') {
+				// Append the queuedAt timestamp suffix so back-to-back drops
+				// produce distinct toast titles rather than collapsing into
+				// one — the user needs to see every drop.
+				const stamp = new Date(payload.queuedAt).toLocaleTimeString();
+				notifyToast({
+					type: 'warning',
+					title: `Cue queue overflow: ${payload.sessionName} (${stamp})`,
+					message: `Oldest queued "${payload.subscriptionName}" event was dropped — raise queue_size or max_concurrent to avoid loss.`,
+				});
 			}
 			refresh();
 		});
