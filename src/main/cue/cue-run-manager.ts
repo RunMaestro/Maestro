@@ -110,7 +110,16 @@ export interface CueRunManager {
 		chainDepth?: number,
 		cliOutput?: { target: string },
 		action?: CueSubscription['action'],
-		command?: CueCommand
+		command?: CueCommand,
+		/**
+		 * Phase 12A — optional pre-existing `queuedAt` used by the engine's
+		 * restore path so re-queued events retain their ORIGINAL wall-clock
+		 * timestamp. Without this, `drainQueue`'s staleness check would
+		 * forever see "just now" for entries that had been waiting for hours
+		 * before the app crashed, effectively converting staleness into a
+		 * free pass across restarts.
+		 */
+		queuedAtOverride?: number
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
@@ -186,15 +195,21 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 						queuedForMs: ageMs,
 					}),
 				});
+				// Emit as `queueDropped` (stale reason) rather than `runFinished`
+				// with status: 'timeout'. Previously this path incremented
+				// `runsTimedOut` via the metric interceptor, confounding real
+				// runtime timeouts with queue-drain staleness. The DB row
+				// still records status: 'timeout' so the user-facing activity
+				// log shows the same symbol as before — only the internal
+				// metric accounting differs.
 				deps.onLog(
 					'cue',
 					`[CUE] Dropping stale queued event for "${sessionName}" (queued ${ageMinutes}m ago) — recorded as timeout in activity log`,
 					{
-						type: 'runFinished',
-						runId: droppedRunId,
+						type: 'queueDropped',
 						sessionId,
-						subscriptionName: entry.subscriptionName,
-						status: 'timeout',
+						count: 1,
+						reason: 'stale',
 					} satisfies CueLogPayload
 				);
 				continue;
@@ -539,7 +554,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			chainDepth?: number,
 			cliOutput?: { target: string },
 			action?: CueSubscription['action'],
-			command?: CueCommand
+			command?: CueCommand,
+			queuedAtOverride?: number
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
@@ -573,7 +589,10 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				}
 
 				const persistId = deps.queuePersistence ? crypto.randomUUID() : undefined;
-				const queuedAt = Date.now();
+				// Preserve the original queuedAt when the engine restores a
+				// persisted row so the staleness check in drainQueue still
+				// behaves correctly relative to the user's actual wait time.
+				const queuedAt = queuedAtOverride ?? Date.now();
 				const queuedEntry: QueuedEvent = {
 					event,
 					subscription: { name: subscriptionName, event: event.type, enabled: true, prompt },

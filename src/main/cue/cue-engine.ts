@@ -371,6 +371,11 @@ export class CueEngine {
 		}
 
 		this.enabled = true;
+		// Reset metrics so startedAt reflects THIS start, not the collector's
+		// construction. Without this, startedAt is fixed at engine-instance
+		// creation time, making "uptime" rate calcs wrong across stop/start
+		// cycles within the same Electron process.
+		this.metrics.reset();
 		// Data payload triggers a renderer refresh via cue:activityUpdate,
 		// clearing any stale queue counters left over from a prior stop.
 		this.meteredOnLog('cue', '[CUE] Engine started', {
@@ -396,6 +401,8 @@ export class CueEngine {
 				// re-persist with a fresh id when it re-queues (or dispatches
 				// immediately if a slot is available).
 				this.queuePersistence.remove(entry.persistId);
+				// Pass the original queuedAt so drainQueue's staleness check
+				// still reflects real user wait time, not the restart time.
 				this.runManager.execute(
 					sessionId,
 					entry.prompt,
@@ -405,7 +412,8 @@ export class CueEngine {
 					entry.chainDepth,
 					entry.cliOutput,
 					entry.action,
-					entry.command
+					entry.command,
+					entry.queuedAt
 				);
 			}
 		}

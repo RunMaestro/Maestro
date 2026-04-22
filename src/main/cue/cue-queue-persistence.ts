@@ -22,6 +22,7 @@ import {
 	safeRecordCueEvent,
 	type CueQueuedEventRecord,
 } from './cue-db';
+import { captureException } from '../utils/sentry';
 
 /** Shape matching cue-run-manager's QueuedEvent (subset — only what's persisted). */
 export interface PersistableQueueEntry {
@@ -86,6 +87,10 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		try {
 			clearPersistedQueue(sessionId);
 		} catch (err) {
+			void captureException(err, {
+				operation: 'cueQueuePersistence.clearSession',
+				sessionId,
+			});
 			deps.onLog(
 				'warn',
 				`[CUE] Failed to clear persisted queue for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
@@ -97,6 +102,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		try {
 			clearPersistedQueue();
 		} catch (err) {
+			void captureException(err, { operation: 'cueQueuePersistence.clearAll' });
 			deps.onLog(
 				'warn',
 				`[CUE] Failed to clear all persisted queue: ${err instanceof Error ? err.message : String(err)}`
@@ -109,6 +115,7 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		try {
 			rows = getQueuedEvents();
 		} catch (err) {
+			void captureException(err, { operation: 'cueQueuePersistence.restoreAll' });
 			deps.onLog(
 				'warn',
 				`[CUE] Failed to read persisted queue — starting empty: ${err instanceof Error ? err.message : String(err)}`
@@ -227,7 +234,8 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 
 		for (const [sessionId, entries] of restored) {
-			deps.onLog('cue', `[CUE] Restored ${entries.length} persisted queue entrie(s)`, {
+			const noun = entries.length === 1 ? 'entry' : 'entries';
+			deps.onLog('cue', `[CUE] Restored ${entries.length} persisted queue ${noun}`, {
 				type: 'queueRestored',
 				sessionId,
 				count: entries.length,

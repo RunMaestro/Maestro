@@ -139,11 +139,15 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			resolvedRepo = stdout.trim();
 			return resolvedRepo;
 		} catch (err) {
-			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
-			// Don't Sentry for rate-limited repo detection — backoff handles it.
-			if (!isGitHubRateLimitError(err)) {
-				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
+			// Rate-limited repo detection must bubble up so doPoll's outer
+			// catch can apply exponential backoff — swallowing + returning null
+			// here would make every poll immediately short-circuit while the
+			// limit lasts, without ever bumping currentPollMs.
+			if (isGitHubRateLimitError(err)) {
+				throw err;
 			}
+			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
+			void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			return null;
 		}
 	}
@@ -355,8 +359,20 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	function scheduleNextPoll(): void {
 		if (stopped) return;
 		pollTimer = setTimeout(async () => {
-			await doPoll();
-			scheduleNextPoll();
+			// Guard the loop: if doPoll throws (it shouldn't — it has its own
+			// try/catch — but an unexpected rethrow would silently end the
+			// schedule). try/finally here keeps the loop alive regardless.
+			try {
+				await doPoll();
+			} catch (err) {
+				onLog(
+					'error',
+					`[CUE] Unexpected error in poll loop for "${triggerName}": ${err instanceof Error ? err.message : String(err)}`
+				);
+				void captureException(err, { operation: 'cue:github:pollLoop', triggerName });
+			} finally {
+				scheduleNextPoll();
+			}
 		}, currentPollMs);
 	}
 

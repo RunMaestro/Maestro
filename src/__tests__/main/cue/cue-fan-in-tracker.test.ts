@@ -4,7 +4,7 @@
  * plus the lifecycle cleanup of fanInCreatedAt in clearForSession and reset.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type {
 	CueSettings,
 	CueSubscription,
@@ -58,6 +58,12 @@ describe('CueFanInTracker — new inspection methods', () => {
 		dispatch = vi.fn();
 		onLog = vi.fn();
 		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		// checkHealth tests additionally call vi.setSystemTime; restore real
+		// timers here so other suites run against the real clock.
+		vi.useRealTimers();
 	});
 
 	function makeTracker() {

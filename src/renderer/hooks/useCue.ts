@@ -144,13 +144,15 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 					const p = payload as unknown as {
 						sessionName: string;
 						subscriptionName: string;
+						queuedAt: number;
 					};
-					// Intentionally unique title each time (timestamp suffix) so
-					// consecutive drops produce distinct toasts rather than
-					// collapsing into one — the user needs to see every drop.
+					// Append the queuedAt timestamp suffix so back-to-back drops
+					// produce distinct toast titles rather than collapsing into
+					// one — the user needs to see every drop.
+					const stamp = new Date(p.queuedAt).toLocaleTimeString();
 					notifyToast({
 						type: 'warning',
-						title: `Cue queue overflow: ${p.sessionName}`,
+						title: `Cue queue overflow: ${p.sessionName} (${stamp})`,
 						message: `Oldest queued "${p.subscriptionName}" event was dropped — raise queue_size or max_concurrent to avoid loss.`,
 					});
 				}

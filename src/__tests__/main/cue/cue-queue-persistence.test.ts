@@ -23,7 +23,7 @@ import {
 	createCueQueuePersistence,
 	type PersistableQueueEntry,
 } from '../../../main/cue/cue-queue-persistence';
-import type { CueEvent } from '../../../main/cue/cue-types';
+import type { CueCommand, CueEvent } from '../../../main/cue/cue-types';
 
 function makeEvent(type: CueEvent['type'] = 'time.heartbeat'): CueEvent {
 	return {
@@ -73,11 +73,12 @@ describe('cue-queue-persistence', () => {
 	describe('persist + restore round-trip', () => {
 		it('round-trips all scalar + nested fields', () => {
 			const p = makePersistence();
+			const command: CueCommand = { mode: 'shell', shell: 'echo hi' };
 			const entry = makeEntry({
 				outputPrompt: 'then do this',
 				cliOutput: { target: 'agent-x' },
 				action: 'command',
-				command: { mode: 'shell', shell: 'echo hi' } as any,
+				command,
 				chainDepth: 2,
 			});
 			p.persist('s-1', 'pid-1', entry);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createCueMetrics, type CueMetricsCollector } from '../../../main/cue/cue-metrics';
 
 describe('cue-metrics', () => {
@@ -8,6 +8,11 @@ describe('cue-metrics', () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-04-21T10:00:00Z'));
 		metrics = createCueMetrics();
+	});
+
+	afterEach(() => {
+		// Restore real timers so other suites aren't polluted.
+		vi.useRealTimers();
 	});
 
 	describe('snapshot', () => {

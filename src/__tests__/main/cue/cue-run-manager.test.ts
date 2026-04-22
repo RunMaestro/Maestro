@@ -1364,6 +1364,37 @@ describe('createCueRunManager', () => {
 				manager.execute('session-1', 'p2', createEvent(), 'sub-2');
 			}).not.toThrow();
 		});
+
+		it('honors queuedAtOverride so restored entries keep their original timestamp', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			// Queue with a timestamp from an hour ago (simulating restore).
+			const anHourAgo = Date.now() - 60 * 60 * 1000;
+			manager.execute(
+				'session-1',
+				'p2',
+				createEvent(),
+				'sub-2',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				anHourAgo
+			);
+			const persistCall = persistence.persist.mock.calls.at(-1);
+			expect(persistCall?.[2].queuedAt).toBe(anHourAgo);
+		});
 	});
 
 	// Phase 12B — onQueueOverflow wiring
