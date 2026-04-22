@@ -83,6 +83,7 @@ function matchesShortcut(e: KeyboardEvent, sc: Shortcut | undefined): boolean {
 
 	const mainKey = keys[keys.length - 1];
 
+	if (mainKey === '/' && key === '/') return true;
 	if (mainKey === 'arrowleft' && key === 'arrowleft') return true;
 	if (mainKey === 'arrowright' && key === 'arrowright') return true;
 	if (mainKey === 'arrowup' && key === 'arrowup') return true;

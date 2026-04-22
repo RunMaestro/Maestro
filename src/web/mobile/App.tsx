@@ -2170,7 +2170,7 @@ export default function MobileApp() {
 			settings: () => setShowSettingsPanel(true),
 			goToFiles: () => handleOpenRightDrawer('files'),
 			goToHistory: () => handleOpenRightDrawer('history'),
-			goToAutoRun: () => handleOpenAutoRunPanel(),
+			goToAutoRun: () => handleOpenRightDrawer('autorun'),
 			agentSessions: () => setShowAllSessions(true),
 			usageDashboard: () => setShowUsageDashboard(true),
 			openCue: () => setShowCuePanel(true),
