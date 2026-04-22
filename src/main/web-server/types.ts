@@ -5,6 +5,7 @@
 
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
+import type { Shortcut } from '../../shared/shortcut-types';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -377,6 +378,8 @@ export interface WebSettings {
 	audioFeedbackEnabled: boolean;
 	colorBlindMode: string;
 	conductorProfile: string;
+	/** User-customized keyboard shortcuts (partial overrides of DEFAULT_SHORTCUTS). */
+	shortcuts: Record<string, Shortcut>;
 }
 
 /**

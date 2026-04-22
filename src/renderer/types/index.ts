@@ -174,11 +174,7 @@ export interface SessionWizardState {
 	toolExecutions?: Array<{ toolName: string; state?: unknown; timestamp: number }>;
 }
 
-export interface Shortcut {
-	id: string;
-	label: string;
-	keys: string[];
-}
+export type { Shortcut } from '../../shared/shortcut-types';
 
 export interface FileArtifact {
 	path: string;
