@@ -1112,6 +1112,8 @@ export default function MobileApp() {
 	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
 	const [showLeftPanel, setShowLeftPanel] = useState(false);
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+	// Bell filter state is lifted so it survives LeftPanel unmount/remount on mobile.
+	const [showUnreadAgentsOnly, setShowUnreadAgentsOnly] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
@@ -3231,6 +3233,8 @@ export default function MobileApp() {
 						onResizeStart={isMobile ? undefined : leftPanelResize.onResizeStart}
 						collapsedGroups={collapsedGroups}
 						setCollapsedGroups={setCollapsedGroups}
+						showUnreadOnly={showUnreadAgentsOnly}
+						setShowUnreadOnly={setShowUnreadAgentsOnly}
 						groups={agentManagement.groups}
 						onCreateGroup={agentManagement.createGroup}
 						onMoveToGroup={agentManagement.moveToGroup}

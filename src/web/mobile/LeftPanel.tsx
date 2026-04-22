@@ -30,6 +30,9 @@ export interface LeftPanelProps {
 	/** Lifted group collapse state — persists across panel open/close */
 	collapsedGroups: Set<string>;
 	setCollapsedGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
+	/** Lifted bell filter state — persists across panel open/close */
+	showUnreadOnly: boolean;
+	setShowUnreadOnly: React.Dispatch<React.SetStateAction<boolean>>;
 	/** Available groups for move-to-group */
 	groups?: GroupData[];
 	/** Create a new group */
@@ -605,6 +608,8 @@ export function LeftPanel({
 	isFullScreen,
 	collapsedGroups,
 	setCollapsedGroups,
+	showUnreadOnly,
+	setShowUnreadOnly,
 	groups = [],
 	onCreateGroup,
 	onMoveToGroup,
@@ -665,8 +670,7 @@ export function LeftPanel({
 
 	// Bell filter — when enabled, show only sessions that are active, busy,
 	// have unread tabs, or have a worktree child that is busy/unread.
-	const [showUnreadOnly, setShowUnreadOnly] = useState(false);
-
+	// State is lifted to the parent so it persists across panel unmount/remount.
 	const worktreeChildrenByParent = useMemo(() => buildWorktreeChildrenMap(sessions), [sessions]);
 
 	const hasUnreadAgents = useMemo(() => sessions.some(sessionHasUnreadActivity), [sessions]);

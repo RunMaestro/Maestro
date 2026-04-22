@@ -225,6 +225,8 @@ vi.mock('../../../web/mobile/LeftPanel', () => ({
 		onClose: () => void;
 		collapsedGroups: Set<string>;
 		setCollapsedGroups: React.Dispatch<React.SetStateAction<Set<string>>>;
+		showUnreadOnly: boolean;
+		setShowUnreadOnly: React.Dispatch<React.SetStateAction<boolean>>;
 	}) => (
 		<div data-testid="left-panel">
 			{sessions.map((s: any) => (
