@@ -21,10 +21,16 @@ import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/i
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
+	'$HOME/.claude/local',
 	'$HOME/bin',
 	'/usr/local/bin',
 	'/opt/homebrew/bin',
 	'$HOME/.cargo/bin',
+	'$HOME/go/bin',
+	'$HOME/.bun/bin',
+	'$HOME/.deno/bin',
+	'$HOME/.nix-profile/bin',
+	'/snap/bin',
 ];
 
 /**
@@ -626,10 +632,16 @@ export async function buildSshCommand(
 	// We prepend common binary locations to PATH:
 	// - ~/.local/bin: Claude Code, pip --user installs
 	// - ~/.opencode/bin: OpenCode installer default location
+	// - ~/.claude/local: Claude Code local-install layout (auto-update bundle)
 	// - ~/bin: User scripts
 	// - /usr/local/bin: Homebrew on Intel Mac, manual installs
 	// - /opt/homebrew/bin: Homebrew on Apple Silicon
 	// - ~/.cargo/bin: Rust tools
+	// - ~/go/bin: Go default GOBIN (Factory Droid and other Go-based CLIs)
+	// - ~/.bun/bin: Bun runtime + bunx-installed CLIs
+	// - ~/.deno/bin: Deno-installed CLIs
+	// - ~/.nix-profile/bin: Nix user profile binaries
+	// - /snap/bin: Linux snap-installed binaries
 	// Plus dynamic detection of Node version managers (nvm, fnm, volta, mise, asdf, n)
 	// to find npm-installed CLIs like codex, claude, etc.
 	//

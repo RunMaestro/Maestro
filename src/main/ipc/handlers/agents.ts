@@ -211,7 +211,7 @@ function stripAgentFunctions(agent: any) {
 
 /**
  * Detect agents on a remote SSH host.
- * Uses 'which' command over SSH to check for agent binaries.
+ * Uses POSIX 'command -v' over SSH to check for agent binaries.
  * Includes a timeout to handle unreachable hosts gracefully.
  */
 async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
@@ -223,10 +223,13 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	let connectionError: string | undefined;
 
 	for (const agentDef of AGENT_DEFINITIONS) {
-		// Build SSH command to check for the binary using 'which'
+		// Build SSH command to check for the binary using POSIX 'command -v'.
+		// Preferred over 'which' because it's a shell builtin (no PATH lookup needed),
+		// avoids /usr/bin/which on hosts without it, and behaves consistently across
+		// bash/dash/zsh. The command runs inside /bin/bash via buildSshCommand().
 		const remoteOptions: RemoteCommandOptions = {
-			command: 'which',
-			args: [agentDef.binaryName],
+			command: 'command',
+			args: ['-v', agentDef.binaryName],
 		};
 
 		try {
@@ -792,10 +795,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					throw new Error(`Unknown agent: ${agentId}`);
 				}
 
-				// Build SSH command to check for the binary using 'which'
+				// Build SSH command to check for the binary using POSIX 'command -v'.
+				// See detectAgentsRemote() for rationale.
 				const remoteOptions: RemoteCommandOptions = {
-					command: 'which',
-					args: [agentDef.binaryName],
+					command: 'command',
+					args: ['-v', agentDef.binaryName],
 				};
 
 				try {
