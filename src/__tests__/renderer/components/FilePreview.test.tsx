@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -189,6 +189,12 @@ describe('FilePreview', () => {
 		mockContainerClickOutside.enabled = false;
 		mockTocClickOutside.callback = null;
 		mockTocClickOutside.enabled = false;
+	});
+
+	// Reset settings store after every test so mid-test `setState({ bionifyReadingMode: true })`
+	// calls can't leak into sibling tests (including other suites) when a test throws mid-flight.
+	afterEach(() => {
+		useSettingsStore.setState({ bionifyReadingMode: false });
 	});
 
 	describe('Document Graph button', () => {
