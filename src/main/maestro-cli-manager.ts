@@ -56,14 +56,22 @@ export class MaestroCliManager {
 	}
 
 	private async resolveBundledCliPath(): Promise<string | null> {
-		for (const candidate of this.getBundledCliCandidates()) {
+		const candidates = this.getBundledCliCandidates();
+		logger.debug('Resolving bundled maestro-cli.js path', LOG_CONTEXT, { candidates });
+		for (const candidate of candidates) {
 			try {
 				await fs.promises.access(candidate, fs.constants.R_OK);
+				logger.info('Resolved bundled maestro-cli.js', LOG_CONTEXT, { path: candidate });
 				return candidate;
-			} catch {
+			} catch (err) {
+				logger.debug('Bundled CLI candidate not accessible', LOG_CONTEXT, {
+					candidate,
+					error: err instanceof Error ? err.message : String(err),
+				});
 				continue;
 			}
 		}
+		logger.warn('No bundled maestro-cli.js candidate was readable', LOG_CONTEXT, { candidates });
 		return null;
 	}
 
@@ -80,21 +88,42 @@ export class MaestroCliManager {
 
 	private async detectCliPath(useExpandedEnv: boolean): Promise<string | null> {
 		const env = useExpandedEnv ? getExpandedEnv() : process.env;
-		const whichResult = await execFileNoThrow(getWhichCommand(), [CLI_BINARY_NAME], undefined, env);
+		const whichCommand = getWhichCommand();
+		const whichResult = await execFileNoThrow(whichCommand, [CLI_BINARY_NAME], undefined, env);
 		if (whichResult.exitCode !== 0 || !whichResult.stdout.trim()) {
+			logger.debug('maestro-cli not found on PATH', LOG_CONTEXT, {
+				useExpandedEnv,
+				whichCommand,
+				exitCode: whichResult.exitCode,
+				stderr: whichResult.stderr,
+			});
 			return null;
 		}
 		const lines = splitOutputLines(whichResult.stdout);
-		return lines[0] || null;
+		const resolved = lines[0] || null;
+		logger.debug('maestro-cli detected on PATH', LOG_CONTEXT, {
+			useExpandedEnv,
+			whichCommand,
+			resolved,
+		});
+		return resolved;
 	}
 
 	private async readCliVersion(commandPath: string): Promise<string | null> {
 		const env = getExpandedEnv();
 		const versionResult = await execFileNoThrow(commandPath, ['--version'], undefined, env);
 		if (versionResult.exitCode !== 0 || !versionResult.stdout.trim()) {
+			logger.warn('Failed to read maestro-cli version', LOG_CONTEXT, {
+				commandPath,
+				exitCode: versionResult.exitCode,
+				stdout: versionResult.stdout,
+				stderr: versionResult.stderr,
+			});
 			return null;
 		}
-		return normalizeVersion(versionResult.stdout);
+		const version = normalizeVersion(versionResult.stdout);
+		logger.debug('Read maestro-cli version', LOG_CONTEXT, { commandPath, version });
+		return version;
 	}
 
 	private async writeUnixShim(installPath: string, bundledCliPath: string): Promise<void> {
@@ -103,6 +132,11 @@ export class MaestroCliManager {
 		const script =
 			`#!/usr/bin/env bash\n` +
 			`ELECTRON_RUN_AS_NODE=1 '${safeRuntimePath}' '${safeCliPath}' "$@"\n`;
+		logger.info('Writing Unix maestro-cli shim', LOG_CONTEXT, {
+			installPath,
+			bundledCliPath,
+			runtimePath: process.execPath,
+		});
 		await fs.promises.writeFile(installPath, script, 'utf-8');
 		await fs.promises.chmod(installPath, 0o755);
 	}
@@ -114,6 +148,11 @@ export class MaestroCliManager {
 			`@echo off\r\n` +
 			`set "ELECTRON_RUN_AS_NODE=1"\r\n` +
 			`"${escapedRuntimePath}" "${escapedCliPath}" %*\r\n`;
+		logger.info('Writing Windows maestro-cli shim', LOG_CONTEXT, {
+			installPath,
+			bundledCliPath,
+			runtimePath: process.execPath,
+		});
 		await fs.promises.writeFile(installPath, script, 'utf-8');
 	}
 
@@ -139,24 +178,45 @@ export class MaestroCliManager {
 		let updated = false;
 		const filesUpdated: string[] = [];
 
+		logger.info('Ensuring POSIX PATH export for maestro-cli', LOG_CONTEXT, {
+			installDir,
+			shellName,
+			rcFiles: Array.from(rcFiles),
+			exportLine,
+		});
+
 		for (const rcFile of rcFiles) {
 			const rcPath = path.join(home, rcFile);
 			let contents = '';
 			try {
 				contents = await fs.promises.readFile(rcPath, 'utf-8');
-			} catch {
+			} catch (err) {
+				logger.debug('Shell rc file not readable; will create if write succeeds', LOG_CONTEXT, {
+					rcPath,
+					error: err instanceof Error ? err.message : String(err),
+				});
 				contents = '';
 			}
 
 			if (contents.includes(this.posixPathMarker) || contents.includes(exportLine)) {
+				logger.debug('Shell rc already contains PATH export; skipping', LOG_CONTEXT, { rcPath });
 				continue;
 			}
 
 			const prefix = contents.length > 0 && !contents.endsWith('\n') ? '\n' : '';
 			const snippet = `${prefix}${this.posixPathMarker}\n${exportLine}\n`;
-			await fs.promises.appendFile(rcPath, snippet, 'utf-8');
-			updated = true;
-			filesUpdated.push(rcPath);
+			try {
+				await fs.promises.appendFile(rcPath, snippet, 'utf-8');
+				logger.info('Appended maestro-cli PATH export to rc file', LOG_CONTEXT, { rcPath });
+				updated = true;
+				filesUpdated.push(rcPath);
+			} catch (err) {
+				logger.error('Failed to append PATH export to rc file', LOG_CONTEXT, {
+					rcPath,
+					error: err instanceof Error ? err.message : String(err),
+				});
+				throw err;
+			}
 		}
 
 		return { updated, files: filesUpdated };
@@ -217,7 +277,7 @@ export class MaestroCliManager {
 		const versionMatch =
 			Boolean(installedVersion) && compareVersions(installedVersion || '', expectedVersion) === 0;
 
-		return {
+		const status: MaestroCliStatus = {
 			expectedVersion,
 			installed,
 			inPath,
@@ -229,21 +289,74 @@ export class MaestroCliManager {
 			installDir,
 			bundledCliPath,
 		};
+
+		logger.info('Checked maestro-cli status', LOG_CONTEXT, {
+			expectedVersion,
+			installedVersion,
+			installed,
+			inPath,
+			inShellPath,
+			versionMatch,
+			commandPath,
+			installShimExists,
+			installDir,
+			bundledCliPath,
+		});
+
+		return status;
 	}
 
 	async installOrUpdate(): Promise<MaestroCliInstallResult> {
 		const installDir = this.getInstallDir();
 		const installPath = this.getInstallPath();
+
+		logger.info('Starting maestro-cli install/update', LOG_CONTEXT, {
+			installDir,
+			installPath,
+			platform: process.platform,
+			electronVersion: process.versions.electron,
+			nodeVersion: process.versions.node,
+			runtimePath: process.execPath,
+			resourcesPath: process.resourcesPath,
+			appPath: app.getAppPath(),
+		});
+
 		const bundledCliPath = await this.resolveBundledCliPath();
 		if (!bundledCliPath) {
-			throw new Error('Unable to locate bundled maestro-cli.js in app resources');
+			const candidates = this.getBundledCliCandidates();
+			logger.error('Unable to locate bundled maestro-cli.js in app resources', LOG_CONTEXT, {
+				candidates,
+			});
+			throw new Error(
+				`Unable to locate bundled maestro-cli.js in app resources. Tried: ${candidates.join(', ')}`
+			);
 		}
 
-		await fs.promises.mkdir(installDir, { recursive: true });
-		if (isWindows()) {
-			await this.writeWindowsShim(installPath, bundledCliPath);
-		} else {
-			await this.writeUnixShim(installPath, bundledCliPath);
+		try {
+			await fs.promises.mkdir(installDir, { recursive: true });
+			logger.debug('Ensured install directory exists', LOG_CONTEXT, { installDir });
+		} catch (err) {
+			logger.error('Failed to create install directory', LOG_CONTEXT, {
+				installDir,
+				error: err instanceof Error ? err.message : String(err),
+			});
+			throw err;
+		}
+
+		try {
+			if (isWindows()) {
+				await this.writeWindowsShim(installPath, bundledCliPath);
+			} else {
+				await this.writeUnixShim(installPath, bundledCliPath);
+			}
+			logger.info('maestro-cli shim written', LOG_CONTEXT, { installPath });
+		} catch (err) {
+			logger.error('Failed to write maestro-cli shim', LOG_CONTEXT, {
+				installPath,
+				bundledCliPath,
+				error: err instanceof Error ? err.message : String(err),
+			});
+			throw err;
 		}
 
 		let pathUpdated = false;
@@ -251,6 +364,11 @@ export class MaestroCliManager {
 		let pathUpdateError: string | undefined;
 
 		const alreadyInPath = this.isPathEntryPresent(process.env.PATH, installDir);
+		logger.debug('PATH membership check for install dir', LOG_CONTEXT, {
+			installDir,
+			alreadyInPath,
+		});
+
 		if (!alreadyInPath) {
 			if (isWindows()) {
 				pathUpdated = await this.ensureWindowsUserPath(installDir);
@@ -265,13 +383,38 @@ export class MaestroCliManager {
 		}
 
 		const status = await this.checkStatus();
-		const executionSucceeded = (await this.readCliVersion(installPath)) !== null;
+		const shimVersion = await this.readCliVersion(installPath);
+		const executionSucceeded = shimVersion !== null;
+
+		const success =
+			status.installed &&
+			status.versionMatch &&
+			executionSucceeded &&
+			pathUpdateError === undefined;
+
+		logger.info('maestro-cli install/update finished', LOG_CONTEXT, {
+			success,
+			executionSucceeded,
+			shimVersion,
+			pathUpdated,
+			shellFilesUpdated,
+			pathUpdateError,
+			installed: status.installed,
+			versionMatch: status.versionMatch,
+			commandPath: status.commandPath,
+		});
+
+		if (!success) {
+			logger.warn('maestro-cli install/update completed with issues', LOG_CONTEXT, {
+				reasonInstalled: status.installed,
+				reasonVersionMatch: status.versionMatch,
+				reasonExecutionSucceeded: executionSucceeded,
+				pathUpdateError,
+			});
+		}
+
 		return {
-			success:
-				status.installed &&
-				status.versionMatch &&
-				executionSucceeded &&
-				pathUpdateError === undefined,
+			success,
 			status,
 			pathUpdated,
 			pathUpdateError,
