@@ -666,7 +666,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (ctx.activeSessionId) {
 					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically
 					ctx.handleOpenTerminalTab();
-					trackShortcut('newTerminalTab');
 				}
 			}
 
