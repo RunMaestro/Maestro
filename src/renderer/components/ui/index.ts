@@ -25,3 +25,6 @@ export type { GhostIconButtonProps } from './GhostIconButton';
 
 export { EmptyStatePlaceholder } from './EmptyStatePlaceholder';
 export type { EmptyStatePlaceholderProps } from './EmptyStatePlaceholder';
+
+export { ShortcutFilterButton } from './ShortcutFilterButton';
+export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';

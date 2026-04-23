@@ -1,12 +1,12 @@
-import React, { useState, useRef, useMemo, useCallback } from 'react';
-import { X, Award, CheckCircle, Trophy, ExternalLink, Search } from 'lucide-react';
+import { useState, useRef, useMemo, useCallback } from 'react';
+import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { buildKeysFromEvent } from '../utils/shortcutRecorder';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
@@ -33,7 +33,6 @@ export function ShortcutsHelpModal({
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const filterShortcutButtonRef = useRef<HTMLButtonElement>(null);
 	// Ref mirrors recording state so onBeforeClose stays stable for layer registration.
 	const recordingRef = useRef(recordingFilterShortcut);
 	recordingRef.current = recordingFilterShortcut;
@@ -71,22 +70,6 @@ export function ShortcutsHelpModal({
 		return KEYBOARD_MASTERY_LEVELS.find((l) => l.threshold > masteryPercentage);
 	}, [masteryPercentage]);
 	const usedShortcutIds = new Set(keyboardMasteryStats?.usedShortcuts ?? []);
-	const handleFilterRecord = (e: React.KeyboardEvent) => {
-		e.preventDefault();
-		e.stopPropagation();
-
-		if (e.key === 'Escape') {
-			setRecordingFilterShortcut(false);
-			setFilterShortcutKeys([]);
-			return;
-		}
-
-		const keys = buildKeysFromEvent(e);
-		if (!keys) return;
-
-		setFilterShortcutKeys(keys);
-		setRecordingFilterShortcut(false);
-	};
 
 	const filteredShortcuts = Object.values(allShortcuts)
 		.filter((sc) => {
@@ -143,53 +126,13 @@ export function ShortcutsHelpModal({
 					className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				/>
-				<button
-					ref={filterShortcutButtonRef}
-					onClick={() => {
-						if (filterShortcutKeys.length > 0) {
-							setFilterShortcutKeys([]);
-							setRecordingFilterShortcut(false);
-						} else {
-							setRecordingFilterShortcut(true);
-							filterShortcutButtonRef.current?.focus();
-						}
-					}}
-					onKeyDownCapture={(e) => {
-						if (recordingFilterShortcut) {
-							handleFilterRecord(e);
-						}
-					}}
-					onBlur={() => setRecordingFilterShortcut(false)}
-					className={`px-3 py-2 rounded border text-xs font-mono whitespace-nowrap text-center transition-colors ${recordingFilterShortcut ? 'ring-2' : ''}`}
-					style={
-						{
-							borderColor:
-								recordingFilterShortcut || filterShortcutKeys.length > 0
-									? theme.colors.accent
-									: theme.colors.border,
-							backgroundColor:
-								recordingFilterShortcut || filterShortcutKeys.length > 0
-									? theme.colors.accentDim
-									: theme.colors.bgActivity,
-							color:
-								recordingFilterShortcut || filterShortcutKeys.length > 0
-									? theme.colors.accent
-									: theme.colors.textDim,
-							'--tw-ring-color': theme.colors.accent,
-						} as React.CSSProperties
-					}
-				>
-					{recordingFilterShortcut ? (
-						'Press keys...'
-					) : filterShortcutKeys.length > 0 ? (
-						formatShortcutKeys(filterShortcutKeys)
-					) : (
-						<span className="flex items-center gap-1">
-							<Search className="w-3 h-3" />
-							By Key
-						</span>
-					)}
-				</button>
+				<ShortcutFilterButton
+					theme={theme}
+					keys={filterShortcutKeys}
+					onKeysChange={setFilterShortcutKeys}
+					recording={recordingFilterShortcut}
+					onRecordingChange={setRecordingFilterShortcut}
+				/>
 			</div>
 			<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
 				Many shortcuts can be customized from Settings → Shortcuts.
