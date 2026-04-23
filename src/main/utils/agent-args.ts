@@ -1,5 +1,9 @@
-import type { AgentConfig } from '../agents';
+import type { AgentConfig, AgentDefinition } from '../agents';
 import { logger } from './logger';
+
+/** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
+ * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
+type AgentConfigOverridable = Pick<AgentConfig, 'configOptions' | 'defaultEnvVars'>;
 
 const LOG_CONTEXT = '[AgentArgs]';
 
@@ -121,7 +125,7 @@ export function buildAgentArgs(
 }
 
 export function applyAgentConfigOverrides(
-	agent: AgentConfig | null | undefined,
+	agent: AgentConfigOverridable | AgentDefinition | AgentConfig | null | undefined,
 	baseArgs: string[],
 	overrides: AgentConfigOverrides
 ): AgentConfigResolution {

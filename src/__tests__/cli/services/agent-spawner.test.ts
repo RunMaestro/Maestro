@@ -23,6 +23,7 @@ import { EventEmitter } from 'events';
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
+	write: vi.fn(),
 };
 const mockStdout = new EventEmitter();
 const mockStderr = new EventEmitter();
@@ -93,8 +94,18 @@ vi.mock('os', async () => {
 
 // Mock storage service
 const mockGetAgentCustomPath = vi.fn();
+const mockReadAgentConfig = vi.fn<(toolType: string) => Record<string, unknown>>(() => ({}));
+const mockReadSshRemotes = vi.fn<() => unknown[]>(() => []);
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
+	readAgentConfig: (toolType: string) => mockReadAgentConfig(toolType),
+	readSshRemotes: () => mockReadSshRemotes(),
+}));
+
+// Mock SSH wrapper so SSH tests don't need real ssh/bash on the test machine
+const mockWrapSpawnWithSsh = vi.fn();
+vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
 import {
@@ -118,6 +129,9 @@ describe('agent-spawner', () => {
 		mockStderr.removeAllListeners();
 		(mockChild as EventEmitter).removeAllListeners();
 		mockGetAgentCustomPath.mockReturnValue(undefined);
+		mockReadAgentConfig.mockReturnValue({});
+		mockReadSshRemotes.mockReturnValue([]);
+		mockWrapSpawnWithSsh.mockReset();
 	});
 
 	afterEach(() => {
@@ -1618,6 +1632,418 @@ Some text with [x] in it that's not a checkbox
 			expect(fs.promises.access).not.toHaveBeenCalled();
 
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
+	});
+
+	// ========================================================================
+	// Config override + SSH remote tests
+	// ========================================================================
+	//
+	// These tests cover the CLI's agent-config override path
+	// (applyAgentConfigOverrides) and the SSH remote wrapper integration.
+	//
+	// The spawn flow is driven by fake events on mockChild so we can assert
+	// on the *inputs* to spawn() (command, args, env) without running anything.
+	// runSpawn() schedules a "close" event on the next tick so the promise
+	// resolves; tests call it before awaiting the spawnAgent promise.
+
+	/** Yield to the microtask queue so spawn() runs and event listeners attach. */
+	const yieldTick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+	/**
+	 * Wait until mockSpawn has been called at least `minCalls` times, or until
+	 * the per-poll attempts run out. First-run dynamic imports (ssh-spawn-wrapper)
+	 * can take several ticks, so we poll rather than assume spawn fires quickly.
+	 */
+	async function waitForSpawnCall(minCalls = 1, attempts = 50): Promise<void> {
+		for (let i = 0; i < attempts; i++) {
+			if (mockSpawn.mock.calls.length >= minCalls) return;
+			await yieldTick();
+		}
+	}
+
+	/**
+	 * Drive a spawnAgent promise to resolution. Waits for spawn to be called
+	 * (guarantees listeners are attached), emits stdout data, then emits a
+	 * close event. Returns the agent result.
+	 */
+	async function driveSpawnToCompletion(
+		resultPromise: Promise<AgentResult>,
+		code = 0,
+		output = ''
+	): Promise<AgentResult> {
+		// Race the spawn call against a soft timeout so tests that legitimately
+		// never call spawn (e.g., SSH hard-fail path) still resolve quickly via
+		// the promise they're awaiting rather than hanging here.
+		await Promise.race([waitForSpawnCall(), resultPromise.then(() => {})]);
+		if (mockSpawn.mock.calls.length > 0) {
+			if (output) mockStdout.emit('data', Buffer.from(output));
+			await yieldTick();
+			(mockChild as EventEmitter).emit('close', code);
+		}
+		return resultPromise;
+	}
+
+	/** Grab the (command, args, options) triple passed to spawn(). */
+	function spawnCall(): { command: string; args: string[]; options: { env: NodeJS.ProcessEnv } } {
+		expect(mockSpawn).toHaveBeenCalled();
+		const [command, args, options] = mockSpawn.mock.calls[0] as [
+			string,
+			string[],
+			{ env: NodeJS.ProcessEnv },
+		];
+		return { command, args, options };
+	}
+
+	const CLAUDE_OK = () => JSON.stringify({ type: 'result', result: 'ok' }) + '\n';
+	const CODEX_INIT = () => JSON.stringify({ type: 'task_started' }) + '\n';
+
+	describe('spawnAgent: local config overrides', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('appends session customArgs to Claude spawn', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customArgs: '--verbose-extra --flag',
+			});
+			const result = await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(result.success).toBe(true);
+			const { args } = spawnCall();
+			expect(args).toContain('--verbose-extra');
+			expect(args).toContain('--flag');
+		});
+
+		it('shell-quote-parses session customArgs (preserves spaces inside quotes)', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customArgs: '--foo "has spaces" --bar',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--foo');
+			expect(args).toContain('has spaces');
+			expect(args).toContain('--bar');
+		});
+
+		it('reads customArgs from agent-level config when session customArgs is not set', async () => {
+			mockReadAgentConfig.mockReturnValue({ customArgs: '--from-agent-config' });
+
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--from-agent-config');
+		});
+
+		it('session customArgs overrides agent-level customArgs', async () => {
+			mockReadAgentConfig.mockReturnValue({ customArgs: '--agent-level' });
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customArgs: '--session-level',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--session-level');
+			expect(args).not.toContain('--agent-level');
+		});
+
+		it('applies session customEnvVars to local spawn env (wins over shell env)', async () => {
+			const prev = process.env.MAESTRO_TEST_ENV;
+			process.env.MAESTRO_TEST_ENV = 'from-shell';
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customEnvVars: { MAESTRO_TEST_ENV: 'from-session' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { options } = spawnCall();
+			expect(options.env.MAESTRO_TEST_ENV).toBe('from-session');
+
+			if (prev === undefined) delete process.env.MAESTRO_TEST_ENV;
+			else process.env.MAESTRO_TEST_ENV = prev;
+		});
+
+		it('session customEnvVars wins over agent-level customEnvVars', async () => {
+			mockReadAgentConfig.mockReturnValue({
+				customEnvVars: { MAESTRO_TEST_LAYER: 'agent' },
+			});
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				customEnvVars: { MAESTRO_TEST_LAYER: 'session' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { options } = spawnCall();
+			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
+		});
+
+		it('applies customModel via configOptions argBuilder for Claude', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, { customModel: 'opus' });
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			const modelIdx = args.indexOf('--model');
+			expect(modelIdx).toBeGreaterThanOrEqual(0);
+			expect(args[modelIdx + 1]).toBe('opus');
+		});
+
+		it('applies customModel for Codex (JSON-line agent)', async () => {
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customModel: 'gpt-5.3-codex' });
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			const modelIdx = args.indexOf('-m');
+			expect(modelIdx).toBeGreaterThanOrEqual(0);
+			expect(args[modelIdx + 1]).toBe('gpt-5.3-codex');
+		});
+
+		it('does not add --model when customModel is empty', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).not.toContain('--model');
+		});
+	});
+
+	describe('spawnAgent: SSH integration', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		const sshWrapResult = (
+			overrides: Partial<{
+				command: string;
+				args: string[];
+				cwd: string;
+				customEnvVars: Record<string, string> | undefined;
+				sshStdinScript: string | undefined;
+				sshRemoteUsed: { id: string; name: string; host: string } | null;
+			}> = {}
+		) => ({
+			command: 'ssh',
+			args: ['remotehost', 'claude --print -- hi'],
+			cwd: '/home/user',
+			customEnvVars: undefined,
+			prompt: undefined,
+			sshStdinScript: undefined,
+			sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+			...overrides,
+		});
+
+		it('does NOT invoke the SSH wrapper when sshRemoteConfig is undefined', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			const { command } = spawnCall();
+			expect(command).not.toBe('ssh');
+		});
+
+		it('does NOT invoke the SSH wrapper when sshRemoteConfig.enabled is false', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: false, remoteId: null },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+
+		it('invokes the SSH wrapper and replaces command/args when remote resolves', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult());
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+			const result = await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(result.success).toBe(true);
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+			const { command, args } = spawnCall();
+			expect(command).toBe('ssh');
+			expect(args).toEqual(['remotehost', 'claude --print -- hi']);
+		});
+
+		it('writes sshStdinScript to child.stdin when large-prompt passthrough is used', async () => {
+			const script = '#!/bin/bash\nexec claude --print\nbig prompt here';
+			mockWrapSpawnWithSsh.mockResolvedValue(
+				sshWrapResult({ args: ['remotehost', '/bin/bash'], sshStdinScript: script })
+			);
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockStdin.write).toHaveBeenCalledWith(script);
+			expect(mockStdin.end).toHaveBeenCalled();
+			// write() must run BEFORE end() (first call of write precedes first end)
+			expect(mockStdin.write.mock.invocationCallOrder[0]).toBeLessThan(
+				mockStdin.end.mock.invocationCallOrder[0]
+			);
+		});
+
+		it('does NOT write to stdin when running locally (no sshStdinScript)', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			expect(mockStdin.write).not.toHaveBeenCalled();
+			expect(mockStdin.end).toHaveBeenCalled();
+		});
+
+		it('returns a clear error when SSH is enabled but the remote is unresolvable', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(
+				sshWrapResult({ command: 'claude', args: [], cwd: '/p', sshRemoteUsed: null })
+			);
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'missing-remote' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/SSH remote execution is enabled/i);
+			expect(result.error).toMatch(/could not be resolved/i);
+			expect(result.error).toContain('missing-remote');
+			// Must not fall through to a local spawn — user explicitly opted into SSH
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('hard-fails for JSON-line agents (Codex) when SSH remote is unresolvable', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(
+				sshWrapResult({ command: 'codex', args: [], cwd: '/p', sshRemoteUsed: null })
+			);
+
+			const result = await spawnAgent('codex', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/could not be resolved/);
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('forwards agent binaryName (not local path) to the SSH wrapper', async () => {
+			mockGetAgentCustomPath.mockReturnValue('/opt/local/claude');
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ agentBinaryName?: string; command: string },
+			];
+			expect(wrapConfig.agentBinaryName).toBe('claude');
+			// local `command` may be a resolved path, but agentBinaryName is what
+			// the wrapper actually uses for the remote invocation.
+		});
+
+		it('passes session customArgs through to the SSH wrapper (baseline args include them)', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				customArgs: '--ssh-injected-flag',
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [{ args: string[] }];
+			expect(wrapConfig.args).toContain('--ssh-injected-flag');
+		});
+
+		it('passes session customEnvVars through to the SSH wrapper (env reaches remote host)', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				customEnvVars: { REMOTE_TOKEN: 'abc' },
+			});
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ customEnvVars?: Record<string, string> },
+			];
+			expect(wrapConfig.customEnvVars).toBeDefined();
+			expect(wrapConfig.customEnvVars!.REMOTE_TOKEN).toBe('abc');
+		});
+	});
+
+	describe('spawnAgent: regression', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('Claude spawn without any options still includes base stream-json flags', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--print');
+			expect(args).toContain('--verbose');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).toContain('--dangerously-skip-permissions');
+			// prompt is appended as positional after '--'
+			const sep = args.indexOf('--');
+			expect(sep).toBeGreaterThan(0);
+			expect(args[sep + 1]).toBe('hi');
+		});
+
+		it('Claude read-only mode uses --permission-mode plan instead of --dangerously-skip-permissions', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, { readOnlyMode: true });
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--permission-mode');
+			expect(args).toContain('plan');
+			expect(args).not.toContain('--dangerously-skip-permissions');
+		});
+
+		it('Claude resumes existing agent session when agentSessionId is provided', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi', 'agent-session-xyz');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			expect(args).toContain('--resume');
+			expect(args).toContain('agent-session-xyz');
+			// no --session-id should be injected when resuming
+			expect(args).not.toContain('--session-id');
+		});
+
+		it('Claude generates fresh --session-id when no agentSessionId is provided', async () => {
+			const p = spawnAgent('claude-code', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
+
+			const { args } = spawnCall();
+			const idx = args.indexOf('--session-id');
+			expect(idx).toBeGreaterThanOrEqual(0);
+			expect(args[idx + 1]).toMatch(/^[0-9a-f-]{36}$/);
+		});
+
+		it('Codex spawn preserves working-dir flag and resume args', async () => {
+			const p = spawnAgent('codex', '/working', 'hi', 'codex-thread-123');
+			await driveSpawnToCompletion(p, 0, CODEX_INIT());
+
+			const { args } = spawnCall();
+			expect(args).toContain('exec');
+			expect(args).toContain('--json');
+			// Codex takes -C <dir> for working directory
+			const c = args.indexOf('-C');
+			expect(c).toBeGreaterThanOrEqual(0);
+			expect(args[c + 1]).toBe('/working');
+			// resume args are ['resume', '<id>']
+			expect(args).toContain('resume');
+			expect(args).toContain('codex-thread-123');
+		});
+
+		it('unsupported agent type returns a failure result', async () => {
+			const result = await spawnAgent('terminal' as never, '/p', 'hi');
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/Unsupported agent type/);
 		});
 	});
 });

@@ -363,6 +363,18 @@ if (sshStore && session.sshRemoteConfig?.enabled) {
 - The correct agent type is used (don't hardcode `claude-code`)
 - Custom agent configuration (customPath, customArgs, customEnvVars) is passed through
 - Agent's `binaryName` is used for remote execution (not local paths)
+- When the user enabled SSH but the configured remote can't be resolved, **fail
+  loudly** instead of silently running locally — the user explicitly opted into
+  SSH and their prompt shouldn't leak to the local machine (see
+  `sshUnresolvedFailure()` in `src/cli/services/agent-spawner.ts` for the CLI's
+  version of this).
+
+**CLI parity:** The CLI (`src/cli/services/agent-spawner.ts`) spawns agent
+processes for batch/playbook automation and honors the same SSH wrapping and
+agent-config overrides as the desktop app. When adding new CLI spawn sites,
+thread `sessionSshRemoteConfig`, `customArgs`, `customEnvVars`, `customModel`,
+`customEffort` through to `spawnAgent(...)`. The CLI loads `ssh-spawn-wrapper`
+via dynamic `import()` so the SSH chain stays out of the local hot path.
 
 See [[CLAUDE-PATTERNS.md]] for detailed SSH patterns.
 

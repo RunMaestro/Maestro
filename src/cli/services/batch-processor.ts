@@ -441,6 +441,10 @@ export async function* runPlaybook(
 					// Spawn agent with combined prompt + document
 					const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, {
 						customModel: session.customModel,
+						customEffort: session.customEffort,
+						customArgs: session.customArgs,
+						customEnvVars: session.customEnvVars,
+						sshRemoteConfig: session.sessionSshRemoteConfig,
 					});
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -479,7 +483,13 @@ export async function* runPlaybook(
 							session.cwd,
 							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
 							result.agentSessionId,
-							{ customModel: session.customModel }
+							{
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								customEnvVars: session.customEnvVars,
+								sshRemoteConfig: session.sessionSshRemoteConfig,
+							}
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {
