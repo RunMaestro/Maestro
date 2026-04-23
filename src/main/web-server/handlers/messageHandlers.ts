@@ -69,6 +69,7 @@ export interface WebClientMessage {
 	newName?: string;
 	filePath?: string;
 	focus?: boolean;
+	force?: boolean;
 	[key: string]: unknown;
 }
 
@@ -509,6 +510,10 @@ export class WebSocketMessageHandler {
 		const command = message.command as string;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		// force=true bypasses the busy-state guard below, allowing callers to
+		// dispatch concurrent writes to an already-running agent. Used by
+		// `maestro-cli send --live --force`.
+		const force = message.force === true;
 
 		logger.info(
 			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
@@ -531,8 +536,9 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Check if session is busy - prevent race conditions between desktop and web
-		if (sessionDetail.state === 'busy') {
+		// Check if session is busy - prevent race conditions between desktop and web.
+		// `force: true` opts out of this guard (see `maestro-cli send --live --force`).
+		if (sessionDetail.state === 'busy' && !force) {
 			this.sendError(
 				client,
 				'Session is busy - please wait for the current operation to complete',
@@ -542,6 +548,9 @@ export class WebSocketMessageHandler {
 			);
 			logger.debug(`Command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
 			return;
+		}
+		if (sessionDetail.state === 'busy' && force) {
+			logger.info(`[Web Command] Force-dispatching to busy session ${sessionId}`, LOG_CONTEXT);
 		}
 
 		// Use client's inputMode if provided, otherwise fall back to server state

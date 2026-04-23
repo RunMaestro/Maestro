@@ -281,6 +281,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		sensitive: true,
 		category: 'advanced',
 	},
+	allowConcurrentSend: {
+		description:
+			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 
 	// --- Shell ---
 	defaultShell: {

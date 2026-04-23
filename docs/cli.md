@@ -78,13 +78,16 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                                                                                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                            |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                                                                                              |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                                                                                       |
+| `-l, --live`         | Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                                      |
+| `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                      |
+| `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Requires `allowConcurrentSend=true`; otherwise exits with code `FORCE_NOT_ALLOWED` |
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `CLAUDE_NOT_FOUND`, `CODEX_NOT_FOUND`, `INVALID_OPTIONS`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `COMMAND_FAILED`.
 
 Supported agent types: `claude-code`, `codex`.
 

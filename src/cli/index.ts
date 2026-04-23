@@ -144,6 +144,10 @@ program
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option('-l, --live', 'Send message through Maestro desktop (appears in tab)')
 	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
+	.option(
+		'-f, --force',
+		'Bypass the busy-state guard when writing to the active tab (requires --live); enables concurrent writes to a single agent'
+	)
 	.action(send);
 
 // Open file command - open a file in the Maestro desktop app

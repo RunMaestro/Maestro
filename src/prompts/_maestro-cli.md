@@ -95,14 +95,17 @@ Reverse with `false` or `maestro-cli settings reset encoreFeatures.<flag>`.
 Send a message to another agent and receive a JSON response. Useful for inter-agent coordination.
 
 ```bash
-{{MAESTRO_CLI_PATH}} send <agent-id> "Your message here" [-s <session-id>] [-r] [-t]
+{{MAESTRO_CLI_PATH}} send <agent-id> "Your message here" [-s <session-id>] [-r] [-t] [-l] [--new-tab] [-f]
 ```
 
-| Flag                 | Description                                              |
-| -------------------- | -------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one |
-| `-r, --read-only`    | Run in read-only mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in Maestro            |
+| Flag                 | Description                                                                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume an existing session instead of creating a new one                                                                                                                                                                              |
+| `-r, --read-only`    | Run in read-only mode (agent cannot modify files)                                                                                                                                                                                     |
+| `-t, --tab`          | Open/focus the agent's session tab in Maestro                                                                                                                                                                                         |
+| `-l, --live`         | Route the message through the Maestro desktop so it appears in the agent's tab                                                                                                                                                        |
+| `--new-tab`          | With `--live`, create a new AI tab and send the prompt into it                                                                                                                                                                        |
+| `-f, --force`        | With `--live`, bypass the busy-state guard so you can dispatch concurrent writes to a single agent's active tab. Gated by the `allowConcurrentSend` setting (off by default); errors out with code `FORCE_NOT_ALLOWED` if not enabled |
 
 ### Resource Listing and Inspection
 

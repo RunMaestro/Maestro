@@ -28,6 +28,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	readSettingValue: vi.fn(),
 }));
 
 // Mock usage-aggregator
@@ -51,7 +52,7 @@ vi.mock('../../../main/agents/definitions', () => ({
 import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
+import { resolveAgentId, getSessionById, readSettingValue } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
 
 describe('send command', () => {
@@ -398,6 +399,81 @@ describe('send command', () => {
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('INVALID_OPTIONS');
 			expect(output.error).toBe('--new-tab requires --live');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should include force=true in send_command payload when --force is set and setting is enabled', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(true);
+			const mockSendCommand = vi.fn().mockResolvedValue({ type: 'command_result' });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Forced message', { live: true, force: true });
+
+			expect(readSettingValue).toHaveBeenCalledWith('allowConcurrentSend');
+			expect(mockSendCommand).toHaveBeenCalledWith(
+				{
+					type: 'send_command',
+					sessionId: 'agent-abc-123',
+					command: 'Forced message',
+					inputMode: 'ai',
+					force: true,
+				},
+				'command_result'
+			);
+		});
+
+		it('should omit force field when --force is not set', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const mockSendCommand = vi.fn().mockResolvedValue({ type: 'command_result' });
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = { sendCommand: mockSendCommand };
+				return action(mockClient as never);
+			});
+
+			await send('my-agent-id', 'Normal', { live: true });
+
+			const [payload] = mockSendCommand.mock.calls[0];
+			expect(payload).not.toHaveProperty('force');
+		});
+
+		it('should error when --force is used without --live', async () => {
+			await send('my-agent-id', 'Hello', { force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('INVALID_OPTIONS');
+			expect(output.error).toBe('--force requires --live');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should error FORCE_NOT_ALLOWED when --force is used and allowConcurrentSend is disabled', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(false);
+
+			await send('my-agent-id', 'Hello', { live: true, force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('FORCE_NOT_ALLOWED');
+			expect(output.error).toContain('allowConcurrentSend');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			// Must not reach the WS layer
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('should error FORCE_NOT_ALLOWED when --force is used and setting is unset (default off)', async () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(readSettingValue).mockReturnValue(undefined);
+
+			await send('my-agent-id', 'Hello', { live: true, force: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.success).toBe(false);
+			expect(output.code).toBe('FORCE_NOT_ALLOWED');
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
