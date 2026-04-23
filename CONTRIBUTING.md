@@ -645,13 +645,14 @@ Based on capabilities, these UI features are automatically enabled/disabled:
 
 ### Supported Agents Reference
 
-| Agent         | Resume                | Read-Only                   | JSON | Images | Sessions                      | Cost             | Status      |
-| ------------- | --------------------- | --------------------------- | ---- | ------ | ----------------------------- | ---------------- | ----------- |
-| Claude Code   | ✅ `--resume`         | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`               | ✅               | ✅ Complete |
-| Codex         | ✅ `exec resume`      | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                | ❌ (tokens only) | ✅ Complete |
-| OpenCode      | ✅ `--session`        | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/` | ✅               | ✅ Complete |
-| Factory Droid | ✅ `-s, --session-id` | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`              | ❌ (tokens only) | ✅ Complete |
-| Gemini CLI    | TBD                   | TBD                         | TBD  | TBD    | TBD                           | ✅               | 📋 Planned  |
+| Agent              | Resume                       | Read-Only                   | JSON | Images | Sessions                       | Cost                    | Status      |
+| ------------------ | ---------------------------- | --------------------------- | ---- | ------ | ------------------------------ | ----------------------- | ----------- |
+| Claude Code        | ✅ `--resume`                | ✅ `--permission-mode plan` | ✅   | ✅     | ✅ `~/.claude/`                | ✅                      | ✅ Complete |
+| Codex              | ✅ `exec resume`             | ✅ `--sandbox read-only`    | ✅   | ✅     | ✅ `~/.codex/`                 | ❌ (tokens only)        | ✅ Complete |
+| OpenCode           | ✅ `--session`               | ✅ `--agent plan`           | ✅   | ✅     | ✅ `~/.local/share/opencode/`  | ✅                      | ✅ Complete |
+| Factory Droid      | ✅ `-s, --session-id`        | ✅ (default mode)           | ✅   | ✅     | ✅ `~/.factory/`               | ❌ (tokens only)        | ✅ Complete |
+| GitHub Copilot CLI | ✅ `--resume` / `--continue` | ✅ permission rules         | ✅   | ✅     | ✅ `~/.copilot/session-state/` | ❌ (not exposed by CLI) | 🧪 Beta     |
+| Gemini CLI         | TBD                          | TBD                         | TBD  | TBD    | TBD                            | ✅                      | 📋 Planned  |
 
 For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
 
@@ -975,11 +976,11 @@ Place icons in `build/` directory:
 
 ### 2. Update Version
 
-Update in `package.json`. Use **odd** minor versions for `main` (stable) and **even** minor versions for `rc` (pre-release). See [Branching & Release Strategy](#branching--release-strategy).
+Update in `package.json`:
 
 ```json
 {
-	"version": "0.15.0"
+	"version": "X.Y.Z"
 }
 ```
 
@@ -999,16 +1000,11 @@ Output in `release/` directory.
 Create a release tag to trigger automated builds:
 
 ```bash
-# Stable release (from main)
-git tag v0.15.0
-git push origin v0.15.0
-
-# Release candidate (from rc) — use -RC suffix
-git tag v0.16.0-RC
-git push origin v0.16.0-RC
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-GitHub Actions will build for all platforms and create a release. Tags containing `-RC`, `-beta`, or `-alpha` are automatically marked as pre-releases on GitHub.
+GitHub Actions will build for all platforms and create a release.
 
 ## Documentation
 

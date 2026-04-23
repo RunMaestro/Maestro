@@ -115,6 +115,9 @@ const summarizeToolInput = (input: Record<string, unknown>): ToolSummary | null 
 	return { description, detail: detail ?? '' };
 };
 
+const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -517,6 +520,52 @@ const LogItemComponent = memo(
 							</div>
 						</div>
 					)}
+					{isHiddenProgressEntry(log) && (
+						<div
+							className="px-4 py-1.5 text-xs border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<div className="flex items-start gap-2">
+								<span
+									className="px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}30`,
+										color: theme.colors.accent,
+									}}
+								>
+									{log.metadata?.hiddenProgress?.kind === 'tool'
+										? log.metadata.hiddenProgress.toolName || 'working'
+										: 'thinking'}
+								</span>
+								{log.metadata?.toolState?.status === 'completed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
+										✓
+									</span>
+								) : log.metadata?.toolState?.status === 'failed' ||
+								  log.metadata?.toolState?.status === 'error' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+										!
+									</span>
+								) : (
+									<span
+										className="animate-pulse shrink-0 pt-0.5"
+										style={{ color: theme.colors.warning }}
+									>
+										●
+									</span>
+								)}
+								<span
+									className="break-words whitespace-pre-wrap opacity-80"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</span>
+							</div>
+						</div>
+					)}
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
@@ -557,6 +606,11 @@ const LogItemComponent = memo(
 												✓
 											</span>
 										)}
+										{log.metadata?.toolState?.status === 'failed' && (
+											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+												!
+											</span>
+										)}
 										{toolSummary?.description && (
 											<span
 												className="opacity-50 break-words"
@@ -580,7 +634,8 @@ const LogItemComponent = memo(
 								</div>
 							);
 						})()}
-					{log.source !== 'error' &&
+					{!isHiddenProgressEntry(log) &&
+						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
 						(hasNoMatches ? (
@@ -969,6 +1024,8 @@ const LogItemComponent = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
+			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

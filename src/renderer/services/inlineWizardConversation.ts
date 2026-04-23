@@ -401,9 +401,8 @@ export function parseWizardResponse(response: string): WizardResponse | null {
 }
 
 /**
- * Extract the agent session ID (session_id) from Claude Code JSON output.
- * This is the Claude-side session ID that can be used to resume the session.
- * Returns the first session_id found in init or result messages.
+ * Extract the provider session ID from agent JSON output.
+ * Returns the first session identifier found in init or result-style messages.
  */
 function extractAgentSessionIdFromOutput(output: string): string | null {
 	try {
@@ -412,9 +411,14 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 			if (!line.trim()) continue;
 			try {
 				const msg = JSON.parse(line);
-				// session_id appears in init and result messages
 				if (msg.session_id) {
 					return msg.session_id;
+				}
+				if (msg.sessionId) {
+					return msg.sessionId;
+				}
+				if (msg.data?.sessionId) {
+					return msg.data.sessionId;
 				}
 			} catch {
 				// Ignore non-JSON lines
@@ -428,7 +432,7 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
 
 /**
  * Extract the result text from agent JSON output.
- * Handles different agent output formats (Claude Code stream-json, etc.)
+ * Handles different agent output formats (Claude Code, Copilot, OpenCode, Codex).
  */
 function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
 	try {
@@ -476,6 +480,21 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 			if (textParts.length > 0) {
 				return textParts.join('');
+			}
+		}
+
+		// For Copilot: final answers arrive as assistant.message with phase=final_answer
+		if (agentType === 'copilot-cli') {
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'assistant.message' && msg.data?.phase === 'final_answer') {
+						return typeof msg.data?.content === 'string' ? msg.data.content : null;
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
 			}
 		}
 
@@ -544,6 +563,14 @@ function buildArgsForAgent(agent: any): string[] {
 				args.push(...agent.readOnlyArgs);
 			}
 
+			return args;
+		}
+
+		case 'copilot-cli': {
+			const args = [...(agent.args || [])];
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
 			return args;
 		}
 

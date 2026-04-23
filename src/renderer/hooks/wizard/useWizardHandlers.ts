@@ -199,7 +199,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	useEffect(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
-		if (currentSession.toolType !== 'claude-code' && currentSession.toolType !== 'opencode') return;
+		if (
+			currentSession.toolType !== 'claude-code' &&
+			currentSession.toolType !== 'opencode' &&
+			currentSession.toolType !== 'copilot-cli'
+		)
+			return;
 		if (currentSession.agentCommands && currentSession.agentCommands.length > 0) return;
 
 		const sessionId = currentSession.id;

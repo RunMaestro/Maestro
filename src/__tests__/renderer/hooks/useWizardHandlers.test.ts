@@ -379,6 +379,67 @@ describe('useWizardHandlers', () => {
 			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 		});
+
+		it('discovers agent slash commands for copilot sessions', async () => {
+			const session = createMockSession({
+				toolType: 'copilot-cli' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'help' },
+				{ name: 'model' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'copilot-cli',
+				'/projects/test',
+				undefined
+			);
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ command: '/help' }),
+					expect.objectContaining({ command: '/model' }),
+				])
+			);
+		});
+
+		it('discovers agent slash commands for opencode sessions', async () => {
+			const session = createMockSession({
+				toolType: 'opencode' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'deploy', prompt: 'Deploy the app' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'opencode',
+				'/projects/test',
+				undefined
+			);
+		});
 	});
 
 	// ========================================================================

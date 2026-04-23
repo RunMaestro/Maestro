@@ -37,6 +37,9 @@ export {
 	clearParserRegistry,
 } from './agent-output-parser';
 
+// Re-export factory function
+export { createOutputParser } from './parser-factory';
+
 // Re-export error pattern utilities (access patterns via getErrorPatterns(agentId))
 export type { ErrorPattern, AgentErrorPatterns } from './error-patterns';
 export {
@@ -54,6 +57,7 @@ import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
 import { CodexOutputParser } from './codex-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
+import { CopilotOutputParser } from './copilot-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -66,6 +70,7 @@ export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
 export { CodexOutputParser } from './codex-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
+export { CopilotOutputParser } from './copilot-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -82,6 +87,7 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new OpenCodeOutputParser());
 	registerOutputParser(new CodexOutputParser());
 	registerOutputParser(new FactoryDroidOutputParser());
+	registerOutputParser(new CopilotOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);
