@@ -13,6 +13,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
+import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
 
 /** UUID v4 format regex for validating stored security tokens.
@@ -960,6 +961,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 				colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
+				shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 			};
 		});
 
@@ -996,6 +998,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 							audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 							colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 							conductorProfile: settingsStore.get('conductorProfile', '') as string,
+							shortcuts: settingsStore.get('shortcuts', {}) as Record<
+								string,
+								import('../../shared/shortcut-types').Shortcut
+							>,
 						};
 						server.broadcastSettingsChanged(settings);
 					}

@@ -2114,7 +2114,7 @@ describe('MobileApp', () => {
 			});
 		});
 
-		it('navigates to previous tab with Cmd+[', async () => {
+		it('navigates to previous tab with Cmd+Shift+[', async () => {
 			render(<MobileApp />);
 
 			await act(async () => {
@@ -2131,7 +2131,7 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: '[', metaKey: true });
+			fireEvent.keyDown(document, { key: '[', metaKey: true, shiftKey: true });
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
@@ -2140,7 +2140,7 @@ describe('MobileApp', () => {
 			});
 		});
 
-		it('navigates to next tab with Cmd+]', async () => {
+		it('navigates to next tab with Cmd+Shift+]', async () => {
 			render(<MobileApp />);
 
 			await act(async () => {
@@ -2157,7 +2157,7 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: ']', metaKey: true });
+			fireEvent.keyDown(document, { key: ']', metaKey: true, shiftKey: true });
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
@@ -2183,7 +2183,7 @@ describe('MobileApp', () => {
 				]);
 			});
 
-			fireEvent.keyDown(document, { key: ']', metaKey: true });
+			fireEvent.keyDown(document, { key: ']', metaKey: true, shiftKey: true });
 
 			expect(mockSend).toHaveBeenCalledWith({
 				type: 'select_tab',
