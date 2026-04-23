@@ -87,13 +87,6 @@ export const AGENT_TILES: AgentTile[] = [
 		description: 'Coming soon',
 		brandColor: '#4285F4', // Google blue
 	},
-	{
-		id: 'qwen3-coder',
-		name: 'Qwen3 Coder',
-		supported: false,
-		description: 'Coming soon',
-		brandColor: '#6366F1', // Indigo/purple
-	},
 ];
 
 // Grid dimensions for keyboard navigation
@@ -198,29 +191,6 @@ export function AgentLogo({
 					/>
 					<path
 						d="M12 20l6 4-6 4M22 28h10"
-						stroke={color}
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-				</svg>
-			);
-
-		case 'qwen3-coder':
-			// Qwen - Alibaba cloud inspired
-			return (
-				<svg
-					className="w-12 h-12"
-					viewBox="0 0 48 48"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-					style={{ opacity }}
-				>
-					{/* Qwen - Q with code element */}
-					<circle cx="24" cy="22" r="14" stroke={color} strokeWidth="2.5" fill="none" />
-					<path d="M30 30l8 10" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-					<path
-						d="M18 22l4 4 6-8"
 						stroke={color}
 						strokeWidth="2"
 						strokeLinecap="round"

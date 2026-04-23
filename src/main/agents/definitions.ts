@@ -441,13 +441,6 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
-		id: 'aider',
-		name: 'Aider',
-		binaryName: 'aider',
-		command: 'aider',
-		args: [], // Base args (placeholder - to be configured when implemented)
-	},
-	{
 		id: 'copilot-cli',
 		name: 'Copilot-CLI',
 		binaryName: 'copilot',
