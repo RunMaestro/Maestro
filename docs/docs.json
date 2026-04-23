@@ -47,6 +47,7 @@
 					"slash-commands",
 					"prompt-customization",
 					"history",
+					"memories",
 					"context-management",
 					"document-graph",
 					"git-worktrees",
