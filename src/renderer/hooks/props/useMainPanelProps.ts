@@ -487,10 +487,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),
-			onPublishMessageGist: (text: string) => {
+			onPublishMessageGist: (text: string, messageId?: string) => {
 				if (!text.trim()) return;
 				const filename = `ai_response_${Date.now()}.md`;
-				useTabStore.getState().setTabGistContent({ filename, content: text });
+				useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
 				deps.setGistPublishModalOpen(true);
 			},
 			hasGist: deps.hasGist,

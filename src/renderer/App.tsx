@@ -3123,10 +3123,12 @@ function MaestroConsoleInner() {
 									participantColors={groupChatParticipantColors}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
-									onPublishMessageGist={(text: string) => {
+									onPublishMessageGist={(text: string, messageId?: string) => {
 										if (!text.trim()) return;
 										const filename = `group_chat_response_${Date.now()}.md`;
-										useTabStore.getState().setTabGistContent({ filename, content: text });
+										useTabStore
+											.getState()
+											.setTabGistContent({ filename, content: text, messageId });
 										setGistPublishModalOpen(true);
 									}}
 								/>

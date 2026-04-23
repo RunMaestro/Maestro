@@ -2614,7 +2614,7 @@ describe('memoization behavior', () => {
 			const gistButton = screen.getByTitle('Publish as GitHub Gist');
 			fireEvent.click(gistButton);
 
-			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share');
+			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
 		});
 	});
 });

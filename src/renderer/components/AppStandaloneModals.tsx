@@ -2,6 +2,7 @@ import { lazy, memo, Suspense } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
+import { useMessageGistStore } from '../stores/messageGistStore';
 import { useUIStore } from '../stores/uiStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
@@ -415,12 +416,22 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					onSuccess={(gistUrl, isPublic) => {
+						const publishedAt = Date.now();
 						// Save gist URL for the file if it's from file preview tab (not tab context)
 						if (activeFileTab && !tabGistContent) {
 							saveFileGistUrl(activeFileTab.path, {
 								gistUrl,
 								isPublic,
-								publishedAt: Date.now(),
+								publishedAt,
+							});
+						}
+						// Save gist URL for the individual message, if the publish originated from one.
+						// In-memory only — intentionally not persisted across app restarts.
+						if (tabGistContent?.messageId) {
+							useMessageGistStore.getState().setMessageGist(tabGistContent.messageId, {
+								gistUrl,
+								isPublic,
+								publishedAt,
 							});
 						}
 						// Copy the gist URL to clipboard
@@ -438,7 +449,11 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					existingGist={
-						activeFileTab && !tabGistContent ? fileGistUrls[activeFileTab.path] : undefined
+						tabGistContent?.messageId
+							? useMessageGistStore.getState().published[tabGistContent.messageId]
+							: activeFileTab && !tabGistContent
+								? fileGistUrls[activeFileTab.path]
+								: undefined
 					}
 				/>
 			)}
