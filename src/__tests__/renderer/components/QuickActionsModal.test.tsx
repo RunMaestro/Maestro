@@ -853,7 +853,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Debug: Log Session State action', () => {
-			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 

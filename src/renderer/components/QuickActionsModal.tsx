@@ -1648,11 +1648,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		{
 			id: 'debugLogSessions',
 			label: 'Debug: Log Session State',
-			subtext: 'Print session state to console',
+			subtext: 'Print session state to DevTools console',
 			action: () => {
-				logger.info(
+				// console.log (not logger.info) so output lands in the renderer DevTools
+				// console where objects are expandable, not the main process log file.
+				console.log(
 					'[Debug] All sessions:',
-					undefined,
 					sessions.map((s) => ({
 						id: s.id,
 						name: s.name,
