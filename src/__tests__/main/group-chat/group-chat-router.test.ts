@@ -46,6 +46,14 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// Mock stores/getters: router reads global shellEnvVars via getSettingsStore().
+// Return an empty settings store so spawns receive an empty shellEnvVars map.
+vi.mock('../../../main/stores/getters', () => ({
+	getSettingsStore: () => ({
+		get: (_key: string, defaultValue: unknown) => defaultValue,
+	}),
+}));
+
 import {
 	extractMentions,
 	extractAllMentions,
