@@ -290,6 +290,88 @@ describe('agents IPC handlers', () => {
 			expect(result[0].configOptions[0].argBuilder).toBeUndefined();
 			expect(result[0].configOptions[0].key).toBe('test');
 		});
+
+		describe('SSH remote detection (issue #878)', () => {
+			let mockSettingsStore: {
+				get: ReturnType<typeof vi.fn>;
+				set: ReturnType<typeof vi.fn>;
+			};
+
+			beforeEach(() => {
+				mockSettingsStore = {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'remote-1',
+							host: 'dev.example.com',
+							username: 'dev',
+							port: 22,
+							enabled: true,
+						},
+					]),
+					set: vi.fn(),
+				};
+
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: mockSettingsStore as any,
+				});
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'mock'],
+				});
+			});
+
+			it("uses POSIX 'command -v' (not 'which') to probe each agent binary", async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '/home/dev/.local/bin/claude\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				await handler!({} as any, 'remote-1');
+
+				// Every probe should invoke 'command -v <binary>', never 'which'
+				const calls = vi.mocked(buildSshCommand).mock.calls;
+				expect(calls.length).toBeGreaterThan(0);
+				for (const [, options] of calls) {
+					expect(options.command).toBe('command');
+					expect(options.args[0]).toBe('-v');
+				}
+			});
+
+			it('marks the agent available and records the resolved remote path', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '/home/dev/.claude/local/claude\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(true);
+				expect(claude.path).toBe('/home/dev/.claude/local/claude');
+			});
+
+			it('marks the agent unavailable when command -v exits non-zero', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 1,
+					stdout: '',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(false);
+				expect(claude.path).toBeUndefined();
+			});
+		});
 	});
 
 	describe('agents:get', () => {
