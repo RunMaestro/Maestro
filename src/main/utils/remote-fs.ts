@@ -244,13 +244,21 @@ export async function readDirRemote(
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
-	// The presence of the __SYMDIR__ marker means the pipeline reached the
-	// symlink scan, which implies `ls` already ran to completion (or emitted
-	// __LS_ERROR__). Treat that as success from a transport standpoint even
-	// if the final `for` loop produced a non-zero exit — see the `|| true`
-	// comment above, and the regression test covering this case.
+	// Defense-in-depth for the for-loop-tail regression: even with `|| true`
+	// in place, tolerate the specific known shape (exit 1, no stderr, marker
+	// present) so an accidental future shell-command regression surfaces as
+	// degraded output rather than a blank error wall. Anything else — a real
+	// transport failure, a different exit code, or any stderr — still
+	// propagates so we don't silently swallow SSH/network issues.
 	const reachedSymlinkMarker = result.stdout.includes('__SYMDIR__');
-	if (result.exitCode !== 0 && !result.stdout.includes('__LS_ERROR__') && !reachedSymlinkMarker) {
+	const hasLsErrorMarker = result.stdout.includes('__LS_ERROR__');
+	const toleratedSymlinkScanExit =
+		result.exitCode === 1 &&
+		reachedSymlinkMarker &&
+		!hasLsErrorMarker &&
+		result.stderr.trim() === '';
+
+	if (result.exitCode !== 0 && !hasLsErrorMarker && !toleratedSymlinkScanExit) {
 		return {
 			success: false,
 			error: result.stderr || `ls failed with exit code ${result.exitCode}`,

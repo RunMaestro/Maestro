@@ -204,6 +204,34 @@ describe('remote-fs', () => {
 			const remoteCommand = call[call.length - 1];
 			expect(remoteCommand).toMatch(/done 2>\/dev\/null \|\| true$/);
 		});
+
+		// The marker-based tolerance is intentionally narrow — anything that
+		// doesn't match the known for-loop-tail shape must still surface as
+		// a failure so we don't silently swallow SSH/transport errors.
+		it('propagates failure when marker is present but stderr is non-empty', async () => {
+			const deps = createMockDeps({
+				stdout: 'src/\n__SYMDIR__\n',
+				stderr: 'ssh: connect to host X port 22: Connection refused',
+				exitCode: 1,
+			});
+
+			const result = await readDirRemote('/home/user/project', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Connection refused');
+		});
+
+		it('propagates failure when marker is present but exit code is not 1', async () => {
+			const deps = createMockDeps({
+				stdout: 'src/\n__SYMDIR__\n',
+				stderr: '',
+				exitCode: 255, // typical ssh transport failure
+			});
+
+			const result = await readDirRemote('/home/user/project', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+		});
 	});
 
 	describe('readFileRemote', () => {
