@@ -1780,6 +1780,43 @@ Some text with [x] in it that's not a checkbox
 			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
 		});
 
+		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
+			// Regression: agent.defaultEnvVars must NOT silently override a value
+			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
+			// its defaultEnvVars — if the shell sets it, that shell value should
+			// survive to the spawned process.
+			const prev = process.env.OPENCODE_CONFIG_CONTENT;
+			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
+
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
+			} finally {
+				if (prev === undefined) delete process.env.OPENCODE_CONFIG_CONTENT;
+				else process.env.OPENCODE_CONFIG_CONTENT = prev;
+			}
+		});
+
+		it('agent defaultEnvVars is applied when the shell has not set it', async () => {
+			// Complements the "shell wins" test: when the shell does NOT export
+			// the key, the agent default must still reach the spawned process.
+			const prev = process.env.OPENCODE_CONFIG_CONTENT;
+			delete process.env.OPENCODE_CONFIG_CONTENT;
+
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+			} finally {
+				if (prev !== undefined) process.env.OPENCODE_CONFIG_CONTENT = prev;
+			}
+		});
+
 		it('applies customModel via configOptions argBuilder for Claude', async () => {
 			const p = spawnAgent('claude-code', '/p', 'hi', undefined, { customModel: 'opus' });
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
@@ -1969,6 +2006,24 @@ Some text with [x] in it that's not a checkbox
 			];
 			expect(wrapConfig.customEnvVars).toBeDefined();
 			expect(wrapConfig.customEnvVars!.REMOTE_TOKEN).toBe('abc');
+		});
+
+		it('forwards agent defaultEnvVars to the SSH wrapper even without user customEnvVars', async () => {
+			// Defaults must still reach the remote host (which has no shell env
+			// to fall back on). Session customEnvVars is omitted here — we're
+			// asserting that the default-only path survived the env-layer fix.
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+
+			const p = spawnAgent('opencode', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+			await driveSpawnToCompletion(p, 0);
+
+			const [wrapConfig] = mockWrapSpawnWithSsh.mock.calls[0] as [
+				{ customEnvVars?: Record<string, string> },
+			];
+			expect(wrapConfig.customEnvVars).toBeDefined();
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
 		});
 	});
 

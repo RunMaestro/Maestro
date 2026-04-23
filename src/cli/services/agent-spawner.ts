@@ -50,16 +50,22 @@ type SpawnOverrides = Pick<
 
 /**
  * Resolve agent-level + session-level overrides and produce final args plus
- * the effective customEnvVars. Mirrors what the desktop process handler does
- * in `applyAgentConfigOverrides()` so CLI-spawned agents honor the same
+ * the user-configured customEnvVars. Mirrors what the desktop process handler
+ * does in `applyAgentConfigOverrides()` so CLI-spawned agents honor the same
  * custom model / effort / args / env vars as the desktop app.
+ *
+ * Note: `applyAgentConfigOverrides().effectiveCustomEnvVars` folds agent
+ * `defaultEnvVars` into its return value. We deliberately strip that here —
+ * defaults are layered separately by `applyEnvLayers()` and
+ * `buildSshEnvForRemote()` with "shell wins" semantics, and treating them as
+ * user overrides would clobber explicit shell env.
  */
 function resolveAgentOverrides(
 	toolType: ToolType,
 	def: ReturnType<typeof getAgentDefinition>,
 	baseArgs: string[],
 	overrides: SpawnOverrides
-): { args: string[]; effectiveCustomEnvVars?: Record<string, string> } {
+): { args: string[]; userCustomEnvVars?: Record<string, string> } {
 	const agentConfigValues = readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
@@ -68,7 +74,10 @@ function resolveAgentOverrides(
 		sessionCustomArgs: overrides.customArgs,
 		sessionCustomEnvVars: overrides.customEnvVars,
 	});
-	return { args: result.args, effectiveCustomEnvVars: result.effectiveCustomEnvVars };
+	const userCustomEnvVars =
+		overrides.customEnvVars ??
+		(agentConfigValues.customEnvVars as Record<string, string> | undefined);
+	return { args: result.args, userCustomEnvVars };
 }
 
 /**
@@ -280,8 +289,8 @@ async function spawnClaudeAgent(
 	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
-	// and compute the effective user-facing env vars.
-	const { args: baseArgs, effectiveCustomEnvVars } = resolveAgentOverrides(
+	// and extract the user-configured env vars (agent + session customEnvVars).
+	const { args: baseArgs, userCustomEnvVars } = resolveAgentOverrides(
 		'claude-code',
 		def,
 		preOverrideArgs,
@@ -294,7 +303,7 @@ async function spawnClaudeAgent(
 		env,
 		def?.defaultEnvVars,
 		def?.batchModeEnvVars,
-		effectiveCustomEnvVars,
+		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
 
@@ -315,7 +324,7 @@ async function spawnClaudeAgent(
 				args: baseArgs,
 				cwd,
 				prompt,
-				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, effectiveCustomEnvVars),
+				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
 				agentBinaryName: def?.binaryName,
 			},
 			sshRemoteConfig
@@ -453,21 +462,21 @@ async function spawnClaudeAgent(
 }
 
 /**
- * Build the env-vars record to forward to an SSH remote. Includes agent
- * defaults, batch-mode defaults, user-configured vars (merged already inside
- * effectiveCustomEnvVars from applyAgentConfigOverrides), and read-only
- * overrides when applicable. Local process.env is NOT forwarded — the remote
- * host has its own environment.
+ * Build the env-vars record to forward to an SSH remote. Layered in the same
+ * order as the local env path: agent defaults < batch-mode defaults <
+ * user-configured vars (agent-level customEnvVars or session customEnvVars) <
+ * read-only overrides. Local process.env is NOT forwarded — the remote host
+ * has its own environment.
  */
 function buildSshEnvForRemote(
 	def: ReturnType<typeof getAgentDefinition>,
 	readOnlyMode: boolean | undefined,
-	effectiveCustomEnvVars: Record<string, string> | undefined
+	userCustomEnvVars: Record<string, string> | undefined
 ): Record<string, string> | undefined {
 	const out: Record<string, string> = {};
 	if (def?.defaultEnvVars) Object.assign(out, def.defaultEnvVars);
 	if (def?.batchModeEnvVars) Object.assign(out, def.batchModeEnvVars);
-	if (effectiveCustomEnvVars) Object.assign(out, effectiveCustomEnvVars);
+	if (userCustomEnvVars) Object.assign(out, userCustomEnvVars);
 	if (readOnlyMode && def?.readOnlyEnvOverrides) Object.assign(out, def.readOnlyEnvOverrides);
 	return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -605,8 +614,8 @@ async function spawnJsonLineAgent(
 	}
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
-	// and compute the effective user-facing env vars.
-	const { args: baseArgs, effectiveCustomEnvVars } = resolveAgentOverrides(
+	// and extract the user-configured env vars (agent + session customEnvVars).
+	const { args: baseArgs, userCustomEnvVars } = resolveAgentOverrides(
 		toolType,
 		def,
 		preOverrideArgs,
@@ -617,7 +626,7 @@ async function spawnJsonLineAgent(
 		env,
 		def?.defaultEnvVars,
 		def?.batchModeEnvVars,
-		effectiveCustomEnvVars,
+		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
 
@@ -641,7 +650,7 @@ async function spawnJsonLineAgent(
 				args: baseArgs,
 				cwd,
 				prompt,
-				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, effectiveCustomEnvVars),
+				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
 			},
