@@ -229,10 +229,14 @@ export async function readDirRemote(
 	// We avoid a plain "/.*" because it matches "." and ".." on most shells.
 	// Unmatched globs are passed literally, but [ -L ] fails on them so nothing
 	// spurious is printed. Errors are redirected to /dev/null regardless.
+	// The trailing `|| true` keeps the remote command's exit code 0 even when
+	// the final iteration's `[ -L ]` test fails (i.e. no symlink-to-dir
+	// entries) — otherwise the whole SSH invocation exits non-zero and the
+	// caller treats a successful `ls` as a failure.
 	const escapedPath = shellEscape(dirPath);
 	const symlinkScan =
 		`for f in ${escapedPath}/* ${escapedPath}/.[!.]* ${escapedPath}/..?*; ` +
-		`do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null`;
+		`do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null || true`;
 	const remoteCommand =
 		`ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"; ` +
 		`echo "__SYMDIR__"; ` +
@@ -240,7 +244,13 @@ export async function readDirRemote(
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
-	if (result.exitCode !== 0 && !result.stdout.includes('__LS_ERROR__')) {
+	// The presence of the __SYMDIR__ marker means the pipeline reached the
+	// symlink scan, which implies `ls` already ran to completion (or emitted
+	// __LS_ERROR__). Treat that as success from a transport standpoint even
+	// if the final `for` loop produced a non-zero exit — see the `|| true`
+	// comment above, and the regression test covering this case.
+	const reachedSymlinkMarker = result.stdout.includes('__SYMDIR__');
+	if (result.exitCode !== 0 && !result.stdout.includes('__LS_ERROR__') && !reachedSymlinkMarker) {
 		return {
 			success: false,
 			error: result.stderr || `ls failed with exit code ${result.exitCode}`,

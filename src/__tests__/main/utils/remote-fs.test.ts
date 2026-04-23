@@ -168,6 +168,42 @@ describe('remote-fs', () => {
 			// Path should be properly escaped in the command
 			expect(remoteCommand).toContain("'/path/with spaces/and'\\''quotes'");
 		});
+
+		// Regression: when the target directory contains no symlink-to-dir
+		// entries, the trailing `for` loop's last `[ -L "$f" ]` test returns
+		// non-zero, which becomes the overall exit code of the remote command.
+		// Before the `|| true` fix, readDirRemote treated a successful `ls` as
+		// a failure (stderr is swallowed by `2>/dev/null`, so the only signal
+		// was Node's "Command failed" boilerplate). See PR description.
+		it('still succeeds when for-loop tail exits non-zero but ls output is valid', async () => {
+			const deps = createMockDeps({
+				stdout: 'src/\npackage.json\n__SYMDIR__\n',
+				stderr: '',
+				exitCode: 1,
+			});
+
+			const result = await readDirRemote('/home/user/project', baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual([
+				{ name: 'src', isDirectory: true, isSymlink: false },
+				{ name: 'package.json', isDirectory: false, isSymlink: false },
+			]);
+		});
+
+		it('appends "|| true" to the symlink scan so the pipeline cannot exit non-zero', async () => {
+			const deps = createMockDeps({
+				stdout: 'file.txt\n__SYMDIR__\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			await readDirRemote('/some/dir', baseConfig, deps);
+
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toMatch(/done 2>\/dev\/null \|\| true$/);
+		});
 	});
 
 	describe('readFileRemote', () => {
