@@ -23,7 +23,7 @@ const PARSER_CONSTRUCTORS: Record<string, () => AgentOutputParser> = {
 	opencode: () => new OpenCodeOutputParser(),
 	codex: () => new CodexOutputParser(),
 	'factory-droid': () => new FactoryDroidOutputParser(),
-	copilot: () => new CopilotOutputParser(),
+	'copilot-cli': () => new CopilotOutputParser(),
 };
 
 /**
