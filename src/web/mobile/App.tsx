@@ -1036,7 +1036,7 @@ export default function MobileApp() {
 	// Responsive: tier + viewport drive the three-column layout decisions in
 	// `./panelModes`. `tier` picks the base overlay/inline layout and
 	// `viewportWidth` feeds the main-column min-width guard.
-	const { tier, width: viewportWidth } = useBreakpoint();
+	const { tier, width: viewportWidth, isShortViewport } = useBreakpoint();
 
 	// Resizable panel hooks
 	const leftPanelResize = useResizableWebPanel({
@@ -3352,6 +3352,7 @@ export default function MobileApp() {
 					thinkingMode={thinkingMode}
 					onToggleThinking={handleToggleThinking}
 					supportsThinking={activeSession?.toolType === 'claude-code'}
+					compact={isShortViewport}
 				/>
 			)}
 

@@ -143,8 +143,6 @@ export interface CommandInputBarProps {
 	/**
 	 * Compact mode: reduces vertical padding and hides secondary rows (swipe
 	 * handle, recent command chips) so the bar consumes less vertical space.
-	 * TODO(phase-5): wire this to `useBreakpoint().isShortViewport` at the
-	 * call site so landscape-phone layouts opt in automatically.
 	 */
 	compact?: boolean;
 }
