@@ -76,6 +76,27 @@ export function AutoRunSetupSheet({
 	const [confirmDeletePlaybookState, setConfirmDeletePlaybookState] = useState<Playbook | null>(
 		null
 	);
+	// Transient error banner shown at the top of the sheet when a save/delete
+	// operation fails. On mobile, haptics alone aren't enough feedback: they
+	// may be disabled, and a failed save otherwise looks identical to success.
+	const [playbookActionError, setPlaybookActionError] = useState<string | null>(null);
+	const playbookActionErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(() => {
+		return () => {
+			if (playbookActionErrorTimerRef.current) {
+				clearTimeout(playbookActionErrorTimerRef.current);
+			}
+		};
+	}, []);
+	const showPlaybookActionError = useCallback((message: string) => {
+		setPlaybookActionError(message);
+		if (playbookActionErrorTimerRef.current) {
+			clearTimeout(playbookActionErrorTimerRef.current);
+		}
+		playbookActionErrorTimerRef.current = setTimeout(() => {
+			setPlaybookActionError(null);
+		}, 4000);
+	}, []);
 
 	// Resolve the currently-loaded playbook. Used to detect modifications and
 	// to switch the "Save Playbook" button between Create / Update modes.
@@ -99,16 +120,55 @@ export function AutoRunSetupSheet({
 		setTimeout(() => onClose(), 300);
 	}, [onClose]);
 
-	// Reinitialize draft when sessionId or documents change.
-	// Use the canonical doc path (which includes any subfolder prefix) so
-	// duplicates across folders never collide.
+	// Tracks the session whose `selectedFiles` have already been initialized
+	// from a non-empty documents list. Used to distinguish "first-time docs
+	// arriving for this session" (auto-select all) from "docs re-fetched"
+	// (keep user intent; just intersect stale entries out).
+	const initializedForSessionRef = useRef<string | null>(null);
+
+	// Full reset on session change only. If we also gated on `documents`, any
+	// parent re-render that produced a new array reference (refresh, file-watcher
+	// event, even an identical re-fetch) would silently wipe the user's prompt,
+	// loop settings, and the just-loaded playbook id.
 	useEffect(() => {
-		setSelectedFiles(new Set(documents.map((d) => d.path || d.filename)));
 		setPrompt('');
 		setLoopEnabled(false);
 		setMaxLoops(3);
 		setActivePlaybookId(null);
-	}, [sessionId, documents]);
+		// Clear selections and the init flag so the next documents effect re-seeds
+		// selectedFiles from whatever the *new* session has (matching pre-fix
+		// behavior of "switch session → all docs selected by default").
+		setSelectedFiles(new Set());
+		initializedForSessionRef.current = null;
+	}, [sessionId]);
+
+	// Handle documents list changes within a session.
+	//   - First non-empty docs arrival for this session: auto-select all docs
+	//     (the canonical "launch the whole playbook" default). This covers the
+	//     async-load case where the parent initially renders with empty docs.
+	//   - Subsequent changes (rename, delete, refresh): intersect current
+	//     selections with what still exists. Leave prompt / loop / playbook id
+	//     untouched — a new `documents` reference must not wipe a loaded draft.
+	useEffect(() => {
+		const available = new Set(documents.map((d) => d.path || d.filename));
+		if (initializedForSessionRef.current !== sessionId && available.size > 0) {
+			initializedForSessionRef.current = sessionId;
+			setSelectedFiles(available);
+			return;
+		}
+		setSelectedFiles((prev) => {
+			let changed = false;
+			const next = new Set<string>();
+			for (const key of prev) {
+				if (available.has(key)) {
+					next.add(key);
+				} else {
+					changed = true;
+				}
+			}
+			return changed ? next : prev;
+		});
+	}, [documents, sessionId]);
 
 	// Load saved playbooks once when the sheet opens for this session.
 	useEffect(() => {
@@ -120,16 +180,26 @@ export function AutoRunSetupSheet({
 		requestAnimationFrame(() => setIsVisible(true));
 	}, []);
 
-	// Close on escape key
+	// Escape handling — route to the top-most overlay first so pressing Escape
+	// inside the playbook-name prompt or the delete-confirmation dialog only
+	// dismisses that modal, not the whole setup sheet. Without this, the
+	// document-level listener would unconditionally tear the sheet down.
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				handleClose();
+			if (e.key !== 'Escape') return;
+			if (playbookNamePromptState) {
+				setPlaybookNamePromptState(null);
+				return;
 			}
+			if (confirmDeletePlaybookState) {
+				setConfirmDeletePlaybookState(null);
+				return;
+			}
+			handleClose();
 		};
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [handleClose]);
+	}, [handleClose, playbookNamePromptState, confirmDeletePlaybookState]);
 
 	const handleBackdropTap = useCallback(
 		(e: React.MouseEvent) => {
@@ -252,6 +322,9 @@ export function AutoRunSetupSheet({
 				triggerHaptic(HAPTIC_PATTERNS.success);
 			} else {
 				triggerHaptic(HAPTIC_PATTERNS.error);
+				showPlaybookActionError(
+					isUpdate ? 'Failed to update playbook.' : 'Failed to save playbook.'
+				);
 			}
 		} finally {
 			setIsSavingPlaybook(false);
@@ -265,6 +338,7 @@ export function AutoRunSetupSheet({
 		prompt,
 		selectedFiles,
 		sessionId,
+		showPlaybookActionError,
 		updatePlaybook,
 	]);
 
@@ -284,10 +358,21 @@ export function AutoRunSetupSheet({
 		setConfirmDeletePlaybookState(null);
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		const success = await deletePlaybook(sessionId, playbook.id);
-		if (success && activePlaybookId === playbook.id) {
-			setActivePlaybookId(null);
+		if (success) {
+			if (activePlaybookId === playbook.id) {
+				setActivePlaybookId(null);
+			}
+		} else {
+			triggerHaptic(HAPTIC_PATTERNS.error);
+			showPlaybookActionError(`Failed to delete "${playbook.name}".`);
 		}
-	}, [activePlaybookId, confirmDeletePlaybookState, deletePlaybook, sessionId]);
+	}, [
+		activePlaybookId,
+		confirmDeletePlaybookState,
+		deletePlaybook,
+		sessionId,
+		showPlaybookActionError,
+	]);
 
 	const allSelected = selectedFiles.size === documents.length && documents.length > 0;
 
@@ -395,6 +480,28 @@ export function AutoRunSetupSheet({
 						</svg>
 					</button>
 				</div>
+
+				{/* Transient error banner for failed save/delete — haptics alone
+				    aren't enough feedback on mobile (may be disabled), so surface
+				    the failure visibly for a few seconds. */}
+				{playbookActionError && (
+					<div
+						role="alert"
+						style={{
+							margin: '0 16px 8px',
+							padding: '10px 12px',
+							borderRadius: '10px',
+							backgroundColor: `${colors.error}20`,
+							border: `1px solid ${colors.error}`,
+							color: colors.error,
+							fontSize: '13px',
+							fontWeight: 500,
+							flexShrink: 0,
+						}}
+					>
+						{playbookActionError}
+					</div>
+				)}
 
 				{/* Scrollable content */}
 				<div
@@ -1020,10 +1127,10 @@ export function AutoRunSetupSheet({
 								if (e.key === 'Enter') {
 									e.preventDefault();
 									void handlePlaybookNamePromptSubmit();
-								} else if (e.key === 'Escape') {
-									e.preventDefault();
-									handlePlaybookNamePromptCancel();
 								}
+								// Escape is handled by the document-level listener so it can
+								// route to the topmost overlay consistently (delete-confirm
+								// modal or this prompt) without closing the whole sheet.
 							}}
 							placeholder="Playbook name"
 							style={{

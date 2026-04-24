@@ -946,7 +946,11 @@ function AutoRunTabContent({
 					}}
 				>
 					{documents.map((doc) => (
-						<DocumentCard key={doc.filename} document={doc} onTap={handleDocumentTap} />
+						// Use the canonical relative path (which includes any subfolder
+						// prefix) as the key — with subfolder support, two files like
+						// `api/README.md` and `web/README.md` share a basename and would
+						// collide on `doc.filename` alone.
+						<DocumentCard key={doc.path || doc.filename} document={doc} onTap={handleDocumentTap} />
 					))}
 				</div>
 			)}
