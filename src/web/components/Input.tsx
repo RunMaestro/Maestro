@@ -1,8 +1,10 @@
 /**
  * Input and TextArea components for Maestro web interface
  *
- * Reusable input components that support multiple variants, sizes, and states.
- * Uses theme colors via CSS custom properties for consistent styling.
+ * Color, border, and radius tokens come from Tailwind utilities backed by the
+ * `--maestro-*` CSS custom properties (see `tailwind.config.mjs` and
+ * `src/web/utils/cssCustomProperties.ts`), so live theme swaps update visuals
+ * without re-rendering.
  */
 
 import React, {
@@ -11,7 +13,6 @@ import React, {
 	type TextareaHTMLAttributes,
 	type ReactNode,
 } from 'react';
-import { useTheme } from './ThemeProvider';
 
 /**
  * Input variant types
@@ -60,35 +61,63 @@ export interface TextAreaProps
 }
 
 /**
- * Size-based style configurations
+ * Variant → Tailwind class string. Background + text resolve via
+ * `--maestro-*`-backed tokens; the error flag swaps the border token so we
+ * never emit two conflicting `border-*` utilities at once.
  */
-const sizeStyles: Record<InputSize, { className: string; borderRadius: string; iconSize: number }> =
-	{
-		sm: {
-			className: 'px-2 py-1 text-xs',
-			borderRadius: '4px',
-			iconSize: 14,
-		},
-		md: {
-			className: 'px-3 py-1.5 text-sm',
-			borderRadius: '6px',
-			iconSize: 16,
-		},
-		lg: {
-			className: 'px-4 py-2 text-base',
-			borderRadius: '8px',
-			iconSize: 18,
-		},
-	};
+const variantClasses: Record<InputVariant, { base: string; error: string }> = {
+	default: {
+		base: 'bg-bg-main text-text-main border border-border',
+		error: 'bg-bg-main text-text-main border border-error',
+	},
+	filled: {
+		base: 'bg-bg-activity text-text-main border border-transparent',
+		error: 'bg-bg-activity text-text-main border border-error',
+	},
+	ghost: {
+		base: 'bg-transparent text-text-main border border-transparent',
+		error: 'bg-transparent text-text-main border border-error',
+	},
+};
+
+/**
+ * Size → padding, type-scale, and corner-radius tuple.
+ * Tailwind's default `rounded`/`rounded-md`/`rounded-lg` are 4/6/8px and match
+ * the legacy values 1:1.
+ */
+const sizeClasses: Record<InputSize, string> = {
+	sm: 'px-2 py-1 text-xs rounded',
+	md: 'px-3 py-1.5 text-sm rounded-md',
+	lg: 'px-4 py-2 text-base rounded-lg',
+};
 
 /**
  * Icon padding adjustments based on size
  */
-const iconPadding: Record<InputSize, { left: string; right: string }> = {
+const iconPaddingClasses: Record<InputSize, { left: string; right: string }> = {
 	sm: { left: 'pl-7', right: 'pr-7' },
 	md: { left: 'pl-9', right: 'pr-9' },
 	lg: { left: 'pl-11', right: 'pr-11' },
 };
+
+/**
+ * Line heights used for TextArea min-height / auto-resize math.
+ * Must stay in sync with the text-* utilities in `sizeClasses`.
+ */
+const lineHeightBySize: Record<InputSize, number> = {
+	sm: 16,
+	md: 20,
+	lg: 24,
+};
+
+const baseInputClasses =
+	'font-normal outline-none transition-colors placeholder:text-text-dim focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+
+function getVariantClass(variant: InputVariant, error: boolean): string {
+	const config = variantClasses[variant];
+	if (!config) return '';
+	return error ? config.error : config.base;
+}
 
 /**
  * Input component for the Maestro web interface
@@ -126,114 +155,36 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
 	},
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-
-	const sizeConfig = sizeStyles[size];
-
-	/**
-	 * Get variant-specific styles
-	 */
-	const getVariantStyles = (): React.CSSProperties => {
-		const baseTransition =
-			'background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease';
-
-		switch (variant) {
-			case 'default':
-				return {
-					backgroundColor: colors.bgMain,
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : colors.border}`,
-					transition: baseTransition,
-				};
-			case 'filled':
-				return {
-					backgroundColor: colors.bgActivity,
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : 'transparent'}`,
-					transition: baseTransition,
-				};
-			case 'ghost':
-				return {
-					backgroundColor: 'transparent',
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : 'transparent'}`,
-					transition: baseTransition,
-				};
-			default:
-				return {};
-		}
-	};
-
-	/**
-	 * Get disabled styles
-	 */
-	const getDisabledStyles = (): React.CSSProperties => {
-		if (!disabled) return {};
-		return {
-			opacity: 0.5,
-			cursor: 'not-allowed',
-		};
-	};
-
-	const variantStyles = getVariantStyles();
-	const disabledStyles = getDisabledStyles();
-
-	const combinedStyles: React.CSSProperties = {
-		...variantStyles,
-		...disabledStyles,
-		borderRadius: sizeConfig.borderRadius,
-		outline: 'none',
-		width: fullWidth ? '100%' : undefined,
-		...style,
-	};
-
-	// Construct class names
-	const baseClasses = [
-		sizeConfig.className,
-		'font-normal',
-		'placeholder:text-opacity-50',
-		'focus:ring-2 focus:ring-offset-1',
-		'transition-colors',
+	const classNames = [
+		baseInputClasses,
+		sizeClasses[size],
+		getVariantClass(variant, error),
 		fullWidth ? 'w-full' : '',
-		leftIcon ? iconPadding[size].left : '',
-		rightIcon ? iconPadding[size].right : '',
+		leftIcon ? iconPaddingClasses[size].left : '',
+		rightIcon ? iconPaddingClasses[size].right : '',
 		className,
 	]
 		.filter(Boolean)
 		.join(' ');
 
-	// If we have icons, wrap in a container
 	if (leftIcon || rightIcon) {
 		return (
 			<div className={`relative inline-flex items-center ${fullWidth ? 'w-full' : ''}`}>
 				{leftIcon && (
-					<span
-						className="absolute left-2 flex items-center pointer-events-none"
-						style={{ color: colors.textDim }}
-					>
+					<span className="absolute left-2 flex items-center pointer-events-none text-text-dim">
 						{leftIcon}
 					</span>
 				)}
 				<input
 					ref={ref}
-					className={baseClasses}
-					style={
-						{
-							...combinedStyles,
-							// Override placeholder color using CSS variable
-							'--placeholder-color': colors.textDim,
-						} as React.CSSProperties
-					}
+					className={classNames}
+					style={style}
 					disabled={disabled}
 					aria-invalid={error}
 					{...props}
 				/>
 				{rightIcon && (
-					<span
-						className="absolute right-2 flex items-center pointer-events-none"
-						style={{ color: colors.textDim }}
-					>
+					<span className="absolute right-2 flex items-center pointer-events-none text-text-dim">
 						{rightIcon}
 					</span>
 				)}
@@ -244,13 +195,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
 	return (
 		<input
 			ref={ref}
-			className={baseClasses}
-			style={
-				{
-					...combinedStyles,
-					'--placeholder-color': colors.textDim,
-				} as React.CSSProperties
-			}
+			className={classNames}
+			style={style}
 			disabled={disabled}
 			aria-invalid={error}
 			{...props}
@@ -295,58 +241,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
 	},
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-
-	const sizeConfig = sizeStyles[size];
-
-	// Internal ref for auto-resize functionality
 	const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-
-	/**
-	 * Get variant-specific styles
-	 */
-	const getVariantStyles = (): React.CSSProperties => {
-		const baseTransition =
-			'background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease';
-
-		switch (variant) {
-			case 'default':
-				return {
-					backgroundColor: colors.bgMain,
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : colors.border}`,
-					transition: baseTransition,
-				};
-			case 'filled':
-				return {
-					backgroundColor: colors.bgActivity,
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : 'transparent'}`,
-					transition: baseTransition,
-				};
-			case 'ghost':
-				return {
-					backgroundColor: 'transparent',
-					color: colors.textMain,
-					border: `1px solid ${error ? colors.error : 'transparent'}`,
-					transition: baseTransition,
-				};
-			default:
-				return {};
-		}
-	};
-
-	/**
-	 * Get disabled styles
-	 */
-	const getDisabledStyles = (): React.CSSProperties => {
-		if (!disabled) return {};
-		return {
-			opacity: 0.5,
-			cursor: 'not-allowed',
-		};
-	};
 
 	/**
 	 * Handle auto-resize on input
@@ -354,15 +249,12 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
 	const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
 		if (autoResize && textareaRef.current) {
 			const textarea = textareaRef.current;
-			// Reset height to auto to get the correct scrollHeight
 			textarea.style.height = 'auto';
 
-			// Calculate line height (approximate based on font size)
-			const lineHeight = size === 'sm' ? 16 : size === 'md' ? 20 : 24;
+			const lineHeight = lineHeightBySize[size];
 			const minHeight = minRows * lineHeight;
 			const maxHeight = maxRows ? maxRows * lineHeight : undefined;
 
-			// Set the new height
 			let newHeight = Math.max(textarea.scrollHeight, minHeight);
 			if (maxHeight && newHeight > maxHeight) {
 				newHeight = maxHeight;
@@ -373,7 +265,6 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
 			textarea.style.height = `${newHeight}px`;
 		}
 
-		// Call the original onInput handler if provided
 		onInput?.(e);
 	};
 
@@ -392,47 +283,30 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
 		[ref]
 	);
 
-	const variantStyles = getVariantStyles();
-	const disabledStyles = getDisabledStyles();
-
-	// Calculate min-height based on minRows
-	const lineHeight = size === 'sm' ? 16 : size === 'md' ? 20 : 24;
-	const minHeight = minRows * lineHeight;
-
-	const combinedStyles: React.CSSProperties = {
-		...variantStyles,
-		...disabledStyles,
-		borderRadius: sizeConfig.borderRadius,
-		outline: 'none',
-		width: fullWidth ? '100%' : undefined,
-		minHeight: `${minHeight}px`,
-		resize: autoResize ? 'none' : 'vertical',
-		...style,
-	};
-
-	// Construct class names
 	const classNames = [
-		sizeConfig.className,
-		'font-normal',
-		'placeholder:text-opacity-50',
-		'focus:ring-2 focus:ring-offset-1',
-		'transition-colors',
+		baseInputClasses,
+		sizeClasses[size],
+		getVariantClass(variant, error),
 		fullWidth ? 'w-full' : '',
+		autoResize ? 'resize-none' : 'resize-y',
 		className,
 	]
 		.filter(Boolean)
 		.join(' ');
 
+	// minHeight depends on the minRows prop, so it has to be inline —
+	// Tailwind's arbitrary-value classes require compile-time strings.
+	const minHeight = minRows * lineHeightBySize[size];
+	const combinedStyle: React.CSSProperties = {
+		minHeight: `${minHeight}px`,
+		...style,
+	};
+
 	return (
 		<textarea
 			ref={setRefs}
 			className={classNames}
-			style={
-				{
-					...combinedStyles,
-					'--placeholder-color': colors.textDim,
-				} as React.CSSProperties
-			}
+			style={combinedStyle}
 			disabled={disabled}
 			aria-invalid={error}
 			onInput={handleInput}
@@ -479,24 +353,17 @@ export function InputGroup({
 	children,
 	className = '',
 }: InputGroupProps) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-
 	return (
 		<div className={`flex flex-col gap-1 ${className}`}>
 			{label && (
-				<label className="text-sm font-medium" style={{ color: colors.textMain }}>
+				<label className="text-sm font-medium text-text-main">
 					{label}
-					{required && (
-						<span style={{ color: colors.error }} className="ml-1">
-							*
-						</span>
-					)}
+					{required && <span className="ml-1 text-error">*</span>}
 				</label>
 			)}
 			{children}
 			{(error || helperText) && (
-				<span className="text-xs" style={{ color: error ? colors.error : colors.textDim }}>
+				<span className={`text-xs ${error ? 'text-error' : 'text-text-dim'}`}>
 					{error || helperText}
 				</span>
 			)}

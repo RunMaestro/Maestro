@@ -1,8 +1,11 @@
 /**
  * Tests for Input, TextArea, and InputGroup components
  *
- * Tests core behavior and user interactions.
- * Implementation details (exact CSS classes, colors) are not tested.
+ * Tests core behavior, props plumbing, and the Tailwind class tokens that
+ * encode variant/size/error/disabled state. jsdom does not resolve Tailwind
+ * classes to computed styles (no Tailwind CSS loaded in the test env), so
+ * color/border checks are className-contains assertions against the
+ * `--maestro-*`-backed tokens from `tailwind.config.mjs`.
  *
  * @vitest-environment jsdom
  */
@@ -11,36 +14,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import React from 'react';
 import { Input, TextArea, InputGroup } from '../../../web/components/Input';
-
-// Mock the ThemeProvider
-vi.mock('../../../web/components/ThemeProvider', () => ({
-	useTheme: () => ({
-		theme: {
-			id: 'dracula',
-			name: 'Dracula',
-			mode: 'dark',
-			colors: {
-				bgMain: '#0b0b0d',
-				bgSidebar: '#111113',
-				bgActivity: '#1c1c1f',
-				border: '#27272a',
-				textMain: '#e4e4e7',
-				textDim: '#a1a1aa',
-				accent: '#6366f1',
-				accentDim: 'rgba(99, 102, 241, 0.2)',
-				accentText: '#a5b4fc',
-				success: '#22c55e',
-				warning: '#eab308',
-				error: '#ef4444',
-			},
-		},
-		isLight: false,
-		isDark: true,
-		isVibe: false,
-		isDevicePreference: false,
-	}),
-	ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
 
 describe('Input Component', () => {
 	afterEach(() => {
@@ -82,30 +55,98 @@ describe('Input Component', () => {
 			rerender(<Input data-testid="input" />);
 			expect(screen.getByTestId('input')).toHaveAttribute('aria-invalid', 'false');
 		});
+
+		it('applies custom style prop', () => {
+			render(<Input style={{ marginTop: '10px' }} data-testid="input" />);
+			expect(screen.getByTestId('input')).toHaveStyle({ marginTop: '10px' });
+		});
 	});
 
-	describe('variants and sizes', () => {
-		it('renders all variants', () => {
-			const variants = ['default', 'filled', 'ghost'] as const;
-			variants.forEach((variant) => {
-				render(<Input variant={variant} data-testid="input" />);
-				expect(screen.getByTestId('input')).toBeInTheDocument();
-				cleanup();
-			});
+	describe('variants', () => {
+		it('applies default variant classes', () => {
+			render(<Input variant="default" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('bg-bg-main');
+			expect(input.className).toContain('text-text-main');
+			expect(input.className).toContain('border-border');
 		});
 
-		it('renders all sizes', () => {
-			const sizes = ['sm', 'md', 'lg'] as const;
-			sizes.forEach((size) => {
-				render(<Input size={size} data-testid="input" />);
-				expect(screen.getByTestId('input')).toBeInTheDocument();
-				cleanup();
-			});
+		it('applies filled variant classes', () => {
+			render(<Input variant="filled" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('bg-bg-activity');
+			expect(input.className).toContain('border-transparent');
+		});
+
+		it('applies ghost variant classes', () => {
+			render(<Input variant="ghost" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('bg-transparent');
+			expect(input.className).toContain('border-transparent');
+		});
+
+		it('uses default variant when none specified', () => {
+			render(<Input data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('bg-bg-main');
 		});
 
 		it('handles unknown variant gracefully', () => {
 			render(<Input variant={'unknown' as any} data-testid="input" />);
-			expect(screen.getByTestId('input')).toBeInTheDocument();
+			const input = screen.getByTestId('input');
+			expect(input).toBeInTheDocument();
+			expect(input.className).not.toContain('bg-bg-main');
+			expect(input.className).not.toContain('bg-bg-activity');
+			expect(input.className).not.toContain('bg-transparent');
+		});
+
+		it('swaps border token to error when error flag is set', () => {
+			render(<Input variant="default" error data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('border-error');
+			expect(input.className).not.toContain('border-border');
+		});
+
+		it('swaps border on filled variant when error flag is set', () => {
+			render(<Input variant="filled" error data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('border-error');
+			expect(input.className).not.toContain('border-transparent');
+		});
+	});
+
+	describe('sizes', () => {
+		it('applies sm size classes', () => {
+			render(<Input size="sm" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('px-2');
+			expect(input.className).toContain('py-1');
+			expect(input.className).toContain('text-xs');
+			expect(input.className).toContain('rounded');
+			expect(input.className).not.toContain('rounded-md');
+			expect(input.className).not.toContain('rounded-lg');
+		});
+
+		it('applies md size classes', () => {
+			render(<Input size="md" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('px-3');
+			expect(input.className).toContain('py-1.5');
+			expect(input.className).toContain('text-sm');
+			expect(input.className).toContain('rounded-md');
+		});
+
+		it('applies lg size classes', () => {
+			render(<Input size="lg" data-testid="input" />);
+			const input = screen.getByTestId('input');
+			expect(input.className).toContain('px-4');
+			expect(input.className).toContain('py-2');
+			expect(input.className).toContain('text-base');
+			expect(input.className).toContain('rounded-lg');
+		});
+
+		it('uses md size as default', () => {
+			render(<Input data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('rounded-md');
 		});
 	});
 
@@ -114,12 +155,25 @@ describe('Input Component', () => {
 			render(<Input disabled data-testid="input" />);
 			expect(screen.getByTestId('input')).toBeDisabled();
 		});
+
+		it('applies disabled utility classes', () => {
+			render(<Input data-testid="input" />);
+			const input = screen.getByTestId('input');
+			// disabled:* utilities are always present; the disabled attribute activates them.
+			expect(input.className).toContain('disabled:opacity-50');
+			expect(input.className).toContain('disabled:cursor-not-allowed');
+		});
 	});
 
 	describe('full width', () => {
-		it('applies full width when fullWidth is true', () => {
+		it('applies w-full class when fullWidth is true', () => {
 			render(<Input fullWidth data-testid="input" />);
 			expect(screen.getByTestId('input').className).toContain('w-full');
+		});
+
+		it('does not apply w-full when fullWidth is false', () => {
+			render(<Input data-testid="input" />);
+			expect(screen.getByTestId('input').className).not.toContain('w-full');
 		});
 	});
 
@@ -139,6 +193,46 @@ describe('Input Component', () => {
 		it('wraps input with icons in container', () => {
 			const { container } = render(<Input leftIcon={<span>L</span>} data-testid="input" />);
 			expect(container.querySelector('.relative.inline-flex')).toBeInTheDocument();
+		});
+
+		it('applies left icon padding class for each size', () => {
+			const { rerender } = render(
+				<Input size="sm" leftIcon={<span>L</span>} data-testid="input" />
+			);
+			expect(screen.getByTestId('input').className).toContain('pl-7');
+
+			rerender(<Input size="md" leftIcon={<span>L</span>} data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('pl-9');
+
+			rerender(<Input size="lg" leftIcon={<span>L</span>} data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('pl-11');
+		});
+
+		it('applies right icon padding class for each size', () => {
+			const { rerender } = render(
+				<Input size="sm" rightIcon={<span>R</span>} data-testid="input" />
+			);
+			expect(screen.getByTestId('input').className).toContain('pr-7');
+
+			rerender(<Input size="md" rightIcon={<span>R</span>} data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('pr-9');
+
+			rerender(<Input size="lg" rightIcon={<span>R</span>} data-testid="input" />);
+			expect(screen.getByTestId('input').className).toContain('pr-11');
+		});
+
+		it('applies text-text-dim to icon wrapper', () => {
+			const { container } = render(
+				<Input
+					leftIcon={<span data-testid="left-icon">L</span>}
+					rightIcon={<span data-testid="right-icon">R</span>}
+				/>
+			);
+			const iconWrappers = container.querySelectorAll('.pointer-events-none');
+			expect(iconWrappers.length).toBe(2);
+			iconWrappers.forEach((wrapper) => {
+				expect(wrapper.className).toContain('text-text-dim');
+			});
 		});
 	});
 
@@ -214,23 +308,46 @@ describe('TextArea Component', () => {
 		});
 	});
 
-	describe('variants and sizes', () => {
-		it('renders all variants', () => {
-			const variants = ['default', 'filled', 'ghost'] as const;
-			variants.forEach((variant) => {
-				render(<TextArea variant={variant} data-testid="textarea" />);
-				expect(screen.getByTestId('textarea')).toBeInTheDocument();
-				cleanup();
-			});
+	describe('variants', () => {
+		it('applies default variant classes', () => {
+			render(<TextArea variant="default" data-testid="textarea" />);
+			const textarea = screen.getByTestId('textarea');
+			expect(textarea.className).toContain('bg-bg-main');
+			expect(textarea.className).toContain('border-border');
 		});
 
-		it('renders all sizes', () => {
-			const sizes = ['sm', 'md', 'lg'] as const;
-			sizes.forEach((size) => {
-				render(<TextArea size={size} data-testid="textarea" />);
-				expect(screen.getByTestId('textarea')).toBeInTheDocument();
-				cleanup();
-			});
+		it('applies filled variant classes', () => {
+			render(<TextArea variant="filled" data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('bg-bg-activity');
+		});
+
+		it('applies ghost variant classes', () => {
+			render(<TextArea variant="ghost" data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('bg-transparent');
+		});
+
+		it('swaps border token to error when error flag is set', () => {
+			render(<TextArea error data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('border-error');
+		});
+	});
+
+	describe('sizes', () => {
+		it('applies sm size classes', () => {
+			render(<TextArea size="sm" data-testid="textarea" />);
+			const textarea = screen.getByTestId('textarea');
+			expect(textarea.className).toContain('px-2');
+			expect(textarea.className).toContain('rounded');
+		});
+
+		it('applies md size classes', () => {
+			render(<TextArea size="md" data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('rounded-md');
+		});
+
+		it('applies lg size classes', () => {
+			render(<TextArea size="lg" data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('rounded-lg');
 		});
 	});
 
@@ -244,17 +361,35 @@ describe('TextArea Component', () => {
 			render(<TextArea data-testid="textarea" />);
 			expect(screen.getByTestId('textarea')).toHaveAttribute('rows', '3');
 		});
+
+		it('applies min-height based on minRows and size (md)', () => {
+			render(<TextArea size="md" minRows={4} data-testid="textarea" />);
+			// 4 rows × 20px line height (md) = 80px
+			expect(screen.getByTestId('textarea')).toHaveStyle({ minHeight: '80px' });
+		});
+
+		it('applies min-height based on minRows and size (sm)', () => {
+			render(<TextArea size="sm" minRows={3} data-testid="textarea" />);
+			// 3 rows × 16px line height (sm) = 48px
+			expect(screen.getByTestId('textarea')).toHaveStyle({ minHeight: '48px' });
+		});
+
+		it('applies min-height based on minRows and size (lg)', () => {
+			render(<TextArea size="lg" minRows={2} data-testid="textarea" />);
+			// 2 rows × 24px line height (lg) = 48px
+			expect(screen.getByTestId('textarea')).toHaveStyle({ minHeight: '48px' });
+		});
 	});
 
 	describe('auto resize', () => {
-		it('sets resize to none when autoResize is true', () => {
+		it('applies resize-none class when autoResize is true', () => {
 			render(<TextArea autoResize data-testid="textarea" />);
-			expect(screen.getByTestId('textarea')).toHaveStyle({ resize: 'none' });
+			expect(screen.getByTestId('textarea').className).toContain('resize-none');
 		});
 
-		it('sets resize to vertical when autoResize is false', () => {
+		it('applies resize-y class when autoResize is false', () => {
 			render(<TextArea autoResize={false} data-testid="textarea" />);
-			expect(screen.getByTestId('textarea')).toHaveStyle({ resize: 'vertical' });
+			expect(screen.getByTestId('textarea').className).toContain('resize-y');
 		});
 
 		it('triggers resize on input', () => {
@@ -270,6 +405,20 @@ describe('TextArea Component', () => {
 			render(<TextArea disabled data-testid="textarea" />);
 			expect(screen.getByTestId('textarea')).toBeDisabled();
 		});
+
+		it('applies disabled utility classes', () => {
+			render(<TextArea data-testid="textarea" />);
+			const textarea = screen.getByTestId('textarea');
+			expect(textarea.className).toContain('disabled:opacity-50');
+			expect(textarea.className).toContain('disabled:cursor-not-allowed');
+		});
+	});
+
+	describe('full width', () => {
+		it('applies w-full class when fullWidth is true', () => {
+			render(<TextArea fullWidth data-testid="textarea" />);
+			expect(screen.getByTestId('textarea').className).toContain('w-full');
+		});
 	});
 
 	describe('accessibility', () => {
@@ -280,6 +429,14 @@ describe('TextArea Component', () => {
 			expect(document.activeElement).toBe(textarea);
 			expect(screen.getByLabelText('Message input')).toBeInTheDocument();
 			expect(textarea).toBeRequired();
+		});
+
+		it('sets aria-invalid based on error prop', () => {
+			const { rerender } = render(<TextArea error data-testid="textarea" />);
+			expect(screen.getByTestId('textarea')).toHaveAttribute('aria-invalid', 'true');
+
+			rerender(<TextArea data-testid="textarea" />);
+			expect(screen.getByTestId('textarea')).toHaveAttribute('aria-invalid', 'false');
 		});
 	});
 });
@@ -308,13 +465,25 @@ describe('InputGroup Component', () => {
 			expect(screen.getByText('Email')).toBeInTheDocument();
 		});
 
+		it('applies text-text-main to label', () => {
+			render(
+				<InputGroup label="Email">
+					<Input />
+				</InputGroup>
+			);
+			const label = screen.getByText('Email');
+			expect(label.className).toContain('text-text-main');
+		});
+
 		it('renders helper text', () => {
 			render(
 				<InputGroup helperText="Enter your email">
 					<Input data-testid="input" />
 				</InputGroup>
 			);
-			expect(screen.getByText('Enter your email')).toBeInTheDocument();
+			const helper = screen.getByText('Enter your email');
+			expect(helper).toBeInTheDocument();
+			expect(helper.className).toContain('text-text-dim');
 		});
 
 		it('renders error message and hides helper text', () => {
@@ -323,7 +492,9 @@ describe('InputGroup Component', () => {
 					<Input data-testid="input" />
 				</InputGroup>
 			);
-			expect(screen.getByText('Invalid email')).toBeInTheDocument();
+			const errorEl = screen.getByText('Invalid email');
+			expect(errorEl).toBeInTheDocument();
+			expect(errorEl.className).toContain('text-error');
 			expect(screen.queryByText('Enter your email')).not.toBeInTheDocument();
 		});
 
@@ -333,7 +504,9 @@ describe('InputGroup Component', () => {
 					<Input data-testid="input" />
 				</InputGroup>
 			);
-			expect(screen.getByText('*')).toBeInTheDocument();
+			const marker = screen.getByText('*');
+			expect(marker).toBeInTheDocument();
+			expect(marker.className).toContain('text-error');
 		});
 
 		it('does not render required indicator without label', () => {
