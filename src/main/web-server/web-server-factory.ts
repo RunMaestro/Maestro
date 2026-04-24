@@ -14,6 +14,7 @@ import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
 import type { Shortcut } from '../../shared/shortcut-types';
+import type { WebPlaybook } from './types';
 import { getDefaultShell } from '../stores/defaults';
 
 /** UUID v4 format regex for validating stored security tokens.
@@ -1377,6 +1378,155 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			mainWindow.webContents.send('remote:stopAutoRun', sessionId);
 			return true;
 		});
+
+		// Helper to issue a request-response IPC roundtrip to the renderer with
+		// a timeout. Used for all the playbook + error-recovery + reset-tasks
+		// bridges below — they share the same shape.
+		const remoteRequest = <T>(
+			operation: string,
+			channel: string,
+			fallback: T,
+			send: (mainWindow: BrowserWindow, responseChannel: string) => void,
+			timeoutMs = 10000
+		): Promise<T> => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn(`mainWindow is null for ${operation}`, 'WebServer');
+				return Promise.resolve(fallback);
+			}
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:${channel}:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: T) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result === undefined ? fallback : result);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn(`webContents is not available for ${operation}`, 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(fallback);
+					return;
+				}
+				send(mainWindow, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`${operation} callback timed out`, 'WebServer');
+					resolve(fallback);
+				}, timeoutMs);
+			});
+		};
+
+		// Reset all `[x]` checkboxes back to `[ ]` for an Auto Run document.
+		// Forwards to the renderer which uses the existing autorun:readDoc / writeDoc IPC
+		// (with SSH support) so this works the same locally and on remote sessions.
+		server.setResetAutoRunDocTasksCallback(async (sessionId, filename) =>
+			remoteRequest<boolean>(
+				'resetAutoRunDocTasks',
+				'resetAutoRunDocTasks',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:resetAutoRunDocTasks',
+						sessionId,
+						filename,
+						responseChannel
+					)
+			)
+		);
+
+		// Resume / skip / abort an Auto Run that has been paused due to an agent error.
+		// These mirror the desktop's AutoRunErrorBanner buttons.
+		server.setResumeAutoRunErrorCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'resumeAutoRunError',
+				'resumeAutoRunError',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:resumeAutoRunError', sessionId, responseChannel)
+			)
+		);
+
+		server.setSkipAutoRunDocumentCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'skipAutoRunDocument',
+				'skipAutoRunDocument',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:skipAutoRunDocument', sessionId, responseChannel)
+			)
+		);
+
+		server.setAbortAutoRunErrorCallback(async (sessionId) =>
+			remoteRequest<boolean>(
+				'abortAutoRunError',
+				'abortAutoRunError',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:abortAutoRunError', sessionId, responseChannel)
+			)
+		);
+
+		// Playbook CRUD callbacks — list / create / update / delete.
+		// All forward to the renderer which calls window.maestro.playbooks.* IPC.
+		server.setListPlaybooksCallback(async (sessionId) =>
+			remoteRequest<WebPlaybook[]>(
+				'listPlaybooks',
+				'listPlaybooks',
+				[],
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:listPlaybooks', sessionId, responseChannel)
+			)
+		);
+
+		server.setCreatePlaybookCallback(async (sessionId, playbook) =>
+			remoteRequest<WebPlaybook | null>(
+				'createPlaybook',
+				'createPlaybook',
+				null,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:createPlaybook', sessionId, playbook, responseChannel)
+			)
+		);
+
+		server.setUpdatePlaybookCallback(async (sessionId, playbookId, updates) =>
+			remoteRequest<WebPlaybook | null>(
+				'updatePlaybook',
+				'updatePlaybook',
+				null,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:updatePlaybook',
+						sessionId,
+						playbookId,
+						updates,
+						responseChannel
+					)
+			)
+		);
+
+		server.setDeletePlaybookCallback(async (sessionId, playbookId) =>
+			remoteRequest<boolean>(
+				'deletePlaybook',
+				'deletePlaybook',
+				false,
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:deletePlaybook',
+						sessionId,
+						playbookId,
+						responseChannel
+					)
+			)
+		);
 
 		// ============ Group Chat Callbacks ============
 

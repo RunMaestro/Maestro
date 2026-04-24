@@ -692,6 +692,104 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle remote reset-tasks from web interface
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteResetAutoRunDocTasks(
+			(sessionId: string, filename: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resetAutoRunDocTasks', {
+						detail: { sessionId, filename, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle remote auto-run error-recovery actions (resume / skip / abort) from web
+	useEffect(() => {
+		const unsubResume = window.maestro.process.onRemoteResumeAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:resumeAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubSkip = window.maestro.process.onRemoteSkipAutoRunDocument(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:skipAutoRunDocument', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubAbort = window.maestro.process.onRemoteAbortAutoRunError(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:abortAutoRunError', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubResume();
+			unsubSkip();
+			unsubAbort();
+		};
+	}, []);
+
+	// Handle remote playbook CRUD from web interface (request-response)
+	useEffect(() => {
+		const unsubList = window.maestro.process.onRemoteListPlaybooks(
+			(sessionId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:listPlaybooks', {
+						detail: { sessionId, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubCreate = window.maestro.process.onRemoteCreatePlaybook(
+			(sessionId: string, playbook: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:createPlaybook', {
+						detail: { sessionId, playbook, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubUpdate = window.maestro.process.onRemoteUpdatePlaybook(
+			(sessionId: string, playbookId: string, updates: unknown, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:updatePlaybook', {
+						detail: { sessionId, playbookId, updates, responseChannel },
+					})
+				);
+			}
+		);
+		const unsubDelete = window.maestro.process.onRemoteDeletePlaybook(
+			(sessionId: string, playbookId: string, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent('maestro:deletePlaybook', {
+						detail: { sessionId, playbookId, responseChannel },
+					})
+				);
+			}
+		);
+		return () => {
+			unsubList();
+			unsubCreate();
+			unsubUpdate();
+			unsubDelete();
+		};
+	}, []);
+
 	// Handle remote set setting from web interface
 	// Uses the existing settings infrastructure via window.maestro.settings.set()
 	useEffect(() => {

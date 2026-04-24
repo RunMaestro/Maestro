@@ -49,6 +49,8 @@ import type {
 	AchievementData,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
+	WebPlaybook,
+	WebPlaybookDocument,
 } from '../types';
 import { AGENT_IDS } from '../../../shared/agentIds';
 
@@ -162,6 +164,33 @@ export interface MessageHandlerCallbacks {
 	getAutoRunDocContent: (sessionId: string, filename: string) => Promise<string>;
 	saveAutoRunDoc: (sessionId: string, filename: string, content: string) => Promise<boolean>;
 	stopAutoRun: (sessionId: string) => Promise<boolean>;
+	resetAutoRunDocTasks: (sessionId: string, filename: string) => Promise<boolean>;
+	resumeAutoRunError: (sessionId: string) => Promise<boolean>;
+	skipAutoRunDocument: (sessionId: string) => Promise<boolean>;
+	abortAutoRunError: (sessionId: string) => Promise<boolean>;
+	listPlaybooks: (sessionId: string) => Promise<WebPlaybook[]>;
+	createPlaybook: (
+		sessionId: string,
+		playbook: {
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}
+	) => Promise<WebPlaybook | null>;
+	updatePlaybook: (
+		sessionId: string,
+		playbookId: string,
+		updates: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}>
+	) => Promise<WebPlaybook | null>;
+	deletePlaybook: (sessionId: string, playbookId: string) => Promise<boolean>;
 	getSettings: () => WebSettings;
 	setSetting: (key: string, value: SettingValue) => Promise<boolean>;
 	getGroups: () => GroupData[];
@@ -357,6 +386,38 @@ export class WebSocketMessageHandler {
 
 			case 'stop_auto_run':
 				this.handleStopAutoRun(client, message);
+				break;
+
+			case 'reset_auto_run_doc_tasks':
+				this.handleResetAutoRunDocTasks(client, message);
+				break;
+
+			case 'resume_auto_run_error':
+				this.handleResumeAutoRunError(client, message);
+				break;
+
+			case 'skip_auto_run_document':
+				this.handleSkipAutoRunDocument(client, message);
+				break;
+
+			case 'abort_auto_run_error':
+				this.handleAbortAutoRunError(client, message);
+				break;
+
+			case 'list_playbooks':
+				this.handleListPlaybooks(client, message);
+				break;
+
+			case 'create_playbook':
+				this.handleCreatePlaybook(client, message);
+				break;
+
+			case 'update_playbook':
+				this.handleUpdatePlaybook(client, message);
+				break;
+
+			case 'delete_playbook':
+				this.handleDeletePlaybook(client, message);
 				break;
 
 			case 'get_settings':
@@ -1864,6 +1925,393 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				this.sendError(client, `Failed to stop auto-run: ${error.message}`);
 			});
+	}
+
+	/**
+	 * Handle reset_auto_run_doc_tasks message — revert all completed `[x]`
+	 * checkboxes back to `[ ]` for a single document. Mirrors the desktop's
+	 * "Reset Tasks" action so a playbook can be re-run from scratch.
+	 */
+	private handleResetAutoRunDocTasks(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const filename = message.filename as string;
+		logger.info(
+			`[Web] Received reset_auto_run_doc_tasks message: session=${sessionId}, filename=${filename}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !filename) {
+			this.sendError(client, 'Missing sessionId or filename');
+			return;
+		}
+
+		// Allow subdirectory paths (forward slashes) but reject traversal
+		if (
+			typeof filename !== 'string' ||
+			filename.length === 0 ||
+			filename.includes('..') ||
+			filename.includes('\\')
+		) {
+			this.sendError(client, 'Invalid filename');
+			return;
+		}
+
+		if (!this.callbacks.resetAutoRunDocTasks) {
+			this.sendError(client, 'Auto-run task reset not configured');
+			return;
+		}
+
+		this.callbacks
+			.resetAutoRunDocTasks(sessionId, filename)
+			.then((success) => {
+				this.send(client, {
+					type: 'reset_auto_run_doc_tasks_result',
+					success,
+					sessionId,
+					filename,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to reset auto-run doc tasks: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle resume_auto_run_error message — clear the error pause and continue.
+	 */
+	private handleResumeAutoRunError(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.resumeAutoRunError) {
+			this.sendError(client, 'Auto-run resume not configured');
+			return;
+		}
+		this.callbacks
+			.resumeAutoRunError(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'resume_auto_run_error_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to resume auto-run: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle skip_auto_run_document message — skip the failing document and
+	 * continue with the next one in the queue.
+	 */
+	private handleSkipAutoRunDocument(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.skipAutoRunDocument) {
+			this.sendError(client, 'Auto-run skip not configured');
+			return;
+		}
+		this.callbacks
+			.skipAutoRunDocument(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'skip_auto_run_document_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to skip auto-run document: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle abort_auto_run_error message — fully stop the run after an error.
+	 */
+	private handleAbortAutoRunError(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.abortAutoRunError) {
+			this.sendError(client, 'Auto-run abort not configured');
+			return;
+		}
+		this.callbacks
+			.abortAutoRunError(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'abort_auto_run_error_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to abort auto-run: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle list_playbooks message — return the saved playbooks for a session.
+	 */
+	private handleListPlaybooks(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!this.callbacks.listPlaybooks) {
+			this.sendError(client, 'Playbook listing not configured');
+			return;
+		}
+		this.callbacks
+			.listPlaybooks(sessionId)
+			.then((playbooks) => {
+				this.send(client, {
+					type: 'playbooks_list',
+					sessionId,
+					playbooks,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to list playbooks: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle create_playbook message — persist a new playbook with the given config.
+	 */
+	private handleCreatePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbook = message.playbook as
+			| {
+					name?: unknown;
+					documents?: unknown;
+					loopEnabled?: unknown;
+					maxLoops?: unknown;
+					prompt?: unknown;
+			  }
+			| undefined;
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+		if (!playbook || typeof playbook !== 'object') {
+			this.sendError(client, 'Missing playbook payload');
+			return;
+		}
+		if (typeof playbook.name !== 'string' || playbook.name.trim() === '') {
+			this.sendError(client, 'Playbook name must be a non-empty string');
+			return;
+		}
+		const documents = this.parsePlaybookDocuments(playbook.documents);
+		if (documents === null) {
+			this.sendError(client, 'Invalid playbook documents');
+			return;
+		}
+		if (playbook.loopEnabled !== undefined && typeof playbook.loopEnabled !== 'boolean') {
+			this.sendError(client, 'loopEnabled must be a boolean');
+			return;
+		}
+		if (
+			playbook.maxLoops !== undefined &&
+			playbook.maxLoops !== null &&
+			(typeof playbook.maxLoops !== 'number' ||
+				!Number.isFinite(playbook.maxLoops) ||
+				playbook.maxLoops < 0)
+		) {
+			this.sendError(client, 'maxLoops must be a finite non-negative number');
+			return;
+		}
+		if (playbook.prompt !== undefined && typeof playbook.prompt !== 'string') {
+			this.sendError(client, 'prompt must be a string');
+			return;
+		}
+
+		if (!this.callbacks.createPlaybook) {
+			this.sendError(client, 'Playbook creation not configured');
+			return;
+		}
+
+		this.callbacks
+			.createPlaybook(sessionId, {
+				name: playbook.name.trim(),
+				documents,
+				loopEnabled: Boolean(playbook.loopEnabled),
+				maxLoops: (playbook.maxLoops as number | null | undefined) ?? null,
+				prompt: typeof playbook.prompt === 'string' ? playbook.prompt : '',
+			})
+			.then((created) => {
+				this.send(client, {
+					type: 'create_playbook_result',
+					success: created !== null,
+					sessionId,
+					playbook: created,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create playbook: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle update_playbook message — apply partial updates to an existing playbook.
+	 */
+	private handleUpdatePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbookId = message.playbookId as string;
+		const updates = message.updates as
+			| {
+					name?: unknown;
+					documents?: unknown;
+					loopEnabled?: unknown;
+					maxLoops?: unknown;
+					prompt?: unknown;
+			  }
+			| undefined;
+
+		if (!sessionId || !playbookId) {
+			this.sendError(client, 'Missing sessionId or playbookId');
+			return;
+		}
+		if (!updates || typeof updates !== 'object') {
+			this.sendError(client, 'Missing updates payload');
+			return;
+		}
+
+		const sanitized: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops: number | null;
+			prompt: string;
+		}> = {};
+
+		if (updates.name !== undefined) {
+			if (typeof updates.name !== 'string' || updates.name.trim() === '') {
+				this.sendError(client, 'Playbook name must be a non-empty string');
+				return;
+			}
+			sanitized.name = updates.name.trim();
+		}
+		if (updates.documents !== undefined) {
+			const docs = this.parsePlaybookDocuments(updates.documents);
+			if (docs === null) {
+				this.sendError(client, 'Invalid playbook documents');
+				return;
+			}
+			sanitized.documents = docs;
+		}
+		if (updates.loopEnabled !== undefined) {
+			if (typeof updates.loopEnabled !== 'boolean') {
+				this.sendError(client, 'loopEnabled must be a boolean');
+				return;
+			}
+			sanitized.loopEnabled = updates.loopEnabled;
+		}
+		if (updates.maxLoops !== undefined) {
+			if (
+				updates.maxLoops !== null &&
+				(typeof updates.maxLoops !== 'number' ||
+					!Number.isFinite(updates.maxLoops) ||
+					updates.maxLoops < 0)
+			) {
+				this.sendError(client, 'maxLoops must be a finite non-negative number');
+				return;
+			}
+			sanitized.maxLoops = updates.maxLoops as number | null;
+		}
+		if (updates.prompt !== undefined) {
+			if (typeof updates.prompt !== 'string') {
+				this.sendError(client, 'prompt must be a string');
+				return;
+			}
+			sanitized.prompt = updates.prompt;
+		}
+
+		if (!this.callbacks.updatePlaybook) {
+			this.sendError(client, 'Playbook updates not configured');
+			return;
+		}
+
+		this.callbacks
+			.updatePlaybook(sessionId, playbookId, sanitized)
+			.then((updated) => {
+				this.send(client, {
+					type: 'update_playbook_result',
+					success: updated !== null,
+					sessionId,
+					playbook: updated,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to update playbook: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle delete_playbook message — remove a playbook.
+	 */
+	private handleDeletePlaybook(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const playbookId = message.playbookId as string;
+		if (!sessionId || !playbookId) {
+			this.sendError(client, 'Missing sessionId or playbookId');
+			return;
+		}
+		if (!this.callbacks.deletePlaybook) {
+			this.sendError(client, 'Playbook deletion not configured');
+			return;
+		}
+		this.callbacks
+			.deletePlaybook(sessionId, playbookId)
+			.then((success) => {
+				this.send(client, {
+					type: 'delete_playbook_result',
+					success,
+					sessionId,
+					playbookId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to delete playbook: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Validate and normalize the `documents` field of a playbook payload.
+	 * Returns the parsed array on success, or null on any validation failure.
+	 */
+	private parsePlaybookDocuments(input: unknown): WebPlaybookDocument[] | null {
+		if (!Array.isArray(input)) return null;
+		const out: WebPlaybookDocument[] = [];
+		for (const entry of input) {
+			if (!entry || typeof entry !== 'object') return null;
+			const e = entry as { filename?: unknown; resetOnCompletion?: unknown };
+			if (typeof e.filename !== 'string' || e.filename.trim() === '') return null;
+			if (e.filename.includes('..') || e.filename.includes('\\')) return null;
+			out.push({
+				filename: e.filename,
+				resetOnCompletion: Boolean(e.resetOnCompletion),
+			});
+		}
+		return out;
 	}
 
 	/**

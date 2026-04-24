@@ -8,7 +8,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import type { AutoRunDocument, LaunchConfig } from '../hooks/useAutoRun';
+import { useAutoRun } from '../hooks/useAutoRun';
+import type { AutoRunDocument, LaunchConfig, Playbook } from '../hooks/useAutoRun';
+import type { UseWebSocketReturn } from '../hooks/useWebSocket';
 
 /**
  * Props for AutoRunSetupSheet component
@@ -18,6 +20,10 @@ export interface AutoRunSetupSheetProps {
 	documents: AutoRunDocument[];
 	onLaunch: (config: LaunchConfig) => void;
 	onClose: () => void;
+	/** WebSocket sendRequest — required so the sheet can list/save/delete playbooks. */
+	sendRequest: UseWebSocketReturn['sendRequest'];
+	/** WebSocket send — passed through to useAutoRun (unused inside the sheet directly). */
+	send: UseWebSocketReturn['send'];
 }
 
 /**
@@ -27,14 +33,16 @@ export interface AutoRunSetupSheetProps {
  * Provides document selection, optional prompt, and loop configuration.
  */
 export function AutoRunSetupSheet({
-	sessionId: _sessionId,
+	sessionId,
 	documents,
 	onLaunch,
 	onClose,
+	sendRequest,
+	send,
 }: AutoRunSetupSheetProps) {
 	const colors = useThemeColors();
 	const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
-		() => new Set(documents.map((d) => d.filename))
+		() => new Set(documents.map((d) => d.path || d.filename))
 	);
 	const [prompt, setPrompt] = useState('');
 	const [loopEnabled, setLoopEnabled] = useState(false);
@@ -42,19 +50,57 @@ export function AutoRunSetupSheet({
 	const [isVisible, setIsVisible] = useState(false);
 	const sheetRef = useRef<HTMLDivElement>(null);
 
+	// Playbook state — loaded once when the sheet opens, plus the id of the
+	// currently-loaded playbook (used to disambiguate "Save" vs. "Update").
+	const {
+		playbooks,
+		isLoadingPlaybooks,
+		loadPlaybooks,
+		createPlaybook,
+		updatePlaybook,
+		deletePlaybook,
+	} = useAutoRun(sendRequest, send);
+	const [activePlaybookId, setActivePlaybookId] = useState<string | null>(null);
+	const [isSavingPlaybook, setIsSavingPlaybook] = useState(false);
+	const [showPlaybooks, setShowPlaybooks] = useState(true);
+
+	// Resolve the currently-loaded playbook. Used to detect modifications and
+	// to switch the "Save Playbook" button between Create / Update modes.
+	const activePlaybook: Playbook | null =
+		(activePlaybookId && playbooks.find((p) => p.id === activePlaybookId)) || null;
+	const isPlaybookModified = (() => {
+		if (!activePlaybook) return false;
+		const currentDocs = Array.from(selectedFiles).sort();
+		const playbookDocs = activePlaybook.documents.map((d) => d.filename).sort();
+		if (currentDocs.length !== playbookDocs.length) return true;
+		if (currentDocs.some((f, i) => f !== playbookDocs[i])) return true;
+		if (prompt !== activePlaybook.prompt) return true;
+		if (loopEnabled !== activePlaybook.loopEnabled) return true;
+		if (loopEnabled && (activePlaybook.maxLoops ?? null) !== maxLoops) return true;
+		return false;
+	})();
+
 	const handleClose = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 		setIsVisible(false);
 		setTimeout(() => onClose(), 300);
 	}, [onClose]);
 
-	// Reinitialize draft when sessionId or documents change
+	// Reinitialize draft when sessionId or documents change.
+	// Use the canonical doc path (which includes any subfolder prefix) so
+	// duplicates across folders never collide.
 	useEffect(() => {
-		setSelectedFiles(new Set(documents.map((d) => d.filename)));
+		setSelectedFiles(new Set(documents.map((d) => d.path || d.filename)));
 		setPrompt('');
 		setLoopEnabled(false);
 		setMaxLoops(3);
-	}, [_sessionId, documents]);
+		setActivePlaybookId(null);
+	}, [sessionId, documents]);
+
+	// Load saved playbooks once when the sheet opens for this session.
+	useEffect(() => {
+		void loadPlaybooks(sessionId);
+	}, [sessionId, loadPlaybooks]);
 
 	// Animate in on mount
 	useEffect(() => {
@@ -99,7 +145,7 @@ export function AutoRunSetupSheet({
 		if (selectedFiles.size === documents.length) {
 			setSelectedFiles(new Set());
 		} else {
-			setSelectedFiles(new Set(documents.map((d) => d.filename)));
+			setSelectedFiles(new Set(documents.map((d) => d.path || d.filename)));
 		}
 	}, [selectedFiles.size, documents]);
 
@@ -126,6 +172,76 @@ export function AutoRunSetupSheet({
 		};
 		onLaunch(config);
 	}, [selectedFiles, prompt, loopEnabled, maxLoops, onLaunch]);
+
+	const handleSelectPlaybook = useCallback((playbook: Playbook) => {
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		setActivePlaybookId(playbook.id);
+		setSelectedFiles(new Set(playbook.documents.map((d) => d.filename)));
+		setPrompt(playbook.prompt);
+		setLoopEnabled(playbook.loopEnabled);
+		setMaxLoops(playbook.maxLoops ?? 3);
+	}, []);
+
+	const handleSavePlaybook = useCallback(async () => {
+		if (selectedFiles.size === 0) return;
+		const isUpdate = activePlaybook !== null;
+		const proposedName = isUpdate ? activePlaybook!.name : '';
+		const name = window.prompt(
+			isUpdate ? 'Update this playbook? You can rename it here:' : 'Name this playbook:',
+			proposedName
+		);
+		if (!name || !name.trim()) return;
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		setIsSavingPlaybook(true);
+		try {
+			const draft = {
+				name: name.trim(),
+				documents: Array.from(selectedFiles).map((filename) => ({
+					filename,
+					resetOnCompletion: false,
+				})),
+				loopEnabled,
+				maxLoops: loopEnabled ? maxLoops : null,
+				prompt: prompt.trim(),
+			};
+			let saved: Playbook | null;
+			if (isUpdate) {
+				saved = await updatePlaybook(sessionId, activePlaybook!.id, draft);
+			} else {
+				saved = await createPlaybook(sessionId, draft);
+			}
+			if (saved) {
+				setActivePlaybookId(saved.id);
+				triggerHaptic(HAPTIC_PATTERNS.success);
+			} else {
+				triggerHaptic(HAPTIC_PATTERNS.error);
+			}
+		} finally {
+			setIsSavingPlaybook(false);
+		}
+	}, [
+		activePlaybook,
+		createPlaybook,
+		loopEnabled,
+		maxLoops,
+		prompt,
+		selectedFiles,
+		sessionId,
+		updatePlaybook,
+	]);
+
+	const handleDeletePlaybook = useCallback(
+		async (playbook: Playbook) => {
+			const confirmed = window.confirm(`Delete playbook "${playbook.name}"?`);
+			if (!confirmed) return;
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			const success = await deletePlaybook(sessionId, playbook.id);
+			if (success && activePlaybookId === playbook.id) {
+				setActivePlaybookId(null);
+			}
+		},
+		[activePlaybookId, deletePlaybook, sessionId]
+	);
 
 	const allSelected = selectedFiles.size === documents.length && documents.length > 0;
 
@@ -243,6 +359,238 @@ export function AutoRunSetupSheet({
 						padding: '0 16px',
 					}}
 				>
+					{/* Playbooks section — collapsible. Surfaces saved configurations
+					    so the mobile launch flow has parity with the desktop's playbook
+					    list (load / save / update / delete). */}
+					<div style={{ marginBottom: '20px' }}>
+						<button
+							onClick={() => {
+								triggerHaptic(HAPTIC_PATTERNS.tap);
+								setShowPlaybooks((p) => !p);
+							}}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'space-between',
+								width: '100%',
+								background: 'none',
+								border: 'none',
+								padding: '4px 0',
+								cursor: 'pointer',
+								marginBottom: '10px',
+							}}
+							aria-expanded={showPlaybooks}
+							aria-label="Toggle playbooks panel"
+						>
+							<span
+								style={{
+									fontSize: '13px',
+									fontWeight: 600,
+									color: colors.textDim,
+									textTransform: 'uppercase',
+									letterSpacing: '0.5px',
+								}}
+							>
+								Playbooks
+								{playbooks.length > 0 && (
+									<span
+										style={{
+											marginLeft: '6px',
+											padding: '2px 6px',
+											borderRadius: '10px',
+											backgroundColor: `${colors.accent}25`,
+											color: colors.accent,
+											fontSize: '11px',
+											fontWeight: 600,
+										}}
+									>
+										{playbooks.length}
+									</span>
+								)}
+							</span>
+							<svg
+								width="16"
+								height="16"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke={colors.textDim}
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								style={{
+									transform: showPlaybooks ? 'rotate(180deg)' : 'rotate(0deg)',
+									transition: 'transform 0.2s ease',
+								}}
+							>
+								<polyline points="6 9 12 15 18 9" />
+							</svg>
+						</button>
+
+						{showPlaybooks && (
+							<>
+								{isLoadingPlaybooks ? (
+									<div
+										style={{
+											padding: '12px 14px',
+											fontSize: '13px',
+											color: colors.textDim,
+										}}
+									>
+										Loading playbooks...
+									</div>
+								) : playbooks.length === 0 ? (
+									<div
+										style={{
+											padding: '12px 14px',
+											borderRadius: '10px',
+											border: `1px dashed ${colors.border}`,
+											fontSize: '13px',
+											color: colors.textDim,
+											textAlign: 'center',
+										}}
+									>
+										No saved playbooks. Configure documents below and tap "Save Playbook" to create
+										one.
+									</div>
+								) : (
+									<div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+										{playbooks.map((playbook) => {
+											const isActive = playbook.id === activePlaybookId;
+											return (
+												<div
+													key={playbook.id}
+													style={{
+														display: 'flex',
+														alignItems: 'center',
+														gap: '8px',
+														padding: '10px 12px',
+														borderRadius: '10px',
+														border: `1px solid ${isActive ? colors.accent : colors.border}`,
+														backgroundColor: isActive ? `${colors.accent}10` : colors.bgSidebar,
+													}}
+												>
+													<button
+														onClick={() => handleSelectPlaybook(playbook)}
+														style={{
+															flex: 1,
+															minWidth: 0,
+															display: 'flex',
+															flexDirection: 'column',
+															alignItems: 'flex-start',
+															gap: '2px',
+															background: 'none',
+															border: 'none',
+															padding: 0,
+															color: colors.textMain,
+															cursor: 'pointer',
+															touchAction: 'manipulation',
+															WebkitTapHighlightColor: 'transparent',
+															textAlign: 'left',
+														}}
+														aria-label={`Load playbook ${playbook.name}`}
+														aria-pressed={isActive}
+													>
+														<span
+															style={{
+																fontSize: '14px',
+																fontWeight: 600,
+																overflow: 'hidden',
+																textOverflow: 'ellipsis',
+																whiteSpace: 'nowrap',
+																maxWidth: '100%',
+															}}
+														>
+															{playbook.name}
+														</span>
+														<span style={{ fontSize: '11px', color: colors.textDim }}>
+															{playbook.documents.length}{' '}
+															{playbook.documents.length === 1 ? 'doc' : 'docs'}
+															{playbook.loopEnabled
+																? ` · loop${
+																		playbook.maxLoops != null ? ` ×${playbook.maxLoops}` : ''
+																	}`
+																: ''}
+														</span>
+													</button>
+													<button
+														onClick={() => handleDeletePlaybook(playbook)}
+														style={{
+															width: '32px',
+															height: '32px',
+															display: 'flex',
+															alignItems: 'center',
+															justifyContent: 'center',
+															borderRadius: '8px',
+															backgroundColor: 'transparent',
+															border: `1px solid ${colors.border}`,
+															color: colors.textDim,
+															cursor: 'pointer',
+															flexShrink: 0,
+															touchAction: 'manipulation',
+															WebkitTapHighlightColor: 'transparent',
+														}}
+														aria-label={`Delete playbook ${playbook.name}`}
+														title="Delete playbook"
+													>
+														<svg
+															width="14"
+															height="14"
+															viewBox="0 0 24 24"
+															fill="none"
+															stroke="currentColor"
+															strokeWidth="2"
+															strokeLinecap="round"
+															strokeLinejoin="round"
+														>
+															<polyline points="3 6 5 6 21 6" />
+															<path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+															<path d="M10 11v6" />
+															<path d="M14 11v6" />
+															<path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+														</svg>
+													</button>
+												</div>
+											);
+										})}
+									</div>
+								)}
+								<button
+									onClick={handleSavePlaybook}
+									disabled={selectedFiles.size === 0 || isSavingPlaybook}
+									style={{
+										marginTop: '10px',
+										width: '100%',
+										padding: '10px 14px',
+										borderRadius: '10px',
+										border: `1px solid ${colors.accent}`,
+										backgroundColor: 'transparent',
+										color: colors.accent,
+										fontSize: '13px',
+										fontWeight: 600,
+										cursor:
+											selectedFiles.size === 0 || isSavingPlaybook ? 'not-allowed' : 'pointer',
+										opacity: selectedFiles.size === 0 || isSavingPlaybook ? 0.5 : 1,
+										touchAction: 'manipulation',
+										WebkitTapHighlightColor: 'transparent',
+									}}
+									aria-label={
+										activePlaybook
+											? `Update playbook ${activePlaybook.name}`
+											: 'Save current configuration as playbook'
+									}
+								>
+									{isSavingPlaybook
+										? 'Saving...'
+										: activePlaybook
+											? isPlaybookModified
+												? `Update "${activePlaybook.name}"`
+												: `Saved as "${activePlaybook.name}"`
+											: 'Save as Playbook'}
+								</button>
+							</>
+						)}
+					</div>
+
 					{/* Document selector section */}
 					<div style={{ marginBottom: '20px' }}>
 						{/* Section label + Select All toggle */}
@@ -292,11 +640,12 @@ export function AutoRunSetupSheet({
 							}}
 						>
 							{documents.map((doc) => {
-								const isSelected = selectedFiles.has(doc.filename);
+								const docKey = doc.path || doc.filename;
+								const isSelected = selectedFiles.has(docKey);
 								return (
 									<button
-										key={doc.filename}
-										onClick={() => handleToggleFile(doc.filename)}
+										key={docKey}
+										onClick={() => handleToggleFile(docKey)}
 										style={{
 											display: 'flex',
 											alignItems: 'center',

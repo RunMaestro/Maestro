@@ -115,6 +115,12 @@ export interface UseBatchHandlersReturn {
 	handleResumeAfterError: () => void;
 	/** Abort the entire batch on unrecoverable error */
 	handleAbortBatchOnError: () => void;
+	/** Resume batch by sessionId (used by web remote) */
+	resumeAfterError: (sessionId: string) => void;
+	/** Skip current document by sessionId (used by web remote) */
+	skipCurrentDocument: (sessionId: string) => void;
+	/** Abort batch by sessionId (used by web remote) */
+	abortBatchOnError: (sessionId: string) => void;
 	/** Session IDs with active batch runs */
 	activeBatchSessionIds: string[];
 	/** Batch state for the current/active session */
@@ -793,6 +799,9 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 		handleSkipCurrentDocument,
 		handleResumeAfterError,
 		handleAbortBatchOnError,
+		resumeAfterError,
+		skipCurrentDocument,
+		abortBatchOnError,
 		activeBatchSessionIds,
 		currentSessionBatchState,
 		activeBatchRunState,

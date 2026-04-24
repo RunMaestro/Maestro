@@ -37,6 +37,16 @@ import type {
 	GetAutoRunDocContentCallback,
 	SaveAutoRunDocCallback,
 	StopAutoRunCallback,
+	ResetAutoRunDocTasksCallback,
+	ResumeAutoRunErrorCallback,
+	SkipAutoRunDocumentCallback,
+	AbortAutoRunErrorCallback,
+	ListPlaybooksCallback,
+	CreatePlaybookCallback,
+	UpdatePlaybookCallback,
+	DeletePlaybookCallback,
+	WebPlaybook,
+	WebPlaybookDocument,
 	GetSettingsCallback,
 	SetSettingCallback,
 	GetGroupsCallback,
@@ -113,6 +123,14 @@ export interface WebServerCallbacks {
 	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
 	saveAutoRunDoc: SaveAutoRunDocCallback | null;
 	stopAutoRun: StopAutoRunCallback | null;
+	resetAutoRunDocTasks: ResetAutoRunDocTasksCallback | null;
+	resumeAutoRunError: ResumeAutoRunErrorCallback | null;
+	skipAutoRunDocument: SkipAutoRunDocumentCallback | null;
+	abortAutoRunError: AbortAutoRunErrorCallback | null;
+	listPlaybooks: ListPlaybooksCallback | null;
+	createPlaybook: CreatePlaybookCallback | null;
+	updatePlaybook: UpdatePlaybookCallback | null;
+	deletePlaybook: DeletePlaybookCallback | null;
 	getSettings: GetSettingsCallback | null;
 	setSetting: SetSettingCallback | null;
 	getGroups: GetGroupsCallback | null;
@@ -173,6 +191,14 @@ export class CallbackRegistry {
 		getAutoRunDocContent: null,
 		saveAutoRunDoc: null,
 		stopAutoRun: null,
+		resetAutoRunDocTasks: null,
+		resumeAutoRunError: null,
+		skipAutoRunDocument: null,
+		abortAutoRunError: null,
+		listPlaybooks: null,
+		createPlaybook: null,
+		updatePlaybook: null,
+		deletePlaybook: null,
 		getSettings: null,
 		setSetting: null,
 		getGroups: null,
@@ -360,6 +386,65 @@ export class CallbackRegistry {
 	async stopAutoRun(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.stopAutoRun) return false;
 		return this.callbacks.stopAutoRun(sessionId);
+	}
+
+	async resetAutoRunDocTasks(sessionId: string, filename: string): Promise<boolean> {
+		if (!this.callbacks.resetAutoRunDocTasks) return false;
+		return this.callbacks.resetAutoRunDocTasks(sessionId, filename);
+	}
+
+	async resumeAutoRunError(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.resumeAutoRunError) return false;
+		return this.callbacks.resumeAutoRunError(sessionId);
+	}
+
+	async skipAutoRunDocument(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.skipAutoRunDocument) return false;
+		return this.callbacks.skipAutoRunDocument(sessionId);
+	}
+
+	async abortAutoRunError(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.abortAutoRunError) return false;
+		return this.callbacks.abortAutoRunError(sessionId);
+	}
+
+	async listPlaybooks(sessionId: string): Promise<WebPlaybook[]> {
+		if (!this.callbacks.listPlaybooks) return [];
+		return this.callbacks.listPlaybooks(sessionId);
+	}
+
+	async createPlaybook(
+		sessionId: string,
+		playbook: {
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}
+	): Promise<WebPlaybook | null> {
+		if (!this.callbacks.createPlaybook) return null;
+		return this.callbacks.createPlaybook(sessionId, playbook);
+	}
+
+	async updatePlaybook(
+		sessionId: string,
+		playbookId: string,
+		updates: Partial<{
+			name: string;
+			documents: WebPlaybookDocument[];
+			loopEnabled: boolean;
+			maxLoops?: number | null;
+			prompt: string;
+		}>
+	): Promise<WebPlaybook | null> {
+		if (!this.callbacks.updatePlaybook) return null;
+		return this.callbacks.updatePlaybook(sessionId, playbookId, updates);
+	}
+
+	async deletePlaybook(sessionId: string, playbookId: string): Promise<boolean> {
+		if (!this.callbacks.deletePlaybook) return false;
+		return this.callbacks.deletePlaybook(sessionId, playbookId);
 	}
 
 	getSettings(): WebSettings {
@@ -660,6 +745,38 @@ export class CallbackRegistry {
 
 	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
 		this.callbacks.stopAutoRun = callback;
+	}
+
+	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {
+		this.callbacks.resetAutoRunDocTasks = callback;
+	}
+
+	setResumeAutoRunErrorCallback(callback: ResumeAutoRunErrorCallback): void {
+		this.callbacks.resumeAutoRunError = callback;
+	}
+
+	setSkipAutoRunDocumentCallback(callback: SkipAutoRunDocumentCallback): void {
+		this.callbacks.skipAutoRunDocument = callback;
+	}
+
+	setAbortAutoRunErrorCallback(callback: AbortAutoRunErrorCallback): void {
+		this.callbacks.abortAutoRunError = callback;
+	}
+
+	setListPlaybooksCallback(callback: ListPlaybooksCallback): void {
+		this.callbacks.listPlaybooks = callback;
+	}
+
+	setCreatePlaybookCallback(callback: CreatePlaybookCallback): void {
+		this.callbacks.createPlaybook = callback;
+	}
+
+	setUpdatePlaybookCallback(callback: UpdatePlaybookCallback): void {
+		this.callbacks.updatePlaybook = callback;
+	}
+
+	setDeletePlaybookCallback(callback: DeletePlaybookCallback): void {
+		this.callbacks.deletePlaybook = callback;
 	}
 
 	setGetSettingsCallback(callback: GetSettingsCallback): void {

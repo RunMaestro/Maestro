@@ -176,6 +176,18 @@ export interface AutoRunState {
 	totalTasksAcrossAllDocs?: number;
 	/** Completed tasks across all documents (multi-document progress) */
 	completedTasksAcrossAllDocs?: number;
+	/** True if batch is paused waiting for error resolution (Phase 5.10) */
+	errorPaused?: boolean;
+	/** Human-readable description of the error that paused the run */
+	errorMessage?: string;
+	/** Error type tag (e.g. 'rate_limit', 'auth', 'context_window') */
+	errorType?: string;
+	/** Whether the error is recoverable (resume vs. abort) */
+	errorRecoverable?: boolean;
+	/** Document index that hit the error (for skip-document UI) */
+	errorDocumentIndex?: number;
+	/** Description of the task that failed (for UI display) */
+	errorTaskDescription?: string;
 }
 
 /**
@@ -400,6 +412,33 @@ export interface AutoRunDocument {
 	path: string;
 	taskCount: number;
 	completedCount: number;
+	/** Subfolder (relative path without filename), empty string for root */
+	folder?: string;
+}
+
+/**
+ * Playbook document entry surfaced to web/CLI clients.
+ * Matches PlaybookDocumentEntry in shared/types.ts but kept local to the
+ * web-server module to avoid pulling shared types into the web bundle.
+ */
+export interface WebPlaybookDocument {
+	filename: string;
+	resetOnCompletion: boolean;
+}
+
+/**
+ * Saved Playbook configuration (subset surfaced to web/mobile clients).
+ * Worktree settings are intentionally omitted — they're desktop-only.
+ */
+export interface WebPlaybook {
+	id: string;
+	name: string;
+	createdAt: number;
+	updatedAt: number;
+	documents: WebPlaybookDocument[];
+	loopEnabled: boolean;
+	maxLoops?: number | null;
+	prompt: string;
 }
 
 /**
@@ -530,6 +569,36 @@ export type SaveAutoRunDocCallback = (
 	content: string
 ) => Promise<boolean>;
 export type StopAutoRunCallback = (sessionId: string) => Promise<boolean>;
+export type ResetAutoRunDocTasksCallback = (
+	sessionId: string,
+	filename: string
+) => Promise<boolean>;
+export type ResumeAutoRunErrorCallback = (sessionId: string) => Promise<boolean>;
+export type SkipAutoRunDocumentCallback = (sessionId: string) => Promise<boolean>;
+export type AbortAutoRunErrorCallback = (sessionId: string) => Promise<boolean>;
+export type ListPlaybooksCallback = (sessionId: string) => Promise<WebPlaybook[]>;
+export type CreatePlaybookCallback = (
+	sessionId: string,
+	playbook: {
+		name: string;
+		documents: WebPlaybookDocument[];
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	}
+) => Promise<WebPlaybook | null>;
+export type UpdatePlaybookCallback = (
+	sessionId: string,
+	playbookId: string,
+	updates: Partial<{
+		name: string;
+		documents: WebPlaybookDocument[];
+		loopEnabled: boolean;
+		maxLoops?: number | null;
+		prompt: string;
+	}>
+) => Promise<WebPlaybook | null>;
+export type DeletePlaybookCallback = (sessionId: string, playbookId: string) => Promise<boolean>;
 export type GetFileTreeCallback = (sessionId: string, subPath?: string) => Promise<FileTreeNode[]>;
 export type GetFileContentCallback = (
 	sessionId: string,

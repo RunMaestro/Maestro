@@ -22,6 +22,12 @@ export interface AutoRunState {
 	currentDocumentIndex?: number;
 	totalTasksAcrossAllDocs?: number;
 	completedTasksAcrossAllDocs?: number;
+	errorPaused?: boolean;
+	errorMessage?: string;
+	errorType?: string;
+	errorRecoverable?: boolean;
+	errorDocumentIndex?: number;
+	errorTaskDescription?: string;
 }
 
 /**

@@ -6,10 +6,11 @@
  * to document viewer and setup sheet.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useAutoRun } from '../hooks/useAutoRun';
 import { DocumentCard } from './AutoRunDocumentCard';
+import type { AutoRunDocument } from '../hooks/useAutoRun';
 import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 
@@ -44,7 +45,7 @@ export function AutoRunPanel({
 	const colors = useThemeColors();
 	const [isStopping, setIsStopping] = useState(false);
 
-	const { documents, isLoadingDocs, loadDocuments, stopAutoRun } = useAutoRun(
+	const { documents, isLoadingDocs, loadDocuments, stopAutoRun, resetDocumentTasks } = useAutoRun(
 		sendRequest,
 		send,
 		autoRunState
@@ -92,6 +93,39 @@ export function AutoRunPanel({
 		},
 		[onOpenDocument]
 	);
+
+	const handleResetDocument = useCallback(
+		async (filename: string) => {
+			const success = await resetDocumentTasks(sessionId, filename);
+			if (success) {
+				// Re-fetch document list so the per-doc task counts reflect the reset.
+				await loadDocuments(sessionId);
+			}
+			return success;
+		},
+		[loadDocuments, resetDocumentTasks, sessionId]
+	);
+
+	// Group documents by their subfolder so the mobile UI mirrors the desktop's
+	// nested tree. Documents at the root use the empty-string key.
+	const documentsByFolder = useMemo(() => {
+		const groups = new Map<string, AutoRunDocument[]>();
+		for (const doc of documents) {
+			const folder = doc.folder || '';
+			const arr = groups.get(folder);
+			if (arr) {
+				arr.push(doc);
+			} else {
+				groups.set(folder, [doc]);
+			}
+		}
+		// Sort folders alphabetically with root first
+		return Array.from(groups.entries()).sort(([a], [b]) => {
+			if (a === '') return -1;
+			if (b === '') return 1;
+			return a.localeCompare(b);
+		});
+	}, [documents]);
 
 	// Close on escape key
 	useEffect(() => {
@@ -421,11 +455,41 @@ export function AutoRunPanel({
 						style={{
 							display: 'flex',
 							flexDirection: 'column',
-							gap: '10px',
+							gap: '16px',
 						}}
 					>
-						{documents.map((doc) => (
-							<DocumentCard key={doc.filename} document={doc} onTap={handleDocumentTap} />
+						{documentsByFolder.map(([folder, folderDocs]) => (
+							<section
+								key={folder || '__root__'}
+								style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
+							>
+								{folder && (
+									<h2
+										style={{
+											fontSize: '12px',
+											fontWeight: 600,
+											color: colors.textDim,
+											textTransform: 'uppercase',
+											letterSpacing: '0.5px',
+											margin: 0,
+											padding: '0 4px',
+										}}
+									>
+										{folder}
+									</h2>
+								)}
+								<div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+									{folderDocs.map((doc) => (
+										<DocumentCard
+											key={doc.path || doc.filename}
+											document={doc}
+											onTap={handleDocumentTap}
+											onReset={handleResetDocument}
+											isLocked={isRunning}
+										/>
+									))}
+								</div>
+							</section>
 						))}
 					</div>
 				)}

@@ -710,6 +710,204 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote reset auto-run document tasks
+		 * (request-response — renderer reads/writes the document via existing autorun IPC)
+		 */
+		onRemoteResetAutoRunDocTasks: (
+			callback: (sessionId: string, filename: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				filename: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, filename, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, false);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:resetAutoRunDocTasks', handler);
+			return () => ipcRenderer.removeListener('remote:resetAutoRunDocTasks', handler);
+		},
+
+		sendRemoteResetAutoRunDocTasksResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote auto-run error-recovery actions (resume / skip-document / abort).
+		 * Each action mirrors the desktop AutoRunErrorBanner buttons.
+		 */
+		onRemoteResumeAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, false);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:resumeAutoRunError', handler);
+			return () => ipcRenderer.removeListener('remote:resumeAutoRunError', handler);
+		},
+
+		sendRemoteResumeAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteSkipAutoRunDocument: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, false);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:skipAutoRunDocument', handler);
+			return () => ipcRenderer.removeListener('remote:skipAutoRunDocument', handler);
+		},
+
+		sendRemoteSkipAutoRunDocumentResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteAbortAutoRunError: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, false);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:abortAutoRunError', handler);
+			return () => ipcRenderer.removeListener('remote:abortAutoRunError', handler);
+		},
+
+		sendRemoteAbortAutoRunErrorResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote playbook CRUD from web interface (request-response).
+		 * Renderer forwards to window.maestro.playbooks.* IPC and replies on the channel.
+		 */
+		onRemoteListPlaybooks: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
+				try {
+					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, []);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, []);
+				}
+			};
+			ipcRenderer.on('remote:listPlaybooks', handler);
+			return () => ipcRenderer.removeListener('remote:listPlaybooks', handler);
+		},
+
+		sendRemoteListPlaybooksResponse: (responseChannel: string, playbooks: unknown[]): void => {
+			ipcRenderer.send(responseChannel, playbooks);
+		},
+
+		onRemoteCreatePlaybook: (
+			callback: (sessionId: string, playbook: unknown, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbook: unknown,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbook, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, null);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, null);
+				}
+			};
+			ipcRenderer.on('remote:createPlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:createPlaybook', handler);
+		},
+
+		sendRemoteCreatePlaybookResponse: (responseChannel: string, playbook: unknown): void => {
+			ipcRenderer.send(responseChannel, playbook);
+		},
+
+		onRemoteUpdatePlaybook: (
+			callback: (
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbookId: string,
+				updates: unknown,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbookId, updates, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, null);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, null);
+				}
+			};
+			ipcRenderer.on('remote:updatePlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:updatePlaybook', handler);
+		},
+
+		sendRemoteUpdatePlaybookResponse: (responseChannel: string, playbook: unknown): void => {
+			ipcRenderer.send(responseChannel, playbook);
+		},
+
+		onRemoteDeletePlaybook: (
+			callback: (sessionId: string, playbookId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				playbookId: string,
+				responseChannel: string
+			) => {
+				try {
+					Promise.resolve(callback(sessionId, playbookId, responseChannel)).catch(() => {
+						ipcRenderer.send(responseChannel, false);
+					});
+				} catch {
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:deletePlaybook', handler);
+			return () => ipcRenderer.removeListener('remote:deletePlaybook', handler);
+		},
+
+		sendRemoteDeletePlaybookResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
 		 * Subscribe to remote set setting from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */

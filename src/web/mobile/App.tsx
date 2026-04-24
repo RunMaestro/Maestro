@@ -1463,7 +1463,28 @@ export default function MobileApp() {
 		documents: autoRunDocuments,
 		loadDocuments: loadAutoRunDocuments,
 		launchAutoRun,
+		resumeAutoRunError,
+		skipAutoRunDocument,
+		abortAutoRunError,
 	} = useAutoRun(sendRequest, send, currentAutoRunState);
+
+	// Bind error-recovery handlers to the active session so the AutoRunIndicator
+	// can call them with no arguments. Memoized so the indicator doesn't see a
+	// fresh function identity on every render and re-trigger pending state.
+	const handleAutoRunResume = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return resumeAutoRunError(activeSessionId);
+	}, [activeSessionId, resumeAutoRunError]);
+
+	const handleAutoRunSkipDocument = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return skipAutoRunDocument(activeSessionId);
+	}, [activeSessionId, skipAutoRunDocument]);
+
+	const handleAutoRunAbort = useCallback(() => {
+		if (!activeSessionId) return Promise.resolve(false);
+		return abortAutoRunError(activeSessionId);
+	}, [activeSessionId, abortAutoRunError]);
 
 	// Auto Run panel handlers
 	const handleOpenAutoRunPanel = useCallback(() => {
@@ -3086,6 +3107,9 @@ export default function MobileApp() {
 					state={autoRunStates[activeSessionId]}
 					sessionName={activeSession?.name}
 					onTap={handleOpenAutoRunPanel}
+					onResume={handleAutoRunResume}
+					onSkipDocument={handleAutoRunSkipDocument}
+					onAbort={handleAutoRunAbort}
 				/>
 			)}
 
@@ -3156,6 +3180,7 @@ export default function MobileApp() {
 					filename={autoRunViewingDoc}
 					onBack={handleAutoRunBackFromDocument}
 					sendRequest={sendRequest}
+					isLocked={Boolean(currentAutoRunState?.isRunning)}
 				/>
 			)}
 
@@ -3166,6 +3191,8 @@ export default function MobileApp() {
 					documents={autoRunDocuments}
 					onLaunch={handleAutoRunLaunch}
 					onClose={handleAutoRunCloseSetup}
+					sendRequest={sendRequest}
+					send={send}
 				/>
 			)}
 

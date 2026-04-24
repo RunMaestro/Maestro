@@ -341,11 +341,17 @@ describe('AutoRunIndicator', () => {
 			expect(banner.style.display).toBe('flex');
 		});
 
-		it('aligns items center', () => {
+		it('lays out as a column to accommodate optional error-recovery actions', () => {
+			// Banner uses flex-column so a paused-on-error state can stack the
+			// progress row above the Resume/Skip/Abort buttons. The original
+			// row of icon + status + badge is still centered inside its own
+			// nested wrapper.
 			const state = createAutoRunState();
 			const { container } = render(<AutoRunIndicator state={state} />);
 			const banner = container.firstChild as HTMLElement;
-			expect(banner.style.alignItems).toBe('center');
+			expect(banner.style.flexDirection).toBe('column');
+			const innerRow = banner.firstChild as HTMLElement;
+			expect(innerRow.style.alignItems).toBe('center');
 		});
 
 		it('has gap between elements', () => {
@@ -594,6 +600,77 @@ describe('AutoRunIndicator', () => {
 			rerender(<AutoRunIndicator state={stoppedState} />);
 
 			expect(container.firstChild).toBeNull();
+		});
+	});
+
+	describe('error-paused state', () => {
+		it('uses the error background color when paused on error', () => {
+			const state = createAutoRunState({ errorPaused: true, errorMessage: 'rate limit hit' });
+			const { container } = render(<AutoRunIndicator state={state} />);
+			const banner = container.firstChild as HTMLElement;
+			expect(banner.style.backgroundColor).toBe('rgb(239, 68, 68)');
+		});
+
+		it('shows "Auto Run Paused" instead of "AutoRun Active"', () => {
+			const state = createAutoRunState({ errorPaused: true });
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText('Auto Run Paused')).toBeInTheDocument();
+			expect(screen.queryByText('AutoRun Active')).toBeNull();
+		});
+
+		it('renders the error message and task description in the recovery box', () => {
+			const state = createAutoRunState({
+				errorPaused: true,
+				errorMessage: 'context window exceeded',
+				errorTaskDescription: 'Update README',
+			});
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.getByText('Update README')).toBeInTheDocument();
+			expect(screen.getByText('context window exceeded')).toBeInTheDocument();
+		});
+
+		it('renders Resume / Skip / Abort buttons when handlers are provided', () => {
+			const state = createAutoRunState({ errorPaused: true });
+			const onResume = vi.fn();
+			const onSkipDocument = vi.fn();
+			const onAbort = vi.fn();
+			render(
+				<AutoRunIndicator
+					state={state}
+					onResume={onResume}
+					onSkipDocument={onSkipDocument}
+					onAbort={onAbort}
+				/>
+			);
+			expect(
+				screen.getByRole('button', { name: /Resume Auto Run after error/i })
+			).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Skip current document/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /Abort Auto Run/i })).toBeInTheDocument();
+		});
+
+		it('hides Resume when errorRecoverable is false', () => {
+			const state = createAutoRunState({ errorPaused: true, errorRecoverable: false });
+			const onResume = vi.fn();
+			const onSkipDocument = vi.fn();
+			const onAbort = vi.fn();
+			render(
+				<AutoRunIndicator
+					state={state}
+					onResume={onResume}
+					onSkipDocument={onSkipDocument}
+					onAbort={onAbort}
+				/>
+			);
+			expect(screen.queryByRole('button', { name: /Resume Auto Run after error/i })).toBeNull();
+			expect(screen.getByRole('button', { name: /Abort Auto Run/i })).toBeInTheDocument();
+		});
+
+		it('does not render the recovery box when no recovery handlers are provided', () => {
+			const state = createAutoRunState({ errorPaused: true });
+			render(<AutoRunIndicator state={state} />);
+			expect(screen.queryByRole('button', { name: /Resume Auto Run after error/i })).toBeNull();
+			expect(screen.queryByRole('button', { name: /Abort Auto Run/i })).toBeNull();
 		});
 	});
 });
