@@ -1001,8 +1001,8 @@ function GroupSection({
 			{!isCollapsed && (
 				<div
 					style={{
-						display: 'flex',
-						flexDirection: 'column',
+						display: 'grid',
+						gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
 						gap: '10px',
 					}}
 				>
@@ -1441,8 +1441,8 @@ export function AllSessionsView({
 					// If only ungrouped sessions, render without group header
 					<div
 						style={{
-							display: 'flex',
-							flexDirection: 'column',
+							display: 'grid',
+							gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
 							gap: '10px',
 						}}
 					>
