@@ -3216,8 +3216,9 @@ export default function MobileApp() {
 			)}
 
 			{/* Context management sheet */}
-			{showContextManagement && activeSessionId && (
+			{activeSessionId && (
 				<ContextManagementSheet
+					isOpen={showContextManagement}
 					sessions={sessions}
 					currentSessionId={activeSessionId}
 					sendRequest={sendRequest}
