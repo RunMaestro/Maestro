@@ -1823,6 +1823,81 @@ describe('source_sub emission on agent chain subs', () => {
 	// emitted for command branches, a pure Schedule → A → B chain would
 	// still self-loop on B's completion matching its own source_session.
 
+	it('multiple triggers pointing at the same agent all appear in downstream source_sub', () => {
+		// Regression: when N triggers share the same downstream agent, the
+		// previous Map<string, string> implementation overwrote subNameForNode
+		// on each iteration, leaving only the LAST trigger's sub name in
+		// source_sub. Completions from any earlier trigger then failed the
+		// source_sub filter and the pipeline stalled silently.
+		const pipeline = makePipeline({
+			name: 'Pipeline 1',
+			nodes: [
+				{
+					id: 'trigger-startup',
+					type: 'trigger',
+					position: { x: 0, y: 0 },
+					data: { eventType: 'app.startup', label: 'Startup', config: {} },
+				},
+				{
+					id: 'trigger-heartbeat',
+					type: 'trigger',
+					position: { x: 0, y: 100 },
+					data: {
+						eventType: 'time.heartbeat',
+						label: 'Heartbeat',
+						config: { interval_minutes: 30 },
+					},
+				},
+				{
+					id: 'agent-a',
+					type: 'agent',
+					position: { x: 300, y: 50 },
+					data: {
+						sessionId: 's-a',
+						sessionName: 'Agent A',
+						toolType: 'claude-code',
+						inputPrompt: 'do work',
+					},
+				},
+				{
+					id: 'agent-b',
+					type: 'agent',
+					position: { x: 600, y: 50 },
+					data: {
+						sessionId: 's-b',
+						sessionName: 'Agent B',
+						toolType: 'claude-code',
+						inputPrompt: 'follow-up',
+					},
+				},
+			],
+			edges: [
+				{ id: 'e1', source: 'trigger-startup', target: 'agent-a', mode: 'pass' },
+				{ id: 'e2', source: 'trigger-heartbeat', target: 'agent-a', mode: 'pass' },
+				{ id: 'e3', source: 'agent-a', target: 'agent-b', mode: 'pass' },
+			],
+		});
+
+		const subs = pipelineToYamlSubscriptions(pipeline);
+		// 2 trigger subs (startup + heartbeat) + 1 chain sub for Agent B = 3
+		expect(subs).toHaveLength(3);
+
+		const triggerNames = subs.filter((s) => s.event !== 'agent.completed').map((s) => s.name);
+		expect(triggerNames).toHaveLength(2);
+
+		const chainSub = subs.find((s) => s.event === 'agent.completed');
+		expect(chainSub).toBeDefined();
+		expect(chainSub!.source_session).toBe('Agent A');
+
+		// source_sub must contain ALL upstream trigger sub names so Agent B fires
+		// regardless of which trigger kicked off Agent A.
+		const sourceSub = chainSub!.source_sub;
+		const sourceSubArray = Array.isArray(sourceSub) ? sourceSub : [sourceSub];
+		for (const triggerName of triggerNames) {
+			expect(sourceSubArray).toContain(triggerName);
+		}
+	});
+
 	it('single trigger -> agent -> agent chain emits source_sub on the downstream chain', () => {
 		const pipeline = makePipeline({
 			name: 'Pipeline 1',
