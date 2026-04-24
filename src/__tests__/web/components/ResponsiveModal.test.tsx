@@ -380,6 +380,77 @@ describe('ResponsiveModal', () => {
 		});
 	});
 
+	// Task 5.6 — audit that the Task 5.5 scroll behaviour applies to the phone
+	// bottom-sheet branch too. Forms taller than the ~351px cap (e.g. the
+	// AgentCreationSheet with agent-type chips + name + cwd + group list) must
+	// scroll inside the body while header + footer stay pinned.
+	describe('phone bottom-sheet at short viewport (Task 5.6)', () => {
+		beforeEach(() => {
+			setIsPhone(true);
+			setIsShortViewport(true);
+		});
+
+		it('keeps the phone bottom-sheet body scrollable and flex-filling', () => {
+			render(
+				<ResponsiveModal
+					isOpen
+					onClose={vi.fn()}
+					title="Landscape phone scroll"
+					footer={<button>Create</button>}
+				>
+					<div data-testid="tall-body" style={{ height: 600 }}>
+						Tall form content
+					</div>
+				</ResponsiveModal>
+			);
+			const body = screen.getByTestId('tall-body').parentElement!;
+			expect(body.className).toContain('overflow-y-auto');
+			expect(body.className).toContain('flex-1');
+		});
+
+		it('pins the phone bottom-sheet header (shrink-0)', () => {
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Pinned phone header">
+					Body
+				</ResponsiveModal>
+			);
+			const header = screen.getByRole('heading', { name: 'Pinned phone header' })
+				.parentElement!.parentElement!;
+			expect(header.tagName).toBe('HEADER');
+			expect(header.className).toContain('shrink-0');
+		});
+
+		it('pins the phone bottom-sheet footer (shrink-0)', () => {
+			render(
+				<ResponsiveModal
+					isOpen
+					onClose={vi.fn()}
+					title="Pinned phone footer"
+					footer={<button>Create Agent</button>}
+				>
+					Body
+				</ResponsiveModal>
+			);
+			const footer = screen.getByRole('button', { name: 'Create Agent' }).parentElement!;
+			expect(footer.className).toContain('shrink-0');
+		});
+
+		it('retains the bottom-sheet shape (rounded top, slide-up) alongside the height cap', () => {
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Bottom sheet shape">
+					Body
+				</ResponsiveModal>
+			);
+			const dialog = screen.getByRole('dialog');
+			// Task 5.5 height cap applies...
+			expect(dialog.className).toContain('max-h-[calc(100vh-24px)]');
+			// ...without disturbing the phone-tier bottom-sheet affordances.
+			expect(dialog.className).toContain('rounded-t-2xl');
+			expect(dialog.className).toContain('animate-slideUp');
+			expect(dialog.className).toContain('safe-area-bottom');
+		});
+	});
+
 	describe('z-index', () => {
 		it('defaults z-index to 400', () => {
 			render(
