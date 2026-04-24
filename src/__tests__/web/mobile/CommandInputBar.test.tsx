@@ -569,6 +569,11 @@ describe('CommandInputBar', () => {
 
 			expect(onHistoryOpen).toHaveBeenCalled();
 		});
+
+		it('hides swipe handle in compact mode even when onHistoryOpen is provided', () => {
+			renderComponent({ onHistoryOpen: vi.fn(), compact: true });
+			expect(screen.queryByLabelText('Open command history')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Recent Command Chips', () => {
@@ -613,6 +618,16 @@ describe('CommandInputBar', () => {
 			fireEvent.click(chip);
 
 			expect(onSelectRecentCommand).toHaveBeenCalledWith('ls -la');
+		});
+
+		it('does not render chips in compact mode even when commands are provided', () => {
+			renderComponent({
+				recentCommands,
+				onSelectRecentCommand: vi.fn(),
+				compact: true,
+			});
+
+			expect(screen.queryByTestId('recent-command-chips')).not.toBeInTheDocument();
 		});
 	});
 
