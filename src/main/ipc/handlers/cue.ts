@@ -110,7 +110,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	ipcMain.handle(
 		'cue:enable',
 		withIpcErrorLogging(handlerOpts('enable'), async (): Promise<void> => {
-			requireEngine().start();
+			requireEngine().start('system-boot');
 		})
 	);
 

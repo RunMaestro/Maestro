@@ -171,6 +171,31 @@ describe('cue-session-registry', () => {
 		});
 	});
 
+	describe('clearAllStartupKeys', () => {
+		it('clears all startup fired-keys so subsequent fires are allowed', () => {
+			registry.markStartupFired('s1', 'init-a');
+			registry.markStartupFired('s1', 'init-b');
+			registry.markStartupFired('s2', 'init-a');
+
+			registry.clearAllStartupKeys();
+
+			expect(registry.markStartupFired('s1', 'init-a')).toBe(true);
+			expect(registry.markStartupFired('s1', 'init-b')).toBe(true);
+			expect(registry.markStartupFired('s2', 'init-a')).toBe(true);
+		});
+
+		it('does not affect sessions, scheduled keys, or session state', () => {
+			registry.register('s1', makeState());
+			registry.markScheduledFired('s1', 'sub-1', '09:00');
+			registry.markStartupFired('s1', 'init');
+
+			registry.clearAllStartupKeys();
+
+			expect(registry.has('s1')).toBe(true);
+			expect(registry.markScheduledFired('s1', 'sub-1', '09:00')).toBe(false); // still deduped
+		});
+	});
+
 	describe('clear', () => {
 		it('drops all sessions and time.scheduled keys but PRESERVES startup keys', () => {
 			registry.register('s1', makeState());

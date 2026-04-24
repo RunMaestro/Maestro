@@ -123,6 +123,10 @@ export interface CueEngineDeps {
 
 export class CueEngine {
 	private enabled = false;
+	/** Set to 'system-boot' while the engine is running after a system-boot or
+	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
+	 * sessions that arrive after start() (the common case at boot). */
+	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
@@ -366,9 +370,13 @@ export class CueEngine {
 	 *
 	 * @param reason Why the engine is starting. Determines whether `app.startup`
 	 *   subscriptions fire:
-	 *   - `'system-boot'`: pass at Electron launch (index.ts). app.startup fires.
-	 *   - `'user-toggle'` (default): user flipped the Cue toggle. app.startup
-	 *     does NOT re-fire — toggling is idempotent.
+	 *   - `'system-boot'`: used at Electron launch (index.ts) AND when the user
+	 *     enables Cue via the IPC handler (`cue:enable` calls
+	 *     `requireEngine().start('system-boot')`). app.startup subscriptions fire
+	 *     and are deduped per engine cycle (keys are cleared by stop()).
+	 *   - `'user-toggle'` (default): direct engine.start() call without an explicit
+	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire —
+	 *     only IPC-driven enables and Electron launch use 'system-boot'.
 	 */
 	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
@@ -378,6 +386,7 @@ export class CueEngine {
 			return;
 		}
 
+		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
 		// Reset metrics so startedAt reflects THIS start, not the collector's
 		// construction. Without this, startedAt is fixed at engine-instance
@@ -438,12 +447,12 @@ export class CueEngine {
 		if (!this.enabled) return;
 
 		this.enabled = false;
+		this.startReason = null;
 		this.sessionRuntimeService.clearAll();
+		// Clear startup dedup keys so that re-enabling Cue fires app.startup
+		// subscriptions again for the new engine cycle.
+		this.sessionRuntimeService.clearAllStartupKeys();
 
-		// Clear concurrency and fan-in state. The session registry's clear()
-		// preserves app.startup dedup keys across stop/start cycles, so toggling
-		// Cue off/on does not re-fire startup subscriptions. Startup keys only
-		// reset when the Electron process restarts (new CueEngine instance).
 		this.runManager.reset();
 		this.fanInTracker.reset();
 
@@ -462,7 +471,11 @@ export class CueEngine {
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
 	refreshSession(sessionId: string, projectRoot: string): void {
-		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot);
+		// When the engine started with 'system-boot', sessions that arrive via
+		// refreshSession (the typical path at boot, since getSessions() is empty
+		// when start() fires) should still get their app.startup triggers.
+		const reason = this.startReason ?? 'refresh';
+		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
 		if (result.reloaded && result.sessionName) {
 			this.meteredOnLog(
 				'cue',

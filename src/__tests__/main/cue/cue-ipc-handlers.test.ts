@@ -226,10 +226,10 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:enable', () => {
-		it('should call engine.start()', async () => {
+		it('should call engine.start() with system-boot reason', async () => {
 			const handler = registerAndGetHandler('cue:enable');
 			await handler(null);
-			expect(mockEngine.start).toHaveBeenCalledOnce();
+			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
 		});
 	});
 

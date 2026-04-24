@@ -19,6 +19,8 @@ import { useCue } from '../../hooks/useCue';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import { CueHelpContent } from '../CueHelpModal';
 import { CuePipelineEditor } from '../CuePipelineEditor';
+import { getPipelineColorForAgent } from '../CuePipelineEditor/pipelineColors';
+import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
 import { getModalActions, useModalStore, selectModalData } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -126,9 +128,21 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		getModalActions().openCueYamlEditor(session.sessionId, session.projectRoot);
 	}, []);
 
-	const handleViewInPipeline = useCallback((_session: CueSessionStatus) => {
-		setActiveTab('pipeline');
-	}, []);
+	const [pendingPipelineId, setPendingPipelineId] = useState<{
+		id: string | null;
+		nonce: string;
+	} | null>(null);
+
+	const handleViewInPipeline = useCallback(
+		(session: CueSessionStatus) => {
+			const colors = getPipelineColorForAgent(session.sessionId, dashboardPipelines);
+			const pipeline =
+				colors.length > 0 ? dashboardPipelines.find((p) => p.color === colors[0]) : undefined;
+			setPendingPipelineId({ id: pipeline?.id ?? null, nonce: generateId() });
+			setActiveTab('pipeline');
+		},
+		[dashboardPipelines]
+	);
 
 	const handleRemoveCue = useCallback(
 		(session: CueSessionStatus) => {
@@ -181,6 +195,14 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	// Active runs section is collapsible when empty
 	const [activeRunsExpanded, setActiveRunsExpanded] = useState(true);
 
+	// Wrap tab switching so navigating away from the pipeline tab clears the
+	// pending selection token — prevents a stale nonce from re-snapping the editor
+	// to the "View in Pipeline" target on the next remount.
+	const handleSetActiveTab = useCallback((tab: CueModalTab) => {
+		if (tab !== 'pipeline') setPendingPipelineId(null);
+		setActiveTab(tab);
+	}, []);
+
 	const handleOpenHelp = useCallback(() => setShowHelp(true), []);
 	const handleCloseHelp = useCallback(() => setShowHelp(false), []);
 
@@ -219,7 +241,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						<CueModalHeader
 							theme={theme}
 							activeTab={activeTab}
-							setActiveTab={setActiveTab}
+							setActiveTab={handleSetActiveTab}
 							isEnabled={isEnabled}
 							toggling={toggling}
 							handleToggle={handleToggle}
@@ -270,6 +292,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								activeRuns={activeRuns}
 								onTriggerPipeline={triggerSubscription}
 								onSaveSuccess={refreshGraphData}
+								initialPipelineId={pendingPipelineId ?? undefined}
 							/>
 						)}
 					</div>

@@ -2,7 +2,7 @@
  * Tests for PipelineEmptyState — Phase 14B extraction.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PipelineEmptyState } from '../../../../../renderer/components/CuePipelineEditor/panels/PipelineEmptyState';
 
@@ -16,6 +16,8 @@ const theme = {
 		accent: '#09f',
 	},
 } as any;
+
+afterEach(() => vi.useRealTimers());
 
 describe('PipelineEmptyState', () => {
 	it('renders nothing when nodeCount > 0', () => {
@@ -63,10 +65,9 @@ describe('PipelineEmptyState', () => {
 		);
 		fireEvent.click(screen.getByText('Create your first pipeline'));
 		expect(createPipeline).toHaveBeenCalledTimes(1);
-		vi.advanceTimersByTime(60);
+		vi.advanceTimersByTime(50);
 		expect(setTrigger).toHaveBeenCalledWith(true);
 		expect(setAgent).toHaveBeenCalledWith(true);
-		vi.useRealTimers();
 	});
 
 	it('shows "drag a trigger" instructional when pipelines exist but canvas is empty', () => {

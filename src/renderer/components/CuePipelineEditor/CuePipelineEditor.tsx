@@ -45,6 +45,9 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
+	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
+	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
+	initialPipelineId?: { id: string | null; nonce: string };
 }
 
 function CuePipelineEditorInner({
@@ -56,6 +59,7 @@ function CuePipelineEditorInner({
 	activeRuns: activeRunsProp,
 	onTriggerPipeline,
 	onSaveSuccess,
+	initialPipelineId,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
@@ -113,6 +117,18 @@ function CuePipelineEditorInner({
 	const selectionHook = usePipelineSelection({
 		pipelineState: stateHook.pipelineState,
 	});
+
+	// When opened via "View in Pipeline", pre-select the resolved pipeline once
+	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
+	// (e.g. a pipeline being added) from overriding a subsequent user selection.
+	const appliedNonce = useRef<string | null>(null);
+	useEffect(() => {
+		const nonce = initialPipelineId?.nonce;
+		if (!nonce || stateHook.pipelineState.pipelines.length === 0) return;
+		if (nonce === appliedNonce.current) return;
+		appliedNonce.current = nonce;
+		stateHook.selectPipeline(initialPipelineId!.id);
+	}, [initialPipelineId?.nonce, stateHook.pipelineState.pipelines.length]);
 
 	// Update ref in render body so next render (and any post-render callback
 	// invocation) reads the latest selection values.

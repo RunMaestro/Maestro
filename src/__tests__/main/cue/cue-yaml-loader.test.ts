@@ -618,8 +618,14 @@ subscriptions:
 			expect(result.errors).toHaveLength(0);
 		});
 
-		it('rejects non-object config', () => {
+		it('treats null config as valid empty config (comments-only file)', () => {
 			const result = validateCueConfig(null);
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('rejects non-object non-null config', () => {
+			const result = validateCueConfig(42);
 			expect(result.valid).toBe(false);
 			expect(result.errors[0]).toContain('non-null object');
 		});

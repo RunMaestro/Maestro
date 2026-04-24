@@ -415,7 +415,12 @@ function validateSettings(rawSettings: unknown): string[] {
 export function validateCueConfigDocument(config: unknown): { valid: boolean; errors: string[] } {
 	const errors: string[] = [];
 
-	if (!config || typeof config !== 'object') {
+	// null/undefined = comments-only or empty file → treat as valid empty config
+	if (config === null || config === undefined) {
+		return { valid: true, errors: [] };
+	}
+
+	if (typeof config !== 'object') {
 		return { valid: false, errors: ['Config must be a non-null object'] };
 	}
 
@@ -472,7 +477,12 @@ export function partitionValidSubscriptions(config: unknown): PartitionedValidat
 		subscriptionErrors: [],
 	};
 
-	if (!config || typeof config !== 'object') {
+	if (config === null || config === undefined) {
+		// comments-only or empty file — no config errors, no subscriptions
+		return result;
+	}
+
+	if (typeof config !== 'object') {
 		result.configErrors.push('Config must be a non-null object');
 		return result;
 	}

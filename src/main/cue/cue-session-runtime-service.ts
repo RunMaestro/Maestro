@@ -77,7 +77,8 @@ export interface CueSessionRuntimeService {
 	initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome;
 	refreshSession(
 		sessionId: string,
-		projectRoot: string
+		projectRoot: string,
+		reason?: SessionInitReason
 	): {
 		reloaded: boolean;
 		configRemoved: boolean;
@@ -87,6 +88,8 @@ export interface CueSessionRuntimeService {
 	removeSession(sessionId: string): void;
 	teardownSession(sessionId: string): void;
 	clearAll(): void;
+	/** Drop ALL app.startup dedup keys. Delegated from engine.stop(). */
+	clearAllStartupKeys(): void;
 }
 
 export function createCueSessionRuntimeService(
@@ -333,7 +336,8 @@ export function createCueSessionRuntimeService(
 
 	function refreshSession(
 		sessionId: string,
-		projectRoot: string
+		projectRoot: string,
+		reason: SessionInitReason = 'refresh'
 	): { reloaded: boolean; configRemoved: boolean; sessionName?: string; activeCount?: number } {
 		const hadSession = registry.has(sessionId);
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
@@ -353,7 +357,7 @@ export function createCueSessionRuntimeService(
 			return { reloaded: false, configRemoved: false };
 		}
 
-		const outcome = initSession({ ...session, projectRoot }, { reason: 'refresh' });
+		const outcome = initSession({ ...session, projectRoot }, { reason });
 		const newState = registry.get(sessionId);
 		if (newState) {
 			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
@@ -455,14 +459,16 @@ export function createCueSessionRuntimeService(
 			for (const [sessionId] of registry.snapshot()) {
 				teardownSession(sessionId);
 			}
-			// Drop session state and time.scheduled keys; preserve startup keys
-			// so toggling Cue off/on does not re-fire app.startup subscriptions.
 			registry.clear();
 
 			for (const [, cleanup] of pendingYamlWatchers) {
 				cleanup();
 			}
 			pendingYamlWatchers.clear();
+		},
+
+		clearAllStartupKeys(): void {
+			registry.clearAllStartupKeys();
 		},
 	};
 }

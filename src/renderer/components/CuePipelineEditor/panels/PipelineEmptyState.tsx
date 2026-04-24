@@ -10,9 +10,11 @@
  * React.memo'd so it doesn't re-render on every drag tick.
  */
 
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { Zap, Plus } from 'lucide-react';
 import type { Theme } from '../../../types';
+
+const DRAWER_OPEN_DELAY_MS = 50;
 
 export interface PipelineEmptyStateProps {
 	pipelineCount: number;
@@ -31,6 +33,14 @@ function PipelineEmptyStateInner({
 	setTriggerDrawerOpen,
 	setAgentDrawerOpen,
 }: PipelineEmptyStateProps) {
+	const drawerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (drawerTimerRef.current !== null) clearTimeout(drawerTimerRef.current);
+		};
+	}, []);
+
 	if (nodeCount !== 0) return null;
 	return (
 		<div
@@ -49,10 +59,11 @@ function PipelineEmptyStateInner({
 					<button
 						onClick={() => {
 							createPipeline();
-							setTimeout(() => {
+							if (drawerTimerRef.current !== null) clearTimeout(drawerTimerRef.current);
+							drawerTimerRef.current = setTimeout(() => {
 								setTriggerDrawerOpen(true);
 								setAgentDrawerOpen(true);
-							}, 50);
+							}, DRAWER_OPEN_DELAY_MS);
 						}}
 						className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium"
 						style={{

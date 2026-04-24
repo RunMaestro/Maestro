@@ -181,6 +181,16 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 	isDirty,
 	runningPipelineIds,
 }: PipelineCanvasProps) {
+	const handleCueSettingsChange = React.useCallback(
+		(s: CueSettings) => {
+			setCueSettings(s);
+			setIsDirty(true);
+		},
+		[setCueSettings, setIsDirty]
+	);
+
+	const handleCloseCueSettings = React.useCallback(() => setShowSettings(false), [setShowSettings]);
+
 	return (
 		<div className="flex-1 relative overflow-hidden">
 			{/* Trigger drawer (left) */}
@@ -285,11 +295,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			{showSettings && (
 				<CueSettingsPanel
 					settings={cueSettings}
-					onChange={(s) => {
-						setCueSettings(s);
-						setIsDirty(true);
-					}}
-					onClose={() => setShowSettings(false)}
+					onChange={handleCueSettingsChange}
+					onClose={handleCloseCueSettings}
 					theme={theme}
 				/>
 			)}
