@@ -173,14 +173,24 @@ export function AutoRunSetupSheet({
 		onLaunch(config);
 	}, [selectedFiles, prompt, loopEnabled, maxLoops, onLaunch]);
 
-	const handleSelectPlaybook = useCallback((playbook: Playbook) => {
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-		setActivePlaybookId(playbook.id);
-		setSelectedFiles(new Set(playbook.documents.map((d) => d.filename)));
-		setPrompt(playbook.prompt);
-		setLoopEnabled(playbook.loopEnabled);
-		setMaxLoops(playbook.maxLoops ?? 3);
-	}, []);
+	const handleSelectPlaybook = useCallback(
+		(playbook: Playbook) => {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			setActivePlaybookId(playbook.id);
+			// A playbook may reference documents that no longer exist (renamed,
+			// deleted, or the user switched sessions). Intersect with the
+			// currently-available docs so we never pre-select a stale name and
+			// silently launch an Auto Run against a file that isn't there.
+			const availableKeys = new Set(documents.map((d) => d.path || d.filename));
+			setSelectedFiles(
+				new Set(playbook.documents.map((d) => d.filename).filter((f) => availableKeys.has(f)))
+			);
+			setPrompt(playbook.prompt);
+			setLoopEnabled(playbook.loopEnabled);
+			setMaxLoops(playbook.maxLoops ?? 3);
+		},
+		[documents]
+	);
 
 	const handleSavePlaybook = useCallback(async () => {
 		if (selectedFiles.size === 0) return;

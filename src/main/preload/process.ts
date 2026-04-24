@@ -711,7 +711,10 @@ export function createProcessApi() {
 
 		/**
 		 * Subscribe to remote reset auto-run document tasks
-		 * (request-response — renderer reads/writes the document via existing autorun IPC)
+		 * (request-response — renderer reads/writes the document via existing autorun IPC).
+		 *
+		 * On failure we ack the channel with a fallback (so the web client doesn't hang)
+		 * and then rethrow so the unhandled rejection reaches Sentry via the global handler.
 		 */
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -723,11 +726,13 @@ export function createProcessApi() {
 				responseChannel: string
 			) => {
 				try {
-					Promise.resolve(callback(sessionId, filename, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, filename, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, false);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, false);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:resetAutoRunDocTasks', handler);
@@ -747,11 +752,13 @@ export function createProcessApi() {
 		): (() => void) => {
 			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
 				try {
-					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, false);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, false);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:resumeAutoRunError', handler);
@@ -767,11 +774,13 @@ export function createProcessApi() {
 		): (() => void) => {
 			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
 				try {
-					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, false);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, false);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:skipAutoRunDocument', handler);
@@ -787,11 +796,13 @@ export function createProcessApi() {
 		): (() => void) => {
 			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
 				try {
-					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, false);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, false);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:abortAutoRunError', handler);
@@ -811,11 +822,13 @@ export function createProcessApi() {
 		): (() => void) => {
 			const handler = (_: unknown, sessionId: string, responseChannel: string) => {
 				try {
-					Promise.resolve(callback(sessionId, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, []);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, []);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:listPlaybooks', handler);
@@ -836,11 +849,13 @@ export function createProcessApi() {
 				responseChannel: string
 			) => {
 				try {
-					Promise.resolve(callback(sessionId, playbook, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, playbook, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, null);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, null);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:createPlaybook', handler);
@@ -867,11 +882,15 @@ export function createProcessApi() {
 				responseChannel: string
 			) => {
 				try {
-					Promise.resolve(callback(sessionId, playbookId, updates, responseChannel)).catch(() => {
-						ipcRenderer.send(responseChannel, null);
-					});
-				} catch {
+					Promise.resolve(callback(sessionId, playbookId, updates, responseChannel)).catch(
+						(err) => {
+							ipcRenderer.send(responseChannel, null);
+							throw err;
+						}
+					);
+				} catch (err) {
 					ipcRenderer.send(responseChannel, null);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:updatePlaybook', handler);
@@ -892,11 +911,13 @@ export function createProcessApi() {
 				responseChannel: string
 			) => {
 				try {
-					Promise.resolve(callback(sessionId, playbookId, responseChannel)).catch(() => {
+					Promise.resolve(callback(sessionId, playbookId, responseChannel)).catch((err) => {
 						ipcRenderer.send(responseChannel, false);
+						throw err;
 					});
-				} catch {
+				} catch (err) {
 					ipcRenderer.send(responseChannel, false);
+					throw err;
 				}
 			};
 			ipcRenderer.on('remote:deletePlaybook', handler);

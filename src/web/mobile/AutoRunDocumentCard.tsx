@@ -28,10 +28,15 @@ export function DocumentCard({ document: doc, onTap, onReset, isLocked }: Docume
 	const progress = doc.taskCount > 0 ? Math.round((doc.completedCount / doc.taskCount) * 100) : 0;
 	const hasCompleted = doc.completedCount > 0;
 
+	// Use the full relative path (which includes any subfolder prefix) when
+	// calling back into the parent — two documents in different folders can
+	// share a basename, so `doc.filename` alone is no longer a unique key.
+	const docKey = doc.path || doc.filename;
+
 	const handleTap = useCallback(() => {
 		triggerHaptic(HAPTIC_PATTERNS.tap);
-		onTap(doc.filename);
-	}, [doc.filename, onTap]);
+		onTap(docKey);
+	}, [docKey, onTap]);
 
 	const handleReset = useCallback(
 		async (e: React.MouseEvent) => {
@@ -44,12 +49,12 @@ export function DocumentCard({ document: doc, onTap, onReset, isLocked }: Docume
 			triggerHaptic(HAPTIC_PATTERNS.tap);
 			setIsResetting(true);
 			try {
-				await onReset(doc.filename);
+				await onReset(docKey);
 			} finally {
 				setIsResetting(false);
 			}
 		},
-		[doc.filename, hasCompleted, isResetting, onReset]
+		[doc.filename, docKey, hasCompleted, isResetting, onReset]
 	);
 
 	return (

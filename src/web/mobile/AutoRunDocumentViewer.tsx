@@ -86,16 +86,24 @@ export function AutoRunDocumentViewer({
 				});
 				if (!cancelled) {
 					const loaded = response.content ?? '';
-					setContent(loaded);
-					setEditContent(loaded);
+					// Clear history *before* swapping content so Cmd+Z can't rewind
+					// into the previously-viewed document's text.
 					undoStackRef.current = [];
 					redoStackRef.current = [];
+					setContent(loaded);
+					setEditContent(loaded);
 					setHistoryTick((t) => t + 1);
 				}
 			} catch {
 				if (!cancelled) {
+					// Same reasoning as the success path — if the request fails after
+					// switching documents, a stray Cmd+Z could otherwise resurrect the
+					// previous file's buffer and let it be saved into this filename.
+					undoStackRef.current = [];
+					redoStackRef.current = [];
 					setContent('');
 					setEditContent('');
+					setHistoryTick((t) => t + 1);
 				}
 			} finally {
 				if (!cancelled) {
@@ -111,12 +119,16 @@ export function AutoRunDocumentViewer({
 	}, [sessionId, filename, sendRequest]);
 
 	// If the Auto Run starts while the user is editing, drop them back to preview
-	// rather than letting them keep typing into a soon-to-be-overwritten file.
+	// AND discard any unsaved local edits so the locked view reflects the live
+	// file the run will be mutating — keeping a dirty buffer would let the
+	// preview render stale text on top of the file the agent is editing.
 	useEffect(() => {
 		if (isLocked && isEditing) {
 			setIsEditing(false);
+			setEditContent(content);
+			setIsDirty(false);
 		}
-	}, [isLocked, isEditing]);
+	}, [isLocked, isEditing, content]);
 
 	// Clear save message timer on unmount
 	useEffect(() => {
@@ -302,9 +314,18 @@ export function AutoRunDocumentViewer({
 		setSearchOpen((open) => {
 			const next = !open;
 			if (!next) setSearchQuery('');
+			// Switch to edit mode when opening search so the textarea can
+			// highlight and scroll to the active match. We skip this when the
+			// viewer is locked (an Auto Run is in progress) since editing is
+			// disabled there — in that case the match counter still updates but
+			// Next/Prev won't move a selection.
+			if (next && !isEditing && !isLocked) {
+				setEditContent(isDirty ? editContent : content);
+				setIsEditing(true);
+			}
 			return next;
 		});
-	}, []);
+	}, [content, editContent, isDirty, isEditing, isLocked]);
 
 	const handleSearchNext = useCallback(() => {
 		if (searchMatches.length === 0) return;

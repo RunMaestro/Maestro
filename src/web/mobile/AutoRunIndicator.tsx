@@ -90,6 +90,19 @@ export function AutoRunIndicator({
 			onClick={errorPaused ? undefined : onTap}
 			role={onTap && !errorPaused ? 'button' : undefined}
 			tabIndex={onTap && !errorPaused ? 0 : undefined}
+			onKeyDown={
+				onTap && !errorPaused
+					? (e) => {
+							// Mirror the mouse activation (onTap) for keyboard users.
+							// Space also covers the legacy 'Spacebar' value some browsers
+							// still emit. preventDefault for Space avoids page scroll.
+							if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+								e.preventDefault();
+								onTap();
+							}
+						}
+					: undefined
+			}
 			style={{
 				backgroundColor: bannerColor,
 				padding: '12px 16px',

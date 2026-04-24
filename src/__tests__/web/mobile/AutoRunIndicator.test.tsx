@@ -673,4 +673,75 @@ describe('AutoRunIndicator', () => {
 			expect(screen.queryByRole('button', { name: /Abort Auto Run/i })).toBeNull();
 		});
 	});
+
+	describe('keyboard activation', () => {
+		// Review feedback: the banner exposes button semantics (role=button,
+		// tabIndex=0) but the original implementation only fired onTap on mouse
+		// click — keyboard users couldn't open the Auto Run panel from the
+		// banner. These tests pin the Enter / Space / legacy Spacebar bindings
+		// and verify they mirror the mouse-click enablement.
+
+		const fireKey = (banner: HTMLElement, key: string) => {
+			const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+			banner.dispatchEvent(event);
+			return event;
+		};
+
+		it('invokes onTap when Enter is pressed on the banner', () => {
+			const state = createAutoRunState();
+			const onTap = vi.fn();
+			const { container } = render(<AutoRunIndicator state={state} onTap={onTap} />);
+			const banner = container.firstChild as HTMLElement;
+			fireKey(banner, 'Enter');
+			expect(onTap).toHaveBeenCalledTimes(1);
+		});
+
+		it('invokes onTap when Space is pressed and prevents page scroll', () => {
+			const state = createAutoRunState();
+			const onTap = vi.fn();
+			const { container } = render(<AutoRunIndicator state={state} onTap={onTap} />);
+			const banner = container.firstChild as HTMLElement;
+			const event = fireKey(banner, ' ');
+			expect(onTap).toHaveBeenCalledTimes(1);
+			expect(event.defaultPrevented).toBe(true);
+		});
+
+		it('also supports the legacy "Spacebar" KeyboardEvent.key value', () => {
+			const state = createAutoRunState();
+			const onTap = vi.fn();
+			const { container } = render(<AutoRunIndicator state={state} onTap={onTap} />);
+			const banner = container.firstChild as HTMLElement;
+			fireKey(banner, 'Spacebar');
+			expect(onTap).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not invoke onTap on other keys', () => {
+			const state = createAutoRunState();
+			const onTap = vi.fn();
+			const { container } = render(<AutoRunIndicator state={state} onTap={onTap} />);
+			const banner = container.firstChild as HTMLElement;
+			fireKey(banner, 'a');
+			fireKey(banner, 'ArrowDown');
+			expect(onTap).not.toHaveBeenCalled();
+		});
+
+		it('does not invoke onTap when errorPaused (mirrors disabled mouse handler)', () => {
+			const state = createAutoRunState({ errorPaused: true });
+			const onTap = vi.fn();
+			const { container } = render(<AutoRunIndicator state={state} onTap={onTap} />);
+			const banner = container.firstChild as HTMLElement;
+			fireKey(banner, 'Enter');
+			fireKey(banner, ' ');
+			expect(onTap).not.toHaveBeenCalled();
+		});
+
+		it('does not invoke onTap when onTap is not provided', () => {
+			// If the banner is purely informational (no onTap), keyboard
+			// activation should be a no-op — no handler, no role=button.
+			const state = createAutoRunState();
+			const { container } = render(<AutoRunIndicator state={state} />);
+			const banner = container.firstChild as HTMLElement;
+			expect(() => fireKey(banner, 'Enter')).not.toThrow();
+		});
+	});
 });

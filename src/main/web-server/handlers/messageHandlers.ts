@@ -1725,16 +1725,23 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Validate that a filename does not contain path traversal sequences.
-	 * Returns true if the filename is safe, false otherwise.
+	 * Validate that a filename is safe for Auto Run read/save operations.
+	 *
+	 * Allows relative forward-slash subpaths (e.g. `loop/step-1`) so documents
+	 * in subfolders can be opened and saved, but rejects:
+	 *   - `..` traversal segments
+	 *   - backslash separators (we only persist POSIX)
+	 *   - absolute POSIX paths (leading `/`)
+	 *   - absolute Windows paths (drive-letter prefix)
 	 */
 	private isValidFilename(filename: string): boolean {
 		return (
 			typeof filename === 'string' &&
 			filename.length > 0 &&
 			!filename.includes('..') &&
-			!filename.includes('/') &&
-			!filename.includes('\\')
+			!filename.includes('\\') &&
+			!filename.startsWith('/') &&
+			!/^[A-Za-z]:[\\/]/.test(filename)
 		);
 	}
 
@@ -1945,12 +1952,16 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Allow subdirectory paths (forward slashes) but reject traversal
+		// Allow relative subdirectory paths (forward slashes) but reject traversal and
+		// absolute paths (POSIX `/foo.md` and Windows `C:/foo.md` / `C:\foo.md`) so the
+		// target always resolves under the Auto Run root.
 		if (
 			typeof filename !== 'string' ||
 			filename.length === 0 ||
 			filename.includes('..') ||
-			filename.includes('\\')
+			filename.includes('\\') ||
+			filename.startsWith('/') ||
+			/^[A-Za-z]:[\\/]/.test(filename)
 		) {
 			this.sendError(client, 'Invalid filename');
 			return;
@@ -2297,6 +2308,16 @@ export class WebSocketMessageHandler {
 	/**
 	 * Validate and normalize the `documents` field of a playbook payload.
 	 * Returns the parsed array on success, or null on any validation failure.
+	 *
+	 * Filenames may contain forward-slash subdirectories (e.g. `loop/step-1`)
+	 * but must not:
+	 *   - contain `..` path-traversal segments
+	 *   - contain backslashes (we only persist POSIX separators)
+	 *   - be absolute (POSIX `/foo` or Windows drive-letter `C:/foo`)
+	 *
+	 * `resetOnCompletion` is validated strictly as a boolean when present;
+	 * any other type is rejected rather than coerced, so a stray truthy
+	 * value from a buggy client can't silently flip the flag on.
 	 */
 	private parsePlaybookDocuments(input: unknown): WebPlaybookDocument[] | null {
 		if (!Array.isArray(input)) return null;
@@ -2306,9 +2327,16 @@ export class WebSocketMessageHandler {
 			const e = entry as { filename?: unknown; resetOnCompletion?: unknown };
 			if (typeof e.filename !== 'string' || e.filename.trim() === '') return null;
 			if (e.filename.includes('..') || e.filename.includes('\\')) return null;
+			if (e.filename.startsWith('/')) return null;
+			if (/^[A-Za-z]:[\\/]/.test(e.filename)) return null;
+			let resetOnCompletion = false;
+			if (e.resetOnCompletion !== undefined) {
+				if (typeof e.resetOnCompletion !== 'boolean') return null;
+				resetOnCompletion = e.resetOnCompletion;
+			}
 			out.push({
 				filename: e.filename,
-				resetOnCompletion: Boolean(e.resetOnCompletion),
+				resetOnCompletion,
 			});
 		}
 		return out;

@@ -129,6 +129,31 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		resizeTerminal: vi.fn().mockReturnValue(true),
 		spawnTerminalForWeb: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
+		// Auto Run parity additions (playbook CRUD + task reset + error recovery)
+		resetAutoRunDocTasks: vi.fn().mockResolvedValue(true),
+		resumeAutoRunError: vi.fn().mockResolvedValue(true),
+		skipAutoRunDocument: vi.fn().mockResolvedValue(true),
+		abortAutoRunError: vi.fn().mockResolvedValue(true),
+		listPlaybooks: vi.fn().mockResolvedValue([]),
+		createPlaybook: vi.fn().mockResolvedValue({
+			id: 'pb-1',
+			name: 'My Playbook',
+			createdAt: 0,
+			updatedAt: 0,
+			documents: [],
+			loopEnabled: false,
+			prompt: '',
+		}),
+		updatePlaybook: vi.fn().mockResolvedValue({
+			id: 'pb-1',
+			name: 'My Playbook',
+			createdAt: 0,
+			updatedAt: 0,
+			documents: [],
+			loopEnabled: false,
+			prompt: '',
+		}),
+		deletePlaybook: vi.fn().mockResolvedValue(true),
 	};
 }
 
@@ -1646,6 +1671,151 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
 			expect(callbacks.triggerCueSubscription).not.toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================
+	// Auto Run parity — reset tasks + playbook CRUD validation
+	// These tests pin the path-safety rules called out in the PR
+	// review: neither the web client nor a compromised dev tool may
+	// escape the Auto Run root via absolute / traversal filenames.
+	// ============================================================
+	describe('reset_auto_run_doc_tasks path validation', () => {
+		it('forwards relative subfolder paths to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: 'loop/step-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.resetAutoRunDocTasks).toHaveBeenCalledWith('session-1', 'loop/step-1');
+			});
+		});
+
+		it('rejects POSIX-absolute filenames', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: '/etc/passwd',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/Invalid filename/);
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+
+		it('rejects Windows drive-letter absolute filenames', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: 'C:/tmp/doc.md',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+
+		it('rejects traversal sequences', () => {
+			handler.handleMessage(client, {
+				type: 'reset_auto_run_doc_tasks',
+				sessionId: 'session-1',
+				filename: '../secrets.md',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.resetAutoRunDocTasks).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('playbook document validation', () => {
+		const validPayload = (overrides: Partial<Record<string, unknown>> = {}) => ({
+			type: 'create_playbook' as const,
+			sessionId: 'session-1',
+			playbook: {
+				name: 'p',
+				documents: [{ filename: 'a' }],
+				loopEnabled: false,
+				prompt: '',
+				...overrides,
+			},
+		});
+
+		it('accepts relative subfolder filenames', async () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'loop/step-1', resetOnCompletion: true }] }),
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.createPlaybook).toHaveBeenCalled();
+			});
+			const [, playbook] = (callbacks.createPlaybook as any).mock.calls[0];
+			expect(playbook.documents).toEqual([{ filename: 'loop/step-1', resetOnCompletion: true }]);
+		});
+
+		it('rejects absolute POSIX filenames', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: '/etc/passwd' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toMatch(/Invalid playbook documents/);
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects Windows drive-letter absolute filenames', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'C:\\tmp\\doc.md' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects backslash separators', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'loop\\step-1' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects `..` traversal segments', () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: '../secrets' }] }),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('rejects non-boolean resetOnCompletion rather than coercing it', () => {
+			// Review feedback — a truthy non-boolean value was being silently
+			// flipped to true. The validator now refuses anything that isn't
+			// strictly a boolean.
+			handler.handleMessage(client, {
+				...validPayload({
+					documents: [{ filename: 'a', resetOnCompletion: 'yes' as unknown as boolean }],
+				}),
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.createPlaybook).not.toHaveBeenCalled();
+		});
+
+		it('defaults resetOnCompletion to false when omitted', async () => {
+			handler.handleMessage(client, {
+				...validPayload({ documents: [{ filename: 'a' }] }),
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.createPlaybook).toHaveBeenCalled();
+			});
+			const [, playbook] = (callbacks.createPlaybook as any).mock.calls[0];
+			expect(playbook.documents[0].resetOnCompletion).toBe(false);
 		});
 	});
 });

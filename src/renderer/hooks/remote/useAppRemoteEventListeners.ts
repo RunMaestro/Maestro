@@ -379,12 +379,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			// Transform file paths into AutoRunDocument objects with task counts.
 			// `folder` is the directory portion of the relative path (empty for root)
-			// so the mobile UI can group documents by subfolder.
+			// so the mobile UI can group documents by subfolder. We normalize
+			// backslash-separated paths (Windows sessions can return `subdir\\doc.md`)
+			// to forward slashes before splitting so the tree view works cross-platform.
 			const docs = await Promise.all(
 				filePaths.map(async (filePath) => {
-					const lastSlash = filePath.lastIndexOf('/');
-					const filename = lastSlash >= 0 ? filePath.slice(lastSlash + 1) : filePath;
-					const folder = lastSlash >= 0 ? filePath.slice(0, lastSlash) : '';
+					const normalizedPath = filePath.replace(/\\/g, '/');
+					const lastSlash = normalizedPath.lastIndexOf('/');
+					const filename = lastSlash >= 0 ? normalizedPath.slice(lastSlash + 1) : normalizedPath;
+					const folder = lastSlash >= 0 ? normalizedPath.slice(0, lastSlash) : '';
 					let taskCount = 0;
 					let completedCount = 0;
 					try {
@@ -402,7 +405,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					} catch {
 						// If reading fails, leave counts at 0
 					}
-					return { filename, path: filePath, taskCount, completedCount, folder };
+					return { filename, path: normalizedPath, taskCount, completedCount, folder };
 				})
 			);
 			window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, docs);
@@ -494,8 +497,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			const original: string = readResult.content ?? '';
 			// Reset all completed task checkboxes (both `[x]` and `[X]`) back to `[ ]`
-			// while preserving leading whitespace and the rest of the line.
-			const reset = original.replace(/^(\s*[-*]\s*)\[[xX]\](\s)/gm, '$1[ ]$2');
+			// while preserving leading whitespace and the rest of the line. The
+			// trailing whitespace group is `\s?` (not `\s`) so malformed lines like
+			// `- [x]Task` (no space after the bracket) still get unchecked — the
+			// desktop's uncheckAllTasks() behaves the same way.
+			const reset = original.replace(/^(\s*[-*]\s*)\[[xX]\](\s?)/gm, '$1[ ]$2');
 			if (reset === original) {
 				// Nothing to reset — still report success so the UI doesn't show an error.
 				window.maestro.process.sendRemoteResetAutoRunDocTasksResponse(responseChannel, true);
