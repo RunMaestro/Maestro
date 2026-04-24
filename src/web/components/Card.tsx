@@ -1,13 +1,14 @@
 /**
  * Card component for Maestro web interface
  *
- * A reusable card container component that supports multiple variants, padding options,
- * and interactive states. Ideal for session cards, information panels, and grouped content.
- * Uses theme colors via CSS custom properties for consistent styling.
+ * Reusable card containers and header/body/footer slots. Color, border, radius,
+ * and shadow tokens come from Tailwind utilities backed by the `--maestro-*`
+ * CSS custom properties (see `tailwind.config.mjs` and
+ * `src/web/utils/cssCustomProperties.ts`), so live theme swaps update visuals
+ * without re-rendering.
  */
 
 import React, { forwardRef, type HTMLAttributes, type ReactNode } from 'react';
-import { useTheme } from './ThemeProvider';
 
 /**
  * Card variant types
@@ -49,9 +50,10 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * Padding style configurations
+ * Padding → Tailwind class. `none` emits no class so `Card padding="none"`
+ * leaves child `CardBody` padding untouched in the final className output.
  */
-const paddingStyles: Record<CardPadding, string> = {
+const paddingClasses: Record<CardPadding, string> = {
 	none: '',
 	sm: 'p-2',
 	md: 'p-3',
@@ -59,15 +61,66 @@ const paddingStyles: Record<CardPadding, string> = {
 };
 
 /**
- * Border radius style configurations
+ * Radius → Tailwind class. Values match the legacy px tuple 1:1:
+ * `rounded` = 4px, `rounded-lg` = 8px, `rounded-xl` = 12px.
  */
-const radiusStyles: Record<CardRadius, string> = {
-	none: '0',
-	sm: '4px',
-	md: '8px',
-	lg: '12px',
-	full: '9999px',
+const radiusClasses: Record<CardRadius, string> = {
+	none: 'rounded-none',
+	sm: 'rounded',
+	md: 'rounded-lg',
+	lg: 'rounded-xl',
+	full: 'rounded-full',
 };
+
+/**
+ * Variant → Tailwind class string. Color tokens resolve via `--maestro-*`
+ * CSS custom properties (see `tailwind.config.mjs`). `elevated` uses the
+ * project-local `shadow-card-elevated` so the exact legacy box-shadow is
+ * preserved (Tailwind's stock `shadow-md` differs in the second layer).
+ */
+const variantClasses: Record<CardVariant, string> = {
+	default: 'bg-bg-activity text-text-main',
+	elevated: 'bg-bg-activity text-text-main shadow-card-elevated',
+	outlined: 'bg-transparent text-text-main border border-border',
+	filled: 'bg-bg-sidebar text-text-main',
+	ghost: 'bg-transparent text-text-main border border-transparent',
+};
+
+/**
+ * Selected overlay → Tailwind classes. Applied on top of the variant classes.
+ *
+ * All variants gain an accent ring (`ring-1 ring-accent`), which renders as
+ * the `box-shadow: 0 0 0 1px accent` outline from the legacy implementation.
+ * Background and border tokens use `!` so the override wins regardless of the
+ * alphabetical class-ordering Tailwind bakes into the final stylesheet.
+ *
+ * - outlined: swap the border token and fill with `accent-dim` — matches the
+ *   legacy behavior where outlined+selected shows both an accent border and
+ *   an accent-tinted fill.
+ * - ghost: border token was transparent; swap to accent so selection is
+ *   visible. Fill with `bg-activity` to match the legacy non-outlined path.
+ * - default / elevated / filled: only add the ring + `bg-activity`. Legacy
+ *   code set a `borderColor` too but the variants have no border-width, so
+ *   it was a no-op — we don't emit a border-color utility here either.
+ */
+function getSelectedClasses(variant: CardVariant): string {
+	switch (variant) {
+		case 'outlined':
+			return '!bg-accent-dim !border-accent ring-1 ring-accent';
+		case 'ghost':
+			return '!bg-bg-activity !border-accent ring-1 ring-accent';
+		default:
+			return '!bg-bg-activity ring-1 ring-accent';
+	}
+}
+
+/**
+ * Base classes shared across every Card. `transition-all duration-150`
+ * replaces the legacy inline `transition: 'background-color 150ms ease, …'`
+ * and covers the same four properties (background, border, shadow, transform).
+ */
+const baseClasses =
+	'transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
 
 /**
  * Card component for the Maestro web interface
@@ -112,113 +165,21 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
 	},
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
+	const variantClassName = variantClasses[variant] ?? '';
+	const selectedClassName = selected ? getSelectedClasses(variant) : '';
+	const interactiveClassName =
+		interactive && !disabled ? 'cursor-pointer hover:brightness-110 active:scale-[0.99]' : '';
+	const disabledClassName = disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : '';
 
-	/**
-	 * Get variant-specific styles
-	 */
-	const getVariantStyles = (): React.CSSProperties => {
-		const baseTransition =
-			'background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease';
-
-		switch (variant) {
-			case 'default':
-				return {
-					backgroundColor: colors.bgActivity,
-					color: colors.textMain,
-					border: 'none',
-					transition: baseTransition,
-				};
-			case 'elevated':
-				return {
-					backgroundColor: colors.bgActivity,
-					color: colors.textMain,
-					border: 'none',
-					boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-					transition: baseTransition,
-				};
-			case 'outlined':
-				return {
-					backgroundColor: 'transparent',
-					color: colors.textMain,
-					border: `1px solid ${colors.border}`,
-					transition: baseTransition,
-				};
-			case 'filled':
-				return {
-					backgroundColor: colors.bgSidebar,
-					color: colors.textMain,
-					border: 'none',
-					transition: baseTransition,
-				};
-			case 'ghost':
-				return {
-					backgroundColor: 'transparent',
-					color: colors.textMain,
-					border: '1px solid transparent',
-					transition: baseTransition,
-				};
-			default:
-				return {};
-		}
-	};
-
-	/**
-	 * Get interactive/hover styles
-	 */
-	const getInteractiveStyles = (): React.CSSProperties => {
-		if (!interactive || disabled) return {};
-		return {
-			cursor: 'pointer',
-		};
-	};
-
-	/**
-	 * Get selected state styles
-	 */
-	const getSelectedStyles = (): React.CSSProperties => {
-		if (!selected) return {};
-		return {
-			borderColor: colors.accent,
-			backgroundColor: variant === 'outlined' ? colors.accentDim : colors.bgActivity,
-			boxShadow: `0 0 0 1px ${colors.accent}`,
-		};
-	};
-
-	/**
-	 * Get disabled styles
-	 */
-	const getDisabledStyles = (): React.CSSProperties => {
-		if (!disabled) return {};
-		return {
-			opacity: 0.5,
-			cursor: 'not-allowed',
-			pointerEvents: 'none',
-		};
-	};
-
-	const variantStyles = getVariantStyles();
-	const interactiveStyles = getInteractiveStyles();
-	const selectedStyles = getSelectedStyles();
-	const disabledStyles = getDisabledStyles();
-
-	const combinedStyles: React.CSSProperties = {
-		...variantStyles,
-		...interactiveStyles,
-		...selectedStyles,
-		...disabledStyles,
-		borderRadius: radiusStyles[radius],
-		width: fullWidth ? '100%' : undefined,
-		...style,
-	};
-
-	// Construct class names
 	const classNames = [
-		paddingStyles[padding],
-		interactive && !disabled ? 'hover:brightness-110 active:scale-[0.99]' : '',
+		baseClasses,
+		variantClassName,
+		paddingClasses[padding],
+		radiusClasses[radius],
+		selectedClassName,
+		interactiveClassName,
+		disabledClassName,
 		fullWidth ? 'w-full' : '',
-		'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
 		className,
 	]
 		.filter(Boolean)
@@ -237,7 +198,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
 		<div
 			ref={ref}
 			className={classNames}
-			style={combinedStyles}
+			style={style}
 			role={interactive ? 'button' : undefined}
 			tabIndex={interactive && !disabled ? 0 : undefined}
 			aria-selected={interactive ? selected : undefined}
@@ -275,41 +236,26 @@ export const CardHeader = forwardRef<HTMLDivElement, CardHeaderProps>(function C
 	{ title, subtitle, action, className = '', style, children, ...props },
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
+	const containerClassName = ['flex items-center justify-between', className]
+		.filter(Boolean)
+		.join(' ');
 
 	// If children are provided, render them directly
 	if (children) {
 		return (
-			<div
-				ref={ref}
-				className={`flex items-center justify-between ${className}`}
-				style={style}
-				{...props}
-			>
+			<div ref={ref} className={containerClassName} style={style} {...props}>
 				{children}
 			</div>
 		);
 	}
 
 	return (
-		<div
-			ref={ref}
-			className={`flex items-center justify-between ${className}`}
-			style={style}
-			{...props}
-		>
+		<div ref={ref} className={containerClassName} style={style} {...props}>
 			<div className="flex flex-col gap-0.5 min-w-0 flex-1">
 				{title && (
-					<div className="font-medium text-sm truncate" style={{ color: colors.textMain }}>
-						{title}
-					</div>
+					<div className="font-medium text-sm truncate text-text-main">{title}</div>
 				)}
-				{subtitle && (
-					<div className="text-xs truncate" style={{ color: colors.textDim }}>
-						{subtitle}
-					</div>
-				)}
+				{subtitle && <div className="text-xs truncate text-text-dim">{subtitle}</div>}
 			</div>
 			{action && <div className="flex-shrink-0 ml-2">{action}</div>}
 		</div>
@@ -338,8 +284,9 @@ export const CardBody = forwardRef<HTMLDivElement, CardBodyProps>(function CardB
 	{ padding = 'none', className = '', children, ...props },
 	ref
 ) {
+	const classNames = [paddingClasses[padding], className].filter(Boolean).join(' ');
 	return (
-		<div ref={ref} className={`${paddingStyles[padding]} ${className}`} {...props}>
+		<div ref={ref} className={classNames} {...props}>
 			{children}
 		</div>
 	);
@@ -367,19 +314,16 @@ export const CardFooter = forwardRef<HTMLDivElement, CardFooterProps>(function C
 	{ bordered = false, className = '', style, children, ...props },
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
+	const classNames = [
+		'flex items-center gap-2 pt-2 mt-2',
+		bordered ? 'border-t border-border' : '',
+		className,
+	]
+		.filter(Boolean)
+		.join(' ');
 
 	return (
-		<div
-			ref={ref}
-			className={`flex items-center gap-2 pt-2 mt-2 ${className}`}
-			style={{
-				borderTop: bordered ? `1px solid ${colors.border}` : undefined,
-				...style,
-			}}
-			{...props}
-		>
+		<div ref={ref} className={classNames} style={style} {...props}>
 			{children}
 		</div>
 	);
@@ -423,36 +367,33 @@ export interface SessionCardProps extends Omit<CardProps, 'children'> {
 }
 
 /**
- * Get status color based on session state
+ * Map session status → Tailwind background class for the dot indicator.
+ * `connecting` uses the non-theme `connecting` token (literal hex) so its
+ * orange color is stable across user themes, mirroring the legacy hardcode.
  */
-const getStatusColor = (
-	status: SessionStatus,
-	colors: { success: string; warning: string; error: string }
-): string => {
-	switch (status) {
-		case 'idle':
-			return colors.success;
-		case 'busy':
-			return colors.warning;
-		case 'error':
-			return colors.error;
-		case 'connecting':
-			return '#f97316'; // Orange
-		default:
-			return colors.success;
-	}
+const statusBgClasses: Record<SessionStatus, string> = {
+	idle: 'bg-success',
+	busy: 'bg-warning',
+	error: 'bg-error',
+	connecting: 'bg-connecting',
 };
 
 export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(function SessionCard(
 	{ name, status, mode, cwd, statusIndicator, info, actions, variant = 'outlined', ...props },
 	ref
 ) {
-	const { theme } = useTheme();
-	const colors = theme.colors;
-	const statusColor = getStatusColor(status, colors);
+	const statusBg = statusBgClasses[status] ?? statusBgClasses.idle;
 
 	// Truncate cwd for display
 	const displayCwd = cwd ? (cwd.length > 30 ? '...' + cwd.slice(-27) : cwd) : undefined;
+
+	// Terminal-mode badge wants a subtle text-dim-tinted background. `var()`
+	// tokens don't compose with Tailwind's opacity modifiers, so use
+	// `color-mix` — same trick as Badge.tsx's `subtle` style.
+	const modeBadgeClassName =
+		mode === 'ai'
+			? 'bg-accent-dim text-accent'
+			: 'bg-[color-mix(in_srgb,var(--maestro-text-dim)_12%,transparent)] text-text-dim';
 
 	return (
 		<Card ref={ref} variant={variant} interactive {...props}>
@@ -460,8 +401,9 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(function
 				{/* Status indicator */}
 				{statusIndicator || (
 					<span
-						className={`w-2 h-2 rounded-full flex-shrink-0 ${status === 'connecting' ? 'animate-pulse' : ''}`}
-						style={{ backgroundColor: statusColor }}
+						className={`w-2 h-2 rounded-full flex-shrink-0 ${statusBg}${
+							status === 'connecting' ? ' animate-pulse' : ''
+						}`}
 						role="status"
 						aria-label={status}
 					/>
@@ -470,23 +412,13 @@ export const SessionCard = forwardRef<HTMLDivElement, SessionCardProps>(function
 				{/* Main content */}
 				<div className="flex flex-col gap-0.5 min-w-0 flex-1">
 					<div className="flex items-center gap-2">
-						<span className="font-medium text-sm truncate" style={{ color: colors.textMain }}>
-							{name}
-						</span>
-						<span
-							className="text-xs px-1.5 py-0.5 rounded"
-							style={{
-								backgroundColor: mode === 'ai' ? colors.accentDim : `${colors.textDim}20`,
-								color: mode === 'ai' ? colors.accent : colors.textDim,
-							}}
-						>
+						<span className="font-medium text-sm truncate text-text-main">{name}</span>
+						<span className={`text-xs px-1.5 py-0.5 rounded ${modeBadgeClassName}`}>
 							{mode === 'ai' ? 'AI' : 'Terminal'}
 						</span>
 					</div>
 					{(displayCwd || info) && (
-						<div className="text-xs truncate" style={{ color: colors.textDim }}>
-							{info || displayCwd}
-						</div>
+						<div className="text-xs truncate text-text-dim">{info || displayCwd}</div>
 					)}
 				</div>
 
