@@ -104,8 +104,15 @@ export function AutoRunSetupSheet({
 		(activePlaybookId && playbooks.find((p) => p.id === activePlaybookId)) || null;
 	const isPlaybookModified = (() => {
 		if (!activePlaybook) return false;
+		// Apply the same stale-doc filter handleSelectPlaybook uses so a playbook
+		// referencing a now-deleted file doesn't light up the Update button just
+		// from the load. The playbook itself hasn't changed — only the world has.
+		const availableKeys = new Set(documents.map((d) => d.path || d.filename));
+		const playbookDocs = activePlaybook.documents
+			.map((d) => d.filename)
+			.filter((f) => availableKeys.has(f))
+			.sort();
 		const currentDocs = Array.from(selectedFiles).sort();
-		const playbookDocs = activePlaybook.documents.map((d) => d.filename).sort();
 		if (currentDocs.length !== playbookDocs.length) return true;
 		if (currentDocs.some((f, i) => f !== playbookDocs[i])) return true;
 		if (prompt !== activePlaybook.prompt) return true;
