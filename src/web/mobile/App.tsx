@@ -25,11 +25,7 @@ import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement'
 import { useOfflineStatus, useDesktopTheme } from '../main';
 import { buildApiUrl } from '../utils/config';
 import { triggerHaptic, HAPTIC_PATTERNS, type BreakpointTier } from './constants';
-import {
-	applyMainMinWidthGuard,
-	getPanelMode,
-	type MostRecentlyOpenedPanel,
-} from './panelModes';
+import { applyMainMinWidthGuard, getPanelMode, type MostRecentlyOpenedPanel } from './panelModes';
 import { webLogger } from '../utils/logger';
 import { AllSessionsView } from './AllSessionsView';
 import { type RightDrawerTab } from './RightDrawer';
@@ -447,123 +443,121 @@ function MobileHeader({
 				{/* Notifications (badge with count + dropdown) — priority #2, always inline */}
 				{isHeaderIconInline('notifications', tier) && (
 					<div ref={notifDropdownRef} className="relative">
-					<button
-						onClick={() => setShowNotifDropdown((prev) => !prev)}
-						className={headerIconButtonClasses(showNotifDropdown)}
-						aria-label="Notifications"
-						title="Notifications"
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
+						<button
+							onClick={() => setShowNotifDropdown((prev) => !prev)}
+							className={headerIconButtonClasses(showNotifDropdown)}
+							aria-label="Notifications"
+							title="Notifications"
 						>
-							<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-							<path d="M13.73 21a2 2 0 0 1-3.46 0" />
-						</svg>
-						{completedAgents.length > 0 && (
-							<span className="absolute -top-1 -right-1 text-[8px] font-bold text-white bg-error rounded-lg min-w-[14px] text-center leading-3 px-[3px] py-px">
-								{completedAgents.length > 99 ? '99+' : completedAgents.length}
-							</span>
-						)}
-					</button>
-					{showNotifDropdown && (
-						<div className="absolute top-full right-0 mt-2 w-[280px] max-h-[360px] bg-bg-sidebar border border-border rounded-[10px] shadow-[0_8px_24px_rgba(0,0,0,0.3)] z-[200] overflow-hidden flex flex-col">
-							{/* Header */}
-							<div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
-								<span className="text-[13px] font-semibold text-text-main">
-									Completed Agents
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							>
+								<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+								<path d="M13.73 21a2 2 0 0 1-3.46 0" />
+							</svg>
+							{completedAgents.length > 0 && (
+								<span className="absolute -top-1 -right-1 text-[8px] font-bold text-white bg-error rounded-lg min-w-[14px] text-center leading-3 px-[3px] py-px">
+									{completedAgents.length > 99 ? '99+' : completedAgents.length}
 								</span>
-								<div className="flex gap-1">
-									{onClearNotifications && completedAgents.length > 0 && (
-										<button
-											onClick={() => {
-												onClearNotifications();
-												setShowNotifDropdown(false);
-											}}
-											className="border-none bg-transparent text-text-dim text-[11px] cursor-pointer px-1.5 py-0.5 rounded"
-										>
-											Clear
-										</button>
-									)}
-									{onOpenNotificationSettings && (
-										<button
-											onClick={() => {
-												onOpenNotificationSettings();
-												setShowNotifDropdown(false);
-											}}
-											className="border-none bg-transparent text-text-dim cursor-pointer px-1 py-0.5 rounded flex items-center"
-											title="Notification Settings"
-										>
-											<svg
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="2"
-												strokeLinecap="round"
-												strokeLinejoin="round"
+							)}
+						</button>
+						{showNotifDropdown && (
+							<div className="absolute top-full right-0 mt-2 w-[280px] max-h-[360px] bg-bg-sidebar border border-border rounded-[10px] shadow-[0_8px_24px_rgba(0,0,0,0.3)] z-[200] overflow-hidden flex flex-col">
+								{/* Header */}
+								<div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+									<span className="text-[13px] font-semibold text-text-main">Completed Agents</span>
+									<div className="flex gap-1">
+										{onClearNotifications && completedAgents.length > 0 && (
+											<button
+												onClick={() => {
+													onClearNotifications();
+													setShowNotifDropdown(false);
+												}}
+												className="border-none bg-transparent text-text-dim text-[11px] cursor-pointer px-1.5 py-0.5 rounded"
 											>
-												<circle cx="12" cy="12" r="3" />
-												<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-											</svg>
-										</button>
+												Clear
+											</button>
+										)}
+										{onOpenNotificationSettings && (
+											<button
+												onClick={() => {
+													onOpenNotificationSettings();
+													setShowNotifDropdown(false);
+												}}
+												className="border-none bg-transparent text-text-dim cursor-pointer px-1 py-0.5 rounded flex items-center"
+												title="Notification Settings"
+											>
+												<svg
+													width="12"
+													height="12"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="2"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												>
+													<circle cx="12" cy="12" r="3" />
+													<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+												</svg>
+											</button>
+										)}
+									</div>
+								</div>
+								{/* Agent list */}
+								<div className="overflow-y-auto flex-1">
+									{completedAgents.length === 0 ? (
+										<div className="px-3 py-6 text-center text-text-dim text-[13px]">
+											No completed agents yet
+										</div>
+									) : (
+										completedAgents.map((agent, i) => {
+											const timeAgo = Math.round((Date.now() - agent.timestamp) / 60000);
+											const timeLabel =
+												timeAgo < 1
+													? 'just now'
+													: timeAgo < 60
+														? `${timeAgo}m ago`
+														: `${Math.round(timeAgo / 60)}h ago`;
+											return (
+												<button
+													key={`${agent.sessionId}-${agent.timestamp}`}
+													onClick={() => {
+														onSelectAgent?.(agent.sessionId);
+														setShowNotifDropdown(false);
+													}}
+													className={`flex items-center gap-2.5 w-full px-3 py-2.5 border-none bg-transparent text-text-main text-[13px] cursor-pointer text-left ${
+														i > 0
+															? 'border-t border-t-[color-mix(in_srgb,var(--maestro-border)_12%,transparent)]'
+															: ''
+													}`}
+												>
+													<span
+														className={`w-2 h-2 rounded-full flex-shrink-0 ${
+															agent.eventType === 'agent_error' ? 'bg-error' : 'bg-success'
+														}`}
+													/>
+													<span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+														{agent.sessionName}
+													</span>
+													<span className="text-[11px] text-text-dim flex-shrink-0">
+														{timeLabel}
+													</span>
+												</button>
+											);
+										})
 									)}
 								</div>
 							</div>
-							{/* Agent list */}
-							<div className="overflow-y-auto flex-1">
-								{completedAgents.length === 0 ? (
-									<div className="px-3 py-6 text-center text-text-dim text-[13px]">
-										No completed agents yet
-									</div>
-								) : (
-									completedAgents.map((agent, i) => {
-										const timeAgo = Math.round((Date.now() - agent.timestamp) / 60000);
-										const timeLabel =
-											timeAgo < 1
-												? 'just now'
-												: timeAgo < 60
-													? `${timeAgo}m ago`
-													: `${Math.round(timeAgo / 60)}h ago`;
-										return (
-											<button
-												key={`${agent.sessionId}-${agent.timestamp}`}
-												onClick={() => {
-													onSelectAgent?.(agent.sessionId);
-													setShowNotifDropdown(false);
-												}}
-												className={`flex items-center gap-2.5 w-full px-3 py-2.5 border-none bg-transparent text-text-main text-[13px] cursor-pointer text-left ${
-													i > 0
-														? 'border-t border-t-[color-mix(in_srgb,var(--maestro-border)_12%,transparent)]'
-														: ''
-												}`}
-											>
-												<span
-													className={`w-2 h-2 rounded-full flex-shrink-0 ${
-														agent.eventType === 'agent_error' ? 'bg-error' : 'bg-success'
-													}`}
-												/>
-												<span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-													{agent.sessionName}
-												</span>
-												<span className="text-[11px] text-text-dim flex-shrink-0">
-													{timeLabel}
-												</span>
-											</button>
-										);
-									})
-								)}
-							</div>
-						</div>
-					)}
-				</div>
+						)}
+					</div>
 				)}
 
 				{/* Settings — inline on desktop */}
@@ -717,206 +711,206 @@ function MobileHeader({
 
 				{/* Overflow menu (⋯) — hidden on desktop (all icons inline) */}
 				{tier !== 'desktop' && (
-				<div ref={overflowRef} className="relative">
-					<button
-						onClick={() => setShowOverflow((prev) => !prev)}
-						className={`${HEADER_ICON_BUTTON_BASE} border-none text-text-dim ${
-							showOverflow
-								? 'bg-[color-mix(in_srgb,var(--maestro-text-dim)_8%,transparent)]'
-								: 'bg-transparent'
-						}`}
-						aria-label="More actions"
-						title="More actions"
-					>
-						{/* Three dots icon */}
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-							<circle cx="12" cy="5" r="2" />
-							<circle cx="12" cy="12" r="2" />
-							<circle cx="12" cy="19" r="2" />
-						</svg>
-					</button>
+					<div ref={overflowRef} className="relative">
+						<button
+							onClick={() => setShowOverflow((prev) => !prev)}
+							className={`${HEADER_ICON_BUTTON_BASE} border-none text-text-dim ${
+								showOverflow
+									? 'bg-[color-mix(in_srgb,var(--maestro-text-dim)_8%,transparent)]'
+									: 'bg-transparent'
+							}`}
+							aria-label="More actions"
+							title="More actions"
+						>
+							{/* Three dots icon */}
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+								<circle cx="12" cy="5" r="2" />
+								<circle cx="12" cy="12" r="2" />
+								<circle cx="12" cy="19" r="2" />
+							</svg>
+						</button>
 
-					{/* Overflow dropdown */}
-					{showOverflow && (
-						<div className="absolute top-full right-0 mt-1 min-w-[200px] bg-bg-sidebar border border-border rounded-[10px] shadow-[0_8px_24px_rgba(0,0,0,0.25)] z-[300] p-1 overflow-hidden">
-							{/* Search — overflow on phone (priority #3) */}
-							{!isHeaderIconInline('search', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<circle cx="11" cy="11" r="8" />
-											<line x1="21" y1="21" x2="16.65" y2="16.65" />
-										</svg>
-									}
-									label="Quick Actions (Cmd+K)"
-									onClick={() => handleOverflowAction(onSearchTap)}
-								/>
-							)}
-							{/* Cue — overflow on phone (priority #4) */}
-							{!isHeaderIconInline('cue', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill={hasRunningCue ? 'currentColor' : 'none'}
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-										</svg>
-									}
-									label={`Maestro Cue${hasRunningCue ? ' (running)' : ''}`}
-									onClick={() => handleOverflowAction(onCueTap)}
-								/>
-							)}
-							{/* Settings — overflow on phone/tablet */}
-							{!isHeaderIconInline('settings', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<circle cx="12" cy="12" r="3" />
-											<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-										</svg>
-									}
-									label="Settings"
-									onClick={() => handleOverflowAction(onSettingsTap)}
-								/>
-							)}
-							{/* Group Chat — overflow on phone/tablet */}
-							{!isHeaderIconInline('groupChat', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-										</svg>
-									}
-									label={`Group Chat${groupChatCount > 0 ? ` (${groupChatCount})` : ''}`}
-									onClick={() => handleOverflowAction(onGroupChatTap)}
-								/>
-							)}
-							{/* Usage Dashboard — secondary, overflow on phone/tablet */}
-							{!isHeaderIconInline('usageDashboard', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-											<path d="M22 12A10 10 0 0 0 12 2v10z" />
-										</svg>
-									}
-									label="Usage Dashboard"
-									onClick={() => handleOverflowAction(onUsageDashboardTap)}
-								/>
-							)}
-							{/* Achievements — secondary, overflow on phone/tablet */}
-							{!isHeaderIconInline('achievements', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<circle cx="12" cy="8" r="7" />
-											<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
-										</svg>
-									}
-									label="Achievements"
-									onClick={() => handleOverflowAction(onAchievementsTap)}
-								/>
-							)}
-							{/* Context Management — secondary, overflow on phone/tablet (requires active session) */}
-							{!isHeaderIconInline('contextManagement', tier) && activeSession && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<circle cx="12" cy="12" r="10" />
-											<path d="M8 12h8" />
-											<path d="M12 8v8" />
-										</svg>
-									}
-									label="Context Management"
-									onClick={() => handleOverflowAction(onContextManagementTap)}
-								/>
-							)}
-							{/* New Agent — secondary, overflow on phone/tablet */}
-							{!isHeaderIconInline('newAgent', tier) && (
-								<OverflowMenuItem
-									icon={
-										<svg
-											width="16"
-											height="16"
-											viewBox="0 0 24 24"
-											fill="none"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										>
-											<line x1="12" y1="5" x2="12" y2="19" />
-											<line x1="5" y1="12" x2="19" y2="12" />
-										</svg>
-									}
-									label="New Agent"
-									onClick={() => handleOverflowAction(onNewAgentTap)}
-								/>
-							)}
-						</div>
-					)}
-				</div>
+						{/* Overflow dropdown */}
+						{showOverflow && (
+							<div className="absolute top-full right-0 mt-1 min-w-[200px] bg-bg-sidebar border border-border rounded-[10px] shadow-[0_8px_24px_rgba(0,0,0,0.25)] z-[300] p-1 overflow-hidden">
+								{/* Search — overflow on phone (priority #3) */}
+								{!isHeaderIconInline('search', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<circle cx="11" cy="11" r="8" />
+												<line x1="21" y1="21" x2="16.65" y2="16.65" />
+											</svg>
+										}
+										label="Quick Actions (Cmd+K)"
+										onClick={() => handleOverflowAction(onSearchTap)}
+									/>
+								)}
+								{/* Cue — overflow on phone (priority #4) */}
+								{!isHeaderIconInline('cue', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill={hasRunningCue ? 'currentColor' : 'none'}
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+											</svg>
+										}
+										label={`Maestro Cue${hasRunningCue ? ' (running)' : ''}`}
+										onClick={() => handleOverflowAction(onCueTap)}
+									/>
+								)}
+								{/* Settings — overflow on phone/tablet */}
+								{!isHeaderIconInline('settings', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<circle cx="12" cy="12" r="3" />
+												<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+											</svg>
+										}
+										label="Settings"
+										onClick={() => handleOverflowAction(onSettingsTap)}
+									/>
+								)}
+								{/* Group Chat — overflow on phone/tablet */}
+								{!isHeaderIconInline('groupChat', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+											</svg>
+										}
+										label={`Group Chat${groupChatCount > 0 ? ` (${groupChatCount})` : ''}`}
+										onClick={() => handleOverflowAction(onGroupChatTap)}
+									/>
+								)}
+								{/* Usage Dashboard — secondary, overflow on phone/tablet */}
+								{!isHeaderIconInline('usageDashboard', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
+												<path d="M22 12A10 10 0 0 0 12 2v10z" />
+											</svg>
+										}
+										label="Usage Dashboard"
+										onClick={() => handleOverflowAction(onUsageDashboardTap)}
+									/>
+								)}
+								{/* Achievements — secondary, overflow on phone/tablet */}
+								{!isHeaderIconInline('achievements', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<circle cx="12" cy="8" r="7" />
+												<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+											</svg>
+										}
+										label="Achievements"
+										onClick={() => handleOverflowAction(onAchievementsTap)}
+									/>
+								)}
+								{/* Context Management — secondary, overflow on phone/tablet (requires active session) */}
+								{!isHeaderIconInline('contextManagement', tier) && activeSession && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<circle cx="12" cy="12" r="10" />
+												<path d="M8 12h8" />
+												<path d="M12 8v8" />
+											</svg>
+										}
+										label="Context Management"
+										onClick={() => handleOverflowAction(onContextManagementTap)}
+									/>
+								)}
+								{/* New Agent — secondary, overflow on phone/tablet */}
+								{!isHeaderIconInline('newAgent', tier) && (
+									<OverflowMenuItem
+										icon={
+											<svg
+												width="16"
+												height="16"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+											>
+												<line x1="12" y1="5" x2="12" y2="19" />
+												<line x1="5" y1="12" x2="19" y2="12" />
+											</svg>
+										}
+										label="New Agent"
+										onClick={() => handleOverflowAction(onNewAgentTap)}
+									/>
+								)}
+							</div>
+						)}
+					</div>
 				)}
 			</div>
 		</header>
@@ -3178,15 +3172,14 @@ export default function MobileApp() {
 			)}
 
 			{/* Agent creation sheet */}
-			{showAgentCreation && (
-				<AgentCreationSheet
-					groups={agentManagement.groups}
-					defaultCwd={activeSession?.cwd || ''}
-					createAgent={agentManagement.createAgent}
-					onCreated={handleAgentCreated}
-					onClose={() => setShowAgentCreation(false)}
-				/>
-			)}
+			<AgentCreationSheet
+				isOpen={showAgentCreation}
+				groups={agentManagement.groups}
+				defaultCwd={activeSession?.cwd || ''}
+				createAgent={agentManagement.createAgent}
+				onCreated={handleAgentCreated}
+				onClose={() => setShowAgentCreation(false)}
+			/>
 
 			{/* Group Chat panel — full-screen overlay */}
 			{activeGroupChatId && groupChat.activeChat && (
