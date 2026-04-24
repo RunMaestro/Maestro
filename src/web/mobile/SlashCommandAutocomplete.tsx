@@ -213,26 +213,7 @@ export function SlashCommandAutocomplete({
 						e.stopPropagation();
 						onClose();
 					}}
-					style={{
-						padding: '6px',
-						borderRadius: '6px',
-						backgroundColor: 'transparent',
-						border: 'none',
-						cursor: 'pointer',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						color: colors.textDim,
-						transition: 'background-color 150ms ease, color 150ms ease',
-					}}
-					onMouseEnter={(e) => {
-						e.currentTarget.style.backgroundColor = `${colors.textDim}20`;
-						e.currentTarget.style.color = colors.textMain;
-					}}
-					onMouseLeave={(e) => {
-						e.currentTarget.style.backgroundColor = 'transparent';
-						e.currentTarget.style.color = colors.textDim;
-					}}
+					className="p-1.5 rounded-md bg-transparent border-none cursor-pointer flex items-center justify-center text-text-dim transition-colors duration-150 ease-in-out hover:bg-[color-mix(in_srgb,var(--maestro-text-dim)_12%,transparent)] hover:text-text-main"
 					aria-label="Close commands"
 				>
 					<svg

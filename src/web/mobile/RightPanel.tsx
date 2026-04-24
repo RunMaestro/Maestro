@@ -168,22 +168,7 @@ export function RightPanel({
 				{!isOverlay && onResizeStart && (
 					<div
 						onPointerDown={onResizeStart}
-						style={{
-							position: 'absolute',
-							top: 0,
-							left: 0,
-							width: '4px',
-							height: '100%',
-							cursor: 'col-resize',
-							zIndex: 10,
-							touchAction: 'none',
-						}}
-						onMouseEnter={(e) => {
-							(e.currentTarget as HTMLElement).style.backgroundColor = colors.accent;
-						}}
-						onMouseLeave={(e) => {
-							(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-						}}
+						className="absolute top-0 left-0 w-1 h-full cursor-col-resize z-10 touch-none bg-transparent transition-colors duration-150 ease-in-out hover:bg-accent"
 					/>
 				)}
 				{/* Header with tabs and close button */}

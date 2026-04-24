@@ -358,29 +358,9 @@ function FilesTabContent({
 							onFileSelect?.(node.path);
 						}
 					}}
+					className="flex items-center gap-1 w-full py-[3px] pr-2 border-none bg-transparent text-text-main text-xs font-mono cursor-pointer text-left whitespace-nowrap overflow-hidden text-ellipsis transition-colors duration-150 ease-in-out hover:bg-[color-mix(in_srgb,var(--maestro-text-dim)_6%,transparent)]"
 					style={{
-						display: 'flex',
-						alignItems: 'center',
-						gap: '4px',
-						width: '100%',
-						padding: '3px 8px',
 						paddingLeft: `${8 + depth * 16}px`,
-						border: 'none',
-						backgroundColor: 'transparent',
-						color: colors.textMain,
-						fontSize: '12px',
-						fontFamily: 'monospace',
-						cursor: 'pointer',
-						textAlign: 'left',
-						whiteSpace: 'nowrap',
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
-					}}
-					onMouseEnter={(e) => {
-						(e.currentTarget as HTMLElement).style.backgroundColor = `${colors.textDim}10`;
-					}}
-					onMouseLeave={(e) => {
-						(e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
 					}}
 					title={node.path}
 				>
