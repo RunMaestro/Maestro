@@ -30,6 +30,7 @@ import { type RightDrawerTab } from './RightDrawer';
 import { RightPanel } from './RightPanel';
 import { LeftPanel } from './LeftPanel';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { useGitStatus } from '../hooks/useGitStatus';
 import { useResizableWebPanel } from '../hooks/useResizableWebPanel';
 import { GitDiffViewer } from './GitDiffViewer';
@@ -250,13 +251,7 @@ function MobileHeader({
 	const isThinking = sessionState === 'busy';
 
 	// Responsive: detect wider screens for showing more icons
-	const [isWide, setIsWide] = useState(() => window.innerWidth > 768);
-	useEffect(() => {
-		const mq = window.matchMedia('(min-width: 769px)');
-		const handler = (e: MediaQueryListEvent) => setIsWide(e.matches);
-		mq.addEventListener('change', handler);
-		return () => mq.removeEventListener('change', handler);
-	}, []);
+	const { isDesktop } = useBreakpoint();
 
 	// Close overflow menu when clicking outside
 	useEffect(() => {
@@ -655,7 +650,7 @@ function MobileHeader({
 				</div>
 
 				{/* Settings — shown directly on wide screens */}
-				{isWide && (
+				{isDesktop && (
 					<button
 						onClick={onSettingsTap}
 						style={headerIconButton(colors)}
@@ -679,7 +674,7 @@ function MobileHeader({
 				)}
 
 				{/* On wide screens, show Group Chat directly too */}
-				{isWide && (
+				{isDesktop && (
 					<button
 						onClick={onGroupChatTap}
 						style={headerIconButton(colors, groupChatCount > 0)}
@@ -760,7 +755,7 @@ function MobileHeader({
 							}}
 						>
 							{/* Settings — only in overflow on narrow screens */}
-							{!isWide && (
+							{!isDesktop && (
 								<OverflowMenuItem
 									icon={
 										<svg
@@ -783,7 +778,7 @@ function MobileHeader({
 								/>
 							)}
 							{/* Group Chat — only in overflow on narrow screens */}
-							{!isWide && (
+							{!isDesktop && (
 								<OverflowMenuItem
 									icon={
 										<svg
