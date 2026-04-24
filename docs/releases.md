@@ -17,7 +17,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 **Latest: v0.15.3** | Released April 5, 2026
 
-# Major 0.15.x Additions
+### Major 0.15.x Additions
 
 🎶 **Maestro Symphony** — Contribute to open source with AI assistance! Browse curated issues from projects with the `runmaestro.ai` label, clone repos with one click, and automatically process the relevant Auto Run playbooks. Track your contributions, streaks, and stats. You're contributing CPU and tokens towards your favorite open source projects and features.
 
@@ -71,13 +71,13 @@ Changes in this point release include:
 
 The major contributions to 0.14.x remain:
 
-🗄️ Document Graphs. Launch from file preview or from the FIle tree panel. Explore relationships between Markdown documents that contain links between documents and to URLs.
+🗄️ Document Graphs. Launch from file preview or from the File tree panel. Explore relationships between Markdown documents that contain links between documents and to URLs.
 
 📶 SSH support for agents. Manage a remote agent with feature parity over SSH. Includes support for Git and File tree panels. Manage agents on remote systems or in containers. This even works for Group Chat, which is rad as hell.
 
 🧙‍♂️ Added an in-tab wizard for generating Auto Run Playbooks via `/wizard` or a new button in the Auto Run panel.
 
-# Smaller Changes in 014.x
+### Smaller Changes in 0.14.x
 
 - Improved User Dashboard, available from hamburger menu, command palette or hotkey 🎛️
 - Leaderboard tracking now works across multiple systems and syncs level from cloud 🏆
@@ -146,7 +146,7 @@ The big changes in the v0.12.x line are the following three:
 
 ## GitHub Spec-Kit Integration
 
-🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
+🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built-in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
 
 ## Context Management Tools
 
@@ -171,7 +171,7 @@ The big changes in the v0.12.x line are the following three:
 
 **Latest: v0.11.0** | Released December 22, 2025
 
-🌳 Github Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
+🌳 GitHub Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
 
 # Other Changes
 
@@ -436,16 +436,16 @@ Plus the pre-release ALPHA...
 
 **Latest: v0.2.3** | Released November 29, 2025
 
-• Enhanced mobile web interface with session sync and history panel 📱
-• Added ThinkingStatusPill showing real-time token counts and elapsed time ⏱️
-• Implemented task count badges and session deduplication for batch runner 📊
-• Added TTS stop control and improved voice synthesis compatibility 🔊
-• Created image lightbox with navigation, clipboard, and delete features 🖼️
-• Fixed UI bugs in search, auto-scroll, and sidebar interactions 🐛
-• Added global Claude stats with streaming updates across projects 📈
-• Improved markdown checkbox styling and collapsed palette hover UX ✨
-• Enhanced scratchpad with search, image paste, and attachment support 🔍
-• Added splash screen with logo and progress bar during startup 🎨
+- Enhanced mobile web interface with session sync and history panel 📱
+- Added ThinkingStatusPill showing real-time token counts and elapsed time ⏱️
+- Implemented task count badges and session deduplication for batch runner 📊
+- Added TTS stop control and improved voice synthesis compatibility 🔊
+- Created image lightbox with navigation, clipboard, and delete features 🖼️
+- Fixed UI bugs in search, auto-scroll, and sidebar interactions 🐛
+- Added global Claude stats with streaming updates across projects 📈
+- Improved markdown checkbox styling and collapsed palette hover UX ✨
+- Enhanced scratchpad with search, image paste, and attachment support 🔍
+- Added splash screen with logo and progress bar during startup 🎨
 
 ### Previous Releases in this Series
 
@@ -459,16 +459,16 @@ Plus the pre-release ALPHA...
 
 **Latest: v0.1.6** | Released November 27, 2025
 
-• Added template variables for dynamic AI command customization 🎯
-• Implemented session bookmarking with star icons and dedicated section ⭐
-• Enhanced Git Log Viewer with smarter date formatting 📅
-• Improved GitHub release workflow to handle partial failures gracefully 🔧
-• Added collapsible template documentation in AI Commands panel 📚
-• Updated default commit command with session ID traceability 🔍
-• Added tag indicators for custom-named sessions visually 🏷️
-• Improved Git Log search UX with better focus handling 🎨
-• Fixed input placeholder spacing for better readability 📝
-• Updated documentation with new features and template references 📖
+- Added template variables for dynamic AI command customization 🎯
+- Implemented session bookmarking with star icons and dedicated section ⭐
+- Enhanced Git Log Viewer with smarter date formatting 📅
+- Improved GitHub release workflow to handle partial failures gracefully 🔧
+- Added collapsible template documentation in AI Commands panel 📚
+- Updated default commit command with session ID traceability 🔍
+- Added tag indicators for custom-named sessions visually 🏷️
+- Improved Git Log search UX with better focus handling 🎨
+- Fixed input placeholder spacing for better readability 📝
+- Updated documentation with new features and template references 📖
 
 ### Previous Releases in this Series
 
