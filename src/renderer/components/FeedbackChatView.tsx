@@ -650,7 +650,10 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 						</button>
 						<button
 							type="button"
-							onClick={() => openUrl(createdIssueUrl)}
+							onClick={() => {
+								openUrl(createdIssueUrl);
+								onCancel();
+							}}
 							className="p-1 rounded transition-colors hover:bg-white/10 shrink-0"
 							style={{ color: theme.colors.textDim }}
 							title="Open in browser"
