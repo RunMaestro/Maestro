@@ -5,6 +5,7 @@ import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
+import { formatLogsForClipboard } from '../../utils/contextExtractor';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -1041,6 +1042,68 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 		return unsubscribe;
 	}, []);
+
+	// Handle remote create-gist requests (from CLI / web clients).
+	// Gathers every AI tab's transcript for the session, formats it the same
+	// way the desktop "Publish Gist" flow does, and shells out to `gh gist
+	// create` via the existing git IPC handler.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteCreateGist(
+			async (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => {
+				try {
+					const session = sessionsRef.current.find((s) => s.id === sessionId);
+					if (!session) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: `Session not found: ${sessionId}`,
+						});
+						return;
+					}
+
+					const sections: string[] = [];
+					for (const tab of session.aiTabs) {
+						const body = formatLogsForClipboard(tab.logs);
+						if (!body) continue;
+						const header = tab.name || tab.id.slice(0, 8);
+						sections.push(`## Tab: ${header}\n\n${body}`);
+					}
+
+					if (sections.length === 0) {
+						window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+							success: false,
+							error: 'Session has no conversation history to publish',
+						});
+						return;
+					}
+
+					const content = `# ${session.name}\n\n${sections.join('\n\n---\n\n')}\n`;
+					const safeName =
+						(session.name || 'session').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60) || 'session';
+					const filename = `${safeName}_context.md`;
+
+					const result = await window.maestro.git.createGist(
+						filename,
+						content,
+						description,
+						isPublic
+					);
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, result);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					window.maestro.process.sendRemoteCreateGistResponse(responseChannel, {
+						success: false,
+						error: message,
+					});
+				}
+			}
+		);
+		return unsubscribe;
+	}, [sessionsRef]);
 
 	return {};
 }

@@ -592,6 +592,11 @@ export type TransferContextCallback = (
 	targetSessionId: string
 ) => Promise<boolean>;
 export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
+export type CreateGistCallback = (
+	sessionId: string,
+	description: string,
+	isPublic: boolean
+) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 
 // =============================================================================
 // Cue Automation Types

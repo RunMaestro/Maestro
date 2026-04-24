@@ -119,6 +119,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeContext: vi.fn().mockResolvedValue(true),
 		transferContext: vi.fn().mockResolvedValue(true),
 		summarizeContext: vi.fn().mockResolvedValue(true),
+		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),

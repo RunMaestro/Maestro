@@ -64,6 +64,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
@@ -133,6 +134,7 @@ export interface WebServerCallbacks {
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
 	summarizeContext: SummarizeContextCallback | null;
+	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
@@ -193,6 +195,7 @@ export class CallbackRegistry {
 		mergeContext: null,
 		transferContext: null,
 		summarizeContext: null,
+		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
@@ -484,6 +487,17 @@ export class CallbackRegistry {
 		return this.callbacks.summarizeContext(sessionId);
 	}
 
+	async createGist(
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		if (!this.callbacks.createGist) {
+			return { success: false, error: 'Gist creation not configured' };
+		}
+		return this.callbacks.createGist(sessionId, description, isPublic);
+	}
+
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
 		if (!this.callbacks.getCueSubscriptions) return [];
 		return this.callbacks.getCueSubscriptions(sessionId);
@@ -740,6 +754,10 @@ export class CallbackRegistry {
 
 	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
 		this.callbacks.summarizeContext = callback;
+	}
+
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbacks.createGist = callback;
 	}
 
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {

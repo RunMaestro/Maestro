@@ -104,6 +104,7 @@ import type {
 	MergeContextCallback,
 	TransferContextCallback,
 	SummarizeContextCallback,
+	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	TriggerCueSubscriptionCallback,
@@ -551,6 +552,10 @@ export class WebServer {
 
 	setSummarizeContextCallback(callback: SummarizeContextCallback): void {
 		this.callbackRegistry.setSummarizeContextCallback(callback);
+	}
+
+	setCreateGistCallback(callback: CreateGistCallback): void {
+		this.callbackRegistry.setCreateGistCallback(callback);
 	}
 
 	setGetCueSubscriptionsCallback(callback: GetCueSubscriptionsCallback): void {

@@ -177,6 +177,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
+		onRemoteCreateGist: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteCreateGistResponse: vi.fn(),
 		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),

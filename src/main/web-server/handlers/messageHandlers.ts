@@ -189,6 +189,11 @@ export interface MessageHandlerCallbacks {
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;
+	createGist: (
+		sessionId: string,
+		description: string,
+		isPublic: boolean
+	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
@@ -438,6 +443,10 @@ export class WebSocketMessageHandler {
 
 			case 'summarize_context':
 				this.handleSummarizeContext(client, message);
+				break;
+
+			case 'create_gist':
+				this.handleCreateGist(client, message);
 				break;
 
 			case 'get_cue_subscriptions':
@@ -2578,6 +2587,41 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to summarize context: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle create_gist message - publish a session's transcript to a GitHub gist
+	 */
+	private handleCreateGist(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const description = (message.description as string | undefined) ?? '';
+		const isPublic = Boolean(message.isPublic);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.createGist) {
+			this.sendError(client, 'Gist creation not configured');
+			return;
+		}
+
+		this.callbacks
+			.createGist(sessionId, description, isPublic)
+			.then((result) => {
+				this.send(client, {
+					type: 'create_gist_result',
+					success: result.success,
+					gistUrl: result.gistUrl,
+					error: result.error,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create gist: ${error.message}`);
 			});
 	}
 

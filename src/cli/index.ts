@@ -40,6 +40,7 @@ import {
 	settingsAgentReset,
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
+import { gistCreate } from './commands/gist';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -411,6 +412,20 @@ prompts
 	.description('Print a prompt by id (honors user customizations from Settings → Maestro Prompts)')
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
+
+// Gist commands — publish agent session transcripts to GitHub gists via the
+// running Maestro desktop app. Grouped as a subcommand so we can add more gist
+// operations (list, show, delete, etc.) later.
+const gist = program.command('gist').description('Publish session context to GitHub gists');
+
+gist
+	.command('create <agent-id>')
+	.description(
+		"Publish an agent's session transcript as a GitHub gist (requires running Maestro app)"
+	)
+	.option('-d, --description <text>', 'Gist description')
+	.option('-p, --public', 'Create a public gist (default: private)')
+	.action(gistCreate);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander

@@ -1107,6 +1107,39 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote create-gist requests from the web/CLI interface
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteCreateGist: (
+			callback: (
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				description: string,
+				isPublic: boolean,
+				responseChannel: string
+			) => callback(sessionId, description, isPublic, responseChannel);
+			ipcRenderer.on('remote:createGist', handler);
+			return () => ipcRenderer.removeListener('remote:createGist', handler);
+		},
+
+		/**
+		 * Send response for remote create-gist
+		 */
+		sendRemoteCreateGistResponse: (
+			responseChannel: string,
+			result: { success: boolean; gistUrl?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to remote get Cue subscriptions from web interface
 		 */
 		onRemoteGetCueSubscriptions: (
