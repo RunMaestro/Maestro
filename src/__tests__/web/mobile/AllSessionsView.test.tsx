@@ -932,6 +932,59 @@ describe('AllSessionsView', () => {
 		});
 	});
 
+	// Regression tests for Task 3.1 (Phase 3 content-views): card containers must
+	// use a fluid CSS grid so AllSessionsView lays out 1/2/3+ columns as the
+	// viewport widens, instead of stacking single-column at every width.
+	// Target `auto-fill` with `minmax(280px, 1fr)` — NOT Tailwind's default
+	// sm/md/lg tiers, which don't line up with the project's 600/960 breakpoints.
+	describe('grid layout (Task 3.1)', () => {
+		it('uses fluid auto-fill grid for ungrouped-only card list', () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Ungrouped One' }),
+				createMockSession({ id: 's2', name: 'Ungrouped Two' }),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			const card = screen.getByRole('button', { name: /Ungrouped One/i });
+			const gridContainer = card.parentElement as HTMLElement;
+
+			expect(gridContainer.style.display).toBe('grid');
+			expect(gridContainer.style.gridTemplateColumns).toBe('repeat(auto-fill, minmax(280px, 1fr))');
+			expect(gridContainer.style.gap).toBe('10px');
+		});
+
+		it('uses fluid auto-fill grid inside an expanded GroupSection', async () => {
+			const sessions = [
+				createMockSession({
+					id: 's1',
+					name: 'Grouped One',
+					groupId: 'g1',
+					groupName: 'Team',
+				}),
+				createMockSession({
+					id: 's2',
+					name: 'Grouped Two',
+					groupId: 'g1',
+					groupName: 'Team',
+				}),
+			];
+
+			render(<AllSessionsView {...createDefaultProps({ sessions })} />);
+
+			// Expand the group so the card grid renders
+			const groupHeader = await screen.findByRole('button', { name: /Team group/i });
+			fireEvent.click(groupHeader);
+
+			const card = screen.getByRole('button', { name: /Grouped One/i });
+			const gridContainer = card.parentElement as HTMLElement;
+
+			expect(gridContainer.style.display).toBe('grid');
+			expect(gridContainer.style.gridTemplateColumns).toBe('repeat(auto-fill, minmax(280px, 1fr))');
+			expect(gridContainer.style.gap).toBe('10px');
+		});
+	});
+
 	describe('integration scenarios', () => {
 		it('complete user flow: search, auto-expand group, select session', async () => {
 			const onSelectSession = vi.fn();
