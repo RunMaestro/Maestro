@@ -961,6 +961,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 				colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
+				// Infinity is JSON-serialized as null — web client maps null back to Infinity.
+				maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
 				shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 			};
 		});
@@ -998,6 +1000,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 							audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 							colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 							conductorProfile: settingsStore.get('conductorProfile', '') as string,
+							maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
 							shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 						};
 						server.broadcastSettingsChanged(settings);

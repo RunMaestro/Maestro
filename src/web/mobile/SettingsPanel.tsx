@@ -47,6 +47,18 @@ const SHOW_THINKING_OPTIONS = [
 ];
 
 /**
+ * Max output lines options — mirrors the desktop Display tab.
+ * `Infinity` is the "All" sentinel (serialized as null over the wire).
+ */
+const MAX_OUTPUT_LINES_OPTIONS: { value: number; label: string }[] = [
+	{ value: 15, label: '15' },
+	{ value: 25, label: '25' },
+	{ value: 50, label: '50' },
+	{ value: 100, label: '100' },
+	{ value: Infinity, label: 'All' },
+];
+
+/**
  * "Saved" indicator that fades in/out
  */
 function SavedIndicator({ visible }: { visible: boolean }) {
@@ -148,7 +160,7 @@ function SectionHeader({
  */
 export function SettingsPanel({ onClose, settingsHook }: SettingsPanelProps) {
 	const colors = useThemeColors();
-	const { settings, setSetting, setTheme, setFontSize } = settingsHook;
+	const { settings, setSetting, setTheme, setFontSize, setMaxOutputLines } = settingsHook;
 	const [savedKey, setSavedKey] = useState<string | null>(null);
 	const savedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -233,6 +245,15 @@ export function SettingsPanel({ onClose, settingsHook }: SettingsPanelProps) {
 			if (success) showSaved('conductorProfile');
 		},
 		[setSetting, showSaved]
+	);
+
+	const handleMaxOutputLinesChange = useCallback(
+		async (value: number) => {
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+			const success = await setMaxOutputLines(value);
+			if (success) showSaved('maxOutputLines');
+		},
+		[setMaxOutputLines, showSaved]
 	);
 
 	if (!settings) {
@@ -663,6 +684,75 @@ export function SettingsPanel({ onClose, settingsHook }: SettingsPanelProps) {
 									);
 								})}
 							</div>
+						</div>
+
+						{/* Max Output Lines per Response */}
+						<div
+							style={{
+								padding: '12px 14px',
+								borderRadius: '10px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgSidebar,
+								minHeight: '44px',
+							}}
+						>
+							<div
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									marginBottom: '10px',
+								}}
+							>
+								<span style={{ fontSize: '14px', fontWeight: 500, color: colors.textMain }}>
+									Max Output Lines per Response
+								</span>
+								<SavedIndicator visible={savedKey === 'maxOutputLines'} />
+							</div>
+							<div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+								{MAX_OUTPUT_LINES_OPTIONS.map((opt) => {
+									// Null (from wire) and undefined (unset) both mean "All"/Infinity.
+									const currentRaw = settings.maxOutputLines;
+									const currentValue =
+										currentRaw === null || currentRaw === undefined ? Infinity : currentRaw;
+									const isActive = currentValue === opt.value;
+									return (
+										<button
+											key={opt.label}
+											onClick={() => handleMaxOutputLinesChange(opt.value)}
+											style={{
+												flex: 1,
+												padding: '8px 12px',
+												borderRadius: '8px',
+												border: isActive
+													? `2px solid ${colors.accent}`
+													: `1px solid ${colors.border}`,
+												backgroundColor: isActive ? `${colors.accent}15` : colors.bgMain,
+												color: isActive ? colors.accent : colors.textMain,
+												fontSize: '13px',
+												fontWeight: isActive ? 600 : 400,
+												cursor: 'pointer',
+												touchAction: 'manipulation',
+												WebkitTapHighlightColor: 'transparent',
+												minHeight: '36px',
+											}}
+											aria-pressed={isActive}
+										>
+											{opt.label}
+										</button>
+									);
+								})}
+							</div>
+							<p
+								style={{
+									fontSize: '11px',
+									color: colors.textDim,
+									marginTop: '8px',
+									lineHeight: 1.4,
+								}}
+							>
+								Long outputs are collapsed into a scrollable window. Set to "All" to always show the
+								full response.
+							</p>
 						</div>
 					</div>
 				</div>

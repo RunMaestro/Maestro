@@ -378,6 +378,8 @@ export interface WebSettings {
 	audioFeedbackEnabled: boolean;
 	colorBlindMode: string;
 	conductorProfile: string;
+	/** Max agent output lines per message before truncation. `null` = All (Infinity serialized). */
+	maxOutputLines: number | null;
 	/** User-customized keyboard shortcuts (partial overrides of DEFAULT_SHORTCUTS). */
 	shortcuts: Record<string, Shortcut>;
 }

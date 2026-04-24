@@ -50,6 +50,12 @@ export interface MessageHistoryProps {
 	sessionState?: string;
 	/** Whether to apply Bionify reading mode to long-form AI output */
 	enableBionifyReadingMode?: boolean;
+	/**
+	 * Max output lines per message before collapsing — mirrors the desktop
+	 * "Max Output Lines per Response" setting. Pass `Infinity` (or omit) to
+	 * fall back to the local line/char defaults and never force-truncate.
+	 */
+	maxOutputLines?: number;
 }
 
 const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'smart');
@@ -86,6 +92,7 @@ export function MessageHistory({
 	thinkingMode,
 	sessionState,
 	enableBionifyReadingMode = false,
+	maxOutputLines = Infinity,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -100,28 +107,41 @@ export function MessageHistory({
 	const [hasNewMessages, setHasNewMessages] = useState(false);
 	const [newMessageCount, setNewMessageCount] = useState(0);
 
+	// When the user-configured line cap is finite ("15" / "25" / …) it takes
+	// precedence over the local mobile default; "All" (Infinity) disables
+	// line-based collapse entirely, matching desktop behavior.
+	const hasLineCap = Number.isFinite(maxOutputLines);
+	const effectiveLineCap = hasLineCap ? maxOutputLines : LINE_TRUNCATE_THRESHOLD;
+
 	/**
 	 * Check if a message should be truncated
 	 */
-	const shouldTruncate = useCallback((text: string): boolean => {
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
-		const lineCount = text.split('\n').length;
-		return lineCount > LINE_TRUNCATE_THRESHOLD;
-	}, []);
+	const shouldTruncate = useCallback(
+		(text: string): boolean => {
+			if (text.length > CHAR_TRUNCATE_THRESHOLD) return true;
+			if (!hasLineCap) return false;
+			const lineCount = text.split('\n').length;
+			return lineCount > effectiveLineCap;
+		},
+		[effectiveLineCap, hasLineCap]
+	);
 
 	/**
 	 * Get truncated text for display
 	 */
-	const getTruncatedText = useCallback((text: string): string => {
-		const lines = text.split('\n');
-		if (lines.length > LINE_TRUNCATE_THRESHOLD) {
-			return lines.slice(0, LINE_TRUNCATE_THRESHOLD).join('\n');
-		}
-		if (text.length > CHAR_TRUNCATE_THRESHOLD) {
-			return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
-		}
-		return text;
-	}, []);
+	const getTruncatedText = useCallback(
+		(text: string): string => {
+			const lines = text.split('\n');
+			if (hasLineCap && lines.length > effectiveLineCap) {
+				return lines.slice(0, effectiveLineCap).join('\n');
+			}
+			if (text.length > CHAR_TRUNCATE_THRESHOLD) {
+				return text.slice(0, CHAR_TRUNCATE_THRESHOLD);
+			}
+			return text;
+		},
+		[effectiveLineCap, hasLineCap]
+	);
 
 	/**
 	 * Toggle expansion state for a message
