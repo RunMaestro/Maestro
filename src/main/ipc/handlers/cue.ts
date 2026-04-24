@@ -20,6 +20,7 @@ import {
 	deleteCueConfigFile,
 	readCueConfigFile,
 	pruneOrphanedPromptFiles,
+	removeEmptyMaestroDir,
 	removeEmptyPromptsDir,
 	writeCueConfigFile,
 	writeCuePromptFile,
@@ -381,6 +382,8 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// invokes this, we still want orphaned prompts cleaned up.
 				pruneOrphanedPromptFiles(options.projectRoot, []);
 				removeEmptyPromptsDir(options.projectRoot);
+				// Collapse .maestro/ itself if nothing else lives there.
+				removeEmptyMaestroDir(options.projectRoot);
 				return deleted;
 			}
 		)
