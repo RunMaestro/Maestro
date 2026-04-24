@@ -123,7 +123,7 @@ function CuePipelineEditorInner({
 		if (initialPipelineId && stateHook.pipelineState.pipelines.length > 0) {
 			stateHook.selectPipeline(initialPipelineId);
 		}
-	}, [initialPipelineId, stateHook.pipelineState.pipelines.length]);  
+	}, [initialPipelineId, stateHook.pipelineState.pipelines.length]);
 
 	// Update ref in render body so next render (and any post-render callback
 	// invocation) reads the latest selection values.
