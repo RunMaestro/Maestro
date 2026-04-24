@@ -15,3 +15,6 @@ export type { InputProps, TextAreaProps, InputGroupProps, InputVariant, InputSiz
 
 export { PullToRefreshIndicator } from './PullToRefresh';
 export type { PullToRefreshIndicatorProps } from './PullToRefresh';
+
+export { ResponsiveModal } from './ResponsiveModal';
+export type { ResponsiveModalProps } from './ResponsiveModal';

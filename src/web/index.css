@@ -316,6 +316,17 @@ section {
 	}
 }
 
+@keyframes modalIn {
+	from {
+		transform: scale(0.96);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
 /* Utility classes */
 .animate-spin {
 	animation: spin 1s linear infinite;
@@ -335,6 +346,10 @@ section {
 
 .animate-slideDown {
 	animation: slideDown var(--transition-normal);
+}
+
+.animate-modalIn {
+	animation: modalIn var(--transition-normal);
 }
 
 /* Hide scrollbar but keep functionality */
