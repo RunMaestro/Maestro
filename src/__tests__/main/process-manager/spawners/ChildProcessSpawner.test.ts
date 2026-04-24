@@ -96,10 +96,8 @@ import type { ManagedProcess, ProcessConfig } from '../../../../main/process-man
 import { getAgentCapabilities } from '../../../../main/agents';
 import { buildChildProcessEnv } from '../../../../main/process-manager/utils/envBuilder';
 import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/streamJsonBuilder';
-import {
-	saveImageToTempFile,
-	buildImagePromptPrefix,
-} from '../../../../main/process-manager/utils/imageUtils';
+import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
+import { createOutputParser } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -226,14 +224,19 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should NOT enable stream-json mode when sendPromptViaStdinRaw is true', () => {
+		it('should NOT enable stream-json mode when sendPromptViaStdinRaw is true (no parser)', () => {
 			const { processes, spawner } = createTestContext();
 
 			// sendPromptViaStdinRaw sends RAW text via stdin, not JSON
-			// So it should NOT set isStreamJsonMode (which is for JSON streaming)
+			// So it should NOT set isStreamJsonMode (which is for JSON streaming).
+			// Override the parser mock to simulate an agent without a parser.
+			vi.mocked(createOutputParser).mockReturnValueOnce(null);
+
 			spawner.spawn(
 				createBaseConfig({
-					args: ['--print'],
+					toolType: 'terminal',
+					command: 'bash',
+					args: [],
 					sendPromptViaStdinRaw: true,
 					prompt: 'test prompt',
 				})
@@ -259,12 +262,18 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should NOT enable stream-json mode for plain args without JSON flags', () => {
+		it('should NOT enable stream-json mode for plain args without JSON flags (no parser)', () => {
 			const { processes, spawner } = createTestContext();
+
+			// An agent with a parser (e.g. claude-code) now enables stream-json mode
+			// by parser presence alone. Override the mock to simulate no parser.
+			vi.mocked(createOutputParser).mockReturnValueOnce(null);
 
 			spawner.spawn(
 				createBaseConfig({
-					args: ['--print', '--verbose'],
+					toolType: 'terminal',
+					command: 'bash',
+					args: ['-l'],
 				})
 			);
 
