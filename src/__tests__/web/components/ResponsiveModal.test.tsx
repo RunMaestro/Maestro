@@ -14,10 +14,14 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 
 import { ResponsiveModal } from '../../../web/components/ResponsiveModal';
 
-// Breakpoint mock — controlled per test via `setIsPhone`.
+// Breakpoint mock — controlled per test via `setIsPhone` / `setIsShortViewport`.
 let isPhone = false;
+let isShortViewport = false;
 function setIsPhone(next: boolean) {
 	isPhone = next;
+}
+function setIsShortViewport(next: boolean) {
+	isShortViewport = next;
 }
 vi.mock('../../../web/hooks/useBreakpoint', () => ({
 	useBreakpoint: () => ({
@@ -26,14 +30,15 @@ vi.mock('../../../web/hooks/useBreakpoint', () => ({
 		isDesktop: false,
 		tier: isPhone ? 'phone' : 'tablet',
 		width: isPhone ? 320 : 1024,
-		height: 800,
-		isShortViewport: false,
+		height: isShortViewport ? 375 : 800,
+		isShortViewport,
 	}),
 }));
 
 describe('ResponsiveModal', () => {
 	beforeEach(() => {
 		setIsPhone(false);
+		setIsShortViewport(false);
 	});
 
 	afterEach(() => {
@@ -307,6 +312,71 @@ describe('ResponsiveModal', () => {
 			);
 			const footer = screen.getByRole('button', { name: 'OK' }).parentElement!;
 			expect(footer.className).toContain('justify-end');
+		});
+	});
+
+	describe('short-viewport behaviour (Task 5.5)', () => {
+		it('caps modal height at 90vh when not short-viewport (tablet+)', () => {
+			setIsPhone(false);
+			setIsShortViewport(false);
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Normal tablet">
+					Body
+				</ResponsiveModal>
+			);
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.className).toContain('max-h-[90vh]');
+			expect(dialog.className).not.toContain('max-h-[calc(100vh-24px)]');
+		});
+
+		it('caps modal height at calc(100vh-24px) at short viewport (tablet+)', () => {
+			setIsPhone(false);
+			setIsShortViewport(true);
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Short tablet">
+					Body
+				</ResponsiveModal>
+			);
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.className).toContain('max-h-[calc(100vh-24px)]');
+			expect(dialog.className).not.toContain('max-h-[90vh]');
+		});
+
+		it('caps modal height at calc(100vh-24px) at short viewport (phone bottom sheet)', () => {
+			setIsPhone(true);
+			setIsShortViewport(true);
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Landscape phone">
+					Body
+				</ResponsiveModal>
+			);
+			const dialog = screen.getByRole('dialog');
+			expect(dialog.className).toContain('max-h-[calc(100vh-24px)]');
+			expect(dialog.className).not.toContain('max-h-[90vh]');
+		});
+
+		it('keeps the body scrollable and flex-filling at short viewport', () => {
+			setIsShortViewport(true);
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Scrollable" footer={<button>OK</button>}>
+					<div data-testid="body-child">Body</div>
+				</ResponsiveModal>
+			);
+			// The body wrapper is the direct parent of the body child
+			const body = screen.getByTestId('body-child').parentElement!;
+			expect(body.className).toContain('overflow-y-auto');
+			expect(body.className).toContain('flex-1');
+		});
+
+		it('keeps the footer pinned (shrink-0) at short viewport', () => {
+			setIsShortViewport(true);
+			render(
+				<ResponsiveModal isOpen onClose={vi.fn()} title="Pinned footer" footer={<button>OK</button>}>
+					Body
+				</ResponsiveModal>
+			);
+			const footer = screen.getByRole('button', { name: 'OK' }).parentElement!;
+			expect(footer.className).toContain('shrink-0');
 		});
 	});
 

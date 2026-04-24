@@ -80,8 +80,14 @@ export function ResponsiveModal({
 	children,
 	footer,
 }: ResponsiveModalProps) {
-	const { isPhone } = useBreakpoint();
+	const { isPhone, isShortViewport } = useBreakpoint();
 	const containerRef = useRef<HTMLDivElement>(null);
+	// Short viewport (landscape phone, <500px tall) squeezes the default
+	// `max-h-[90vh]` cap too aggressively. Task 5.5 spec: cap at
+	// `calc(100vh - 24px)` so the modal can claim all vertical real estate
+	// except a 12px gutter on each side. The body stays scrollable via
+	// `overflow-y-auto flex-1`, keeping the header/footer pinned.
+	const maxHeightClass = isShortViewport ? 'max-h-[calc(100vh-24px)]' : 'max-h-[90vh]';
 
 	// Auto-focus the dialog container on open. Matches the desktop Modal
 	// behaviour — keyboard users can Tab into content, and screen readers
@@ -172,7 +178,7 @@ export function ResponsiveModal({
 					aria-label={title}
 					tabIndex={-1}
 					onKeyDown={handleKeyDown}
-					className="w-full max-h-[90vh] flex flex-col bg-bg-sidebar border-t border-border rounded-t-2xl shadow-2xl outline-none animate-slideUp safe-area-bottom"
+					className={`w-full ${maxHeightClass} flex flex-col bg-bg-sidebar border-t border-border rounded-t-2xl shadow-2xl outline-none animate-slideUp safe-area-bottom`}
 				>
 					<header className="p-4 border-b border-border flex items-center justify-between shrink-0">
 						<div className="flex items-center gap-2 min-w-0">
@@ -211,7 +217,7 @@ export function ResponsiveModal({
 				aria-label={title}
 				tabIndex={-1}
 				onKeyDown={handleKeyDown}
-				className="max-h-[90vh] flex flex-col bg-bg-sidebar border border-border rounded-lg shadow-2xl outline-none animate-modalIn"
+				className={`${maxHeightClass} flex flex-col bg-bg-sidebar border border-border rounded-lg shadow-2xl outline-none animate-modalIn`}
 				style={capStyle}
 			>
 				<header className="p-4 border-b border-border flex items-center justify-between shrink-0">
