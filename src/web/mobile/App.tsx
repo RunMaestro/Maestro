@@ -23,7 +23,7 @@ import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement';
 import { useOfflineStatus, useDesktopTheme } from '../main';
 import { buildApiUrl } from '../utils/config';
-import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { triggerHaptic, HAPTIC_PATTERNS, type BreakpointTier } from './constants';
 import {
 	applyMainMinWidthGuard,
 	getPanelMode,
@@ -175,7 +175,69 @@ function OverflowMenuItem({
 /**
  * Header component for the mobile app
  * Reorganized: Left (menu) | Center (session name + status) | Right (priority icons + overflow)
+ *
+ * ---------------------------------------------------------------------------
+ * Icon priority (Phase 1 Task 1.6)
+ *
+ * The right-side icon row is tier-responsive. As the viewport narrows, lower-
+ * priority icons drop into the overflow dropdown. Secondary icons (rare
+ * actions like Usage Dashboard) live in the overflow on `phone`/`tablet`
+ * and promote inline on `desktop`, where the overflow button is hidden.
+ *
+ * Phase 6 maintainers: adjust `PRIMARY_HEADER_ICONS` (order = priority) and
+ * `PRIMARY_SLOTS_BY_TIER` to re-tune what's visible per breakpoint.
+ *
+ * Slot counts by tier (right-side only; left Agents toggle + center session
+ * title always render):
+ *   - phone   → 2 primary icons + overflow
+ *   - tablet  → 4 primary icons + overflow
+ *   - desktop → all 6 primary + all 4 secondary inline, no overflow
+ * ---------------------------------------------------------------------------
  */
+type HeaderIconId =
+	| 'rightPanel'
+	| 'notifications'
+	| 'search'
+	| 'cue'
+	| 'settings'
+	| 'groupChat'
+	| 'usageDashboard'
+	| 'achievements'
+	| 'contextManagement'
+	| 'newAgent';
+
+/** Primary icons, ordered high→low priority. Index < slot count = inline. */
+const PRIMARY_HEADER_ICONS: readonly HeaderIconId[] = [
+	'rightPanel',
+	'notifications',
+	'search',
+	'cue',
+	'settings',
+	'groupChat',
+] as const;
+
+/** Secondary icons — always overflow on phone/tablet, inline on desktop. */
+const SECONDARY_HEADER_ICONS: readonly HeaderIconId[] = [
+	'usageDashboard',
+	'achievements',
+	'contextManagement',
+	'newAgent',
+] as const;
+
+const PRIMARY_SLOTS_BY_TIER: Record<BreakpointTier, number> = {
+	phone: 2,
+	tablet: 4,
+	desktop: PRIMARY_HEADER_ICONS.length,
+};
+
+function isHeaderIconInline(id: HeaderIconId, tier: BreakpointTier): boolean {
+	if ((SECONDARY_HEADER_ICONS as readonly HeaderIconId[]).includes(id)) {
+		return tier === 'desktop';
+	}
+	const idx = PRIMARY_HEADER_ICONS.indexOf(id);
+	return idx >= 0 && idx < PRIMARY_SLOTS_BY_TIER[tier];
+}
+
 interface MobileHeaderProps {
 	activeSession?: Session | null;
 	onMenuTap?: () => void;
@@ -254,8 +316,9 @@ function MobileHeader({
 	const sessionState = activeTab?.state || activeSession?.state || 'idle';
 	const isThinking = sessionState === 'busy';
 
-	// Responsive: detect wider screens for showing more icons
-	const { isDesktop } = useBreakpoint();
+	// Responsive: tier drives which icons render inline vs. in the overflow
+	// menu (see PRIMARY_HEADER_ICONS / PRIMARY_SLOTS_BY_TIER at top of file).
+	const { tier } = useBreakpoint();
 
 	// Close overflow menu when clicking outside
 	useEffect(() => {
@@ -369,87 +432,94 @@ function MobileHeader({
 
 			{/* Right: Priority icon buttons + overflow */}
 			<div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-				{/* Search / Quick Actions (Cmd+K) */}
-				<button
-					onClick={onSearchTap}
-					style={headerIconButton(colors)}
-					aria-label="Search"
-					title="Quick Actions (Cmd+K)"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{/* Search / Quick Actions (Cmd+K) — inline on tablet+ */}
+				{isHeaderIconInline('search', tier) && (
+					<button
+						onClick={onSearchTap}
+						style={headerIconButton(colors)}
+						aria-label="Search"
+						title="Quick Actions (Cmd+K)"
 					>
-						<circle cx="11" cy="11" r="8" />
-						<line x1="21" y1="21" x2="16.65" y2="16.65" />
-					</svg>
-				</button>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<circle cx="11" cy="11" r="8" />
+							<line x1="21" y1="21" x2="16.65" y2="16.65" />
+						</svg>
+					</button>
+				)}
 
-				{/* Right Panel toggle */}
-				<button
-					onClick={onRightDrawerTap}
-					style={headerIconButton(colors, isRightPanelOpen)}
-					aria-label="Files & History"
-					title="Files / History / Git"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{/* Right Panel toggle — priority #1, always inline */}
+				{isHeaderIconInline('rightPanel', tier) && (
+					<button
+						onClick={onRightDrawerTap}
+						style={headerIconButton(colors, isRightPanelOpen)}
+						aria-label="Files & History"
+						title="Files / History / Git"
 					>
-						<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-						<polyline points="13 2 13 9 20 9" />
-					</svg>
-				</button>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+							<polyline points="13 2 13 9 20 9" />
+						</svg>
+					</button>
+				)}
 
-				{/* Cue status */}
-				<button
-					onClick={onCueTap}
-					style={headerIconButton(colors, hasRunningCue)}
-					aria-label="Maestro Cue"
-					title="Maestro Cue"
-				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill={hasRunningCue ? 'currentColor' : 'none'}
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+				{/* Cue status — inline on tablet+ */}
+				{isHeaderIconInline('cue', tier) && (
+					<button
+						onClick={onCueTap}
+						style={headerIconButton(colors, hasRunningCue)}
+						aria-label="Maestro Cue"
+						title="Maestro Cue"
 					>
-						<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-					</svg>
-					{hasRunningCue && (
-						<span
-							style={{
-								position: 'absolute',
-								top: '-2px',
-								right: '-2px',
-								width: '7px',
-								height: '7px',
-								borderRadius: '50%',
-								backgroundColor: colors.success,
-								animation: 'pulse 1.5s ease-in-out infinite',
-							}}
-						/>
-					)}
-				</button>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill={hasRunningCue ? 'currentColor' : 'none'}
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+						</svg>
+						{hasRunningCue && (
+							<span
+								style={{
+									position: 'absolute',
+									top: '-2px',
+									right: '-2px',
+									width: '7px',
+									height: '7px',
+									borderRadius: '50%',
+									backgroundColor: colors.success,
+									animation: 'pulse 1.5s ease-in-out infinite',
+								}}
+							/>
+						)}
+					</button>
+				)}
 
-				{/* Notifications (badge with count + dropdown) */}
-				<div ref={notifDropdownRef} style={{ position: 'relative' }}>
+				{/* Notifications (badge with count + dropdown) — priority #2, always inline */}
+				{isHeaderIconInline('notifications', tier) && (
+					<div ref={notifDropdownRef} style={{ position: 'relative' }}>
 					<button
 						onClick={() => setShowNotifDropdown((prev) => !prev)}
 						style={headerIconButton(colors, showNotifDropdown)}
@@ -652,9 +722,10 @@ function MobileHeader({
 						</div>
 					)}
 				</div>
+				)}
 
-				{/* Settings — shown directly on wide screens */}
-				{isDesktop && (
+				{/* Settings — inline on desktop */}
+				{isHeaderIconInline('settings', tier) && (
 					<button
 						onClick={onSettingsTap}
 						style={headerIconButton(colors)}
@@ -677,8 +748,8 @@ function MobileHeader({
 					</button>
 				)}
 
-				{/* On wide screens, show Group Chat directly too */}
-				{isDesktop && (
+				{/* Group Chat — inline on desktop */}
+				{isHeaderIconInline('groupChat', tier) && (
 					<button
 						onClick={onGroupChatTap}
 						style={headerIconButton(colors, groupChatCount > 0)}
@@ -720,7 +791,105 @@ function MobileHeader({
 					</button>
 				)}
 
-				{/* Overflow menu (⋯) — always present for less-frequent actions */}
+				{/* Usage Dashboard — secondary, inline on desktop */}
+				{isHeaderIconInline('usageDashboard', tier) && (
+					<button
+						onClick={onUsageDashboardTap}
+						style={headerIconButton(colors)}
+						aria-label="Usage Dashboard"
+						title="Usage Dashboard"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
+							<path d="M22 12A10 10 0 0 0 12 2v10z" />
+						</svg>
+					</button>
+				)}
+
+				{/* Achievements — secondary, inline on desktop */}
+				{isHeaderIconInline('achievements', tier) && (
+					<button
+						onClick={onAchievementsTap}
+						style={headerIconButton(colors)}
+						aria-label="Achievements"
+						title="Achievements"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<circle cx="12" cy="8" r="7" />
+							<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+						</svg>
+					</button>
+				)}
+
+				{/* Context Management — secondary, inline on desktop (requires active session) */}
+				{isHeaderIconInline('contextManagement', tier) && activeSession && (
+					<button
+						onClick={onContextManagementTap}
+						style={headerIconButton(colors)}
+						aria-label="Context Management"
+						title="Context Management"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<circle cx="12" cy="12" r="10" />
+							<path d="M8 12h8" />
+							<path d="M12 8v8" />
+						</svg>
+					</button>
+				)}
+
+				{/* New Agent — secondary, inline on desktop */}
+				{isHeaderIconInline('newAgent', tier) && (
+					<button
+						onClick={onNewAgentTap}
+						style={headerIconButton(colors)}
+						aria-label="New Agent"
+						title="New Agent"
+					>
+						<svg
+							width="14"
+							height="14"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<line x1="12" y1="5" x2="12" y2="19" />
+							<line x1="5" y1="12" x2="19" y2="12" />
+						</svg>
+					</button>
+				)}
+
+				{/* Overflow menu (⋯) — hidden on desktop (all icons inline) */}
+				{tier !== 'desktop' && (
 				<div ref={overflowRef} style={{ position: 'relative' }}>
 					<button
 						onClick={() => setShowOverflow((prev) => !prev)}
@@ -758,8 +927,53 @@ function MobileHeader({
 								overflow: 'hidden',
 							}}
 						>
-							{/* Settings — only in overflow on narrow screens */}
-							{!isDesktop && (
+							{/* Search — overflow on phone (priority #3) */}
+							{!isHeaderIconInline('search', tier) && (
+								<OverflowMenuItem
+									icon={
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<circle cx="11" cy="11" r="8" />
+											<line x1="21" y1="21" x2="16.65" y2="16.65" />
+										</svg>
+									}
+									label="Quick Actions (Cmd+K)"
+									onClick={() => handleOverflowAction(onSearchTap)}
+									colors={colors}
+								/>
+							)}
+							{/* Cue — overflow on phone (priority #4) */}
+							{!isHeaderIconInline('cue', tier) && (
+								<OverflowMenuItem
+									icon={
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill={hasRunningCue ? 'currentColor' : 'none'}
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+										</svg>
+									}
+									label={`Maestro Cue${hasRunningCue ? ' (running)' : ''}`}
+									onClick={() => handleOverflowAction(onCueTap)}
+									colors={colors}
+								/>
+							)}
+							{/* Settings — overflow on phone/tablet */}
+							{!isHeaderIconInline('settings', tier) && (
 								<OverflowMenuItem
 									icon={
 										<svg
@@ -781,8 +995,8 @@ function MobileHeader({
 									colors={colors}
 								/>
 							)}
-							{/* Group Chat — only in overflow on narrow screens */}
-							{!isDesktop && (
+							{/* Group Chat — overflow on phone/tablet */}
+							{!isHeaderIconInline('groupChat', tier) && (
 								<OverflowMenuItem
 									icon={
 										<svg
@@ -803,47 +1017,54 @@ function MobileHeader({
 									colors={colors}
 								/>
 							)}
-							<OverflowMenuItem
-								icon={
-									<svg
-										width="16"
-										height="16"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
-										<path d="M22 12A10 10 0 0 0 12 2v10z" />
-									</svg>
-								}
-								label="Usage Dashboard"
-								onClick={() => handleOverflowAction(onUsageDashboardTap)}
-								colors={colors}
-							/>
-							<OverflowMenuItem
-								icon={
-									<svg
-										width="16"
-										height="16"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<circle cx="12" cy="8" r="7" />
-										<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
-									</svg>
-								}
-								label="Achievements"
-								onClick={() => handleOverflowAction(onAchievementsTap)}
-								colors={colors}
-							/>
-							{activeSession && (
+							{/* Usage Dashboard — secondary, overflow on phone/tablet */}
+							{!isHeaderIconInline('usageDashboard', tier) && (
+								<OverflowMenuItem
+									icon={
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
+											<path d="M22 12A10 10 0 0 0 12 2v10z" />
+										</svg>
+									}
+									label="Usage Dashboard"
+									onClick={() => handleOverflowAction(onUsageDashboardTap)}
+									colors={colors}
+								/>
+							)}
+							{/* Achievements — secondary, overflow on phone/tablet */}
+							{!isHeaderIconInline('achievements', tier) && (
+								<OverflowMenuItem
+									icon={
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<circle cx="12" cy="8" r="7" />
+											<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+										</svg>
+									}
+									label="Achievements"
+									onClick={() => handleOverflowAction(onAchievementsTap)}
+									colors={colors}
+								/>
+							)}
+							{/* Context Management — secondary, overflow on phone/tablet (requires active session) */}
+							{!isHeaderIconInline('contextManagement', tier) && activeSession && (
 								<OverflowMenuItem
 									icon={
 										<svg
@@ -866,29 +1087,33 @@ function MobileHeader({
 									colors={colors}
 								/>
 							)}
-							<OverflowMenuItem
-								icon={
-									<svg
-										width="16"
-										height="16"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-									>
-										<line x1="12" y1="5" x2="12" y2="19" />
-										<line x1="5" y1="12" x2="19" y2="12" />
-									</svg>
-								}
-								label="New Agent"
-								onClick={() => handleOverflowAction(onNewAgentTap)}
-								colors={colors}
-							/>
+							{/* New Agent — secondary, overflow on phone/tablet */}
+							{!isHeaderIconInline('newAgent', tier) && (
+								<OverflowMenuItem
+									icon={
+										<svg
+											width="16"
+											height="16"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+										>
+											<line x1="12" y1="5" x2="12" y2="19" />
+											<line x1="5" y1="12" x2="19" y2="12" />
+										</svg>
+									}
+									label="New Agent"
+									onClick={() => handleOverflowAction(onNewAgentTap)}
+									colors={colors}
+								/>
+							)}
 						</div>
 					)}
 				</div>
+				)}
 			</div>
 
 			{/* Pulse animation for thinking state */}
