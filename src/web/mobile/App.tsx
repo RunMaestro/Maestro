@@ -7,6 +7,7 @@
 
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
+import { ResponsiveModal, Button } from '../components';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -923,168 +924,98 @@ function MobileHeader({
 }
 
 /**
- * Small bottom sheet listing available group chats with a "New" button
+ * Modal listing available group chats with a "New" button.
+ *
+ * Uses `ResponsiveModal` so it renders as a bottom sheet on phones and a
+ * centered dialog at tablet+. The "+ New" primary action lives in the footer —
+ * ResponsiveModal keeps the footer pinned to the bottom and thumb-reachable on
+ * mobile.
  */
 interface GroupChatListSheetProps {
+	isOpen: boolean;
 	chats: GroupChatState[];
 	onSelectChat: (chatId: string) => void;
 	onNewChat: () => void;
 	onClose: () => void;
 }
 
-function GroupChatListSheet({ chats, onSelectChat, onNewChat, onClose }: GroupChatListSheetProps) {
+function GroupChatListSheet({
+	isOpen,
+	chats,
+	onSelectChat,
+	onNewChat,
+	onClose,
+}: GroupChatListSheetProps) {
 	const colors = useThemeColors();
-	const [isVisible, setIsVisible] = useState(false);
-
-	useEffect(() => {
-		requestAnimationFrame(() => setIsVisible(true));
-	}, []);
-
-	const handleClose = useCallback(() => {
-		setIsVisible(false);
-		setTimeout(() => onClose(), 300);
-	}, [onClose]);
-
-	const handleBackdropTap = useCallback(
-		(e: React.MouseEvent) => {
-			if (e.target === e.currentTarget) handleClose();
-		},
-		[handleClose]
-	);
 
 	const activeChats = chats.filter((c) => c.isActive);
 	const endedChats = chats.filter((c) => !c.isActive);
 
 	return (
-		<div
-			onClick={handleBackdropTap}
-			style={{
-				position: 'fixed',
-				top: 0,
-				left: 0,
-				right: 0,
-				bottom: 0,
-				backgroundColor: `rgba(0, 0, 0, ${isVisible ? 0.5 : 0})`,
-				zIndex: 220,
-				display: 'flex',
-				alignItems: 'flex-end',
-				transition: 'background-color 0.3s ease-out',
-			}}
+		<ResponsiveModal
+			isOpen={isOpen}
+			onClose={onClose}
+			title="Group Chats"
+			zIndex={220}
+			footer={
+				<Button variant="primary" fullWidth onClick={onNewChat} aria-label="New group chat">
+					+ New
+				</Button>
+			}
 		>
-			<div
-				style={{
-					width: '100%',
-					maxHeight: '60vh',
-					backgroundColor: colors.bgMain,
-					borderTopLeftRadius: 16,
-					borderTopRightRadius: 16,
-					display: 'flex',
-					flexDirection: 'column',
-					transform: isVisible ? 'translateY(0)' : 'translateY(100%)',
-					transition: 'transform 0.3s ease-out',
-					paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
-				}}
-			>
-				{/* Drag handle */}
-				<div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
-					<div
-						style={{
-							width: 36,
-							height: 4,
-							borderRadius: 2,
-							backgroundColor: `${colors.textDim}40`,
-						}}
-					/>
+			{chats.length === 0 && (
+				<div style={{ textAlign: 'center', padding: 20, color: colors.textDim, fontSize: 13 }}>
+					No group chats yet
 				</div>
-
-				{/* Header */}
-				<div
+			)}
+			{activeChats.map((chat) => (
+				<button
+					key={chat.id}
+					onClick={() => onSelectChat(chat.id)}
 					style={{
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'space-between',
-						padding: '8px 16px 12px',
+						width: '100%',
+						textAlign: 'left',
+						padding: '12px 14px',
+						borderRadius: 10,
+						border: `1px solid ${colors.accent}30`,
+						backgroundColor: `${colors.accent}08`,
+						color: colors.textMain,
+						cursor: 'pointer',
+						marginBottom: 6,
+						touchAction: 'manipulation',
 					}}
 				>
-					<h2 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: colors.textMain }}>
-						Group Chats
-					</h2>
-					<button
-						onClick={onNewChat}
-						style={{
-							padding: '6px 14px',
-							borderRadius: 8,
-							backgroundColor: colors.accent,
-							border: 'none',
-							color: 'white',
-							fontSize: 13,
-							fontWeight: 600,
-							cursor: 'pointer',
-							touchAction: 'manipulation',
-						}}
-						aria-label="New group chat"
-					>
-						+ New
-					</button>
-				</div>
-
-				{/* Chat list */}
-				<div style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}>
-					{chats.length === 0 && (
-						<div style={{ textAlign: 'center', padding: 20, color: colors.textDim, fontSize: 13 }}>
-							No group chats yet
-						</div>
-					)}
-					{activeChats.map((chat) => (
-						<button
-							key={chat.id}
-							onClick={() => onSelectChat(chat.id)}
-							style={{
-								width: '100%',
-								textAlign: 'left',
-								padding: '12px 14px',
-								borderRadius: 10,
-								border: `1px solid ${colors.accent}30`,
-								backgroundColor: `${colors.accent}08`,
-								color: colors.textMain,
-								cursor: 'pointer',
-								marginBottom: 6,
-								touchAction: 'manipulation',
-							}}
-						>
-							<div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{chat.topic}</div>
-							<div style={{ fontSize: 12, color: colors.textDim }}>
-								{chat.participants.length} participants · {chat.messages.length} messages · Active
-							</div>
-						</button>
-					))}
-					{endedChats.map((chat) => (
-						<button
-							key={chat.id}
-							onClick={() => onSelectChat(chat.id)}
-							style={{
-								width: '100%',
-								textAlign: 'left',
-								padding: '12px 14px',
-								borderRadius: 10,
-								border: `1px solid ${colors.border}`,
-								backgroundColor: colors.bgSidebar,
-								color: colors.textMain,
-								cursor: 'pointer',
-								marginBottom: 6,
-								opacity: 0.7,
-								touchAction: 'manipulation',
-							}}
-						>
-							<div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{chat.topic}</div>
-							<div style={{ fontSize: 12, color: colors.textDim }}>
-								{chat.participants.length} participants · {chat.messages.length} messages · Ended
-							</div>
-						</button>
-					))}
-				</div>
-			</div>
-		</div>
+					<div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{chat.topic}</div>
+					<div style={{ fontSize: 12, color: colors.textDim }}>
+						{chat.participants.length} participants · {chat.messages.length} messages · Active
+					</div>
+				</button>
+			))}
+			{endedChats.map((chat) => (
+				<button
+					key={chat.id}
+					onClick={() => onSelectChat(chat.id)}
+					style={{
+						width: '100%',
+						textAlign: 'left',
+						padding: '12px 14px',
+						borderRadius: 10,
+						border: `1px solid ${colors.border}`,
+						backgroundColor: colors.bgSidebar,
+						color: colors.textMain,
+						cursor: 'pointer',
+						marginBottom: 6,
+						opacity: 0.7,
+						touchAction: 'manipulation',
+					}}
+				>
+					<div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>{chat.topic}</div>
+					<div style={{ fontSize: 12, color: colors.textDim }}>
+						{chat.participants.length} participants · {chat.messages.length} messages · Ended
+					</div>
+				</button>
+			))}
+		</ResponsiveModal>
 	);
 }
 
@@ -3310,18 +3241,17 @@ export default function MobileApp() {
 				/>
 			)}
 
-			{/* Group Chat list — small bottom sheet listing active chats */}
-			{showGroupChatList && (
-				<GroupChatListSheet
-					chats={groupChat.chats}
-					onSelectChat={handleGroupChatOpen}
-					onNewChat={() => {
-						setShowGroupChatList(false);
-						setShowGroupChatSetup(true);
-					}}
-					onClose={() => setShowGroupChatList(false)}
-				/>
-			)}
+			{/* Group Chat list — centered modal on tablet+, bottom sheet on phone */}
+			<GroupChatListSheet
+				isOpen={showGroupChatList}
+				chats={groupChat.chats}
+				onSelectChat={handleGroupChatOpen}
+				onNewChat={() => {
+					setShowGroupChatList(false);
+					setShowGroupChatSetup(true);
+				}}
+				onClose={() => setShowGroupChatList(false)}
+			/>
 
 			{/* Horizontal layout: left panel + main content + right panel. Each
 			    panel's `mode` is derived from tier + open-state + a min-width guard
