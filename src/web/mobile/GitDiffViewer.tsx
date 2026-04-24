@@ -253,46 +253,15 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 	const hasDiff = diff.trim() !== '';
 
 	return (
-		<div
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				height: '100%',
-				backgroundColor: colors.bgMain,
-			}}
-		>
+		<div className="flex flex-col h-full bg-bg-main">
 			{/* Header */}
-			<div
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '8px',
-					padding: '10px 12px',
-					borderBottom: `1px solid ${colors.border}`,
-					backgroundColor: colors.bgSidebar,
-					flexShrink: 0,
-				}}
-			>
+			<div className="flex items-center gap-[8px] px-[12px] py-[10px] border-b border-border bg-bg-sidebar flex-shrink-0">
 				<button
 					onClick={() => {
 						triggerHaptic(HAPTIC_PATTERNS.tap);
 						onBack();
 					}}
-					style={{
-						width: '36px',
-						height: '36px',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						borderRadius: '8px',
-						border: `1px solid ${colors.border}`,
-						backgroundColor: colors.bgMain,
-						color: colors.textMain,
-						cursor: 'pointer',
-						touchAction: 'manipulation',
-						WebkitTapHighlightColor: 'transparent',
-						flexShrink: 0,
-					}}
+					className="w-[36px] h-[36px] flex items-center justify-center rounded-lg border border-border bg-bg-main text-text-main cursor-pointer flex-shrink-0 [touch-action:manipulation] [-webkit-tap-highlight-color:transparent]"
 					aria-label="Back"
 				>
 					<svg
@@ -309,18 +278,7 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 					</svg>
 				</button>
 
-				<span
-					style={{
-						fontSize: '13px',
-						fontWeight: 600,
-						color: colors.textMain,
-						fontFamily: 'monospace',
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
-						whiteSpace: 'nowrap',
-						flex: 1,
-					}}
-				>
+				<span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-mono font-semibold text-text-main">
 					{filePath}
 				</span>
 
@@ -328,13 +286,7 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 				<div
 					role="tablist"
 					aria-label="Diff view mode"
-					style={{
-						display: 'flex',
-						border: `1px solid ${colors.border}`,
-						borderRadius: '8px',
-						overflow: 'hidden',
-						flexShrink: 0,
-					}}
+					className="flex border border-border rounded-lg overflow-hidden flex-shrink-0"
 				>
 					{(['unified', 'split'] as const).map((mode, idx) => {
 						const isActive = viewMode === mode;
@@ -344,20 +296,7 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 								role="tab"
 								aria-selected={isActive}
 								onClick={() => handleViewModeChange(mode)}
-								style={{
-									padding: '6px 10px',
-									minHeight: '28px',
-									border: 'none',
-									borderLeft: idx === 0 ? 'none' : `1px solid ${colors.border}`,
-									backgroundColor: isActive ? colors.accent : colors.bgMain,
-									color: isActive ? colors.accentForeground : colors.textDim,
-									fontSize: '12px',
-									fontWeight: isActive ? 600 : 500,
-									cursor: 'pointer',
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
-									textTransform: 'capitalize',
-								}}
+								className={`px-[10px] py-[6px] min-h-[28px] border-0 text-[12px] capitalize cursor-pointer [touch-action:manipulation] [-webkit-tap-highlight-color:transparent] ${idx === 0 ? '' : 'border-l border-border'} ${isActive ? 'bg-accent text-accent-foreground font-semibold' : 'bg-bg-main text-text-dim font-medium'}`}
 							>
 								{mode}
 							</button>
@@ -367,178 +306,99 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 			</div>
 
 			{/* Diff content */}
-			<div
-				style={{
-					flex: 1,
-					overflow: 'auto',
-					WebkitOverflowScrolling: 'touch',
-				}}
-			>
+			<div className="flex-1 overflow-auto [-webkit-overflow-scrolling:touch]">
 				{!hasDiff ? (
-					<div
-						style={{
-							display: 'flex',
-							alignItems: 'center',
-							justifyContent: 'center',
-							padding: '40px 16px',
-							color: colors.textDim,
-							fontSize: '14px',
-						}}
-					>
+					<div className="flex items-center justify-center px-[16px] py-[40px] text-text-dim text-[14px]">
 						No diff available
 					</div>
 				) : viewMode === 'unified' ? (
 					<pre
 						data-diff-view="unified"
-						style={{
-							margin: 0,
-							padding: 0,
-							fontFamily: 'monospace',
-							fontSize: '12px',
-							lineHeight: '1.5',
-							whiteSpace: 'pre',
-						}}
+						className="m-0 p-0 font-mono text-[12px] leading-[1.5] whitespace-pre"
 					>
 						{lines.map((line, i) => (
 							<div
 								key={i}
+								className="flex min-w-fit"
 								style={{
-									display: 'flex',
 									backgroundColor: lineBackground(line.type),
 									color: lineColor(line.type),
-									minWidth: 'fit-content',
 								}}
 							>
 								{/* Line number gutter */}
 								<span
-									style={{
-										display: 'inline-block',
-										width: gutterWidth,
-										textAlign: 'right',
-										padding: '0 4px',
-										color: colors.textDim,
-										userSelect: 'none',
-										flexShrink: 0,
-										borderRight: `1px solid ${colors.border}`,
-										opacity: 0.6,
-									}}
+									className="inline-block text-right px-[4px] text-text-dim select-none flex-shrink-0 border-r border-border opacity-60"
+									style={{ width: gutterWidth }}
 								>
 									{line.oldNum}
 								</span>
 								<span
-									style={{
-										display: 'inline-block',
-										width: gutterWidth,
-										textAlign: 'right',
-										padding: '0 4px',
-										color: colors.textDim,
-										userSelect: 'none',
-										flexShrink: 0,
-										borderRight: `1px solid ${colors.border}`,
-										opacity: 0.6,
-									}}
+									className="inline-block text-right px-[4px] text-text-dim select-none flex-shrink-0 border-r border-border opacity-60"
+									style={{ width: gutterWidth }}
 								>
 									{line.newNum}
 								</span>
 
 								{/* Line content */}
-								<span style={{ padding: '0 8px', flex: 1 }}>{line.content}</span>
+								<span className="flex-1 px-[8px]">{line.content}</span>
 							</div>
 						))}
 					</pre>
 				) : (
 					<pre
 						data-diff-view="split"
-						style={{
-							margin: 0,
-							padding: 0,
-							fontFamily: 'monospace',
-							fontSize: '12px',
-							lineHeight: '1.5',
-							whiteSpace: 'pre',
-							minWidth: 'fit-content',
-						}}
+						className="m-0 p-0 font-mono text-[12px] leading-[1.5] whitespace-pre min-w-fit"
 					>
 						{splitRows.map((row, i) => {
 							if (row.kind === 'hunk') {
 								return (
 									<div
 										key={i}
+										className="flex min-w-fit"
 										style={{
-											display: 'flex',
 											backgroundColor: lineBackground('hunk'),
 											color: lineColor('hunk'),
-											minWidth: 'fit-content',
 										}}
 									>
-										<span style={{ padding: '0 8px', flex: 1 }}>{row.content}</span>
+										<span className="flex-1 px-[8px]">{row.content}</span>
 									</div>
 								);
 							}
 
 							return (
-								<div
-									key={i}
-									style={{
-										display: 'flex',
-										minWidth: 'fit-content',
-									}}
-								>
+								<div key={i} className="flex min-w-fit">
 									{/* Left (old) cell */}
 									<div
+										className="flex flex-[1_1_50%] min-w-[50%] border-r border-border"
 										style={{
-											display: 'flex',
-											flex: '1 1 50%',
-											minWidth: '50%',
 											backgroundColor: lineBackground(row.left.type),
 											color: lineColor(row.left.type === 'empty' ? 'context' : row.left.type),
-											borderRight: `1px solid ${colors.border}`,
 										}}
 									>
 										<span
-											style={{
-												display: 'inline-block',
-												width: gutterWidth,
-												textAlign: 'right',
-												padding: '0 4px',
-												color: colors.textDim,
-												userSelect: 'none',
-												flexShrink: 0,
-												borderRight: `1px solid ${colors.border}`,
-												opacity: 0.6,
-											}}
+											className="inline-block text-right px-[4px] text-text-dim select-none flex-shrink-0 border-r border-border opacity-60"
+											style={{ width: gutterWidth }}
 										>
 											{row.left.num}
 										</span>
-										<span style={{ padding: '0 8px', flex: 1 }}>{row.left.content}</span>
+										<span className="flex-1 px-[8px]">{row.left.content}</span>
 									</div>
 
 									{/* Right (new) cell */}
 									<div
+										className="flex flex-[1_1_50%] min-w-[50%]"
 										style={{
-											display: 'flex',
-											flex: '1 1 50%',
-											minWidth: '50%',
 											backgroundColor: lineBackground(row.right.type),
 											color: lineColor(row.right.type === 'empty' ? 'context' : row.right.type),
 										}}
 									>
 										<span
-											style={{
-												display: 'inline-block',
-												width: gutterWidth,
-												textAlign: 'right',
-												padding: '0 4px',
-												color: colors.textDim,
-												userSelect: 'none',
-												flexShrink: 0,
-												borderRight: `1px solid ${colors.border}`,
-												opacity: 0.6,
-											}}
+											className="inline-block text-right px-[4px] text-text-dim select-none flex-shrink-0 border-r border-border opacity-60"
+											style={{ width: gutterWidth }}
 										>
 											{row.right.num}
 										</span>
-										<span style={{ padding: '0 8px', flex: 1 }}>{row.right.content}</span>
+										<span className="flex-1 px-[8px]">{row.right.content}</span>
 									</div>
 								</div>
 							);
