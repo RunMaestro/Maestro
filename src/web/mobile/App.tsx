@@ -3296,15 +3296,7 @@ export default function MobileApp() {
 			         isFullScreen / panelRef / width / onResizeStart props — no tier awareness, no 'most-recently-opened' tracking.
 			     Tasks 1.2–1.5 replace isFullScreen with mode:'overlay'|'inline' derived from useBreakpoint() + a recency ref,
 			     and migrate the row container + main to Tailwind. */}
-			<div
-				style={{
-					flex: 1,
-					display: 'flex',
-					flexDirection: 'row',
-					minHeight: 0,
-					overflow: 'hidden',
-				}}
-			>
+			<div className="flex flex-1 flex-row min-h-0 overflow-hidden">
 				{/* Left panel — agent list, toggleable */}
 				{showLeftPanel && (
 					<LeftPanel
@@ -3329,36 +3321,21 @@ export default function MobileApp() {
 
 				{/* Main content area */}
 				<main
-					style={{
-						flex: 1,
-						display: 'flex',
-						flexDirection: 'column',
-						alignItems: currentInputMode === 'terminal' ? 'stretch' : 'center',
-						justifyContent: 'flex-start',
-						padding: currentInputMode === 'terminal' ? '0' : '12px',
-						paddingBottom:
-							currentInputMode === 'terminal' ? '0' : 'calc(80px + env(safe-area-inset-bottom))',
-						textAlign: currentInputMode === 'terminal' ? 'left' : 'center',
-						overflow: 'hidden',
-						minHeight: 0,
-						minWidth: 0,
-					}}
+					className={`flex flex-1 flex-col justify-start min-h-0 min-w-0 overflow-hidden ${
+						currentInputMode === 'terminal'
+							? 'items-stretch p-0 text-left'
+							: 'items-center px-3 pt-3 pb-[calc(80px+env(safe-area-inset-bottom))] text-center'
+					}`}
 				>
 					{/* Content wrapper */}
 					<div
-						style={{
-							flex: 1,
-							display: 'flex',
-							flexDirection: 'column',
-							alignItems: currentInputMode === 'terminal' ? 'stretch' : 'center',
-							justifyContent:
-								connectionState === 'connected' || connectionState === 'authenticated'
-									? 'flex-start'
-									: 'center',
-							width: '100%',
-							minHeight: 0,
-							overflow: 'hidden',
-						}}
+						className={`flex flex-1 flex-col w-full min-h-0 overflow-hidden ${
+							currentInputMode === 'terminal' ? 'items-stretch' : 'items-center'
+						} ${
+							connectionState === 'connected' || connectionState === 'authenticated'
+								? 'justify-start'
+								: 'justify-center'
+						}`}
 					>
 						{renderContent()}
 						{connectionState !== 'connected' && connectionState !== 'authenticated' && (
