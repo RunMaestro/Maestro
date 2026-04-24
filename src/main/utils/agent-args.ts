@@ -11,6 +11,19 @@ type BuildAgentArgsOptions = {
 	modelId?: string;
 	yoloMode?: boolean;
 	agentSessionId?: string;
+	/**
+	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
+	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
+	 * default behavior gates these on `options.prompt` being truthy so that a
+	 * bare interactive launch (no prompt) doesn't accidentally enable batch
+	 * mode. Callers that NEVER launch interactive mode — e.g. Cue, which spawns
+	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY — must set this so an
+	 * empty-after-substitution prompt (e.g. `{{CUE_SOURCE_OUTPUT}}` resolving
+	 * to `""` when the upstream run produced no parseable stdout) doesn't
+	 * silently fall back to interactive mode and fail with
+	 * "stdin is not a terminal".
+	 */
+	forceBatchMode?: boolean;
 };
 
 type AgentConfigOverrides = {
@@ -82,11 +95,18 @@ export function buildAgentArgs(
 		return finalArgs;
 	}
 
-	if (agent.batchModePrefix && options.prompt) {
+	// Batch-mode gate: normally we infer "batch mode" from the presence of a
+	// truthy prompt, so a bare interactive launch (no prompt) doesn't get batch
+	// args it never asked for. Callers that never launch interactive mode pass
+	// `forceBatchMode: true` so this path still fires when the prompt is an
+	// empty string (e.g. a Cue template variable that resolved to nothing).
+	const inBatchMode = Boolean(options.prompt) || options.forceBatchMode === true;
+
+	if (agent.batchModePrefix && inBatchMode) {
 		finalArgs = [...agent.batchModePrefix, ...finalArgs];
 	}
 
-	if (agent.batchModeArgs && options.prompt) {
+	if (agent.batchModeArgs && inBatchMode) {
 		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
 		// when readOnlyMode is active. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
@@ -100,11 +120,7 @@ export function buildAgentArgs(
 	// Interactive sessions must not receive these flags (e.g., Copilot rejects --output-format json
 	// in interactive mode). Agents that need JSON output in interactive mode should include
 	// the relevant flags in their base `args` or `batchModeArgs` instead.
-	if (
-		agent.jsonOutputArgs &&
-		options.prompt &&
-		!hasJsonOutputFlag(finalArgs, agent.jsonOutputArgs)
-	) {
+	if (agent.jsonOutputArgs && inBatchMode && !hasJsonOutputFlag(finalArgs, agent.jsonOutputArgs)) {
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}
 

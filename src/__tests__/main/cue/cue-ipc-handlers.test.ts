@@ -54,6 +54,7 @@ vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	writeCuePromptFile: vi.fn(),
 	pruneOrphanedPromptFiles: vi.fn(() => []),
 	removeEmptyPromptsDir: vi.fn(() => false),
+	removeEmptyMaestroDir: vi.fn(() => false),
 }));
 
 vi.mock('../../../main/cue/pipeline-layout-store', () => ({
@@ -74,6 +75,7 @@ import {
 	writeCuePromptFile,
 	pruneOrphanedPromptFiles,
 	removeEmptyPromptsDir,
+	removeEmptyMaestroDir,
 } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import * as yaml from 'js-yaml';
@@ -520,8 +522,9 @@ describe('Cue IPC Handlers', () => {
 
 			// Keep-set is empty — everything in .maestro/prompts/ is orphaned.
 			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
-			// Then collapse the now-empty prompts directory.
+			// Then collapse the now-empty prompts directory, then .maestro/ itself.
 			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
+			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
 		});
 
 		it('prunes prompts even when the yaml file was already absent', async () => {
@@ -534,6 +537,7 @@ describe('Cue IPC Handlers', () => {
 
 			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
 			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
+			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
 		});
 	});
 

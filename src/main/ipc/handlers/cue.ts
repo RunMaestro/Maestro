@@ -20,6 +20,7 @@ import {
 	deleteCueConfigFile,
 	readCueConfigFile,
 	pruneOrphanedPromptFiles,
+	removeEmptyMaestroDir,
 	removeEmptyPromptsDir,
 	writeCueConfigFile,
 	writeCuePromptFile,
@@ -173,6 +174,22 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				return result;
 			}
 		)
+	);
+
+	// Get engine metrics snapshot (runsStarted, eventsDropped, etc.)
+	ipcMain.handle(
+		'cue:getMetrics',
+		withIpcErrorLogging(handlerOpts('getMetrics'), async () => {
+			return requireEngine().getMetrics();
+		})
+	);
+
+	// Get fan-in health — stalled trackers > 50% timeout (empty = healthy).
+	ipcMain.handle(
+		'cue:getFanInHealth',
+		withIpcErrorLogging(handlerOpts('getFanInHealth'), async () => {
+			return requireEngine().getFanInHealth();
+		})
 	);
 
 	// Refresh a session's Cue configuration
@@ -365,6 +382,8 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				// invokes this, we still want orphaned prompts cleaned up.
 				pruneOrphanedPromptFiles(options.projectRoot, []);
 				removeEmptyPromptsDir(options.projectRoot);
+				// Collapse .maestro/ itself if nothing else lives there.
+				removeEmptyMaestroDir(options.projectRoot);
 				return deleted;
 			}
 		)

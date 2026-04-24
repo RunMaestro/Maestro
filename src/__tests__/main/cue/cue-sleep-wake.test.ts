@@ -29,6 +29,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	persistQueuedEvent: vi.fn(),
+	removeQueuedEvent: vi.fn(),
+	getQueuedEvents: vi.fn(() => []),
+	clearPersistedQueue: vi.fn(),
+	safePersistQueuedEvent: vi.fn(),
+	safeRemoveQueuedEvent: vi.fn(),
 }));
 
 // Track reconciler calls

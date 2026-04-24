@@ -69,6 +69,55 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- forceBatchMode --
+	// Regression: when a Cue template variable like {{CUE_SOURCE_OUTPUT}}
+	// substituted to `""`, the empty-string prompt was falsy and dropped
+	// batch-mode args. For Codex specifically, that meant spawning `codex`
+	// (interactive TUI) instead of `codex exec` (batch), which died with
+	// "Error: stdin is not a terminal" since Cue provides no TTY.
+	it('adds batchModePrefix with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ batchModePrefix: ['exec'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: [],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['exec']);
+	});
+
+	it('adds batchModeArgs with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ batchModeArgs: ['--skip-git'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['--print', '--skip-git']);
+	});
+
+	it('adds jsonOutputArgs with empty prompt when forceBatchMode is true', () => {
+		const agent = makeAgent({ jsonOutputArgs: ['--json'] });
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+			forceBatchMode: true,
+		});
+		expect(result).toEqual(['--print', '--json']);
+	});
+
+	it('still skips batch args with empty prompt when forceBatchMode is false', () => {
+		const agent = makeAgent({
+			batchModePrefix: ['exec'],
+			batchModeArgs: ['--skip-git'],
+			jsonOutputArgs: ['--json'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			prompt: '',
+		});
+		expect(result).toEqual(['--print']);
+	});
+
 	// -- batchModeArgs --
 	it('adds batchModeArgs when prompt provided', () => {
 		const agent = makeAgent({ batchModeArgs: ['--skip-git'] });

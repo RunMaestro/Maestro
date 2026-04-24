@@ -38,6 +38,7 @@ vi.mock('../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline'
 
 const mockWriteYaml = vi.fn();
 const mockReadYaml = vi.fn();
+const mockDeleteYaml = vi.fn();
 const mockRefreshSession = vi.fn();
 const mockGetGraphData = vi.fn();
 
@@ -45,6 +46,7 @@ vi.mock('../../../../renderer/services/cue', () => ({
 	cueService: {
 		writeYaml: (...args: unknown[]) => mockWriteYaml(...args),
 		readYaml: (...args: unknown[]) => mockReadYaml(...args),
+		deleteYaml: (...args: unknown[]) => mockDeleteYaml(...args),
 		refreshSession: (...args: unknown[]) => mockRefreshSession(...args),
 		getGraphData: (...args: unknown[]) => mockGetGraphData(...args),
 	},
@@ -171,6 +173,7 @@ describe('usePipelinePersistence', () => {
 		vi.clearAllMocks();
 		mockWriteYaml.mockResolvedValue(undefined);
 		mockReadYaml.mockResolvedValue('yaml-content');
+		mockDeleteYaml.mockResolvedValue(true);
 		mockRefreshSession.mockResolvedValue(undefined);
 		mockGetGraphData.mockResolvedValue([]);
 		__resetPendingEditsRegistryForTests();
@@ -466,7 +469,7 @@ describe('usePipelinePersistence', () => {
 	});
 
 	describe('handleSave - orphaned root clearing', () => {
-		it('previously-written root not in current set is cleared with empty yaml', async () => {
+		it('previously-written root not in current set is deleted via deleteYaml', async () => {
 			// Previous save touched /old; current pipelines all live at /new
 			const h = setup({
 				pipelines: [
@@ -480,19 +483,20 @@ describe('usePipelinePersistence', () => {
 				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/new' }],
 				previousRoots: new Set(['/old']),
 			});
-			// First readYaml returns content for /new (yaml-content), second for /old (empty)
-			mockReadYaml.mockResolvedValueOnce('yaml-content').mockResolvedValueOnce('');
+			// First readYaml for /new write-verify returns content; second for /old
+			// deletion-verify returns null (confirms file was removed).
+			mockReadYaml.mockResolvedValueOnce('yaml-content').mockResolvedValueOnce(null);
 			await act(async () => {
 				await h.result.current.handleSave();
 			});
 			expect(mockWriteYaml).toHaveBeenCalledWith('/new', 'yaml-content', {});
-			expect(mockWriteYaml).toHaveBeenCalledWith('/old', '', {});
+			expect(mockDeleteYaml).toHaveBeenCalledWith('/old');
 			expect(h.result.current.saveStatus).toBe('success');
 			expect(h.lastWrittenRootsRef.current.has('/new')).toBe(true);
 			expect(h.lastWrittenRootsRef.current.has('/old')).toBe(false);
 		});
 
-		it('empty-root clear verification: readYaml returns non-empty → error', async () => {
+		it('stale-root deletion verify: readYaml returns non-null → error', async () => {
 			const h = setup({
 				pipelines: [
 					pipeline(
@@ -505,7 +509,7 @@ describe('usePipelinePersistence', () => {
 				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/new' }],
 				previousRoots: new Set(['/old']),
 			});
-			// /new verify ok; /old clear verify returns stale content
+			// /new verify ok; /old deletion-verify returns stale content → triggers error
 			mockReadYaml.mockResolvedValueOnce('yaml-content').mockResolvedValueOnce('STALE');
 			await act(async () => {
 				await h.result.current.handleSave();

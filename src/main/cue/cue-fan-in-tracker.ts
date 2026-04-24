@@ -38,6 +38,33 @@ export interface CueFanInDeps {
 	) => number;
 }
 
+/**
+ * Health status for a single active fan-in tracker. Phase 12D surfaces these
+ * entries in the dashboard when a stall exceeds 50% of the configured timeout
+ * so users can intervene before the tracker actually times out.
+ */
+export interface FanInHealthEntry {
+	key: string;
+	ownerSessionId: string;
+	subscriptionName: string;
+	completedCount: number;
+	expectedCount: number;
+	elapsedMs: number;
+	timeoutMs: number;
+	percentElapsed: number;
+	pendingSourceIds: string[];
+	firstCompletionAt: number;
+}
+
+/** Parameters for `checkHealth`. Caller looks up per-tracker subscription config. */
+export interface FanInHealthCheckParams {
+	sessions: SessionInfo[];
+	lookupSubscription: (
+		key: string
+	) => { sub: CueSubscription; settings: CueSettings; sources: string[] } | null;
+	now?: number;
+}
+
 export interface CueFanInTracker {
 	handleCompletion(
 		ownerSessionId: string,
@@ -56,6 +83,12 @@ export interface CueFanInTracker {
 	getTrackerCreatedAt(key: string): number | undefined;
 	/** Force-expire a tracker by key without dispatching or waiting for timeout. Used by the cleanup service. */
 	expireTracker(key: string): void;
+	/**
+	 * Phase 12D — returns active trackers stalled >50% of their timeout. Empty
+	 * result is the healthy case. Caller supplies `lookupSubscription` since
+	 * the tracker itself doesn't hold subscription config.
+	 */
+	checkHealth(params: FanInHealthCheckParams): FanInHealthEntry[];
 }
 
 export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
@@ -293,6 +326,62 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				clearTimeout(timer);
 				fanInTimers.delete(key);
 			}
+		},
+
+		// Phase 12D — return entries for trackers stalled > 50% of their timeout.
+		// The tracker doesn't know its subscription config, so we accept a
+		// `lookupSubscription` callback that the engine wires up against its
+		// registry. Entries whose subscription can't be resolved (renamed /
+		// deleted mid-wait) are excluded — the cleanup service will evict them.
+		checkHealth({
+			sessions,
+			lookupSubscription,
+			now = Date.now(),
+		}: FanInHealthCheckParams): FanInHealthEntry[] {
+			const out: FanInHealthEntry[] = [];
+			for (const [key, tracker] of fanInTrackers) {
+				const createdAt = fanInCreatedAt.get(key);
+				if (createdAt === undefined) continue;
+				const lookup = lookupSubscription(key);
+				if (!lookup) continue;
+
+				const { sub, settings, sources } = lookup;
+				const timeoutMs =
+					(sub.fan_in_timeout_minutes ?? settings.timeout_minutes ?? 30) * 60 * 1000;
+				// Clamp clock-backward cases to 0 so we never report phantom negative stalls.
+				const elapsedMs = Math.max(0, now - createdAt);
+				const percentElapsed = timeoutMs > 0 ? (elapsedMs / timeoutMs) * 100 : 0;
+				if (percentElapsed <= 50) continue;
+
+				// Resolve expected count via dedup — same logic used for completion counting.
+				// We inline it here because calling the private helper from outside the
+				// closure would require exposing it, which leaks implementation detail.
+				const resolvedExpected = new Set<string>();
+				for (const s of sources) {
+					const match = sessions.find((sess) => sess.name === s || sess.id === s);
+					resolvedExpected.add(match?.id ?? s);
+				}
+				const completedIds = new Set(tracker.keys());
+				const pendingSourceIds: string[] = [];
+				for (const id of resolvedExpected) {
+					if (!completedIds.has(id)) pendingSourceIds.push(id);
+				}
+
+				const [ownerSessionId, ...subNameParts] = key.split(':');
+				out.push({
+					key,
+					ownerSessionId,
+					subscriptionName: subNameParts.join(':'),
+					completedCount: tracker.size,
+					expectedCount: resolvedExpected.size,
+					elapsedMs,
+					timeoutMs,
+					percentElapsed,
+					pendingSourceIds,
+					firstCompletionAt: createdAt,
+				});
+			}
+			return out;
 		},
 	};
 }

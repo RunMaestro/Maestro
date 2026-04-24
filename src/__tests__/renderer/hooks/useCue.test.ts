@@ -229,6 +229,118 @@ describe('useCue', () => {
 
 			expect(globalThis.clearInterval).toHaveBeenCalled();
 		});
+
+		// Phase 14A — visibility-aware polling
+		it('honors a custom pollIntervalMs override', async () => {
+			await act(async () => {
+				renderHook(() => useCue({ pollIntervalMs: 30_000 }));
+				await Promise.resolve();
+			});
+			expect(globalThis.setInterval).toHaveBeenCalledWith(expect.any(Function), 30_000);
+		});
+
+		it('skips refresh when document.visibilityState is hidden', async () => {
+			// Capture the tick callback passed to setInterval so we can invoke it
+			// synchronously with a stubbed visibility state.
+			let capturedTick: (() => void) | null = null;
+			(globalThis.setInterval as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+				(fn: () => void) => {
+					capturedTick = fn;
+					return 999 as unknown as ReturnType<typeof setInterval>;
+				}
+			);
+			await renderAndSettle();
+
+			// Initial fetch already happened; clear to observe tick-driven refresh alone.
+			mockGetStatus.mockClear();
+			const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+
+			capturedTick?.();
+			await Promise.resolve();
+
+			expect(mockGetStatus).not.toHaveBeenCalled();
+			visibilitySpy.mockRestore();
+		});
+
+		// Phase 12B — queueOverflow activity payload triggers a toast
+		it('fires a warning toast when a queueOverflow activity payload is received', async () => {
+			// Capture the onActivityUpdate callback so we can deliver a payload.
+			let activityCallback: ((p: unknown) => void) | null = null;
+			mockOnActivityUpdate.mockImplementation((cb: (p: unknown) => void) => {
+				activityCallback = cb;
+				return mockUnsubscribe;
+			});
+			const notificationStore = await import('../../../renderer/stores/notificationStore');
+			const notifySpy = vi.spyOn(notificationStore, 'notifyToast').mockReturnValue(undefined);
+
+			await renderAndSettle();
+			expect(activityCallback).not.toBeNull();
+
+			act(() => {
+				activityCallback?.({
+					type: 'queueOverflow',
+					sessionId: 's-1',
+					sessionName: 'Sess A',
+					subscriptionName: 'sub-x',
+					queuedAt: 1_700_000_000_000,
+				});
+			});
+
+			expect(notifySpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: expect.stringContaining('Sess A'),
+					message: expect.stringContaining('sub-x'),
+				})
+			);
+			notifySpy.mockRestore();
+		});
+
+		it('does not fire a toast for runFinished payloads', async () => {
+			let activityCallback: ((p: unknown) => void) | null = null;
+			mockOnActivityUpdate.mockImplementation((cb: (p: unknown) => void) => {
+				activityCallback = cb;
+				return mockUnsubscribe;
+			});
+			const notificationStore = await import('../../../renderer/stores/notificationStore');
+			const notifySpy = vi.spyOn(notificationStore, 'notifyToast').mockReturnValue(undefined);
+
+			await renderAndSettle();
+
+			act(() => {
+				activityCallback?.({
+					type: 'runFinished',
+					runId: 'r-1',
+					sessionId: 's-1',
+					subscriptionName: 'sub-x',
+					status: 'completed',
+				});
+			});
+
+			expect(notifySpy).not.toHaveBeenCalled();
+			notifySpy.mockRestore();
+		});
+
+		it('runs refresh on tick when document.visibilityState is visible', async () => {
+			let capturedTick: (() => void) | null = null;
+			(globalThis.setInterval as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+				(fn: () => void) => {
+					capturedTick = fn;
+					return 999 as unknown as ReturnType<typeof setInterval>;
+				}
+			);
+			await renderAndSettle();
+			mockGetStatus.mockClear();
+			const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+
+			await act(async () => {
+				capturedTick?.();
+				await Promise.resolve();
+			});
+
+			expect(mockGetStatus).toHaveBeenCalled();
+			visibilitySpy.mockRestore();
+		});
 	});
 
 	describe('error state', () => {

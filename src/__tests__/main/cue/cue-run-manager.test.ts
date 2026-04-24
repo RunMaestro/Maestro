@@ -1253,4 +1253,231 @@ describe('createCueRunManager', () => {
 			expect(deps.onRunCompleted).not.toHaveBeenCalled();
 		});
 	});
+
+	// Phase 12A — queue persistence wiring
+	describe('queue persistence (Phase 12A)', () => {
+		function makeMockPersistence() {
+			return {
+				persist: vi.fn(),
+				remove: vi.fn(),
+				clearSession: vi.fn(),
+				clearAll: vi.fn(),
+				restoreAll: vi.fn(() => new Map()),
+			};
+		}
+
+		it('calls queuePersistence.persist when an event is queued', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute('session-1', 'p2', createEvent(), 'sub-2'); // queued
+			expect(persistence.persist).toHaveBeenCalledTimes(1);
+			expect(persistence.persist).toHaveBeenCalledWith(
+				'session-1',
+				expect.any(String),
+				expect.objectContaining({ subscriptionName: 'sub-2' })
+			);
+		});
+
+		it('calls queuePersistence.remove when a queued event drains', async () => {
+			const persistence = makeMockPersistence();
+			let resolveFirst: ((r: CueRunResult) => void) | null = null;
+			const deps = createDeps({
+				onCueRun: vi
+					.fn()
+					.mockImplementationOnce(() => new Promise<CueRunResult>((r) => (resolveFirst = r)))
+					.mockResolvedValue(makeResult()),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute('session-1', 'p2', createEvent(), 'sub-2'); // queued
+			expect(persistence.remove).not.toHaveBeenCalled();
+			// Finish the first run → slot opens → queued event drains
+			resolveFirst!(makeResult());
+			await vi.advanceTimersByTimeAsync(0);
+			// The drain path removes the persisted row before dispatching
+			expect(persistence.remove).toHaveBeenCalled();
+		});
+
+		it('calls queuePersistence.remove on overflow drop', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 1,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			manager.execute('session-1', 'p2', createEvent(), 'sub-2'); // queued
+			persistence.remove.mockClear();
+			manager.execute('session-1', 'p3', createEvent(), 'sub-3'); // overflow → drops oldest
+			expect(persistence.remove).toHaveBeenCalledTimes(1);
+		});
+
+		it('calls queuePersistence.clearAll on stopAll', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1');
+			manager.stopAll();
+			expect(persistence.clearAll).toHaveBeenCalled();
+		});
+
+		it('calls queuePersistence.clearAll on reset', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.reset();
+			expect(persistence.clearAll).toHaveBeenCalled();
+		});
+
+		it('works without queuePersistence dep (back-compat)', () => {
+			const deps = createDeps({ onCueRun: vi.fn(() => new Promise(() => {})) });
+			const manager = createCueRunManager(deps);
+			expect(() => {
+				manager.execute('session-1', 'p1', createEvent(), 'sub-1');
+				manager.execute('session-1', 'p2', createEvent(), 'sub-2');
+			}).not.toThrow();
+		});
+
+		it('honors queuedAtOverride so restored entries keep their original timestamp', () => {
+			const persistence = makeMockPersistence();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+			// Queue with a timestamp from an hour ago (simulating restore).
+			const anHourAgo = Date.now() - 60 * 60 * 1000;
+			manager.execute(
+				'session-1',
+				'p2',
+				createEvent(),
+				'sub-2',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				anHourAgo
+			);
+			const persistCall = persistence.persist.mock.calls.at(-1);
+			expect(persistCall?.[2].queuedAt).toBe(anHourAgo);
+		});
+	});
+
+	// Phase 12B — onQueueOverflow wiring
+	describe('queue overflow (Phase 12B)', () => {
+		it('invokes onQueueOverflow when the queue saturates, before shifting', async () => {
+			const onQueueOverflow = vi.fn();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})), // never resolves — stays active
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 2,
+				})),
+				onQueueOverflow,
+			});
+			const manager = createCueRunManager(deps);
+
+			// Fill the slot (1 active) + fill the queue (2 queued) = 3 calls total.
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1');
+			manager.execute('session-1', 'p2', createEvent(), 'sub-2');
+			manager.execute('session-1', 'p3', createEvent(), 'sub-3');
+			expect(onQueueOverflow).not.toHaveBeenCalled();
+
+			// Fourth call exceeds queue_size — overflow fires.
+			manager.execute('session-1', 'p4', createEvent(), 'sub-4');
+			expect(onQueueOverflow).toHaveBeenCalledTimes(1);
+			expect(onQueueOverflow).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-1',
+					sessionName: 'Test Session',
+					subscriptionName: 'sub-2', // oldest queued
+				})
+			);
+		});
+
+		it('does NOT invoke onQueueOverflow when capacity is available', () => {
+			const onQueueOverflow = vi.fn();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				onQueueOverflow,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1');
+			expect(onQueueOverflow).not.toHaveBeenCalled();
+		});
+
+		it('works without onQueueOverflow dep (back-compat)', () => {
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 1,
+				})),
+				// Intentionally no onQueueOverflow
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-1');
+			manager.execute('session-1', 'p2', createEvent(), 'sub-2');
+			// No throw, normal continuation.
+			expect(() => manager.execute('session-1', 'p3', createEvent(), 'sub-3')).not.toThrow();
+		});
+
+		it('drops the incoming event (not queue[0]) when queue_size is 0', () => {
+			const onQueueOverflow = vi.fn();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 0,
+				})),
+				onQueueOverflow,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'sub-active'); // dispatched
+			// Second call would crash pre-guard because queue[0] is undefined.
+			expect(() => manager.execute('session-1', 'p2', createEvent(), 'sub-incoming')).not.toThrow();
+			// Overflow fires for the INCOMING subscription, not a non-existent oldest.
+			expect(onQueueOverflow).toHaveBeenCalledWith(
+				expect.objectContaining({ subscriptionName: 'sub-incoming' })
+			);
+			expect(manager.getQueueStatus().size).toBe(0);
+		});
+	});
 });

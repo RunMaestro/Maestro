@@ -147,6 +147,21 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	templateContext.cue = buildCueTemplateContext(event, subscription, runId);
 	const substitutedPrompt = substituteTemplateVariables(trimmedPrompt, templateContext);
 
+	// Surface the "prompt was X, resolved to empty" case loudly. The most
+	// common cause is a downstream prompt like just `{{CUE_SOURCE_OUTPUT}}`
+	// where the upstream run produced no parseable stdout (for example Claude
+	// outputting stream-json with no `result` or `text` events). The spawn
+	// still proceeds — `forceBatchMode` on the Cue spawn builder keeps the
+	// agent in batch mode so it doesn't fall into interactive TUI and die with
+	// "stdin is not a terminal" — but the log line is what tells the user to
+	// look at their upstream prompt rather than at the downstream agent.
+	if (!substitutedPrompt.trim()) {
+		onLog(
+			'warn',
+			`[CUE] "${subscription.name}" prompt resolved to empty after template substitution — check the upstream agent's output and your prompt_file references (e.g. {{CUE_SOURCE_OUTPUT}})`
+		);
+	}
+
 	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
 	const buildResult = await buildSpawnSpec(config, substitutedPrompt);
 	if (!buildResult.ok) {

@@ -150,6 +150,7 @@ type GroupChatData = {
 };
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
+import type { CueLogPayload } from '../shared/cue-log-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 
 interface MaestroAPI {
@@ -3026,6 +3027,8 @@ interface MaestroAPI {
 			sourceAgentId?: string
 		) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
+		getMetrics: () => Promise<import('../main/cue/cue-metrics').CueMetrics | null>;
+		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
@@ -3038,7 +3041,7 @@ interface MaestroAPI {
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
-		onActivityUpdate: (callback: (data: CueRunResult) => void) => () => void;
+		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)

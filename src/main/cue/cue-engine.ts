@@ -24,6 +24,7 @@
  */
 
 import type { MainLogLevel } from '../../shared/logger-types';
+import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { SessionInfo } from '../../shared/types';
 import {
 	createCueEvent,
@@ -54,6 +55,8 @@ import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session
 import type { SessionState } from './cue-session-state';
 import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
+import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
+import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
 import { loadCueConfig } from './cue-yaml-loader';
 
 const MAX_CHAIN_DEPTH = 10;
@@ -131,18 +134,52 @@ export class CueEngine {
 	private sessionRuntimeService: CueSessionRuntimeService;
 	private recoveryService: CueRecoveryService;
 	private cleanupService: CueCleanupService;
+	private metrics: CueMetricsCollector = createCueMetrics();
+	private queuePersistence: CueQueuePersistence;
 	private deps: CueEngineDeps;
+
+	/**
+	 * Intercept all onLog calls to route structured payloads into metrics.
+	 * Subsystems stay decoupled from the metrics module — they emit the same
+	 * typed CueLogPayload they already do, and the engine translates.
+	 *
+	 * Arrow-function field so `this` is bound when we pass it into subsystem deps.
+	 */
+	private meteredOnLog: CueEngineDeps['onLog'] = (level, message, data) => {
+		this.recordMetricFromPayload(data);
+		// Preserve original arity: omit `data` when it's undefined so vi.fn() mocks
+		// that assert `toHaveBeenCalledWith(level, msg)` (2 args) still match —
+		// this path is hot for every warn/info line the engine emits.
+		if (data === undefined) {
+			this.deps.onLog(level, message);
+		} else {
+			this.deps.onLog(level, message, data);
+		}
+	};
 
 	constructor(deps: CueEngineDeps) {
 		this.deps = deps;
 		this.registry = createCueSessionRegistry();
+		const meteredOnLog = this.meteredOnLog;
+
+		// Phase 12A — queue persistence façade. Wired up-front so the run
+		// manager receives it by construction. Uses the in-process registry +
+		// settings for staleness / session-membership checks.
+		this.queuePersistence = createCueQueuePersistence({
+			onLog: meteredOnLog,
+			getSessionTimeoutMs: (sessionId) => {
+				const state = this.registry.get(sessionId);
+				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
+			},
+			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+		});
 
 		this.runManager = createCueRunManager({
 			getSessions: deps.getSessions,
 			getSessionSettings: (sessionId) => this.registry.get(sessionId)?.config.settings,
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth) => {
 				this.pushActivityLog(result);
 				// Carry forwarded outputs from the triggering event through to the
@@ -167,9 +204,19 @@ export class CueEngine {
 			},
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
+			// Phase 12B: surface queue overflow through the same typed-log channel
+			// so the renderer's activity-update listener can toast the user.
+			onQueueOverflow: (payload) => {
+				meteredOnLog('warn', `[CUE] Queue overflow in "${payload.sessionName}"`, {
+					type: 'queueOverflow',
+					...payload,
+				} satisfies CueLogPayload);
+			},
+			// Phase 12A: queue rows survive app crash / quit.
+			queuePersistence: this.queuePersistence,
 		});
 		this.fanInTracker = createCueFanInTracker({
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
 			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
 				return this.dispatchService.dispatchSubscription(
@@ -206,7 +253,7 @@ export class CueEngine {
 					command
 				);
 			},
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,
@@ -214,7 +261,7 @@ export class CueEngine {
 			onRefreshRequested: (sessionId, projectRoot) => {
 				this.refreshSession(sessionId, projectRoot);
 			},
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
 			registry: this.registry,
@@ -255,7 +302,7 @@ export class CueEngine {
 					chainDepth
 				);
 			},
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			maxChainDepth: MAX_CHAIN_DEPTH,
 		});
 		this.queryService = createCueQueryService({
@@ -283,11 +330,19 @@ export class CueEngine {
 				const now = new Date();
 				return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 			},
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 		});
-		this.heartbeat = createCueHeartbeat(() => this.cleanupService.onTick());
+		this.heartbeat = createCueHeartbeat({
+			onTick: () => this.cleanupService.onTick(),
+			// Route heartbeat-failure notifications through the metered log
+			// channel so the engine's recordMetricFromPayload bumps the
+			// heartbeatFailures counter exactly once per failure run.
+			onFailure: (payload) => {
+				this.meteredOnLog('warn', '[CUE] Heartbeat write failing', payload);
+			},
+		});
 		this.recoveryService = createCueRecoveryService({
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			getSessions: () => {
 				const result = new Map<string, { config: CueConfig; sessionName: string }>();
 				const allSessions = deps.getSessions();
@@ -324,13 +379,51 @@ export class CueEngine {
 		}
 
 		this.enabled = true;
+		// Reset metrics so startedAt reflects THIS start, not the collector's
+		// construction. Without this, startedAt is fixed at engine-instance
+		// creation time, making "uptime" rate calcs wrong across stop/start
+		// cycles within the same Electron process.
+		this.metrics.reset();
 		// Data payload triggers a renderer refresh via cue:activityUpdate,
 		// clearing any stale queue counters left over from a prior stop.
-		this.deps.onLog('cue', '[CUE] Engine started', { type: 'engineStarted' });
+		this.meteredOnLog('cue', '[CUE] Engine started', {
+			type: 'engineStarted',
+		} satisfies CueLogPayload);
 
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
+		}
+
+		// Phase 12A — restore persisted queue entries AFTER sessions are
+		// initialized (so registry.get(...) has their configs / timeout). Each
+		// entry is re-executed through the normal path so the run manager
+		// re-applies concurrency gating + re-persists with a new persist id.
+		// The prior persistId is discarded via remove() inside the restore
+		// helper's session-missing drop path (if applicable), or is discarded
+		// implicitly on re-enqueue since we never reuse the old id.
+		const restored = this.queuePersistence.restoreAll();
+		for (const [sessionId, entries] of restored) {
+			for (const entry of entries) {
+				// Remove the persisted row immediately — runManager.execute will
+				// re-persist with a fresh id when it re-queues (or dispatches
+				// immediately if a slot is available).
+				this.queuePersistence.remove(entry.persistId);
+				// Pass the original queuedAt so drainQueue's staleness check
+				// still reflects real user wait time, not the restart time.
+				this.runManager.execute(
+					sessionId,
+					entry.prompt,
+					entry.event,
+					entry.subscriptionName,
+					entry.outputPrompt,
+					entry.chainDepth,
+					entry.cliOutput,
+					entry.action,
+					entry.command,
+					entry.queuedAt
+				);
+			}
 		}
 
 		// Detect sleep gap from previous heartbeat
@@ -357,27 +450,30 @@ export class CueEngine {
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
 		this.recoveryService.shutdown();
+		this.metrics.reset();
 
 		// Data payload triggers a renderer refresh via cue:activityUpdate so
 		// the queue counters, active runs list, and indicators reflect the
 		// cleared engine state instead of waiting for the next 10s poll.
-		this.deps.onLog('cue', '[CUE] Engine stopped', { type: 'engineStopped' });
+		this.meteredOnLog('cue', '[CUE] Engine stopped', {
+			type: 'engineStopped',
+		} satisfies CueLogPayload);
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
 	refreshSession(sessionId: string, projectRoot: string): void {
 		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot);
 		if (result.reloaded && result.sessionName) {
-			this.deps.onLog(
+			this.meteredOnLog(
 				'cue',
 				`[CUE] Config reloaded for "${result.sessionName}" (${result.activeCount ?? 0} subscriptions)`,
-				{ type: 'configReloaded', sessionId }
+				{ type: 'configReloaded', sessionId } satisfies CueLogPayload
 			);
 		} else if (result.configRemoved && result.sessionName) {
-			this.deps.onLog('cue', `[CUE] Config removed for "${result.sessionName}"`, {
+			this.meteredOnLog('cue', `[CUE] Config removed for "${result.sessionName}"`, {
 				type: 'configRemoved',
 				sessionId,
-			});
+			} satisfies CueLogPayload);
 		}
 	}
 
@@ -430,6 +526,117 @@ export class CueEngine {
 	/** Returns all sessions with their parsed subscriptions (for graph visualization) */
 	getGraphData() {
 		return this.queryService.getGraphData();
+	}
+
+	/**
+	 * Phase 12D — returns fan-in subscriptions that have completed some sources
+	 * but are stalled past 50% of their configured timeout. Empty array means
+	 * healthy (or no active fan-in at all).
+	 */
+	getFanInHealth() {
+		return this.fanInTracker.checkHealth({
+			sessions: this.deps.getSessions(),
+			lookupSubscription: (key: string) => {
+				const colonIdx = key.indexOf(':');
+				if (colonIdx === -1) return null;
+				const ownerSessionId = key.slice(0, colonIdx);
+				const subName = key.slice(colonIdx + 1);
+				const state = this.registry.get(ownerSessionId);
+				if (!state) return null;
+				const sub = state.config.subscriptions?.find((s) => s.name === subName);
+				if (!sub) return null;
+				// Fan-in requires multiple sources; accept either the array or
+				// single-string form of `source_session`. Combine with any ID
+				// overrides present via `source_session_ids`. Single-source subs
+				// don't qualify as fan-in and return null.
+				const nameSources: string[] = Array.isArray(sub.source_session)
+					? sub.source_session
+					: sub.source_session
+						? [sub.source_session]
+						: [];
+				const idSources: string[] = Array.isArray(sub.source_session_ids)
+					? (sub.source_session_ids as string[])
+					: typeof sub.source_session_ids === 'string'
+						? [sub.source_session_ids as string]
+						: [];
+				const sources = [...nameSources, ...idSources];
+				if (sources.length < 2) return null;
+				return {
+					sub,
+					settings: state.config.settings ?? {},
+					sources,
+				};
+			},
+		});
+	}
+
+	/** Returns a snapshot of engine-level counters (runs, queue, fan-in, etc.). */
+	getMetrics(): CueMetrics {
+		return this.metrics.snapshot();
+	}
+
+	/** Testing/observability helper — expose the collector so subsystems can be
+	 * handed a bound increment function without leaking the engine instance. */
+	getMetricsCollector(): CueMetricsCollector {
+		return this.metrics;
+	}
+
+	/**
+	 * Translate structured onLog payloads into metric counter increments.
+	 * Kept as a single chokepoint so subsystems stay fully decoupled from the
+	 * metrics module — they emit typed CueLogPayload as normal; the engine
+	 * observes and counts.
+	 */
+	private recordMetricFromPayload(data: unknown): void {
+		if (!data || typeof data !== 'object') return;
+		const payload = data as { type?: unknown };
+		if (typeof payload.type !== 'string') return;
+		const typed = payload as { type: string; status?: string; count?: number };
+
+		switch (typed.type) {
+			case 'runStarted':
+				this.metrics.increment('runsStarted');
+				break;
+			case 'runFinished':
+				if (typed.status === 'completed') this.metrics.increment('runsCompleted');
+				else if (typed.status === 'failed') this.metrics.increment('runsFailed');
+				else if (typed.status === 'timeout') this.metrics.increment('runsTimedOut');
+				else if (typed.status === 'stopped') this.metrics.increment('runsStopped');
+				break;
+			case 'runStopped':
+				this.metrics.increment('runsStopped');
+				break;
+			case 'queueOverflow':
+				this.metrics.increment('eventsDropped');
+				break;
+			case 'queueRestored':
+				this.metrics.increment('queueRestored', typed.count ?? 0);
+				break;
+			case 'queueDropped':
+				this.metrics.increment('eventsDropped', typed.count ?? 0);
+				break;
+			case 'fanInTimeout':
+				this.metrics.increment('fanInTimeouts');
+				break;
+			case 'fanInComplete':
+				this.metrics.increment('fanInCompletions');
+				break;
+			case 'rateLimitBackoff':
+				this.metrics.increment('rateLimitBackoffs');
+				break;
+			case 'githubPollError':
+				this.metrics.increment('githubPollErrors');
+				break;
+			case 'heartbeatFailure':
+				this.metrics.increment('heartbeatFailures');
+				break;
+			case 'configReloaded':
+				this.metrics.increment('configReloads');
+				break;
+			case 'pathTraversalBlocked':
+				this.metrics.increment('pathTraversalsBlocked');
+				break;
+		}
 	}
 
 	/**

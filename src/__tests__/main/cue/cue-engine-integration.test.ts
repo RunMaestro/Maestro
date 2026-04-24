@@ -505,4 +505,64 @@ describe('Phase 15B — CueEngine integration', () => {
 			engine.stop();
 		});
 	});
+
+	// ─── Phase 13B — Metrics ────────────────────────────────────────────────
+
+	describe('metrics (Phase 13B)', () => {
+		it('returns a zeroed snapshot before engine start', () => {
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			const snap = engine.getMetrics();
+			expect(snap.runsStarted).toBe(0);
+			expect(snap.runsCompleted).toBe(0);
+			expect(snap.configReloads).toBe(0);
+			expect(typeof snap.startedAt).toBe('number');
+		});
+
+		it('increments runsStarted + runsCompleted as an interval heartbeat fires', async () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'hb-metrics',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'tick',
+						interval_minutes: 5,
+					},
+				],
+			});
+			configsByProject.set('/projects/test', config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+			const snap = engine.getMetrics();
+			expect(snap.runsStarted).toBeGreaterThanOrEqual(1);
+			expect(snap.runsCompleted).toBeGreaterThanOrEqual(1);
+			engine.stop();
+		});
+
+		it('resets metrics when the engine stops', async () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'hb-metrics-reset',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'tick',
+						interval_minutes: 5,
+					},
+				],
+			});
+			configsByProject.set('/projects/test', config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(engine.getMetrics().runsStarted).toBeGreaterThan(0);
+			engine.stop();
+			expect(engine.getMetrics().runsStarted).toBe(0);
+			expect(engine.getMetrics().runsCompleted).toBe(0);
+		});
+	});
 });

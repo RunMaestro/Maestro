@@ -297,21 +297,19 @@ export function usePipelinePersistence({
 				totalPipelinesWritten += rootPipelines.length;
 			}
 
-			// Clear any root whose pipelines were all removed this save. Use the
-			// same write-and-verify path as non-empty writes so an empty YAML
-			// clear can never be a silent no-op (the user would see the deleted
-			// pipeline reappear on next launch).
+			// Delete cue.yaml (and clean up prompts + .maestro/) for any root
+			// whose last pipeline was removed this save. Deleting the file is
+			// the correct behaviour — writing an empty YAML left a stale
+			// .maestro/cue.yaml on disk that confused users and the engine.
 			for (const root of previousRoots) {
 				if (currentRoots.has(root)) continue;
-				const { yaml: emptyYaml } = pipelinesToYaml([], cueSettings);
-				await cueService.writeYaml(root, emptyYaml, {});
+				await cueService.deleteYaml(root);
+				// Verify the file is gone so a silent IPC failure surfaces as an
+				// error instead of a ghost pipeline reappearing on next launch.
 				const onDisk = await cueService.readYaml(root);
-				if (onDisk === null) {
-					throw new Error(`writeYaml clear of "${root}" did not persist: no file on disk`);
-				}
-				if (onDisk !== emptyYaml) {
+				if (onDisk !== null) {
 					throw new Error(
-						`writeYaml clear of "${root}" did not persist the expected content (${onDisk.length} bytes on disk vs ${emptyYaml.length} expected)`
+						`deleteYaml of "${root}" did not remove the file — cue.yaml still present on disk`
 					);
 				}
 				rootsCleared++;

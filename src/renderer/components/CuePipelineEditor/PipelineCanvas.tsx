@@ -18,7 +18,6 @@ import ReactFlow, {
 	type Connection,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Zap, Plus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
 	CuePipeline,
@@ -41,6 +40,8 @@ import { AgentDrawer } from './drawers/AgentDrawer';
 import { NodeConfigPanel, type IncomingTriggerEdgeInfo } from './panels/NodeConfigPanel';
 import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 import { CueSettingsPanel } from './panels/CueSettingsPanel';
+import { PipelineLegend } from './panels/PipelineLegend';
+import { PipelineEmptyState } from './panels/PipelineEmptyState';
 import { EVENT_COLORS } from './cueEventConstants';
 
 const nodeTypes = {
@@ -189,69 +190,15 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Empty state overlay */}
-			{nodes.length === 0 && (
-				<div
-					className="absolute inset-0 flex items-center justify-center"
-					style={{
-						zIndex: 5,
-						pointerEvents: pipelineCount === 0 ? 'auto' : 'none',
-					}}
-				>
-					{pipelineCount === 0 ? (
-						<div className="flex flex-col items-center gap-4 text-center px-8">
-							<Zap size={28} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
-							<span className="text-sm" style={{ color: theme.colors.textDim }}>
-								Build event-driven automations by connecting triggers to agents
-							</span>
-							<button
-								onClick={() => {
-									createPipeline();
-									setTimeout(() => {
-										setTriggerDrawerOpen(true);
-										setAgentDrawerOpen(true);
-									}, 50);
-								}}
-								className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium"
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.bgMain,
-									cursor: 'pointer',
-									transition: 'opacity 0.15s',
-								}}
-								onMouseEnter={(e) => {
-									e.currentTarget.style.opacity = '0.85';
-								}}
-								onMouseLeave={(e) => {
-									e.currentTarget.style.opacity = '1';
-								}}
-							>
-								<Plus size={14} />
-								Create your first pipeline
-							</button>
-						</div>
-					) : (
-						<div className="flex flex-col items-center gap-3 text-center px-8">
-							<div className="flex items-center gap-6" style={{ color: theme.colors.textDim }}>
-								<div className="flex flex-col items-center gap-1">
-									<span style={{ fontSize: 20 }}>←</span>
-									<span className="text-xs">Triggers</span>
-								</div>
-								<div className="flex flex-col items-center gap-2 max-w-xs">
-									<Zap size={24} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
-									<span className="text-sm" style={{ color: theme.colors.textDim }}>
-										Drag a trigger from the left drawer and an agent from the right drawer
-									</span>
-								</div>
-								<div className="flex flex-col items-center gap-1">
-									<span style={{ fontSize: 20 }}>→</span>
-									<span className="text-xs">Agents</span>
-								</div>
-							</div>
-						</div>
-					)}
-				</div>
-			)}
+			{/* Empty state overlay (Phase 14B — extracted + memoized) */}
+			<PipelineEmptyState
+				nodeCount={nodes.length}
+				pipelineCount={pipelineCount}
+				theme={theme}
+				createPipeline={createPipeline}
+				setTriggerDrawerOpen={setTriggerDrawerOpen}
+				setAgentDrawerOpen={setAgentDrawerOpen}
+			/>
 
 			{/* React Flow Canvas */}
 			<ReactFlow
@@ -326,65 +273,13 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 				theme={theme}
 			/>
 
-			{/* Pipeline legend (shown in All Pipelines view) */}
-			{selectedPipelineId === null && pipelines.length > 0 && (
-				<div
-					style={{
-						position: 'absolute',
-						top: 8,
-						left: '50%',
-						transform: 'translateX(-50%)',
-						zIndex: 10,
-						display: 'flex',
-						alignItems: 'center',
-						gap: 12,
-						padding: '6px 14px',
-						backgroundColor: `${theme.colors.bgActivity}f5`,
-						border: `1px solid ${theme.colors.border}`,
-						borderRadius: 6,
-					}}
-				>
-					{pipelines.map((p) => (
-						<button
-							key={p.id}
-							onClick={() => selectPipeline(p.id)}
-							style={{
-								display: 'flex',
-								alignItems: 'center',
-								gap: 6,
-								fontSize: 11,
-								color: theme.colors.textMain,
-								backgroundColor: 'transparent',
-								border: 'none',
-								cursor: 'pointer',
-								padding: '2px 4px',
-								borderRadius: 4,
-								transition: 'background-color 0.15s',
-							}}
-							onMouseEnter={(e) => {
-								e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
-							}}
-							onMouseLeave={(e) => {
-								e.currentTarget.style.backgroundColor = 'transparent';
-							}}
-							title={`Switch to ${p.name}`}
-						>
-							<span
-								style={{
-									width: 10,
-									height: 10,
-									borderRadius: '50%',
-									backgroundColor: p.color,
-									flexShrink: 0,
-									border: '1px solid rgba(255,255,255,0.15)',
-								}}
-							/>
-							<span style={{ fontWeight: 500 }}>{p.name}</span>
-							<span style={{ color: theme.colors.textDim, fontSize: 10 }}>({p.nodes.length})</span>
-						</button>
-					))}
-				</div>
-			)}
+			{/* Pipeline legend — extracted + memoized (Phase 14B) */}
+			<PipelineLegend
+				pipelines={pipelines}
+				selectedPipelineId={selectedPipelineId}
+				selectPipeline={selectPipeline}
+				theme={theme}
+			/>
 
 			{/* Cue settings panel */}
 			{showSettings && (
