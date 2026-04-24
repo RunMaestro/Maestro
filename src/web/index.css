@@ -149,21 +149,24 @@ textarea::placeholder {
 	font-style: italic;
 }
 
+/* Larger tap targets for accessibility (44px minimum per Apple HIG).
+   Applied at all viewport widths so pointer, touch, and stylus input all
+   clear the same target-size floor. Phone-only rules (text-size-adjust,
+   overscroll, iOS 16px zoom-prevention) remain gated below. */
+button,
+a,
+input,
+select,
+textarea {
+	min-height: 44px;
+}
+
 /* Mobile-specific styles */
 @media (max-width: 767px) {
 	/* Prevent text size adjustment */
 	html {
 		-webkit-text-size-adjust: none;
 		text-size-adjust: none;
-	}
-
-	/* Larger tap targets for accessibility (44px minimum per Apple HIG) */
-	button,
-	a,
-	input,
-	select,
-	textarea {
-		min-height: 44px;
 	}
 
 	/* Disable pull-to-refresh on body (we'll handle it ourselves) */
