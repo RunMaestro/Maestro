@@ -140,6 +140,13 @@ export interface CommandInputBarProps {
 	onToggleThinking?: () => void;
 	/** Whether the active agent supports thinking display */
 	supportsThinking?: boolean;
+	/**
+	 * Compact mode: reduces vertical padding and hides secondary rows (swipe
+	 * handle, recent command chips) so the bar consumes less vertical space.
+	 * TODO(phase-5): wire this to `useBreakpoint().isShortViewport` at the
+	 * call site so landscape-phone layouts opt in automatically.
+	 */
+	compact?: boolean;
 }
 
 /**
@@ -171,6 +178,7 @@ export function CommandInputBar({
 	thinkingMode = 'off',
 	onToggleThinking,
 	supportsThinking = false,
+	compact = false,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -495,10 +503,14 @@ export function CommandInputBar({
 				bottom: keyboardOffset,
 				zIndex: 100,
 				// Safe area padding for notched devices
-				paddingBottom: isKeyboardVisible ? '0' : 'max(12px, env(safe-area-inset-bottom))',
+				paddingBottom: isKeyboardVisible
+					? '0'
+					: compact
+						? 'max(4px, env(safe-area-inset-bottom))'
+						: 'max(12px, env(safe-area-inset-bottom))',
 				paddingLeft: 'env(safe-area-inset-left)',
 				paddingRight: 'env(safe-area-inset-right)',
-				paddingTop: onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown
+				paddingTop: compact ? '4px' : onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown or compact
 				backgroundColor: colors.bgSidebar,
 				borderTop: `1px solid ${colors.border}`,
 				// Smooth transition when keyboard appears/disappears
@@ -512,7 +524,8 @@ export function CommandInputBar({
 			}}
 		>
 			{/* Swipe up handle indicator - visual hint for opening history */}
-			{onHistoryOpen && (
+			{/* Hidden in compact mode to reclaim vertical space on short viewports */}
+			{onHistoryOpen && !compact && (
 				<div
 					style={{
 						display: 'flex',
@@ -537,7 +550,9 @@ export function CommandInputBar({
 
 			{/* Recent command chips - quick-tap to reuse commands */}
 			{/* On mobile, can be hidden when input is not focused to save space */}
+			{/* Hidden in compact mode to reclaim vertical space on short viewports */}
 			{showRecentCommands &&
+				!compact &&
 				recentCommands &&
 				recentCommands.length > 0 &&
 				onSelectRecentCommand && (
