@@ -294,30 +294,29 @@ describe('agent-definitions', () => {
 			expect(modelOption?.argBuilder?.('  ')).toEqual([]);
 		});
 
-		it('should have Copilot-specific config options for supported CLI flags', () => {
+		it('should expose only the batch-meaningful Copilot config knobs', () => {
 			const copilot = getAgentDefinition('copilot-cli');
 			expect(copilot?.configOptions).toBeDefined();
+
+			// The only user-facing knobs we expose are model, contextWindow, and
+			// reasoningEffort. The autopilot / allow-all-paths / allow-all-urls /
+			// experimental / screen-reader flags are intentionally omitted: batch
+			// mode already runs with --allow-all, and the rest are either
+			// interactive-only or general user preferences (see definitions.ts).
+			const keys = (copilot?.configOptions || []).map((opt) => opt.key).sort();
+			expect(keys).toEqual(['contextWindow', 'model', 'reasoningEffort']);
 
 			const reasoningEffort = copilot?.configOptions?.find((opt) => opt.key === 'reasoningEffort');
 			expect(reasoningEffort?.type).toBe('select');
 			expect(reasoningEffort?.argBuilder?.('high')).toEqual(['--reasoning-effort', 'high']);
+			expect(reasoningEffort?.argBuilder?.('')).toEqual([]);
+		});
 
-			const autopilot = copilot?.configOptions?.find((opt) => opt.key === 'autopilot');
-			expect(autopilot?.type).toBe('checkbox');
-			expect(autopilot?.argBuilder?.(true)).toEqual(['--autopilot']);
-			expect(autopilot?.argBuilder?.(false)).toEqual([]);
-
-			const allowAllPaths = copilot?.configOptions?.find((opt) => opt.key === 'allowAllPaths');
-			expect(allowAllPaths?.argBuilder?.(true)).toEqual(['--allow-all-paths']);
-
-			const allowAllUrls = copilot?.configOptions?.find((opt) => opt.key === 'allowAllUrls');
-			expect(allowAllUrls?.argBuilder?.(true)).toEqual(['--allow-all-urls']);
-
-			const experimental = copilot?.configOptions?.find((opt) => opt.key === 'experimental');
-			expect(experimental?.argBuilder?.(true)).toEqual(['--experimental']);
-
-			const screenReader = copilot?.configOptions?.find((opt) => opt.key === 'screenReader');
-			expect(screenReader?.argBuilder?.(true)).toEqual(['--screen-reader']);
+		it('should run Copilot batch with --allow-all (no --silent, no per-flag toggles)', () => {
+			const copilot = getAgentDefinition('copilot-cli');
+			expect(copilot?.batchModeArgs).toEqual(['--allow-all']);
+			expect(copilot?.batchModeArgs).not.toContain('--silent');
+			expect(copilot?.yoloModeArgs).toEqual(['--allow-all']);
 		});
 	});
 
