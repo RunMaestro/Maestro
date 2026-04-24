@@ -237,10 +237,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// file to avoid exceeding the ~32K CreateProcess command-line length limit.
 				// SSH sessions are exempt (the command runs inside a stdin script, not the
 				// OS command line) and always use inline --append-system-prompt.
+				//
+				// Resume behavior: for agents WITHOUT native --append-system-prompt support,
+				// the fallback path embeds the system prompt into the first user turn. That
+				// turn is preserved in the agent's session transcript, so on resume we skip
+				// re-embedding to avoid polluting every subsequent user message with the
+				// full system prompt (which would be redundant context and waste tokens).
+				// Agents with native support re-send per invocation — that flag is metadata,
+				// not conversation content, and some agents (e.g. Claude Code) require it
+				// every turn because it isn't persisted into the session transcript.
 				// ========================================================================
 				let effectivePrompt = config.prompt;
 				let systemPromptTempFile: string | undefined;
 				const isSshSession = config.sessionSshRemoteConfig?.enabled;
+				const isResume = !!config.agentSessionId;
 				if (config.appendSystemPrompt) {
 					if (agent?.capabilities?.supportsAppendSystemPrompt) {
 						if (isWindows() && !isSshSession) {
@@ -287,6 +297,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								systemPromptLength: config.appendSystemPrompt.length,
 							});
 						}
+					} else if (isResume) {
+						// Resume path for agents without native --append-system-prompt:
+						// the system prompt was embedded in the first user turn at initial
+						// spawn and is preserved in the agent's session transcript. Skip
+						// re-embedding to avoid polluting every subsequent user message.
+						logger.debug(
+							'Skipping system prompt re-injection on resume (already in transcript)',
+							LOG_CONTEXT,
+							{
+								agentId: agent?.id,
+								systemPromptLength: config.appendSystemPrompt.length,
+							}
+						);
 					} else if (effectivePrompt) {
 						// Fallback: embed system prompt in user message
 						effectivePrompt = `${config.appendSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;

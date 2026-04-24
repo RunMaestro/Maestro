@@ -2346,6 +2346,117 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.sshStdinScript).toContain('# User Request');
 		});
 
+		it('should skip embedding system prompt on resume for unsupported agents', async () => {
+			const mockAgent = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				requiresPty: true,
+				path: '/usr/local/bin/copilot',
+				capabilities: {
+					supportsAppendSystemPrompt: false,
+					supportsResume: true,
+				},
+				resumeArgs: (sessionId: string) => [`--resume=${sessionId}`],
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'Follow-up question',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				agentSessionId: 'prior-session-uuid', // Resume signal
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// --append-system-prompt should NOT be in args (agent doesn't support it)
+			expect(spawnCall.args).not.toContain('--append-system-prompt');
+			// System prompt should NOT be embedded in the user prompt on resume
+			expect(spawnCall.prompt).toBe('Follow-up question');
+			expect(spawnCall.prompt).not.toContain('Maestro system prompt');
+			expect(spawnCall.prompt).not.toContain('# User Request');
+		});
+
+		it('should still embed system prompt on first turn (no agentSessionId) for unsupported agents', async () => {
+			const mockAgent = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				requiresPty: true,
+				path: '/usr/local/bin/copilot',
+				capabilities: {
+					supportsAppendSystemPrompt: false,
+					supportsResume: true,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'First message',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				// No agentSessionId — this is a fresh session
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// First turn: should embed in the user prompt
+			expect(spawnCall.prompt).toContain('You are Maestro system prompt content');
+			expect(spawnCall.prompt).toContain('First message');
+			expect(spawnCall.prompt).toContain('# User Request');
+		});
+
+		it('should still send --append-system-prompt on resume for natively-supported agents', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: true,
+				path: '/usr/local/bin/claude',
+				capabilities: {
+					supportsAppendSystemPrompt: true,
+					supportsStreamJsonInput: true,
+					supportsResume: true,
+				},
+				resumeArgs: (sessionId: string) => ['--resume', sessionId],
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'Follow-up question',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				agentSessionId: 'prior-session-uuid', // Resume signal
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			if (process.platform !== 'win32') {
+				// Non-Windows: flag is still passed every turn (not persisted in transcript)
+				const idx = spawnCall.args.indexOf('--append-system-prompt');
+				expect(idx).toBeGreaterThan(-1);
+				expect(spawnCall.args[idx + 1]).toBe('You are Maestro system prompt content');
+			}
+			// User prompt stays clean regardless
+			expect(spawnCall.prompt).toBe('Follow-up question');
+		});
+
 		it('should not add --append-system-prompt when appendSystemPrompt is not provided', async () => {
 			const mockAgent = {
 				id: 'claude-code',

@@ -1031,9 +1031,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							});
 						}
 
-						// Prepare Maestro system prompt (re-injected on every spawn, incl. resume —
-						// Claude Code's --append-system-prompt is per-invocation and NOT persisted
-						// into the session transcript, so skipping on resume drops it from turn 2+)
+						// Prepare Maestro system prompt. Always send it; the main-process handler
+						// decides how to deliver it based on agent capabilities:
+						//  - Native --append-system-prompt agents (e.g. Claude Code): re-send every
+						//    invocation — the flag isn't persisted into the session transcript.
+						//  - Fallback-embed agents (e.g. Copilot-CLI, Codex): embed only on first
+						//    turn; on resume the prompt is already in the transcript.
 						const appendSystemPrompt = await prepareMaestroSystemPrompt({
 							session: freshSession,
 							activeTabId: freshSession.activeTabId,

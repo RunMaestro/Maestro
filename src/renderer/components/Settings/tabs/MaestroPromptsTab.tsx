@@ -424,7 +424,6 @@ export function MaestroPromptsTab({
 	}, []);
 
 	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component).
-	// Token count reflects saved content; the editor header shows the live count for the buffer being edited.
 	const items = useMemo<DualPaneFileEditorItem[]>(() => {
 		return [...prompts]
 			.sort((a, b) => a.id.localeCompare(b.id))
@@ -434,11 +433,8 @@ export function MaestroPromptsTab({
 				description: p.description,
 				category: p.category,
 				isModified: p.isModified,
-				tokenCount: estimateTokenCount(
-					selectedPrompt?.id === p.id && hasUnsavedChanges ? editedContent : p.content
-				),
 			}));
-	}, [prompts, selectedPrompt?.id, hasUnsavedChanges, editedContent]);
+	}, [prompts]);
 
 	const editorTokenCount = useMemo(
 		() => (selectedPrompt ? estimateTokenCount(editedContent) : undefined),
