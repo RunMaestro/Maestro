@@ -172,38 +172,18 @@ export function RightPanel({
 					/>
 				)}
 				{/* Header with tabs and close button */}
-				<div
-					style={{
-						display: 'flex',
-						alignItems: 'stretch',
-						borderBottom: `1px solid ${colors.border}`,
-						backgroundColor: colors.bgSidebar,
-						flexShrink: 0,
-					}}
-				>
+				<div className="flex items-stretch border-b border-border bg-bg-sidebar flex-shrink-0">
 					{TABS.map((tab) => {
 						const isActive = currentTab === tab.id;
 						return (
 							<button
 								key={tab.id}
 								onClick={() => handleTabChange(tab.id)}
-								style={{
-									flex: 1,
-									minWidth: 0,
-									padding: '10px 6px 8px',
-									border: 'none',
-									borderBottom: `2px solid ${isActive ? colors.accent : 'transparent'}`,
-									backgroundColor: 'transparent',
-									color: isActive ? colors.accent : colors.textDim,
-									fontSize: '11px',
-									fontWeight: isActive ? 600 : 500,
-									cursor: 'pointer',
-									touchAction: 'manipulation',
-									WebkitTapHighlightColor: 'transparent',
-									transition: 'color 0.15s ease, border-color 0.15s ease',
-									whiteSpace: 'nowrap',
-									textAlign: 'center',
-								}}
+								className={`flex-1 min-w-0 pt-2.5 px-1.5 pb-2 border-0 border-b-2 bg-transparent text-[11px] cursor-pointer touch-manipulation [-webkit-tap-highlight-color:transparent] transition-colors duration-150 ease-in-out whitespace-nowrap text-center ${
+									isActive
+										? 'border-accent text-accent font-semibold'
+										: 'border-transparent text-text-dim font-medium'
+								}`}
 								aria-selected={isActive}
 								role="tab"
 							>
@@ -214,18 +194,7 @@ export function RightPanel({
 					{/* Close button */}
 					<button
 						onClick={onClose}
-						style={{
-							padding: '8px 10px',
-							border: 'none',
-							backgroundColor: 'transparent',
-							color: colors.textDim,
-							cursor: 'pointer',
-							display: 'flex',
-							alignItems: 'center',
-							justifyContent: 'center',
-							flexShrink: 0,
-							touchAction: 'manipulation',
-						}}
+						className="py-2 px-2.5 border-0 bg-transparent text-text-dim cursor-pointer flex items-center justify-center flex-shrink-0 touch-manipulation"
 						aria-label="Close panel"
 						title="Close panel"
 					>
@@ -246,13 +215,7 @@ export function RightPanel({
 				</div>
 
 				{/* Tab content */}
-				<div
-					style={{
-						flex: 1,
-						overflowY: 'auto',
-						overflowX: 'hidden',
-					}}
-				>
+				<div className="flex-1 overflow-y-auto overflow-x-hidden">
 					{currentTab === 'files' && (
 						<FilesTabContent
 							sessionId={sessionId}

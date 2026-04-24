@@ -375,11 +375,9 @@ function FilesTabContent({
 								strokeWidth="2"
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								style={{
-									flexShrink: 0,
-									transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-									transition: 'transform 0.1s ease',
-								}}
+								className={`flex-shrink-0 transition-transform duration-100 ease-in-out ${
+									isExpanded ? 'rotate-90' : 'rotate-0'
+								}`}
 							>
 								<polyline points="9 18 15 12 9 6" />
 							</svg>
@@ -389,14 +387,14 @@ function FilesTabContent({
 								viewBox="0 0 24 24"
 								fill={isExpanded ? colors.accent : colors.textDim}
 								stroke="none"
-								style={{ flexShrink: 0, opacity: 0.7 }}
+								className="flex-shrink-0 opacity-70"
 							>
 								<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
 							</svg>
 						</>
 					) : (
 						<>
-							<span style={{ width: '10px', flexShrink: 0 }} />
+							<span className="w-2.5 flex-shrink-0" />
 							<svg
 								width="14"
 								height="14"
@@ -406,14 +404,14 @@ function FilesTabContent({
 								strokeWidth="2"
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								style={{ flexShrink: 0, opacity: 0.5 }}
+								className="flex-shrink-0 opacity-50"
 							>
 								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
 								<polyline points="14 2 14 8 20 8" />
 							</svg>
 						</>
 					)}
-					<span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+					<span className="overflow-hidden text-ellipsis">{node.name}</span>
 				</button>
 				{isFolder && isExpanded && node.children && (
 					<div>{node.children.map((child) => renderNode(child, depth + 1))}</div>

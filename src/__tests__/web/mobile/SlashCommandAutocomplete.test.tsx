@@ -512,7 +512,10 @@ describe('SlashCommandAutocomplete', () => {
 		it('header is sticky', () => {
 			render(<SlashCommandAutocomplete {...defaultProps} />);
 			const header = screen.getByText('Commands').closest('div');
-			expect(header).toHaveStyle({ position: 'sticky' });
+			// Phase 6 Task 6.7 migrated inline `position: sticky` to Tailwind's
+			// `sticky` utility. JSDom doesn't apply stylesheet CSS, so assert on
+			// the class instead of the computed style.
+			expect(header).toHaveClass('sticky');
 		});
 	});
 

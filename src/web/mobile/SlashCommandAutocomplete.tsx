@@ -184,28 +184,8 @@ export function SlashCommandAutocomplete({
 			}}
 		>
 			{/* Header with title and close button */}
-			<div
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					justifyContent: 'space-between',
-					padding: '10px 16px',
-					borderBottom: `1px solid ${colors.border}`,
-					position: 'sticky',
-					top: 0,
-					backgroundColor: colors.bgSidebar,
-					zIndex: 1,
-				}}
-			>
-				<span
-					style={{
-						fontSize: '13px',
-						fontWeight: 600,
-						color: colors.textDim,
-						textTransform: 'uppercase',
-						letterSpacing: '0.5px',
-					}}
-				>
+			<div className="flex items-center justify-between py-2.5 px-4 border-b border-border sticky top-0 bg-bg-sidebar z-[1]">
+				<span className="text-[13px] font-semibold text-text-dim uppercase tracking-[0.5px]">
 					Commands
 				</span>
 				<button
