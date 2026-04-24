@@ -212,6 +212,17 @@ export function createCueSessionRuntimeService(
 			);
 		}
 
+		// Subscriptions this session will actually instantiate / run. For non-
+		// owners, drop unowned subs (no agent_id) up front so every downstream
+		// consumer — trigger wiring, app.startup, sleep prevention, the
+		// initialized-with-N-subs log, refresh activeCount — sees a single
+		// consistent view. Without this filter, a non-owner with only unowned
+		// time-based subs would still hit `onPreventSleep` and report active
+		// counts for work it never executes.
+		const runnableSubscriptions = isConfigOwner
+			? config.subscriptions
+			: config.subscriptions.filter((sub) => Boolean(sub.agent_id));
+
 		const state: SessionState = {
 			config,
 			configRoot: ancestorRoot,
@@ -236,10 +247,9 @@ export function createCueSessionRuntimeService(
 		// own timer/watcher/poller and emits events through the `emit` callback,
 		// which centralizes the dispatch path: passesFilter → state.lastTriggered
 		// → dispatchSubscription. Sources never touch session state directly.
-		for (const sub of config.subscriptions) {
+		for (const sub of runnableSubscriptions) {
 			if (sub.enabled === false) continue;
 			if (sub.agent_id && sub.agent_id !== session.id) continue;
-			if (!isConfigOwner && !sub.agent_id) continue;
 
 			const source: CueTriggerSource | null = createTriggerSource(sub.event, {
 				session,
@@ -263,10 +273,9 @@ export function createCueSessionRuntimeService(
 		// only when the engine is starting because of a real system boot. Toggling
 		// Cue off/on or hot-reloading a YAML must NOT re-fire startup events.
 		if (opts.reason === 'system-boot') {
-			for (const sub of config.subscriptions) {
+			for (const sub of runnableSubscriptions) {
 				if (sub.enabled === false) continue;
 				if (sub.agent_id && sub.agent_id !== session.id) continue;
-				if (!isConfigOwner && !sub.agent_id) continue;
 				if (sub.event !== 'app.startup') continue;
 
 				if (!registry.markStartupFired(session.id, sub.name)) continue;
@@ -283,14 +292,17 @@ export function createCueSessionRuntimeService(
 			}
 		}
 
-		state.sleepPrevented = hasTimeBasedSubscriptions(config, session.id);
+		state.sleepPrevented = hasTimeBasedSubscriptions(
+			{ ...config, subscriptions: runnableSubscriptions },
+			session.id
+		);
 		if (state.sleepPrevented) {
 			deps.onPreventSleep?.(`cue:schedule:${session.id}`);
 		}
 
 		deps.onLog(
 			'cue',
-			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(config.subscriptions, session.id, session.name)} active subscription(s)`
+			`[CUE] Initialized session "${session.name}" with ${countActiveSubscriptions(runnableSubscriptions, session.id, session.name)} active subscription(s)`
 		);
 		return { kind: 'loaded' };
 	}
@@ -379,11 +391,12 @@ export function createCueSessionRuntimeService(
 					clearGitHubSeenForSubscription(id);
 				}
 			}
-			const activeCount = countActiveSubscriptions(
-				newState.config.subscriptions,
-				sessionId,
-				session.name
-			);
+			// Mirror init's ownership-filtered view so the dashboard count
+			// doesn't include unowned subscriptions a non-owner won't run.
+			const visibleSubscriptions = newState.ownershipWarning
+				? newState.config.subscriptions.filter((sub) => Boolean(sub.agent_id))
+				: newState.config.subscriptions;
+			const activeCount = countActiveSubscriptions(visibleSubscriptions, sessionId, session.name);
 			return {
 				reloaded: true,
 				configRemoved: false,
