@@ -73,4 +73,14 @@ describe('MobileMarkdownRenderer', () => {
 		expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
 		expect(getByTestId('syntax-highlighter').querySelector('.bionify-word-emphasis')).toBeNull();
 	});
+
+	it('applies word-break to paragraphs so long URLs wrap', () => {
+		const { container } = render(
+			<MobileMarkdownRenderer content="Some prose with a link." enableBionifyReadingMode={false} />
+		);
+
+		const paragraph = container.querySelector('.mobile-markdown-content p');
+		expect(paragraph).not.toBeNull();
+		expect((paragraph as HTMLElement).style.wordBreak).toBe('break-word');
+	});
 });
