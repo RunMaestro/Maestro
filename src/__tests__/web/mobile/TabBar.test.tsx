@@ -326,7 +326,10 @@ describe('TabBar', () => {
 	});
 
 	describe('Hover state', () => {
-		it('changes background on mouse enter for inactive tab', () => {
+		it('marks inactive tab so CSS can apply the hover tint', () => {
+			// Phase 2.2 moved the inactive-tab hover tint from React state to a CSS
+			// rule keyed off `data-tab-active="false"` (see the `<style>` block in
+			// TabBar.tsx). Mouse events no longer mutate inline style.
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active' }),
 				createTab({ id: 'tab-2', name: 'Inactive' }),
@@ -340,14 +343,22 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const inactiveButton = screen.getByText('Inactive').closest('button');
+			const inactiveButton = screen.getByText('Inactive').closest('button')!;
 
-			// Hover
-			fireEvent.mouseEnter(inactiveButton!);
-			expect(inactiveButton).toHaveStyle({ backgroundColor: 'rgba(255, 255, 255, 0.08)' });
+			expect(inactiveButton).toHaveAttribute('data-tab-active', 'false');
+			expect(inactiveButton).toHaveClass('tab-bar-tab-button');
+			expect(inactiveButton.style.backgroundColor).toBe('transparent');
+
+			// Mouse events must no longer mutate inline backgroundColor — the CSS
+			// `:hover` rule handles the tint, and simulated mouseEnter in jsdom
+			// does not fire real `:hover` matches anyway.
+			fireEvent.mouseEnter(inactiveButton);
+			expect(inactiveButton.style.backgroundColor).toBe('transparent');
+			fireEvent.mouseLeave(inactiveButton);
+			expect(inactiveButton.style.backgroundColor).toBe('transparent');
 		});
 
-		it('resets background on mouse leave for inactive tab', () => {
+		it('keeps the active tab background untouched by mouse events', () => {
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active' }),
 				createTab({ id: 'tab-2', name: 'Inactive' }),
@@ -361,36 +372,12 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const inactiveButton = screen.getByText('Inactive').closest('button');
+			const activeButton = screen.getByText('Active').closest('button')!;
 
-			fireEvent.mouseEnter(inactiveButton!);
-			// Get the hovered background
-			const hoveredBg = inactiveButton?.style.backgroundColor;
-			expect(hoveredBg).toBe('rgba(255, 255, 255, 0.08)');
+			expect(activeButton).toHaveAttribute('data-tab-active', 'true');
+			expect(activeButton).toHaveStyle({ backgroundColor: mockColors.bgMain });
 
-			fireEvent.mouseLeave(inactiveButton!);
-			// After mouse leave, background should change back (not the hovered state)
-			const afterLeaveBg = inactiveButton?.style.backgroundColor;
-			expect(afterLeaveBg).not.toBe('rgba(255, 255, 255, 0.08)');
-		});
-
-		it('does not change background for active tab on hover', () => {
-			const tabs = [
-				createTab({ id: 'tab-1', name: 'Active' }),
-				createTab({ id: 'tab-2', name: 'Inactive' }),
-			];
-			render(
-				<TabBar
-					tabs={tabs}
-					activeTabId="tab-1"
-					onSelectTab={mockOnSelectTab}
-					onNewTab={mockOnNewTab}
-					onCloseTab={mockOnCloseTab}
-				/>
-			);
-			const activeButton = screen.getByText('Active').closest('button');
-
-			fireEvent.mouseEnter(activeButton!);
+			fireEvent.mouseEnter(activeButton);
 			expect(activeButton).toHaveStyle({ backgroundColor: mockColors.bgMain });
 		});
 	});
@@ -416,7 +403,10 @@ describe('TabBar', () => {
 			expect(closeButton).toBeInTheDocument();
 		});
 
-		it('shows close button on hover for inactive tab', () => {
+		it('always renders close button for inactive tabs (touch reachability)', () => {
+			// Phase 2.2: the `×` must be in the DOM at every viewport tier so
+			// touch users can reach it without hovering. The desktop-only
+			// hover-reveal is handled in CSS (see `<style>` block in TabBar).
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Active' }),
 				createTab({ id: 'tab-2', name: 'Inactive' }),
@@ -433,35 +423,15 @@ describe('TabBar', () => {
 			const inactiveButton = screen.getByText('Inactive').closest('button')!;
 			const tabWrapper = inactiveButton.parentElement!;
 
-			// Before hover - no close button
-			expect(within(tabWrapper).queryByLabelText('Close tab')).not.toBeInTheDocument();
-
-			// Hover - close button appears
-			fireEvent.mouseEnter(inactiveButton);
+			// Close button present even before any hover event.
 			expect(within(tabWrapper).getByLabelText('Close tab')).toBeInTheDocument();
-		});
+			// And the row carries the data attribute the CSS rule targets.
+			expect(tabWrapper).toHaveAttribute('data-tab-active', 'false');
 
-		it('hides close button when mouse leaves inactive tab', () => {
-			const tabs = [
-				createTab({ id: 'tab-1', name: 'Active' }),
-				createTab({ id: 'tab-2', name: 'Inactive' }),
-			];
-			render(
-				<TabBar
-					tabs={tabs}
-					activeTabId="tab-1"
-					onSelectTab={mockOnSelectTab}
-					onNewTab={mockOnNewTab}
-					onCloseTab={mockOnCloseTab}
-				/>
-			);
-			const inactiveButton = screen.getByText('Inactive').closest('button')!;
-			const tabWrapper = inactiveButton.parentElement!;
-
+			// Mouse events must not toggle DOM presence any more.
 			fireEvent.mouseEnter(inactiveButton);
 			fireEvent.mouseLeave(inactiveButton);
-
-			expect(within(tabWrapper).queryByLabelText('Close tab')).not.toBeInTheDocument();
+			expect(within(tabWrapper).getByLabelText('Close tab')).toBeInTheDocument();
 		});
 
 		it('calls onCloseTab with correct tab id when close button clicked', () => {

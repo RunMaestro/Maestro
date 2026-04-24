@@ -51,7 +51,6 @@ function Tab({
 	onClose,
 	onLongPress,
 }: TabProps) {
-	const [isHovered, setIsHovered] = useState(false);
 	const [isCloseHovered, setIsCloseHovered] = useState(false);
 
 	const handleLongPress = useCallback(
@@ -69,6 +68,8 @@ function Tab({
 
 	return (
 		<div
+			className="tab-bar-tab-row"
+			data-tab-active={isActive}
 			style={{
 				display: 'flex',
 				alignItems: 'center',
@@ -81,14 +82,17 @@ function Tab({
 				{...handlers}
 				onClick={handleClick}
 				onContextMenu={handleContextMenu}
-				onMouseEnter={() => setIsHovered(true)}
-				onMouseLeave={() => setIsHovered(false)}
+				className="tab-bar-tab-button"
+				data-tab-active={isActive}
 				style={{
 					display: 'flex',
 					alignItems: 'center',
 					gap: '6px',
 					padding: '6px 10px',
-					paddingRight: canClose && isActive ? '28px' : '10px',
+					// Reserve space for the close `×` whenever it can render. Keeping
+					// padding stable across hover/active prevents a layout shift when
+					// the CSS hover reveal animates it in on desktop.
+					paddingRight: canClose ? '28px' : '10px',
 					// Browser-style tab with rounded top corners
 					borderTopLeftRadius: '6px',
 					borderTopRightRadius: '6px',
@@ -98,12 +102,10 @@ function Tab({
 					borderRight: isActive ? `1px solid ${colors.border}` : '1px solid transparent',
 					// Active tab connects to content (no bottom border)
 					borderBottom: isActive ? `1px solid ${colors.bgMain}` : '1px solid transparent',
-					// Active tab has bright background matching content, inactive are transparent
-					backgroundColor: isActive
-						? colors.bgMain
-						: isHovered
-							? 'rgba(255, 255, 255, 0.08)'
-							: 'transparent',
+					// Active tab has bright background matching content; inactive starts
+					// transparent and gets a CSS-driven hover tint (see the <style> block
+					// at the bottom of this file).
+					backgroundColor: isActive ? colors.bgMain : 'transparent',
 					color: isActive ? colors.textMain : colors.textDim,
 					fontSize: '12px',
 					fontWeight: isActive ? 600 : 400,
@@ -153,8 +155,10 @@ function Tab({
 				</span>
 			</button>
 
-			{/* Close button - separate from tab button for reliable touch targets */}
-			{canClose && (isHovered || isActive) && (
+			{/* Close button — always rendered when `canClose`, so touch users can
+			    reach it without hover. At desktop width the CSS `<style>` block
+			    below hides the inactive-tab `×` until hover or focus-within. */}
+			{canClose && (
 				<button
 					onClick={(e) => {
 						e.stopPropagation();
@@ -163,6 +167,7 @@ function Tab({
 					}}
 					onMouseEnter={() => setIsCloseHovered(true)}
 					onMouseLeave={() => setIsCloseHovered(false)}
+					className="tab-bar-close-button"
 					style={{
 						position: 'absolute',
 						right: '4px',
@@ -912,7 +917,9 @@ export function TabBar({
 				/>
 			)}
 
-			{/* CSS for pulse animation */}
+			{/* CSS for pulse animation + hover/visibility rules driven by
+			    data-tab-active on the row + tab button. See Task 2.2 in
+			    .maestro/playbooks/webui-responsiveness/PHASE-02-navigation.md. */}
 			<style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
@@ -920,6 +927,24 @@ export function TabBar({
         }
         .hide-scrollbar::-webkit-scrollbar {
           display: none;
+        }
+        /* Inactive tabs get a subtle hover tint — previously a React state. */
+        .tab-bar-tab-button[data-tab-active="false"]:hover {
+          background-color: rgba(255, 255, 255, 0.08);
+        }
+        /* Close-button visibility mirrors Phase 2.2 rules:
+             active tab OR phone/tablet (< 960px) → always visible;
+             desktop (≥ 960px) inactive tab → hidden until hover or focus-within. */
+        @media (min-width: 960px) {
+          .tab-bar-tab-row[data-tab-active="false"] .tab-bar-close-button {
+            opacity: 0;
+            pointer-events: none;
+          }
+          .tab-bar-tab-row[data-tab-active="false"]:hover .tab-bar-close-button,
+          .tab-bar-tab-row[data-tab-active="false"]:focus-within .tab-bar-close-button {
+            opacity: 1;
+            pointer-events: auto;
+          }
         }
       `}</style>
 		</div>
