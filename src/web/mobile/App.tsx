@@ -3157,14 +3157,13 @@ export default function MobileApp() {
 			)}
 
 			{/* Notification settings bottom sheet */}
-			{showNotificationSettings && (
-				<NotificationSettingsSheet
-					preferences={notificationPreferences}
-					onPreferencesChange={setNotificationPreferences}
-					permission={notificationPermission}
-					onClose={handleCloseNotificationSettings}
-				/>
-			)}
+			<NotificationSettingsSheet
+				isOpen={showNotificationSettings}
+				preferences={notificationPreferences}
+				onPreferencesChange={setNotificationPreferences}
+				permission={notificationPermission}
+				onClose={handleCloseNotificationSettings}
+			/>
 
 			{/* Settings panel - full-screen overlay */}
 			{showSettingsPanel && (
