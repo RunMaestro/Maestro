@@ -1,12 +1,18 @@
 /**
  * GitDiffViewer component for Maestro mobile web interface
  *
- * Displays a unified diff with line-by-line coloring, line numbers parsed
- * from @@ hunks, and horizontal scroll for long lines.
+ * Displays a parsed unified diff in one of two view modes:
+ *   - `unified` — a single column (old and new changes interleaved)
+ *   - `split`   — two columns side-by-side (old on the left, new on the right)
+ *
+ * The user's choice is persisted globally via localStorage. If no preference
+ * has been saved, the initial mode is picked by viewport tier: `unified` on
+ * phones, `split` on tablet and desktop.
  */
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 
 export interface GitDiffViewerProps {
@@ -15,11 +21,57 @@ export interface GitDiffViewerProps {
 	onBack: () => void;
 }
 
+export type DiffViewMode = 'unified' | 'split';
+
+/**
+ * localStorage key for the user's persisted diff view-mode preference.
+ * Kept flat (not namespaced into the view-state blob) because this is a
+ * long-lived UI preference that shouldn't be subject to the staleness check
+ * used by `viewState.ts`.
+ */
+export const DIFF_VIEW_MODE_STORAGE_KEY = 'maestro-web-diff-view-mode';
+
 interface DiffLine {
 	content: string;
 	type: 'add' | 'remove' | 'hunk' | 'context';
 	oldNum: string;
 	newNum: string;
+}
+
+type SplitRow =
+	| { kind: 'hunk'; content: string }
+	| {
+			kind: 'pair';
+			left: SplitCell;
+			right: SplitCell;
+	  };
+
+interface SplitCell {
+	content: string;
+	num: string;
+	type: 'context' | 'add' | 'remove' | 'empty';
+}
+
+/**
+ * Read the saved view-mode preference. Returns `null` when the user hasn't
+ * made a choice yet (so the caller can apply a tier-based default).
+ */
+export function loadDiffViewMode(): DiffViewMode | null {
+	try {
+		const stored = localStorage.getItem(DIFF_VIEW_MODE_STORAGE_KEY);
+		if (stored === 'unified' || stored === 'split') return stored;
+	} catch {
+		/* localStorage unavailable (e.g. Safari private mode) — fall through */
+	}
+	return null;
+}
+
+function saveDiffViewMode(mode: DiffViewMode): void {
+	try {
+		localStorage.setItem(DIFF_VIEW_MODE_STORAGE_KEY, mode);
+	} catch {
+		/* ignore localStorage write errors */
+	}
 }
 
 /**
@@ -68,11 +120,99 @@ function parseDiffLines(diff: string): DiffLine[] {
 	return result;
 }
 
+/**
+ * Transpose a flat list of diff lines into row-aligned split-view rows.
+ *
+ * Rules:
+ *   - Hunk headers get their own full-width row.
+ *   - Context lines appear on both sides, same content, with matched numbers.
+ *   - A contiguous run of `-` followed by `+` is paired one-to-one; any
+ *     imbalance produces empty cells on the unpaired side.
+ */
+function buildSplitRows(lines: DiffLine[]): SplitRow[] {
+	const rows: SplitRow[] = [];
+	let i = 0;
+
+	while (i < lines.length) {
+		const line = lines[i];
+
+		if (line.type === 'hunk') {
+			rows.push({ kind: 'hunk', content: line.content });
+			i++;
+			continue;
+		}
+
+		if (line.type === 'context') {
+			rows.push({
+				kind: 'pair',
+				left: { content: line.content, num: line.oldNum, type: 'context' },
+				right: { content: line.content, num: line.newNum, type: 'context' },
+			});
+			i++;
+			continue;
+		}
+
+		// Collect a run of removes then a run of adds, and pair them.
+		const removes: DiffLine[] = [];
+		while (i < lines.length && lines[i].type === 'remove') {
+			removes.push(lines[i]);
+			i++;
+		}
+		const adds: DiffLine[] = [];
+		while (i < lines.length && lines[i].type === 'add') {
+			adds.push(lines[i]);
+			i++;
+		}
+
+		const pairCount = Math.max(removes.length, adds.length);
+		// If neither removes nor adds matched (defensive — shouldn't happen with
+		// the parser above), bail out on this line to avoid an infinite loop.
+		if (pairCount === 0) {
+			i++;
+			continue;
+		}
+
+		for (let j = 0; j < pairCount; j++) {
+			const r = removes[j];
+			const a = adds[j];
+			rows.push({
+				kind: 'pair',
+				left: r
+					? { content: r.content, num: r.oldNum, type: 'remove' }
+					: { content: '', num: '', type: 'empty' },
+				right: a
+					? { content: a.content, num: a.newNum, type: 'add' }
+					: { content: '', num: '', type: 'empty' },
+			});
+		}
+	}
+
+	return rows;
+}
+
 export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 	const colors = useThemeColors();
-	const lines = useMemo(() => parseDiffLines(diff), [diff]);
+	const { isPhone } = useBreakpoint();
 
-	// Determine max line number width for gutter sizing
+	const lines = useMemo(() => parseDiffLines(diff), [diff]);
+	const splitRows = useMemo(() => buildSplitRows(lines), [lines]);
+
+	// Initial mode: stored preference wins. Otherwise, phone → unified,
+	// tablet/desktop → split. Captured once on mount so width changes after
+	// the fact don't override a user-selected mode.
+	const [viewMode, setViewMode] = useState<DiffViewMode>(() => {
+		const stored = loadDiffViewMode();
+		if (stored) return stored;
+		return isPhone ? 'unified' : 'split';
+	});
+
+	const handleViewModeChange = useCallback((mode: DiffViewMode) => {
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+		setViewMode(mode);
+		saveDiffViewMode(mode);
+	}, []);
+
+	// Determine max line number width for gutter sizing (shared across modes).
 	const maxNumWidth = useMemo(() => {
 		let max = 0;
 		for (const line of lines) {
@@ -86,7 +226,7 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 
 	const gutterWidth = `${maxNumWidth}ch`;
 
-	function lineBackground(type: DiffLine['type']): string {
+	function lineBackground(type: DiffLine['type'] | 'empty'): string {
 		switch (type) {
 			case 'add':
 				return `${colors.success}26`;
@@ -94,12 +234,14 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 				return `${colors.error}26`;
 			case 'hunk':
 				return `${colors.accent}1a`;
+			case 'empty':
+				return `${colors.border}33`;
 			default:
 				return 'transparent';
 		}
 	}
 
-	function lineColor(type: DiffLine['type']): string {
+	function lineColor(type: DiffLine['type'] | 'empty'): string {
 		switch (type) {
 			case 'hunk':
 				return colors.accent;
@@ -107,6 +249,8 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 				return colors.textMain;
 		}
 	}
+
+	const hasDiff = diff.trim() !== '';
 
 	return (
 		<div
@@ -179,6 +323,47 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 				>
 					{filePath}
 				</span>
+
+				{/* View-mode segmented control */}
+				<div
+					role="tablist"
+					aria-label="Diff view mode"
+					style={{
+						display: 'flex',
+						border: `1px solid ${colors.border}`,
+						borderRadius: '8px',
+						overflow: 'hidden',
+						flexShrink: 0,
+					}}
+				>
+					{(['unified', 'split'] as const).map((mode, idx) => {
+						const isActive = viewMode === mode;
+						return (
+							<button
+								key={mode}
+								role="tab"
+								aria-selected={isActive}
+								onClick={() => handleViewModeChange(mode)}
+								style={{
+									padding: '6px 10px',
+									minHeight: '28px',
+									border: 'none',
+									borderLeft: idx === 0 ? 'none' : `1px solid ${colors.border}`,
+									backgroundColor: isActive ? colors.accent : colors.bgMain,
+									color: isActive ? colors.accentForeground : colors.textDim,
+									fontSize: '12px',
+									fontWeight: isActive ? 600 : 500,
+									cursor: 'pointer',
+									touchAction: 'manipulation',
+									WebkitTapHighlightColor: 'transparent',
+									textTransform: 'capitalize',
+								}}
+							>
+								{mode}
+							</button>
+						);
+					})}
+				</div>
 			</div>
 
 			{/* Diff content */}
@@ -189,7 +374,7 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 					WebkitOverflowScrolling: 'touch',
 				}}
 			>
-				{diff.trim() === '' ? (
+				{!hasDiff ? (
 					<div
 						style={{
 							display: 'flex',
@@ -202,8 +387,9 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 					>
 						No diff available
 					</div>
-				) : (
+				) : viewMode === 'unified' ? (
 					<pre
+						data-diff-view="unified"
 						style={{
 							margin: 0,
 							padding: 0,
@@ -259,6 +445,104 @@ export function GitDiffViewer({ diff, filePath, onBack }: GitDiffViewerProps) {
 								<span style={{ padding: '0 8px', flex: 1 }}>{line.content}</span>
 							</div>
 						))}
+					</pre>
+				) : (
+					<pre
+						data-diff-view="split"
+						style={{
+							margin: 0,
+							padding: 0,
+							fontFamily: 'monospace',
+							fontSize: '12px',
+							lineHeight: '1.5',
+							whiteSpace: 'pre',
+							minWidth: 'fit-content',
+						}}
+					>
+						{splitRows.map((row, i) => {
+							if (row.kind === 'hunk') {
+								return (
+									<div
+										key={i}
+										style={{
+											display: 'flex',
+											backgroundColor: lineBackground('hunk'),
+											color: lineColor('hunk'),
+											minWidth: 'fit-content',
+										}}
+									>
+										<span style={{ padding: '0 8px', flex: 1 }}>{row.content}</span>
+									</div>
+								);
+							}
+
+							return (
+								<div
+									key={i}
+									style={{
+										display: 'flex',
+										minWidth: 'fit-content',
+									}}
+								>
+									{/* Left (old) cell */}
+									<div
+										style={{
+											display: 'flex',
+											flex: '1 1 50%',
+											minWidth: '50%',
+											backgroundColor: lineBackground(row.left.type),
+											color: lineColor(row.left.type === 'empty' ? 'context' : row.left.type),
+											borderRight: `1px solid ${colors.border}`,
+										}}
+									>
+										<span
+											style={{
+												display: 'inline-block',
+												width: gutterWidth,
+												textAlign: 'right',
+												padding: '0 4px',
+												color: colors.textDim,
+												userSelect: 'none',
+												flexShrink: 0,
+												borderRight: `1px solid ${colors.border}`,
+												opacity: 0.6,
+											}}
+										>
+											{row.left.num}
+										</span>
+										<span style={{ padding: '0 8px', flex: 1 }}>{row.left.content}</span>
+									</div>
+
+									{/* Right (new) cell */}
+									<div
+										style={{
+											display: 'flex',
+											flex: '1 1 50%',
+											minWidth: '50%',
+											backgroundColor: lineBackground(row.right.type),
+											color: lineColor(row.right.type === 'empty' ? 'context' : row.right.type),
+										}}
+									>
+										<span
+											style={{
+												display: 'inline-block',
+												width: gutterWidth,
+												textAlign: 'right',
+												padding: '0 4px',
+												color: colors.textDim,
+												userSelect: 'none',
+												flexShrink: 0,
+												borderRight: `1px solid ${colors.border}`,
+												opacity: 0.6,
+											}}
+										>
+											{row.right.num}
+										</span>
+										<span style={{ padding: '0 8px', flex: 1 }}>{row.right.content}</span>
+									</div>
+								</div>
+							);
+						})}
 					</pre>
 				)}
 			</div>
