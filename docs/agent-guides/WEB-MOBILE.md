@@ -421,6 +421,27 @@ If you add a new icon-only button, prefer the tier-aware inline-label pattern (d
 
 ---
 
+## `onMouse*` handler policy
+
+Phase 6 swept hover-reveal affordances and mouse-only drag/press out of the web UI. New code should not introduce `onMouseEnter` / `onMouseLeave` / `onMouseDown` / `onMouseMove` / `onMouseUp` handlers. The established alternatives are:
+
+- **Hover reveal / bg swap / color fade** — use Tailwind `hover:` pseudo-classes (`hover:bg-[color-mix(in_srgb,var(--maestro-text-dim)_X%,transparent)]`, `hover:bg-accent`, `hover:text-text-main`). Touch devices never trigger `:hover`, so the affordance must either be always-visible (possibly dimmed) or redundant with an explicit tap target.
+- **Drag / press / resize** — use `onPointerDown` + `setPointerCapture(pointerId)` + `pointerup` / `pointercancel` listeners (see `src/web/hooks/useResizableWebPanel.ts`). Attach `touch-none` to the handle so CSS `touch-action: none` lets the pointer capture route moves instead of scrolling the page.
+- **Focus-visible affordance** — pair any interactive element with `outline-none focus-visible:ring-2 focus-visible:ring-accent` (add `focus-visible:ring-inset` if the element sits flush against a neighbour).
+
+### Allowed `onMouseEnter` exceptions (keyboard-selection sync)
+
+A residue of `onMouseEnter` handlers is allowed **only** where the handler syncs the keyboard-selected index to wherever the mouse last hovered, so arrow-key and pointer focus stay aligned in a popup that owns a `selectedIndex`. These handlers are no-ops on touch devices (no mouse → no enter event), so they do not create a mouse-only affordance. Run `rg -n "onMouse(Enter|Leave|Down|Move|Up)" src/web/` to audit; hits outside the table below should either be removed or added to the table with a justification.
+
+| File | Line | Use |
+| ---- | ---- | --- |
+| `src/web/mobile/SlashCommandAutocomplete.tsx` | `onMouseEnter={() => onSelectedIndexChange?.(idx)}` on each command row | Keeps the popup's keyboard-highlighted row in sync with the mouse pointer. Click / `onTouchStart` / `onTouchEnd` handle the actual selection. |
+| `src/web/mobile/QuickActionsMenu.tsx` | `onMouseEnter={() => setSelectedIndex(currentActionIndex)}` on each action button | Same contract as `SlashCommandAutocomplete` — `onClick` drives the real selection; `onMouseEnter` only nudges the keyboard-highlight index. |
+
+If you catch yourself wanting a new `onMouseEnter` for anything other than keyboard-selection sync, reach for Tailwind `hover:` (visual) or `onPointerEnter` (needs to fire for stylus / pen too) instead. Upgrading the two entries above to `onPointerEnter` is a reasonable future refinement — noted in Phase 6 Task 6.1's inventory.
+
+---
+
 ## Mobile-Specific Hooks
 
 ### `useOfflineQueue`
