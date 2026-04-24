@@ -390,6 +390,37 @@ Do **not** use `isShortViewport` as a proxy for "mobile" — it only signals ver
 
 ---
 
+## Icon-only buttons and `title=` tooltips
+
+Phase 6 Task 6.4 converted the `MobileHeader` icon toolbar into a true desktop-tier toolbar: each title-only icon button now renders a short inline label (e.g. "Agents", "Search", "Files", "Cue", "Alerts", "Settings", "Chat", "Usage", "Awards", "Context", "New Agent") when `isDesktop` is true. On `phone` and `tablet`, the button stays icon-only and lower-priority actions are still discoverable through the labeled overflow menu.
+
+### Pattern
+
+- `aria-label` and `title` remain on the button at every tier (screen-reader + native hover tooltip).
+- The visible label is purely additive: `{isDesktop && <span className="text-[13px] font-medium leading-none whitespace-nowrap">Label</span>}` inside the button.
+- `headerIconButtonClasses(isActive, compact, withLabel)` in `src/web/mobile/App.tsx` switches between the fixed `w-8 h-8` square and a relaxed `h-8 px-2 gap-1.5` flex row so the label sits cleanly beside the SVG icon.
+
+### Allowed `title=`-only icon-button exceptions
+
+The buttons below keep `title=` as their sole visible affordance at every tier. They are exempt from the "visible label on desktop" rule because they sit in tight panel-headers, overlays, or contextual affordances where a visible label would crowd the layout and the icon itself is contextually unambiguous:
+
+| File | Button | Justification |
+| ---- | ------ | ------------- |
+| `src/web/mobile/LeftPanel.tsx` | New group / New agent / Close panel | Small icons in a dense LeftPanel header row; the panel itself labels the sessions. |
+| `src/web/mobile/RightPanel.tsx` | Close panel | Standard `×` icon convention. |
+| `src/web/mobile/RightDrawer.tsx` | Refresh file tree / Refresh documents | The button content is a `↻` Unicode glyph, not a pure SVG icon; the glyph serves as the label. |
+| `src/web/mobile/MessageHistory.tsx` | Scroll to new messages | Floating affordance; arrow icon is self-describing. |
+| `src/web/mobile/SessionStatusBanner.tsx` | Copy response to clipboard | Standard clipboard icon pattern, contextually near the response. |
+| `src/web/mobile/SessionPillBar.tsx` | Search Sessions / History / Panel | Pill-bar controls; adding labels would break the horizontal scroll rhythm. |
+| `src/web/mobile/TabBar.tsx` | Search N tabs / New Tab | Tab-bar affordances; text siblings are the tab labels themselves. |
+| `src/web/mobile/WebTerminal.tsx` | Find-bar Prev / Next / Close | Find overlay is intentionally compact and `title=` already carries the keyboard shortcut (`Shift+Enter` / `Enter` / `Escape`). |
+| `src/web/mobile/App.tsx` | Notification Settings (cog inside the notifications dropdown) | Sits inside a 280px dropdown header; adding a visible label would push the "Clear" button off-row. |
+| `src/web/mobile/App.tsx` | More actions (`⋯`) | Only renders on `phone`/`tablet`; the three-dot menu is a universal affordance and it's the overflow trigger itself. |
+
+If you add a new icon-only button, prefer the tier-aware inline-label pattern (desktop shows text, phone/tablet stays icon-only). Only add to this exception table if space constraints genuinely rule it out, and include a one-line justification as above.
+
+---
+
 ## Mobile-Specific Hooks
 
 ### `useOfflineQueue`

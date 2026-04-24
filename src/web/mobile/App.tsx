@@ -112,16 +112,29 @@ function getActiveTabFromSession(session: Session | null | undefined): AITabData
  * so the thinned header stays under 48px total — still well above the 32px
  * icon box, so the tap target shrinks via reduced surrounding padding rather
  * than by scaling the icon.
+ *
+ * Phase 6 Task 6.4: When `withLabel` is true (desktop tier), the button
+ * relaxes from a fixed 32px square to `h-8 px-2 gap-1.5` so a short inline
+ * label can sit beside the SVG. `aria-label` and `title` still fire for
+ * screen readers and native hover, so the label is additive, not a
+ * replacement.
  */
-const HEADER_ICON_BUTTON_BASE =
+const HEADER_ICON_BUTTON_BASE_SQUARE =
 	'w-8 h-8 flex items-center justify-center rounded-md flex-shrink-0 relative p-0 cursor-pointer touch-manipulation';
 
-function headerIconButtonClasses(isActive = false, compact = false): string {
+const HEADER_ICON_BUTTON_BASE_LABELED =
+	'h-8 flex items-center justify-center rounded-md flex-shrink-0 relative px-2 gap-1.5 cursor-pointer touch-manipulation';
+
+// Kept for backwards compatibility with the overflow-button inline string.
+const HEADER_ICON_BUTTON_BASE = HEADER_ICON_BUTTON_BASE_SQUARE;
+
+function headerIconButtonClasses(isActive = false, compact = false, withLabel = false): string {
+	const base = withLabel ? HEADER_ICON_BUTTON_BASE_LABELED : HEADER_ICON_BUTTON_BASE_SQUARE;
 	const state = isActive
 		? 'bg-[color-mix(in_srgb,var(--maestro-accent)_12%,transparent)] border border-accent text-accent'
 		: 'bg-transparent border border-border text-text-dim';
 	const sizing = compact ? 'min-h-10' : '';
-	return `${HEADER_ICON_BUTTON_BASE} ${state}${sizing ? ` ${sizing}` : ''}`;
+	return `${base} ${state}${sizing ? ` ${sizing}` : ''}`;
 }
 
 /**
@@ -295,7 +308,7 @@ function MobileHeader({
 	// `isShortViewport` (Phase 5 Task 5.4) halves vertical padding and relaxes
 	// the per-button 44px min-height floor to 40px so the header stays ≤48px
 	// tall in landscape phone orientations.
-	const { tier, isShortViewport } = useBreakpoint();
+	const { tier, isShortViewport, isDesktop } = useBreakpoint();
 
 	// Close overflow menu when clicking outside
 	useEffect(() => {
@@ -334,7 +347,7 @@ function MobileHeader({
 			{/* Left: Agents panel toggle */}
 			<button
 				onClick={onMenuTap}
-				className={headerIconButtonClasses(isLeftPanelOpen, isShortViewport)}
+				className={headerIconButtonClasses(isLeftPanelOpen, isShortViewport, isDesktop)}
 				aria-label="Agents"
 				title="Agents"
 			>
@@ -355,6 +368,9 @@ function MobileHeader({
 					<line x1="12" y1="4" x2="12" y2="8" />
 					<circle cx="12" cy="3" r="1" />
 				</svg>
+				{isDesktop && (
+					<span className="text-[13px] font-medium leading-none whitespace-nowrap">Agents</span>
+				)}
 			</button>
 
 			{/* Center: Session name + status dot */}
@@ -384,7 +400,7 @@ function MobileHeader({
 				{isHeaderIconInline('search', tier) && (
 					<button
 						onClick={onSearchTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="Search"
 						title="Quick Actions (Cmd+K)"
 					>
@@ -401,6 +417,11 @@ function MobileHeader({
 							<circle cx="11" cy="11" r="8" />
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">
+								Search
+							</span>
+						)}
 					</button>
 				)}
 
@@ -408,7 +429,7 @@ function MobileHeader({
 				{isHeaderIconInline('rightPanel', tier) && (
 					<button
 						onClick={onRightDrawerTap}
-						className={headerIconButtonClasses(isRightPanelOpen, isShortViewport)}
+						className={headerIconButtonClasses(isRightPanelOpen, isShortViewport, isDesktop)}
 						aria-label="Files & History"
 						title="Files / History / Git"
 					>
@@ -425,6 +446,9 @@ function MobileHeader({
 							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
 							<polyline points="13 2 13 9 20 9" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Files</span>
+						)}
 					</button>
 				)}
 
@@ -432,7 +456,7 @@ function MobileHeader({
 				{isHeaderIconInline('cue', tier) && (
 					<button
 						onClick={onCueTap}
-						className={headerIconButtonClasses(hasRunningCue, isShortViewport)}
+						className={headerIconButtonClasses(hasRunningCue, isShortViewport, isDesktop)}
 						aria-label="Maestro Cue"
 						title="Maestro Cue"
 					>
@@ -448,6 +472,9 @@ function MobileHeader({
 						>
 							<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Cue</span>
+						)}
 						{hasRunningCue && (
 							<span className="absolute -top-0.5 -right-0.5 w-[7px] h-[7px] rounded-full bg-success [animation:pulse_1.5s_ease-in-out_infinite]" />
 						)}
@@ -459,7 +486,7 @@ function MobileHeader({
 					<div ref={notifDropdownRef} className="relative">
 						<button
 							onClick={() => setShowNotifDropdown((prev) => !prev)}
-							className={headerIconButtonClasses(showNotifDropdown, isShortViewport)}
+							className={headerIconButtonClasses(showNotifDropdown, isShortViewport, isDesktop)}
 							aria-label="Notifications"
 							title="Notifications"
 						>
@@ -476,6 +503,11 @@ function MobileHeader({
 								<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
 								<path d="M13.73 21a2 2 0 0 1-3.46 0" />
 							</svg>
+							{isDesktop && (
+								<span className="text-[13px] font-medium leading-none whitespace-nowrap">
+									Alerts
+								</span>
+							)}
 							{completedAgents.length > 0 && (
 								<span className="absolute -top-1 -right-1 text-[8px] font-bold text-white bg-error rounded-lg min-w-[14px] text-center leading-3 px-[3px] py-px">
 									{completedAgents.length > 99 ? '99+' : completedAgents.length}
@@ -578,7 +610,7 @@ function MobileHeader({
 				{isHeaderIconInline('settings', tier) && (
 					<button
 						onClick={onSettingsTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="Settings"
 						title="Settings"
 					>
@@ -595,6 +627,11 @@ function MobileHeader({
 							<circle cx="12" cy="12" r="3" />
 							<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">
+								Settings
+							</span>
+						)}
 					</button>
 				)}
 
@@ -602,7 +639,7 @@ function MobileHeader({
 				{isHeaderIconInline('groupChat', tier) && (
 					<button
 						onClick={onGroupChatTap}
-						className={headerIconButtonClasses(groupChatCount > 0, isShortViewport)}
+						className={headerIconButtonClasses(groupChatCount > 0, isShortViewport, isDesktop)}
 						aria-label="Group Chat"
 						title="Group Chat"
 					>
@@ -618,6 +655,9 @@ function MobileHeader({
 						>
 							<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Chat</span>
+						)}
 						{groupChatCount > 0 && (
 							<span className="absolute -top-1 -right-1 text-[8px] font-bold text-white bg-accent rounded-lg min-w-[14px] text-center leading-3 px-[3px] py-px">
 								{groupChatCount}
@@ -630,7 +670,7 @@ function MobileHeader({
 				{isHeaderIconInline('usageDashboard', tier) && (
 					<button
 						onClick={onUsageDashboardTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="Usage Dashboard"
 						title="Usage Dashboard"
 					>
@@ -647,6 +687,9 @@ function MobileHeader({
 							<path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
 							<path d="M22 12A10 10 0 0 0 12 2v10z" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Usage</span>
+						)}
 					</button>
 				)}
 
@@ -654,7 +697,7 @@ function MobileHeader({
 				{isHeaderIconInline('achievements', tier) && (
 					<button
 						onClick={onAchievementsTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="Achievements"
 						title="Achievements"
 					>
@@ -671,6 +714,9 @@ function MobileHeader({
 							<circle cx="12" cy="8" r="7" />
 							<polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Awards</span>
+						)}
 					</button>
 				)}
 
@@ -678,7 +724,7 @@ function MobileHeader({
 				{isHeaderIconInline('contextManagement', tier) && activeSession && (
 					<button
 						onClick={onContextManagementTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="Context Management"
 						title="Context Management"
 					>
@@ -696,6 +742,11 @@ function MobileHeader({
 							<path d="M8 12h8" />
 							<path d="M12 8v8" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">
+								Context
+							</span>
+						)}
 					</button>
 				)}
 
@@ -703,7 +754,7 @@ function MobileHeader({
 				{isHeaderIconInline('newAgent', tier) && (
 					<button
 						onClick={onNewAgentTap}
-						className={headerIconButtonClasses(false, isShortViewport)}
+						className={headerIconButtonClasses(false, isShortViewport, isDesktop)}
 						aria-label="New Agent"
 						title="New Agent"
 					>
@@ -720,6 +771,11 @@ function MobileHeader({
 							<line x1="12" y1="5" x2="12" y2="19" />
 							<line x1="5" y1="12" x2="19" y2="12" />
 						</svg>
+						{isDesktop && (
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">
+								New Agent
+							</span>
+						)}
 					</button>
 				)}
 
