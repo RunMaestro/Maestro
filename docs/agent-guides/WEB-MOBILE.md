@@ -44,6 +44,8 @@ src/web/
 │   ├── ThemeProvider.tsx
 │   └── index.ts
 ├── hooks/                    # Web-specific hooks
+│   ├── useBreakpoint.ts      # Viewport tier (phone/tablet/desktop) + short-viewport flag
+│   ├── useIsMobile.ts        # Thin wrapper over useBreakpoint (deprecated for new code)
 │   ├── useWebSocket.ts       # Core WS connection
 │   ├── useSessions.ts        # Session state management
 │   ├── useNotifications.ts   # Push notifications
@@ -332,6 +334,59 @@ Theme synced from the desktop app via WebSocket:
 ```typescript
 const theme = useDesktopTheme();
 ```
+
+---
+
+## Responsive Breakpoints
+
+### `useBreakpoint()`
+
+File: `src/web/hooks/useBreakpoint.ts`
+
+Single source of truth for viewport-tier decisions in the web UI. Prefer this hook over `useIsMobile()` (now a thin wrapper) and over ad-hoc `matchMedia` calls.
+
+```typescript
+const { tier, width, height, isPhone, isTablet, isDesktop, isShortViewport } = useBreakpoint();
+```
+
+| Field             | Type                                 | Meaning                                              |
+| ----------------- | ------------------------------------ | ---------------------------------------------------- |
+| `tier`            | `'phone' \| 'tablet' \| 'desktop'`   | Current tier derived from `width`                    |
+| `width`           | `number`                             | `window.innerWidth` (debounced 150ms on resize)      |
+| `height`          | `number`                             | `window.innerHeight` (debounced 150ms on resize)     |
+| `isPhone`         | `boolean`                            | `width < 600` (`BREAKPOINTS.tablet`)                 |
+| `isTablet`        | `boolean`                            | `600 <= width < 960`                                 |
+| `isDesktop`       | `boolean`                            | `width >= 960` (`BREAKPOINTS.desktop`)               |
+| `isShortViewport` | `boolean`                            | `height < 500` — orthogonal to tier                  |
+
+Tier boundaries live in `BREAKPOINTS` (`src/web/mobile/constants.ts`) and are mirrored to CSS custom properties `--bp-tablet: 600px` and `--bp-desktop: 960px` in `src/web/index.css` so media queries and JS stay linked to one source of truth.
+
+### When to use each tier
+
+- **`isPhone`** — stacked / single-column layouts, edge-to-edge sheets, gesture-driven navigation. The phone tier is the mobile app's default design target.
+- **`isTablet`** — dense layouts start to work but there's not enough width for a full desktop-style three-pane split. Good for two-pane overlays, wider sheets, and showing more controls inline instead of behind overflow menus.
+- **`isDesktop`** — enough room for inline chrome, resizable side panels, and full-width headers. Use this to drop hamburger/overflow patterns in favor of visible toolbars.
+
+### Choosing inline vs. Tailwind for tier-dependent styles
+
+| Situation                                                                                | Use                                                                       |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Purely visual (color, padding, border, radius, typography) varies by tier                | **Tailwind responsive variants** (`sm:`, `md:`, `lg:`) driven by CSS media queries — no hook needed. |
+| Layout changes are structural (different component tree, props, or children per tier)    | **`useBreakpoint()` in JS** and branch on `isPhone` / `isTablet` / `isDesktop`. |
+| One element has a handful of tier-conditional classes                                    | **Tailwind** first; only reach for inline styles if a value isn't a token. |
+| You need the numeric width/height (e.g. to size an xterm grid or compute a scroll range) | **`useBreakpoint()`** — read `width` / `height` directly.                 |
+
+Rule of thumb: reach for Tailwind first, JS-driven branching second. JS branching causes a re-render on every debounced resize and forces SSR/paint to wait on hydration; CSS media queries don't.
+
+### `isShortViewport` usage
+
+Orthogonal to tier — a landscape phone can be `isPhone && isShortViewport`, and a laptop with devtools open can be `isDesktop && isShortViewport`. Use it to collapse vertically-expensive chrome when the user is vertically cramped:
+
+- Hide or collapse banners, headers, and pill bars that eat prime vertical space.
+- Switch multi-line command inputs to single-line + overflow-expand.
+- Skip decorative padding that would push primary content below the fold.
+
+Do **not** use `isShortViewport` as a proxy for "mobile" — it only signals vertical pressure.
 
 ---
 
