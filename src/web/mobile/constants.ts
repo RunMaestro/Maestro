@@ -33,7 +33,30 @@ export const defaultMobileConfig: MobileConfig = {
 };
 
 /**
- * Mobile viewport constants
+ * Responsive breakpoint tiers for the web UI.
+ *
+ * Each value is the minimum viewport width (inclusive) at which the tier starts.
+ * `phone` covers `[0, tablet)`, `tablet` covers `[tablet, desktop)`, and
+ * `desktop` covers `[desktop, ∞)`. Consumed by `useBreakpoint()` and kept in
+ * sync with the `--bp-*` CSS custom properties declared in `src/web/index.css`.
+ */
+export const BREAKPOINTS = {
+	phone: 0,
+	tablet: 600,
+	desktop: 960,
+} as const;
+
+/**
+ * Named tier returned by `useBreakpoint()`.
+ */
+export type BreakpointTier = 'phone' | 'tablet' | 'desktop';
+
+/**
+ * Mobile viewport constants.
+ *
+ * @deprecated Prefer `BREAKPOINTS` above for new responsive work. These values
+ * originally powered the phone-only sizing heuristics and are retained for
+ * backward compatibility with existing callers.
  */
 export const MOBILE_BREAKPOINTS = {
 	/** Maximum width for small phones */
