@@ -496,6 +496,74 @@ export async function listDirWithStatsRemote(
 }
 
 /**
+ * Bulk-stat a fixed file name within every immediate subdirectory of
+ * `parentDir`, in a single SSH round-trip.
+ *
+ * Why this exists: agents like Copilot store sessions as
+ * `parentDir/<sessionId>/events.jsonl`. Listing N sessions naively means
+ * one stat (or `du`) call per session, which fans out past sshd's
+ * `MaxStartups` once N grows. This collapses the fan-out to one
+ * shell-glob `stat` invocation.
+ *
+ * Returned entries use the parent subdirectory name (the session id, in
+ * Copilot's case) as `name`. Subdirectories that lack the file are silently
+ * omitted — the caller decides how to treat them.
+ */
+export async function bulkStatFileInSubdirsRemote(
+	parentDir: string,
+	fileName: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteDirEntryWithStats[]>> {
+	// `fileName` is interpolated raw into a shell glob; reject any
+	// metacharacters so a malicious caller can't inject extra commands.
+	if (/[^\w.-]/.test(fileName)) {
+		return { success: false, error: `Refusing unsafe fileName: ${fileName}` };
+	}
+	const escapedParent = shellEscape(parentDir);
+	// Output one line per matching file: `<size>|<mtime-seconds>|<subdir>/<fileName>`.
+	// Same GNU-then-BSD probe used by `listDirWithStatsRemote`. The leading
+	// `cd` scopes the glob so file names come back as relative paths.
+	const remoteCommand =
+		`cd ${escapedParent} 2>/dev/null || exit 0; ` +
+		`if stat --version >/dev/null 2>&1; then ` +
+		`stat --printf='%s|%Y|%n\\n' */${fileName} 2>/dev/null || true; ` +
+		`else ` +
+		`stat -f '%z|%m|%N' */${fileName} 2>/dev/null || true; ` +
+		`fi`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to bulk-stat ${fileName} under: ${parentDir}`,
+		};
+	}
+
+	const entries: RemoteDirEntryWithStats[] = [];
+	const lines = result.stdout.split('\n');
+	const suffix = `/${fileName}`;
+	for (const line of lines) {
+		if (!line) continue;
+		const firstPipe = line.indexOf('|');
+		const secondPipe = firstPipe >= 0 ? line.indexOf('|', firstPipe + 1) : -1;
+		if (firstPipe < 0 || secondPipe < 0) continue;
+		const size = parseInt(line.slice(0, firstPipe), 10);
+		const mtimeSeconds = parseInt(line.slice(firstPipe + 1, secondPipe), 10);
+		const fullName = line.slice(secondPipe + 1);
+		if (!fullName || isNaN(size) || isNaN(mtimeSeconds)) continue;
+		// Strip the trailing `/<fileName>` to recover the subdirectory name.
+		if (!fullName.endsWith(suffix)) continue;
+		const name = fullName.slice(0, -suffix.length);
+		if (!name) continue;
+		entries.push({ name, size, mtime: mtimeSeconds * 1000 });
+	}
+
+	return { success: true, data: entries };
+}
+
+/**
  * Read file contents from a remote host via SSH.
  *
  * Executes `cat` on the remote to read the file contents.
