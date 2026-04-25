@@ -7,6 +7,7 @@
  * re-fires all siblings for each individual trigger call.
  */
 
+import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SessionsTable } from '../../../../renderer/components/CueModal/SessionsTable';
@@ -84,7 +85,7 @@ describe('SessionsTable', () => {
 		expect(screen.getByText(/No sessions have a cue config file/)).toBeInTheDocument();
 	});
 
-	it('renders session name, agent type, and status columns', () => {
+	it('renders session name and agent type columns', () => {
 		const session = makeSession('s1', 'MyAgent');
 		render(<SessionsTable {...makeProps({ sessions: [session] })} />);
 		expect(screen.getByText('MyAgent')).toBeInTheDocument();
@@ -173,6 +174,43 @@ describe('SessionsTable', () => {
 		expect(onTrigger).toHaveBeenCalledWith('a1');
 		expect(onTrigger).toHaveBeenCalledWith('b1');
 		expect(onTrigger).toHaveBeenCalledWith('c1');
+	});
+
+	it('Run Now fires both subs when same pipeline_name and same event but different interval', () => {
+		const onTrigger = vi.fn();
+		const session = makeSession('s1');
+		// Same pipeline_name, same event — but different interval_minutes → different composite keys
+		const gs = makeGraphSession('s1', [
+			{
+				name: 'fast',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'p',
+				interval_minutes: 5,
+				pipeline_name: 'Poller',
+			},
+			{
+				name: 'slow',
+				event: 'time.heartbeat',
+				enabled: true,
+				prompt: 'p',
+				interval_minutes: 60,
+				pipeline_name: 'Poller',
+			},
+		]);
+		render(
+			<SessionsTable
+				{...makeProps({
+					sessions: [session],
+					graphSessions: [gs],
+					onTriggerSubscription: onTrigger,
+				})}
+			/>
+		);
+		fireEvent.click(screen.getByText('Run Now'));
+		expect(onTrigger).toHaveBeenCalledTimes(2);
+		expect(onTrigger).toHaveBeenCalledWith('fast');
+		expect(onTrigger).toHaveBeenCalledWith('slow');
 	});
 
 	it('Run Now fires both subs when same pipeline_name but different trigger types', () => {

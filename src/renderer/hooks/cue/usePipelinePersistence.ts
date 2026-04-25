@@ -292,7 +292,12 @@ export function usePipelinePersistence({
 			let rootsCleared = 0;
 
 			// Write each root's YAML with only that root's pipelines.
+			// Skip roots that are also referenced by error-node pipelines: those
+			// pipelines exist on disk with valid YAML that we cannot reproduce
+			// without their missing agents. Writing the root here would silently
+			// strip those pipelines from disk (data loss).
 			for (const root of currentRoots) {
+				if (errorPipelineRoots.has(root)) continue;
 				const rootPipelines = pipelinesByRoot.get(root)!;
 				const { yaml: yamlContent, promptFiles } = pipelinesToYaml(rootPipelines, cueSettings);
 				const promptFilesObj: Record<string, string> = {};

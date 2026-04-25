@@ -768,9 +768,9 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Trigger] &rarr; [action: shell "npm test"]
+							[Trigger] &rarr; [action: command, mode: shell &rarr; "npm test"]
 							<br />
-							[Agent A] &rarr; [action: cli send &rarr; Agent B]
+							[Agent A] &rarr; [action: command, mode: cli &rarr; send to Agent B]
 						</div>
 					</div>
 

@@ -349,6 +349,40 @@ describe('usePipelinePersistence', () => {
 			expect(saved[0].id).toBe('p-a');
 		});
 
+		it('does not overwrite a root that has both a valid and an error-node pipeline (mixed root)', async () => {
+			// Both pipelineA (valid) and pipelineB (error node) resolve to the
+			// SAME root /proj-ab. Writing pipelineA's YAML would silently drop
+			// pipelineB from disk. The save must skip the write for that root.
+			const pipelineA = pipeline(
+				'p-a',
+				'Pipeline A',
+				[triggerNode('t1'), agentNode('a1', 'Alpha')],
+				[{ id: 'e1', source: 't1', target: 'a1' }]
+			);
+			const pipelineB = pipeline('p-b', 'Broken B', [
+				triggerNode('t2'),
+				{ ...agentNode('a2', 'Alpha'), id: 'a2' }, // valid agent node in the same root
+				makeErrorNode('e-b'),
+			]);
+			const h = setup({
+				pipelines: [pipelineA, pipelineB],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/proj-ab' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			// The root is shared — skip writing to avoid stripping pipelineB from disk
+			expect(mockWriteYaml).not.toHaveBeenCalledWith(
+				'/proj-ab',
+				expect.anything(),
+				expect.anything()
+			);
+			// Warning toast for pipelineB
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'warning', title: 'Some pipelines skipped' })
+			);
+		});
+
 		it('allows save when no error nodes are present', async () => {
 			const h = setup({
 				pipelines: [
