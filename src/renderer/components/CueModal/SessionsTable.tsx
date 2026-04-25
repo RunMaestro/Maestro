@@ -2,7 +2,7 @@
  * SessionsTable — Table of Cue-enabled sessions with status, pipeline info, and actions.
  */
 
-import { FileCode, GitFork, Play, Trash2 } from 'lucide-react';
+import { AlertTriangle, FileCode, GitFork, Play, Trash2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import {
@@ -72,7 +72,24 @@ export function SessionsTable({
 							style={{ borderColor: theme.colors.border }}
 						>
 							<td className="py-2" style={{ color: theme.colors.textMain }}>
-								{s.sessionName}
+								<span className="inline-flex items-center gap-1.5">
+									{s.ownershipWarning && (
+										<span
+											role="img"
+											tabIndex={0}
+											title={s.ownershipWarning}
+											aria-label={s.ownershipWarning}
+											className="inline-flex focus:outline-none focus-visible:ring-1 focus-visible:ring-current rounded"
+										>
+											<AlertTriangle
+												className="w-3.5 h-3.5 flex-shrink-0"
+												style={{ color: theme.colors.error }}
+												aria-hidden="true"
+											/>
+										</span>
+									)}
+									{s.sessionName}
+								</span>
 							</td>
 							<td className="py-2" style={{ color: theme.colors.textDim }}>
 								{s.toolType}

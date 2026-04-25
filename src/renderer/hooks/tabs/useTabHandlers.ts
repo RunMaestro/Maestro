@@ -19,6 +19,7 @@ import {
 	getActiveTab,
 	getInitialRenameValue,
 	hasActiveWizard,
+	hasWizardInteraction,
 	hasDraft,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
@@ -70,6 +71,7 @@ export interface CloseCurrentTabResult {
 	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
 	tabId?: string;
 	isWizardTab?: boolean;
+	hasWizardUserInteraction?: boolean;
 	hasDraft?: boolean;
 }
 
@@ -893,11 +895,14 @@ export function useTabHandlers(): TabHandlersReturn {
 			const session = selectActiveSession(useSessionStore.getState());
 			const tab = session?.aiTabs.find((t) => t.id === tabId);
 
-			if (tab && hasActiveWizard(tab)) {
+			if (tab && hasWizardInteraction(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'Close this wizard? Your progress will be lost and cannot be restored.',
 					onConfirm: () => performTabClose(tabId),
 				});
+			} else if (tab && hasActiveWizard(tab)) {
+				// Wizard is active but no user interaction yet - close without confirmation
+				performTabClose(tabId);
 			} else if (tab && hasDraft(tab)) {
 				useModalStore.getState().openModal('confirm', {
 					message: 'This tab has an unsent draft. Are you sure you want to close it?',
@@ -1254,9 +1259,10 @@ export function useTabHandlers(): TabHandlersReturn {
 			const tabId = session.activeTabId;
 			const tab = session.aiTabs.find((t) => t.id === tabId);
 			const isWizardTab = tab ? hasActiveWizard(tab) : false;
+			const hasWizardUserInteraction = tab ? hasWizardInteraction(tab) : false;
 			const tabHasDraft = tab ? hasDraft(tab) : false;
 
-			return { type: 'ai', tabId, isWizardTab, hasDraft: tabHasDraft };
+			return { type: 'ai', tabId, isWizardTab, hasWizardUserInteraction, hasDraft: tabHasDraft };
 		}
 
 		return { type: 'none' };

@@ -103,6 +103,63 @@ describe('CopilotOutputParser', () => {
 		);
 	});
 
+	it('recognizes modern Copilot final messages by structure (no phase field)', () => {
+		// Regression: Copilot CLI ≥ 1.0.35 does not emit `phase: 'final_answer'`.
+		// The final assistant message is identified structurally by non-empty
+		// content + empty toolRequests. The parser must still emit it as a
+		// result so StdoutHandler flushes the response; previously this was
+		// dropped as a 'system' event when deltas had preceded it, leaving the
+		// UI to rely on possibly-incomplete accumulated deltas.
+		const parser = new CopilotOutputParser();
+
+		parser.parseJsonObject({ type: 'assistant.turn_start' });
+		parser.parseJsonObject({
+			type: 'assistant.message_delta',
+			data: { deltaContent: 'Here is the' },
+		});
+		parser.parseJsonObject({
+			type: 'assistant.message_delta',
+			data: { deltaContent: ' answer.' },
+		});
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: 'Here is the full canonical answer.',
+				toolRequests: [],
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'result',
+				text: 'Here is the full canonical answer.',
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(true);
+	});
+
+	it('treats intermediate tool-call messages (empty content + tools) as text with tool blocks', () => {
+		const parser = new CopilotOutputParser();
+
+		const event = parser.parseJsonObject({
+			type: 'assistant.message',
+			data: {
+				content: '',
+				toolRequests: [{ toolCallId: 'call_1', name: 'bash', arguments: { command: 'ls' } }],
+			},
+		});
+
+		expect(event).toEqual(
+			expect.objectContaining({
+				type: 'text',
+				text: '',
+				toolUseBlocks: [{ name: 'bash', id: 'call_1', input: { command: 'ls' } }],
+			})
+		);
+		expect(event && parser.isResultMessage(event)).toBe(false);
+	});
+
 	it('parses assistant message deltas as partial text events', () => {
 		const parser = new CopilotOutputParser();
 

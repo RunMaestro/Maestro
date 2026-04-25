@@ -156,6 +156,16 @@ interface LoadingState {
 	maxEntries: number;
 	/** True once we've hit the entry cap and started skipping further files. */
 	truncated: boolean;
+	/** Optional abort signal — when aborted, the recursion stops issuing new readDir calls. */
+	signal?: AbortSignal;
+}
+
+/** Thrown when a file tree load is aborted via {@link AbortSignal}. */
+export class FileTreeAbortError extends Error {
+	constructor() {
+		super('File tree load aborted');
+		this.name = 'FileTreeAbortError';
+	}
 }
 
 /**
@@ -209,7 +219,8 @@ export async function loadFileTree(
 	sshContext?: SshContext,
 	onProgress?: FileTreeProgressCallback,
 	localOptions?: LocalFileTreeOptions,
-	maxEntries: number = Number.POSITIVE_INFINITY
+	maxEntries: number = Number.POSITIVE_INFINITY,
+	signal?: AbortSignal
 ): Promise<FileTreeLoadResult> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
@@ -258,6 +269,7 @@ export async function loadFileTree(
 		isRemote,
 		maxEntries: maxEntries > 0 ? maxEntries : Number.POSITIVE_INFINITY,
 		truncated: false,
+		signal,
 	};
 
 	const tree = await loadFileTreeRecursive(dirPath, maxDepth, currentDepth, sshContext, state);
@@ -293,9 +305,11 @@ async function loadFileTreeRecursive(
 	state: LoadingState
 ): Promise<FileTreeNode[]> {
 	if (currentDepth >= maxDepth) return [];
+	if (state.signal?.aborted) throw new FileTreeAbortError();
 
 	try {
 		const entries = await window.maestro.fs.readDir(dirPath, sshContext?.sshRemoteId);
+		if (state.signal?.aborted) throw new FileTreeAbortError();
 		const tree: FileTreeNode[] = [];
 
 		// Update progress: we've scanned a directory
@@ -332,6 +346,7 @@ async function loadFileTreeRecursive(
 			}
 
 			if (entry.isDirectory) {
+				if (state.signal?.aborted) throw new FileTreeAbortError();
 				// Wrap child directory reads in try/catch so a single failing
 				// subdirectory (permissions, spaces in name over SSH, broken
 				// symlinks, etc.) doesn't kill the entire tree walk.
@@ -345,8 +360,10 @@ async function loadFileTreeRecursive(
 							sshContext,
 							state
 						);
-					} catch {
-						// Skip unreadable child directories — show them as empty folders
+					} catch (childErr) {
+						// Re-throw aborts so the whole walk stops; skip unreadable child
+						// directories so a single failing subdir doesn't kill the walk.
+						if (childErr instanceof FileTreeAbortError) throw childErr;
 					}
 				} else {
 					// Cap hit before we could recurse: fold this in as an empty placeholder
@@ -389,6 +406,7 @@ async function loadFileTreeRecursive(
 			return a.name.localeCompare(b.name);
 		});
 	} catch (error) {
+		if (error instanceof FileTreeAbortError) throw error;
 		logger.error('Error loading file tree:', undefined, error);
 		throw error; // Propagate error to be caught by caller
 	}

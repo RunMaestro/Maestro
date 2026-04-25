@@ -15,10 +15,23 @@ import {
 	type CueSubscription,
 } from './cue-types';
 
+/**
+ * Per-session view exposed to the completion service. `ownershipWarning` is
+ * non-empty when the session is NOT the effective owner of its `cue.yaml`
+ * (shared-projectRoot conflict). Unowned `agent.completed` subscriptions
+ * must be skipped for those sessions, otherwise a workspace registered as
+ * two agents would dispatch the same chain twice — exactly the duplication
+ * the ownership gate exists to prevent.
+ */
+export interface CueCompletionSessionView {
+	config: CueConfig;
+	ownershipWarning?: string;
+}
+
 export interface CueCompletionServiceDeps {
 	enabled: () => boolean;
 	getSessions: () => Array<{ id: string; name: string }>;
-	getSessionConfigs: () => Map<string, CueConfig>;
+	getSessionConfigs: () => Map<string, CueCompletionSessionView>;
 	fanInTracker: CueFanInTracker;
 	onDispatch: (
 		ownerSessionId: string,
@@ -87,10 +100,14 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 			const completingSession = allSessions.find((session) => session.id === sessionId);
 			const completingName = completingSession?.name ?? sessionId;
 
-			for (const [ownerSessionId, config] of deps.getSessionConfigs()) {
-				for (const sub of config.subscriptions) {
+			for (const [ownerSessionId, view] of deps.getSessionConfigs()) {
+				for (const sub of view.config.subscriptions) {
 					if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
 					if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
+					// Skip unowned subs on non-owner sessions so the ownership
+					// gate covers the completion path the same way it covers
+					// trigger-source wiring in the runtime service.
+					if (view.ownershipWarning && !sub.agent_id) continue;
 
 					const sources = getMatchingSources(sub);
 					if (sources.some((src) => src === sessionId || src === completingName)) {
@@ -118,10 +135,12 @@ export function createCueCompletionService(deps: CueCompletionServiceDeps): CueC
 			const completingSession = allSessions.find((session) => session.id === sessionId);
 			const completingName = completionData?.sessionName ?? completingSession?.name ?? sessionId;
 
-			for (const [ownerSessionId, config] of deps.getSessionConfigs()) {
+			for (const [ownerSessionId, view] of deps.getSessionConfigs()) {
+				const config = view.config;
 				for (const sub of config.subscriptions) {
 					if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
 					if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
+					if (view.ownershipWarning && !sub.agent_id) continue;
 
 					const sources = getMatchingSources(sub);
 					if (!sources.some((src) => src === sessionId || src === completingName)) continue;

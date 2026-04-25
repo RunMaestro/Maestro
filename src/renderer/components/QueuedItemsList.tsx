@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, GripVertical, Hammer } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, GripVertical, Copy, Check, Hammer } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
@@ -71,6 +72,24 @@ export const QueuedItemsList = memo(
 
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;
+
+		// Copy feedback state
+		const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+		const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+		const handleCopy = useCallback((item: QueuedItem) => {
+			const text =
+				item.type === 'command'
+					? [item.command, item.commandArgs].filter(Boolean).join(' ')
+					: (item.text ?? '');
+			safeClipboardWrite(text).then((ok) => {
+				if (ok) {
+					setCopiedItemId(item.id);
+					if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+					copyResetTimerRef.current = setTimeout(() => setCopiedItemId(null), 1500);
+				}
+			});
+		}, []);
 
 		// Toggle expanded state for a queued message
 		const toggleExpanded = useCallback((itemId: string) => {
@@ -247,11 +266,27 @@ export const QueuedItemsList = memo(
 							{/* Top-right: Remove button */}
 							<button
 								onClick={() => setQueueRemoveConfirmId(item.id)}
-								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors"
+								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
 								style={{ color: theme.colors.textDim }}
 								title="Remove from queue"
 							>
 								<X className="w-4 h-4" />
+							</button>
+
+							{/* Copy button - bottom right */}
+							<button
+								onClick={() => handleCopy(item)}
+								className="absolute bottom-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+								style={{
+									color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
+								}}
+								title="Copy to clipboard"
+							>
+								{copiedItemId === item.id ? (
+									<Check className="w-3.5 h-3.5" />
+								) : (
+									<Copy className="w-3.5 h-3.5" />
+								)}
 							</button>
 
 							{/* Item content */}
@@ -260,8 +295,21 @@ export const QueuedItemsList = memo(
 								style={{ color: theme.colors.textMain }}
 							>
 								{item.type === 'command' && (
-									<span style={{ color: theme.colors.success, fontWeight: 600 }}>
-										{item.command}
+									<span className="flex items-baseline gap-1 overflow-hidden">
+										<span
+											className="shrink-0"
+											style={{ color: theme.colors.success, fontWeight: 600 }}
+										>
+											{item.command}
+										</span>
+										<span
+											className="truncate min-w-0"
+											style={{
+												color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
+											}}
+										>
+											{item.commandArgs || item.commandDescription}
+										</span>
 									</span>
 								)}
 								{item.type === 'message' &&

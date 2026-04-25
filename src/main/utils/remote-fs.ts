@@ -121,6 +121,76 @@ const DEFAULT_RETRY_CONFIG = {
 const SSH_COMMAND_TIMEOUT_MS = 30000;
 
 /**
+ * Maximum concurrent SSH commands per remote host.
+ *
+ * SSH-via-cloudflared (and similar tunneled transports) rate-limit aggressive
+ * connection bursts. A naive recursive file walk over a large tree can spawn
+ * hundreds of fresh SSH connections in seconds, saturating the tunnel and
+ * starving unrelated SSH traffic — agent spawn, terminal start, git ops.
+ *
+ * 4 in-flight per host steady-state is well below cloudflared's burst threshold
+ * while still keeping a multi-thousand-directory walk progressing acceptably
+ * (each ls call is short). Excess calls queue rather than spawn new processes.
+ */
+const MAX_CONCURRENT_SSH_PER_HOST = 4;
+
+/**
+ * Per-host async semaphore. Caps in-flight SSH commands so a runaway scan on
+ * one host can't exhaust the SSH transport for unrelated callers (agents,
+ * terminals, git).
+ */
+class HostLimiter {
+	private inFlight = 0;
+	private readonly waiters: Array<() => void> = [];
+
+	constructor(private readonly max: number) {}
+
+	async acquire(): Promise<void> {
+		if (this.inFlight < this.max) {
+			this.inFlight++;
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			this.waiters.push(resolve);
+		});
+		this.inFlight++;
+	}
+
+	release(): void {
+		this.inFlight--;
+		const next = this.waiters.shift();
+		if (next) next();
+	}
+}
+
+/** Limiters keyed by stable host identifier — see {@link sshHostKey}. */
+const hostLimiters = new Map<string, HostLimiter>();
+
+/** Stable key for per-host limiting. Different users/ports on the same host get separate limiters. */
+function sshHostKey(config: SshRemoteConfig): string {
+	const user = config.username?.trim() || '';
+	return `${user}@${config.host}:${config.port}`;
+}
+
+function getHostLimiter(config: SshRemoteConfig): HostLimiter {
+	const key = sshHostKey(config);
+	let limiter = hostLimiters.get(key);
+	if (!limiter) {
+		limiter = new HostLimiter(MAX_CONCURRENT_SSH_PER_HOST);
+		hostLimiters.set(key, limiter);
+	}
+	return limiter;
+}
+
+/**
+ * Test-only: reset the per-host limiter map. Avoids cross-test state leakage
+ * when tests exercise the limiter behavior with custom hosts.
+ */
+export function __resetHostLimitersForTest(): void {
+	hostLimiters.clear();
+}
+
+/**
  * Sleep for a specified duration with jitter.
  */
 function sleep(ms: number): Promise<void> {
@@ -159,36 +229,48 @@ async function execRemoteCommand(
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
 	const sshPath = await resolveSshPath();
 
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		const sshArgs = deps.buildSshArgs(config);
-		sshArgs.push(remoteCommand);
+	// Cap concurrent SSH commands per host. Tunneled transports (e.g.,
+	// cloudflared) drop connections under burst load; throttling here prevents
+	// a recursive file scan from starving unrelated SSH consumers (agent spawn,
+	// terminal, git). Acquired once for the whole retry loop so retries don't
+	// double-count against the cap.
+	const limiter = getHostLimiter(config);
+	await limiter.acquire();
 
-		const result = await deps.execSsh(sshPath, sshArgs);
-		lastResult = result;
+	try {
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			const sshArgs = deps.buildSshArgs(config);
+			sshArgs.push(remoteCommand);
 
-		// Success - return immediately
-		if (result.exitCode === 0) {
+			const result = await deps.execSsh(sshPath, sshArgs);
+			lastResult = result;
+
+			// Success - return immediately
+			if (result.exitCode === 0) {
+				return result;
+			}
+
+			// Check if this is a recoverable error
+			const combinedOutput = `${result.stderr} ${result.stdout}`;
+			const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
+			if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
+				const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+				logger.debug(
+					`[remote-fs] SSH transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`
+				);
+				await sleep(delay);
+				continue;
+			}
+
+			// Non-recoverable error or max retries reached - return the result
 			return result;
 		}
 
-		// Check if this is a recoverable error
-		const combinedOutput = `${result.stderr} ${result.stdout}`;
-		const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
-		if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
-			const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-			logger.debug(
-				`[remote-fs] SSH transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`
-			);
-			await sleep(delay);
-			continue;
-		}
-
-		// Non-recoverable error or max retries reached - return the result
-		return result;
+		// Should never reach here, but return last result as fallback
+		return lastResult!;
+	} finally {
+		limiter.release();
 	}
-
-	// Should never reach here, but return last result as fallback
-	return lastResult!;
 }
 
 function shellEscapeRemotePath(filePath: string): string {
@@ -242,15 +324,29 @@ export async function readDirRemote(
 	// that consumers can recurse into them.  The marker line __SYMDIR__
 	// separates the two outputs.
 	//
-	// We use `find -mindepth 1 -maxdepth 1 -type l` rather than shell globs
-	// because zsh (the default shell on modern macOS) errors on unmatched
-	// globs by default (NOMATCH), which would fail the whole command for any
-	// directory missing dotfiles. `find` has no such failure mode, and
-	// -mindepth/-maxdepth are supported by both GNU and BSD find.
+	// Implementation choices (both matter — each guards against a real failure
+	// we hit in production):
+	//
+	// 1. `find -mindepth 1 -maxdepth 1 -type l` rather than shell globs,
+	//    because zsh (default shell on modern macOS) errors on unmatched
+	//    globs (NOMATCH), which would fail the whole SSH command for any
+	//    directory missing dotfiles. `find` has no such failure mode.
+	//
+	// 2. `-exec test -d {} \; -exec basename {} \;` rather than a
+	//    `| while read` pipeline, because the while loop's exit status is
+	//    the exit status of its last body command. If `find` returns any
+	//    symlink whose target is NOT a directory (e.g. a symlink to a file),
+	//    `test -d` fails for that iteration and the pipeline leaks exit 1,
+	//    which `readDirRemote`'s caller would then report as a failure even
+	//    though `ls` succeeded. `find -exec` always reports success when
+	//    find itself completed, regardless of -exec outcomes.
+	//
+	// Both `-mindepth`/`-maxdepth` and the POSIX `-exec … {} \;` form are
+	// supported by GNU and BSD (macOS) find.
 	const escapedPath = shellEscapeRemotePath(dirPath);
 	const symlinkScan =
-		`find ${escapedPath} -mindepth 1 -maxdepth 1 -type l 2>/dev/null | ` +
-		`while IFS= read -r f; do [ -d "$f" ] && basename "$f"; done`;
+		`find ${escapedPath} -mindepth 1 -maxdepth 1 -type l ` +
+		`-exec test -d {} \\; -exec basename {} \\; 2>/dev/null`;
 	const remoteCommand =
 		`ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"; ` +
 		`echo "__SYMDIR__"; ` +

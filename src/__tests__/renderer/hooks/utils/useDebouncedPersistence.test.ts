@@ -710,6 +710,29 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].fileTreeLoading).toBeUndefined();
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
 			});
+
+			it('should remove fileTreeError and fileTreeRetryAt', () => {
+				// Regression: persisting fileTreeError resurfaced a stale error
+				// on next app launch, and the `hasLoadedOnce` gate in
+				// useFileTreeManagement blocked auto-retry, so the panel
+				// displayed an out-of-date error from a prior code path even
+				// after the underlying bug was fixed.
+				const session = makeSession({
+					fileTreeError: 'Cannot access directory: /remote/path\nCommand failed: ssh …',
+					fileTreeRetryAt: Date.now() + 20000,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeError).toBeUndefined();
+				expect(persisted[0].fileTreeRetryAt).toBeUndefined();
+			});
 		});
 
 		describe('session runtime state reset', () => {

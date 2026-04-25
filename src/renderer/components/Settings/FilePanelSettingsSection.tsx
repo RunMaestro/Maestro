@@ -19,6 +19,9 @@ import {
 	FILE_EXPLORER_MAX_ENTRIES_CAP,
 	FILE_EXPLORER_MIN_DEPTH,
 	FILE_EXPLORER_MIN_ENTRIES,
+	SSH_REDUCE_ENTRY_CAP_MAX_FRACTION,
+	SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+	SSH_REDUCE_ENTRY_CAP_STEP,
 } from '../../stores/settingsStore';
 
 export interface FilePanelSettingsSectionProps {
@@ -27,6 +30,10 @@ export interface FilePanelSettingsSectionProps {
 	onMaxDepthChange: (value: number) => void;
 	maxEntries: number;
 	onMaxEntriesChange: (value: number) => void;
+	sshReduceEntryCapEnabled: boolean;
+	onSshReduceEntryCapEnabledChange: (value: boolean) => void;
+	sshReduceEntryCapFraction: number;
+	onSshReduceEntryCapFractionChange: (value: number) => void;
 }
 
 /** Preset buckets for max entries — kept small so the UI is one click wide. */
@@ -44,6 +51,10 @@ export function FilePanelSettingsSection({
 	onMaxDepthChange,
 	maxEntries,
 	onMaxEntriesChange,
+	sshReduceEntryCapEnabled,
+	onSshReduceEntryCapEnabledChange,
+	sshReduceEntryCapFraction,
+	onSshReduceEntryCapFractionChange,
 }: FilePanelSettingsSectionProps) {
 	const handleResetToDefaults = () => {
 		onMaxDepthChange(DEFAULT_FILE_EXPLORER_MAX_DEPTH);
@@ -54,6 +65,16 @@ export function FilePanelSettingsSection({
 		((maxDepth - FILE_EXPLORER_MIN_DEPTH) /
 			(FILE_EXPLORER_MAX_DEPTH_CAP - FILE_EXPLORER_MIN_DEPTH)) *
 		100;
+
+	const sshFractionPct =
+		((sshReduceEntryCapFraction - SSH_REDUCE_ENTRY_CAP_MIN_FRACTION) /
+			(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION - SSH_REDUCE_ENTRY_CAP_MIN_FRACTION)) *
+		100;
+	const sshPercentLabel = `${Math.round(sshReduceEntryCapFraction * 100)}%`;
+	const sshResolvedEntries = Math.max(
+		FILE_EXPLORER_MIN_ENTRIES,
+		Math.floor(maxEntries * sshReduceEntryCapFraction)
+	);
 
 	return (
 		<div
@@ -145,6 +166,62 @@ export function FilePanelSettingsSection({
 						{formatEntries(FILE_EXPLORER_MAX_ENTRIES_CAP)}. The Files panel shows a Load More / Load
 						All button when a scan hits this cap.
 					</p>
+				</div>
+
+				{/* SSH cap reduction */}
+				<div className="mb-3 pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+					<label className="flex items-center justify-between cursor-pointer">
+						<div className="flex-1 min-w-0 pr-3">
+							<p className="text-xs font-medium">Reduce entry cap on SSH remotes</p>
+							<p className="text-[11px] opacity-50 mt-0.5">
+								Apply a fraction of the cap to remote scans. Each directory walked over SSH is a
+								separate round-trip, so a smaller cap returns sooner on large remote trees.
+							</p>
+						</div>
+						<input
+							type="checkbox"
+							checked={sshReduceEntryCapEnabled}
+							onChange={(e) => onSshReduceEntryCapEnabledChange(e.target.checked)}
+							className="w-4 h-4 flex-shrink-0 cursor-pointer"
+							style={{ accentColor: theme.colors.accent }}
+						/>
+					</label>
+
+					{sshReduceEntryCapEnabled && (
+						<div className="mt-3">
+							<div className="flex items-center justify-between mb-2">
+								<label htmlFor="file-panel-ssh-fraction" className="text-xs font-medium">
+									SSH cap fraction
+								</label>
+								<span
+									className="text-xs font-mono px-2 py-0.5 rounded"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textMain,
+									}}
+								>
+									{sshPercentLabel}
+								</span>
+							</div>
+							<input
+								id="file-panel-ssh-fraction"
+								type="range"
+								min={SSH_REDUCE_ENTRY_CAP_MIN_FRACTION}
+								max={SSH_REDUCE_ENTRY_CAP_MAX_FRACTION}
+								step={SSH_REDUCE_ENTRY_CAP_STEP}
+								value={sshReduceEntryCapFraction}
+								onChange={(e) => onSshReduceEntryCapFractionChange(Number(e.target.value))}
+								className="w-full h-2 rounded-lg appearance-none cursor-pointer"
+								style={{
+									background: `linear-gradient(to right, ${theme.colors.accent} 0%, ${theme.colors.accent} ${sshFractionPct}%, ${theme.colors.bgActivity} ${sshFractionPct}%, ${theme.colors.bgActivity} 100%)`,
+								}}
+							/>
+							<p className="text-[11px] opacity-50 mt-1">
+								{formatEntries(maxEntries)} × {sshPercentLabel} ={' '}
+								{formatEntries(sshResolvedEntries)} on SSH. Slider steps by 5%.
+							</p>
+						</div>
+					)}
 				</div>
 
 				<button

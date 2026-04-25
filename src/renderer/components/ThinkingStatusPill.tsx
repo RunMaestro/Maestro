@@ -29,7 +29,7 @@ interface ThinkingStatusPillProps {
 // ElapsedTimeDisplay - shows time since thinking started
 const ElapsedTimeDisplay = memo(
 	({ startTime, textColor }: { startTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(
+		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
 			Math.floor((Date.now() - startTime) / 1000)
 		);
 

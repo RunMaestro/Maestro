@@ -449,11 +449,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		requiresPty: true, // Interactive Copilot exits immediately when launched over plain pipes without a TTY
 		// GitHub Copilot CLI argument builders
 		// Interactive mode: copilot (default)
-		// Interactive with initial prompt: copilot -i "prompt"
-		// Batch mode: copilot -p "prompt" (or --prompt "prompt")
-		// Silent/non-interactive: -s, --silent
+		// Batch mode: copilot -p "prompt" --output-format json --allow-all
+		// `--allow-all` is the documented equivalent of
+		// --allow-all-tools + --allow-all-paths + --allow-all-urls; required
+		// for non-interactive runs so Copilot never stops to confirm.
 		batchModePrefix: [], // No exec subcommand needed
-		batchModeArgs: ['--allow-all-tools', '--silent'], // Non-interactive mode requires tool auto-approval
+		batchModeArgs: ['--allow-all'], // Unattended: full permissions (tools + paths + urls)
 		jsonOutputArgs: ['--output-format', 'json'], // JSONL output
 		resumeArgs: (sessionId: string) => [`--resume=${sessionId}`], // Resume with session ID (--continue or --resume=sessionId)
 		readOnlyArgs: [
@@ -463,13 +464,20 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		], // Enforce read-only by denying write/shell/memory/github actions at the Copilot CLI layer
 		readOnlyCliEnforced: true, // CLI-enforced via explicit tool permission rules
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
-		yoloModeArgs: ['--allow-all-tools'], // Auto-approve all tools (--allow-all-tools or --allow-all)
+		yoloModeArgs: ['--allow-all'], // Full permissions (same as batchModeArgs; Copilot treats --yolo as an alias)
 		imagePromptBuilder: (imagePaths: string[]) =>
 			imagePaths.length > 0
 				? `Use these attached images as context:\n${imagePaths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`
 				: '',
 		promptArgs: (prompt: string) => ['-p', prompt], // Batch mode prompt arg
 		// Agent-specific configuration options
+		//
+		// Deliberately omitted: --autopilot, --allow-all-paths, --allow-all-urls,
+		// --experimental, --screen-reader. The batch path always runs with
+		// --allow-all so path/url toggles are moot, and --autopilot is an
+		// interactive-mode follow-up behavior that has no effect on -p runs.
+		// Experimental/screen-reader are user preferences rather than agent
+		// config and can be set via Custom CLI Args if needed.
 		configOptions: [
 			{
 				key: 'model',
@@ -497,52 +505,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				key: 'reasoningEffort',
 				type: 'select',
 				label: 'Reasoning Effort',
-				description: 'Control how much deliberate reasoning Copilot uses before responding.',
+				description:
+					'Reasoning budget for models that support it (GPT-5 Codex, o-series). ' +
+					'Leave empty to use the model default. Non-reasoning models ignore this flag.',
 				options: ['', 'low', 'medium', 'high', 'xhigh'],
 				default: '',
 				argBuilder: (value: string) =>
 					value && value.trim() ? ['--reasoning-effort', value.trim()] : [],
-			},
-			{
-				key: 'autopilot',
-				type: 'checkbox',
-				label: 'Autopilot',
-				description: 'Allow Copilot to continue with follow-up turns automatically in prompt mode.',
-				default: false,
-				argBuilder: (value: boolean) => (value ? ['--autopilot'] : []),
-			},
-			{
-				key: 'allowAllPaths',
-				type: 'checkbox',
-				label: 'Allow All Paths',
-				description:
-					'Disable file path verification and allow access to any path without prompting.',
-				default: false,
-				argBuilder: (value: boolean) => (value ? ['--allow-all-paths'] : []),
-			},
-			{
-				key: 'allowAllUrls',
-				type: 'checkbox',
-				label: 'Allow All URLs',
-				description: 'Allow network access to any URL without prompting.',
-				default: false,
-				argBuilder: (value: boolean) => (value ? ['--allow-all-urls'] : []),
-			},
-			{
-				key: 'experimental',
-				type: 'checkbox',
-				label: 'Experimental Features',
-				description: 'Enable Copilot CLI experimental features for this agent.',
-				default: false,
-				argBuilder: (value: boolean) => (value ? ['--experimental'] : []),
-			},
-			{
-				key: 'screenReader',
-				type: 'checkbox',
-				label: 'Screen Reader Mode',
-				description: 'Enable Copilot CLI screen reader optimizations.',
-				default: false,
-				argBuilder: (value: boolean) => (value ? ['--screen-reader'] : []),
 			},
 		],
 	},

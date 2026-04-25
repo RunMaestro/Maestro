@@ -290,11 +290,14 @@ export class CueEngine {
 			getSessions: () =>
 				deps.getSessions().map((session) => ({ id: session.id, name: session.name })),
 			getSessionConfigs: () => {
-				const configs = new Map<string, CueConfig>();
+				const views = new Map<string, { config: CueConfig; ownershipWarning?: string }>();
 				for (const [sessionId, state] of this.registry.snapshot()) {
-					configs.set(sessionId, state.config);
+					views.set(sessionId, {
+						config: state.config,
+						ownershipWarning: state.ownershipWarning,
+					});
 				}
-				return configs;
+				return views;
 			},
 			fanInTracker: this.fanInTracker,
 			onDispatch: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {

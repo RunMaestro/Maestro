@@ -189,6 +189,16 @@ export interface CueSettings {
 	timeout_on_fail: 'break' | 'continue';
 	max_concurrent: number;
 	queue_size: number;
+	/**
+	 * When multiple agents share the same projectRoot, the config is otherwise
+	 * loaded N times (once per agent) and every trigger fires N times. Setting
+	 * `owner_agent_id` pins execution to a single agent. Accepts either the
+	 * agent's internal session id (UUID) or its display name.
+	 *
+	 * When unset and multiple agents share a projectRoot, the first agent in
+	 * the session list wins (deterministic per launch).
+	 */
+	owner_agent_id?: string;
 }
 
 /** Default Cue settings */
@@ -251,6 +261,11 @@ export interface CueSessionStatus {
 	activeRuns: number;
 	lastTriggered?: string;
 	nextTrigger?: string;
+	/** Populated when this session's unowned subscriptions are suppressed because
+	 *  ownership of its cue.yaml is contested (multiple agents in the same
+	 *  projectRoot) or unresolvable (owner_agent_id matches no agent). The
+	 *  dashboard renders a red indicator with this text as the tooltip. */
+	ownershipWarning?: string;
 }
 
 /** Session data with subscriptions for the Cue graph visualization */

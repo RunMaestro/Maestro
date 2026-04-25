@@ -122,6 +122,18 @@ export const FILE_EXPLORER_MIN_ENTRIES = 1_000;
 /** Maximum allowed file-entry cap (soft ceiling; "Load all" bypasses this). */
 export const FILE_EXPLORER_MAX_ENTRIES_CAP = 1_000_000;
 
+/**
+ * Default fraction applied to {@link DEFAULT_FILE_EXPLORER_MAX_ENTRIES} when
+ * "Reduce entry cap on SSH remotes" is enabled. 0.10 → 10% of the local cap.
+ */
+export const DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION = 0.1;
+/** Minimum allowed SSH cap fraction (5%). */
+export const SSH_REDUCE_ENTRY_CAP_MIN_FRACTION = 0.05;
+/** Maximum allowed SSH cap fraction (100% — no reduction). */
+export const SSH_REDUCE_ENTRY_CAP_MAX_FRACTION = 1.0;
+/** Slider step for the SSH cap fraction (5 percentage points). */
+export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
+
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
 	maxContextTokens: 100000,
@@ -326,6 +338,8 @@ export interface SettingsStoreState {
 	localHonorGitignore: boolean;
 	fileExplorerMaxDepth: number;
 	fileExplorerMaxEntries: number;
+	sshReduceEntryCapEnabled: boolean;
+	sshReduceEntryCapFraction: number;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
 	useSystemBrowser: boolean;
@@ -416,6 +430,8 @@ export interface SettingsStoreActions {
 	setLocalHonorGitignore: (value: boolean) => void;
 	setFileExplorerMaxDepth: (value: number) => void;
 	setFileExplorerMaxEntries: (value: number) => void;
+	setSshReduceEntryCapEnabled: (value: boolean) => void;
+	setSshReduceEntryCapFraction: (value: number) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
@@ -586,6 +602,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		localHonorGitignore: true,
 		fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
 		fileExplorerMaxEntries: DEFAULT_FILE_EXPLORER_MAX_ENTRIES,
+		sshReduceEntryCapEnabled: false,
+		sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		useSystemBrowser: false,
@@ -1026,6 +1044,24 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			);
 			set({ fileExplorerMaxEntries: clamped });
 			window.maestro.settings.set('fileExplorerMaxEntries', clamped);
+		},
+
+		setSshReduceEntryCapEnabled: (value) => {
+			set({ sshReduceEntryCapEnabled: value });
+			window.maestro.settings.set('sshReduceEntryCapEnabled', value);
+		},
+
+		setSshReduceEntryCapFraction: (value) => {
+			// Snap to the slider step so persisted values stay on-grid even if the
+			// caller passes a high-precision float (e.g. from a range input).
+			const steps = Math.round(value / SSH_REDUCE_ENTRY_CAP_STEP);
+			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
+			const clamped = Math.max(
+				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
+			);
+			set({ sshReduceEntryCapFraction: clamped });
+			window.maestro.settings.set('sshReduceEntryCapFraction', clamped);
 		},
 
 		setSshRemoteIgnorePatterns: (value) => {
@@ -2069,6 +2105,24 @@ export async function loadAllSettings(): Promise<void> {
 			patch.fileExplorerMaxEntries = Math.max(
 				FILE_EXPLORER_MIN_ENTRIES,
 				Math.min(FILE_EXPLORER_MAX_ENTRIES_CAP, Math.floor(raw))
+			);
+		}
+
+		if (typeof allSettings['sshReduceEntryCapEnabled'] === 'boolean') {
+			patch.sshReduceEntryCapEnabled = allSettings['sshReduceEntryCapEnabled'] as boolean;
+		}
+
+		if (
+			allSettings['sshReduceEntryCapFraction'] !== undefined &&
+			typeof allSettings['sshReduceEntryCapFraction'] === 'number' &&
+			Number.isFinite(allSettings['sshReduceEntryCapFraction'])
+		) {
+			const raw = allSettings['sshReduceEntryCapFraction'] as number;
+			const steps = Math.round(raw / SSH_REDUCE_ENTRY_CAP_STEP);
+			const snapped = steps * SSH_REDUCE_ENTRY_CAP_STEP;
+			patch.sshReduceEntryCapFraction = Math.max(
+				SSH_REDUCE_ENTRY_CAP_MIN_FRACTION,
+				Math.min(SSH_REDUCE_ENTRY_CAP_MAX_FRACTION, snapped)
 			);
 		}
 

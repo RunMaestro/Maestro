@@ -74,6 +74,17 @@ When a user asks you to add, modify, or debug a Cue subscription:
 3. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration, https://docs.runmaestro.ai/maestro-cue-events, https://docs.runmaestro.ai/maestro-cue-advanced, https://docs.runmaestro.ai/maestro-cue-examples. Don't guess field names.
 4. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` — the engine reloads automatically when the file changes.
 
+### Shared Workspaces: `settings.owner_agent_id`
+
+When two or more agents are registered against the same project root (for example, an Opus and a Sonnet agent both pointing at the same Obsidian vault), every subscription in `cue.yaml` is either **pinned to a single agent** or **disabled** — there is no mode where an unowned subscription broadcasts to every agent in the root. Which state applies depends on `owner_agent_id` and the per-subscription `agent_id`:
+
+- **Always prefer explicit `agent_id` per subscription** when you want a specific agent (or several, via chains / fan-out) to run work in a shared workspace. That is the reliable way to target multiple agents from one `cue.yaml`.
+- **Set `settings.owner_agent_id`** to the agent's internal id (UUID) **or** display name to pin every _unowned_ subscription (no `agent_id`) to that agent. Prefer the UUID when two agents share a display name — a name with multiple matches is flagged as ambiguous and unowned subs are disabled until it's resolved.
+- **If `owner_agent_id` is unset and >1 agent shares the root**, the first agent in the session list is picked as a deterministic fallback owner; non-winners are flagged in the Cue dashboard with a red warning pointing to `owner_agent_id`. Do not rely on this fallback — set `owner_agent_id` explicitly.
+- **If `owner_agent_id` is set but no agent in the root matches it**, every agent there is flagged and unowned subscriptions are disabled until the value is fixed.
+
+When authoring `cue.yaml` for a workspace that may be registered under more than one agent, set `owner_agent_id` proactively. Use `{{MAESTRO_CLI_PATH}} list agents` to discover ids and names.
+
 ### Natural-Language → YAML Recipes
 
 Translate the user's phrasing into one of these starter templates, then adapt names/prompts/agent ids. Always set `agent_id` to the target agent (use `{{MAESTRO_CLI_PATH}} list agents` to find ids).

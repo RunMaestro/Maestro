@@ -314,7 +314,9 @@ export function AgentSessionsModal({
 				}
 				setTotalMessages(result.total);
 				setHasMoreMessages(result.hasMore);
-				setMessagesOffset(offset + result.messages.length);
+				setMessagesOffset((prev) =>
+					offset === 0 ? result.messages.length : prev + result.messages.length
+				);
 			} catch (error) {
 				console.error('Failed to load messages:', error);
 			} finally {

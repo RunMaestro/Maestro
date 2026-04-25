@@ -237,6 +237,72 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Login Form Implementation');
 		});
 
+		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
+			// Regression guard: without forwarding promptArgs, ChildProcessSpawner falls back
+			// to `-- <prompt>` which breaks copilot-cli (needs `-p <prompt>`) and factory-droid
+			// (needs a bare positional prompt).
+			const copilotPromptArgs = vi.fn((p: string) => ['-p', p]);
+			const mockCopilotAgent: AgentConfig = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				command: 'copilot',
+				path: '/usr/local/bin/copilot',
+				args: [],
+				promptArgs: copilotPromptArgs,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCopilotAgent);
+
+			mockProcessManager.on.mockImplementation(() => {});
+
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'copilot-cli',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'copilot-cli',
+					promptArgs: copilotPromptArgs,
+				})
+			);
+		});
+
+		it('forwards noPromptSeparator for agents that use bare positional prompts (factory-droid)', async () => {
+			const mockDroidAgent: AgentConfig = {
+				id: 'factory-droid',
+				name: 'Factory Droid',
+				command: 'droid',
+				path: '/usr/local/bin/droid',
+				args: [],
+				noPromptSeparator: true,
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockDroidAgent);
+
+			mockProcessManager.on.mockImplementation(() => {});
+
+			invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Review this repo',
+				agentType: 'factory-droid',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'factory-droid',
+					noPromptSeparator: true,
+				})
+			);
+		});
+
 		it('filters out --dangerously-skip-permissions for read-only parallel execution', async () => {
 			const { buildAgentArgs } = await import('../../../../main/utils/agent-args');
 

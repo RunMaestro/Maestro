@@ -28,6 +28,7 @@ settings:
   timeout_on_fail: break | continue
   max_concurrent: 1
   queue_size: 10
+  owner_agent_id: <agent id or name>  # optional — recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
 
 Multi-agent patterns: Startup (app.startup), Heartbeat (time.heartbeat), Scheduled (time.scheduled), File Enrichment (file.changed), Research Swarm (fan_out + fan-in), Sequential Chain (agent.completed chain), Debate (fan_out to opposing + fan-in to moderator), PR Review (github.pull_request), Issue Triage (github.issue), Task Queue (task.pending).
 

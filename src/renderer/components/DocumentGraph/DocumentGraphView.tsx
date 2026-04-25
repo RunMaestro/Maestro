@@ -1443,7 +1443,7 @@ export function DocumentGraphView({
 
 							{showDepthSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -1516,7 +1516,7 @@ export function DocumentGraphView({
 
 							{showPreviewSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-50"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,

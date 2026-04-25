@@ -157,6 +157,7 @@ export const WizardMessageBubble = React.memo(function WizardMessageBubble({
 							<img
 								key={imgIdx}
 								src={img}
+								alt={`Attached image ${imgIdx + 1}`}
 								className="h-20 rounded border cursor-zoom-in shrink-0"
 								style={{
 									objectFit: 'contain',

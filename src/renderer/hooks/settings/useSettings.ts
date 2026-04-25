@@ -282,6 +282,10 @@ export interface UseSettingsReturn {
 	setFileExplorerMaxDepth: (value: number) => void;
 	fileExplorerMaxEntries: number;
 	setFileExplorerMaxEntries: (value: number) => void;
+	sshReduceEntryCapEnabled: boolean;
+	setSshReduceEntryCapEnabled: (value: boolean) => void;
+	sshReduceEntryCapFraction: number;
+	setSshReduceEntryCapFraction: (value: number) => void;
 
 	// SSH Remote file indexing settings
 	sshRemoteIgnorePatterns: string[];

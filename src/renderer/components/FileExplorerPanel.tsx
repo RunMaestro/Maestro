@@ -98,6 +98,7 @@ function FileTreeLoadingProgress({
 	theme,
 	progress,
 	isRemote,
+	onCancel,
 }: {
 	theme: Theme;
 	progress?: {
@@ -106,6 +107,7 @@ function FileTreeLoadingProgress({
 		currentDirectory: string;
 	};
 	isRemote: boolean;
+	onCancel?: () => void;
 }) {
 	// Extract just the folder name from the full path for display
 	const currentFolder = progress?.currentDirectory
@@ -146,6 +148,18 @@ function FileTreeLoadingProgress({
 					>
 						scanning: {currentFolder}/
 					</div>
+				)}
+
+				{/* Cancel — useful over SSH when the scan is hogging connections. */}
+				{onCancel && (
+					<button
+						type="button"
+						onClick={onCancel}
+						className="text-[11px] mt-3 underline-offset-2 hover:underline transition-opacity"
+						style={{ color: theme.colors.textDim }}
+					>
+						Stop loading
+					</button>
 				)}
 			</div>
 		</div>
@@ -421,6 +435,11 @@ interface FileExplorerPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -439,6 +458,8 @@ interface FileExplorerPanelProps {
 		sessionId: string,
 		options?: { maxEntriesOverride?: number }
 	) => Promise<FileTreeChanges | undefined>;
+	/** Cancel the in-flight file tree load — useful when SSH scans monopolize connections. */
+	cancelFileTreeLoad?: (sessionId: string) => void;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
@@ -465,11 +486,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setActiveFocus,
 		fileTreeFilterInputRef,
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,
 		updateSessionWorkingDirectory,
 		refreshFileTree,
+		cancelFileTreeLoad,
 		setSessions,
 		onAutoRefreshChange,
 		onShowFlash,
@@ -1058,6 +1081,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			return (
 				<div
 					data-file-index={globalIndex}
+					title={isFolder ? 'Alt/Option+click to expand or collapse all subfolders' : undefined}
 					className={`absolute top-0 left-0 w-full flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-white/5 px-2 rounded transition-colors border-l-2 select-none min-w-0 ${isSelected ? 'bg-white/10' : ''}`}
 					style={{
 						height: `${virtualRow.size}px`,
@@ -1077,9 +1101,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							e.preventDefault();
 						}
 					}}
-					onClick={() => {
+					onClick={(e) => {
 						if (isFolder) {
-							toggleFolder(fullPath, session.id, setSessions);
+							if (e.altKey) {
+								toggleFolderRecursive(fullPath, session.id, setSessions);
+							} else {
+								toggleFolder(fullPath, session.id, setSessions);
+							}
 						} else {
 							setSelectedFileIndex(globalIndex);
 							// Only change focus if not filtering
@@ -1149,6 +1177,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			selectedFileIndex,
 			theme,
 			toggleFolder,
+			toggleFolderRecursive,
 			setSessions,
 			setSelectedFileIndex,
 			setActiveFocus,
@@ -1395,6 +1424,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							theme={theme}
 							progress={session.fileTreeLoadingProgress}
 							isRemote={!!(session.sshRemoteId || session.sessionSshRemoteConfig?.enabled)}
+							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
 						/>
 					)}
 					{/* Truncation banner - scan hit the entry cap and stopped early. */}

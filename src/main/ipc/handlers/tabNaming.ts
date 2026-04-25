@@ -311,6 +311,8 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							args: finalArgs,
 							prompt: fullPrompt,
 							customEnvVars,
+							promptArgs: agent.promptArgs,
+							noPromptSeparator: agent.noPromptSeparator,
 							sendPromptViaStdin: shouldSendPromptViaStdin,
 							sendPromptViaStdinRaw,
 						});

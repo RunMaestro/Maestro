@@ -107,9 +107,9 @@ export class CopilotOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'copilot-cli';
 
 	private toolNames = new Map<string, string>();
-	/** Tracks whether message deltas were received in the current turn. */
-	private turnHadMessageDeltas = false;
-	/** Tracks whether reasoning deltas were received in the current turn. */
+	/** Tracks whether reasoning deltas were received in the current turn.
+	 *  Used to dedupe the `assistant.reasoning` summary against its preceding
+	 *  delta stream. */
 	private turnHadReasoningDeltas = false;
 
 	/** Parse a single JSON line from Copilot's JSONL output stream. */
@@ -146,7 +146,6 @@ export class CopilotOutputParser implements AgentOutputParser {
 			case 'assistant.reasoning':
 				return this.parseAssistantReasoning(msg);
 			case 'assistant.turn_start':
-				this.turnHadMessageDeltas = false;
 				this.turnHadReasoningDeltas = false;
 				return {
 					type: 'system',
@@ -192,10 +191,18 @@ export class CopilotOutputParser implements AgentOutputParser {
 		}
 	}
 
-	/** Parse assistant.message events, detecting final_answer phase as result events.
-	 *  Non-final messages repeat content already streamed via assistant.message_delta
-	 *  events — when deltas were received, the summary is skipped to avoid
-	 *  double-accumulation. When no deltas preceded it, the content is used. */
+	/** Parse assistant.message events.
+	 *
+	 *  Shape of the three assistant.message variants we see in practice:
+	 *   1. Intermediate turn:  content = "" + toolRequests present         → emit tools
+	 *   2. Final turn:         content = "<full answer>" + no toolRequests → emit result
+	 *   3. Legacy/edge:        phase = 'final_answer'                      → emit result
+	 *
+	 *  Modern Copilot CLI does not emit the `phase` field, so we recognize
+	 *  the final answer structurally: non-empty content with no tool
+	 *  requests. Emitting as `type: 'result'` with the full message content
+	 *  guarantees StdoutHandler has the authoritative final text even when
+	 *  the accumulated delta stream is incomplete or lagging. */
 	private parseAssistantMessage(msg: CopilotRawMessage): ParsedEvent {
 		const content = msg.data?.content || '';
 		const phase = msg.data?.phase;
@@ -217,7 +224,14 @@ export class CopilotOutputParser implements AgentOutputParser {
 				};
 			});
 
-		if (phase === 'final_answer') {
+		// Final answer: either the explicit phase (legacy) OR the structural
+		// pattern used by modern Copilot CLI (no phase field, non-empty
+		// content, no pending tool calls). Phase values like 'commentary'
+		// opt out — they mark the message as an intermediate narration.
+		const isFinalAnswer =
+			phase === 'final_answer' || (phase === undefined && !!content && toolUseBlocks.length === 0);
+
+		if (isFinalAnswer) {
 			return {
 				type: 'result',
 				text: content,
@@ -226,7 +240,9 @@ export class CopilotOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Non-final message with tool requests — forward tool blocks only
+		// Intermediate turn with tool calls — forward the tool blocks. The
+		// accompanying text (if any) was already streamed via deltas and will
+		// be finalized when the session-ending assistant.message arrives.
 		if (toolUseBlocks.length > 0) {
 			return {
 				type: 'text',
@@ -236,24 +252,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// If deltas already streamed this content, skip the summary to avoid duplication
-		if (this.turnHadMessageDeltas) {
-			return {
-				type: 'system',
-				raw: msg,
-			};
-		}
-
-		// No deltas preceded this message — use its content directly
-		if (content) {
-			return {
-				type: 'text',
-				text: content,
-				isPartial: true,
-				raw: msg,
-			};
-		}
-
+		// Empty content, no tools — pure signal event, nothing to render.
 		return {
 			type: 'system',
 			raw: msg,
@@ -267,7 +266,6 @@ export class CopilotOutputParser implements AgentOutputParser {
 			return null;
 		}
 
-		this.turnHadMessageDeltas = true;
 		return {
 			type: 'text',
 			text: deltaContent,

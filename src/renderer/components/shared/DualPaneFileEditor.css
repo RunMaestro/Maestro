@@ -116,12 +116,6 @@
 	flex-shrink: 0;
 }
 
-.dual-pane-list-item-token-count {
-	font-size: 10px;
-	font-variant-numeric: tabular-nums;
-	opacity: 0.75;
-}
-
 .dual-pane-modified-indicator {
 	font-size: 16px;
 	line-height: 1;

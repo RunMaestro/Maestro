@@ -215,19 +215,6 @@ describe('MaestroPromptsTab selection precedence', () => {
 		expect(ids).toEqual(expect.arrayContaining(PROMPTS.map((p) => p.id)));
 	});
 
-	it('renders a per-row token count estimate on each list item', async () => {
-		const { container } = render(<MaestroPromptsTab theme={mockTheme} />);
-		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
-		// Every list row should carry a token-count badge driven by the item's content.
-		const counts = container.querySelectorAll<HTMLElement>(
-			'.dual-pane-list-item .dual-pane-list-item-token-count'
-		);
-		expect(counts.length).toBe(PROMPTS.length);
-		for (const el of counts) {
-			expect(el.textContent).toMatch(/^~\d/);
-		}
-	});
-
 	it('renders a live token count next to the editor title', async () => {
 		const { container } = render(<MaestroPromptsTab theme={mockTheme} />);
 		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
