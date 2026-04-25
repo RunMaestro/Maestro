@@ -16,6 +16,7 @@ import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import type { ModeratorConfig, GroupChatHistoryEntry } from '../../shared/group-chat-types';
 import { hasCapability } from '../agents/capabilities';
+import { logger } from '../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Write serialization & atomic file I/O
@@ -78,13 +79,7 @@ async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
 	}
 }
 
-/**
- * Bootstrap settings store for custom storage location.
- * This is the same store used in main/index.ts for settings sync.
- */
-interface BootstrapSettings {
-	customSyncPath?: string;
-}
+import type { BootstrapSettings } from '../stores/types';
 
 const bootstrapStore = new Store<BootstrapSettings>({
 	name: 'maestro-bootstrap',
@@ -169,7 +164,7 @@ function getConfigDir(): string {
 /**
  * Get the group chats directory path
  */
-export function getGroupChatsDir(): string {
+function getGroupChatsDir(): string {
 	return path.join(getConfigDir(), 'group-chats');
 }
 
@@ -597,7 +592,7 @@ export async function getGroupChatHistory(groupChatId: string): Promise<GroupCha
 					entries.push(JSON.parse(line));
 				} catch {
 					// Skip malformed lines
-					console.warn(`[GroupChatHistory] Skipping malformed line: ${line.substring(0, 50)}...`);
+					logger.warn(`[GroupChatHistory] Skipping malformed line: ${line.substring(0, 50)}...`);
 				}
 			}
 		}

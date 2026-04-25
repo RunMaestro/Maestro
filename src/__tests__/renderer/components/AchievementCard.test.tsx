@@ -5,6 +5,7 @@ import { AchievementCard } from '../../../renderer/components/AchievementCard';
 import type { Theme } from '../../../renderer/types';
 import type { AutoRunStats } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the MaestroSilhouette component
 vi.mock('../../../renderer/components/MaestroSilhouette', () => ({
 	MaestroSilhouette: ({
@@ -77,25 +78,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e2e',
-		bgSidebar: '#181825',
-		bgActivity: '#11111b',
-		textMain: '#cdd6f4',
-		textDim: '#a6adc8',
-		accent: '#8B5CF6',
-		border: '#313244',
-		success: '#a6e3a1',
-		warning: '#f9e2af',
-		error: '#f38ba8',
-		info: '#89dceb',
-		highlight: '#f5c2e7',
-	},
-};
 
 // Base autoRunStats for tests
 const baseAutoRunStats: AutoRunStats = {

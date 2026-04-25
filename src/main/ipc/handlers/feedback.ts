@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { logger } from '../../utils/logger';
+import { getPrompt } from '../../prompt-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
 	isGhInstalled,
@@ -20,6 +21,7 @@ import {
 } from '../../utils/cliDetection';
 import { execFileNoThrow } from '../../utils/execFile';
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[Feedback]';
 const ATTACHMENTS_REPO = 'maestro-feedback-attachments';
@@ -790,9 +792,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 		withIpcErrorLogging(
 			handlerOpts('get-conversation-prompt'),
 			async (): Promise<{ prompt: string; environment: string }> => {
-				// Use the build-time generated prompt constant (no runtime file I/O needed)
-				const { feedbackConversationPrompt } = await import('../../../generated/prompts');
-				const promptTemplate = feedbackConversationPrompt;
+				const promptTemplate = getPrompt('feedback-conversation');
 
 				const platformLabel = getPlatformLabel(process.platform);
 				const osVersion = typeof os.version === 'function' ? os.version() : '';
@@ -934,6 +934,7 @@ export function registerFeedbackHandlers(_deps: FeedbackHandlerDependencies): vo
 							}
 						}
 					} catch (e) {
+						void captureException(e);
 						logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
 					}
 				}

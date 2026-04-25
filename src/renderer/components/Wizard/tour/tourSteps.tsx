@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { PenLine, ImageIcon, History, Eye, Brain, Keyboard, Search } from 'lucide-react';
+import { PenLine, ImageIcon, History, Eye, Brain, Search, Sparkles, Gauge } from 'lucide-react';
 import type { TourStepConfig } from './useTour';
 import type { Shortcut } from '../../../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
@@ -47,11 +47,48 @@ const inputAreaIconsContent = (
 	<div className="text-xs leading-relaxed space-y-1.5">
 		<div>
 			Look for these controls: <TourIcon icon={PenLine} /> opens an expanded prompt editor,{' '}
-			<TourIcon icon={ImageIcon} /> lets you attach files (or just paste),{' '}
-			<TourIcon icon={History} label="History" /> toggles session history,{' '}
-			<TourIcon icon={Eye} label="Read-only" /> prevents file changes,{' '}
-			<TourIcon icon={Brain} label="Thinking" /> toggles display of agent thinking, and{' '}
-			<TourIcon icon={Keyboard} label="Enter" /> switches the submit hotkey.
+			<TourIcon icon={ImageIcon} /> lets you attach files (or just paste).
+		</div>
+	</div>
+);
+
+/**
+ * JSX content for the model selector tour step
+ */
+const modelSelectorContent = (
+	<div className="text-xs leading-relaxed space-y-1.5">
+		<div>
+			<TourIcon icon={Sparkles} label="Model" /> Click this pill to switch between available AI
+			models (e.g., Sonnet, Opus, Haiku). Different models have different strengths — pick the right
+			one for the task.
+		</div>
+		<div>
+			<TourIcon icon={Gauge} label="Effort" /> When available, this pill lets you set the effort
+			level (low, medium, high). Lower effort means faster, cheaper responses. Higher effort means
+			more thorough work.
+		</div>
+	</div>
+);
+
+/**
+ * JSX content for the toolbar toggles tour step
+ */
+const toolbarTogglesContent = (
+	<div className="text-xs leading-relaxed space-y-1.5">
+		<div>
+			These are <strong>buttons</strong>, not just labels — click them to toggle:
+		</div>
+		<div>
+			<TourIcon icon={History} label="History" /> Controls whether this tab's interactions are saved
+			to your history. Toggle per-tab as needed.
+		</div>
+		<div>
+			<TourIcon icon={Eye} label="Plan / Read-only" /> Prevents the agent from modifying files —
+			great for asking questions, reviewing code, or planning without risk.
+		</div>
+		<div>
+			<TourIcon icon={Brain} label="Thinking" /> Streams the agent's internal reasoning. Click once
+			for temporary, again for sticky (persistent across messages), and once more to turn off.
 		</div>
 		<div className="opacity-70">
 			Defaults for these toggles can be changed in Settings → General.
@@ -82,8 +119,10 @@ const tabSearchIconContent = (
  * 8) Main terminal area + tabs - explain AI Terminal and tab usage
  * 9) Agent Sessions button - browse previous conversations
  * 10) Input area - explain messaging the AI
- * 11) Terminal mode - teach Cmd+J shortcut
- * 12) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
+ * 11) Model & effort selector - choose model and effort level
+ * 12) Toolbar toggles - History, Read-only/Plan, Thinking buttons
+ * 13) Additional tabs - terminal (Cmd+J), browser (Cmd+B), jump to nearest terminal
+ * 14) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
  */
 export const tourSteps: TourStepConfig[] = [
 	{
@@ -197,7 +236,7 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'input-area',
 		title: 'Input Area',
 		description:
-			'Type your messages here to communicate with the AI. During Auto Run, this area may be locked while tasks execute. You can queue messages to send after the current task completes. Press {{focusInput}} to quickly jump here.',
+			'Type your messages here to communicate with the AI. You can also use slash commands and @ mentions for files. Press {{focusInput}} to quickly jump here.',
 		descriptionGeneric:
 			'Type your messages here to communicate with the AI. You can also use slash commands and @ mentions for files. Press {{focusInput}} to quickly jump here.',
 		descriptionContent: inputAreaIconsContent,
@@ -207,12 +246,40 @@ export const tourSteps: TourStepConfig[] = [
 		uiActions: [],
 	},
 	{
-		id: 'terminal-mode',
-		title: 'Terminal Mode',
+		id: 'model-selector',
+		title: 'Model & Effort',
 		description:
-			'Press {{toggleMode}} to switch between AI mode and Terminal mode. Terminal mode gives you a direct shell for running commands yourself.',
+			'These pills let you change your AI model and effort level on the fly — no need to dig through settings.',
 		descriptionGeneric:
-			'Press {{toggleMode}} to switch between AI mode and Terminal mode. Terminal mode gives you a direct shell for running commands yourself.',
+			'These pills let you change your AI model and effort level on the fly — no need to dig through settings.',
+		descriptionContent: modelSelectorContent,
+		descriptionContentGeneric: modelSelectorContent,
+		wide: true,
+		selector: '[data-tour="model-selector"], [data-tour="effort-selector"]',
+		position: 'top',
+		uiActions: [],
+	},
+	{
+		id: 'toolbar-toggles',
+		title: 'Session Controls',
+		description:
+			"These aren't just status indicators — they're clickable buttons that control your session behavior.",
+		descriptionGeneric:
+			"These aren't just status indicators — they're clickable buttons that control your session behavior.",
+		descriptionContent: toolbarTogglesContent,
+		descriptionContentGeneric: toolbarTogglesContent,
+		wide: true,
+		selector: '[data-tour="toolbar-toggles"]',
+		position: 'top',
+		uiActions: [],
+	},
+	{
+		id: 'additional-tabs',
+		title: 'Additional Tabs',
+		description:
+			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab — a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
+		descriptionGeneric:
+			'Beyond AI chat tabs, you can open other tab types right alongside your conversations.\n\nPress {{toggleMode}} to open a Terminal tab — a full shell for running commands yourself. Press {{newBrowserTab}} to open a Browser tab for web previews and research without leaving Maestro.\n\nWorking with multiple terminals? Press {{jumpToTerminal}} to instantly jump to the nearest terminal tab.',
 		selector: '[data-tour="input-area"]',
 		position: 'top',
 		uiActions: [],

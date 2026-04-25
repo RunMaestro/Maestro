@@ -47,7 +47,10 @@ import type {
 	CueActivityEntry,
 	UsageDashboardData,
 	AchievementData,
+	CreateSessionConfig,
+	DirectorNotesSynopsisResult,
 } from '../types';
+import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -66,6 +69,7 @@ export interface WebClientMessage {
 	newName?: string;
 	filePath?: string;
 	focus?: boolean;
+	force?: boolean;
 	[key: string]: unknown;
 }
 
@@ -119,6 +123,12 @@ export interface MessageHandlerCallbacks {
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
+	openBrowserTab: (sessionId: string, url: string) => Promise<boolean>;
+	openTerminalTab: (
+		sessionId: string,
+		config: { cwd?: string; shell?: string; name?: string | null }
+	) => Promise<boolean>;
+	newAITabWithPrompt: (sessionId: string, prompt: string) => Promise<boolean>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -129,6 +139,13 @@ export interface MessageHandlerCallbacks {
 			maxLoops?: number;
 			saveAsPlaybook?: string;
 			launch?: boolean;
+			worktree?: {
+				enabled: boolean;
+				path: string;
+				branchName: string;
+				createPROnCompletion: boolean;
+				prTargetBranch: string;
+			};
 		}
 	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 	getSessions: () => Array<{
@@ -157,7 +174,8 @@ export interface MessageHandlerCallbacks {
 		name: string,
 		toolType: string,
 		cwd: string,
-		groupId?: string
+		groupId?: string,
+		config?: CreateSessionConfig
 	) => Promise<{ sessionId: string } | null>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	renameSession: (sessionId: string, newName: string) => Promise<boolean>;
@@ -174,8 +192,17 @@ export interface MessageHandlerCallbacks {
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
+	triggerCueSubscription: (
+		subscriptionName: string,
+		prompt?: string,
+		sourceAgentId?: string
+	) => Promise<boolean>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
+	generateDirectorNotesSynopsis: (
+		lookbackDays: number,
+		provider: string
+	) => Promise<DirectorNotesSynopsisResult>;
 	writeToTerminal: (sessionId: string, data: string) => boolean;
 	resizeTerminal: (sessionId: string, cols: number, rows: number) => boolean;
 	spawnTerminalForWeb: (
@@ -283,6 +310,18 @@ export class WebSocketMessageHandler {
 
 			case 'open_file_tab':
 				this.handleOpenFileTab(client, message);
+				break;
+
+			case 'open_browser_tab':
+				this.handleOpenBrowserTab(client, message);
+				break;
+
+			case 'open_terminal_tab':
+				this.handleOpenTerminalTab(client, message);
+				break;
+
+			case 'new_ai_tab_with_prompt':
+				this.handleNewAITabWithPrompt(client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -413,12 +452,20 @@ export class WebSocketMessageHandler {
 				this.handleGetCueActivity(client, message);
 				break;
 
+			case 'trigger_cue_subscription':
+				this.handleTriggerCueSubscription(client, message);
+				break;
+
 			case 'get_usage_dashboard':
 				this.handleGetUsageDashboard(client, message);
 				break;
 
 			case 'get_achievements':
 				this.handleGetAchievements(client, message);
+				break;
+
+			case 'generate_director_notes_synopsis':
+				this.handleGenerateDirectorNotesSynopsis(client, message);
 				break;
 
 			case 'terminal_write':
@@ -463,6 +510,10 @@ export class WebSocketMessageHandler {
 		const command = message.command as string;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
+		// force=true bypasses the busy-state guard below, allowing callers to
+		// dispatch concurrent writes to an already-running agent. Used by
+		// `maestro-cli send --live --force`.
+		const force = message.force === true;
 
 		logger.info(
 			`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}`,
@@ -485,8 +536,9 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Check if session is busy - prevent race conditions between desktop and web
-		if (sessionDetail.state === 'busy') {
+		// Check if session is busy - prevent race conditions between desktop and web.
+		// `force: true` opts out of this guard (see `maestro-cli send --live --force`).
+		if (sessionDetail.state === 'busy' && !force) {
 			this.sendError(
 				client,
 				'Session is busy - please wait for the current operation to complete',
@@ -496,6 +548,9 @@ export class WebSocketMessageHandler {
 			);
 			logger.debug(`Command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
 			return;
+		}
+		if (sessionDetail.state === 'busy' && force) {
+			logger.info(`[Web Command] Force-dispatching to busy session ${sessionId}`, LOG_CONTEXT);
 		}
 
 		// Use client's inputMode if provided, otherwise fall back to server state
@@ -1242,6 +1297,52 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// Validate optional worktree config — desktop app uses this to create a
+		// git worktree, checkout the branch, and optionally open a PR on completion.
+		let worktree:
+			| {
+					enabled: boolean;
+					path: string;
+					branchName: string;
+					createPROnCompletion: boolean;
+					prTargetBranch: string;
+			  }
+			| undefined;
+		if (message.worktree !== undefined) {
+			const w = message.worktree as Record<string, unknown> | null;
+			if (typeof w !== 'object' || w === null) {
+				this.sendError(client, 'worktree must be an object');
+				return;
+			}
+			if (typeof w.enabled !== 'boolean') {
+				this.sendError(client, 'worktree.enabled must be a boolean');
+				return;
+			}
+			if (typeof w.path !== 'string' || w.path.trim() === '') {
+				this.sendError(client, 'worktree.path must be a non-empty string');
+				return;
+			}
+			if (typeof w.branchName !== 'string' || w.branchName.trim() === '') {
+				this.sendError(client, 'worktree.branchName must be a non-empty string');
+				return;
+			}
+			if (w.createPROnCompletion !== undefined && typeof w.createPROnCompletion !== 'boolean') {
+				this.sendError(client, 'worktree.createPROnCompletion must be a boolean');
+				return;
+			}
+			if (w.prTargetBranch !== undefined && typeof w.prTargetBranch !== 'string') {
+				this.sendError(client, 'worktree.prTargetBranch must be a string');
+				return;
+			}
+			worktree = {
+				enabled: w.enabled,
+				path: w.path,
+				branchName: w.branchName,
+				createPROnCompletion: Boolean(w.createPROnCompletion),
+				prTargetBranch: (w.prTargetBranch as string | undefined) ?? '',
+			};
+		}
+
 		const config = {
 			documents,
 			prompt: message.prompt as string | undefined,
@@ -1249,6 +1350,7 @@ export class WebSocketMessageHandler {
 			maxLoops: message.maxLoops !== undefined ? Number(message.maxLoops) : undefined,
 			saveAsPlaybook: message.saveAsPlaybook as string | undefined,
 			launch: message.launch as boolean | undefined,
+			worktree,
 		};
 
 		this.callbacks
@@ -1327,6 +1429,246 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				sendErrorResult(`Failed to open file tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_browser_tab message - open a URL in a browser tab
+	 */
+	private handleOpenBrowserTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const url = typeof message.url === 'string' ? message.url : '';
+		// URLs can embed bearer tokens or session IDs — log length only.
+		logger.info(
+			`[Web] Received open_browser_tab message: session=${sessionId}, urlLength=${url.length}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'open_browser_tab_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId || !url) {
+			sendErrorResult('Missing sessionId or url');
+			return;
+		}
+
+		const session = this.callbacks.getSessions?.().find((s) => s.id === sessionId);
+		if (!session) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		// Only http(s) URLs are allowed in browser tabs; everything else is rejected
+		// (mailto:, file:, javascript:, etc. would be unsafe or nonsensical here).
+		// Normalize bare host:port inputs (e.g. `localhost:3000`) to http:// so
+		// WHATWG URL parsing doesn't mistake the host for a protocol.
+		const trimmedUrl = url.trim();
+		const hasExplicitScheme = trimmedUrl.includes('://');
+		const candidate = hasExplicitScheme ? trimmedUrl : `http://${trimmedUrl}`;
+		let parsed: URL;
+		try {
+			parsed = new URL(candidate);
+		} catch {
+			sendErrorResult('Invalid URL');
+			return;
+		}
+		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+			sendErrorResult(`Unsupported URL protocol: ${parsed.protocol}`);
+			return;
+		}
+		// A bare input that parses with userinfo is almost certainly malformed
+		// (e.g. `foo:bar@baz` accidentally looking like `user:pass@host`).
+		if (!hasExplicitScheme && (parsed.username || parsed.password)) {
+			sendErrorResult('Invalid URL');
+			return;
+		}
+
+		if (!this.callbacks.openBrowserTab) {
+			sendErrorResult('Browser tab opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openBrowserTab(sessionId, parsed.toString())
+			.then((success) => {
+				this.send(client, {
+					type: 'open_browser_tab_result',
+					success,
+					sessionId,
+					url: parsed.toString(),
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to open browser tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle open_terminal_tab message - open a new terminal tab
+	 */
+	private async handleOpenTerminalTab(client: WebClient, message: WebClientMessage): Promise<void> {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const rawCwd = message.cwd;
+		const rawShell = message.shell;
+		const rawName = message.name;
+		// cwd/shell/name can leak local usernames or project names — log
+		// presence flags only.
+		logger.info(
+			`[Web] Received open_terminal_tab message: session=${sessionId}, cwdProvided=${
+				typeof rawCwd === 'string' && rawCwd.length > 0
+			}, shellProvided=${
+				typeof rawShell === 'string' && rawShell.length > 0
+			}, nameProvided=${rawName !== undefined}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'open_terminal_tab_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId) {
+			sendErrorResult('Missing sessionId');
+			return;
+		}
+
+		// Reject malformed optional fields rather than silently defaulting them,
+		// which could spawn a terminal in the wrong cwd or with the wrong shell.
+		if (rawCwd !== undefined && typeof rawCwd !== 'string') {
+			sendErrorResult('Invalid cwd: must be a string');
+			return;
+		}
+		if (rawShell !== undefined && typeof rawShell !== 'string') {
+			sendErrorResult('Invalid shell: must be a string');
+			return;
+		}
+		if (rawName !== undefined && rawName !== null && typeof rawName !== 'string') {
+			sendErrorResult('Invalid name: must be a string or null');
+			return;
+		}
+		const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
+		const shell = typeof rawShell === 'string' ? rawShell : undefined;
+		const name = typeof rawName === 'string' ? rawName : rawName === null ? null : undefined;
+
+		const session = this.callbacks.getSessions?.().find((s) => s.id === sessionId);
+		if (!session) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		// If a cwd is provided, confine it to the agent working directory
+		// (same rule as open_file_tab — prevents spawning a shell outside scope).
+		// Resolve symlinks via fs.realpath so a `link-to-outside` inside the
+		// session root can't slip past the lexical prefix check.
+		let resolvedCwd: string | undefined;
+		if (cwd) {
+			if (!session.cwd) {
+				sendErrorResult('Session has no working directory');
+				return;
+			}
+			let sessionRoot: string;
+			let resolved: string;
+			try {
+				sessionRoot = await fs.realpath(path.resolve(session.cwd));
+				resolved = await fs.realpath(path.resolve(sessionRoot, cwd));
+			} catch {
+				sendErrorResult('Invalid cwd');
+				return;
+			}
+			if (!resolved.startsWith(sessionRoot + path.sep) && resolved !== sessionRoot) {
+				sendErrorResult('Invalid cwd: path is outside the agent working directory');
+				return;
+			}
+			resolvedCwd = resolved;
+		}
+
+		if (!this.callbacks.openTerminalTab) {
+			sendErrorResult('Terminal tab opening not configured');
+			return;
+		}
+
+		this.callbacks
+			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name })
+			.then((success) => {
+				this.send(client, {
+					type: 'open_terminal_tab_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to open terminal tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle new_ai_tab_with_prompt message - atomically create a new AI tab
+	 * and dispatch an initial prompt into it. Used by `send --live --new-tab`
+	 * to guarantee a fresh conversation rather than writing into whichever tab
+	 * happens to be active.
+	 */
+	private handleNewAITabWithPrompt(client: WebClient, message: WebClientMessage): void {
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+		const prompt = typeof message.prompt === 'string' ? message.prompt : '';
+		// Prompts can contain user-authored content with secrets or PII —
+		// log length only rather than a raw preview.
+		logger.info(
+			`[Web] Received new_ai_tab_with_prompt message: session=${sessionId}, promptLength=${prompt.length}`,
+			LOG_CONTEXT
+		);
+
+		const sendErrorResult = (error: string) => {
+			this.send(client, {
+				type: 'new_ai_tab_with_prompt_result',
+				success: false,
+				error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!sessionId || !prompt) {
+			sendErrorResult('Missing sessionId or prompt');
+			return;
+		}
+
+		const session = this.callbacks.getSessions?.().find((s) => s.id === sessionId);
+		if (!session) {
+			sendErrorResult('Session not found');
+			return;
+		}
+
+		if (!this.callbacks.newAITabWithPrompt) {
+			sendErrorResult('New AI tab with prompt not configured');
+			return;
+		}
+
+		this.callbacks
+			.newAITabWithPrompt(sessionId, prompt)
+			.then((success) => {
+				this.send(client, {
+					type: 'new_ai_tab_with_prompt_result',
+					success,
+					sessionId,
+					requestId: message.requestId,
+				});
+			})
+			.catch((error) => {
+				sendErrorResult(`Failed to create AI tab with prompt: ${error.message}`);
 			});
 	}
 
@@ -1608,14 +1950,12 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
-	 * Known agent types for validation
+	 * Known agent types for validation — derived from the canonical AGENT_IDS list.
+	 * Excludes 'terminal' since it's an internal-only agent type.
 	 */
-	private static readonly VALID_AGENT_TYPES = new Set([
-		'claude-code',
-		'codex',
-		'opencode',
-		'factory-droid',
-	]);
+	private static readonly VALID_AGENT_TYPES: Set<string> = new Set(
+		AGENT_IDS.filter((id) => id !== 'terminal')
+	);
 
 	/**
 	 * Handle create_session message - create a new agent session
@@ -1649,8 +1989,28 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
+		// Extract optional config fields
+		const config: CreateSessionConfig = {};
+		if (message.nudgeMessage) config.nudgeMessage = message.nudgeMessage as string;
+		if (message.newSessionMessage) config.newSessionMessage = message.newSessionMessage as string;
+		if (message.customPath) config.customPath = message.customPath as string;
+		if (message.customArgs) config.customArgs = message.customArgs as string;
+		if (message.customEnvVars)
+			config.customEnvVars = message.customEnvVars as Record<string, string>;
+		if (message.customModel) config.customModel = message.customModel as string;
+		if (message.customEffort) config.customEffort = message.customEffort as string;
+		if (message.customContextWindow)
+			config.customContextWindow = message.customContextWindow as number;
+		if (message.customProviderPath)
+			config.customProviderPath = message.customProviderPath as string;
+		if (message.sessionSshRemoteConfig) {
+			config.sessionSshRemoteConfig =
+				message.sessionSshRemoteConfig as CreateSessionConfig['sessionSshRemoteConfig'];
+		}
+		const hasConfig = Object.keys(config).length > 0;
+
 		this.callbacks
-			.createSession(name, toolType, cwd, groupId)
+			.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
 			.then((result) => {
 				this.send(client, {
 					type: 'create_session_result',
@@ -2314,6 +2674,52 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Handle trigger_cue_subscription message - manually trigger a Cue subscription
+	 */
+	private handleTriggerCueSubscription(client: WebClient, message: WebClientMessage): void {
+		const subscriptionName = message.subscriptionName;
+		const prompt = message.prompt;
+
+		if (typeof subscriptionName !== 'string' || subscriptionName.trim() === '') {
+			this.sendError(client, 'Missing subscriptionName');
+			return;
+		}
+		if (prompt !== undefined && typeof prompt !== 'string') {
+			this.sendError(client, 'Invalid prompt: must be a string when provided');
+			return;
+		}
+
+		if (!this.callbacks.triggerCueSubscription) {
+			this.sendError(client, 'Cue trigger not available');
+			return;
+		}
+
+		const rawSourceAgentId = message.sourceAgentId;
+		if (rawSourceAgentId !== undefined && typeof rawSourceAgentId !== 'string') {
+			this.sendError(client, 'Invalid sourceAgentId: must be a string when provided');
+			return;
+		}
+		const sourceAgentId = rawSourceAgentId as string | undefined;
+
+		this.callbacks
+			.triggerCueSubscription(subscriptionName, prompt as string | undefined, sourceAgentId)
+			.then((success) => {
+				this.send(client, {
+					type: 'trigger_cue_subscription_result',
+					success,
+					subscriptionName,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error(`Failed to trigger Cue subscription: ${err.message}`, 'WebSocket');
+				this.sendError(client, `Failed to trigger Cue subscription: ${err.message}`);
+			});
+	}
+
+	/**
 	 * Handle get_usage_dashboard message - fetch usage analytics data
 	 */
 	private handleGetUsageDashboard(client: WebClient, message: WebClientMessage): void {
@@ -2366,6 +2772,43 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to get achievements: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle generate_director_notes_synopsis - generate AI synopsis via batch-mode agent
+	 */
+	private handleGenerateDirectorNotesSynopsis(client: WebClient, message: WebClientMessage): void {
+		if (!this.callbacks.generateDirectorNotesSynopsis) {
+			this.send(client, {
+				type: 'generate_director_notes_synopsis_result',
+				success: false,
+				error: "Director's Notes synopsis generation not available",
+				requestId: message.requestId,
+			});
+			return;
+		}
+
+		const lookbackDays = (message.lookbackDays as number) || 7;
+		const provider = (message.provider as string) || 'claude-code';
+
+		this.callbacks
+			.generateDirectorNotesSynopsis(lookbackDays, provider)
+			.then((result) => {
+				this.send(client, {
+					type: 'generate_director_notes_synopsis_result',
+					...result,
+					requestId: message.requestId,
+					timestamp: Date.now(),
+				});
+			})
+			.catch((error) => {
+				this.send(client, {
+					type: 'generate_director_notes_synopsis_result',
+					success: false,
+					error: `Synopsis generation failed: ${error.message}`,
+					requestId: message.requestId,
+				});
 			});
 	}
 

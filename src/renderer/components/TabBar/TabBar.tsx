@@ -5,20 +5,21 @@ import { hasDraft } from '../../utils/tabHelpers';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { AITab as AITabComponent } from './AITab';
+import { BrowserTabItem } from './BrowserTabItem';
 import { FileTab } from './FileTab';
 import { TerminalTabItem } from './TerminalTabItem';
 import { NewTabPopover } from './NewTabPopover';
 import { SearchPopover } from './SearchPopover';
 import { isUnifiedTabActive, getShortcutHint } from './tabBarUtils';
 import type { TabBarProps } from './types';
+import { logger } from '../../utils/logger';
 
 /** Approximate width of the sticky right "+" button area (px) */
 const STICKY_RIGHT_WIDTH = 48;
 
 /**
- * TabBar component for displaying AI session tabs.
- * Shows tabs for each Claude Code conversation within a Maestro session.
- * Appears only in AI mode (hidden in terminal mode).
+ * TabBar component for displaying the unified tab strip.
+ * Shows AI, file, browser, and terminal tabs within a Maestro session.
  */
 function TabBarInner({
 	tabs,
@@ -28,6 +29,8 @@ function TabBarInner({
 	onTabSelect,
 	onTabClose,
 	onNewTab,
+	onNewFileTab,
+	onNewBrowserTab,
 	onNewTerminalTab,
 	onRequestRename,
 	onTabReorder,
@@ -52,21 +55,29 @@ function TabBarInner({
 	activeFileTabId,
 	onFileTabSelect,
 	onFileTabClose,
+	activeBrowserTabId,
+	onBrowserTabSelect,
+	onBrowserTabClose,
 	onUnifiedTabReorder,
 	activeTerminalTabId,
 	inputMode = 'ai',
 	onTerminalTabSelect,
 	onTerminalTabClose,
 	onTerminalTabRename,
+	onCopyTerminalBuffer,
+	onPublishTerminalBufferGist,
+	onSendTerminalBufferToAgent,
+	onCopyBrowserContent,
+	onSendBrowserContentToAgent,
 	colorBlindMode,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
 		if (!onFileTabSelect || !onFileTabClose) {
-			console.warn('[TabBar] unifiedTabs provided but onFileTabSelect/onFileTabClose missing');
+			logger.warn('[TabBar] unifiedTabs provided but onFileTabSelect/onFileTabClose missing');
 		}
 		if (!onTerminalTabSelect || !onTerminalTabClose) {
-			console.warn(
+			logger.warn(
 				'[TabBar] unifiedTabs provided but onTerminalTabSelect/onTerminalTabClose missing'
 			);
 		}
@@ -100,7 +111,7 @@ function TabBarInner({
 				const targetTabId =
 					inputMode === 'terminal'
 						? activeTerminalTabId || activeTabId
-						: activeFileTabId || activeTabId;
+						: activeFileTabId || activeBrowserTabId || activeTabId;
 				const tabElement = container?.querySelector(
 					`[data-tab-id="${targetTabId}"]`
 				) as HTMLElement | null;
@@ -123,7 +134,15 @@ function TabBarInner({
 				}
 			});
 		});
-	}, [activeTabId, activeFileTabId, activeTerminalTabId, inputMode, activeTabName, showUnreadOnly]);
+	}, [
+		activeTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTerminalTabId,
+		inputMode,
+		activeTabName,
+		showUnreadOnly,
+	]);
 
 	// Filter tabs for display
 	const displayedTabs = showUnreadOnly
@@ -399,7 +418,7 @@ function TabBarInner({
 						className="flex items-center px-3 py-1.5 text-xs italic shrink-0 self-center mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
-						No unread tabs
+						No unread or draft tabs
 					</div>
 				)}
 
@@ -410,6 +429,7 @@ function TabBarInner({
 							unifiedTab,
 							activeTabId,
 							activeFileTabId,
+							activeBrowserTabId,
 							activeTerminalTabId,
 							inputMode
 						);
@@ -419,6 +439,7 @@ function TabBarInner({
 									prevTab,
 									activeTabId,
 									activeFileTabId,
+									activeBrowserTabId,
 									activeTerminalTabId,
 									inputMode
 								)
@@ -428,7 +449,13 @@ function TabBarInner({
 						const showSeparator = index > 0 && !isActive && !isPrevActive;
 						const isFirstTab = originalIndex === 0;
 						const isLastTab = originalIndex === allTabs.length - 1;
-						const shortcutHint = getShortcutHint(originalIndex, isLastTab, showUnreadOnly);
+						// When the unread filter is active, jump shortcuts (Cmd+N / Cmd+0) operate on
+						// the filtered list — so hints must reflect the displayed position, not the
+						// underlying unifiedTabs index.
+						const isLastDisplayed = index === displayedUnifiedTabs.length - 1;
+						const shortcutHint = showUnreadOnly
+							? getShortcutHint(index, isLastDisplayed)
+							: getShortcutHint(originalIndex, isLastTab);
 
 						if (unifiedTab.type === 'ai') {
 							return (
@@ -482,7 +509,7 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-						} else {
+						} else if (unifiedTab.type === 'terminal') {
 							const terminalTab = unifiedTab.data;
 							const terminalIndex = allTabs
 								.filter((ut) => ut.type === 'terminal')
@@ -514,6 +541,44 @@ function TabBarInner({
 										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
 										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
 										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+										onCopyBuffer={onCopyTerminalBuffer}
+										onPublishBufferGist={ghCliAvailable ? onPublishTerminalBufferGist : undefined}
+										onSendBufferToAgent={onSendTerminalBufferToAgent}
+										totalTabs={allTabs.length}
+										tabIndex={originalIndex}
+										shortcutHint={shortcutHint}
+									/>
+								</React.Fragment>
+							);
+						} else {
+							const browserTab = unifiedTab.data;
+							return (
+								<React.Fragment key={unifiedTab.id}>
+									{showSeparator && separator}
+									<BrowserTabItem
+										tab={browserTab}
+										isActive={isActive}
+										theme={theme}
+										onSelect={onBrowserTabSelect || (() => {})}
+										onClose={onBrowserTabClose || (() => {})}
+										onDragStart={handleDragStart}
+										onDragOver={handleDragOver}
+										onDragEnd={handleDragEnd}
+										onDrop={handleDrop}
+										isDragging={draggingTabId === browserTab.id}
+										isDragOver={dragOverTabId === browserTab.id}
+										registerRef={(el) => registerTabRef(browserTab.id, el)}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
+										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										isFirstTab={isFirstTab}
+										isLastTab={isLastTab}
+										onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+										onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+										onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+										onCopyContent={onCopyBrowserContent}
+										onSendContentToAgent={onSendBrowserContentToAgent}
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										shortcutHint={shortcutHint}
@@ -531,7 +596,11 @@ function TabBarInner({
 						const showSeparator = index > 0 && !isActive && !isPrevActive;
 						const isFirstTab = originalIndex === 0;
 						const isLastTab = originalIndex === tabs.length - 1;
-						const shortcutHint = getShortcutHint(originalIndex, isLastTab, showUnreadOnly);
+						// Legacy mode: displayedTabs is the filtered list when unread filter is on.
+						const isLastDisplayed = index === displayedTabs.length - 1;
+						const shortcutHint = showUnreadOnly
+							? getShortcutHint(index, isLastDisplayed)
+							: getShortcutHint(originalIndex, isLastTab);
 
 						return (
 							<React.Fragment key={tab.id}>
@@ -556,8 +625,12 @@ function TabBarInner({
 			<NewTabPopover
 				theme={theme}
 				onNewTab={onNewTab}
+				onNewFileTab={onNewFileTab}
+				onNewBrowserTab={onNewBrowserTab}
 				onNewTerminalTab={onNewTerminalTab}
 				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
+				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
+				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
 				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
 				isOverflowing={isOverflowing}
 			/>

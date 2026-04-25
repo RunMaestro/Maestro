@@ -78,10 +78,17 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
-	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
+	InputArea: (props: {
+		session: { name: string };
+		onInputFocus: () => void;
+		availableModels?: string[];
+	}) => {
 		return React.createElement(
 			'div',
-			{ 'data-testid': 'input-area' },
+			{
+				'data-testid': 'input-area',
+				'data-available-models': JSON.stringify(props.availableModels ?? []),
+			},
 			React.createElement('input', { 'data-testid': 'input-field', onFocus: props.onInputFocus }),
 			`Input for ${props.session?.name}`
 		);
@@ -378,6 +385,7 @@ describe('MainPanel', () => {
 		// State
 		logViewerOpen: false,
 		agentSessionsOpen: false,
+		memoryViewerOpen: false,
 		activeAgentSessionId: null,
 		activeSession: createSession(),
 		thinkingItems: [] as ThinkingItem[],
@@ -399,6 +407,7 @@ describe('MainPanel', () => {
 		setGitDiffPreview: vi.fn(),
 		setLogViewerOpen: vi.fn(),
 		setAgentSessionsOpen: vi.fn(),
+		setMemoryViewerOpen: vi.fn(),
 		setActiveAgentSessionId: vi.fn(),
 		onResumeAgentSession: vi.fn(),
 		onNewAgentSession: vi.fn(),
@@ -1878,7 +1887,12 @@ describe('MainPanel', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
-				expect(screen.getByText('1,500')).toBeInTheDocument();
+				// Claude reports inputTokens as the uncached delta only, so the
+				// displayed "Input Tokens" value is inputTokens + cacheRead + cacheCreation
+				// = 1500 + 200 + 100 = 1800. See issue #844 / calculateDisplayInputTokens.
+				// Same number also appears in the "Context Tokens" row (which sums the
+				// same three fields), so we expect two matches.
+				expect(screen.getAllByText('1,800')).toHaveLength(2);
 				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
 				expect(screen.getByText('750')).toBeInTheDocument();
 				expect(screen.getByText('Cache Read')).toBeInTheDocument();
@@ -3469,6 +3483,97 @@ describe('MainPanel', () => {
 			useSessionStore.setState({ sessions: [session] });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 			expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Model/effort pill race condition', () => {
+		it('should discard stale model responses when switching agent types', async () => {
+			// Simulate: OpenCode model discovery (slow subprocess) resolves AFTER
+			// Claude model discovery (fast file read) when switching agents.
+			// Without the stale flag fix, the late OpenCode response would overwrite
+			// Claude's model list, showing wrong models in the picker.
+
+			let resolveOpenCodeModels!: (models: string[]) => void;
+			const openCodeModelsPromise = new Promise<string[]>((resolve) => {
+				resolveOpenCodeModels = resolve;
+			});
+
+			const claudeModels = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
+			const openCodeModels = ['github-copilot/gpt-5-mini', 'ollama/llama3:8b'];
+
+			// Start with OpenCode session
+			const openCodeSession = createSession({
+				id: 'session-opencode',
+				toolType: 'opencode' as any,
+				name: 'OpenCode Session',
+			});
+
+			setCapabilitiesCache('opencode', {
+				supportsResume: false,
+				supportsReadOnlyMode: true,
+				supportsJsonOutput: true,
+				supportsSessionId: true,
+				supportsImageInput: false,
+				supportsImageInputOnResume: false,
+				supportsSlashCommands: true,
+				supportsSessionStorage: false,
+				supportsCostTracking: false,
+				supportsUsageStats: false,
+				supportsBatchMode: true,
+				requiresPromptToStart: false,
+				supportsStreaming: true,
+				supportsResultMessages: true,
+				supportsModelSelection: true,
+				supportsStreamJsonInput: false,
+			});
+
+			// Mock getModels: OpenCode returns a slow promise, Claude returns immediately
+			vi.mocked(window.maestro.agents.getModels).mockImplementation((agentId: string) => {
+				if (agentId === 'opencode') return openCodeModelsPromise;
+				if (agentId === 'claude-code') return Promise.resolve(claudeModels);
+				return Promise.resolve([]);
+			});
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			useSessionStore.setState({ sessions: [openCodeSession] });
+
+			// Render with OpenCode session — triggers getModels('opencode') which is pending
+			const { rerender } = render(<MainPanel {...defaultProps} activeSession={openCodeSession} />);
+
+			// Switch to Claude session — triggers getModels('claude-code') which resolves fast
+			const claudeSession = createSession({
+				id: 'session-claude',
+				toolType: 'claude-code',
+				name: 'Claude Session',
+			});
+			useSessionStore.setState({ sessions: [claudeSession] });
+
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={claudeSession} />);
+			});
+
+			// Wait for Claude models to be applied
+			await waitFor(() => {
+				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+			});
+
+			// Now resolve the stale OpenCode models (arriving late)
+			await act(async () => {
+				resolveOpenCodeModels(openCodeModels);
+			});
+
+			// Both IPC calls should have fired
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+
+			// The stale OpenCode models should NOT appear — Claude models should persist.
+			// Verify via the data attribute exposed by the InputArea mock.
+			await waitFor(() => {
+				const inputArea = screen.getByTestId('input-area');
+				const models = JSON.parse(inputArea.getAttribute('data-available-models') || '[]');
+				expect(models).toEqual(claudeModels);
+			});
 		});
 	});
 });

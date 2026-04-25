@@ -13,7 +13,14 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
-import type { Session, AITab, ToolType, Group, BatchRunConfig } from '../../types';
+import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
+import { ensureInUnifiedTabOrder } from '../../utils/tabHelpers';
+import {
+	createTerminalTab as createTerminalTabHelper,
+	addTerminalTab as addTerminalTabHelper,
+} from '../../utils/terminalTabHelpers';
+import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -73,7 +80,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		const { sessionId, filePath } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
-			console.error('[Remote] Session not found for openFileTab:', sessionId);
+			logger.error('[Remote] Session not found for openFileTab:', undefined, sessionId);
 			return;
 		}
 		const sshRemoteId =
@@ -100,7 +107,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				);
 			}
 		} catch (error) {
-			console.error('[Remote] Failed to open file tab:', error);
+			logger.error('[Remote] Failed to open file tab:', undefined, error);
 		}
 	});
 
@@ -108,6 +115,95 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:refreshFileTree', (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		refreshFileTree(sessionId);
+	});
+
+	// Handle remote open browser tab events from CLI/web interface.
+	// Acks success to responseChannel so the CLI only reports success after
+	// the tab is actually created.
+	useEventListener('maestro:openBrowserTab', (e: Event) => {
+		const { sessionId, url, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			url: string;
+			responseChannel?: string;
+		};
+		const ack = (success: boolean) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success);
+			}
+		};
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session) {
+			logger.error('[Remote] Session not found for openBrowserTab:', undefined, sessionId);
+			ack(false);
+			return;
+		}
+		setActiveSessionId(sessionId);
+		const newBrowserTab: BrowserTab = {
+			id: generateId(),
+			url,
+			title: url,
+			createdAt: Date.now(),
+			partition: getBrowserTabPartition(sessionId),
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: true,
+			favicon: null,
+		};
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				return {
+					...s,
+					browserTabs: [...(s.browserTabs || []), newBrowserTab],
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+					unifiedTabOrder: ensureInUnifiedTabOrder(
+						s.unifiedTabOrder || [],
+						'browser',
+						newBrowserTab.id
+					),
+				};
+			})
+		);
+		ack(true);
+	});
+
+	// Handle remote open terminal tab events from CLI/web interface.
+	// Acks success to responseChannel so the CLI only reports success after
+	// the tab is actually created.
+	useEventListener('maestro:openTerminalTab', (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: { cwd?: string; shell?: string; name?: string | null };
+			responseChannel?: string;
+		};
+		const ack = (success: boolean) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success);
+			}
+		};
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
+		if (!session) {
+			logger.error('[Remote] Session not found for openTerminalTab:', undefined, sessionId);
+			ack(false);
+			return;
+		}
+		setActiveSessionId(sessionId);
+		const tab = createTerminalTabHelper(
+			config?.shell,
+			config?.cwd ?? session.cwd,
+			config?.name ?? null
+		);
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const updated = addTerminalTabHelper(s, tab);
+				return { ...updated, inputMode: 'terminal' as const };
+			})
+		);
+		ack(true);
 	});
 
 	// --- Auto Run Operations ---
@@ -206,11 +302,26 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					return;
 				}
 
-				const batchConfig = {
+				// Forward worktree configuration when the CLI requests it.
+				// startBatchRun handles worktree setup, branch checkout, and (optionally)
+				// PR creation on completion via the existing git IPC handlers.
+				const worktree: BatchRunConfig['worktree'] | undefined =
+					config.worktree && config.worktree.enabled
+						? {
+								enabled: true,
+								path: config.worktree.path,
+								branchName: config.worktree.branchName,
+								createPROnCompletion: Boolean(config.worktree.createPROnCompletion),
+								prTargetBranch: config.worktree.prTargetBranch || '',
+							}
+						: undefined;
+
+				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || '',
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
+					...(worktree ? { worktree } : {}),
 				};
 
 				// Send success response immediately - startBatchRun is long-running
@@ -219,7 +330,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					success: true,
 				});
 				startBatchRun(sessionId, batchConfig, folderPath).catch((err) => {
-					console.error('[Remote] Failed to start auto-run:', err);
+					logger.error('[Remote] Failed to start auto-run:', undefined, err);
 				});
 				return;
 			}
@@ -232,7 +343,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				error: 'Use --launch to start auto-run immediately, or --save-as to save as a playbook',
 			});
 		} catch (error) {
-			console.error('[Remote] Failed to configure auto-run:', error);
+			logger.error('[Remote] Failed to configure auto-run:', undefined, error);
 			window.maestro.process.sendRemoteConfigureAutoRunResponse(responseChannel, {
 				success: false,
 				error: String(error),
@@ -283,7 +394,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			);
 			window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, docs);
 		} catch (error) {
-			console.error('[Remote] Failed to get auto-run docs:', error);
+			logger.error('[Remote] Failed to get auto-run docs:', undefined, error);
 			window.maestro.process.sendRemoteGetAutoRunDocsResponse(responseChannel, []);
 		}
 	});
@@ -307,7 +418,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const content = contentResult.success ? contentResult.content || '' : '';
 			window.maestro.process.sendRemoteGetAutoRunDocContentResponse(responseChannel, content);
 		} catch (error) {
-			console.error('[Remote] Failed to get auto-run doc content:', error);
+			logger.error('[Remote] Failed to get auto-run doc content:', undefined, error);
 			window.maestro.process.sendRemoteGetAutoRunDocContentResponse(responseChannel, '');
 		}
 	});
@@ -334,7 +445,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				writeResult.success ?? false
 			);
 		} catch (error) {
-			console.error('[Remote] Failed to save auto-run doc:', error);
+			logger.error('[Remote] Failed to save auto-run doc:', undefined, error);
 			window.maestro.process.sendRemoteSaveAutoRunDocResponse(responseChannel, false);
 		}
 	});
@@ -349,7 +460,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -380,6 +491,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				name,
 				toolType: toolType as ToolType,
 				state: 'idle',
+				createdAt: Date.now(),
 				cwd,
 				fullPath: cwd,
 				projectRoot: cwd,
@@ -415,12 +527,34 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
+				browserTabs: [],
+				activeBrowserTabId: null,
 				terminalTabs: [],
 				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
 				groupId: groupId || undefined,
 				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
+				// Apply optional config fields from CLI/web
+				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
+				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
+				...(config?.customPath && { customPath: config.customPath as string }),
+				...(config?.customArgs && { customArgs: config.customArgs as string }),
+				...(config?.customEnvVars && {
+					customEnvVars: config.customEnvVars as Record<string, string>,
+				}),
+				...(config?.customModel && { customModel: config.customModel as string }),
+				...(config?.customEffort && { customEffort: config.customEffort as string }),
+				...(config?.customContextWindow && {
+					customContextWindow: config.customContextWindow as number,
+				}),
+				...(config?.customProviderPath && {
+					customProviderPath: config.customProviderPath as string,
+				}),
+				...(config?.sessionSshRemoteConfig && {
+					sessionSshRemoteConfig:
+						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
+				}),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
@@ -437,7 +571,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				sessionId: newId,
 			});
 		} catch (error) {
-			console.error('[Remote] Failed to create session:', error);
+			logger.error('[Remote] Failed to create session:', undefined, error);
 			window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
 		}
 	});

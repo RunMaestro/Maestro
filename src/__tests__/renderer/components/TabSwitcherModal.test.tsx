@@ -13,6 +13,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { TabSwitcherModal } from '../../../renderer/components/TabSwitcherModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
@@ -25,6 +26,7 @@ vi.mock('lucide-react', () => ({
 	Star: () => <svg data-testid="star-icon" />,
 	FileText: () => <svg data-testid="file-text-icon" />,
 	Terminal: () => <svg data-testid="terminal-icon" />,
+	Globe: () => <svg data-testid="globe-icon" />,
 }));
 
 // Create a test theme
@@ -427,7 +429,7 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByText('ABC12345')).toBeInTheDocument();
 			});
 
-			it('returns "New Session" if no name or agentSessionId', () => {
+			it('returns tab UUID marker if no name or agentSessionId', () => {
 				const tab = createTestTab({ name: '', agentSessionId: undefined });
 
 				renderWithLayerStack(
@@ -442,6 +444,7 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
+				// No name or agentSessionId yet — shows "New Session"
 				expect(screen.getByText('New Session')).toBeInTheDocument();
 			});
 		});
@@ -1668,7 +1671,7 @@ describe('TabSwitcherModal', () => {
 		});
 
 		it('handles sync errors gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			// For claude-code sessions (default), it uses window.maestro.claude.updateSessionName
 			vi.mocked(window.maestro.claude.updateSessionName).mockRejectedValue(
@@ -1692,6 +1695,7 @@ describe('TabSwitcherModal', () => {
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
 					'[TabSwitcher] Failed to sync tab name:',
+					undefined,
 					expect.any(Error)
 				);
 			});
@@ -2540,6 +2544,182 @@ describe('TabSwitcherModal', () => {
 				);
 
 				expect(screen.getByTestId('terminal-icon')).toBeInTheDocument();
+			});
+		});
+
+		describe('browser tab support', () => {
+			// Helper to create a test browser tab
+			const createTestBrowserTab = (
+				overrides: Partial<import('../../../renderer/types').BrowserTab> = {}
+			) => ({
+				id: `browser-tab-${Math.random().toString(36).substr(2, 9)}`,
+				url: 'https://example.com',
+				title: 'Example',
+				createdAt: Date.now(),
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				...overrides,
+			});
+
+			it('includes browser tabs in Open Tabs count', () => {
+				const aiTabs = [createTestTab({ name: 'AI Tab' })];
+				const browserTabs = [createTestBrowserTab(), createTestBrowserTab()];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={aiTabs}
+						browserTabs={browserTabs}
+						activeTabId={aiTabs[0].id}
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				// Should show 3 total tabs (1 AI + 2 browser)
+				expect(screen.getByText('Open Tabs (3)')).toBeInTheDocument();
+			});
+
+			it('renders browser tabs with title, URL, and Browser label', () => {
+				const browserTabs = [
+					createTestBrowserTab({ title: 'My Page', url: 'https://mypage.com/path' }),
+				];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				expect(screen.getByText('My Page')).toBeInTheDocument();
+				expect(screen.getByText('https://mypage.com/path')).toBeInTheDocument();
+				expect(screen.getByText('Browser')).toBeInTheDocument();
+			});
+
+			it('falls back to URL when title is empty', () => {
+				const browserTabs = [createTestBrowserTab({ title: '', url: 'https://fallback.com' })];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				// URL appears as both display name and subtitle
+				expect(screen.getAllByText('https://fallback.com')).toHaveLength(2);
+			});
+
+			it('calls onBrowserTabSelect when clicking a browser tab', () => {
+				const browserTabs = [createTestBrowserTab({ title: 'Click Me' })];
+				const onBrowserTabSelect = vi.fn();
+				const onClose = vi.fn();
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onBrowserTabSelect={onBrowserTabSelect}
+						onNamedSessionSelect={vi.fn()}
+						onClose={onClose}
+					/>
+				);
+
+				fireEvent.click(screen.getByText('Click Me'));
+
+				expect(onBrowserTabSelect).toHaveBeenCalledWith(browserTabs[0].id);
+				expect(onClose).toHaveBeenCalled();
+			});
+
+			it('filters browser tabs by search query', () => {
+				const browserTabs = [
+					createTestBrowserTab({ title: 'GitHub', url: 'https://github.com' }),
+					createTestBrowserTab({ title: 'Google', url: 'https://google.com' }),
+				];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				const input = screen.getByPlaceholderText('Search open tabs...');
+				fireEvent.change(input, { target: { value: 'github' } });
+
+				expect(screen.getByText('GitHub')).toBeInTheDocument();
+				expect(screen.queryByText('Google')).not.toBeInTheDocument();
+			});
+
+			it('shows active indicator for the active browser tab', () => {
+				const browserTabs = [
+					createTestBrowserTab({ id: 'active-browser-tab', title: 'Active Page' }),
+				];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						activeBrowserTabId="active-browser-tab"
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				// Active browser tab shows a green dot instead of the globe icon
+				expect(screen.queryByTestId('globe-icon')).not.toBeInTheDocument();
+			});
+
+			it('shows globe icon for inactive browser tab', () => {
+				const browserTabs = [
+					createTestBrowserTab({ id: 'inactive-browser', title: 'Inactive Page' }),
+				];
+
+				renderWithLayerStack(
+					<TabSwitcherModal
+						theme={theme}
+						tabs={[]}
+						browserTabs={browserTabs}
+						activeTabId=""
+						activeBrowserTabId="other-tab"
+						projectRoot="/test"
+						onTabSelect={vi.fn()}
+						onNamedSessionSelect={vi.fn()}
+						onClose={vi.fn()}
+					/>
+				);
+
+				expect(screen.getByTestId('globe-icon')).toBeInTheDocument();
 			});
 		});
 	});

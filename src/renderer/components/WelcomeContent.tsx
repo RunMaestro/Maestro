@@ -8,6 +8,8 @@
 
 import type { Theme } from '../types';
 import maestroWandIcon from '../assets/icon-wand.png';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface WelcomeContentProps {
 	theme: Theme;
@@ -108,6 +110,15 @@ export function WelcomeContent({
 					To get started, create your first agent manually or with the help of the AI wizard.
 				</p>
 			)}
+
+			{/* Read more link */}
+			<button
+				onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/getting-started'))}
+				className="text-xs mt-4 hover:opacity-80 transition-colors"
+				style={{ color: theme.colors.accent }}
+			>
+				Read more at docs.runmaestro.ai/getting-started
+			</button>
 		</div>
 	);
 }

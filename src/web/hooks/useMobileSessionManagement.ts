@@ -90,6 +90,8 @@ export interface UseMobileSessionManagementDeps {
 	onResponseComplete?: (session: Session, response?: unknown) => void;
 	/** Callback when theme updates from server */
 	onThemeUpdate?: (theme: Theme) => void;
+	/** Callback when the global Bionify reading-mode setting updates from the server */
+	onBionifyReadingModeUpdate?: (enabled: boolean) => void;
 	/** Callback when custom commands are received */
 	onCustomCommands?: (commands: CustomCommand[]) => void;
 	/** Callback when AutoRun state changes */
@@ -138,6 +140,7 @@ export interface MobileSessionHandlers {
 	onSessionExit: (sessionId: string, exitCode: number) => void;
 	onUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
 	onThemeUpdate: (theme: Theme) => void;
+	onBionifyReadingModeUpdate: (enabled: boolean) => void;
 	onCustomCommands: (commands: CustomCommand[]) => void;
 	onAutoRunStateChange: (sessionId: string, state: AutoRunState | null) => void;
 	onTabsChanged: (sessionId: string, aiTabs: AITabData[], newActiveTabId: string) => void;
@@ -214,6 +217,7 @@ export function useMobileSessionManagement(
 		hapticTapPattern,
 		onResponseComplete,
 		onThemeUpdate,
+		onBionifyReadingModeUpdate,
 		onCustomCommands,
 		onAutoRunStateChange,
 	} = deps;
@@ -752,6 +756,10 @@ export function useMobileSessionManagement(
 				webLogger.debug(`Theme update received: ${theme.name} (${theme.mode})`, 'Mobile');
 				onThemeUpdate?.(theme);
 			},
+			onBionifyReadingModeUpdate: (enabled: boolean) => {
+				webLogger.debug(`Bionify reading mode update received: ${enabled}`, 'Mobile');
+				onBionifyReadingModeUpdate?.(enabled);
+			},
 			onCustomCommands: (commands: CustomCommand[]) => {
 				// Custom slash commands from desktop app
 				webLogger.debug(`Custom commands received: ${commands.length}`, 'Mobile');
@@ -782,7 +790,13 @@ export function useMobileSessionManagement(
 				}
 			},
 		}),
-		[onResponseComplete, onThemeUpdate, onCustomCommands, onAutoRunStateChange]
+		[
+			onResponseComplete,
+			onThemeUpdate,
+			onBionifyReadingModeUpdate,
+			onCustomCommands,
+			onAutoRunStateChange,
+		]
 	);
 
 	return {

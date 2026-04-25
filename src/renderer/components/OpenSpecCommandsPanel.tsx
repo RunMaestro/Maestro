@@ -13,6 +13,8 @@ import {
 import type { Theme, OpenSpecCommand, OpenSpecMetadata } from '../types';
 import { useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface OpenSpecCommandsPanelProps {
 	theme: Theme;
@@ -63,7 +65,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 					setMetadata(metadataResult.metadata);
 				}
 			} catch (error) {
-				console.error('Failed to load openspec commands:', error);
+				logger.error('Failed to load openspec commands:', undefined, error);
 			} finally {
 				setIsLoading(false);
 			}
@@ -91,7 +93,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				setEditingCommand(null);
 			}
 		} catch (error) {
-			console.error('Failed to save prompt:', error);
+			logger.error('Failed to save prompt:', undefined, error);
 		}
 	};
 
@@ -106,7 +108,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				);
 			}
 		} catch (error) {
-			console.error('Failed to reset prompt:', error);
+			logger.error('Failed to reset prompt:', undefined, error);
 		}
 	};
 
@@ -123,7 +125,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				}
 			}
 		} catch (error) {
-			console.error('Failed to refresh openspec prompts:', error);
+			logger.error('Failed to refresh openspec prompts:', undefined, error);
 		} finally {
 			setIsRefreshing(false);
 		}
@@ -181,9 +183,7 @@ export function OpenSpecCommandsPanel({ theme }: OpenSpecCommandsPanelProps) {
 				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
 					Change management commands from{' '}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/Fission-AI/OpenSpec')
-						}
+						onClick={() => openUrl('https://github.com/Fission-AI/OpenSpec')}
 						className="underline hover:opacity-80 inline-flex items-center gap-1"
 						style={{
 							color: theme.colors.accent,

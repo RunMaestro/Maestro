@@ -36,6 +36,7 @@
 
 import React, { useRef, useEffect, ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { GhostIconButton } from './GhostIconButton';
 import type { Theme } from '../../types';
 import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
 
@@ -76,6 +77,8 @@ export interface ModalProps {
 	testId?: string;
 	/** Override className for the content wrapper (default: 'p-6 overflow-y-auto flex-1') */
 	contentClassName?: string;
+	/** Allow content to overflow the modal container (e.g., for dropdowns). Defaults to false */
+	allowOverflow?: boolean;
 }
 
 /**
@@ -100,6 +103,7 @@ export function Modal({
 	initialFocusRef,
 	testId,
 	contentClassName,
+	allowOverflow = false,
 }: ModalProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -139,7 +143,7 @@ export function Modal({
 			data-testid={testId}
 		>
 			<div
-				className="border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className={`border rounded-lg shadow-2xl flex flex-col ${allowOverflow ? 'overflow-visible' : 'overflow-hidden'}`}
 				style={{
 					width: `${width}px`,
 					maxHeight,
@@ -162,15 +166,13 @@ export function Modal({
 								</h2>
 							</div>
 							{showCloseButton && (
-								<button
-									type="button"
+								<GhostIconButton
 									onClick={onClose}
-									className="p-1 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
-									aria-label="Close modal"
+									ariaLabel="Close modal"
+									color={theme.colors.textDim}
 								>
 									<X className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 							)}
 						</div>
 					))}

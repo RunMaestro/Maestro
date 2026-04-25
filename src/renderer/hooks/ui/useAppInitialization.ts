@@ -32,6 +32,7 @@ import { getBmadCommands } from '../../services/bmad';
 import { captureException } from '../../utils/sentry';
 import { exposeWindowsWarningModalDebug } from '../../components/WindowsWarningModal';
 import type { GistInfo } from '../../components/GistPublishModal';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Return type
@@ -69,6 +70,8 @@ export function useAppInitialization(): AppInitializationReturn {
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const audioFeedbackCommand = useSettingsStore((s) => s.audioFeedbackCommand);
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
+	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
+	const idleNotificationCommand = useSettingsStore((s) => s.idleNotificationCommand);
 
 	// --- Local state ---
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -139,7 +142,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.error('[App] Failed to detect platform for Windows warning:', error);
+				logger.error('[App] Failed to detect platform for Windows warning:', undefined, error);
 			});
 	}, [settingsLoaded, suppressWindowsWarning]);
 
@@ -153,7 +156,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.debug('[useAppInitialization] Failed to load fileGistUrls:', error);
+				logger.debug('[useAppInitialization] Failed to load fileGistUrls:', undefined, error);
 			});
 	}, []);
 
@@ -182,7 +185,7 @@ export function useAppInitialization(): AppInitializationReturn {
 						getModalActions().setUpdateCheckModalOpen(true);
 					}
 				} catch (error) {
-					console.error('Failed to check for updates on startup:', error);
+					logger.error('Failed to check for updates on startup:', undefined, error);
 				}
 			}, 2000);
 			return () => clearTimeout(timer);
@@ -222,7 +225,7 @@ export function useAppInitialization(): AppInitializationReturn {
 					}
 				}
 			} catch (error) {
-				console.debug('[Leaderboard] Startup sync failed (non-critical):', error);
+				logger.debug('[Leaderboard] Startup sync failed (non-critical):', undefined, error);
 			}
 		}, 3000);
 
@@ -236,7 +239,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				const commands = await getSpeckitCommands();
 				setSpeckitCommands(commands);
 			} catch (error) {
-				console.error('[SpecKit] Failed to load commands:', error);
+				logger.error('[SpecKit] Failed to load commands:', undefined, error);
 			}
 		})();
 	}, []);
@@ -248,7 +251,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				const commands = await getOpenSpecCommands();
 				setOpenspecCommands(commands);
 			} catch (error) {
-				console.error('[OpenSpec] Failed to load commands:', error);
+				logger.error('[OpenSpec] Failed to load commands:', undefined, error);
 			}
 		})();
 	}, []);
@@ -286,7 +289,7 @@ export function useAppInitialization(): AppInitializationReturn {
 				}
 			})
 			.catch((error) => {
-				console.warn('[useAppInitialization] Failed to load SSH remote configs:', error);
+				logger.warn('[useAppInitialization] Failed to load SSH remote configs:', undefined, error);
 			});
 	}, []);
 
@@ -320,6 +323,12 @@ export function useAppInitialization(): AppInitializationReturn {
 	useEffect(() => {
 		useNotificationStore.getState().setOsNotifications(osNotificationsEnabled);
 	}, [osNotificationsEnabled]);
+
+	useEffect(() => {
+		useNotificationStore
+			.getState()
+			.setIdleNotification(idleNotificationEnabled, idleNotificationCommand);
+	}, [idleNotificationEnabled, idleNotificationCommand]);
 
 	// --- Playground debug function ---
 	useEffect(() => {

@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { AgentSessionsBrowser } from '../../../renderer/components/AgentSessionsBrowser';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -76,6 +77,7 @@ const defaultTheme: Theme = {
 interface ClaudeSession {
 	sessionId: string;
 	projectPath: string;
+	createdAt: number;
 	timestamp: string;
 	modifiedAt: string;
 	firstMessage: string;
@@ -105,6 +107,7 @@ interface SessionMessage {
 const createMockClaudeSession = (overrides: Partial<ClaudeSession> = {}): ClaudeSession => ({
 	sessionId: `d02d0bd6-${Math.random().toString(36).substr(2, 6)}-4a01-9123-456789abcdef`,
 	projectPath: '/path/to/project',
+	createdAt: Date.parse('2025-01-15T09:00:00Z'),
 	timestamp: '2025-01-15T10:00:00Z',
 	modifiedAt: '2025-01-15T11:30:00Z',
 	firstMessage: 'Help me with this code',
@@ -133,6 +136,7 @@ const createMockActiveSession = (overrides: Partial<Session> = {}): Session => (
 	id: 'session-1',
 	name: 'Test Project',
 	toolType: 'claude-code',
+	createdAt: Date.parse('2025-01-15T08:30:00Z'),
 	state: 'idle',
 	inputMode: 'ai',
 	cwd: '/path/to/project',
@@ -316,7 +320,7 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			// Total tokens = 500 + 200 = 700
-			expect(screen.getByText('700.0')).toBeInTheDocument();
+			expect(screen.getByText('700')).toBeInTheDocument();
 		});
 
 		it('formats thousands with k suffix', async () => {
@@ -345,8 +349,8 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			// Total = 8000, should be 8.0k
-			expect(screen.getByText('8.0k')).toBeInTheDocument();
+			// Total = 8000, should be 8.0K
+			expect(screen.getByText('8.0K')).toBeInTheDocument();
 		});
 
 		it('formats millions with M suffix', async () => {
@@ -590,7 +594,7 @@ describe('AgentSessionsBrowser', () => {
 		});
 
 		it('handles API error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockRejectedValue(
 				new Error('API Error')
 			);
@@ -600,7 +604,11 @@ describe('AgentSessionsBrowser', () => {
 				await vi.runAllTimersAsync();
 			});
 
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load sessions:', expect.any(Error));
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to load sessions:',
+				undefined,
+				expect.any(Error)
+			);
 			consoleSpy.mockRestore();
 		});
 
@@ -688,8 +696,10 @@ describe('AgentSessionsBrowser', () => {
 			expect(statsText).toHaveClass('animate-pulse');
 		});
 
-		it('shows oldest session date', async () => {
+		it('shows the active session creation date in the since label', async () => {
 			const sessions = [createMockClaudeSession()];
+			const createdAt = Date.parse('2026-04-09T12:00:00Z');
+			const oldestTimestamp = '2024-06-15T00:00:00Z';
 			vi.mocked(window.maestro.agentSessions.listPaginated).mockResolvedValue({
 				sessions,
 				hasMore: false,
@@ -698,7 +708,13 @@ describe('AgentSessionsBrowser', () => {
 			});
 
 			await act(async () => {
-				renderWithProvider(<AgentSessionsBrowser {...createDefaultProps()} />);
+				renderWithProvider(
+					<AgentSessionsBrowser
+						{...createDefaultProps({
+							activeSession: createMockActiveSession({ createdAt }),
+						})}
+					/>
+				);
 				await vi.runAllTimersAsync();
 			});
 
@@ -709,13 +725,18 @@ describe('AgentSessionsBrowser', () => {
 					totalMessages: 10,
 					totalCostUsd: 0.5,
 					totalSizeBytes: 5000,
-					oldestTimestamp: '2024-06-15T00:00:00Z',
+					oldestTimestamp,
 					isComplete: true,
 				});
 				await vi.runAllTimersAsync();
 			});
 
-			expect(screen.getByText(/Since/i)).toBeInTheDocument();
+			expect(
+				screen.getByText(`Since ${new Date(createdAt).toLocaleDateString()}`)
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText(`Since ${new Date(oldestTimestamp).toLocaleDateString()}`)
+			).toBeNull();
 		});
 
 		it('ignores stats updates for different project paths', async () => {
@@ -1847,7 +1868,7 @@ describe('AgentSessionsBrowser', () => {
 
 			expect(screen.getByText('$1.23')).toBeInTheDocument();
 			expect(screen.getByText('3m 5s')).toBeInTheDocument();
-			expect(screen.getByText('8.0k')).toBeInTheDocument(); // 5000 + 3000
+			expect(screen.getByText('8.0K')).toBeInTheDocument(); // 5000 + 3000
 			expect(screen.getByText('15')).toBeInTheDocument();
 		});
 

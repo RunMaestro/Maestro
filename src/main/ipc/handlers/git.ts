@@ -31,6 +31,7 @@ import {
 	getRepoRootRemote,
 } from '../../utils/remote-git';
 import { readDirRemote } from '../../utils/remote-fs';
+import { captureException } from '../../utils/sentry';
 
 const LOG_CONTEXT = '[Git]';
 
@@ -46,6 +47,9 @@ export interface GitHandlerDependencies {
 
 // Worktree directory watchers keyed by session ID
 const worktreeWatchers = new Map<string, FSWatcher>();
+// Debounce timers keyed by "sessionId:dirPath" so each discovered directory
+// gets its own independent timer (previously keyed by sessionId alone, which
+// caused only the last of multiple near-simultaneous addDir events to fire).
 const worktreeWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
 
 /** Helper to create handler options with Git context */
@@ -1150,6 +1154,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { gitSubdirs };
 				} catch (err) {
+					void captureException(err);
 					logger.error(`Failed to scan directory ${parentPath}: ${err}`, LOG_CONTEXT);
 					return { gitSubdirs: [] };
 				}
@@ -1166,6 +1171,11 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 		createIpcHandler(
 			handlerOpts('watchWorktreeDirectory'),
 			async (sessionId: string, worktreePath: string, sshRemoteId?: string) => {
+				// TODO: Remove debug logging after worktree detection is confirmed working
+				logger.warn(
+					`[WT-DEBUG] watchWorktreeDirectory called: session=${sessionId} path=${worktreePath} ssh=${sshRemoteId}`
+				);
+
 				// SSH remote: file watching is not supported
 				// Return success with isRemote flag so UI knows to poll instead
 				if (sshRemoteId) {
@@ -1180,18 +1190,20 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					};
 				}
 
-				// Stop existing watcher if any
+				// Stop existing watcher if any — delete from map BEFORE awaiting close
+				// to prevent race conditions with concurrent unwatch/watch IPC calls
 				const existingWatcher = worktreeWatchers.get(sessionId);
 				if (existingWatcher) {
-					await existingWatcher.close();
 					worktreeWatchers.delete(sessionId);
+					await existingWatcher.close();
 				}
 
-				// Clear any pending debounce timer
-				const existingTimer = worktreeWatchDebounceTimers.get(sessionId);
-				if (existingTimer) {
-					clearTimeout(existingTimer);
-					worktreeWatchDebounceTimers.delete(sessionId);
+				// Clear any pending debounce timers for this session
+				for (const [key, timer] of worktreeWatchDebounceTimers) {
+					if (key.startsWith(`${sessionId}:`)) {
+						clearTimeout(timer);
+						worktreeWatchDebounceTimers.delete(key);
+					}
 				}
 
 				try {
@@ -1208,17 +1220,21 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					// Handler for directory additions
 					watcher.on('addDir', async (dirPath: string) => {
+						// TODO: Remove debug logging after worktree detection is confirmed working
+						logger.warn(`[WT-DEBUG] addDir event: ${dirPath}`);
 						// Skip the root directory itself
 						if (dirPath === worktreePath) return;
 
-						// Debounce to avoid flooding with events
-						const existingTimer = worktreeWatchDebounceTimers.get(sessionId);
+						// Per-directory debounce so multiple near-simultaneous worktree
+						// additions each get their own validation pipeline
+						const debounceKey = `${sessionId}:${dirPath}`;
+						const existingTimer = worktreeWatchDebounceTimers.get(debounceKey);
 						if (existingTimer) {
 							clearTimeout(existingTimer);
 						}
 
 						const timer = setTimeout(async () => {
-							worktreeWatchDebounceTimers.delete(sessionId);
+							worktreeWatchDebounceTimers.delete(debounceKey);
 
 							// Check if this new directory is a git worktree
 							const isInsideWorkTree = await execFileNoThrow(
@@ -1227,7 +1243,10 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								dirPath
 							);
 							if (isInsideWorkTree.exitCode !== 0) {
-								return; // Not a git repo
+								logger.warn(
+									`[WT-DEBUG] REJECTED ${dirPath}: not inside work tree (exit=${isInsideWorkTree.exitCode} stderr=${isInsideWorkTree.stderr})`
+								);
+								return;
 							}
 
 							// Verify this IS a worktree/repo root, not a subdirectory inside one
@@ -1237,10 +1256,16 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 								dirPath
 							);
 							if (toplevelResult.exitCode !== 0) {
-								return; // Git command failed — skip
+								logger.warn(
+									`[WT-DEBUG] REJECTED ${dirPath}: show-toplevel failed (exit=${toplevelResult.exitCode})`
+								);
+								return;
 							}
 							if (path.resolve(dirPath) !== path.resolve(toplevelResult.stdout.trim())) {
-								return; // Subdirectory inside a repo, not a worktree root
+								logger.warn(
+									`[WT-DEBUG] REJECTED ${dirPath}: not repo root (resolved=${path.resolve(dirPath)} toplevel=${path.resolve(toplevelResult.stdout.trim())})`
+								);
+								return;
 							}
 
 							// Get branch name
@@ -1253,8 +1278,13 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 							// Skip main/master/HEAD branches
 							if (branch === 'main' || branch === 'master' || branch === 'HEAD') {
+								logger.warn(`[WT-DEBUG] REJECTED ${dirPath}: skippable branch ${branch}`);
 								return;
 							}
+
+							logger.warn(
+								`[WT-DEBUG] ACCEPTED ${dirPath}: branch=${branch}, emitting worktree:discovered`
+							);
 
 							// Emit event to renderer
 							const windows = BrowserWindow.getAllWindows();
@@ -1274,7 +1304,25 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 							logger.info(`${LOG_CONTEXT} New worktree discovered: ${dirPath} (branch: ${branch})`);
 						}, 500); // 500ms debounce
 
-						worktreeWatchDebounceTimers.set(sessionId, timer);
+						worktreeWatchDebounceTimers.set(debounceKey, timer);
+					});
+
+					// Handler for directory removals (e.g., git worktree remove from CLI)
+					watcher.on('unlinkDir', (dirPath: string) => {
+						if (dirPath === worktreePath) return;
+
+						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
+						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);
+
+						const windows = BrowserWindow.getAllWindows();
+						for (const win of windows) {
+							if (isWebContentsAvailable(win)) {
+								win.webContents.send('worktree:removed', {
+									sessionId,
+									worktreePath: dirPath,
+								});
+							}
+						}
 					});
 
 					watcher.on('error', (error) => {
@@ -1290,6 +1338,7 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 
 					return { success: true };
 				} catch (err) {
+					void captureException(err);
 					logger.error(`${LOG_CONTEXT} Failed to watch worktree directory ${worktreePath}: ${err}`);
 					return { success: false, error: String(err) };
 				}
@@ -1301,18 +1350,27 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 	ipcMain.handle(
 		'git:unwatchWorktreeDirectory',
 		createIpcHandler(handlerOpts('unwatchWorktreeDirectory'), async (sessionId: string) => {
+			// TODO: Remove debug logging after worktree detection is confirmed working
+			logger.warn(
+				`[WT-DEBUG] unwatchWorktreeDirectory called: session=${sessionId} hasWatcher=${worktreeWatchers.has(sessionId)}`
+			);
 			const watcher = worktreeWatchers.get(sessionId);
 			if (watcher) {
-				await watcher.close();
+				// Delete from map BEFORE awaiting close to prevent a race condition:
+				// React StrictMode double-fires effects, so unwatchWorktreeDirectory and
+				// watchWorktreeDirectory can interleave. If we delete after await, the
+				// unwatch can remove a NEW watcher that watchWorktreeDirectory just created.
 				worktreeWatchers.delete(sessionId);
+				await watcher.close();
 				logger.info(`${LOG_CONTEXT} Stopped watching worktree directory for session ${sessionId}`);
 			}
 
-			// Clear any pending debounce timer
-			const timer = worktreeWatchDebounceTimers.get(sessionId);
-			if (timer) {
-				clearTimeout(timer);
-				worktreeWatchDebounceTimers.delete(sessionId);
+			// Clear any pending debounce timers for this session
+			for (const [key, timer] of worktreeWatchDebounceTimers) {
+				if (key.startsWith(`${sessionId}:`)) {
+					clearTimeout(timer);
+					worktreeWatchDebounceTimers.delete(key);
+				}
 			}
 
 			return { success: true };

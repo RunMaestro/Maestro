@@ -21,10 +21,16 @@ import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/i
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
+	'$HOME/.claude/local',
 	'$HOME/bin',
 	'/usr/local/bin',
 	'/opt/homebrew/bin',
 	'$HOME/.cargo/bin',
+	'$HOME/go/bin',
+	'$HOME/.bun/bin',
+	'$HOME/.deno/bin',
+	'$HOME/.nix-profile/bin',
+	'/snap/bin',
 ];
 
 /**
@@ -300,6 +306,8 @@ export async function buildSshCommandWithStdin(
 		images?: string[];
 		/** Function to build CLI args for each image path (e.g., (path) => ['-i', path]) */
 		imageArgs?: (imagePath: string) => string[];
+		/** Function to embed image references into the prompt/stdinInput (e.g., Copilot @mentions). */
+		imagePromptBuilder?: (imagePaths: string[]) => string;
 		/** When set to 'prompt-embed', embed image paths in the prompt/stdinInput instead of adding -i CLI args.
 		 * Used for resumed Codex sessions where the resume command doesn't support -i flag. */
 		imageResumeMode?: 'prompt-embed';
@@ -374,7 +382,11 @@ export async function buildSshCommandWithStdin(
 	const remoteImagePaths: string[] = [];
 	/** All remote temp file paths created during image decoding (for cleanup) */
 	const allRemoteTempPaths: string[] = [];
-	if (remoteOptions.images && remoteOptions.images.length > 0 && remoteOptions.imageArgs) {
+	if (
+		remoteOptions.images &&
+		remoteOptions.images.length > 0 &&
+		(remoteOptions.imageArgs || remoteOptions.imagePromptBuilder)
+	) {
 		const timestamp = Date.now();
 		for (let i = 0; i < remoteOptions.images.length; i++) {
 			const parsed = parseDataUrl(remoteOptions.images[i]);
@@ -388,10 +400,13 @@ export async function buildSshCommandWithStdin(
 			scriptLines.push(`base64 -d > ${shellEscape(remoteTempPath)} <<'MAESTRO_IMG_${i}_EOF'`);
 			scriptLines.push(parsed.base64);
 			scriptLines.push(`MAESTRO_IMG_${i}_EOF`);
-			if (remoteOptions.imageResumeMode === 'prompt-embed') {
+			if (remoteOptions.imagePromptBuilder || remoteOptions.imageResumeMode === 'prompt-embed') {
 				// Resume mode: collect paths for prompt embedding instead of CLI args
 				remoteImagePaths.push(remoteTempPath);
 			} else {
+				if (!remoteOptions.imageArgs) {
+					continue;
+				}
 				// Normal mode: add -i (or equivalent) CLI args
 				imageArgParts.push(
 					...remoteOptions.imageArgs(remoteTempPath).map((arg) => shellEscape(arg))
@@ -410,7 +425,9 @@ export async function buildSshCommandWithStdin(
 
 	// For prompt-embed mode (resumed sessions), prepend image paths to stdinInput/prompt
 	if (remoteImagePaths.length > 0) {
-		const imagePrefix = buildImagePromptPrefix(remoteImagePaths);
+		const imagePrefix = remoteOptions.imagePromptBuilder
+			? remoteOptions.imagePromptBuilder(remoteImagePaths)
+			: buildImagePromptPrefix(remoteImagePaths);
 		if (remoteOptions.stdinInput !== undefined) {
 			remoteOptions.stdinInput = imagePrefix + remoteOptions.stdinInput;
 		} else if (remoteOptions.prompt) {
@@ -626,10 +643,16 @@ export async function buildSshCommand(
 	// We prepend common binary locations to PATH:
 	// - ~/.local/bin: Claude Code, pip --user installs
 	// - ~/.opencode/bin: OpenCode installer default location
+	// - ~/.claude/local: Claude Code local-install layout (auto-update bundle)
 	// - ~/bin: User scripts
 	// - /usr/local/bin: Homebrew on Intel Mac, manual installs
 	// - /opt/homebrew/bin: Homebrew on Apple Silicon
 	// - ~/.cargo/bin: Rust tools
+	// - ~/go/bin: Go default GOBIN (Factory Droid and other Go-based CLIs)
+	// - ~/.bun/bin: Bun runtime + bunx-installed CLIs
+	// - ~/.deno/bin: Deno-installed CLIs
+	// - ~/.nix-profile/bin: Nix user profile binaries
+	// - /snap/bin: Linux snap-installed binaries
 	// Plus dynamic detection of Node version managers (nvm, fnm, volta, mise, asdf, n)
 	// to find npm-installed CLIs like codex, claude, etc.
 	//

@@ -1,4 +1,5 @@
 import { parseDiff, type FileData, type HunkData, type ChangeData } from 'react-diff-view';
+import { logger } from './logger';
 
 // Image file extensions for binary detection
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
@@ -63,7 +64,7 @@ export function parseGitDiff(diffText: string): ParsedFileDiff[] {
 				isDeletedFile,
 			};
 		} catch (error) {
-			console.error('Failed to parse diff section:', error);
+			logger.error('Failed to parse diff section:', undefined, error);
 			// Return a fallback structure if parsing fails
 			return {
 				oldPath,

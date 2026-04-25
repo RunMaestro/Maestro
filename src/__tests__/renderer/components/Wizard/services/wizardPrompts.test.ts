@@ -5,7 +5,9 @@
  * Tests parsing strategies, fallback handling, validation, color generation, and edge cases.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
 	parseStructuredOutput,
 	generateSystemPrompt,
@@ -13,6 +15,7 @@ import {
 	isReadyToProceed,
 	getConfidenceColor,
 	getInitialQuestion,
+	loadWizardPrompts,
 	STRUCTURED_OUTPUT_SCHEMA,
 	STRUCTURED_OUTPUT_SUFFIX,
 	READY_CONFIDENCE_THRESHOLD,
@@ -22,7 +25,50 @@ import {
 } from '../../../../../renderer/components/Wizard/services/wizardPrompts';
 import { getAllInitialQuestions } from '../../../../../renderer/components/Wizard/services/fillerPhrases';
 
+// Load actual prompt files from disk so generateSystemPrompt tests work with real content.
+// Mirror the {{INCLUDE:name}} resolution that src/main/prompt-manager.ts performs in
+// production — without it, included partials like _file-access-wizard remain unresolved
+// and the assertions below would never see their content.
+const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', '..', '..', 'src', 'prompts');
+const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
+function resolveIncludes(content: string, depth = 0): string {
+	if (depth >= 3) return content;
+	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
+		try {
+			const included = fs.readFileSync(path.join(promptsDir, `${name}.md`), 'utf-8');
+			return resolveIncludes(included, depth + 1);
+		} catch {
+			return match;
+		}
+	});
+}
+const wizardSystemContent = resolveIncludes(
+	fs.readFileSync(path.join(promptsDir, 'wizard-system.md'), 'utf-8')
+);
+const wizardContinuationContent = resolveIncludes(
+	fs.readFileSync(path.join(promptsDir, 'wizard-system-continuation.md'), 'utf-8')
+);
+
 describe('wizardPrompts', () => {
+	beforeAll(async () => {
+		// Mock window.maestro.prompts.get to return actual prompt file content
+		(window as any).maestro = {
+			...(window as any).maestro,
+			prompts: {
+				get: vi.fn((id: string) => {
+					if (id === 'wizard-system') {
+						return Promise.resolve({ success: true, content: wizardSystemContent });
+					}
+					if (id === 'wizard-system-continuation') {
+						return Promise.resolve({ success: true, content: wizardContinuationContent });
+					}
+					return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+				}),
+			},
+		};
+		await loadWizardPrompts(true);
+	});
+
 	describe('Constants', () => {
 		describe('READY_CONFIDENCE_THRESHOLD', () => {
 			it('should be 80', () => {

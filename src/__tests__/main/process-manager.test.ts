@@ -579,7 +579,7 @@ describe('process-manager.ts', () => {
 
 				processManager.kill('pty-session');
 
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session');
+				expect(killWindowsTreeSpy).toHaveBeenCalledWith(12345, 'pty-session', false);
 				expect(mockPtyProcess.kill).not.toHaveBeenCalled();
 			});
 
@@ -623,7 +623,7 @@ describe('process-manager.ts', () => {
 
 				processManager.kill('child-session');
 
-				expect(killWindowsTreeSpy).toHaveBeenCalledWith(99999, 'child-session');
+				expect(killWindowsTreeSpy).toHaveBeenCalledWith(99999, 'child-session', false);
 				expect(mockChildProcess.kill).not.toHaveBeenCalled();
 			});
 
@@ -692,9 +692,9 @@ describe('process-manager.ts', () => {
 			it('should kill all processes even when kill() deletes from the map', () => {
 				const kills: string[] = [];
 				const originalKill = processManager.kill.bind(processManager);
-				processManager.kill = (sessionId: string) => {
+				processManager.kill = (sessionId: string, opts?: { sync?: boolean }) => {
 					kills.push(sessionId);
-					return originalKill(sessionId);
+					return originalKill(sessionId, opts);
 				};
 
 				const processes = (processManager as any).processes as Map<string, any>;
@@ -721,6 +721,33 @@ describe('process-manager.ts', () => {
 
 				expect(kills).toEqual(expect.arrayContaining(['a', 'b', 'c']));
 				expect(kills).toHaveLength(3);
+			});
+
+			it('should pass sync: true to kill() so Windows taskkill blocks until complete', () => {
+				const killSpy = vi.spyOn(processManager, 'kill');
+
+				const processes = (processManager as any).processes as Map<string, any>;
+				processes.set('sync-test', {
+					sessionId: 'sync-test',
+					toolType: 'terminal',
+					isTerminal: true,
+					pid: 1,
+					cwd: '/tmp',
+					startTime: Date.now(),
+					ptyProcess: {
+						pid: 1,
+						kill: vi.fn(),
+						onExit: vi.fn(),
+						onData: vi.fn(),
+						write: vi.fn(),
+						resize: vi.fn(),
+					},
+				});
+
+				processManager.killAll();
+
+				expect(killSpy).toHaveBeenCalledWith('sync-test', { sync: true });
+				killSpy.mockRestore();
 			});
 		});
 	});

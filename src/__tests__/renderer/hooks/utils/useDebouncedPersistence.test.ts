@@ -11,6 +11,7 @@ import type {
 	FilePreviewTab,
 	UnifiedTabRef,
 	TerminalTab,
+	BrowserTab,
 } from '../../../../renderer/types';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,20 @@ const makeTab = (overrides: Partial<AITab> = {}): AITab => ({
 	createdAt: Date.now(),
 	state: 'idle',
 	...overrides,
+});
+
+/** Create a minimal BrowserTab with sensible defaults */
+const makeBrowserTab = (overrides: Partial<BrowserTab> = {}): BrowserTab => ({
+	id: overrides.id ?? `browser-${Math.random().toString(36).slice(2, 8)}`,
+	url: overrides.url ?? 'https://example.com/docs',
+	title: overrides.title ?? 'Example Docs',
+	createdAt: overrides.createdAt ?? Date.now(),
+	partition: overrides.partition,
+	canGoBack: overrides.canGoBack ?? false,
+	canGoForward: overrides.canGoForward ?? false,
+	isLoading: overrides.isLoading ?? false,
+	favicon: overrides.favicon ?? null,
+	webContentsId: overrides.webContentsId,
 });
 
 /** Create a minimal Session with sensible defaults */
@@ -258,6 +273,131 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].aiTabs[0].state).toBe('idle');
 				expect(persisted[0].aiTabs[0].inputValue).toBe('');
 				expect(persisted[0].aiTabs[0].starred).toBe(false);
+			});
+		});
+
+		describe('browser tab persistence', () => {
+			it('preserves browser tab order, active selection, URL, title, and safe partition', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-1',
+					url: 'localhost:5173/docs',
+					title: 'Local Docs',
+					partition: 'persist:maestro-browser-session-session-browser',
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 77,
+				});
+				const session = makeSession({
+					id: 'session-browser',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'browser-1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs).toHaveLength(1);
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					id: 'browser-1',
+					url: 'http://localhost:5173/docs',
+					title: 'Local Docs',
+					partition: 'persist:maestro-browser-session-session-browser',
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+					favicon: null,
+				});
+				expect(persisted[0].browserTabs[0].webContentsId).toBeUndefined();
+				expect(persisted[0].activeBrowserTabId).toBe('browser-1');
+				expect(persisted[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'default-tab' },
+					{ type: 'browser', id: 'browser-1' },
+				]);
+			});
+
+			it('repairs unsafe persisted browser partitions and stale active browser ids', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-1',
+					url: 'javascript:alert(1)',
+					title: '',
+					partition: 'persist:evil',
+					webContentsId: 12,
+				});
+				const session = makeSession({
+					id: 'session-safe',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'missing-browser',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					url: 'about:blank',
+					title: 'New Tab',
+					partition: 'persist:maestro-browser-session-session-safe',
+				});
+				expect(persisted[0].activeBrowserTabId).toBeNull();
+			});
+
+			it('persists legacy browser tabs with safe defaults while preserving valid active selection', () => {
+				const browserTab = makeBrowserTab({
+					id: 'browser-legacy',
+					url: '',
+					title: '',
+					partition: undefined,
+					favicon: undefined,
+				});
+				const session = makeSession({
+					id: 'session legacy/browser',
+					browserTabs: [browserTab],
+					activeBrowserTabId: 'browser-legacy',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'default-tab' },
+						{ type: 'browser', id: 'browser-legacy' },
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi
+					.mocked(window.maestro.sessions.setAll)
+					.mock.calls.at(-1)?.[0] as Session[];
+				expect(persisted[0].browserTabs[0]).toMatchObject({
+					url: 'about:blank',
+					title: 'New Tab',
+					partition: 'persist:maestro-browser-session-session-legacy-browser',
+					favicon: null,
+				});
+				expect(persisted[0].activeBrowserTabId).toBe('browser-legacy');
 			});
 		});
 
@@ -569,6 +709,29 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].fileTreeStats).toBeUndefined();
 				expect(persisted[0].fileTreeLoading).toBeUndefined();
 				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
+			});
+
+			it('should remove fileTreeError and fileTreeRetryAt', () => {
+				// Regression: persisting fileTreeError resurfaced a stale error
+				// on next app launch, and the `hasLoadedOnce` gate in
+				// useFileTreeManagement blocked auto-retry, so the panel
+				// displayed an out-of-date error from a prior code path even
+				// after the underlying bug was fixed.
+				const session = makeSession({
+					fileTreeError: 'Cannot access directory: /remote/path\nCommand failed: ssh …',
+					fileTreeRetryAt: Date.now() + 20000,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTreeError).toBeUndefined();
+				expect(persisted[0].fileTreeRetryAt).toBeUndefined();
 			});
 		});
 

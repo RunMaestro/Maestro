@@ -328,9 +328,14 @@ describe('usePipelineSelection', () => {
 		expect(result.current.incomingTriggerEdges[0].triggerLabel).toBe('My Trigger');
 	});
 
-	it('falls back to agent inputPrompt when edge has no prompt', () => {
-		const trigger = makeTriggerNode('t1', 'Watch');
-		const agent = makeAgentNode('a1', 'sess1', 'Agent', { inputPrompt: 'default prompt' });
+	it('falls back to the event-type default template when edge has no prompt, ignoring agent inputPrompt', () => {
+		// Regression guard for the multi-trigger prompt-leakage bug: when a
+		// second trigger feeds an agent with no edge.prompt of its own, the UI
+		// must NOT fall back to the agent's node-level inputPrompt (which was
+		// set by the first trigger). The fallback must be the per-event
+		// barebones template so each trigger starts independent.
+		const trigger = makeTriggerNode('t1', 'Watch', 'file.changed');
+		const agent = makeAgentNode('a1', 'sess1', 'Agent', { inputPrompt: 'first trigger prompt' });
 		const edge = makeEdge('e1', 't1', 'a1');
 		const pipeline = makePipeline('p1', { nodes: [trigger, agent], edges: [edge] });
 		const state: CuePipelineState = { pipelines: [pipeline], selectedPipelineId: 'p1' };
@@ -341,11 +346,16 @@ describe('usePipelineSelection', () => {
 			result.current.onNodeClick(mouseEvent(), { id: 'p1:a1' } as any);
 		});
 
-		expect(result.current.incomingTriggerEdges[0].prompt).toBe('default prompt');
+		// file.changed default is "Changed file: {{CUE_FILE_PATH}}\n\n"; must NOT
+		// be the agent's "first trigger prompt".
+		expect(result.current.incomingTriggerEdges[0].prompt).toBe(
+			'Changed file: {{CUE_FILE_PATH}}\n\n'
+		);
+		expect(result.current.incomingTriggerEdges[0].prompt).not.toContain('first trigger prompt');
 	});
 
-	it('returns empty string prompt when neither edge nor agent has one', () => {
-		const trigger = makeTriggerNode('t1', 'Watch');
+	it('returns the event-type default template when neither edge nor agent has one', () => {
+		const trigger = makeTriggerNode('t1', 'Watch', 'time.heartbeat');
 		const agent = makeAgentNode('a1', 'sess1');
 		const edge = makeEdge('e1', 't1', 'a1');
 		const pipeline = makePipeline('p1', { nodes: [trigger, agent], edges: [edge] });
@@ -357,6 +367,7 @@ describe('usePipelineSelection', () => {
 			result.current.onNodeClick(mouseEvent(), { id: 'p1:a1' } as any);
 		});
 
+		// time.heartbeat default is an empty string (no useful barebones template).
 		expect(result.current.incomingTriggerEdges[0].prompt).toBe('');
 	});
 

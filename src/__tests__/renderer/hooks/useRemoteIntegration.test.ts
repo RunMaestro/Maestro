@@ -2,53 +2,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
-const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
-	id: 'tab-1',
-	agentSessionId: null,
-	name: null,
-	starred: false,
-	logs: [],
-	inputValue: '',
-	stagedImages: [],
-	createdAt: 1700000000000,
-	state: 'idle',
-	saveToHistory: true,
-	...overrides,
-});
+const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
+	createMockAITab({
+		createdAt: 1700000000000,
+		saveToHistory: true,
+		...overrides,
+	});
 
+// Thin wrapper: pre-populates an AI tab so remote integration handlers
+// have a tab to dispatch events to.
 const createMockSession = (overrides: Partial<Session> = {}): Session => {
 	const baseTab = createMockTab();
-
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
+	return baseCreateMockSession({
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		aiTabs: [baseTab],
 		activeTabId: baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
 		...overrides,
-	};
+	});
 };
 
 describe('useRemoteIntegration', () => {
@@ -73,6 +46,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteNewAITabWithPromptHandler:
+		| ((sessionId: string, prompt: string, responseChannel: string) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -121,12 +97,25 @@ describe('useRemoteIntegration', () => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
 		}),
+		onRemoteNewAITabWithPrompt: vi.fn().mockImplementation((handler) => {
+			onRemoteNewAITabWithPromptHandler = handler;
+			return () => {};
+		}),
+		sendRemoteNewAITabWithPromptResponse: vi.fn(),
 		onRemoteOpenFileTab: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
 		onRemoteRefreshFileTree: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
+		onRemoteOpenBrowserTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteOpenBrowserTabResponse: vi.fn(),
+		onRemoteOpenTerminalTab: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteOpenTerminalTabResponse: vi.fn(),
 		onRemoteRefreshAutoRunDocs: vi.fn().mockImplementation(() => {
 			return () => {};
 		}),
@@ -188,6 +177,10 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteGetGitDiffResponse: vi.fn(),
+		onRemoteTriggerCueSubscription: vi.fn().mockImplementation(() => {
+			return () => {};
+		}),
+		sendRemoteTriggerCueSubscriptionResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -217,6 +210,11 @@ describe('useRemoteIntegration', () => {
 		updateSessionName: vi.fn().mockResolvedValue(true),
 	};
 
+	const mockCue = {
+		...window.maestro.cue,
+		triggerSubscription: vi.fn().mockResolvedValue(true),
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		onRemoteCommandHandler = undefined;
@@ -230,6 +228,7 @@ describe('useRemoteIntegration', () => {
 		onRemoteStarTabHandler = undefined;
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
+		onRemoteNewAITabWithPromptHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -239,6 +238,7 @@ describe('useRemoteIntegration', () => {
 			claude: mockClaude as typeof window.maestro.claude,
 			agentSessions: mockAgentSessions as typeof window.maestro.agentSessions,
 			history: mockHistory as typeof window.maestro.history,
+			cue: mockCue as typeof window.maestro.cue,
 		};
 	});
 
@@ -607,6 +607,73 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalled();
+		});
+	});
+
+	describe('remote new AI tab with prompt', () => {
+		it('creates tab, dispatches remoteCommand, and acks true on idle session', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-1');
+			});
+
+			expect(deps.setSessions).toHaveBeenCalled();
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: { sessionId: 'session-1', command: 'Hello', inputMode: 'ai' },
+				})
+			);
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan-1', true);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('acks false and skips dispatch when session is missing', () => {
+			const deps = createDeps({ sessions: [] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('nonexistent', 'Hello', 'chan-missing');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'chan-missing',
+				false
+			);
+
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('acks false and skips dispatch when session is busy', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.('session-1', 'Hello', 'chan-busy');
+			});
+
+			expect(deps.setSessions).not.toHaveBeenCalled();
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith(
+				'chan-busy',
+				false
+			);
+
+			dispatchEventSpy.mockRestore();
 		});
 	});
 

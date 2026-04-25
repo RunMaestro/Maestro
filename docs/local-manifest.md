@@ -1,3 +1,9 @@
+---
+title: Local Manifest
+description: Extend the Playbook Exchange with custom or work-in-progress playbooks stored locally.
+icon: folder-open
+---
+
 # Local Manifest for Custom Playbooks
 
 The local manifest feature allows you to extend the Playbook Exchange with custom or work-in-progress playbooks that are stored locally instead of in the public GitHub repository.

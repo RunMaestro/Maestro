@@ -46,6 +46,23 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const fs = require('fs');
+		const path = require('path');
+		const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+		const filenameMap: Record<string, string> = {
+			'group-chat-participant': 'group-chat-participant.md',
+			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
+		};
+		const filename = filenameMap[id];
+		if (!filename) throw new Error(`Unknown prompt ID in test mock: ${id}`);
+		return fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+	}),
+}));
+
 import {
 	extractMentions,
 	extractAllMentions,
@@ -56,7 +73,7 @@ import {
 	getGroupChatReadOnlyState,
 	setGetSessionsCallback,
 	setSshStore,
-	type SessionInfo,
+	type GroupChatSessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
@@ -578,10 +595,10 @@ describe('group-chat-router', () => {
 			);
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (benign race on moderator exit)', async () => {
 			await expect(
 				routeModeratorResponse('non-existent-id', 'Hello', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('works without process manager (log only)', async () => {
@@ -945,7 +962,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH User Mention Test');
 
 			// Set up a session with SSH config that the router can discover
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-1',
 				name: 'RemoteAgent',
 				toolType: 'claude-code',
@@ -980,7 +997,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('SSH Moderator Mention Test');
 
 			// Set up session with SSH config
-			const sshSession: SessionInfo = {
+			const sshSession: GroupChatSessionInfo = {
 				id: 'ses-ssh-2',
 				name: 'SSHWorker',
 				toolType: 'claude-code',
@@ -1029,7 +1046,7 @@ describe('group-chat-router', () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 
 			// Session without SSH config
-			const localSession: SessionInfo = {
+			const localSession: GroupChatSessionInfo = {
 				id: 'ses-local-1',
 				name: 'LocalAgent',
 				toolType: 'claude-code',

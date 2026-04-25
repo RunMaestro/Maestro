@@ -65,66 +65,38 @@ import { createTabAtPosition } from '../../../renderer/utils/tabHelpers';
 import { useOperationStore } from '../../../renderer/stores/operationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 function createMockTab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: 'tab-1',
+	return createMockAITab({
 		agentSessionId: 'agent-session-1',
 		name: 'Tab 1',
-		starred: false,
 		logs: [
 			{ id: 'log-1', timestamp: Date.now(), source: 'user', text: 'hello' },
 			{ id: 'log-2', timestamp: Date.now(), source: 'assistant', text: 'world' },
 		],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
 		saveToHistory: true,
 		...overrides,
-	} as AITab;
+	});
 }
 
+// Thin wrapper: pre-populates an AI tab and raises contextUsage above the
+// summarization threshold so the summarize handler will actually run.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
-		toolType: 'claude-code',
-		state: 'idle',
+	return baseCreateMockSession({
 		cwd: '/projects/test',
 		fullPath: '/projects/test',
 		projectRoot: '/projects/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
 		contextUsage: 75,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
 		aiTabs: [createMockTab()],
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 // ============================================================================

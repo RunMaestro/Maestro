@@ -5,6 +5,7 @@ import type { Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
+import { openUrl } from '../../utils/openUrl';
 
 interface LiveOverlayPanelProps {
 	theme: Theme;
@@ -205,7 +206,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							<button
 								type="button"
 								onClick={() =>
-									window.maestro.shell.openExternal(
+									openUrl(
 										'https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/'
 									)
 								}
@@ -393,7 +394,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 							type="button"
 							onClick={() => {
 								const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
-								if (url) window.maestro.shell.openExternal(url);
+								if (url) openUrl(url);
 							}}
 							className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 							title="Open in Browser"
@@ -501,7 +502,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						type="button"
 						onClick={() => {
 							const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
-							if (url) window.maestro.shell.openExternal(url);
+							if (url) openUrl(url);
 						}}
 						className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10 border"
 						style={{

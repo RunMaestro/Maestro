@@ -176,6 +176,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent sessions browser (Cmd+Shift+L) */
 	AGENT_SESSIONS: 680,
 
+	/** New memory filename modal (appears above Memory Viewer) */
+	MEMORY_CREATE: 695,
+
 	/** Execution queue browser modal */
 	EXECUTION_QUEUE_BROWSER: 670,
 
@@ -187,6 +190,9 @@ export const MODAL_PRIORITIES = {
 
 	/** Debug package generation modal */
 	DEBUG_PACKAGE: 605,
+
+	/** Debug: View Application Stats modal */
+	DEBUG_APPLICATION_STATS: 604,
 
 	/** Windows warning modal - shown on startup for Windows users */
 	WINDOWS_WARNING: 615,

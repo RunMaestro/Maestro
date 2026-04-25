@@ -5,7 +5,7 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 import { logger } from '../../utils/logger';
-import { getOutputParser } from '../../parsers';
+import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
@@ -17,6 +17,7 @@ import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -61,6 +62,7 @@ export class ChildProcessSpawner {
 			prompt,
 			images,
 			imageArgs,
+			imagePromptBuilder,
 			promptArgs,
 			contextWindow,
 			customEnvVars,
@@ -107,8 +109,9 @@ export class ChildProcessSpawner {
 				: [];
 			finalArgs = [...args, ...needsInputFormat];
 			// Prompt will be sent via stdin as stream-json with embedded images (not in CLI args)
-		} else if (hasImages && prompt && imageArgs) {
-			// For agents that use file-based image args (like Codex, OpenCode)
+		} else if (hasImages && prompt && (imageArgs || imagePromptBuilder)) {
+			// For agents that use file-based image args (like Codex, OpenCode) or
+			// prompt-embedded image mentions (like Copilot's @path syntax)
 			finalArgs = [...args];
 			tempImageFiles = [];
 			for (let i = 0; i < images.length; i++) {
@@ -120,10 +123,14 @@ export class ChildProcessSpawner {
 
 			const isResumeWithPromptEmbed =
 				capabilities.imageResumeMode === 'prompt-embed' && args.some((a) => a === 'resume');
+			const shouldEmbedImagesInPrompt = !!imagePromptBuilder || isResumeWithPromptEmbed;
 
-			if (isResumeWithPromptEmbed) {
-				// Resume mode: embed file paths in prompt text, don't use -i flag
-				const imagePrefix = buildImagePromptPrefix(tempImageFiles);
+			if (shouldEmbedImagesInPrompt) {
+				// Some agents consume images by mentioning temp file paths inside the prompt
+				// instead of accepting a dedicated CLI image flag.
+				const imagePrefix = imagePromptBuilder
+					? imagePromptBuilder(tempImageFiles)
+					: buildImagePromptPrefix(tempImageFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
 					if (promptArgs) {
@@ -135,19 +142,19 @@ export class ChildProcessSpawner {
 					}
 					promptAddedToArgs = true;
 				}
-				logger.debug(
-					'[ProcessManager] Resume mode: embedded image paths in prompt',
-					'ProcessManager',
-					{
-						sessionId,
-						imageCount: images.length,
-						tempFiles: tempImageFiles,
-						promptViaStdin,
-					}
-				);
+				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
+					sessionId,
+					imageCount: images.length,
+					tempFiles: tempImageFiles,
+					embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
+					promptViaStdin,
+				});
 			} else {
 				// Initial spawn: use -i flag as before
 				for (const tempPath of tempImageFiles) {
+					if (!imageArgs) {
+						continue;
+					}
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
@@ -208,7 +215,9 @@ export class ChildProcessSpawner {
 
 		try {
 			// Build environment
-			const isResuming = finalArgs.includes('--resume') || finalArgs.includes('--session');
+			const isResuming =
+				args.some((arg) => arg === '--resume' || arg.startsWith('--resume=')) ||
+				args.includes('--session');
 			const env = buildChildProcessEnv(customEnvVars, isResuming, shellEnvVars);
 
 			// Log environment variable application for troubleshooting
@@ -336,17 +345,29 @@ export class ChildProcessSpawner {
 			// because the SSH command wraps the actual agent command. Without this, the output
 			// parser won't process JSON output from remote agents, causing raw JSON to display.
 			// NOTE: sendPromptViaStdinRaw sends RAW text (not JSON), so it should NOT set isStreamJsonMode
-			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
+			// Use the pre-prompt args for detection to avoid false positives from prompt content
+			// (e.g., a prompt like "Explain --json" should not flip isStreamJsonMode)
+			const cliArgs = promptAddedToArgs ? args : finalArgs;
+			const argsContain = (pattern: string) => cliArgs.some((arg) => arg.includes(pattern));
+			const argsHaveFlagValue = (flag: string, value: string) =>
+				cliArgs.some(
+					(arg, index) =>
+						arg === `${flag}=${value}` || (arg === flag && cliArgs[index + 1] === value)
+				);
+
+			// Create a fresh output parser instance for this process (not the shared singleton)
+			// to isolate mutable state like tool name tracking across concurrent sessions
+			const outputParser = createOutputParser(toolType) || undefined;
+
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
-				(argsContain('--format') && argsContain('json')) ||
+				argsHaveFlagValue('--format', 'json') ||
+				argsHaveFlagValue('--output-format', 'json') ||
 				(hasImages && !!prompt) ||
 				!!config.sendPromptViaStdin ||
-				!!config.sshStdinScript;
-
-			// Get the output parser for this agent type
-			const outputParser = getOutputParser(toolType) || undefined;
+				!!config.sshStdinScript ||
+				!!outputParser; // Agents with output parsers use streaming JSONL, not batch JSON
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
@@ -434,6 +455,7 @@ export class ChildProcessSpawner {
 					try {
 						this.emitter.emit('raw-stdout', sessionId, output);
 					} catch (err) {
+						void captureException(err);
 						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
 							sessionId,
 							error: String(err),
@@ -523,6 +545,7 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: true };
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});

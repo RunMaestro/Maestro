@@ -210,6 +210,7 @@ async function collectReferencedAssets(
 			const nestedAssets = await collectReferencedAssets(repoPath, assetContent, seen, depth + 1);
 			assets.push(...nestedAssets);
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Could not fetch referenced BMAD asset ${repoPath}: ${error}`, LOG_CONTEXT);
 		}
 	}
@@ -369,6 +370,7 @@ async function getBundledPrompts(): Promise<
 				isCustom: cmd.isCustom,
 			};
 		} catch (error) {
+			void captureException(error);
 			logger.warn(`Failed to load bundled prompt for ${cmd.id}: ${error}`, LOG_CONTEXT);
 			result[cmd.id] = {
 				prompt: `# ${cmd.id}\n\nPrompt not available.`,
@@ -502,6 +504,7 @@ async function getLatestCommitSha(): Promise<string> {
 		const commit = (await response.json()) as { sha?: string };
 		return commit.sha?.slice(0, 7) ?? 'main';
 	} catch (error) {
+		void captureException(error);
 		logger.warn(`Could not fetch BMAD commit SHA: ${error}`, LOG_CONTEXT);
 		return 'main';
 	}
@@ -518,6 +521,7 @@ async function getLatestVersion(): Promise<string> {
 		const packageJson = (await response.json()) as { version?: string };
 		return packageJson.version ?? 'main';
 	} catch (error) {
+		void captureException(error);
 		logger.warn(`Could not fetch BMAD version: ${error}`, LOG_CONTEXT);
 		return 'main';
 	}

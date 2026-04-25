@@ -8,6 +8,11 @@
 
 import { marked } from 'marked';
 import type { GroupChat, GroupChatMessage, GroupChatHistoryEntry, Theme } from '../types';
+import {
+	formatDurationCompact,
+	formatTimestamp as formatTimestampShared,
+} from '../../shared/formatters';
+import { logger } from './logger';
 
 // Configure marked for GFM (tables, strikethrough, etc.)
 marked.setOptions({
@@ -31,23 +36,18 @@ function escapeHtml(text: string): string {
  * Format a timestamp for display
  */
 function formatTimestamp(timestamp: string | number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleString();
+	return formatTimestampShared(timestamp, 'full');
 }
 
 /**
- * Format duration from milliseconds
+ * Format duration from group chat messages by computing span between first and last
  */
 function formatDuration(messages: GroupChatMessage[]): string {
 	if (messages.length < 2) return '0m';
 
 	const firstTimestamp = new Date(messages[0].timestamp).getTime();
 	const lastTimestamp = new Date(messages[messages.length - 1].timestamp).getTime();
-	const durationMs = lastTimestamp - firstTimestamp;
-	const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-	const durationMins = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-
-	return durationHours > 0 ? `${durationHours}h ${durationMins}m` : `${durationMins}m`;
+	return formatDurationCompact(lastTimestamp - firstTimestamp);
 }
 
 /**
@@ -762,7 +762,7 @@ export async function downloadGroupChatExport(
 	try {
 		images = await window.maestro.groupChat.getImages(groupChat.id);
 	} catch (error) {
-		console.warn('Failed to fetch images for export:', error);
+		logger.warn('Failed to fetch images for export:', undefined, error);
 	}
 
 	// Generate HTML

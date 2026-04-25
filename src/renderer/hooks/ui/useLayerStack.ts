@@ -10,6 +10,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Layer, LayerInput } from '../../types/layer';
+import { logger } from '../../utils/logger';
 
 /**
  * Extend Window interface for debug API
@@ -240,9 +241,9 @@ export function useLayerStack(): LayerStackAPI {
 				top: () => {
 					const topLayer = layers[layers.length - 1];
 					if (topLayer) {
-						console.log('Top Layer:', topLayer);
+						logger.info('Top Layer:', undefined, topLayer);
 					} else {
-						console.log('No layers in stack');
+						logger.info('No layers in stack');
 					}
 				},
 
@@ -262,7 +263,7 @@ export function useLayerStack(): LayerStackAPI {
 							cancelable: true,
 						});
 						window.dispatchEvent(event);
-						console.log('Escape key event dispatched');
+						logger.info('Escape key event dispatched');
 					},
 
 					/**
@@ -272,7 +273,7 @@ export function useLayerStack(): LayerStackAPI {
 						const count = layers.length;
 						setLayers([]);
 						handlerRefs.current.clear();
-						console.log(`Cleared ${count} layers from stack`);
+						logger.info(`Cleared ${count} layers from stack`);
 					},
 				},
 			};

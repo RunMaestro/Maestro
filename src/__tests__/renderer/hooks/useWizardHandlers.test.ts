@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -49,10 +50,8 @@ vi.mock('../../../renderer/constants/app', () => ({
 	getSlashCommandDescription: vi.fn((cmd: string) => `Description for ${cmd}`),
 }));
 
-vi.mock('../../../prompts', async () => {
-	const actual = await vi.importActual('../../../prompts');
-	return { ...actual, autorunSynopsisPrompt: 'Generate a synopsis of all work done.' };
-});
+// autorunSynopsisPrompt is now loaded via IPC (window.maestro.prompts.get)
+// and cached in the hook's module-level cache via loadWizardHandlersPrompts()
 
 vi.mock('../../../shared/synopsis', () => ({
 	parseSynopsis: vi.fn((response: string) => ({
@@ -64,10 +63,6 @@ vi.mock('../../../shared/synopsis', () => ({
 
 vi.mock('../../../shared/formatters', () => ({
 	formatRelativeTime: vi.fn(() => '5 minutes ago'),
-}));
-
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
 }));
 
 vi.mock('../../../renderer/components/BatchRunnerModal', () => ({
@@ -85,64 +80,41 @@ import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
 import { parseSynopsis } from '../../../shared/synopsis';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
-const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
-	id: 'tab-1',
-	agentSessionId: 'agent-session-1',
-	name: 'Tab 1',
-	starred: false,
-	logs: [],
-	inputValue: '',
-	stagedImages: [],
-	createdAt: Date.now() - 60000,
-	state: 'idle',
-	saveToHistory: true,
-	showThinking: 'off',
-	...overrides,
-});
+const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
+	createMockAITab({
+		agentSessionId: 'agent-session-1',
+		name: 'Tab 1',
+		createdAt: Date.now() - 60000,
+		saveToHistory: true,
+		showThinking: 'off',
+		...overrides,
+	});
 
+// Thin wrapper: pre-populates an AI tab so wizard handlers have a tab
+// target.
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'session-1',
+	baseCreateMockSession({
 		name: 'Test Agent',
-		toolType: 'claude-code',
-		state: 'idle',
 		cwd: '/projects/test',
 		fullPath: '/projects/test',
 		projectRoot: '/projects/test',
-		isGitRepo: false,
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
 		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		fileTreeAutoRefreshInterval: 180,
 		shellCwd: '/projects/test',
 		aiCommandHistory: [],
 		shellCommandHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
 		aiTabs: [createMockTab()],
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
-		unifiedClosedTabHistory: [],
 		...overrides,
-	}) as Session;
+	});
 
 const createMockDeps = (overrides: Partial<UseWizardHandlersDeps> = {}): UseWizardHandlersDeps => ({
 	inlineWizardContext: {
@@ -342,6 +314,7 @@ describe('useWizardHandlers', () => {
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
 				'claude-code',
 				'/projects/test',
+				undefined,
 				undefined
 			);
 
@@ -394,7 +367,7 @@ describe('useWizardHandlers', () => {
 				new Error('Discovery failed')
 			);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			renderHook(() => useWizardHandlers(deps));
 
@@ -405,6 +378,69 @@ describe('useWizardHandlers', () => {
 			// Should not throw; errors are caught and logged
 			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
+		});
+
+		it('discovers agent slash commands for copilot sessions', async () => {
+			const session = createMockSession({
+				toolType: 'copilot-cli' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'help' },
+				{ name: 'model' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'copilot-cli',
+				'/projects/test',
+				undefined,
+				undefined
+			);
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ command: '/help' }),
+					expect.objectContaining({ command: '/model' }),
+				])
+			);
+		});
+
+		it('discovers agent slash commands for opencode sessions', async () => {
+			const session = createMockSession({
+				toolType: 'opencode' as any,
+				agentCommands: undefined,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'deploy', prompt: 'Deploy the app' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'opencode',
+				'/projects/test',
+				undefined,
+				undefined
+			);
 		});
 	});
 
@@ -1055,7 +1091,7 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession();
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps({
 				spawnBackgroundSynopsis: vi.fn().mockRejectedValue(new Error('Spawn failed')),
 			});
@@ -1203,7 +1239,7 @@ describe('useWizardHandlers', () => {
 
 			(window as any).maestro.claude.getSkills.mockRejectedValue(new Error('Skill fetch failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
@@ -2030,7 +2066,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(
@@ -2083,7 +2119,7 @@ describe('useWizardHandlers', () => {
 				},
 			});
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const { result } = renderHook(() => useWizardHandlers(deps));
 
 			await expect(

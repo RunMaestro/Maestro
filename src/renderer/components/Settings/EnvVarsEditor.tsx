@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 
 export interface EnvVarEntry {
@@ -187,17 +188,17 @@ export function EnvVarsEditor({
 									value={entry.value}
 									onChange={(e) => updateEntry(entry.id, 'value', e.target.value)}
 									placeholder="value"
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								/>
-								<button
+								<GhostIconButton
 									onClick={() => removeEntry(entry.id)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									padding="p-2"
 									title="Remove variable"
-									style={{ color: theme.colors.textDim }}
+									color={theme.colors.textDim}
 								>
 									<Trash2 className="w-3 h-3" />
-								</button>
+								</GhostIconButton>
 							</div>
 							{error && (
 								<p className="text-xs mt-1 px-2" style={{ color: '#ef4444' }}>

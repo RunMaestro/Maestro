@@ -4,7 +4,6 @@
 
 import {
 	TreeNode,
-	walkTree,
 	walkTreePartitioned,
 	getAllFilePaths,
 	getAllFolderPaths,
@@ -38,156 +37,6 @@ describe('treeUtils', () => {
 			children: [{ name: 'guide.md', type: 'file' }],
 		},
 	];
-
-	describe('walkTree', () => {
-		it('returns empty array for empty tree', () => {
-			const result = walkTree([], {
-				onFile: (_, path) => path,
-			});
-			expect(result).toEqual([]);
-		});
-
-		it('collects all file paths', () => {
-			const result = walkTree(sampleTree, {
-				onFile: (_, path) => path,
-			});
-			expect(result).toEqual([
-				'src/index.ts',
-				'src/utils.ts',
-				'src/components/Button.tsx',
-				'src/components/Modal.tsx',
-				'README.md',
-				'package.json',
-				'docs/guide.md',
-			]);
-		});
-
-		it('collects all folder paths', () => {
-			const result = walkTree(sampleTree, {
-				onFolder: (_, path) => path,
-			});
-			expect(result).toEqual(['src', 'src/components', 'docs']);
-		});
-
-		it('collects both files and folders', () => {
-			const result = walkTree(sampleTree, {
-				onFile: (_, path) => ({ type: 'file', path }),
-				onFolder: (_, path) => ({ type: 'folder', path }),
-			});
-			expect(result).toEqual([
-				{ type: 'folder', path: 'src' },
-				{ type: 'file', path: 'src/index.ts' },
-				{ type: 'file', path: 'src/utils.ts' },
-				{ type: 'folder', path: 'src/components' },
-				{ type: 'file', path: 'src/components/Button.tsx' },
-				{ type: 'file', path: 'src/components/Modal.tsx' },
-				{ type: 'file', path: 'README.md' },
-				{ type: 'file', path: 'package.json' },
-				{ type: 'folder', path: 'docs' },
-				{ type: 'file', path: 'docs/guide.md' },
-			]);
-		});
-
-		it('respects basePath option', () => {
-			const result = walkTree(sampleTree, {
-				basePath: 'project',
-				onFile: (_, path) => path,
-			});
-			expect(result).toContain('project/src/index.ts');
-			expect(result).toContain('project/README.md');
-		});
-
-		it('filters undefined results', () => {
-			const result = walkTree(sampleTree, {
-				onFile: (node, path) => (node.name.endsWith('.tsx') ? path : undefined),
-			});
-			expect(result).toEqual(['src/components/Button.tsx', 'src/components/Modal.tsx']);
-		});
-
-		it('handles folders without children', () => {
-			const tree: TreeNode[] = [
-				{ name: 'empty-folder', type: 'folder' },
-				{ name: 'file.txt', type: 'file' },
-			];
-			const result = walkTree(tree, {
-				onFile: (_, path) => path,
-				onFolder: (_, path) => path,
-			});
-			expect(result).toEqual(['empty-folder', 'file.txt']);
-		});
-
-		it('provides node to callback', () => {
-			const fileNames: string[] = [];
-			walkTree(sampleTree, {
-				onFile: (node) => {
-					fileNames.push(node.name);
-				},
-			});
-			expect(fileNames).toContain('index.ts');
-			expect(fileNames).toContain('Button.tsx');
-			expect(fileNames).toContain('README.md');
-		});
-
-		it('handles deeply nested structures', () => {
-			const deepTree: TreeNode[] = [
-				{
-					name: 'a',
-					type: 'folder',
-					children: [
-						{
-							name: 'b',
-							type: 'folder',
-							children: [
-								{
-									name: 'c',
-									type: 'folder',
-									children: [
-										{
-											name: 'd',
-											type: 'folder',
-											children: [{ name: 'deep.txt', type: 'file' }],
-										},
-									],
-								},
-							],
-						},
-					],
-				},
-			];
-			const result = walkTree(deepTree, {
-				onFile: (_, path) => path,
-			});
-			expect(result).toEqual(['a/b/c/d/deep.txt']);
-		});
-
-		it('handles tree with only files', () => {
-			const flatTree: TreeNode[] = [
-				{ name: 'file1.txt', type: 'file' },
-				{ name: 'file2.txt', type: 'file' },
-				{ name: 'file3.txt', type: 'file' },
-			];
-			const result = walkTree(flatTree, {
-				onFile: (_, path) => path,
-			});
-			expect(result).toEqual(['file1.txt', 'file2.txt', 'file3.txt']);
-		});
-
-		it('handles tree with only folders', () => {
-			const folderTree: TreeNode[] = [
-				{ name: 'dir1', type: 'folder', children: [] },
-				{ name: 'dir2', type: 'folder', children: [] },
-			];
-			const result = walkTree(folderTree, {
-				onFolder: (_, path) => path,
-			});
-			expect(result).toEqual(['dir1', 'dir2']);
-		});
-
-		it('works with no callbacks', () => {
-			const result = walkTree(sampleTree, {});
-			expect(result).toEqual([]);
-		});
-	});
 
 	describe('walkTreePartitioned', () => {
 		it('returns empty sets for empty tree', () => {
@@ -364,26 +213,6 @@ describe('treeUtils', () => {
 			size?: number;
 			lastModified?: Date;
 		}
-
-		it('walkTree works with extended node types', () => {
-			const extTree: ExtendedNode[] = [
-				{ name: 'file.txt', type: 'file', size: 1024 },
-				{
-					name: 'folder',
-					type: 'folder',
-					children: [{ name: 'nested.txt', type: 'file', size: 512 }],
-				},
-			];
-
-			const result = walkTree<{ name: string; size?: number }, ExtendedNode>(extTree, {
-				onFile: (node) => ({ name: node.name, size: node.size }),
-			});
-
-			expect(result).toEqual([
-				{ name: 'file.txt', size: 1024 },
-				{ name: 'nested.txt', size: 512 },
-			]);
-		});
 
 		it('getAllFilePaths works with extended node types', () => {
 			const extTree: ExtendedNode[] = [{ name: 'file.txt', type: 'file', size: 1024 }];

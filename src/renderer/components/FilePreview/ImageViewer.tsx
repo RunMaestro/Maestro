@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
-import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, ImageOff } from 'lucide-react';
 
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 interface ImageViewerProps {
 	src: string;
 	alt: string;
@@ -24,17 +26,24 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 	const [dragging, setDragging] = useState(false);
 	const dragStart = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
 	const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+	const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
-	// Reset zoom/pan when image source changes
+	// Reset zoom/pan and load state when image source changes
 	useEffect(() => {
 		setZoom(1);
 		setOffset({ x: 0, y: 0 });
 		setNaturalSize(null);
+		setLoadState(src ? 'loading' : 'error');
 	}, [src]);
 
 	const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
 		const img = e.currentTarget;
 		setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+		setLoadState('loaded');
+	}, []);
+
+	const handleImageError = useCallback(() => {
+		setLoadState('error');
 	}, []);
 
 	// Zoom centered on the cursor position, proportional to scroll delta
@@ -118,36 +127,21 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 				className="flex items-center justify-center gap-2 py-1.5 shrink-0 border-b"
 				style={{ borderColor: theme.colors.border }}
 			>
-				<button
-					onClick={zoomOut}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title="Zoom out"
-				>
+				<GhostIconButton onClick={zoomOut} title="Zoom out" color={theme.colors.textDim}>
 					<ZoomOut className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 				<span
 					className="text-xs font-mono w-12 text-center select-none"
 					style={{ color: theme.colors.textMain }}
 				>
 					{zoomPercent}%
 				</span>
-				<button
-					onClick={zoomIn}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title="Zoom in"
-				>
+				<GhostIconButton onClick={zoomIn} title="Zoom in" color={theme.colors.textDim}>
 					<ZoomIn className="w-4 h-4" />
-				</button>
-				<button
-					onClick={fitToView}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title="Fit to view"
-				>
+				</GhostIconButton>
+				<GhostIconButton onClick={fitToView} title="Fit to view" color={theme.colors.textDim}>
 					<Maximize2 className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 				{naturalSize && (
 					<span className="text-[10px] ml-2" style={{ color: theme.colors.textDim }}>
 						{naturalSize.w} × {naturalSize.h}
@@ -182,15 +176,36 @@ export const ImageViewer = memo(function ImageViewer({ src, alt, theme }: ImageV
 						willChange: 'transform',
 					}}
 				>
-					<img
-						src={src}
-						alt={alt}
-						className="max-w-full max-h-full object-contain select-none"
-						style={{ imageRendering: zoom > 2 ? 'pixelated' : 'auto' }}
-						draggable={false}
-						onLoad={handleImageLoad}
-					/>
+					{src && (
+						<img
+							src={src}
+							alt={alt}
+							className="max-w-full max-h-full object-contain select-none"
+							style={{
+								imageRendering: zoom > 2 ? 'pixelated' : 'auto',
+								visibility: loadState === 'loaded' ? 'visible' : 'hidden',
+							}}
+							draggable={false}
+							onLoad={handleImageLoad}
+							onError={handleImageError}
+						/>
+					)}
 				</div>
+
+				{loadState === 'loading' && (
+					<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+						<Spinner size={32} color={theme.colors.accent} />
+					</div>
+				)}
+
+				{loadState === 'error' && (
+					<div className="absolute inset-0 flex flex-col items-center justify-center gap-2 pointer-events-none">
+						<ImageOff className="w-10 h-10" style={{ color: theme.colors.textDim }} />
+						<span className="text-sm" style={{ color: theme.colors.textDim }}>
+							Failed to load image
+						</span>
+					</div>
+				)}
 			</div>
 		</div>
 	);

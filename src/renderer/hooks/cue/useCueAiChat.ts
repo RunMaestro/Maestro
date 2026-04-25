@@ -7,6 +7,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { buildSpawnConfigForAgent } from '../../utils/sessionHelpers';
+import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only — no markdown, no code fences, no bullet lists, no formatting.
 
@@ -27,6 +28,7 @@ settings:
   timeout_on_fail: break | continue
   max_concurrent: 1
   queue_size: 10
+  owner_agent_id: <agent id or name>  # optional — recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
 
 Multi-agent patterns: Startup (app.startup), Heartbeat (time.heartbeat), Scheduled (time.scheduled), File Enrichment (file.changed), Research Swarm (fan_out + fan-in), Sequential Chain (agent.completed chain), Debate (fan_out to opposing + fan-in to moderator), PR Review (github.pull_request), Issue Triage (github.issue), Task Queue (task.pending).
 
@@ -105,11 +107,16 @@ export function useCueAiChat({
 			: text;
 
 		try {
+			const appendSystemPrompt = await prepareMaestroSystemPrompt({
+				session,
+			});
+
 			const spawnConfig = await buildSpawnConfigForAgent({
 				sessionId: spawnSessionIdRef.current,
 				toolType: session.toolType,
 				cwd: projectRoot,
 				prompt,
+				appendSystemPrompt,
 				agentSessionId: agentSessionIdRef.current ?? undefined,
 				sessionCustomPath: session.customPath,
 				sessionCustomArgs: session.customArgs,

@@ -1400,6 +1400,55 @@ Some text with [x] in it that's not a checkbox
 				);
 			}
 		});
+
+		it('should set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 for claude-code batch spawns (#861)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('should set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 even in read-only mode', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
+			const originalValue = process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
+			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
+
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+				await new Promise((resolve) => setTimeout(resolve, 0));
+
+				const [, , options] = mockSpawn.mock.calls[0];
+				expect(options.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('0');
+
+				mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+				mockChild.emit('close', 0);
+				await resultPromise;
+			} finally {
+				if (originalValue === undefined) {
+					delete process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS;
+				} else {
+					process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = originalValue;
+				}
+			}
+		});
 	});
 
 	describe('PATH expansion (via spawnAgent)', () => {

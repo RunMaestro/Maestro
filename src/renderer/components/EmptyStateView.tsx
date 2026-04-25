@@ -12,11 +12,13 @@ import {
 	BookOpen,
 	ExternalLink,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, Shortcut } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -82,14 +84,14 @@ export function EmptyStateView({
 
 				{/* Right: Hamburger Menu */}
 				<div className="relative" ref={menuRef}>
-					<button
+					<GhostIconButton
 						onClick={() => setMenuOpen(!menuOpen)}
-						className="p-2 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
+						padding="p-2"
 						title="Menu"
+						color={theme.colors.textDim}
 					>
 						<Menu className="w-5 h-5" />
-					</button>
+					</GhostIconButton>
 
 					{/* Menu Overlay */}
 					{menuOpen && (
@@ -220,7 +222,7 @@ export function EmptyStateView({
 
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'));
+										openUrl(buildMaestroUrl('https://runmaestro.ai'));
 										setMenuOpen(false);
 									}}
 									className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
@@ -239,9 +241,7 @@ export function EmptyStateView({
 
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(
-											buildMaestroUrl('https://docs.runmaestro.ai')
-										);
+										openUrl(buildMaestroUrl('https://docs.runmaestro.ai'));
 										setMenuOpen(false);
 									}}
 									className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"

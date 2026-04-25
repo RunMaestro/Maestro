@@ -268,6 +268,30 @@ describe('TunnelManager', () => {
 			mockProcess.emit('exit', 0);
 		});
 
+		it('spawns with --protocol http2 to avoid QUIC URL output bug', async () => {
+			tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(mocks.mockSpawn).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.arrayContaining(['--protocol', 'http2'])
+			);
+
+			mockProcess.emit('exit', 0);
+		});
+
+		it('extracts URL from stdout as fallback', async () => {
+			const startPromise = tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			// Emit URL on stdout instead of stderr
+			mockProcess.stdout.emit('data', Buffer.from('https://test-fallback.trycloudflare.com'));
+			const result = await startPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.url).toBe('https://test-fallback.trycloudflare.com');
+		});
+
 		it('passes different ports correctly', async () => {
 			tunnelManager.start(9000);
 			await new Promise((resolve) => setImmediate(resolve));
@@ -327,6 +351,21 @@ describe('TunnelManager', () => {
 			expect('isRunning' in status).toBe(true);
 			expect('url' in status).toBe(true);
 			expect('error' in status).toBe(true);
+		});
+
+		it('preserves an error after unexpected exit post-connect', async () => {
+			const startPromise = tunnelManager.start(3000);
+			await new Promise((resolve) => setImmediate(resolve));
+
+			mockProcess.stderr.emit('data', Buffer.from('https://abc.trycloudflare.com'));
+			await startPromise;
+
+			mockProcess.emit('exit', 1);
+
+			const status = tunnelManager.getStatus();
+			expect(status.isRunning).toBe(false);
+			expect(status.url).toBe('https://abc.trycloudflare.com');
+			expect(status.error).toContain('cloudflared exited unexpectedly');
 		});
 	});
 });

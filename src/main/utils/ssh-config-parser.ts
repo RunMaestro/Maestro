@@ -245,23 +245,6 @@ export function parseConfigContent(content: string, homeDir: string): SshConfigH
 }
 
 /**
- * Find a host entry in the SSH config by name.
- *
- * @param hostName The Host pattern to look for
- * @param deps Optional dependencies for testing
- * @returns The matching host entry or undefined
- */
-export function findSshConfigHost(
-	hostName: string,
-	deps?: Partial<SshConfigParserDeps>
-): SshConfigHost | undefined {
-	const result = parseSshConfig(deps);
-	if (!result.success) return undefined;
-
-	return result.hosts.find((h) => h.host.toLowerCase() === hostName.toLowerCase());
-}
-
-/**
  * Get a summary of what an SSH config host provides.
  * Useful for displaying to users what will be auto-filled.
  */

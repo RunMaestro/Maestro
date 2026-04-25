@@ -20,8 +20,11 @@
  * - Select session with focus (window foregrounding)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	WebSocketMessageHandler,
 	type WebClient,
@@ -75,6 +78,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		toggleBookmark: vi.fn().mockResolvedValue(true),
 		openFileTab: vi.fn().mockResolvedValue(true),
 		refreshFileTree: vi.fn().mockResolvedValue(true),
+		openBrowserTab: vi.fn().mockResolvedValue(true),
+		openTerminalTab: vi.fn().mockResolvedValue(true),
+		newAITabWithPrompt: vi.fn().mockResolvedValue(true),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -116,6 +122,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
 		getCueActivity: vi.fn().mockResolvedValue([]),
+		triggerCueSubscription: vi.fn().mockResolvedValue(true),
 		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
@@ -212,6 +219,30 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('error');
 			expect(response.message).toContain('busy');
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+		});
+
+		it('should bypass busy guard and forward command when force=true', async () => {
+			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'concurrent write',
+				inputMode: 'ai',
+				force: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'concurrent write',
+					'ai'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
 		});
 
 		it('should reject command when session not found', () => {
@@ -661,6 +692,388 @@ describe('WebSocketMessageHandler', () => {
 		});
 	});
 
+	describe('Open Browser Tab (Web → Desktop)', () => {
+		it('should forward open browser tab with sessionId and url', async () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith('session-1', 'https://example.com/');
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+			expect(response.url).toBe('https://example.com/');
+		});
+
+		it('should reject missing sessionId or url', () => {
+			handler.handleMessage(client, { type: 'open_browser_tab', sessionId: 'session-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or url');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject invalid URL', () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'not a url',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid URL');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-http(s) protocols', () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'file:///etc/passwd',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unsupported URL protocol');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should normalize bare host:port as http://', async () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'localhost:3000',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openBrowserTab).toHaveBeenCalledWith(
+					'session-1',
+					'http://localhost:3000/'
+				);
+			});
+		});
+
+		it('should reject when session does not exist', () => {
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'ghost-session',
+				url: 'https://example.com/',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_browser_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.openBrowserTab).not.toHaveBeenCalled();
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.openBrowserTab as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'open_browser_tab',
+				sessionId: 'session-1',
+				url: 'https://example.com/',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('open_browser_tab_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Open Terminal Tab (Web → Desktop)', () => {
+		it('should forward open terminal tab with sessionId', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
+					cwd: undefined,
+					shell: undefined,
+					name: undefined,
+				});
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should forward optional shell and name', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				shell: 'bash',
+				name: 'build logs',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openTerminalTab).toHaveBeenCalledWith('session-1', {
+					cwd: undefined,
+					shell: 'bash',
+					name: 'build logs',
+				});
+			});
+		});
+
+		it('should reject cwd outside the agent working directory', async () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				cwd: '/home/user/project/../../etc',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('open_terminal_tab_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('Invalid cwd');
+			});
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		describe('symlink-safe cwd confinement', () => {
+			let sessionRoot: string;
+			let outside: string;
+			const createdPaths: string[] = [];
+
+			beforeEach(() => {
+				const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-openterm-'));
+				sessionRoot = fs.mkdtempSync(path.join(tmpBase, 'root-'));
+				outside = fs.mkdtempSync(path.join(tmpBase, 'outside-'));
+				fs.mkdirSync(path.join(sessionRoot, 'sub'));
+				fs.symlinkSync(outside, path.join(sessionRoot, 'link-to-outside'));
+				createdPaths.push(tmpBase);
+
+				(callbacks.getSessions as any).mockReturnValue([
+					{
+						id: 'session-real',
+						name: 'Real Session',
+						toolType: 'claude-code',
+						state: 'idle',
+						inputMode: 'ai',
+						cwd: sessionRoot,
+					},
+				]);
+			});
+
+			afterAll(() => {
+				for (const p of createdPaths) {
+					try {
+						fs.rmSync(p, { recursive: true, force: true });
+					} catch {
+						// best-effort cleanup
+					}
+				}
+			});
+
+			it('should allow a real subdirectory of the session root', async () => {
+				handler.handleMessage(client, {
+					type: 'open_terminal_tab',
+					sessionId: 'session-real',
+					cwd: 'sub',
+				});
+
+				await vi.waitFor(() => {
+					expect(callbacks.openTerminalTab).toHaveBeenCalledWith(
+						'session-real',
+						expect.objectContaining({
+							cwd: fs.realpathSync(path.join(sessionRoot, 'sub')),
+						})
+					);
+				});
+			});
+
+			it('should reject a symlink pointing outside the session root', async () => {
+				handler.handleMessage(client, {
+					type: 'open_terminal_tab',
+					sessionId: 'session-real',
+					cwd: 'link-to-outside',
+				});
+
+				await vi.waitFor(() => {
+					const calls = (client.socket.send as any).mock.calls;
+					const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+					expect(lastResponse.type).toBe('open_terminal_tab_result');
+					expect(lastResponse.success).toBe(false);
+					expect(lastResponse.error).toContain('outside the agent working directory');
+				});
+				expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+			});
+		});
+
+		it('should reject missing sessionId', () => {
+			handler.handleMessage(client, { type: 'open_terminal_tab' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject when session does not exist', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'ghost-session',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string cwd', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				cwd: 42 as unknown as string,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid cwd');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string shell', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				shell: true as unknown as string,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid shell');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string/non-null name', () => {
+			handler.handleMessage(client, {
+				type: 'open_terminal_tab',
+				sessionId: 'session-1',
+				name: 123 as unknown as string,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('open_terminal_tab_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Invalid name');
+			expect(callbacks.openTerminalTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('New AI Tab With Prompt (Web → Desktop)', () => {
+		it('should forward sessionId and prompt to callback', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'Summarize the repo',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'Summarize the repo'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(true);
+			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should reject missing sessionId', () => {
+			handler.handleMessage(client, { type: 'new_ai_tab_with_prompt', prompt: 'hello' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or prompt');
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('should reject missing prompt', () => {
+			handler.handleMessage(client, { type: 'new_ai_tab_with_prompt', sessionId: 'session-1' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or prompt');
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-string prompt without throwing', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 42 as unknown as string,
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or prompt');
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('should reject when session does not exist', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'ghost-session',
+				prompt: 'hello',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Session not found');
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.newAITabWithPrompt as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: 'hello',
+			});
+
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('new_ai_tab_with_prompt_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
 	describe('Refresh File Tree (Web → Desktop)', () => {
 		it('should forward refresh file tree to desktop', async () => {
 			handler.handleMessage(client, {
@@ -771,6 +1184,7 @@ describe('WebSocketMessageHandler', () => {
 					maxLoops: 3,
 					saveAsPlaybook: undefined,
 					launch: true,
+					worktree: undefined,
 				});
 			});
 
@@ -838,6 +1252,7 @@ describe('WebSocketMessageHandler', () => {
 					maxLoops: undefined,
 					saveAsPlaybook: 'My Playbook',
 					launch: undefined,
+					worktree: undefined,
 				});
 			});
 
@@ -864,6 +1279,72 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.type).toBe('error');
 				expect(lastResponse.message).toContain('Auto-run configuration failed');
 			});
+		});
+
+		it('should forward configure auto run with worktree config', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				worktree: {
+					enabled: true,
+					path: '/tmp/worktree',
+					branchName: 'feature/auto-run',
+					createPROnCompletion: true,
+					prTargetBranch: 'main',
+				},
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith('session-1', {
+					documents: [{ filename: 'doc1.md' }],
+					prompt: undefined,
+					loopEnabled: undefined,
+					maxLoops: undefined,
+					saveAsPlaybook: undefined,
+					launch: true,
+					worktree: {
+						enabled: true,
+						path: '/tmp/worktree',
+						branchName: 'feature/auto-run',
+						createPROnCompletion: true,
+						prTargetBranch: 'main',
+					},
+				});
+			});
+		});
+
+		it('should reject worktree missing required fields', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				worktree: { enabled: true, path: '/tmp/wt', branchName: '' },
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('worktree.branchName');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject non-object worktree', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				worktree: 'not-an-object',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('worktree must be an object');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
 		});
 
 		it('should handle missing configureAutoRun callback', () => {
@@ -1111,6 +1592,84 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('terminal_resize_result');
 			expect(response.success).toBe(true);
+		});
+	});
+
+	describe('Trigger Cue Subscription (sourceAgentId)', () => {
+		it('should pass sourceAgentId through to triggerCueSubscription callback', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz-123',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					undefined,
+					'agent-xyz-123'
+				);
+			});
+		});
+
+		it('should pass prompt and sourceAgentId together', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				prompt: 'custom prompt',
+				sourceAgentId: 'agent-abc',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					'custom prompt',
+					'agent-abc'
+				);
+			});
+		});
+
+		it('should pass undefined sourceAgentId when not provided', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.triggerCueSubscription).toHaveBeenCalledWith(
+					'my-sub',
+					undefined,
+					undefined
+				);
+			});
+		});
+
+		it('should return trigger_cue_subscription_result on success', async () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz',
+			});
+
+			await vi.waitFor(() => {
+				expect(client.socket.send).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('trigger_cue_subscription_result');
+			expect(response.success).toBe(true);
+			expect(response.subscriptionName).toBe('my-sub');
+		});
+
+		it('should reject missing subscriptionName', () => {
+			handler.handleMessage(client, {
+				type: 'trigger_cue_subscription',
+				sourceAgentId: 'agent-xyz',
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(callbacks.triggerCueSubscription).not.toHaveBeenCalled();
 		});
 	});
 });

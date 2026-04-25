@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { subscribeToActivity } from '../../utils/activityBus';
+import { useEventListener } from '../utils/useEventListener';
 
 const ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes of inactivity = idle
 const TICK_INTERVAL_MS = 1000; // Update every second
@@ -121,20 +122,12 @@ export function useHandsOnTimeTracker(addTotalActiveTimeMs: (delta: number) => v
 	}, [stopInterval, persistAccumulatedTime]);
 
 	// Persist on beforeunload (app closing)
-	useEffect(() => {
-		const handleBeforeUnload = () => {
-			// Synchronous - can't use async here
-			if (accumulatedTimeRef.current > 0) {
-				const timeToAdd = accumulatedTimeRef.current;
-				accumulatedTimeRef.current = 0;
-				addTotalActiveTimeMsRef.current(timeToAdd);
-			}
-		};
-
-		window.addEventListener('beforeunload', handleBeforeUnload);
-
-		return () => {
-			window.removeEventListener('beforeunload', handleBeforeUnload);
-		};
-	}, []);
+	useEventListener('beforeunload', () => {
+		// Synchronous - can't use async here
+		if (accumulatedTimeRef.current > 0) {
+			const timeToAdd = accumulatedTimeRef.current;
+			accumulatedTimeRef.current = 0;
+			addTotalActiveTimeMsRef.current(timeToAdd);
+		}
+	});
 }

@@ -334,6 +334,26 @@ describe('ssh-command-builder', () => {
 			expect(lastArg).not.toContain('&& cd'); // cd comes after PATH setup if present
 		});
 
+		it('includes common agent install locations in PATH wrapper (issue #878)', async () => {
+			const result = await buildSshCommand(baseConfig, {
+				command: 'command',
+				args: ['-v', 'claude'],
+			});
+
+			const lastArg = result.args[result.args.length - 1];
+			expect(lastArg).toContain('export PATH=');
+			expect(lastArg).toContain('$HOME/.local/bin');
+			expect(lastArg).toContain('$HOME/.opencode/bin');
+			expect(lastArg).toContain('$HOME/.claude/local');
+			expect(lastArg).toContain('$HOME/go/bin');
+			expect(lastArg).toContain('$HOME/.bun/bin');
+			expect(lastArg).toContain('$HOME/.deno/bin');
+			expect(lastArg).toContain('$HOME/.nix-profile/bin');
+			expect(lastArg).toContain('/usr/local/bin');
+			expect(lastArg).toContain('/opt/homebrew/bin');
+			expect(lastArg).toContain('/snap/bin');
+		});
+
 		it('includes the remote command as the last argument', async () => {
 			const result = await buildSshCommand(baseConfig, {
 				command: 'claude',
@@ -702,8 +722,17 @@ describe('ssh-command-builder', () => {
 
 			expect(result.stdinScript).toBeDefined();
 			expect(result.stdinScript).toContain('export PATH=');
-			expect(result.stdinScript).toContain('.local/bin');
+			// Common install locations (regression coverage for issue #878)
+			expect(result.stdinScript).toContain('$HOME/.local/bin');
+			expect(result.stdinScript).toContain('$HOME/.opencode/bin');
+			expect(result.stdinScript).toContain('$HOME/.claude/local');
+			expect(result.stdinScript).toContain('$HOME/go/bin');
+			expect(result.stdinScript).toContain('$HOME/.bun/bin');
+			expect(result.stdinScript).toContain('$HOME/.deno/bin');
+			expect(result.stdinScript).toContain('$HOME/.nix-profile/bin');
+			expect(result.stdinScript).toContain('/usr/local/bin');
 			expect(result.stdinScript).toContain('/opt/homebrew/bin');
+			expect(result.stdinScript).toContain('/snap/bin');
 		});
 
 		it('includes cd command in stdin script when cwd provided', async () => {
@@ -1034,6 +1063,28 @@ describe('ssh-command-builder', () => {
 			expect(cmdPortion).not.toContain("'-i'");
 			// Should have cleanup rm -f
 			expect(result.stdinScript).toContain('; rm -f');
+		});
+
+		it('embeds Copilot image @mentions when imagePromptBuilder is provided', async () => {
+			const testImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'copilot',
+				args: ['--output-format', 'json'],
+				stdinInput: 'describe this image',
+				images: [testImage],
+				imagePromptBuilder: (paths: string[]) =>
+					`Use these attached images as context:\n${paths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`,
+			});
+
+			expect(result.stdinScript).toContain('base64 -d >');
+			const cmdLine = result.stdinScript?.split('\n').find((line) => line.startsWith('copilot '));
+			expect(cmdLine).toBeDefined();
+			expect(cmdLine).not.toContain("'-i'");
+			expect(cmdLine).toContain('; rm -f');
+
+			const afterCmd = result.stdinScript?.split(cmdLine + '\n')[1];
+			expect(afterCmd).toContain('@/tmp/maestro-image-');
+			expect(afterCmd).toContain('describe this image');
 		});
 
 		it('does not embed image paths when imageResumeMode is not set (default behavior)', async () => {

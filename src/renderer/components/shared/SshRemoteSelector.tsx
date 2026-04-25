@@ -194,6 +194,43 @@ function SshRemoteDropdown({
 				</label>
 			)}
 
+			{/* Share-to-project-dir toggle - visible regardless of SSH selection.
+			    Enables mirroring this agent's entries to the local project's
+			    .maestro/history/ dir so another Maestro instance (typically one
+			    SSH'd into this machine) can see them. */}
+			<label
+				className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors hover:bg-white/5"
+				style={{ backgroundColor: theme.colors.bgActivity }}
+			>
+				<input
+					type="checkbox"
+					checked={sshRemoteConfig?.shareHistoryToProjectDir === true}
+					onChange={(e) => {
+						onSshRemoteConfigChange({
+							// Preserve whatever SSH enablement/remoteId already exist
+							enabled: sshRemoteConfig?.enabled ?? false,
+							remoteId: sshRemoteConfig?.remoteId ?? null,
+							workingDirOverride: sshRemoteConfig?.workingDirOverride,
+							syncHistory: sshRemoteConfig?.syncHistory,
+							shareHistoryToProjectDir: e.target.checked,
+						});
+					}}
+					onClick={(e) => e.stopPropagation()}
+					className="accent-current"
+					style={{ accentColor: theme.colors.accent }}
+				/>
+				<History className="w-3 h-3 flex-shrink-0" style={{ color: theme.colors.textDim }} />
+				<div className="flex flex-col">
+					<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+						This agent is remote-controlled
+					</span>
+					<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						Mirror history entries to this project's local .maestro/history/ so another Maestro
+						(SSH'd into this machine) can see what was done here.
+					</span>
+				</div>
+			</label>
+
 			{/* No remotes configured hint */}
 			{sshRemotes.filter((r) => r.enabled).length === 0 && (
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>

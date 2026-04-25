@@ -7,120 +7,17 @@
  * - Handle agent differences in a consistent way
  *
  * When adding a new agent, define its capabilities here.
+ *
+ * The AgentCapabilities interface and DEFAULT_CAPABILITIES constant are
+ * defined canonically in src/shared/types.ts and re-exported here so that
+ * existing `from './capabilities'` imports keep working.
  */
 
-/**
- * Capability flags that determine what features are available for each agent.
- */
-export interface AgentCapabilities {
-	/** Agent supports resuming existing sessions (e.g., --resume flag) */
-	supportsResume: boolean;
+import type { AgentCapabilities } from '../../shared/types';
+import { DEFAULT_CAPABILITIES } from '../../shared/types';
 
-	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
-	supportsReadOnlyMode: boolean;
-
-	/** Agent outputs JSON-formatted responses (for parsing) */
-	supportsJsonOutput: boolean;
-
-	/** Agent provides a session ID for conversation continuity */
-	supportsSessionId: boolean;
-
-	/** Agent can accept image inputs (screenshots, diagrams, etc.) */
-	supportsImageInput: boolean;
-
-	/** Agent can accept image inputs when resuming an existing session */
-	supportsImageInputOnResume: boolean;
-
-	/** Agent supports slash commands (e.g., /help, /compact) */
-	supportsSlashCommands: boolean;
-
-	/** Agent stores session history in a discoverable location */
-	supportsSessionStorage: boolean;
-
-	/** Agent provides cost/pricing information */
-	supportsCostTracking: boolean;
-
-	/** Agent provides token usage statistics */
-	supportsUsageStats: boolean;
-
-	/** Agent supports batch/headless mode (non-interactive) */
-	supportsBatchMode: boolean;
-
-	/** Agent requires a prompt to start (no eager spawn on session creation) */
-	requiresPromptToStart: boolean;
-
-	/** Agent streams responses in real-time */
-	supportsStreaming: boolean;
-
-	/** Agent provides distinct "result" messages when done */
-	supportsResultMessages: boolean;
-
-	/** Agent supports selecting different models (e.g., --model flag) */
-	supportsModelSelection: boolean;
-
-	/** Agent supports --input-format stream-json for image input via stdin */
-	supportsStreamJsonInput: boolean;
-
-	/** Agent emits streaming thinking/reasoning content that can be displayed */
-	supportsThinkingDisplay: boolean;
-
-	/** Agent can receive merged context from other sessions/tabs */
-	supportsContextMerge: boolean;
-
-	/** Agent can export its context for transfer to other sessions/agents */
-	supportsContextExport: boolean;
-
-	/** Agent supports inline wizard structured output conversations */
-	supportsWizard: boolean;
-
-	/** Agent can serve as a group chat moderator */
-	supportsGroupChatModeration: boolean;
-
-	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
-	usesJsonLineOutput: boolean;
-
-	/** Agent uses a combined input+output context window (vs separate limits) */
-	usesCombinedContextWindow: boolean;
-
-	/** Agent supports --append-system-prompt for separate system prompt delivery */
-	supportsAppendSystemPrompt: boolean;
-
-	/** How images should be handled on resume when -i flag is not available.
-	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
-	 * undefined: Use default image handling (or no special resume handling needed). */
-	imageResumeMode?: 'prompt-embed';
-}
-
-/**
- * Default capabilities - safe defaults for unknown agents.
- * All capabilities disabled by default (conservative approach).
- */
-export const DEFAULT_CAPABILITIES: AgentCapabilities = {
-	supportsResume: false,
-	supportsReadOnlyMode: false,
-	supportsJsonOutput: false,
-	supportsSessionId: false,
-	supportsImageInput: false,
-	supportsImageInputOnResume: false,
-	supportsSlashCommands: false,
-	supportsSessionStorage: false,
-	supportsCostTracking: false,
-	supportsUsageStats: false,
-	supportsBatchMode: false,
-	requiresPromptToStart: false,
-	supportsStreaming: false,
-	supportsResultMessages: false,
-	supportsModelSelection: false,
-	supportsStreamJsonInput: false,
-	supportsThinkingDisplay: false,
-	supportsContextMerge: false,
-	supportsContextExport: false,
-	supportsWizard: false,
-	supportsGroupChatModeration: false,
-	usesJsonLineOutput: false,
-	usesCombinedContextWindow: false,
-	supportsAppendSystemPrompt: false,
-};
+export type { AgentCapabilities };
+export { DEFAULT_CAPABILITIES };
 
 /**
  * Capability definitions for each supported agent.
@@ -163,6 +60,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // Uses stream-json, not JSONL
 		usesCombinedContextWindow: false, // Claude has separate input/output limits
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
+		supportsProjectMemory: true, // ~/.claude/projects/<path>/memory/
 	},
 
 	/**
@@ -194,6 +92,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false,
 		usesCombinedContextWindow: false,
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -228,6 +127,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: true, // OpenAI models use combined context window
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -262,6 +162,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -295,6 +196,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // PLACEHOLDER
 		usesCombinedContextWindow: false, // PLACEHOLDER
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -329,6 +231,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
@@ -357,45 +260,47 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits thinking content in messages - Verified
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
-		supportsWizard: false, // Not yet integrated with wizard
+		supportsWizard: true, // Supports wizard structured output flow
 		supportsGroupChatModeration: true, // Can serve as group chat moderator
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: false, // Depends on model provider
 		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
 	},
 
 	/**
-	 * Aider - Open source AI pair programming tool
-	 * https://github.com/paul-gauthier/aider
+	 * GitHub Copilot CLI - AI coding assistant from GitHub
+	 * https://github.com/github/copilot-cli
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Aider integration is
-	 * implemented and tested. Update this configuration when integrating.
+	 * Capabilities based on verified CLI help output (copilot --help).
+	 * Conservative approach: only mark capabilities as true if explicitly verified.
 	 */
-	aider: {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
-		supportsImageInputOnResume: false,
-		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false,
-		supportsStreaming: true, // Likely streams
-		supportsResultMessages: false,
-		supportsModelSelection: false,
-		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false,
-		supportsContextMerge: false,
-		supportsContextExport: false,
-		supportsWizard: false, // PLACEHOLDER
-		supportsGroupChatModeration: false, // PLACEHOLDER
-		usesJsonLineOutput: false, // PLACEHOLDER
-		usesCombinedContextWindow: false, // PLACEHOLDER
-		supportsAppendSystemPrompt: false,
+	'copilot-cli': {
+		supportsResume: true, // --continue, --resume[=sessionId]
+		supportsReadOnlyMode: true, // Maestro enforces read-only via Copilot's CLI tool permission rules
+		supportsJsonOutput: true, // --output-format json (JSONL)
+		supportsSessionId: true, // result event includes sessionId
+		supportsImageInput: true, // Copilot supports @file/@image mentions; Maestro maps uploads to temp-file mentions
+		supportsImageInputOnResume: true, // Prompt-based @image mentions work for resumed sessions as well
+		supportsSlashCommands: true, // Interactive mode supports slash commands
+		supportsSessionStorage: true, // ~/.copilot/session-state/<session-id>/
+		supportsCostTracking: false, // Not verified
+		supportsUsageStats: true, // session.shutdown event includes modelMetrics with per-model token counts
+		supportsBatchMode: true, // -p, --prompt <text> for batch mode
+		requiresPromptToStart: false, // Default interactive mode works without prompt, -i flag allows initial prompt
+		supportsStreaming: true, // Streams assistant/tool execution events as JSONL
+		supportsResultMessages: true, // assistant.message with phase=final_answer
+		supportsModelSelection: true, // --model <model>
+		supportsStreamJsonInput: false, // Not verified
+		supportsThinkingDisplay: true, // assistant.reasoning events are rendered through Maestro's thinking-chunk pipeline
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Wizard structured output works with Copilot JSON final_answer events
+		supportsGroupChatModeration: true, // Group chat moderation uses the standard batch-mode orchestration path
+		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
+		supportsProjectMemory: false, // No project memory mechanism
+		usesJsonLineOutput: true, // --output-format json produces JSONL
+		usesCombinedContextWindow: false, // Default Copilot model is Claude Sonnet; model-specific behavior varies
 	},
 };
 

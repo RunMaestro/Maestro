@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AboutModal } from '../../../renderer/components/AboutModal';
 import type { Theme, AutoRunStats } from '../../../renderer/types';
@@ -73,11 +74,6 @@ vi.mock('lucide-react', () => ({
 			📖
 		</span>
 	),
-}));
-
-// Mock the avatar import
-vi.mock('../../../renderer/assets/pedram-avatar.png', () => ({
-	default: 'mock-avatar-url.png',
 }));
 
 // Mock layer stack context
@@ -287,8 +283,8 @@ describe('AboutModal', () => {
 		});
 	});
 
-	describe('Author section', () => {
-		it('should render author name', () => {
+	describe('Origin section', () => {
+		it('should render Born in Austin text', () => {
 			render(
 				<AboutModal
 					theme={theme}
@@ -298,64 +294,7 @@ describe('AboutModal', () => {
 				/>
 			);
 
-			expect(screen.getByText('Pedram Amini')).toBeInTheDocument();
-		});
-
-		it('should render author title', () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			expect(screen.getByText('Founder, Hacker, Investor, Advisor')).toBeInTheDocument();
-		});
-
-		it('should render author avatar with correct alt text', () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			const avatar = screen.getByAltText('Pedram Amini');
-			expect(avatar).toBeInTheDocument();
-		});
-
-		it('should have GitHub profile link', () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			// The component renders "GitHub" twice - author section and project link
-			// Use getAllByText since there are multiple GitHub buttons
-			const githubLinks = screen.getAllByText('GitHub');
-			expect(githubLinks.length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('should have LinkedIn profile link', () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			// The component renders "LinkedIn" as the button text
-			expect(screen.getByText('LinkedIn')).toBeInTheDocument();
+			expect(screen.getByText('Born in Austin, TX')).toBeInTheDocument();
 		});
 	});
 
@@ -370,50 +309,11 @@ describe('AboutModal', () => {
 				/>
 			);
 
-			// The component renders "GitHub" twice - first one is the project repo link (in Action Links section)
-			const githubLinks = screen.getAllByText('GitHub');
-			fireEvent.click(githubLinks[0]);
+			const githubLink = screen.getByText('GitHub');
+			fireEvent.click(githubLink);
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
 				'https://github.com/RunMaestro/Maestro'
-			);
-		});
-
-		it('should open LinkedIn profile on click', async () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			// The component renders "LinkedIn" as the button text
-			const linkedinLink = screen.getByText('LinkedIn');
-			fireEvent.click(linkedinLink);
-
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://www.linkedin.com/in/pedramamini/'
-			);
-		});
-
-		it('should open GitHub profile on click', async () => {
-			render(
-				<AboutModal
-					theme={theme}
-					handsOnTimeMs={0}
-					autoRunStats={createAutoRunStats()}
-					onClose={onClose}
-				/>
-			);
-
-			// The component renders "GitHub" twice - second one is the author profile link (in Creator Section)
-			const githubLinks = screen.getAllByText('GitHub');
-			fireEvent.click(githubLinks[1]);
-
-			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini'
 			);
 		});
 
@@ -427,9 +327,8 @@ describe('AboutModal', () => {
 				/>
 			);
 
-			// Find the Texas flag button (it's near "Made in Austin, TX")
-			const austinText = screen.getByText('Made in Austin, TX');
-			// The Texas flag SVG button is a sibling
+			// Find the Texas flag button (it's near "Born in Austin, TX")
+			const austinText = screen.getByText('Born in Austin, TX');
 			const texasButton = austinText.parentElement?.querySelector('button');
 			expect(texasButton).toBeInTheDocument();
 			fireEvent.click(texasButton!);
@@ -646,7 +545,7 @@ describe('AboutModal', () => {
 		});
 
 		it('should handle stats loading error gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockRejectedValue(new Error('Failed'));
 
 			render(
@@ -664,13 +563,14 @@ describe('AboutModal', () => {
 
 			expect(consoleErrorSpy).toHaveBeenCalledWith(
 				'Failed to load global agent stats:',
+				undefined,
 				expect.any(Error)
 			);
 			consoleErrorSpy.mockRestore();
 		});
 
 		it('should display "No sessions found" when no stats', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			// Setup the mock to reject BEFORE rendering
 			vi.mocked(window.maestro.agentSessions.getGlobalStats).mockRejectedValue(new Error('Failed'));
 
@@ -1039,8 +939,8 @@ describe('AboutModal', () => {
 		});
 	});
 
-	describe('Made in Austin section', () => {
-		it('should render Made in Austin text', () => {
+	describe('Born in Austin section', () => {
+		it('should render Born in Austin text', () => {
 			render(
 				<AboutModal
 					theme={theme}
@@ -1050,7 +950,7 @@ describe('AboutModal', () => {
 				/>
 			);
 
-			expect(screen.getByText('Made in Austin, TX')).toBeInTheDocument();
+			expect(screen.getByText('Born in Austin, TX')).toBeInTheDocument();
 		});
 	});
 

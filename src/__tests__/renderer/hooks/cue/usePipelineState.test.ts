@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useCueDirtyStore } from '../../../../renderer/stores/cueDirtyStore';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import {
 	usePipelineState,
 	validatePipelines,
@@ -19,8 +20,14 @@ vi.mock('../../../../renderer/utils/sentry', () => ({
 }));
 
 const mockPersistLayout = vi.fn();
+const mockPendingSavedViewportRef = {
+	current: null as null | { x: number; y: number; zoom: number },
+};
 vi.mock('../../../../renderer/hooks/cue/usePipelineLayout', () => ({
-	usePipelineLayout: vi.fn(() => ({ persistLayout: mockPersistLayout })),
+	usePipelineLayout: vi.fn(() => ({
+		persistLayout: mockPersistLayout,
+		pendingSavedViewportRef: mockPendingSavedViewportRef,
+	})),
 }));
 
 vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml', () => ({
@@ -54,6 +61,13 @@ const mockGetSettings = vi.fn().mockResolvedValue({
 const mockWriteYaml = vi.fn().mockResolvedValue(undefined);
 const mockRefreshSession = vi.fn().mockResolvedValue(undefined);
 const mockGetGraphData = vi.fn().mockResolvedValue([]);
+// readYaml returns the same content pipelinesToYaml is mocked to produce, so
+// handleSave's write-back verification passes.
+const mockReadYaml = vi.fn().mockResolvedValue('test');
+
+afterEach(() => {
+	useCueDirtyStore.setState({ pipelineDirty: false, yamlDirty: false });
+});
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -61,6 +75,7 @@ beforeEach(() => {
 		cue: {
 			getSettings: mockGetSettings,
 			writeYaml: mockWriteYaml,
+			readYaml: mockReadYaml,
 			refreshSession: mockRefreshSession,
 			getGraphData: mockGetGraphData,
 		},
@@ -75,7 +90,6 @@ function createDefaultParams(overrides?: Partial<UsePipelineStateParams>): UsePi
 		sessions: [],
 		graphSessions: [],
 		activeRuns: [],
-		onDirtyChange: vi.fn(),
 		reactFlowInstance: { getViewport: vi.fn(() => ({ x: 0, y: 0, zoom: 1 })) } as any,
 		selectedNodePipelineId: null,
 		selectedEdgePipelineId: null,
@@ -88,14 +102,23 @@ function createDefaultParams(overrides?: Partial<UsePipelineStateParams>): UsePi
 }
 
 function makeTriggerNode(id: string, eventType = 'file.changed' as const): PipelineNode {
+	// Provide event-appropriate defaults so the per-event trigger config
+	// validation (introduced to prevent broken YAML being saved) doesn't
+	// fail tests that aren't asserting on trigger config specifics.
+	const defaults: Record<string, Record<string, unknown>> = {
+		'file.changed': { watch: '**/*' },
+		'task.pending': { watch: '**/*.md' },
+		'time.heartbeat': { interval_minutes: 5 },
+		'time.scheduled': { schedule_times: ['09:00'] },
+	};
 	return {
 		id,
 		type: 'trigger',
 		position: { x: 0, y: 0 },
 		data: {
 			eventType,
-			label: 'File Change',
-			config: {},
+			label: eventType,
+			config: defaults[eventType] ?? {},
 		},
 	};
 }
@@ -144,9 +167,9 @@ function makePipeline(overrides?: Partial<CuePipeline>): CuePipeline {
 // ─── DEFAULT_TRIGGER_LABELS ──────────────────────────────────────────────────
 
 describe('DEFAULT_TRIGGER_LABELS', () => {
-	it('has entries for all eight event types', () => {
+	it('has entries for all nine event types', () => {
 		const keys = Object.keys(DEFAULT_TRIGGER_LABELS);
-		expect(keys).toHaveLength(8);
+		expect(keys).toHaveLength(9);
 		expect(keys).toContain('app.startup');
 		expect(keys).toContain('time.heartbeat');
 		expect(keys).toContain('time.scheduled');
@@ -155,15 +178,19 @@ describe('DEFAULT_TRIGGER_LABELS', () => {
 		expect(keys).toContain('github.pull_request');
 		expect(keys).toContain('github.issue');
 		expect(keys).toContain('task.pending');
+		expect(keys).toContain('cli.trigger');
 	});
 });
 
 // ─── validatePipelines (pure function) ───────────────────────────────────────
 
 describe('validatePipelines', () => {
-	it('returns empty array for empty pipeline (no nodes)', () => {
-		const errors = validatePipelines([makePipeline()]);
-		expect(errors).toEqual([]);
+	it('flags an empty pipeline (no nodes) so the save surfaces feedback', () => {
+		// Previously this returned [] and save silently succeeded without
+		// persisting anything — the "didn't save" class of user-reported bugs.
+		const errors = validatePipelines([makePipeline({ name: 'Empty' })]);
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toMatch(/Empty.*add a trigger and an agent/);
 	});
 
 	it('returns empty array for empty pipelines array', () => {
@@ -823,8 +850,149 @@ describe('usePipelineState', () => {
 		expect(result.current.runningPipelineIds.size).toBe(0);
 	});
 
+	it('runningAgentsByPipeline groups running session names under the owning pipeline id', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'My Pipeline', sessionName: 'Alice' },
+						{ subscriptionName: 'My Pipeline-chain-1', sessionName: 'Bob' },
+						{ subscriptionName: 'Other Pipeline', sessionName: 'Carol' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'p1', name: 'My Pipeline' }),
+					makePipeline({ id: 'p2', name: 'Other Pipeline' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+
+		const p1Agents = result.current.runningAgentsByPipeline.get('p1');
+		const p2Agents = result.current.runningAgentsByPipeline.get('p2');
+		expect(p1Agents).toBeDefined();
+		expect([...p1Agents!].sort()).toEqual(['Alice', 'Bob']);
+		expect(p2Agents).toBeDefined();
+		expect([...p2Agents!]).toEqual(['Carol']);
+	});
+
+	it('runningAgentsByPipeline strips -chain-N and -fanin suffixes when matching to pipelines', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'Pipeline-chain-3', sessionName: 'DeepAgent' },
+						{ subscriptionName: 'Pipeline-fanin', sessionName: 'Aggregator' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [makePipeline({ id: 'p1', name: 'Pipeline' })],
+				selectedPipelineId: null,
+			});
+		});
+
+		const agents = result.current.runningAgentsByPipeline.get('p1');
+		expect(agents).toBeDefined();
+		expect([...agents!].sort()).toEqual(['Aggregator', 'DeepAgent']);
+	});
+
+	it('runningAgentsByPipeline is an empty map when no activeRuns', () => {
+		const { result } = renderHook(() => usePipelineState(createDefaultParams({ activeRuns: [] })));
+		expect(result.current.runningAgentsByPipeline.size).toBe(0);
+	});
+
+	it('runningSubscriptionsByPipeline carries exact subscription names (no suffix stripping)', () => {
+		// Used by trigger-node animation: each trigger node knows its exact
+		// subscription name (e.g. "Pipeline 1-chain-2") and compares against
+		// the pipeline's running-subs set. Stripping the suffix would collapse
+		// chain triggers with the initial trigger — making every trigger icon
+		// spin when any sub in the pipeline runs (the pre-fix bug).
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [
+						{ subscriptionName: 'Pipeline 1', sessionName: 'Alice' },
+						{ subscriptionName: 'Pipeline 1-chain-2', sessionName: 'Bob' },
+					],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [makePipeline({ id: 'p1', name: 'Pipeline 1' })],
+				selectedPipelineId: null,
+			});
+		});
+
+		const subs = result.current.runningSubscriptionsByPipeline.get('p1');
+		expect(subs).toBeDefined();
+		expect([...subs!].sort()).toEqual(['Pipeline 1', 'Pipeline 1-chain-2']);
+	});
+
+	it('runningSubscriptionsByPipeline is empty when no activeRuns', () => {
+		const { result } = renderHook(() => usePipelineState(createDefaultParams({ activeRuns: [] })));
+		expect(result.current.runningSubscriptionsByPipeline.size).toBe(0);
+	});
+
+	it('runningSubscriptionsByPipeline does not include pipelines with no matching runs', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [{ subscriptionName: 'Alpha', sessionName: 'A' }],
+				})
+			)
+		);
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'pAlpha', name: 'Alpha' }),
+					makePipeline({ id: 'pBravo', name: 'Bravo' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+		expect(result.current.runningSubscriptionsByPipeline.has('pAlpha')).toBe(true);
+		expect(result.current.runningSubscriptionsByPipeline.has('pBravo')).toBe(false);
+	});
+
+	it('runningAgentsByPipeline does not include pipelines with no matching active runs', () => {
+		const { result } = renderHook(() =>
+			usePipelineState(
+				createDefaultParams({
+					activeRuns: [{ subscriptionName: 'Alpha', sessionName: 'A1' }],
+				})
+			)
+		);
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({ id: 'pAlpha', name: 'Alpha' }),
+					makePipeline({ id: 'pBravo', name: 'Bravo' }),
+				],
+				selectedPipelineId: null,
+			});
+		});
+
+		expect(result.current.runningAgentsByPipeline.has('pAlpha')).toBe(true);
+		expect(result.current.runningAgentsByPipeline.has('pBravo')).toBe(false);
+	});
+
 	it('handleSave with no project root adds validation error', async () => {
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions: [] })));
+
+		// Wait for settingsLoaded flip (Fix #1 gate) before calling handleSave
+		await waitFor(() => expect(mockGetSettings).toHaveBeenCalled());
 
 		// Create a valid pipeline so it doesn't fail on other validations
 		act(() => {
@@ -852,11 +1020,56 @@ describe('usePipelineState', () => {
 		expect(mockWriteYaml).not.toHaveBeenCalled();
 	});
 
+	it('validation errors persist across subsequent re-renders (regression: dirty-tracking wipe)', async () => {
+		// Previously the dirty-tracking effect depended on the `persistence` object
+		// identity, which changes every render. When handleSave set validationErrors
+		// and React re-rendered, the effect fired and immediately cleared them —
+		// the banner flashed for one frame. Guard: errors survive a post-save
+		// re-render so the user can actually read them.
+		const { result, rerender } = renderHook(() =>
+			usePipelineState(createDefaultParams({ sessions: [] }))
+		);
+
+		await waitFor(() => expect(mockGetSettings).toHaveBeenCalled());
+
+		act(() => {
+			result.current.setPipelineState({
+				pipelines: [
+					makePipeline({
+						nodes: [
+							makeTriggerNode('t1'),
+							makeAgentNode('a1', 'Agent 1', { inputPrompt: 'do stuff' }),
+						],
+						edges: [makeEdge('e1', 't1', 'a1')],
+					}),
+				],
+				selectedPipelineId: 'p1',
+			});
+		});
+
+		await act(async () => {
+			await result.current.handleSave();
+		});
+
+		expect(result.current.validationErrors.length).toBeGreaterThan(0);
+
+		// Force extra renders the way a parent re-render would. Without the fix
+		// the dirty-tracking effect would fire and wipe validationErrors.
+		rerender();
+		rerender();
+		rerender();
+
+		expect(result.current.validationErrors.length).toBeGreaterThan(0);
+	});
+
 	it('handleSave succeeds with valid pipeline and project root', async () => {
 		const sessions = [
 			{ id: 's1', name: 'Agent 1', toolType: 'claude-code', projectRoot: '/test/project' },
 		];
 		const { result } = renderHook(() => usePipelineState(createDefaultParams({ sessions })));
+
+		// Wait for settingsLoaded flip (Fix #1 gate) before calling handleSave
+		await waitFor(() => expect(mockGetSettings).toHaveBeenCalled());
 
 		act(() => {
 			result.current.setPipelineState({
@@ -929,17 +1142,22 @@ describe('usePipelineState', () => {
 		expect(result.current.showSettings).toBe(true);
 	});
 
-	it('notifies onDirtyChange when isDirty changes', () => {
-		const onDirtyChange = vi.fn();
-		const { result } = renderHook(() => usePipelineState(createDefaultParams({ onDirtyChange })));
+	it('pushes isDirty into cueDirtyStore.pipelineDirty when isDirty changes', () => {
+		const { result } = renderHook(() => usePipelineState(createDefaultParams()));
 
-		// Initial call with false
-		expect(onDirtyChange).toHaveBeenCalledWith(false);
+		// Initially not dirty
+		expect(useCueDirtyStore.getState().pipelineDirty).toBe(false);
 
 		act(() => {
 			result.current.setIsDirty(true);
 		});
 
-		expect(onDirtyChange).toHaveBeenCalledWith(true);
+		expect(useCueDirtyStore.getState().pipelineDirty).toBe(true);
+
+		act(() => {
+			result.current.setIsDirty(false);
+		});
+
+		expect(useCueDirtyStore.getState().pipelineDirty).toBe(false);
 	});
 });

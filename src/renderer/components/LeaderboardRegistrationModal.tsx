@@ -12,7 +12,6 @@ import {
 	Trophy,
 	Mail,
 	User,
-	Loader2,
 	Check,
 	AlertCircle,
 	ExternalLink,
@@ -22,14 +21,18 @@ import {
 	Send,
 	DownloadCloud,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, AutoRunStats, LeaderboardRegistration, KeyboardMasteryStats } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
@@ -131,8 +134,9 @@ export function LeaderboardRegistrationModal({
 	onOptOut,
 	onSyncStats,
 }: LeaderboardRegistrationModalProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	useModalLayer(MODAL_PRIORITIES.LEADERBOARD_REGISTRATION, 'Register for Leaderboard', () =>
+		onCloseRef.current()
+	);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -246,11 +250,11 @@ export function LeaderboardRegistrationModal({
 					);
 				} else if (result.status === 'error') {
 					// Don't stop polling on transient errors, just log
-					console.warn('Polling error:', result.error);
+					logger.warn('Polling error:', undefined, result.error);
 				}
 				// 'pending' status - continue polling
 			} catch (error) {
-				console.warn('Poll request failed:', error);
+				logger.warn('Poll request failed:', undefined, error);
 				// Continue polling on network errors
 			}
 		},
@@ -736,27 +740,10 @@ export function LeaderboardRegistrationModal({
 		setSuccessMessage('You have opted out of the leaderboard. Your local stats are preserved.');
 	}, [onOptOut]);
 
-	// Register layer on mount
+	// Focus container on mount
 	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.LEADERBOARD_REGISTRATION,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Register for Leaderboard',
-			onEscape: () => onCloseRef.current(),
-		});
-		layerIdRef.current = id;
-
 		containerRef.current?.focus();
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
+	}, []);
 
 	// Handle Enter key for form submission
 	const handleKeyDown = useCallback(
@@ -796,13 +783,9 @@ export function LeaderboardRegistrationModal({
 								: 'Register for Leaderboard'}
 						</h2>
 					</div>
-					<button
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
+					<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 						<X className="w-4 h-4" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content */}
@@ -811,9 +794,7 @@ export function LeaderboardRegistrationModal({
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						Join the global Maestro leaderboard at{' '}
 						<button
-							onClick={() =>
-								window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'))
-							}
+							onClick={() => openUrl(buildMaestroUrl('https://runmaestro.ai'))}
 							className="inline-flex items-center gap-1 hover:underline"
 							style={{ color: theme.colors.accent }}
 						>
@@ -1149,7 +1130,7 @@ export function LeaderboardRegistrationModal({
 								>
 									{isResending ? (
 										<>
-											<Loader2 className="w-3.5 h-3.5 animate-spin" />
+											<Spinner size={14} />
 											Sending...
 										</>
 									) : (
@@ -1308,7 +1289,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{submitState === 'submitting' ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Pushing...
 									</>
 								) : (
@@ -1337,7 +1318,7 @@ export function LeaderboardRegistrationModal({
 							>
 								{isSyncing ? (
 									<>
-										<Loader2 className="w-4 h-4 animate-spin" />
+										<Spinner size={16} />
 										Pulling...
 									</>
 								) : (

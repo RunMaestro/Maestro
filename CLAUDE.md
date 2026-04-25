@@ -20,6 +20,60 @@ This guide has been split into focused sub-documents for progressive disclosure:
 
 ---
 
+## Before Writing New Code - Check Existing Utilities
+
+**MANDATORY:** Before creating any new utility function, helper, hook, component, type, or constant, check the guide docs in `docs/agent-guides/` to see if it already exists. Duplicated code is the #1 source of maintenance burden in this codebase - there are already grep-verified instances of 20+ duplicate format helpers, 60+ ad-hoc mock factories, and 500+ manual modal-layer registrations. Don't add to the pile.
+
+| Before creating...                                 | Check this guide first                                         |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| Utility function (formatting, IDs, paths, strings) | [SHARED-UTILS.md](docs/agent-guides/SHARED-UTILS.md)           |
+| IPC handler or preload bridge                      | [IPC-PATTERNS.md](docs/agent-guides/IPC-PATTERNS.md)           |
+| Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)       |
+| Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)             |
+| UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)             |
+| Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)         |
+| Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md) |
+| Process spawning or listener                       | [PROCESS-SYSTEM.md](docs/agent-guides/PROCESS-SYSTEM.md)       |
+| Web/mobile hook or component                       | [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md)               |
+| CLI command or playbook feature                    | [CLI-PLAYBOOKS.md](docs/agent-guides/CLI-PLAYBOOKS.md)         |
+| Group chat or Symphony feature                     | [GROUP-CHAT.md](docs/agent-guides/GROUP-CHAT.md)               |
+| Stats, analytics, or dashboard                     | [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)     |
+| Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)         |
+| Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)           |
+| App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)       |
+
+### Commonly-reimplemented functions (do NOT add new copies)
+
+Grep-verified 2026-04-10. Import from these canonical locations:
+
+- **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
+- **Format file size:** `formatSize()` in `src/shared/formatters.ts`
+- **Format numbers:** `formatNumber()` in `src/shared/formatters.ts`
+- **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
+- **Format elapsed time:** `formatElapsedTime()`, `formatElapsedTimeColon()` in `src/shared/formatters.ts`
+- **Format duration (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts - common mistake)
+- **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
+- **Format cost:** `formatCost()` in `src/shared/formatters.ts`
+- **Path utilities:** `truncatePath()`, `getParentDir()`, `truncateCommand()` in `src/shared/formatters.ts`
+- **Strip ANSI:** `stripAnsiCodes()` in `src/shared/stringUtils.ts`
+- **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
+- **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`
+- **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
+- **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
+- **Toast notifications:** `notifyToast()` in `src/renderer/stores/notificationStore.ts`
+- **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
+- **Session mutation:** `updateSessionWith(sessionId, updater)` in `src/renderer/stores/sessionStore.ts` (do NOT hand-roll `setSessions(prev => prev.map(...))`)
+- **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
+- **Focus after render:** `useFocusAfterRender()` in `src/renderer/hooks/utils/useFocusAfterRender.ts` (do NOT use `useEffect + setTimeout(() => ref.focus())`)
+- **Event listeners:** `useEventListener()` in `src/renderer/hooks/utils/useEventListener.ts` (do NOT pair raw `addEventListener`/`removeEventListener` inside useEffect)
+- **Debounce/throttle:** `useDebouncedValue()`, `useDebouncedCallback()`, `useThrottledCallback()` in `src/renderer/hooks/utils/useThrottle.ts` (filename is misleading - all three live here)
+
+If your use case does NOT match an existing utility, prefer extending the canonical file over creating a new one. If you genuinely need something new, add it to the relevant guide in `docs/agent-guides/` so the next person can find it.
+
+The tracker at [DEDUP-TRACKER.md](docs/agent-guides/DEDUP-TRACKER.md) lists all known duplication findings.
+
+---
+
 ## Agent Behavioral Guidelines
 
 Core behaviors for effective collaboration. Failures here cause the most rework.
@@ -96,6 +150,12 @@ This codebase uses **tabs for indentation**, not spaces. Always match existing f
 
 ---
 
+## Do Not Edit: `docs/releases.md`
+
+`docs/releases.md` is generated/updated automatically during release pressing. **Never modify it manually** — even when shipping user-facing changes that would seem to warrant a release note entry. The release tooling handles it.
+
+---
+
 ## Project Overview
 
 Maestro is an Electron desktop app for managing multiple AI coding assistants simultaneously with a keyboard-first interface.
@@ -108,6 +168,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `codex`         | OpenAI Codex  | **Active** |
 | `opencode`      | OpenCode      | **Active** |
 | `factory-droid` | Factory Droid | **Active** |
+| `copilot-cli`   | Copilot-CLI   | **Beta**   |
 | `terminal`      | Terminal      | Internal   |
 
 See [[CLAUDE-AGENTS.md]] for capabilities and integration details.
@@ -184,7 +245,9 @@ src/
 | Add tab overlay menu         | See Tab Hover Overlay Menu pattern in [[CLAUDE-PATTERNS.md]]                                                                                                            |
 | Add setting                  | `src/shared/settingsMetadata.ts` (metadata), `src/renderer/stores/settingsStore.ts`, `src/main/stores/defaults.ts`                                                      |
 | Add template variable        | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts`                                                                                            |
-| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.)                                                                                                                             |
+| Modify system prompts        | `src/prompts/*.md` (wizard, Auto Run, etc.) or edit via **Maestro Prompts** tab in Settings                                                                             |
+| Customize prompts            | Use **Maestro Prompts** tab in Settings, or edit `userData/core-prompts-customizations.json`                                                                            |
+| Add new prompt               | `src/prompts/*.md`, `src/shared/promptDefinitions.ts` (add to `CORE_PROMPTS` array and `PROMPT_IDS`)                                                                    |
 | Add Spec-Kit command         | `src/prompts/speckit/`, `src/main/speckit-manager.ts`                                                                                                                   |
 | Add OpenSpec command         | `src/prompts/openspec/`, `src/main/openspec-manager.ts`                                                                                                                 |
 | Add CLI command              | `src/cli/commands/`, `src/cli/index.ts`                                                                                                                                 |

@@ -28,6 +28,8 @@ import {
 } from '../../../../main/web-server/services/broadcastService';
 import type { Theme } from '../../../../shared/theme-types';
 
+import { createMockTheme } from '../../../helpers/mockTheme';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -62,27 +64,6 @@ function createMockClient(
 /**
  * Create a mock theme
  */
-function createMockTheme(id: string = 'dracula'): Theme {
-	return {
-		id,
-		name: id.charAt(0).toUpperCase() + id.slice(1),
-		mode: 'dark',
-		colors: {
-			bgMain: '#0b0b0d',
-			bgSidebar: '#111113',
-			bgActivity: '#1c1c1f',
-			border: '#27272a',
-			textMain: '#e4e4e7',
-			textDim: '#a1a1aa',
-			accent: '#6366f1',
-			accentDim: 'rgba(99, 102, 241, 0.2)',
-			accentText: '#a5b4fc',
-			success: '#22c55e',
-			warning: '#eab308',
-			error: '#ef4444',
-		},
-	};
-}
 
 /**
  * Create mock session data
@@ -186,7 +167,7 @@ describe('BroadcastService', () => {
 			const client = createMockClient('client-1');
 			clients.set('client-1', client);
 
-			const theme = createMockTheme('monokai');
+			const theme = createMockTheme({ id: 'monokai', name: 'Monokai' });
 			service.broadcastThemeChange(theme);
 
 			const sentData = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -206,6 +187,19 @@ describe('BroadcastService', () => {
 
 			expect(dashboardClient.socket.send).toHaveBeenCalledTimes(1);
 			expect(sessionClient.socket.send).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('Bionify Reading Mode Sync (Desktop → Web)', () => {
+		it('should broadcast bionify reading mode changes with the correct payload', () => {
+			const client = createMockClient('client-1');
+			clients.set('client-1', client);
+
+			service.broadcastBionifyReadingModeChange(true);
+
+			const sentData = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(sentData.type).toBe('bionify_reading_mode');
+			expect(sentData.enabled).toBe(true);
 		});
 	});
 

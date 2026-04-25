@@ -23,7 +23,7 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
-import { directorNotesPrompt } from '../../../prompts';
+import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
@@ -36,7 +36,7 @@ const LOG_CONTEXT = '[DirectorNotes]';
  * Strips markdown formatting characters and control sequences that could
  * be interpreted as prompt instructions by the AI agent.
  */
-export function sanitizeDisplayName(name: string): string {
+function sanitizeDisplayName(name: string): string {
 	return (
 		name
 			// Strip markdown headers, bold, italic, links, images
@@ -363,7 +363,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				});
 
 				const prompt = [
-					directorNotesPrompt,
+					getPrompt('director-notes'),
 					'',
 					'---',
 					'',

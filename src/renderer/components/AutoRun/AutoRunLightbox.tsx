@@ -1,12 +1,13 @@
-import React, { useState, useCallback, memo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, memo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ChevronLeft, ChevronRight, Copy, Check, Trash2, FileText } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ConfirmModal } from '../ConfirmModal';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // AutoRunLightbox - Full-screen image viewer with navigation, copy, delete
@@ -52,46 +53,25 @@ export const AutoRunLightbox = memo(
 		const [copied, setCopied] = useState(false);
 		const [copiedMarkdown, setCopiedMarkdown] = useState(false);
 		const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-		const layerIdRef = useRef<string>();
 		const onCloseRef = useRef(onClose);
 		onCloseRef.current = onClose;
 
-		// Determine if lightbox is visible
-		const isVisible = Boolean(lightboxFilename);
+		// Determine if lightbox is visible and has a renderable image
+		const lightboxImageUrl =
+			lightboxExternalUrl ||
+			(lightboxFilename ? attachmentPreviews.get(lightboxFilename) : undefined);
+		const isVisible = Boolean(lightboxFilename && lightboxImageUrl);
 
 		// Register with layer stack when lightbox is visible
 		// This ensures Escape closes the lightbox first before the expanded modal
-		useEffect(() => {
-			if (isVisible) {
-				const id = registerLayer({
-					type: 'modal',
-					priority: MODAL_PRIORITIES.AUTORUN_LIGHTBOX,
-					blocksLowerLayers: true,
-					capturesFocus: true,
-					focusTrap: 'lenient',
-					onEscape: () => {
-						onCloseRef.current();
-					},
-				});
-				layerIdRef.current = id;
-
-				return () => {
-					if (layerIdRef.current) {
-						unregisterLayer(layerIdRef.current);
-					}
-				};
-			}
-		}, [isVisible, registerLayer, unregisterLayer]);
-
-		// Keep escape handler up to date
-		useEffect(() => {
-			if (layerIdRef.current) {
-				updateLayerHandler(layerIdRef.current, () => {
-					onCloseRef.current();
-				});
-			}
-		}, [onClose, updateLayerHandler]);
+		useModalLayer(
+			MODAL_PRIORITIES.AUTORUN_LIGHTBOX,
+			undefined,
+			() => {
+				onCloseRef.current();
+			},
+			{ focusTrap: 'lenient', enabled: isVisible }
+		);
 
 		// Calculate current index and navigation availability
 		const currentIndex = lightboxFilename ? attachmentsList.indexOf(lightboxFilename) : -1;
@@ -125,7 +105,7 @@ export const AutoRunLightbox = memo(
 					setTimeout(() => setCopied(false), 2000);
 				}
 			} catch (err) {
-				console.error('Failed to copy image to clipboard:', err);
+				logger.error('Failed to copy image to clipboard:', undefined, err);
 			}
 		}, [lightboxFilename, lightboxExternalUrl, attachmentPreviews]);
 

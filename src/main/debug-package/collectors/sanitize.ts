@@ -23,7 +23,7 @@ export function sanitizePath(pathStr: string): string {
  * Sanitize a free-text string that may contain embedded file paths.
  * Replaces home directory occurrences within arbitrary text.
  */
-export function sanitizeText(text: string): string {
+function sanitizeText(text: string): string {
 	if (typeof text !== 'string') return text;
 	const homeDir = os.homedir();
 	// Replace both slash styles using split/join for pre-ES2021 compat

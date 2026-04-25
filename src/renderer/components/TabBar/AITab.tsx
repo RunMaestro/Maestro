@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Star, Pencil, Loader2 } from 'lucide-react';
+import { X, Star, Pencil, Loader2, AlertCircle } from 'lucide-react';
 import type { AITab as AITabType, Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
@@ -311,28 +311,31 @@ export const AITab = memo(function AITab({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseOtherTabs?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tabId, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tabId, setOverlayOpen]
 	);
 
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseTabsLeft?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tabId, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tabId, setOverlayOpen]
 	);
 
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tabId);
 			onCloseTabsRight?.(tabId);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tabId, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tabId, setOverlayOpen]
 	);
 
 	// Handlers for drag events using stable tabId
@@ -434,6 +437,18 @@ export const AITab = memo(function AITab({
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
 		>
+			{/* Agent error pill - highlights tabs that have an active error for quick triage */}
+			{tab.agentError && (
+				<div
+					className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+					style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
+					title={`Error: ${tab.agentError.message}`}
+				>
+					<AlertCircle className="w-2.5 h-2.5" />
+					ERR
+				</div>
+			)}
+
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
 			{tab.state === 'busy' && (
 				<div

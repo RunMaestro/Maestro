@@ -28,6 +28,40 @@ export interface DocumentGraphChange {
 }
 
 /**
+ * Runtime snapshot returned by debug:getAppStats.
+ * See src/main/ipc/handlers/debug.ts for field population details.
+ */
+export interface AppStatsSnapshot {
+	timestamp: number;
+	platform: NodeJS.Platform;
+	main: {
+		rss: number;
+		heapTotal: number;
+		heapUsed: number;
+		external: number;
+		arrayBuffers: number;
+	};
+	electronProcesses: Array<{
+		pid: number;
+		type: string;
+		name?: string;
+		serviceName?: string;
+		cpuPercent?: number;
+		workingSetBytes?: number;
+		peakWorkingSetBytes?: number;
+	}>;
+	managedProcesses: Array<{
+		sessionId: string;
+		toolType: string;
+		pid?: number;
+		isTerminal?: boolean;
+		isBatchMode: boolean;
+		startTime?: number;
+		rssBytes?: number;
+	}>;
+}
+
+/**
  * Creates the Debug API object for preload exposure
  */
 export function createDebugApi() {
@@ -36,6 +70,8 @@ export function createDebugApi() {
 			ipcRenderer.invoke('debug:createPackage', options),
 
 		previewPackage: () => ipcRenderer.invoke('debug:previewPackage'),
+
+		getAppStats: (): Promise<AppStatsSnapshot> => ipcRenderer.invoke('debug:getAppStats'),
 	};
 }
 

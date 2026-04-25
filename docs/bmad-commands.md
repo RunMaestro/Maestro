@@ -1,6 +1,7 @@
 ---
 title: BMAD Commands
 description: Use BMAD Method workflows inside Maestro's AI Commands panel.
+icon: hammer
 ---
 
 # BMAD Commands

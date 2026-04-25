@@ -11,13 +11,14 @@ import {
 	Server,
 	Monitor,
 	Globe,
-	Users,
+	Wand2,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
 import type { Theme, LLMProvider } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AICommandsPanel } from '../AICommandsPanel';
+import { MaestroPromptsTab } from './tabs/MaestroPromptsTab';
 import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
 import { OpenSpecCommandsPanel } from '../OpenSpecCommandsPanel';
 import { BmadCommandsPanel } from '../BmadCommandsPanel';
@@ -51,10 +52,11 @@ interface SettingsModalProps {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
-		| 'groupchat'
 		| 'ssh'
 		| 'environment'
-		| 'encore';
+		| 'encore'
+		| 'prompts';
+	initialSelectedPromptId?: string;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -67,6 +69,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		theme,
 		themes,
 		initialTab,
+		initialSelectedPromptId,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -92,6 +95,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setAudioFeedbackCommand,
 		toastDuration,
 		setToastDuration,
+		idleNotificationEnabled,
+		setIdleNotificationEnabled,
+		idleNotificationCommand,
+		setIdleNotificationCommand,
 		// AI Commands
 		customAICommands,
 		setCustomAICommands,
@@ -100,9 +107,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 		setSshRemoteHonorGitignore,
-		// Group Chat settings
-		moderatorStandingInstructions,
-		setModeratorStandingInstructions,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
@@ -113,10 +117,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
-		| 'groupchat'
 		| 'ssh'
 		| 'environment'
 		| 'encore'
+		| 'prompts'
 	>('general');
 	const [testingLLM, setTestingLLM] = useState(false);
 	const [testResult, setTestResult] = useState<{
@@ -131,32 +135,48 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setSearchActive(active);
 	}, []);
 
-	const search = useSettingsSearch({ isOpen, onSearchActiveChange: handleSearchActiveChange });
+	// Hold setQuery in a ref so handleSearchNavigate doesn't depend on `search`
+	// (which is created below and itself takes onNavigate as input).
+	const setQueryRef = useRef<(q: string) => void>(() => {});
 
-	const handleSearchNavigate = useCallback(
-		(tab: SearchableSetting['tab'], settingId: string) => {
-			search.setQuery('');
-			setActiveTab(tab);
-			// Double-RAF to ensure DOM has rendered the new tab content before scrolling
+	// Stash theme accent in a ref so handleSearchNavigate stays stable across renders
+	const jumpAccentRef = useRef(theme.colors.accent);
+	jumpAccentRef.current = theme.colors.accent;
+
+	const handleSearchNavigate = useCallback((tab: SearchableSetting['tab'], settingId: string) => {
+		setQueryRef.current('');
+		setActiveTab(tab);
+		// Double-RAF to ensure DOM has rendered the new tab content before scrolling
+		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
-				requestAnimationFrame(() => {
-					const el = contentRef.current?.querySelector(`[data-setting-id="${settingId}"]`);
-					if (el) {
-						el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-						// Brief highlight flash
-						el.classList.add('settings-search-highlight');
-						setTimeout(() => el.classList.remove('settings-search-highlight'), 1500);
-					}
-				});
+				const el = contentRef.current?.querySelector<HTMLElement>(
+					`[data-setting-id="${settingId}"]`
+				);
+				if (el) {
+					el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					// Themed arrow indicator + outline flash; duration must match the
+					// 3s animations in .settings-search-highlight / ::before.
+					el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
+					el.classList.add('settings-search-highlight');
+					setTimeout(() => {
+						el.classList.remove('settings-search-highlight');
+						el.style.removeProperty('--settings-search-jump-color');
+					}, 3000);
+				}
 			});
-		},
-		[search]
-	);
+		});
+	}, []);
+
+	const search = useSettingsSearch({
+		isOpen,
+		onSearchActiveChange: handleSearchActiveChange,
+		onNavigate: handleSearchNavigate,
+	});
+	setQueryRef.current = search.setQuery;
 
 	// Layer stack integration
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const isRecordingShortcutRef = useRef(false);
+	const promptsEscapeHandlerRef = useRef<(() => boolean) | null>(null);
 
 	useEffect(() => {
 		if (isOpen) {
@@ -170,31 +190,18 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	onCloseRef.current = onClose;
 
 	// Register layer when modal opens
-	useEffect(() => {
-		if (!isOpen) return;
-
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.SETTINGS,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Settings',
-			onEscape: () => {
-				// If recording a shortcut, ShortcutsTab handles its own escape via onKeyDownCapture
-				if (isRecordingShortcutRef.current) return;
-				onCloseRef.current();
-			},
-		});
-
-		layerIdRef.current = id;
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [isOpen, registerLayer, unregisterLayer]); // Removed onClose from deps
+	useModalLayer(
+		MODAL_PRIORITIES.SETTINGS,
+		'Settings',
+		() => {
+			// If recording a shortcut, ShortcutsTab handles its own escape via onKeyDownCapture
+			if (isRecordingShortcutRef.current) return;
+			// Let prompts tab handle layered escape (help -> expanded -> list -> close)
+			if (promptsEscapeHandlerRef.current?.()) return;
+			onCloseRef.current();
+		},
+		{ enabled: isOpen }
+	);
 
 	// Tab navigation with Cmd+Shift+[ and ]
 	useEffect(() => {
@@ -209,10 +216,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'theme'
 				| 'notifications'
 				| 'aicommands'
-				| 'groupchat'
 				| 'ssh'
 				| 'environment'
 				| 'encore'
+				| 'prompts'
 			> = FEATURE_FLAGS.LLM_SETTINGS
 				? [
 						'general',
@@ -222,7 +229,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
-						'groupchat',
+						'prompts',
 						'ssh',
 						'environment',
 						'encore',
@@ -234,7 +241,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						'theme',
 						'notifications',
 						'aicommands',
-						'groupchat',
+						'prompts',
 						'ssh',
 						'environment',
 						'encore',
@@ -384,7 +391,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		{ id: 'theme', label: 'Themes', icon: Palette },
 		{ id: 'notifications', label: 'Notifications', icon: Bell },
 		{ id: 'aicommands', label: 'AI Commands', icon: Cpu },
-		{ id: 'groupchat', label: 'Group Chat', icon: Users },
+		{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 		{ id: 'ssh', label: 'SSH Hosts', icon: Server },
 		{ id: 'environment', label: 'Environment', icon: Globe },
 		{ id: 'encore', label: 'Encore Features', icon: FlaskConical },
@@ -426,6 +433,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						query={search.query}
 						results={search.results}
 						onNavigate={handleSearchNavigate}
+						selectedIndex={search.selectedIndex}
+						setSelectedIndex={search.setSelectedIndex}
 					/>
 				)}
 
@@ -594,6 +603,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								setAudioFeedbackCommand={setAudioFeedbackCommand}
 								toastDuration={toastDuration}
 								setToastDuration={setToastDuration}
+								idleNotificationEnabled={idleNotificationEnabled}
+								setIdleNotificationEnabled={setIdleNotificationEnabled}
+								idleNotificationCommand={idleNotificationCommand}
+								setIdleNotificationCommand={setIdleNotificationCommand}
 								theme={theme}
 							/>
 						)}
@@ -634,37 +647,15 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							</div>
 						)}
 
-						{activeTab === 'groupchat' && (
-							<div className="space-y-5">
-								<div>
-									<h3
-										className="text-sm font-bold uppercase tracking-wider mb-1"
-										style={{ color: theme.colors.textMain }}
-									>
-										Moderator Standing Instructions
-									</h3>
-									<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
-										These instructions are included in every group chat moderator prompt. Use them
-										for standing practices like branch workflows, autorun setup, or coding
-										standards.
-									</p>
-									<textarea
-										value={moderatorStandingInstructions}
-										onChange={(e) => setModeratorStandingInstructions(e.target.value)}
-										placeholder={`Example:\n- Always instruct agents to work in git branches, not directly on main\n- When delegating tasks, tell agents to enable autorun with: /autorun on\n- Prefer TypeScript strict mode in all new files`}
-										className="w-full p-3 rounded border bg-transparent outline-none resize-vertical text-sm font-mono"
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-											minHeight: '150px',
-										}}
-										maxLength={2000}
-										rows={8}
-									/>
-									<div className="text-xs mt-1 text-right" style={{ color: theme.colors.textDim }}>
-										{moderatorStandingInstructions.length} / 2000
-									</div>
-								</div>
+						{activeTab === 'prompts' && (
+							<div data-setting-id="prompts-editor" className="prompts-editor-wrapper">
+								<MaestroPromptsTab
+									theme={theme}
+									initialSelectedPromptId={initialSelectedPromptId}
+									onEscapeHandled={(handler) => {
+										promptsEscapeHandlerRef.current = handler;
+									}}
+								/>
 							</div>
 						)}
 

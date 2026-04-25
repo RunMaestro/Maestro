@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { Group, SessionInfo, HistoryEntry } from '../../../shared/types';
+import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../../shared/types';
 
 // Store original env values
 const originalEnv = { ...process.env };
@@ -54,6 +54,9 @@ import {
 	getSessionsByGroup,
 	getConfigDirectory,
 	addHistoryEntry,
+	readSshRemotes,
+	writeSshRemotes,
+	resolveSshRemoteId,
 } from '../../../cli/services/storage';
 
 describe('storage service', () => {
@@ -1434,6 +1437,104 @@ describe('storage service', () => {
 
 			expect(result).toBe(false);
 			expect(fs.writeFileSync).not.toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================================
+	// SSH Remote Helpers
+	// ============================================================================
+
+	const mockSshRemote = (overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig => ({
+		id: 'remote-1',
+		name: 'Dev Server',
+		host: '192.168.1.100',
+		port: 22,
+		username: 'deploy',
+		privateKeyPath: '',
+		enabled: true,
+		...overrides,
+	});
+
+	describe('readSshRemotes', () => {
+		it('should read SSH remotes from settings', () => {
+			const remotes = [mockSshRemote()];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual(remotes);
+		});
+
+		it('should return empty array when no remotes configured', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({}));
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when settings file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				const err = new Error('ENOENT') as NodeJS.ErrnoException;
+				err.code = 'ENOENT';
+				throw err;
+			});
+
+			const result = readSshRemotes();
+
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe('writeSshRemotes', () => {
+		it('should write SSH remotes to settings file', () => {
+			const remotes = [mockSshRemote()];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ otherSetting: true }));
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+
+			writeSshRemotes(remotes);
+
+			expect(fs.writeFileSync).toHaveBeenCalledWith(
+				expect.stringContaining('maestro-settings.json'),
+				expect.stringContaining('"sshRemotes"'),
+				'utf-8'
+			);
+		});
+	});
+
+	describe('resolveSshRemoteId', () => {
+		it('should resolve exact ID match', () => {
+			const remotes = [mockSshRemote({ id: 'remote-abc-123' })];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = resolveSshRemoteId('remote-abc-123');
+
+			expect(result).toBe('remote-abc-123');
+		});
+
+		it('should resolve partial ID match', () => {
+			const remotes = [mockSshRemote({ id: 'remote-abc-123' })];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			const result = resolveSshRemoteId('remote-abc');
+
+			expect(result).toBe('remote-abc-123');
+		});
+
+		it('should throw for ambiguous ID', () => {
+			const remotes = [
+				mockSshRemote({ id: 'remote-abc-1', name: 'Server A' }),
+				mockSshRemote({ id: 'remote-abc-2', name: 'Server B' }),
+			];
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: remotes }));
+
+			expect(() => resolveSshRemoteId('remote-abc')).toThrow('Ambiguous SSH remote ID');
+		});
+
+		it('should throw for non-existent ID', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ sshRemotes: [] }));
+
+			expect(() => resolveSshRemoteId('nonexistent')).toThrow('SSH remote not found');
 		});
 	});
 });

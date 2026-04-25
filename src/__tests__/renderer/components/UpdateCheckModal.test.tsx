@@ -50,21 +50,9 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 // Import component after mocks
 import { UpdateCheckModal } from '../../../renderer/components/UpdateCheckModal';
 
+import { createMockTheme } from '../../helpers/mockTheme';
+
 // Helper to create mock theme
-const createMockTheme = () => ({
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#007acc',
-		border: '#404040',
-		error: '#f44336',
-		success: '#4caf50',
-		warning: '#ff9800',
-	},
-});
 
 // Helper to create mock release
 const createMockRelease = (

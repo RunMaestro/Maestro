@@ -1,8 +1,21 @@
 /**
- * Cue Engine Core — the main coordinator for Maestro Cue event-driven automation.
+ * Cue Engine Core — thin façade for Maestro Cue event-driven automation.
  *
- * Discovers maestro-cue.yaml files per session, manages interval timers,
- * file watchers, and agent completion listeners. Runs in the Electron main process.
+ * Coordinates a small set of single-responsibility services. The engine itself
+ * owns no Cue runtime state — every mutable thing (sessions, dedup keys, run
+ * lifecycle, fan-in, etc.) lives behind a service interface.
+ *
+ * Service map:
+ * - CueSessionRegistry      — sole owner of per-session state and dedup keys
+ * - CueSessionRuntimeService — session lifecycle (init/refresh/teardown)
+ * - CueRunManager           — concurrency, queues, run execution
+ * - CueDispatchService      — fan-out routing
+ * - CueCompletionService    — agent.completed routing (single + fan-in)
+ * - CueFanInTracker         — multi-source agent.completed state machine
+ * - CueQueryService         — read-only projections (status, graph, settings)
+ * - CueRecoveryService      — DB init, sleep detection, missed-event recovery
+ * - CueHeartbeat            — periodic heartbeat write
+ * - CueActivityLog          — recent run history
  *
  * Supports agent completion chains:
  * - Fan-out: a subscription fires its prompt against multiple target sessions
@@ -10,45 +23,82 @@
  * - Session bridging: completion events from user sessions (non-Cue) trigger Cue subscriptions
  */
 
-import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
+import type { CueLogPayload } from '../../shared/cue-log-types';
 import type { SessionInfo } from '../../shared/types';
 import {
 	createCueEvent,
-	DEFAULT_CUE_SETTINGS,
 	type AgentCompletionData,
+	type CueCommand,
 	type CueConfig,
-	type CueEvent,
-	type CueGraphSession,
 	type CueRunResult,
-	type CueSessionStatus,
-	type CueSettings,
+	type CueEvent,
 	type CueSubscription,
 } from './cue-types';
-import { captureException } from '../utils/sentry';
-import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
-import { matchesFilter, describeFilter } from './cue-filter';
-import {
-	setupHeartbeatSubscription,
-	setupScheduledSubscription,
-	setupFileWatcherSubscription,
-	setupGitHubPollerSubscription,
-	setupTaskScannerSubscription,
-	type SubscriptionSetupDeps,
-} from './cue-subscription-setup';
-import { initCueDb, closeCueDb, pruneCueEvents } from './cue-db';
 import { createCueActivityLog } from './cue-activity-log';
 import type { CueActivityLog } from './cue-activity-log';
-import { createCueHeartbeat, EVENT_PRUNE_AGE_MS } from './cue-heartbeat';
+import { createCueHeartbeat } from './cue-heartbeat';
 import type { CueHeartbeat } from './cue-heartbeat';
-import { createCueFanInTracker, SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
+import { createCueFanInTracker } from './cue-fan-in-tracker';
 import type { CueFanInTracker } from './cue-fan-in-tracker';
 import { createCueRunManager } from './cue-run-manager';
 import type { CueRunManager } from './cue-run-manager';
+import { createCueDispatchService } from './cue-dispatch-service';
+import type { CueDispatchService } from './cue-dispatch-service';
+import { createCueCompletionService } from './cue-completion-service';
+import type { CueCompletionService } from './cue-completion-service';
+import { createCueQueryService } from './cue-query-service';
+import type { CueQueryService } from './cue-query-service';
+import { createCueSessionRuntimeService } from './cue-session-runtime-service';
+import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
+import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
+import type { SessionState } from './cue-session-state';
+import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
+import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
+import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
+import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
+import { loadCueConfig } from './cue-yaml-loader';
+
 const MAX_CHAIN_DEPTH = 10;
 
-// Re-export for backwards compat (tests import from cue-engine)
-export { calculateNextScheduledTime } from './cue-subscription-setup';
+/**
+ * Stable identity key grouping subs that represent parallel branches of the
+ * same visual trigger. Used by manual-trigger dispatch to fire every sibling
+ * sub a scheduled tick would fire — e.g. `Schedule → [Cmd1, Cmd2]` serializes
+ * as two subs sharing event config but targeting different commands; both
+ * must fire together when the user clicks Play.
+ *
+ * Mirrors `triggerGroupKey` in `yamlToPipeline.ts` so the runtime's notion of
+ * "same trigger" matches the editor's collapse rule on load. Any divergence
+ * in event-specific config (different schedule_times, different watch glob,
+ * etc.) yields a distinct key and therefore a distinct group, preserving
+ * author intent when they configured truly independent triggers.
+ */
+function triggerGroupKey(sub: CueSubscription): string {
+	// Sort filter keys so two subs whose filter objects differ only in key
+	// insertion order (hand-written YAML or library-reordered round-trips)
+	// still hash to the same group.
+	const filter = sub.filter
+		? Object.keys(sub.filter)
+				.sort()
+				.reduce<Record<string, unknown>>((acc, k) => {
+					acc[k] = (sub.filter as Record<string, unknown>)[k];
+					return acc;
+				}, {})
+		: null;
+	return JSON.stringify({
+		event: sub.event,
+		schedule_times: sub.schedule_times ?? null,
+		schedule_days: sub.schedule_days ?? null,
+		interval_minutes: sub.interval_minutes ?? null,
+		watch: sub.watch ?? null,
+		repo: sub.repo ?? null,
+		poll_minutes: sub.poll_minutes ?? null,
+		gh_state: sub.gh_state ?? null,
+		label: sub.label ?? null,
+		filter,
+	});
+}
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -60,6 +110,8 @@ export interface CueEngineDeps {
 		subscriptionName: string;
 		event: CueEvent;
 		timeoutMs: number;
+		action?: CueSubscription['action'];
+		command?: CueCommand;
 	}) => Promise<CueRunResult>;
 	onStopCueRun?: (runId: string) => boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
@@ -69,44 +121,77 @@ export interface CueEngineDeps {
 	onAllowSleep?: (reason: string) => void;
 }
 
-/** Internal state per session with an active Cue config */
-interface SessionState {
-	config: CueConfig;
-	timers: ReturnType<typeof setInterval>[];
-	watchers: (() => void)[];
-	yamlWatcher: (() => void) | null;
-	lastTriggered?: string;
-	nextTriggers: Map<string, number>; // subscriptionName -> next trigger timestamp
-}
-
 export class CueEngine {
 	private enabled = false;
-	private sessions = new Map<string, SessionState>();
+	/** Set to 'system-boot' while the engine is running after a system-boot or
+	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
+	 * sessions that arrive after start() (the common case at boot). */
+	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
+	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
 	private runManager!: CueRunManager;
-	private pendingYamlWatchers = new Map<string, () => void>();
-	/** Tracks "subName:HH:MM" keys that time.scheduled already fired, preventing double-fire on config refresh */
-	private scheduledFiredKeys = new Set<string>();
-	/** Tracks "sessionId:subName" keys for app.startup subscriptions that already fired this process lifecycle.
-	 *  NOT cleared on stop() — persists across engine stop/start cycles (feature toggling). Only resets on app restart. */
-	private startupFiredKeys = new Set<string>();
-	/** True only during the initial session scan inside start(true). Cleared immediately after the scan
-	 *  completes so that later refreshSession/initSession calls don't fire app.startup subs. */
-	private isBootScan = false;
 	private heartbeat: CueHeartbeat;
+	private dispatchService: CueDispatchService;
+	private completionService: CueCompletionService;
+	private queryService: CueQueryService;
+	private sessionRuntimeService: CueSessionRuntimeService;
+	private recoveryService: CueRecoveryService;
+	private cleanupService: CueCleanupService;
+	private metrics: CueMetricsCollector = createCueMetrics();
+	private queuePersistence: CueQueuePersistence;
 	private deps: CueEngineDeps;
+
+	/**
+	 * Intercept all onLog calls to route structured payloads into metrics.
+	 * Subsystems stay decoupled from the metrics module — they emit the same
+	 * typed CueLogPayload they already do, and the engine translates.
+	 *
+	 * Arrow-function field so `this` is bound when we pass it into subsystem deps.
+	 */
+	private meteredOnLog: CueEngineDeps['onLog'] = (level, message, data) => {
+		this.recordMetricFromPayload(data);
+		// Preserve original arity: omit `data` when it's undefined so vi.fn() mocks
+		// that assert `toHaveBeenCalledWith(level, msg)` (2 args) still match —
+		// this path is hot for every warn/info line the engine emits.
+		if (data === undefined) {
+			this.deps.onLog(level, message);
+		} else {
+			this.deps.onLog(level, message, data);
+		}
+	};
 
 	constructor(deps: CueEngineDeps) {
 		this.deps = deps;
+		this.registry = createCueSessionRegistry();
+		const meteredOnLog = this.meteredOnLog;
+
+		// Phase 12A — queue persistence façade. Wired up-front so the run
+		// manager receives it by construction. Uses the in-process registry +
+		// settings for staleness / session-membership checks.
+		this.queuePersistence = createCueQueuePersistence({
+			onLog: meteredOnLog,
+			getSessionTimeoutMs: (sessionId) => {
+				const state = this.registry.get(sessionId);
+				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
+			},
+			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+		});
+
 		this.runManager = createCueRunManager({
 			getSessions: deps.getSessions,
-			getSessionSettings: (sessionId) => this.sessions.get(sessionId)?.config.settings,
+			getSessionSettings: (sessionId) => this.registry.get(sessionId)?.config.settings,
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth) => {
 				this.pushActivityLog(result);
+				// Carry forwarded outputs from the triggering event through to the
+				// completion notification so downstream agents can access them via
+				// per-source template variables ({{CUE_FORWARDED_<NAME>}}).
+				const forwarded = result.event.payload.forwardedOutputs as
+					| Record<string, string>
+					| undefined;
 				this.notifyAgentCompleted(sessionId, {
 					sessionName: result.sessionName,
 					status: result.status,
@@ -115,6 +200,7 @@ export class CueEngine {
 					stdout: result.stdout,
 					triggeredBy: subscriptionName,
 					chainDepth: (chainDepth ?? 0) + 1,
+					forwardedOutputs: forwarded,
 				});
 			},
 			onRunStopped: (result) => {
@@ -122,20 +208,152 @@ export class CueEngine {
 			},
 			onPreventSleep: deps.onPreventSleep,
 			onAllowSleep: deps.onAllowSleep,
+			// Phase 12B: surface queue overflow through the same typed-log channel
+			// so the renderer's activity-update listener can toast the user.
+			onQueueOverflow: (payload) => {
+				meteredOnLog('warn', `[CUE] Queue overflow in "${payload.sessionName}"`, {
+					type: 'queueOverflow',
+					...payload,
+				} satisfies CueLogPayload);
+			},
+			// Phase 12A: queue rows survive app crash / quit.
+			queuePersistence: this.queuePersistence,
 		});
 		this.fanInTracker = createCueFanInTracker({
-			onLog: deps.onLog,
+			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
 			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
-				this.dispatchSubscription(ownerSessionId, sub, event, sourceSessionName, chainDepth);
+				return this.dispatchService.dispatchSubscription(
+					ownerSessionId,
+					sub,
+					event,
+					sourceSessionName,
+					chainDepth
+				);
 			},
 		});
+		this.dispatchService = createCueDispatchService({
+			getSessions: deps.getSessions,
+			executeRun: (
+				sessionId,
+				prompt,
+				event,
+				subscriptionName,
+				outputPrompt,
+				chainDepth,
+				cliOutput,
+				action,
+				command
+			) => {
+				this.runManager.execute(
+					sessionId,
+					prompt,
+					event,
+					subscriptionName,
+					outputPrompt,
+					chainDepth,
+					cliOutput,
+					action,
+					command
+				);
+			},
+			onLog: meteredOnLog,
+		});
+		this.sessionRuntimeService = createCueSessionRuntimeService({
+			enabled: () => this.enabled,
+			getSessions: deps.getSessions,
+			onRefreshRequested: (sessionId, projectRoot) => {
+				this.refreshSession(sessionId, projectRoot);
+			},
+			onLog: meteredOnLog,
+			onPreventSleep: deps.onPreventSleep,
+			onAllowSleep: deps.onAllowSleep,
+			registry: this.registry,
+			dispatchSubscription: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+				return this.dispatchService.dispatchSubscription(
+					ownerSessionId,
+					sub,
+					event,
+					sourceSessionName,
+					chainDepth
+				);
+			},
+			clearQueue: (sessionId, preserveStartup) => {
+				this.runManager.clearQueue(sessionId, preserveStartup);
+			},
+			clearFanInState: (sessionId) => {
+				this.fanInTracker.clearForSession(sessionId);
+			},
+		});
+		this.completionService = createCueCompletionService({
+			enabled: () => this.enabled,
+			getSessions: () =>
+				deps.getSessions().map((session) => ({ id: session.id, name: session.name })),
+			getSessionConfigs: () => {
+				const views = new Map<string, { config: CueConfig; ownershipWarning?: string }>();
+				for (const [sessionId, state] of this.registry.snapshot()) {
+					views.set(sessionId, {
+						config: state.config,
+						ownershipWarning: state.ownershipWarning,
+					});
+				}
+				return views;
+			},
+			fanInTracker: this.fanInTracker,
+			onDispatch: (ownerSessionId, sub, event, sourceSessionName, chainDepth) => {
+				this.dispatchService.dispatchSubscription(
+					ownerSessionId,
+					sub,
+					event,
+					sourceSessionName,
+					chainDepth
+				);
+			},
+			onLog: meteredOnLog,
+			maxChainDepth: MAX_CHAIN_DEPTH,
+		});
+		this.queryService = createCueQueryService({
+			enabled: () => this.enabled,
+			getAllSessions: () =>
+				deps.getSessions().map((session) => ({
+					id: session.id,
+					name: session.name,
+					toolType: session.toolType,
+					projectRoot: session.projectRoot,
+				})),
+			getSessionStates: () => this.registry.snapshot(),
+			getActiveRunCount: (sessionId) => this.runManager.getActiveRunCount(sessionId),
+			loadConfigForProjectRoot: loadCueConfig,
+		});
+		this.cleanupService = createCueCleanupService({
+			fanInTracker: this.fanInTracker,
+			registry: this.registry,
+			getSessions: () => deps.getSessions().map((s) => ({ id: s.id })),
+			getSessionTimeoutMs: (sessionId) => {
+				const state = this.registry.get(sessionId);
+				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
+			},
+			getCurrentMinute: () => {
+				const now = new Date();
+				return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+			},
+			onLog: meteredOnLog,
+		});
 		this.heartbeat = createCueHeartbeat({
-			onLog: deps.onLog,
+			onTick: () => this.cleanupService.onTick(),
+			// Route heartbeat-failure notifications through the metered log
+			// channel so the engine's recordMetricFromPayload bumps the
+			// heartbeatFailures counter exactly once per failure run.
+			onFailure: (payload) => {
+				this.meteredOnLog('warn', '[CUE] Heartbeat write failing', payload);
+			},
+		});
+		this.recoveryService = createCueRecoveryService({
+			onLog: meteredOnLog,
 			getSessions: () => {
 				const result = new Map<string, { config: CueConfig; sessionName: string }>();
 				const allSessions = deps.getSessions();
-				for (const [sessionId, state] of this.sessions) {
+				for (const [sessionId, state] of this.registry.snapshot()) {
 					const session = allSessions.find((s) => s.id === sessionId);
 					result.set(sessionId, {
 						config: state.config,
@@ -145,51 +363,83 @@ export class CueEngine {
 				return result;
 			},
 			onDispatch: (sessionId, sub, event) => {
-				this.dispatchSubscription(sessionId, sub, event, sessionId);
+				this.dispatchService.dispatchSubscription(sessionId, sub, event, sessionId);
 			},
 		});
 	}
 
-	/** Enable the engine and scan all sessions for Cue configs.
-	 *  @param isSystemBoot Pass `true` only at application launch (index.ts). When false (default),
-	 *  app.startup subscriptions will NOT fire — this prevents re-firing when the user toggles Cue on/off. */
-	start(isSystemBoot = false): void {
+	/**
+	 * Enable the engine and scan all sessions for Cue configs.
+	 *
+	 * @param reason Why the engine is starting. Determines whether `app.startup`
+	 *   subscriptions fire:
+	 *   - `'system-boot'`: used at Electron launch (index.ts) AND when the user
+	 *     enables Cue via the IPC handler (`cue:enable` calls
+	 *     `requireEngine().start('system-boot')`). app.startup subscriptions fire
+	 *     and are deduped per engine cycle (keys are cleared by stop()).
+	 *   - `'user-toggle'` (default): direct engine.start() call without an explicit
+	 *     reason (e.g. in tests or internal paths). app.startup does NOT fire —
+	 *     only IPC-driven enables and Electron launch use 'system-boot'.
+	 */
+	start(reason: SessionInitReason = 'user-toggle'): void {
 		if (this.enabled) return;
 
-		if (isSystemBoot) {
-			this.isBootScan = true;
-		}
-
-		// Initialize Cue database and prune old events — fail gracefully so app startup is not blocked
-		try {
-			initCueDb((level, msg) => this.deps.onLog(level as MainLogLevel, msg));
-			pruneCueEvents(EVENT_PRUNE_AGE_MS);
-		} catch (error) {
-			this.deps.onLog(
-				'error',
-				`[CUE] Failed to initialize Cue database — engine will not start: ${error}`
-			);
-			captureException(error instanceof Error ? error : new Error(String(error)), {
-				extra: { operation: 'cue.dbInit' },
-			});
-			this.isBootScan = false;
+		const initResult = this.recoveryService.init();
+		if (!initResult.ok) {
 			return;
 		}
 
+		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
-		this.deps.onLog('cue', '[CUE] Engine started');
+		// Reset metrics so startedAt reflects THIS start, not the collector's
+		// construction. Without this, startedAt is fixed at engine-instance
+		// creation time, making "uptime" rate calcs wrong across stop/start
+		// cycles within the same Electron process.
+		this.metrics.reset();
+		// Data payload triggers a renderer refresh via cue:activityUpdate,
+		// clearing any stale queue counters left over from a prior stop.
+		this.meteredOnLog('cue', '[CUE] Engine started', {
+			type: 'engineStarted',
+		} satisfies CueLogPayload);
 
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
-			this.initSession(session);
+			this.sessionRuntimeService.initSession(session, { reason });
 		}
 
-		// Boot scan complete — clear the flag so later refreshSession/initSession
-		// calls (YAML hot-reload, auto-discovery) don't fire app.startup subs
-		this.isBootScan = false;
+		// Phase 12A — restore persisted queue entries AFTER sessions are
+		// initialized (so registry.get(...) has their configs / timeout). Each
+		// entry is re-executed through the normal path so the run manager
+		// re-applies concurrency gating + re-persists with a new persist id.
+		// The prior persistId is discarded via remove() inside the restore
+		// helper's session-missing drop path (if applicable), or is discarded
+		// implicitly on re-enqueue since we never reuse the old id.
+		const restored = this.queuePersistence.restoreAll();
+		for (const [sessionId, entries] of restored) {
+			for (const entry of entries) {
+				// Remove the persisted row immediately — runManager.execute will
+				// re-persist with a fresh id when it re-queues (or dispatches
+				// immediately if a slot is available).
+				this.queuePersistence.remove(entry.persistId);
+				// Pass the original queuedAt so drainQueue's staleness check
+				// still reflects real user wait time, not the restart time.
+				this.runManager.execute(
+					sessionId,
+					entry.prompt,
+					entry.event,
+					entry.subscriptionName,
+					entry.outputPrompt,
+					entry.chainDepth,
+					entry.cliOutput,
+					entry.action,
+					entry.command,
+					entry.queuedAt
+				);
+			}
+		}
 
 		// Detect sleep gap from previous heartbeat
-		this.heartbeat.detectSleepAndReconcile();
+		this.recoveryService.detectSleepAndReconcile();
 
 		// Start heartbeat writer (30s interval)
 		this.heartbeat.start();
@@ -200,156 +450,57 @@ export class CueEngine {
 		if (!this.enabled) return;
 
 		this.enabled = false;
-		for (const [sessionId] of this.sessions) {
-			this.teardownSession(sessionId);
-		}
-		this.sessions.clear();
+		this.startReason = null;
+		this.sessionRuntimeService.clearAll();
+		// Clear startup dedup keys so that re-enabling Cue fires app.startup
+		// subscriptions again for the new engine cycle.
+		this.sessionRuntimeService.clearAllStartupKeys();
 
-		// Clean up pending yaml watchers (watching for config re-creation after deletion)
-		for (const [, cleanup] of this.pendingYamlWatchers) {
-			cleanup();
-		}
-		this.pendingYamlWatchers.clear();
-
-		// Clear concurrency and fan-in state
 		this.runManager.reset();
 		this.fanInTracker.reset();
-		this.scheduledFiredKeys.clear();
-		// NOTE: startupFiredKeys is NOT cleared here — it persists across engine stop/start
-		// cycles so that toggling Cue off/on does not re-fire app.startup subscriptions.
-		// It only resets when the Electron process restarts (new CueEngine instance).
 
-		// Stop heartbeat and close database
+		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
-		try {
-			closeCueDb();
-		} catch {
-			// Non-fatal — database may not have been initialized
-		}
+		this.recoveryService.shutdown();
+		this.metrics.reset();
 
-		this.deps.onLog('cue', '[CUE] Engine stopped');
+		// Data payload triggers a renderer refresh via cue:activityUpdate so
+		// the queue counters, active runs list, and indicators reflect the
+		// cleared engine state instead of waiting for the next 10s poll.
+		this.meteredOnLog('cue', '[CUE] Engine stopped', {
+			type: 'engineStopped',
+		} satisfies CueLogPayload);
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
 	refreshSession(sessionId: string, projectRoot: string): void {
-		const hadSession = this.sessions.has(sessionId);
-		this.teardownSession(sessionId);
-		this.sessions.delete(sessionId);
-
-		// Clean up any pending yaml watcher for this session
-		const pendingWatcher = this.pendingYamlWatchers.get(sessionId);
-		if (pendingWatcher) {
-			pendingWatcher();
-			this.pendingYamlWatchers.delete(sessionId);
-		}
-
-		const session = this.deps.getSessions().find((s) => s.id === sessionId);
-		if (!session) return;
-
-		this.initSession({ ...session, projectRoot });
-
-		const newState = this.sessions.get(sessionId);
-		if (newState) {
-			// Config was successfully reloaded
-			const activeCount = newState.config.subscriptions.filter((s) => s.enabled !== false).length;
-			this.deps.onLog(
+		// When the engine started with 'system-boot', sessions that arrive via
+		// refreshSession (the typical path at boot, since getSessions() is empty
+		// when start() fires) should still get their app.startup triggers.
+		const reason = this.startReason ?? 'refresh';
+		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		if (result.reloaded && result.sessionName) {
+			this.meteredOnLog(
 				'cue',
-				`[CUE] Config reloaded for "${session.name}" (${activeCount} subscriptions)`,
-				{ type: 'configReloaded', sessionId }
+				`[CUE] Config reloaded for "${result.sessionName}" (${result.activeCount ?? 0} subscriptions)`,
+				{ type: 'configReloaded', sessionId } satisfies CueLogPayload
 			);
-		} else if (hadSession) {
-			// Config was removed — keep watching for re-creation
-			const yamlWatcher = watchCueYaml(projectRoot, () => {
-				this.refreshSession(sessionId, projectRoot);
-			});
-			this.pendingYamlWatchers.set(sessionId, yamlWatcher);
-			this.deps.onLog('cue', `[CUE] Config removed for "${session.name}"`, {
+		} else if (result.configRemoved && result.sessionName) {
+			this.meteredOnLog('cue', `[CUE] Config removed for "${result.sessionName}"`, {
 				type: 'configRemoved',
 				sessionId,
-			});
+			} satisfies CueLogPayload);
 		}
 	}
 
 	/** Teardown all subscriptions for a session */
 	removeSession(sessionId: string): void {
-		this.teardownSession(sessionId);
-		this.sessions.delete(sessionId);
-		this.runManager.clearQueue(sessionId);
-
-		// Clear startup fired keys so re-adding this session will fire startup again
-		for (const key of this.startupFiredKeys) {
-			if (key.startsWith(`${sessionId}:`)) {
-				this.startupFiredKeys.delete(key);
-			}
-		}
-
-		const pendingWatcher = this.pendingYamlWatchers.get(sessionId);
-		if (pendingWatcher) {
-			pendingWatcher();
-			this.pendingYamlWatchers.delete(sessionId);
-		}
-
-		this.deps.onLog('cue', `[CUE] Session removed: ${sessionId}`);
+		this.sessionRuntimeService.removeSession(sessionId);
 	}
 
 	/** Returns status of all sessions with Cue configs */
-	getStatus(): CueSessionStatus[] {
-		const result: CueSessionStatus[] = [];
-		const allSessions = this.deps.getSessions();
-		const reportedSessionIds = new Set<string>();
-
-		// Report active sessions with live state
-		for (const [sessionId, state] of this.sessions) {
-			const session = allSessions.find((s) => s.id === sessionId);
-			if (!session) continue;
-
-			reportedSessionIds.add(sessionId);
-
-			const activeRunCount = this.runManager.getActiveRunCount(sessionId);
-
-			let nextTrigger: string | undefined;
-			if (state.nextTriggers.size > 0) {
-				const earliest = Math.min(...state.nextTriggers.values());
-				nextTrigger = new Date(earliest).toISOString();
-			}
-
-			result.push({
-				sessionId,
-				sessionName: session.name,
-				toolType: session.toolType,
-				projectRoot: session.projectRoot,
-				enabled: true,
-				subscriptionCount: state.config.subscriptions.filter(
-					(s) => s.enabled !== false && (!s.agent_id || s.agent_id === sessionId)
-				).length,
-				activeRuns: activeRunCount,
-				lastTriggered: state.lastTriggered,
-				nextTrigger,
-			});
-		}
-
-		// When engine is disabled, scan for sessions with cue configs on disk
-		if (!this.enabled) {
-			for (const session of allSessions) {
-				if (reportedSessionIds.has(session.id)) continue;
-				const config = loadCueConfig(session.projectRoot);
-				if (!config) continue;
-
-				result.push({
-					sessionId: session.id,
-					sessionName: session.name,
-					toolType: session.toolType,
-					projectRoot: session.projectRoot,
-					enabled: false,
-					subscriptionCount: config.subscriptions.filter(
-						(s) => s.enabled !== false && (!s.agent_id || s.agent_id === session.id)
-					).length,
-					activeRuns: 0,
-				});
-			}
-		}
-
-		return result;
+	getStatus() {
+		return this.queryService.getStatus();
 	}
 
 	/** Returns currently running Cue executions */
@@ -384,71 +535,231 @@ export class CueEngine {
 	}
 
 	/** Returns the merged Cue settings from the first available session config */
-	getSettings(): CueSettings {
-		for (const [, state] of this.sessions) {
-			return { ...state.config.settings };
-		}
-		return { ...DEFAULT_CUE_SETTINGS };
+	getSettings() {
+		return this.queryService.getSettings();
 	}
 
 	/** Returns all sessions with their parsed subscriptions (for graph visualization) */
-	getGraphData(): CueGraphSession[] {
-		const result: CueGraphSession[] = [];
-		const allSessions = this.deps.getSessions();
-		const reportedSessionIds = new Set<string>();
-
-		for (const [sessionId, state] of this.sessions) {
-			const session = allSessions.find((s) => s.id === sessionId);
-			if (!session) continue;
-
-			reportedSessionIds.add(sessionId);
-			result.push({
-				sessionId,
-				sessionName: session.name,
-				toolType: session.toolType,
-				subscriptions: state.config.subscriptions,
-			});
-		}
-
-		// When engine is disabled, scan for sessions with cue configs on disk
-		if (!this.enabled) {
-			for (const session of allSessions) {
-				if (reportedSessionIds.has(session.id)) continue;
-				const config = loadCueConfig(session.projectRoot);
-				if (!config) continue;
-
-				result.push({
-					sessionId: session.id,
-					sessionName: session.name,
-					toolType: session.toolType,
-					subscriptions: config.subscriptions,
-				});
-			}
-		}
-
-		return result;
+	getGraphData() {
+		return this.queryService.getGraphData();
 	}
 
 	/**
-	 * Manually trigger a subscription by name, bypassing its event conditions.
-	 * Creates a synthetic event and dispatches through the normal execution path.
-	 * Returns true if the subscription was found and triggered.
+	 * Phase 12D — returns fan-in subscriptions that have completed some sources
+	 * but are stalled past 50% of their configured timeout. Empty array means
+	 * healthy (or no active fan-in at all).
 	 */
-	triggerSubscription(subscriptionName: string): boolean {
-		for (const [sessionId, state] of this.sessions) {
+	getFanInHealth() {
+		return this.fanInTracker.checkHealth({
+			sessions: this.deps.getSessions(),
+			lookupSubscription: (key: string) => {
+				const colonIdx = key.indexOf(':');
+				if (colonIdx === -1) return null;
+				const ownerSessionId = key.slice(0, colonIdx);
+				const subName = key.slice(colonIdx + 1);
+				const state = this.registry.get(ownerSessionId);
+				if (!state) return null;
+				const sub = state.config.subscriptions?.find((s) => s.name === subName);
+				if (!sub) return null;
+				// Fan-in requires multiple sources; accept either the array or
+				// single-string form of `source_session`. Combine with any ID
+				// overrides present via `source_session_ids`. Single-source subs
+				// don't qualify as fan-in and return null.
+				const nameSources: string[] = Array.isArray(sub.source_session)
+					? sub.source_session
+					: sub.source_session
+						? [sub.source_session]
+						: [];
+				const idSources: string[] = Array.isArray(sub.source_session_ids)
+					? (sub.source_session_ids as string[])
+					: typeof sub.source_session_ids === 'string'
+						? [sub.source_session_ids as string]
+						: [];
+				const sources = [...nameSources, ...idSources];
+				if (sources.length < 2) return null;
+				return {
+					sub,
+					settings: state.config.settings ?? {},
+					sources,
+				};
+			},
+		});
+	}
+
+	/** Returns a snapshot of engine-level counters (runs, queue, fan-in, etc.). */
+	getMetrics(): CueMetrics {
+		return this.metrics.snapshot();
+	}
+
+	/** Testing/observability helper — expose the collector so subsystems can be
+	 * handed a bound increment function without leaking the engine instance. */
+	getMetricsCollector(): CueMetricsCollector {
+		return this.metrics;
+	}
+
+	/**
+	 * Translate structured onLog payloads into metric counter increments.
+	 * Kept as a single chokepoint so subsystems stay fully decoupled from the
+	 * metrics module — they emit typed CueLogPayload as normal; the engine
+	 * observes and counts.
+	 */
+	private recordMetricFromPayload(data: unknown): void {
+		if (!data || typeof data !== 'object') return;
+		const payload = data as { type?: unknown };
+		if (typeof payload.type !== 'string') return;
+		const typed = payload as { type: string; status?: string; count?: number };
+
+		switch (typed.type) {
+			case 'runStarted':
+				this.metrics.increment('runsStarted');
+				break;
+			case 'runFinished':
+				if (typed.status === 'completed') this.metrics.increment('runsCompleted');
+				else if (typed.status === 'failed') this.metrics.increment('runsFailed');
+				else if (typed.status === 'timeout') this.metrics.increment('runsTimedOut');
+				else if (typed.status === 'stopped') this.metrics.increment('runsStopped');
+				break;
+			case 'runStopped':
+				this.metrics.increment('runsStopped');
+				break;
+			case 'queueOverflow':
+				this.metrics.increment('eventsDropped');
+				break;
+			case 'queueRestored':
+				this.metrics.increment('queueRestored', typed.count ?? 0);
+				break;
+			case 'queueDropped':
+				this.metrics.increment('eventsDropped', typed.count ?? 0);
+				break;
+			case 'fanInTimeout':
+				this.metrics.increment('fanInTimeouts');
+				break;
+			case 'fanInComplete':
+				this.metrics.increment('fanInCompletions');
+				break;
+			case 'rateLimitBackoff':
+				this.metrics.increment('rateLimitBackoffs');
+				break;
+			case 'githubPollError':
+				this.metrics.increment('githubPollErrors');
+				break;
+			case 'heartbeatFailure':
+				this.metrics.increment('heartbeatFailures');
+				break;
+			case 'configReloaded':
+				this.metrics.increment('configReloads');
+				break;
+			case 'pathTraversalBlocked':
+				this.metrics.increment('pathTraversalsBlocked');
+				break;
+		}
+	}
+
+	/**
+	 * Manually trigger subscription(s) by name, bypassing event conditions.
+	 *
+	 * Resolution:
+	 *   1. Exact `sub.name` match — the anchor.
+	 *   2. If no exact match, treat `subscriptionName` as a `pipeline_name`
+	 *      and use the first initial-trigger sub in that pipeline as the
+	 *      anchor. This handles the pipeline-editor Play button case where
+	 *      a freshly-rebuilt (not-yet-reloaded) trigger node carries only
+	 *      `pipelineName` as its fire target — the serializer's per-branch
+	 *      emission doesn't guarantee any sub is named exactly `pipelineName`
+	 *      (command targets inherit their node's auto-generated name).
+	 *
+	 * Dispatch set:
+	 *   - Initial-trigger anchor (event !== 'agent.completed') with a
+	 *     known `pipeline_name` → fire every sibling sub that shares
+	 *     `pipeline_name` + identical event config. A natural scheduled
+	 *     tick arms each parallel branch sub independently and fires them
+	 *     all simultaneously; manual trigger mirrors that so a fan-out to
+	 *     [Cmd1, Cmd2] fires both commands in one click instead of one.
+	 *   - Chain-sub anchor (agent.completed), OR legacy sub with no
+	 *     `pipeline_name`, OR a `promptOverride` is present → anchor-only.
+	 *     A prompt override is a targeted CLI feature; applying it to
+	 *     unrelated siblings would surprise the caller.
+	 *
+	 * Returns true iff at least one dispatch actually queued a run. Returns
+	 * false when no anchor was found OR every dispatch in the group was
+	 * skipped (empty prompts, missing target sessions, etc.) so the UI can
+	 * surface "didn't run" instead of letting a silent no-op look like
+	 * success.
+	 */
+	triggerSubscription(
+		subscriptionName: string,
+		promptOverride?: string,
+		sourceAgentId?: string
+	): boolean {
+		type OwnedSub = {
+			ownerSessionId: string;
+			state: SessionState;
+			sub: CueSubscription;
+		};
+
+		// Collect every sub the current session scope owns. A sub is owned
+		// by its `agent_id` session when set; unbound subs are owned by
+		// whichever registry entry contains them (filter preserves
+		// existing semantics).
+		const ownedSubs: OwnedSub[] = [];
+		for (const [sessionId, state] of this.registry.snapshot()) {
 			for (const sub of state.config.subscriptions) {
-				if (sub.name !== subscriptionName) continue;
 				if (sub.agent_id && sub.agent_id !== sessionId) continue;
-
-				const event = createCueEvent(sub.event, sub.name, { manual: true });
-
-				this.deps.onLog('cue', `[CUE] "${sub.name}" manually triggered`);
-				state.lastTriggered = event.timestamp;
-				this.dispatchSubscription(sessionId, sub, event, 'manual');
-				return true;
+				ownedSubs.push({ ownerSessionId: sessionId, state, sub });
 			}
 		}
-		return false;
+
+		// Anchor resolution: exact name, then `pipeline_name` fallback.
+		let anchor = ownedSubs.find((x) => x.sub.name === subscriptionName);
+		if (!anchor) {
+			anchor = ownedSubs.find(
+				(x) => x.sub.pipeline_name === subscriptionName && x.sub.event !== 'agent.completed'
+			);
+		}
+		if (!anchor) return false;
+
+		// Decide whether to fire the sibling group or just the anchor.
+		// See method docstring for the rationale on each condition.
+		const shouldFireGroup =
+			anchor.sub.event !== 'agent.completed' && !!anchor.sub.pipeline_name && !promptOverride;
+
+		let toDispatch: OwnedSub[];
+		if (shouldFireGroup) {
+			const anchorKey = triggerGroupKey(anchor.sub);
+			toDispatch = ownedSubs.filter(
+				(x) =>
+					x.sub.pipeline_name === anchor!.sub.pipeline_name &&
+					x.sub.event !== 'agent.completed' &&
+					triggerGroupKey(x.sub) === anchorKey
+			);
+		} else {
+			toDispatch = [anchor];
+		}
+
+		let totalDispatched = 0;
+		for (const { ownerSessionId, state, sub } of toDispatch) {
+			const event = createCueEvent(sub.event, sub.name, {
+				manual: true,
+				...(sourceAgentId ? { sourceAgentId } : {}),
+				...(promptOverride ? { cliPrompt: promptOverride } : {}),
+			});
+
+			this.deps.onLog(
+				'cue',
+				`[CUE] "${sub.name}" manually triggered${promptOverride ? ' (with prompt override)' : ''}`
+			);
+			state.lastTriggered = event.timestamp;
+			const dispatched = this.dispatchService.dispatchSubscription(
+				ownerSessionId,
+				sub,
+				event,
+				'manual',
+				undefined,
+				promptOverride
+			);
+			if (dispatched > 0) totalDispatched++;
+		}
+		return totalDispatched > 0;
 	}
 
 	/** Clears queued events for a session */
@@ -461,118 +772,12 @@ export class CueEngine {
 	 * Used to avoid emitting completion events for sessions nobody cares about.
 	 */
 	hasCompletionSubscribers(sessionId: string): boolean {
-		if (!this.enabled) return false;
-
-		const allSessions = this.deps.getSessions();
-		const completingSession = allSessions.find((s) => s.id === sessionId);
-		const completingName = completingSession?.name ?? sessionId;
-
-		for (const [ownerSessionId, state] of this.sessions) {
-			for (const sub of state.config.subscriptions) {
-				if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
-				if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
-
-				const sources = Array.isArray(sub.source_session)
-					? sub.source_session
-					: sub.source_session
-						? [sub.source_session]
-						: [];
-
-				if (sources.some((src) => src === sessionId || src === completingName)) {
-					return true;
-				}
-			}
-		}
-
-		return false;
+		return this.completionService.hasCompletionSubscribers(sessionId);
 	}
 
 	/** Notify the engine that an agent session has completed (for agent.completed triggers) */
 	notifyAgentCompleted(sessionId: string, completionData?: AgentCompletionData): void {
-		if (!this.enabled) return;
-
-		// Guard against infinite chain loops (A triggers B triggers A).
-		// chainDepth is propagated through AgentCompletionData so it persists across async hops.
-		const chainDepth = completionData?.chainDepth ?? 0;
-		if (chainDepth >= MAX_CHAIN_DEPTH) {
-			this.deps.onLog(
-				'error',
-				`[CUE] Max chain depth (${MAX_CHAIN_DEPTH}) exceeded — aborting to prevent infinite loop`
-			);
-			return;
-		}
-
-		// Resolve the completing session's name for matching
-		const allSessions = this.deps.getSessions();
-		const completingSession = allSessions.find((s) => s.id === sessionId);
-		const completingName = completionData?.sessionName ?? completingSession?.name ?? sessionId;
-
-		for (const [ownerSessionId, state] of this.sessions) {
-			for (const sub of state.config.subscriptions) {
-				if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
-				if (sub.agent_id && sub.agent_id !== ownerSessionId) continue;
-
-				const sources = Array.isArray(sub.source_session)
-					? sub.source_session
-					: sub.source_session
-						? [sub.source_session]
-						: [];
-
-				// Match by session name or ID
-				if (!sources.some((src) => src === sessionId || src === completingName)) continue;
-
-				if (sources.length === 1) {
-					// Single source — fire immediately.
-					//
-					// INVARIANT: sourceOutput is built EXCLUSIVELY from
-					// completionData.stdout. There must NEVER be a fallback to any
-					// session-level output store, group-chat output buffer, or live
-					// process buffer. Adding such a fallback would leak whatever the
-					// caller's session buffer happens to contain (including group-chat
-					// transcripts when the source session is also a group-chat
-					// participant) into the downstream {{CUE_SOURCE_OUTPUT}} template.
-					// The exit-listener path (process-listeners/exit-listener.ts)
-					// passes only { status, exitCode } → sourceOutput = ''.
-					// The self-loop path (cue-engine.ts onRunCompleted) passes the
-					// cue-spawned run's own extractCleanStdout() result, which is the
-					// ONLY sanctioned way stdout reaches this field.
-					const rawStdout = completionData?.stdout ?? '';
-					const event = createCueEvent('agent.completed', sub.name, {
-						sourceSession: completingName,
-						sourceSessionId: sessionId,
-						status: completionData?.status ?? 'completed',
-						exitCode: completionData?.exitCode ?? null,
-						durationMs: completionData?.durationMs ?? 0,
-						sourceOutput: rawStdout.slice(-SOURCE_OUTPUT_MAX_CHARS),
-						outputTruncated: rawStdout.length > SOURCE_OUTPUT_MAX_CHARS,
-						triggeredBy: completionData?.triggeredBy,
-					});
-
-					// Check payload filter
-					if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
-						this.deps.onLog(
-							'cue',
-							`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
-						);
-						continue;
-					}
-
-					this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed)`);
-					this.dispatchSubscription(ownerSessionId, sub, event, completingName, chainDepth);
-				} else {
-					// Fan-in: track completions with data
-					this.fanInTracker.handleCompletion(
-						ownerSessionId,
-						state.config.settings,
-						sub,
-						sources,
-						sessionId,
-						completingName,
-						completionData
-					);
-				}
-			}
-		}
+		this.completionService.notifyAgentCompleted(sessionId, completionData);
 	}
 
 	/** Clear all fan-in state for a session (when Cue is disabled or session removed) */
@@ -580,228 +785,7 @@ export class CueEngine {
 		this.fanInTracker.clearForSession(sessionId);
 	}
 
-	// --- Private methods ---
-
-	/**
-	 * Dispatch a subscription, handling fan-out if configured.
-	 * If the subscription has fan_out targets, fires against each target session.
-	 * Otherwise fires against the owner session.
-	 */
-	private dispatchSubscription(
-		ownerSessionId: string,
-		sub: CueSubscription,
-		event: CueEvent,
-		sourceSessionName: string,
-		chainDepth?: number
-	): void {
-		if (sub.fan_out && sub.fan_out.length > 0) {
-			// Fan-out: fire against each target session
-			const targetNames = sub.fan_out.join(', ');
-			this.deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
-
-			const allSessions = this.deps.getSessions();
-			for (let i = 0; i < sub.fan_out.length; i++) {
-				const targetName = sub.fan_out[i];
-				const targetSession = allSessions.find((s) => s.name === targetName || s.id === targetName);
-
-				if (!targetSession) {
-					this.deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" — skipping`);
-					continue;
-				}
-
-				const fanOutEvent: CueEvent = {
-					...event,
-					id: crypto.randomUUID(),
-					payload: {
-						...event.payload,
-						fanOutSource: sourceSessionName,
-						fanOutIndex: i,
-					},
-				};
-				const perTargetPrompt = sub.fan_out_prompts?.[i];
-				const prompt = perTargetPrompt || sub.prompt_file || sub.prompt;
-				this.runManager.execute(
-					targetSession.id,
-					prompt,
-					fanOutEvent,
-					sub.name,
-					sub.output_prompt,
-					chainDepth
-				);
-			}
-		} else {
-			this.runManager.execute(
-				ownerSessionId,
-				sub.prompt_file ?? sub.prompt,
-				event,
-				sub.name,
-				sub.output_prompt,
-				chainDepth
-			);
-		}
-	}
-
-	private initSession(session: SessionInfo): void {
-		if (!this.enabled) return;
-
-		const config = loadCueConfig(session.projectRoot);
-		if (!config) return;
-
-		const state: SessionState = {
-			config,
-			timers: [],
-			watchers: [],
-			yamlWatcher: null,
-			nextTriggers: new Map(),
-		};
-
-		// Watch the YAML file for changes (hot reload)
-		state.yamlWatcher = watchCueYaml(session.projectRoot, () => {
-			this.refreshSession(session.id, session.projectRoot);
-		});
-
-		// Warn about missing prompt files at setup time (not just at execution time)
-		for (const sub of config.subscriptions) {
-			if (sub.enabled === false) continue;
-			if (sub.agent_id && sub.agent_id !== session.id) continue;
-			if (sub.prompt_file && !sub.prompt) {
-				this.deps.onLog(
-					'warn',
-					`[CUE] "${sub.name}" has prompt_file "${sub.prompt_file}" but the file was not found — subscription will fail on trigger`
-				);
-			}
-			if (sub.output_prompt_file && !sub.output_prompt) {
-				this.deps.onLog(
-					'warn',
-					`[CUE] "${sub.name}" has output_prompt_file "${sub.output_prompt_file}" but the file was not found`
-				);
-			}
-		}
-
-		// Set up subscriptions
-		const setupDeps: SubscriptionSetupDeps = {
-			enabled: () => this.enabled,
-			scheduledFiredKeys: this.scheduledFiredKeys,
-			onLog: this.deps.onLog,
-			executeCueRun: (sid, prompt, event, subName, outputPrompt) => {
-				this.runManager.execute(sid, prompt, event, subName, outputPrompt);
-			},
-		};
-
-		for (const sub of config.subscriptions) {
-			if (sub.enabled === false) continue;
-			// Skip subscriptions bound to a different agent
-			if (sub.agent_id && sub.agent_id !== session.id) continue;
-
-			if (sub.event === 'time.heartbeat' && sub.interval_minutes) {
-				setupHeartbeatSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'time.scheduled' && sub.schedule_times?.length) {
-				setupScheduledSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'file.changed' && sub.watch) {
-				setupFileWatcherSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'task.pending' && sub.watch) {
-				setupTaskScannerSubscription(setupDeps, session, state, sub);
-			} else if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
-				setupGitHubPollerSubscription(setupDeps, session, state, sub);
-			}
-			// agent.completed subscriptions are handled reactively via notifyAgentCompleted
-		}
-
-		// Fire app.startup subscriptions (once per system boot, deduplicated across hot-reloads and feature toggles)
-		for (const sub of config.subscriptions) {
-			if (sub.enabled === false) continue;
-			if (sub.agent_id && sub.agent_id !== session.id) continue;
-			if (sub.event !== 'app.startup') continue;
-
-			// Only fire during the initial boot scan (app launch), not on later refreshSession/feature toggle
-			if (!this.isBootScan) continue;
-
-			const firedKey = `${session.id}:${sub.name}`;
-			if (this.startupFiredKeys.has(firedKey)) continue;
-			this.startupFiredKeys.add(firedKey);
-
-			const event = createCueEvent('app.startup', sub.name, {
-				reason: 'system_startup',
-			});
-
-			// Check payload filter
-			if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
-				this.deps.onLog(
-					'cue',
-					`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
-				);
-				continue;
-			}
-
-			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (app.startup)`);
-			state.lastTriggered = event.timestamp;
-			this.dispatchSubscription(session.id, sub, event, session.name);
-		}
-
-		this.sessions.set(session.id, state);
-
-		// Prevent system sleep if this session has time-based subscriptions
-		if (this.hasTimeBasedSubscriptions(config, session.id)) {
-			this.deps.onPreventSleep?.(`cue:schedule:${session.id}`);
-		}
-
-		this.deps.onLog(
-			'cue',
-			`[CUE] Initialized session "${session.name}" with ${config.subscriptions.filter((s) => s.enabled !== false).length} active subscription(s)`
-		);
-	}
-
 	private pushActivityLog(result: CueRunResult): void {
 		this.activityLog.push(result);
-	}
-
-	/** Check if a config has any enabled time-based subscriptions that will actually schedule timers */
-	private hasTimeBasedSubscriptions(config: CueConfig, sessionId: string): boolean {
-		return config.subscriptions.some(
-			(sub) =>
-				sub.enabled !== false &&
-				(!sub.agent_id || sub.agent_id === sessionId) &&
-				((sub.event === 'time.heartbeat' &&
-					typeof sub.interval_minutes === 'number' &&
-					sub.interval_minutes > 0) ||
-					(sub.event === 'time.scheduled' &&
-						Array.isArray(sub.schedule_times) &&
-						sub.schedule_times.length > 0))
-		);
-	}
-
-	private teardownSession(sessionId: string): void {
-		const state = this.sessions.get(sessionId);
-		if (!state) return;
-
-		// Release sleep prevention for this session's scheduled subscriptions
-		this.deps.onAllowSleep?.(`cue:schedule:${sessionId}`);
-
-		for (const timer of state.timers) {
-			clearInterval(timer);
-		}
-		for (const cleanup of state.watchers) {
-			cleanup();
-		}
-		if (state.yamlWatcher) {
-			state.yamlWatcher();
-		}
-
-		// Clean up fan-in trackers and timers for this session
-		this.clearFanInState(sessionId);
-
-		// Clean up queued events for this session (prevents stale events after config reload)
-		// Preserve app.startup events — they are one-time boot intents that should survive
-		// config hot-reloads (e.g., OneDrive touching the YAML file during the boot scan).
-		this.clearQueue(sessionId, /* preserveStartup */ true);
-
-		// Clean up scheduledFiredKeys for this session's subscriptions
-		for (const sub of state.config.subscriptions) {
-			for (const key of this.scheduledFiredKeys) {
-				if (key.startsWith(`${sessionId}:${sub.name}:`)) {
-					this.scheduledFiredKeys.delete(key);
-				}
-			}
-		}
 	}
 }

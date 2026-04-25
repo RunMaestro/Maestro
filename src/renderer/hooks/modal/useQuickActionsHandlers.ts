@@ -14,7 +14,7 @@
  */
 
 import { useCallback } from 'react';
-import type { ThinkingMode } from '../../types';
+import type { Session, ThinkingMode, UnifiedTabRef } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -28,6 +28,8 @@ import type { RightPanelHandle } from '../../components/RightPanel';
 export interface UseQuickActionsHandlersDeps {
 	/** Refresh file tree and git state for a session */
 	refreshGitFileState: (sessionId: string) => Promise<void>;
+	/** Scan worktree directories for additions and removals */
+	refreshWorktreeState: () => Promise<void>;
 	/** Ref to main panel component */
 	mainPanelRef: React.RefObject<MainPanelHandle | null>;
 	/** Ref to right panel component */
@@ -36,6 +38,16 @@ export interface UseQuickActionsHandlersDeps {
 	handleSummarizeAndContinue: () => void;
 	/** Process a queued execution item */
 	processQueuedItem: (sessionId: string, item: any) => Promise<void>;
+	/** Close the current tab */
+	handleCloseCurrentTab: () => void;
+	/** Reorder unified tabs (AI + file + terminal tabs) */
+	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	/** Copy tab context to clipboard */
+	handleCopyContext: (tabId: string) => void;
+	/** Export tab as HTML */
+	handleExportHtml: (tabId: string) => Promise<void>;
+	/** Publish tab as GitHub Gist */
+	handlePublishTabGist: (tabId: string) => void;
 }
 
 // ============================================================================
@@ -59,21 +71,56 @@ export interface UseQuickActionsHandlersReturn {
 	handleQuickActionsAutoRunResetTasks: () => void;
 	/** Clear the active terminal xterm buffer */
 	handleQuickActionsClearActiveTerminal: () => void;
+	/** Close the current tab */
+	handleQuickActionsCloseCurrentTab: () => void;
+	/** Move current tab to first position */
+	handleQuickActionsMoveTabToFirst: () => void;
+	/** Move current tab to last position */
+	handleQuickActionsMoveTabToLast: () => void;
+	/** Copy active tab context to clipboard */
+	handleQuickActionsCopyTabContext: (tabId: string) => void;
+	/** Export active tab as HTML */
+	handleQuickActionsExportTabHtml: (tabId: string) => Promise<void>;
+	/** Publish active tab as GitHub Gist */
+	handleQuickActionsPublishTabGist: (tabId: string) => void;
 }
 
 // ============================================================================
 // Hook implementation
 // ============================================================================
 
+/** Returns the UnifiedTabRef for the currently active tab (AI, file, terminal, or browser). */
+function getActiveUnifiedRef(session: Session): UnifiedTabRef | null {
+	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
+		return { type: 'terminal', id: session.activeTerminalTabId };
+	}
+	if (session.activeFileTabId) {
+		return { type: 'file', id: session.activeFileTabId };
+	}
+	if (session.activeBrowserTabId) {
+		return { type: 'browser', id: session.activeBrowserTabId };
+	}
+	if (session.activeTabId) {
+		return { type: 'ai', id: session.activeTabId };
+	}
+	return null;
+}
+
 export function useQuickActionsHandlers(
 	deps: UseQuickActionsHandlersDeps
 ): UseQuickActionsHandlersReturn {
 	const {
 		refreshGitFileState,
+		refreshWorktreeState,
 		mainPanelRef,
 		rightPanelRef,
 		handleSummarizeAndContinue,
 		processQueuedItem,
+		handleCloseCurrentTab,
+		handleUnifiedTabReorder,
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
 	} = deps;
 
 	// --- Reactive subscriptions ---
@@ -137,14 +184,12 @@ export function useQuickActionsHandlers(
 
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
 		if (activeSessionId) {
-			// Refresh file tree, branches/tags, and history
-			await refreshGitFileState(activeSessionId);
-			// Also refresh git info in main panel header (branch, ahead/behind, uncommitted)
+			await Promise.all([refreshGitFileState(activeSessionId), refreshWorktreeState()]);
 			await mainPanelRef.current?.refreshGitInfo();
 			setSuccessFlashNotification('Files, Git, History Refreshed');
 			setTimeout(() => setSuccessFlashNotification(null), 2000);
 		}
-	}, [activeSessionId, refreshGitFileState]);
+	}, [activeSessionId, refreshGitFileState, refreshWorktreeState]);
 
 	const handleQuickActionsDebugReleaseQueuedItem = useCallback(() => {
 		if (!activeSession || activeSession.executionQueue.length === 0) return;
@@ -184,6 +229,50 @@ export function useQuickActionsHandlers(
 		mainPanelRef.current?.clearActiveTerminal();
 	}, []);
 
+	const handleQuickActionsCloseCurrentTab = useCallback(() => {
+		handleCloseCurrentTab();
+	}, [handleCloseCurrentTab]);
+
+	const handleQuickActionsMoveTabToFirst = useCallback(() => {
+		if (!activeSession) return;
+		// Find the active tab's index in the unified tab order (supports AI, file, and terminal tabs)
+		const activeRef = getActiveUnifiedRef(activeSession);
+		if (!activeRef) return;
+		const idx = activeSession.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (idx > 0) {
+			handleUnifiedTabReorder(idx, 0);
+		}
+	}, [activeSession, handleUnifiedTabReorder]);
+
+	const handleQuickActionsMoveTabToLast = useCallback(() => {
+		if (!activeSession) return;
+		const activeRef = getActiveUnifiedRef(activeSession);
+		if (!activeRef) return;
+		const idx = activeSession.unifiedTabOrder.findIndex(
+			(ref) => ref.type === activeRef.type && ref.id === activeRef.id
+		);
+		if (idx >= 0 && idx < activeSession.unifiedTabOrder.length - 1) {
+			handleUnifiedTabReorder(idx, activeSession.unifiedTabOrder.length - 1);
+		}
+	}, [activeSession, handleUnifiedTabReorder]);
+
+	const handleQuickActionsCopyTabContext = useCallback(
+		(tabId: string) => handleCopyContext(tabId),
+		[handleCopyContext]
+	);
+
+	const handleQuickActionsExportTabHtml = useCallback(
+		(tabId: string) => handleExportHtml(tabId),
+		[handleExportHtml]
+	);
+
+	const handleQuickActionsPublishTabGist = useCallback(
+		(tabId: string) => handlePublishTabGist(tabId),
+		[handlePublishTabGist]
+	);
+
 	return {
 		handleQuickActionsToggleReadOnlyMode,
 		handleQuickActionsToggleTabShowThinking,
@@ -193,5 +282,11 @@ export function useQuickActionsHandlers(
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
 		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsCloseCurrentTab,
+		handleQuickActionsMoveTabToFirst,
+		handleQuickActionsMoveTabToLast,
+		handleQuickActionsCopyTabContext,
+		handleQuickActionsExportTabHtml,
+		handleQuickActionsPublishTabGist,
 	};
 }

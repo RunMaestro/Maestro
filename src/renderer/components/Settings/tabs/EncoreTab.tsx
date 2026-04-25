@@ -898,23 +898,9 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										customPath={ac.customPath}
 										onCustomPathChange={ac.setCustomPath}
 										onCustomPathBlur={persistDnCustomConfig}
-										onCustomPathClear={() => {
-											ac.setCustomPath('');
-											setDirectorNotesSettings({
-												...directorNotesSettings,
-												customPath: undefined,
-											});
-										}}
 										customArgs={ac.customArgs}
 										onCustomArgsChange={ac.setCustomArgs}
 										onCustomArgsBlur={persistDnCustomConfig}
-										onCustomArgsClear={() => {
-											ac.setCustomArgs('');
-											setDirectorNotesSettings({
-												...directorNotesSettings,
-												customArgs: undefined,
-											});
-										}}
 										customEnvVars={ac.customEnvVars}
 										onEnvVarKeyChange={(oldKey, newKey, value) => {
 											const newVars = { ...ac.customEnvVars };

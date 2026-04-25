@@ -8,11 +8,12 @@
  * Side effects (logging, audio TTS, OS notifications, auto-dismiss timers)
  * live in the notifyToast() wrapper function, not in the store itself.
  *
- * Can be used outside React via getNotificationState() / getNotificationActions().
+ * Can be used outside React via useNotificationStore.getState().
  * notifyToast() is callable from anywhere (React components, services, orchestrators).
  */
 
 import { create } from 'zustand';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -48,6 +49,8 @@ export interface NotificationConfig {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	osNotificationsEnabled: boolean;
+	idleNotificationEnabled: boolean;
+	idleNotificationCommand: string;
 }
 
 // ============================================================================
@@ -72,6 +75,8 @@ export interface NotificationStoreActions {
 	setAudioFeedback: (enabled: boolean, command: string) => void;
 	/** Configure OS desktop notifications. */
 	setOsNotifications: (enabled: boolean) => void;
+	/** Configure idle notification (fires when all agents/batches stop). */
+	setIdleNotification: (enabled: boolean, command: string) => void;
 }
 
 export type NotificationStore = NotificationStoreState & NotificationStoreActions;
@@ -79,14 +84,6 @@ export type NotificationStore = NotificationStoreState & NotificationStoreAction
 // ============================================================================
 // Selectors
 // ============================================================================
-
-export function selectToasts(s: NotificationStoreState): Toast[] {
-	return s.toasts;
-}
-
-export function selectToastCount(s: NotificationStoreState): number {
-	return s.toasts.length;
-}
 
 export function selectConfig(s: NotificationStoreState): NotificationConfig {
 	return s.config;
@@ -104,6 +101,8 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: '',
 		osNotificationsEnabled: true,
+		idleNotificationEnabled: false,
+		idleNotificationCommand: '',
 	},
 
 	// --- Toast CRUD ---
@@ -137,6 +136,11 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 
 	setOsNotifications: (enabled) =>
 		set((s) => ({ config: { ...s.config, osNotificationsEnabled: enabled } })),
+
+	setIdleNotification: (enabled, command) =>
+		set((s) => ({
+			config: { ...s.config, idleNotificationEnabled: enabled, idleNotificationCommand: command },
+		})),
 }));
 
 // ============================================================================
@@ -147,11 +151,6 @@ let toastIdCounter = 0;
 
 /** Active auto-dismiss timers keyed by toast ID. Cleared on manual removal. */
 const autoDismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** Reset the toast ID counter (for tests). */
-export function resetToastIdCounter(): void {
-	toastIdCounter = 0;
-}
 
 /**
  * Fire a toast notification. Handles:
@@ -239,7 +238,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	if (willTriggerCustomNotification) {
 		if (typeof window !== 'undefined' && window.maestro?.notification?.speak) {
 			window.maestro.notification.speak(toast.message, config.audioFeedbackCommand).catch((err) => {
-				console.error('[notificationStore] Custom notification failed:', err);
+				logger.error('[notificationStore] Custom notification failed:', undefined, err);
 			});
 		}
 	}
@@ -272,7 +271,7 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 			window.maestro.notification
 				.show(notifTitle, notifBody, toast.sessionId, toast.tabId)
 				.catch((err) => {
-					console.error('[notificationStore] Failed to show OS notification:', err);
+					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
 				});
 		}
 	}
@@ -287,31 +286,4 @@ export function notifyToast(toast: Omit<Toast, 'id' | 'timestamp'>): string {
 	}
 
 	return id;
-}
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current notification state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getNotificationState() {
-	return useNotificationStore.getState();
-}
-
-/**
- * Get stable notification action references outside React.
- */
-export function getNotificationActions() {
-	const state = useNotificationStore.getState();
-	return {
-		addToast: state.addToast,
-		removeToast: state.removeToast,
-		clearToasts: state.clearToasts,
-		setDefaultDuration: state.setDefaultDuration,
-		setAudioFeedback: state.setAudioFeedback,
-		setOsNotifications: state.setOsNotifications,
-	};
 }

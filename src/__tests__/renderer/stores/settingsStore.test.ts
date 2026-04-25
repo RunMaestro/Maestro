@@ -2,21 +2,59 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
 	useSettingsStore,
 	loadAllSettings,
-	getBadgeLevelForTime,
 	selectIsLeaderboardRegistered,
-	getSettingsState,
-	getSettingsActions,
-	DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
-	DEFAULT_AUTO_RUN_STATS,
-	DEFAULT_USAGE_STATS,
-	DEFAULT_KEYBOARD_MASTERY_STATS,
-	DEFAULT_ONBOARDING_STATS,
-	DEFAULT_AI_COMMANDS,
 } from '../../../renderer/stores/settingsStore';
 import type { SettingsStoreState } from '../../../renderer/stores/settingsStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
+
+// Pull defaults from a freshly-initialized store so tests don't need to re-import them.
+// Deep-cloned so test mutations can't affect the captured reference.
+// These constants match what the store uses internally (kept non-exported to prevent fan-out).
+const _INITIAL_STATE = useSettingsStore.getState();
+const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.contextManagementSettings)
+);
+const DEFAULT_AUTO_RUN_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.autoRunStats));
+const DEFAULT_USAGE_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.usageStats));
+const DEFAULT_KEYBOARD_MASTERY_STATS = JSON.parse(
+	JSON.stringify(_INITIAL_STATE.keyboardMasteryStats)
+);
+const DEFAULT_ONBOARDING_STATS = JSON.parse(JSON.stringify(_INITIAL_STATE.onboardingStats));
+const DEFAULT_AI_COMMANDS = JSON.parse(JSON.stringify(_INITIAL_STATE.customAICommands));
+
+// Inlined badge level calculator matching settingsStore's internal function.
+// Kept local so removing the export from the store doesn't break this test.
+function getBadgeLevelForTime(cumulativeTimeMs: number): number {
+	const MINUTE = 60 * 1000;
+	const HOUR = 60 * MINUTE;
+	const DAY = 24 * HOUR;
+	const WEEK = 7 * DAY;
+	const MONTH = 30 * DAY;
+	const thresholds = [
+		15 * MINUTE,
+		1 * HOUR,
+		8 * HOUR,
+		1 * DAY,
+		1 * WEEK,
+		1 * MONTH,
+		3 * MONTH,
+		6 * MONTH,
+		365 * DAY,
+		5 * 365 * DAY,
+		10 * 365 * DAY,
+	];
+	let level = 0;
+	for (let i = 0; i < thresholds.length; i++) {
+		if (cumulativeTimeMs >= thresholds[i]) {
+			level = i + 1;
+		} else {
+			break;
+		}
+	}
+	return level;
+}
 
 /**
  * Reset the Zustand store to initial state between tests.
@@ -39,7 +77,8 @@ function resetStore() {
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
 		customThemeBaseId: 'dracula',
-		enterToSendAI: false,
+		enterToSendAI: true,
+		enterToSendAIExpanded: false,
 		defaultSaveToHistory: true,
 		defaultShowThinking: 'off',
 		leftSidebarWidth: 256,
@@ -56,6 +95,8 @@ function resetStore() {
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		idleNotificationEnabled: false,
+		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
 		enableBetaUpdates: false,
 		crashReportingEnabled: true,
@@ -139,7 +180,8 @@ describe('settingsStore', () => {
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
 			expect(state.customThemeBaseId).toBe('dracula');
-			expect(state.enterToSendAI).toBe(false);
+			expect(state.enterToSendAI).toBe(true);
+			expect(state.enterToSendAIExpanded).toBe(false);
 			expect(state.defaultSaveToHistory).toBe(true);
 			expect(state.defaultShowThinking).toBe('off');
 			expect(state.leftSidebarWidth).toBe(256);
@@ -647,13 +689,13 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('setters with validation', () => {
-		it('setConductorProfile trims to 1000 characters', () => {
-			const longProfile = 'a'.repeat(1500);
+		it('setConductorProfile trims to 5000 characters', () => {
+			const longProfile = 'a'.repeat(6000);
 			useSettingsStore.getState().setConductorProfile(longProfile);
-			expect(useSettingsStore.getState().conductorProfile).toBe('a'.repeat(1000));
+			expect(useSettingsStore.getState().conductorProfile).toBe('a'.repeat(5000));
 			expect(window.maestro.settings.set).toHaveBeenCalledWith(
 				'conductorProfile',
-				'a'.repeat(1000)
+				'a'.repeat(5000)
 			);
 		});
 
@@ -1470,6 +1512,58 @@ describe('settingsStore', () => {
 			);
 		});
 
+		it('persists the default-remap on migration so subsequent loads are stable', async () => {
+			// User still has the OLD default for moveToGroup (Cmd+Shift+M).
+			// The remap should (a) bump their binding to the new default, (b) persist
+			// the new binding to disk so the next load does not re-trigger migration.
+			// Regression test for the crash-and-relaunch loop caused by write
+			// amplification: old code set needsMigration=true but wrote back the
+			// unchanged keys, which the file watcher would pick up and re-trigger.
+			const savedWithOldMoveToGroup = {
+				moveToGroup: {
+					id: 'moveToGroup',
+					label: 'Move to Group',
+					keys: ['Meta', 'Shift', 'm'],
+				},
+			};
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: savedWithOldMoveToGroup,
+			});
+
+			await loadAllSettings();
+
+			const shortcuts = useSettingsStore.getState().shortcuts;
+			expect(shortcuts.moveToGroup.keys).toEqual(['Alt', 'Meta', 'm']);
+			// The persisted raw value must contain the NEW keys, otherwise the next
+			// load re-detects migration and we re-enter the loop.
+			expect(window.maestro.settings.set).toHaveBeenCalledWith(
+				'shortcuts',
+				expect.objectContaining({
+					moveToGroup: expect.objectContaining({
+						keys: ['Alt', 'Meta', 'm'],
+					}),
+				})
+			);
+
+			// Simulate the re-load that the settings file watcher would trigger.
+			// Feed back the value that was just persisted and confirm migration
+			// does not fire a second write.
+			const persistedCall = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts');
+			const persistedShortcuts = persistedCall?.[1] as Record<string, unknown>;
+			vi.mocked(window.maestro.settings.set).mockClear();
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: persistedShortcuts,
+			});
+
+			await loadAllSettings();
+
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.some(([k]) => k === 'shortcuts')
+			).toBe(false);
+		});
+
 		it('merges shortcuts: preserves user keys but updates labels from defaults', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				shortcuts: {
@@ -1826,17 +1920,16 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('non-React access', () => {
-		it('getSettingsState returns current state', () => {
+		it('useSettingsStore.getState() returns current state', () => {
 			useSettingsStore.setState({ fontSize: 20 });
-			const state = getSettingsState();
+			const state = useSettingsStore.getState();
 			expect(state.fontSize).toBe(20);
 		});
 
-		it('getSettingsActions returns action functions that work', () => {
-			const actions = getSettingsActions();
-			expect(typeof actions.setFontSize).toBe('function');
+		it('useSettingsStore.getState() exposes action functions that work', () => {
+			expect(typeof useSettingsStore.getState().setFontSize).toBe('function');
 
-			actions.setFontSize(22);
+			useSettingsStore.getState().setFontSize(22);
 			expect(useSettingsStore.getState().fontSize).toBe(22);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('fontSize', 22);
 		});

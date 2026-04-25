@@ -41,6 +41,8 @@ import {
 	Lock,
 	Star,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, Session } from '../types';
 import type {
 	RegisteredRepository,
@@ -51,7 +53,7 @@ import type {
 } from '../../shared/symphony-types';
 import { SYMPHONY_CATEGORIES, SYMPHONY_BLOCKING_LABEL } from '../../shared/symphony-constants';
 import { COLORBLIND_AGENT_PALETTE } from '../constants/colorblindPalettes';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSymphony } from '../hooks/symphony';
 import { useContributorStats, type Achievement } from '../hooks/symphony/useContributorStats';
@@ -63,6 +65,9 @@ import {
 } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
+import { formatDurationCompact as formatDurationMs } from '../../shared/formatters';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -125,13 +130,6 @@ function formatCacheAge(cacheAgeMs: number | null): string {
 	return 'just now';
 }
 
-function formatDurationMs(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-	if (totalSeconds < 3600) return `${Math.floor(totalSeconds / 60)}m`;
-	return `${Math.floor(totalSeconds / 3600)}h ${Math.floor((totalSeconds % 3600) / 60)}m`;
-}
-
 function formatDate(isoString: string): string {
 	return new Date(isoString).toLocaleDateString('en-US', {
 		month: 'short',
@@ -146,12 +144,12 @@ function getStatusInfo(status: ContributionStatus): {
 	icon: React.ReactNode;
 } {
 	const icons: Record<string, React.ReactNode> = {
-		cloning: <Loader2 className="w-3 h-3 animate-spin" />,
-		creating_pr: <Loader2 className="w-3 h-3 animate-spin" />,
+		cloning: <Spinner size={12} />,
+		creating_pr: <Spinner size={12} />,
 		running: <Play className="w-3 h-3" />,
 		paused: <Pause className="w-3 h-3" />,
 		completed: <CheckCircle className="w-3 h-3" />,
-		completing: <Loader2 className="w-3 h-3 animate-spin" />,
+		completing: <Spinner size={12} />,
 		ready_for_review: <GitPullRequest className="w-3 h-3" />,
 		failed: <AlertCircle className="w-3 h-3" />,
 		cancelled: <X className="w-3 h-3" />,
@@ -406,7 +404,7 @@ function IssueCard({
 						style={{ color: theme.colors.accent, pointerEvents: 'auto' }}
 						onClick={(e) => {
 							e.stopPropagation();
-							window.maestro.shell.openExternal(issue.claimedByPr!.url);
+							openUrl(issue.claimedByPr!.url);
 						}}
 					>
 						<GitPullRequest className="w-3 h-3" />
@@ -492,9 +490,9 @@ function RepositoryDetailView({
 		() =>
 			createMarkdownComponents({
 				theme,
-				onExternalLinkClick: (href) => {
+				onExternalLinkClick: (href, opts) => {
 					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
+						openUrl(href, opts);
 					}
 				},
 			}),
@@ -559,7 +557,7 @@ function RepositoryDetailView({
 	};
 
 	const handleOpenExternal = useCallback((url: string) => {
-		window.maestro.shell.openExternal(url);
+		openUrl(url);
 	}, []);
 
 	return (
@@ -570,13 +568,9 @@ function RepositoryDetailView({
 				style={{ borderColor: theme.colors.border }}
 			>
 				<div className="flex items-center gap-3">
-					<button
-						onClick={onBack}
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="Back (Esc)"
-					>
+					<GhostIconButton onClick={onBack} padding="p-1.5" title="Back (Esc)">
 						<ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 					<div className="flex items-center gap-2">
 						<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
 						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
@@ -592,14 +586,13 @@ function RepositoryDetailView({
 						<span>{categoryInfo.emoji}</span>
 						<span>{categoryInfo.label}</span>
 					</span>
-					<button
-						type="button"
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="View repository on GitHub"
+					<GhostIconButton
 						onClick={() => handleOpenExternal(repo.url)}
+						padding="p-1.5"
+						title="View repository on GitHub"
 					>
 						<ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 			</div>
 
@@ -717,12 +710,7 @@ function RepositoryDetailView({
 									style={{ color: theme.colors.textDim }}
 								>
 									<span>Available Issues ({availableIssues.length})</span>
-									{isLoadingIssues && (
-										<Loader2
-											className="w-3 h-3 animate-spin"
-											style={{ color: theme.colors.accent }}
-										/>
-									)}
+									{isLoadingIssues && <Spinner size={12} color={theme.colors.accent} />}
 								</h4>
 								{availableIssues.length === 0 && blockedIssues.length === 0 ? (
 									<p className="text-sm text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -868,10 +856,7 @@ function RepositoryDetailView({
 								<style>{proseStyles}</style>
 								{isLoadingDocument ? (
 									<div className="flex items-center justify-center h-32">
-										<Loader2
-											className="w-6 h-6 animate-spin"
-											style={{ color: theme.colors.accent }}
-										/>
+										<Spinner size={24} color={theme.colors.accent} />
 									</div>
 								) : documentPreview ? (
 									<div
@@ -956,7 +941,7 @@ function RepositoryDetailView({
 					>
 						{isStarting ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Starting...
 							</>
 						) : (
@@ -1004,7 +989,7 @@ function ActiveContributionCard({
 	const canFinalize = contribution.status === 'ready_for_review';
 
 	const handleOpenExternal = useCallback((url: string) => {
-		window.maestro.shell.openExternal(url);
+		openUrl(url);
 	}, []);
 
 	return (
@@ -1153,7 +1138,7 @@ function CompletedContributionCard({
 	theme: Theme;
 }) {
 	const handleOpenPR = useCallback(() => {
-		window.maestro.shell.openExternal(contribution.prUrl);
+		openUrl(contribution.prUrl);
 	}, [contribution.prUrl]);
 
 	// Check both wasMerged (preferred) and merged (legacy) for backward compatibility
@@ -1316,7 +1301,6 @@ export function SymphonyModal({
 	sessions,
 	onSelectSession,
 }: SymphonyModalProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
@@ -1412,28 +1396,20 @@ export function SymphonyModal({
 	handleBackRef.current = handleBack;
 
 	// Layer stack
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.SYMPHONY ?? 710,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Maestro Symphony',
-				onEscape: () => {
-					if (showHelpRef.current) {
-						setShowHelp(false);
-					} else if (showDetailViewRef.current) {
-						handleBackRef.current();
-					} else {
-						onCloseRef.current();
-					}
-				},
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.SYMPHONY ?? 710,
+		'Maestro Symphony',
+		() => {
+			if (showHelpRef.current) {
+				setShowHelp(false);
+			} else if (showDetailViewRef.current) {
+				handleBackRef.current();
+			} else {
+				onCloseRef.current();
+			}
+		},
+		{ enabled: isOpen }
+	);
 
 	// Focus tile grid for keyboard navigation (keyboard-first design)
 	useEffect(() => {
@@ -1483,7 +1459,7 @@ export function SymphonyModal({
 					);
 				}
 			} catch (error) {
-				console.error('Failed to fetch document:', error);
+				logger.error('Failed to fetch document:', undefined, error);
 				setDocumentPreview(
 					`*Failed to load document: ${error instanceof Error ? error.message : 'Unknown error'}*`
 				);
@@ -1577,7 +1553,7 @@ export function SymphonyModal({
 				setTimeout(() => setPrStatusMessage(null), 5000);
 			}
 		} catch (err) {
-			console.error('Failed to sync contribution:', err);
+			logger.error('Failed to sync contribution:', undefined, err);
 			setPrStatusMessage('Sync failed');
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} finally {
@@ -1608,7 +1584,7 @@ export function SymphonyModal({
 			// Clear message after 5 seconds
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} catch (err) {
-			console.error('Failed to check PR statuses:', err);
+			logger.error('Failed to check PR statuses:', undefined, err);
 			setPrStatusMessage('Failed to check statuses');
 			setTimeout(() => setPrStatusMessage(null), 5000);
 		} finally {
@@ -1659,9 +1635,10 @@ export function SymphonyModal({
 				return;
 			}
 
-			// Escape from search returns focus to grid
+			// Escape from search returns focus to grid (stop propagation to prevent modal close)
 			if (e.key === 'Escape' && e.target instanceof HTMLInputElement) {
 				e.preventDefault();
+				e.stopPropagation();
 				(e.target as HTMLInputElement).blur();
 				tileGridRef.current?.focus();
 				return;
@@ -1813,9 +1790,7 @@ export function SymphonyModal({
 											</p>
 											<button
 												onClick={() => {
-													window.maestro.shell.openExternal(
-														buildMaestroUrl('https://docs.runmaestro.ai/symphony')
-													);
+													openUrl(buildMaestroUrl('https://docs.runmaestro.ai/symphony'));
 													setShowHelp(false);
 												}}
 												className="text-xs hover:opacity-80 transition-colors"
@@ -1841,9 +1816,7 @@ export function SymphonyModal({
 								{/* Register Project link */}
 								<button
 									onClick={() => {
-										window.maestro.shell.openExternal(
-											buildMaestroUrl('https://docs.runmaestro.ai/symphony')
-										);
+										openUrl(buildMaestroUrl('https://docs.runmaestro.ai/symphony'));
 									}}
 									className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
 									title="Register your project for Symphony contributions"
@@ -1870,13 +1843,9 @@ export function SymphonyModal({
 										style={{ color: theme.colors.textDim }}
 									/>
 								</button>
-								<button
-									onClick={onClose}
-									className="p-1.5 rounded hover:bg-white/10 transition-colors"
-									title="Close (Esc)"
-								>
+								<GhostIconButton onClick={onClose} padding="p-1.5" title="Close (Esc)">
 									<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-								</button>
+								</GhostIconButton>
 							</div>
 						</div>
 
@@ -2390,10 +2359,7 @@ export function SymphonyModal({
 						>
 							{isCheckingGh ? (
 								<div className="flex items-center gap-3 py-4">
-									<Loader2
-										className="w-5 h-5 animate-spin"
-										style={{ color: theme.colors.textDim }}
-									/>
+									<Spinner size={20} color={theme.colors.textDim} />
 									<span className="text-sm" style={{ color: theme.colors.textDim }}>
 										Checking prerequisites…
 									</span>

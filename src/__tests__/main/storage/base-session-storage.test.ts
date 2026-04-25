@@ -4,7 +4,7 @@
  * Uses a concrete TestSessionStorage subclass to test the abstract base class.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { BaseSessionStorage, SearchableMessage } from '../../../main/storage/base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../../shared/types';
 import type {
@@ -224,20 +224,23 @@ describe('BaseSessionStorage', () => {
 	// ---- extractMatchPreview (static) ----
 
 	describe('extractMatchPreview', () => {
-		it('extracts context around match', () => {
-			const text = 'A'.repeat(100) + 'TARGET' + 'B'.repeat(100);
+		it('extracts asymmetric context around match (short lead, long trail)', () => {
+			const text = 'A'.repeat(100) + 'TARGET' + 'B'.repeat(200);
 			const lower = text.toLowerCase();
-			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10);
-			// Should include ... prefix, 10 chars before, TARGET, 10 chars after, ... suffix
+			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10, 30);
+			// Should include ... prefix, 10 chars before, TARGET, 30 chars after, ... suffix
 			expect(preview).toContain('TARGET');
 			expect(preview.startsWith('...')).toBe(true);
 			expect(preview.endsWith('...')).toBe(true);
+			// Trail must be longer than lead so the keyword stays near the left edge.
+			const matchIdx = preview.indexOf('TARGET');
+			expect(matchIdx).toBeLessThan(preview.length - matchIdx - 'TARGET'.length);
 		});
 
 		it('omits leading ellipsis when match is at start', () => {
 			const text = 'TARGET' + 'B'.repeat(100);
 			const lower = text.toLowerCase();
-			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10);
+			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10, 30);
 			expect(preview.startsWith('TARGET')).toBe(true);
 			expect(preview.endsWith('...')).toBe(true);
 		});
@@ -245,7 +248,7 @@ describe('BaseSessionStorage', () => {
 		it('omits trailing ellipsis when match is at end', () => {
 			const text = 'A'.repeat(100) + 'TARGET';
 			const lower = text.toLowerCase();
-			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10);
+			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6, 10, 30);
 			expect(preview.startsWith('...')).toBe(true);
 			expect(preview.endsWith('TARGET')).toBe(true);
 		});
@@ -262,8 +265,18 @@ describe('BaseSessionStorage', () => {
 
 		it('handles short text with no ellipsis needed', () => {
 			const text = 'find me';
-			const preview = BaseSessionStorage.extractMatchPreview(text, text, 'find', 4, 60);
+			const preview = BaseSessionStorage.extractMatchPreview(text, text, 'find', 4, 60, 60);
 			expect(preview).toBe('find me');
+		});
+
+		it('defaults bias the keyword toward the start of the preview', () => {
+			const text = 'A'.repeat(500) + 'TARGET' + 'B'.repeat(500);
+			const lower = text.toLowerCase();
+			const preview = BaseSessionStorage.extractMatchPreview(text, lower, 'target', 6);
+			const matchIdx = preview.indexOf('TARGET');
+			// With defaults (20 lead, 120 trail), the keyword should land early so it
+			// remains visible when the UI truncates with an ellipsis.
+			expect(matchIdx).toBeLessThan(preview.length / 2);
 		});
 	});
 

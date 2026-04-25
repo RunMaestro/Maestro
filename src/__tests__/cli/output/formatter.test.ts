@@ -25,6 +25,7 @@ import {
 	formatInfo,
 	formatWarning,
 	formatSessions,
+	formatSshRemotes,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -33,6 +34,7 @@ import {
 	type RunEvent,
 	type AgentDetailDisplay,
 	type SessionDisplay,
+	type SshRemoteDisplay,
 } from '../../../cli/output/formatter';
 
 // Store original process.stdout.isTTY
@@ -1337,6 +1339,76 @@ describe('formatter', () => {
 			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
 			expect(result).toContain('5.0m'); // 300 seconds = 5.0m
 			expect(result).toContain('1.0m'); // 60 seconds = 1.0m
+		});
+	});
+
+	// ============================================================================
+	// formatSshRemotes Tests
+	// ============================================================================
+
+	describe('formatSshRemotes', () => {
+		const baseRemote: SshRemoteDisplay = {
+			id: 'remote-abc-123',
+			name: 'Dev Server',
+			host: '192.168.1.100',
+			port: 22,
+			username: 'deploy',
+			enabled: true,
+		};
+
+		it('should return "No SSH remotes configured." for empty array', () => {
+			const result = formatSshRemotes([]);
+			expect(result).toContain('No SSH remotes configured');
+		});
+
+		it('should display remote name and host', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).toContain('Dev Server');
+			expect(result).toContain('deploy@192.168.1.100');
+		});
+
+		it('should show enabled/disabled status', () => {
+			const enabled = formatSshRemotes([{ ...baseRemote, enabled: true }]);
+			expect(enabled).toContain('enabled');
+
+			const disabled = formatSshRemotes([{ ...baseRemote, enabled: false }]);
+			expect(disabled).toContain('disabled');
+		});
+
+		it('should show default tag', () => {
+			const result = formatSshRemotes([{ ...baseRemote, isDefault: true }]);
+			expect(result).toContain('[default]');
+		});
+
+		it('should show ssh-config tag', () => {
+			const result = formatSshRemotes([{ ...baseRemote, useSshConfig: true }]);
+			expect(result).toContain('[ssh-config]');
+		});
+
+		it('should show non-standard port', () => {
+			const result = formatSshRemotes([{ ...baseRemote, port: 2222 }]);
+			expect(result).toContain(':2222');
+		});
+
+		it('should not show port 22', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).not.toContain(':22');
+		});
+
+		it('should show host without username when username is empty', () => {
+			const result = formatSshRemotes([{ ...baseRemote, username: '' }]);
+			expect(result).toContain('192.168.1.100');
+			expect(result).not.toContain('@');
+		});
+
+		it('should show count in header', () => {
+			const result = formatSshRemotes([baseRemote, { ...baseRemote, id: 'r2', name: 'Staging' }]);
+			expect(result).toContain('(2)');
+		});
+
+		it('should show remote ID', () => {
+			const result = formatSshRemotes([baseRemote]);
+			expect(result).toContain('remote-abc-123');
 		});
 	});
 });

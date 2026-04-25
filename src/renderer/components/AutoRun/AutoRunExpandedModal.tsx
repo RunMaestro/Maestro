@@ -7,14 +7,15 @@ import {
 	Edit,
 	Play,
 	Square,
-	Loader2,
 	Save,
 	RotateCcw,
 	LayoutGrid,
 	AlertTriangle,
 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme, BatchRunState, SessionState, Shortcut } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { AutoRun } from './AutoRun';
 import type { AutoRunHandle } from './types';
@@ -93,8 +94,6 @@ export function AutoRunExpandedModal({
 	onOpenMarketplace,
 	...autoRunProps
 }: AutoRunExpandedModalProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	const handleCloseRef = useRef<() => void>(() => {});
 	const autoRunRef = useRef<AutoRunHandle>(null);
@@ -177,35 +176,9 @@ export function AutoRunExpandedModal({
 		onClose();
 	}, [handleRevert, onClose]);
 
-	// Register layer on mount
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.AUTORUN_EXPANDED,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			onEscape: () => {
-				handleCloseRef.current();
-			},
-		});
-		layerIdRef.current = id;
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Keep escape handler up to date
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				handleCloseRef.current();
-			});
-		}
-	}, [handleClose, updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.AUTORUN_EXPANDED, undefined, () => {
+		handleCloseRef.current();
+	});
 
 	// Focus the AutoRun component on mount
 	useEffect(() => {
@@ -360,12 +333,8 @@ export function AutoRunExpandedModal({
 								}}
 								title={isStopping ? 'Stopping after current task...' : 'Stop auto-run'}
 							>
-								{isStopping ? (
-									<Loader2 className="w-3.5 h-3.5 animate-spin" />
-								) : (
-									<Square className="w-3.5 h-3.5" />
-								)}
-								{isStopping ? 'Stopping...' : 'Stop'}
+								{isStopping ? <Spinner size={14} /> : <Square className="w-3.5 h-3.5" />}
+								{isStopping ? 'Stopping' : 'Stop'}
 							</button>
 						) : (
 							<button
@@ -389,7 +358,7 @@ export function AutoRunExpandedModal({
 								Run
 							</button>
 						)}
-						{/* Exchange button */}
+						{/* PlayBooks button */}
 						{onOpenMarketplace && (
 							<button
 								onClick={onOpenMarketplace}
@@ -399,10 +368,10 @@ export function AutoRunExpandedModal({
 									border: `1px solid ${theme.colors.accent}40`,
 									backgroundColor: `${theme.colors.accent}15`,
 								}}
-								title="Browse Playbook Exchange - discover and share community playbooks"
+								title="Browse PlayBooks - discover and share community playbooks"
 							>
 								<LayoutGrid className="w-3.5 h-3.5" />
-								Exchange
+								PlayBooks
 							</button>
 						)}
 					</div>
@@ -422,13 +391,9 @@ export function AutoRunExpandedModal({
 							<Minimize2 className="w-4 h-4" />
 							Collapse
 						</button>
-						<button
-							onClick={handleClose}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							title="Close (Esc)"
-						>
+						<GhostIconButton onClick={handleClose} title="Close (Esc)">
 							<X className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-						</button>
+						</GhostIconButton>
 					</div>
 				</div>
 

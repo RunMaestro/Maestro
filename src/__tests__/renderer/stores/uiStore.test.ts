@@ -23,6 +23,7 @@ function resetStore() {
 		successFlashNotification: null,
 		outputSearchOpen: false,
 		outputSearchQuery: '',
+		outputSearchRegex: false,
 		sessionFilterOpen: false,
 		historySearchFilterOpen: false,
 		draggingSessionId: null,
@@ -54,6 +55,7 @@ describe('uiStore', () => {
 			expect(state.successFlashNotification).toBeNull();
 			expect(state.outputSearchOpen).toBe(false);
 			expect(state.outputSearchQuery).toBe('');
+			expect(state.outputSearchRegex).toBe(false);
 			expect(state.sessionFilterOpen).toBe(false);
 			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();

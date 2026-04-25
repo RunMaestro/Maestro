@@ -10,8 +10,6 @@ import {
 	parseGitBehindAhead,
 	parseGitBranches,
 	parseGitTags,
-	cleanBranchName,
-	cleanGitPath,
 	remoteUrlToBrowserUrl,
 	isImageFile,
 	getImageMimeType,
@@ -202,31 +200,6 @@ describe('gitUtils', () => {
 		it('handles whitespace', () => {
 			const output = '  v1.0.0  \n  v2.0.0  \n';
 			expect(parseGitTags(output)).toEqual(['v1.0.0', 'v2.0.0']);
-		});
-	});
-
-	describe('cleanBranchName', () => {
-		it('trims whitespace', () => {
-			expect(cleanBranchName('  main  ')).toBe('main');
-			expect(cleanBranchName('feature/foo\n')).toBe('feature/foo');
-		});
-
-		it('handles empty/null input', () => {
-			expect(cleanBranchName('')).toBe('');
-			expect(cleanBranchName(null as unknown as string)).toBe('');
-			expect(cleanBranchName(undefined as unknown as string)).toBe('');
-		});
-	});
-
-	describe('cleanGitPath', () => {
-		it('trims whitespace', () => {
-			expect(cleanGitPath('  /path/to/repo  ')).toBe('/path/to/repo');
-			expect(cleanGitPath('/path/to/repo\n')).toBe('/path/to/repo');
-		});
-
-		it('handles empty/null input', () => {
-			expect(cleanGitPath('')).toBe('');
-			expect(cleanGitPath(null as unknown as string)).toBe('');
 		});
 	});
 

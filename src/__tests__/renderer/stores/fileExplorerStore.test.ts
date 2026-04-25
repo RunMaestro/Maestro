@@ -7,11 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-	useFileExplorerStore,
-	getFileExplorerState,
-	getFileExplorerActions,
-} from '../../../renderer/stores/fileExplorerStore';
+import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import type { FlatTreeNode } from '../../../renderer/utils/fileExplorer';
 
 // ============================================================================
@@ -244,32 +240,32 @@ describe('fileExplorerStore', () => {
 	});
 
 	describe('non-React access', () => {
-		it('getFileExplorerState returns current state', () => {
+		it('useFileExplorerStore.getState() returns current state', () => {
 			useFileExplorerStore.getState().setFileTreeFilter('search');
-			const state = getFileExplorerState();
+			const state = useFileExplorerStore.getState();
 			expect(state.fileTreeFilter).toBe('search');
 		});
 
-		it('getFileExplorerActions returns action functions', () => {
-			const actions = getFileExplorerActions();
-			expect(typeof actions.setSelectedFileIndex).toBe('function');
-			expect(typeof actions.setFileTreeFilter).toBe('function');
-			expect(typeof actions.setFileTreeFilterOpen).toBe('function');
-			expect(typeof actions.setFilePreviewLoading).toBe('function');
-			expect(typeof actions.setFlatFileList).toBe('function');
-			expect(typeof actions.focusFileInGraph).toBe('function');
-			expect(typeof actions.openLastDocumentGraph).toBe('function');
-			expect(typeof actions.closeGraphView).toBe('function');
-			expect(typeof actions.setIsGraphViewOpen).toBe('function');
+		it('useFileExplorerStore.getState() exposes action functions', () => {
+			const state = useFileExplorerStore.getState();
+			expect(typeof state.setSelectedFileIndex).toBe('function');
+			expect(typeof state.setFileTreeFilter).toBe('function');
+			expect(typeof state.setFileTreeFilterOpen).toBe('function');
+			expect(typeof state.setFilePreviewLoading).toBe('function');
+			expect(typeof state.setFlatFileList).toBe('function');
+			expect(typeof state.focusFileInGraph).toBe('function');
+			expect(typeof state.openLastDocumentGraph).toBe('function');
+			expect(typeof state.closeGraphView).toBe('function');
+			expect(typeof state.setIsGraphViewOpen).toBe('function');
 		});
 
-		it('actions from getFileExplorerActions update state', () => {
-			const actions = getFileExplorerActions();
+		it('actions from useFileExplorerStore.getState() update state', () => {
+			const actions = useFileExplorerStore.getState();
 			actions.setSelectedFileIndex(10);
 			actions.setFileTreeFilter('test');
 			actions.focusFileInGraph('via-actions.ts');
 
-			const state = getFileExplorerState();
+			const state = useFileExplorerStore.getState();
 			expect(state.selectedFileIndex).toBe(10);
 			expect(state.fileTreeFilter).toBe('test');
 			expect(state.graphFocusFilePath).toBe('via-actions.ts');

@@ -18,8 +18,9 @@ import {
 	Tag,
 } from 'lucide-react';
 import type { Session, Group, Theme, GroupChat } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { logger } from '../utils/logger';
 
 interface ProcessMonitorProps {
 	theme: Theme;
@@ -158,8 +159,6 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	const selectedNodeRef = useRef<HTMLButtonElement | HTMLDivElement>(null);
 	const killConfirmRef = useRef<HTMLDivElement>(null);
 	const detailViewRef = useRef<HTMLDivElement>(null);
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 
 	// Fetch active processes from ProcessManager
 	const fetchActiveProcesses = useCallback(async (showRefresh = false) => {
@@ -170,7 +169,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			const processes = await window.maestro.process.getActiveProcesses();
 			setActiveProcesses(processes);
 		} catch (error) {
-			console.error('Failed to fetch active processes:', error);
+			logger.error('Failed to fetch active processes:', undefined, error);
 		} finally {
 			setIsLoading(false);
 			// Keep refresh spinner visible for at least 500ms for visual feedback
@@ -193,7 +192,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 				// Refresh the process list after killing
 				await fetchActiveProcesses(true);
 			} catch (error) {
-				console.error('Failed to kill process:', error);
+				logger.error('Failed to kill process:', undefined, error);
 			} finally {
 				setIsKilling(false);
 				setKillConfirmProcessId(null);
@@ -211,34 +210,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 	}, [killConfirmProcessId]);
 
 	// Register layer on mount
-	useEffect(() => {
-		const layerId = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.PROCESS_MONITOR,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'System Processes',
-			onEscape: () => {},
-		});
-		layerIdRef.current = layerId;
-		return () => unregisterLayer(layerId);
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when onClose or detailView changes
 	// If in detail view, Escape goes back to list; otherwise closes the modal
-	useEffect(() => {
-		if (layerIdRef.current) {
-			const handleEscape = () => {
-				if (detailView) {
-					setDetailView(null);
-				} else {
-					onClose();
-				}
-			};
-			updateLayerHandler(layerIdRef.current, handleEscape);
+	useModalLayer(MODAL_PRIORITIES.PROCESS_MONITOR, 'System Processes', () => {
+		if (detailView) {
+			setDetailView(null);
+		} else {
+			onClose();
 		}
-	}, [onClose, detailView, updateLayerHandler]);
+	});
 
 	// Fetch processes on mount and poll for updates
 	useEffect(() => {
@@ -360,9 +339,9 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 		return 'ai';
 	};
 
-	// Extract tab ID from process session ID (format: {sessionId}-ai-{tabId} or {sessionId}-terminal-{tabId})
+	// Extract tab ID from process session ID (format: {sessionId}-ai-{tabId}[-fp-{timestamp}] or {sessionId}-terminal-{tabId})
 	const parseTabId = (processSessionId: string): string | null => {
-		const aiMatch = processSessionId.match(/-ai-(.+)$/);
+		const aiMatch = processSessionId.match(/-ai-(.+?)(?:-fp-\d+)?$/);
 		if (aiMatch) return aiMatch[1];
 		const terminalMatch = processSessionId.match(/-terminal-(.+)$/);
 		if (terminalMatch) return terminalMatch[1];
@@ -474,7 +453,26 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 					? `${sessionName} - ${label} - ${tabName}`
 					: `${sessionName} - ${label}`;
 
-				sessionNode.children!.push({
+				// Build child process nodes for terminal processes
+				const childNodes: ProcessNode[] = [];
+				if (processType === 'terminal' && proc.childProcesses && proc.childProcesses.length > 0) {
+					proc.childProcesses.forEach((child) => {
+						const cmdBasename = child.command.split('/').pop() || child.command;
+						childNodes.push({
+							id: `child-${proc.sessionId}-${child.pid}`,
+							type: 'process',
+							label: cmdBasename,
+							pid: child.pid,
+							processType: 'terminal',
+							sessionId: session.id,
+							isAlive: true,
+							command: child.command,
+							sshRemote,
+						});
+					});
+				}
+
+				const processNode: ProcessNode = {
 					id: `process-${proc.sessionId}`,
 					type: 'process',
 					label: displayLabel,
@@ -494,7 +492,12 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 					sshRemote,
 					tabName,
 					childProcesses: proc.childProcesses,
-				});
+					children: childNodes.length > 0 ? childNodes : undefined,
+					expanded:
+						childNodes.length > 0 ? expandedNodes.has(`process-${proc.sessionId}`) : undefined,
+				};
+
+				sessionNode.children!.push(processNode);
 			});
 
 			// Only return session node if it has active processes
@@ -1073,231 +1076,252 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			const altBg = index % 2 === 1 ? `${theme.colors.textDim}08` : 'transparent';
 
 			return (
-				<div
-					ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLDivElement>) : null}
-					key={node.id}
-					tabIndex={0}
-					className="px-4 py-1.5 cursor-pointer group"
-					style={{
-						paddingLeft: `${paddingLeft}px`,
-						color: theme.colors.textMain,
-						backgroundColor: isSelected ? `${theme.colors.accent}25` : altBg,
-						outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
-						outlineOffset: '-2px',
-						borderTop: index > 0 ? `1px solid ${theme.colors.border}40` : 'none',
-					}}
-					onClick={() => setSelectedNodeId(node.id)}
-					onDoubleClick={() => openProcessDetail(node)}
-					onMouseEnter={(e) => {
-						if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
-					}}
-					onMouseLeave={(e) => {
-						if (!isSelected) e.currentTarget.style.backgroundColor = altBg;
-					}}
-				>
-					{/* First line: status dot, label, badges, kill button */}
-					<div className="flex items-center gap-2">
-						<div className="w-4 h-4 flex-shrink-0" />
-						<div
-							className="w-2 h-2 rounded-full flex-shrink-0"
-							style={{ backgroundColor: theme.colors.success }}
-						/>
-						<span className="text-sm flex-1 truncate">{node.label}</span>
-						<div className="flex items-center gap-2 ml-auto flex-shrink-0">
-							{node.isAutoRun && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
-									style={{
-										backgroundColor: theme.colors.accent + '20',
-										color: theme.colors.accent,
-									}}
-								>
-									AUTO
-								</span>
+				<div key={node.id}>
+					<div
+						ref={isSelected ? (selectedNodeRef as React.RefObject<HTMLDivElement>) : null}
+						tabIndex={0}
+						className="px-4 py-1.5 cursor-pointer group"
+						style={{
+							paddingLeft: `${paddingLeft}px`,
+							color: theme.colors.textMain,
+							backgroundColor: isSelected ? `${theme.colors.accent}25` : altBg,
+							outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
+							outlineOffset: '-2px',
+							borderTop: index > 0 ? `1px solid ${theme.colors.border}40` : 'none',
+						}}
+						onClick={() => {
+							setSelectedNodeId(node.id);
+							if (hasChildren) toggleNode(node.id);
+						}}
+						onDoubleClick={() => openProcessDetail(node)}
+						onMouseEnter={(e) => {
+							if (!isSelected) e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
+						}}
+						onMouseLeave={(e) => {
+							if (!isSelected) e.currentTarget.style.backgroundColor = altBg;
+						}}
+					>
+						{/* First line: status dot, label, badges, kill button */}
+						<div className="flex items-center gap-2">
+							{hasChildren ? (
+								isExpanded ? (
+									<ChevronDown
+										className="w-4 h-4 flex-shrink-0"
+										style={{ color: theme.colors.textDim }}
+									/>
+								) : (
+									<ChevronRight
+										className="w-4 h-4 flex-shrink-0"
+										style={{ color: theme.colors.textDim }}
+									/>
+								)
+							) : (
+								<div className="w-4 h-4 flex-shrink-0" />
 							)}
-							{/* Group Chat badges */}
-							{node.processType === 'moderator' && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-										border: `1px solid ${theme.colors.warning}50`,
-									}}
-								>
-									MODERATOR
-								</span>
-							)}
-							{node.processType === 'participant' && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: theme.colors.success + '30',
-										color: theme.colors.success,
-										border: `1px solid ${theme.colors.success}50`,
-									}}
-								>
-									PARTICIPANT
-								</span>
-							)}
-							{/* Wizard badges */}
-							{node.processType === 'wizard' && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: '#a855f7' + '30',
-										color: '#a855f7',
-										border: '1px solid #a855f750',
-									}}
-								>
-									WIZARD
-								</span>
-							)}
-							{node.processType === 'wizard-gen' && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: '#a855f7' + '30',
-										color: '#a855f7',
-										border: '1px solid #a855f750',
-									}}
-								>
-									GENERATING
-								</span>
-							)}
-							{/* Cue badge */}
-							{node.processType === 'cue' && (
-								<span
-									className="text-xs font-semibold px-1.5 py-0.5 rounded"
-									style={{
-										backgroundColor: '#06b6d4' + '30',
-										color: '#06b6d4',
-										border: '1px solid #06b6d450',
-									}}
-								>
-									{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
-								</span>
-							)}
-							{/* Jump to agent button */}
-							{node.sessionId &&
-								onNavigateToSession &&
-								!isGroupChatProcess &&
-								!isWizardProcess &&
-								!isCueProcess && (
+							<div
+								className="w-2 h-2 rounded-full flex-shrink-0"
+								style={{ backgroundColor: theme.colors.success }}
+							/>
+							<span className="text-sm flex-1 truncate">{node.label}</span>
+							<div className="flex items-center gap-2 ml-auto flex-shrink-0">
+								{node.isAutoRun && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
+										style={{
+											backgroundColor: theme.colors.accent + '20',
+											color: theme.colors.accent,
+										}}
+									>
+										AUTO
+									</span>
+								)}
+								{/* Group Chat badges */}
+								{node.processType === 'moderator' && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: theme.colors.warning + '30',
+											color: theme.colors.warning,
+											border: `1px solid ${theme.colors.warning}50`,
+										}}
+									>
+										MODERATOR
+									</span>
+								)}
+								{node.processType === 'participant' && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: theme.colors.success + '30',
+											color: theme.colors.success,
+											border: `1px solid ${theme.colors.success}50`,
+										}}
+									>
+										PARTICIPANT
+									</span>
+								)}
+								{/* Wizard badges */}
+								{node.processType === 'wizard' && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: '#a855f7' + '30',
+											color: '#a855f7',
+											border: '1px solid #a855f750',
+										}}
+									>
+										WIZARD
+									</span>
+								)}
+								{node.processType === 'wizard-gen' && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: '#a855f7' + '30',
+											color: '#a855f7',
+											border: '1px solid #a855f750',
+										}}
+									>
+										GENERATING
+									</span>
+								)}
+								{/* Cue badge */}
+								{node.processType === 'cue' && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: '#06b6d4' + '30',
+											color: '#06b6d4',
+											border: '1px solid #06b6d450',
+										}}
+									>
+										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
+									</span>
+								)}
+								{/* Jump to agent button */}
+								{node.sessionId &&
+									onNavigateToSession &&
+									!isGroupChatProcess &&
+									!isWizardProcess &&
+									!isCueProcess && (
+										<button
+											className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+											style={{ color: theme.colors.accent }}
+											onClick={(e) => {
+												e.stopPropagation();
+												onNavigateToSession(node.sessionId!, node.tabId, node.processType);
+												onClose();
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+											}
+											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+											title={node.tabId ? 'Jump to tab' : 'Jump to agent'}
+										>
+											<ExternalLink className="w-4 h-4" />
+										</button>
+									)}
+								{/* Jump to group chat button */}
+								{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
 									<button
 										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
 										style={{ color: theme.colors.accent }}
 										onClick={(e) => {
 											e.stopPropagation();
-											onNavigateToSession(node.sessionId!, node.tabId, node.processType);
+											onNavigateToGroupChat(node.groupChatId!);
 											onClose();
 										}}
 										onMouseEnter={(e) =>
 											(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 										}
 										onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-										title={node.tabId ? 'Jump to tab' : 'Jump to agent'}
+										title="Jump to group chat"
 									>
 										<ExternalLink className="w-4 h-4" />
 									</button>
 								)}
-							{/* Jump to group chat button */}
-							{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
+								{/* Kill button */}
+								{node.processSessionId && (
+									<button
+										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+										style={{ color: theme.colors.error }}
+										onClick={(e) => {
+											e.stopPropagation();
+											setKillConfirmProcessId(node.processSessionId!);
+											setKillConfirmCueRunId(node.cueRunId);
+										}}
+										onMouseEnter={(e) =>
+											(e.currentTarget.style.backgroundColor = `${theme.colors.error}20`)
+										}
+										onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+										title="Kill process"
+									>
+										<XCircle className="w-4 h-4" />
+									</button>
+								)}
+							</div>
+						</div>
+						{/* Second line: Claude session ID, PID, runtime, status - indented */}
+						<div className="flex items-center gap-3 mt-1" style={{ paddingLeft: '24px' }}>
+							{node.agentSessionId && node.sessionId && onNavigateToSession && (
 								<button
-									className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+									className="text-xs font-mono hover:underline cursor-pointer"
 									style={{ color: theme.colors.accent }}
 									onClick={(e) => {
 										e.stopPropagation();
-										onNavigateToGroupChat(node.groupChatId!);
+										onNavigateToSession(node.sessionId!, node.tabId, node.processType);
 										onClose();
 									}}
-									onMouseEnter={(e) =>
-										(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-									}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-									title="Jump to group chat"
+									title="Click to navigate to this session"
 								>
-									<ExternalLink className="w-4 h-4" />
+									{node.agentSessionId.substring(0, 8)}
 								</button>
 							)}
-							{/* Kill button */}
-							{node.processSessionId && (
-								<button
-									className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
-									style={{ color: theme.colors.error }}
-									onClick={(e) => {
-										e.stopPropagation();
-										setKillConfirmProcessId(node.processSessionId!);
-										setKillConfirmCueRunId(node.cueRunId);
+							{node.agentSessionId && (!node.sessionId || !onNavigateToSession) && (
+								<span className="text-xs font-mono" style={{ color: theme.colors.accent }}>
+									{node.agentSessionId.substring(0, 8)}
+								</span>
+							)}
+							{/* For group chat and wizard processes, show tool type */}
+							{(isGroupChatProcess || isWizardProcess) && node.toolType && (
+								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
+									{node.toolType}
+								</span>
+							)}
+							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
+								PID: {node.pid}
+							</span>
+							{node.startTime && (
+								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
+									{formatRuntime(node.startTime)}
+								</span>
+							)}
+							<span
+								className="text-xs px-2 py-0.5 rounded"
+								style={{
+									backgroundColor: `${theme.colors.success}20`,
+									color: theme.colors.success,
+								}}
+							>
+								Running
+							</span>
+							{node.sshRemote && (
+								<span
+									className="text-xs px-1.5 py-0.5 rounded"
+									style={{
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
 									}}
-									onMouseEnter={(e) =>
-										(e.currentTarget.style.backgroundColor = `${theme.colors.error}20`)
-									}
-									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-									title="Kill process"
+									title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
 								>
-									<XCircle className="w-4 h-4" />
-								</button>
+									SSH
+								</span>
 							)}
 						</div>
 					</div>
-					{/* Second line: Claude session ID, PID, runtime, status - indented */}
-					<div className="flex items-center gap-3 mt-1" style={{ paddingLeft: '24px' }}>
-						{node.agentSessionId && node.sessionId && onNavigateToSession && (
-							<button
-								className="text-xs font-mono hover:underline cursor-pointer"
-								style={{ color: theme.colors.accent }}
-								onClick={(e) => {
-									e.stopPropagation();
-									onNavigateToSession(node.sessionId!, node.tabId, node.processType);
-									onClose();
-								}}
-								title="Click to navigate to this session"
-							>
-								{node.agentSessionId.substring(0, 8)}
-							</button>
-						)}
-						{node.agentSessionId && (!node.sessionId || !onNavigateToSession) && (
-							<span className="text-xs font-mono" style={{ color: theme.colors.accent }}>
-								{node.agentSessionId.substring(0, 8)}
-							</span>
-						)}
-						{/* For group chat and wizard processes, show tool type */}
-						{(isGroupChatProcess || isWizardProcess) && node.toolType && (
-							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-								{node.toolType}
-							</span>
-						)}
-						<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-							PID: {node.pid}
-						</span>
-						{node.startTime && (
-							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-								{formatRuntime(node.startTime)}
-							</span>
-						)}
-						<span
-							className="text-xs px-2 py-0.5 rounded"
-							style={{
-								backgroundColor: `${theme.colors.success}20`,
-								color: theme.colors.success,
-							}}
-						>
-							Running
-						</span>
-						{node.sshRemote && (
-							<span
-								className="text-xs px-1.5 py-0.5 rounded"
-								style={{
-									backgroundColor: `${theme.colors.accent}20`,
-									color: theme.colors.accent,
-								}}
-								title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
-							>
-								SSH
-							</span>
-						)}
-					</div>
+					{isExpanded && hasChildren && (
+						<div>{node.children!.map((child, i) => renderNode(child, depth + 1, i))}</div>
+					)}
 				</div>
 			);
 		}

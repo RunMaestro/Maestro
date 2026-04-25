@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppWorktreeModals } from '../../../renderer/components/AppModals';
 import type { Theme, Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 vi.mock('../../../renderer/components/WorktreeConfigModal', () => ({
 	WorktreeConfigModal: (props: any) => <div data-testid="worktree-config-modal" />,
@@ -36,32 +37,14 @@ const testTheme: Theme = {
 	},
 };
 
+// Thin wrapper: adds git repo state with branches so worktree modals
+// populate their branch dropdowns.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
+	return baseCreateMockSession({
 		isGitRepo: true,
 		gitBranches: ['main', 'feature-branch'],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		...overrides,
-	} as Session;
+	});
 }
 
 const defaultProps = {

@@ -5,6 +5,7 @@
  * All changes update immediately.
  */
 
+import React from 'react';
 import { ArrowRight, MessageCircle, FileText, Trash2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { PipelineEdge, EdgeMode, PipelineNode } from '../../../../shared/cue-pipeline-types';
@@ -56,7 +57,7 @@ const MODES: Array<{
 	},
 ];
 
-export function EdgeConfigPanel({
+function EdgeConfigPanelInner({
 	selectedEdge,
 	theme,
 	sourceNode,
@@ -266,3 +267,6 @@ export function EdgeConfigPanel({
 		</div>
 	);
 }
+
+// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+export const EdgeConfigPanel = React.memo(EdgeConfigPanelInner);

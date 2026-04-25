@@ -15,10 +15,15 @@ import {
 	type TriggerNodeData,
 	type AgentNodeData,
 	type IncomingTriggerEdgeInfo,
+	type IncomingAgentEdgeInfo,
 } from '../../../shared/cue-pipeline-types';
 import { getTriggerConfigSummary } from '../../components/CuePipelineEditor/utils/pipelineGraph';
+import { defaultPromptFor } from '../../components/CuePipelineEditor/cueEventConstants';
 
-export type { IncomingTriggerEdgeInfo } from '../../../shared/cue-pipeline-types';
+export type {
+	IncomingTriggerEdgeInfo,
+	IncomingAgentEdgeInfo,
+} from '../../../shared/cue-pipeline-types';
 
 export interface UsePipelineSelectionParams {
 	pipelineState: CuePipelineState;
@@ -34,6 +39,7 @@ export interface UsePipelineSelectionReturn {
 	selectedNodeHasOutgoingEdge: boolean;
 	hasIncomingAgentEdges: boolean;
 	incomingAgentEdgeCount: number;
+	incomingAgentEdges: IncomingAgentEdgeInfo[];
 	incomingTriggerEdges: IncomingTriggerEdgeInfo[];
 	selectedEdge: PipelineEdgeType | null;
 	selectedEdgePipelineId: string | null;
@@ -78,6 +84,7 @@ export function usePipelineSelection({
 		selectedNodeHasOutgoingEdge,
 		hasIncomingAgentEdges,
 		incomingAgentEdgeCount,
+		incomingAgentEdges,
 		incomingTriggerEdges,
 	} = useMemo(() => {
 		const empty = {
@@ -86,6 +93,7 @@ export function usePipelineSelection({
 			selectedNodeHasOutgoingEdge: false,
 			hasIncomingAgentEdges: false,
 			incomingAgentEdgeCount: 0,
+			incomingAgentEdges: [] as IncomingAgentEdgeInfo[],
 			incomingTriggerEdges: [] as IncomingTriggerEdgeInfo[],
 		};
 		if (!selectedNodeId) return empty;
@@ -100,21 +108,37 @@ export function usePipelineSelection({
 
 		// Compute incoming trigger edges and check for incoming agent edges
 		const triggerEdges: IncomingTriggerEdgeInfo[] = [];
-		let agentIncomingCount = 0;
+		const agentEdges: IncomingAgentEdgeInfo[] = [];
 		if (node?.type === 'agent' && pipeline) {
 			const incomingEdges = pipeline.edges.filter((e) => e.target === nodeId);
+			const targetData = node.data as AgentNodeData;
 			for (const edge of incomingEdges) {
 				const sourceNode = pipeline.nodes.find((n) => n.id === edge.source);
 				if (sourceNode?.type === 'trigger') {
 					const triggerData = sourceNode.data as TriggerNodeData;
+					// Per-edge prompt takes precedence. Fall back to the event-type
+					// barebones template — NEVER to the agent node's inputPrompt, which
+					// used to leak the first trigger's prompt onto every other trigger
+					// feeding the same agent.
 					triggerEdges.push({
 						edgeId: edge.id,
 						triggerLabel: triggerData.customLabel || triggerData.label,
 						configSummary: getTriggerConfigSummary(triggerData),
-						prompt: edge.prompt ?? (node.data as AgentNodeData).inputPrompt ?? '',
+						prompt: edge.prompt ?? defaultPromptFor(triggerData.eventType),
 					});
 				} else if (sourceNode?.type === 'agent') {
-					agentIncomingCount++;
+					const agentData = sourceNode.data as AgentNodeData;
+					agentEdges.push({
+						edgeId: edge.id,
+						sourceNodeId: sourceNode.id,
+						sourceSessionName: agentData.sessionName,
+						// Resolve: edge setting → node setting → true
+						includeUpstreamOutput:
+							edge.includeUpstreamOutput !== undefined
+								? edge.includeUpstreamOutput
+								: targetData.includeUpstreamOutput !== false,
+						forwardOutput: edge.forwardOutput ?? false,
+					});
 				}
 			}
 		}
@@ -123,8 +147,9 @@ export function usePipelineSelection({
 			selectedNode: node ?? null,
 			selectedNodePipelineId: node ? pipelineId : null,
 			selectedNodeHasOutgoingEdge: hasOutgoing,
-			hasIncomingAgentEdges: agentIncomingCount > 0,
-			incomingAgentEdgeCount: agentIncomingCount,
+			hasIncomingAgentEdges: agentEdges.length > 0,
+			incomingAgentEdgeCount: agentEdges.length,
+			incomingAgentEdges: agentEdges,
 			incomingTriggerEdges: triggerEdges,
 		};
 	}, [selectedNodeId, pipelineState.pipelines]);
@@ -192,6 +217,7 @@ export function usePipelineSelection({
 		selectedNodeHasOutgoingEdge,
 		hasIncomingAgentEdges,
 		incomingAgentEdgeCount,
+		incomingAgentEdges,
 		incomingTriggerEdges,
 		selectedEdge,
 		selectedEdgePipelineId,

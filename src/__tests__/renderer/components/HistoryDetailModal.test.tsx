@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { HistoryDetailModal } from '../../../renderer/components/HistoryDetailModal';
 import type { Theme, HistoryEntry } from '../../../renderer/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock LayerStackContext
 const mockRegisterLayer = vi.fn(() => 'layer-id-1');
 const mockUnregisterLayer = vi.fn();
@@ -31,26 +33,6 @@ Object.defineProperty(navigator, 'clipboard', {
 });
 
 // Create a mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 // Create a base history entry for testing
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -81,6 +63,7 @@ describe('HistoryDetailModal', () => {
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 		mockWriteText.mockClear();
+		useSettingsStore.setState({ bionifyReadingMode: false });
 	});
 
 	afterEach(() => {
@@ -325,6 +308,26 @@ describe('HistoryDetailModal', () => {
 
 			// Should render without error
 			expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+		});
+
+		it('applies reading mode to prose while preserving code and link text when enabled', () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						fullResponse: 'Hello `code sample` [example link](https://example.com) world',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+			expect(screen.getByText('code sample')).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'example link' })).toBeInTheDocument();
+			expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+			expect(document.querySelector('a .bionify-word')).not.toBeInTheDocument();
 		});
 	});
 

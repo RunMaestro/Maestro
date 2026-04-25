@@ -37,7 +37,9 @@ import {
 	deleteRemote,
 	countItemsRemote,
 } from '../../utils/remote-fs';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Supported image file extensions for base64 encoding
@@ -107,29 +109,60 @@ export function registerFilesystemHandlers(): void {
 			if (!result.success) {
 				throw new Error(result.error || 'Failed to read remote directory');
 			}
-			// Map remote entries to match local format (isFile derived from !isDirectory && !isSymlink)
-			// Include full path for recursive directory scanning (e.g., document graph)
-			// Use POSIX path joining for remote paths (always forward slashes)
-			return result.data!.map((entry) => ({
-				name: entry.name.normalize('NFC'),
-				isDirectory: entry.isDirectory,
-				isFile: !entry.isDirectory && !entry.isSymlink,
-				// Preserve raw filesystem name in path for correct remote operations
-				path: dirPath.endsWith('/') ? `${dirPath}${entry.name}` : `${dirPath}/${entry.name}`,
-			}));
+			// Map remote entries to match local format.
+			// For symlinks, resolve target type via remote stat so directory/file links remain visible.
+			// Include full path for recursive directory scanning (e.g., document graph).
+			return await Promise.all(
+				result.data!.map(async (entry) => {
+					const fullPath = dirPath.endsWith('/')
+						? `${dirPath}${entry.name}`
+						: `${dirPath}/${entry.name}`;
+					let isDirectory = entry.isDirectory;
+					let isFile = !entry.isDirectory && !entry.isSymlink;
+					if (entry.isSymlink) {
+						const statResult = await statRemote(fullPath, sshConfig);
+						if (statResult.success && statResult.data) {
+							isDirectory = statResult.data.isDirectory;
+							isFile = !statResult.data.isDirectory;
+						} else {
+							// Broken symlink or inaccessible target: keep entry visible as symlink
+							isDirectory = false;
+							isFile = false;
+						}
+					}
+					return {
+						name: entry.name.normalize('NFC'),
+						isDirectory,
+						isFile,
+						...(entry.isSymlink ? { isSymlink: true } : {}),
+						// Preserve raw filesystem name in path for correct remote operations
+						path: fullPath,
+					};
+				})
+			);
 		}
 
 		// Local: use standard fs operations
 		const entries = await fs.readdir(dirPath, { withFileTypes: true });
-		// Convert Dirent objects to plain objects for IPC serialization
-		// Include full path for recursive directory scanning (e.g., document graph)
-		return entries.map((entry: any) => ({
-			name: entry.name.normalize('NFC'),
-			isDirectory: entry.isDirectory(),
-			isFile: entry.isFile(),
-			// Preserve raw filesystem name in path for correct local operations
-			path: path.join(dirPath, entry.name),
-		}));
+		// Convert Dirent objects to plain objects for IPC serialization.
+		// Resolve symlinks via resolveDirentType so linked directories/files are not dropped.
+		// Broken symlinks are shown as files so they still appear in the browser.
+		// Include full path for recursive directory scanning (e.g., document graph).
+		return Promise.all(
+			entries.map(async (entry) => {
+				const fullPath = path.join(dirPath, entry.name);
+				const resolved = await resolveDirentType(entry, fullPath);
+				const isSymlink = entry.isSymbolicLink?.() === true;
+				return {
+					name: entry.name.normalize('NFC'),
+					isDirectory: resolved.isDirectory,
+					isFile: resolved.isFile || resolved.isBrokenSymlink,
+					...(isSymlink ? { isSymlink: true } : {}),
+					// Preserve raw filesystem name in path for correct local operations
+					path: fullPath,
+				};
+			})
+		);
 	});
 
 	// Read file contents (supports SSH remote, with image base64 encoding)
@@ -426,10 +459,13 @@ export function registerFilesystemHandlers(): void {
 			const countRecursive = async (dir: string) => {
 				const entries = await fs.readdir(dir, { withFileTypes: true });
 				for (const entry of entries) {
-					if (entry.isDirectory()) {
+					const fullPath = path.join(dir, entry.name);
+					const resolved = await resolveDirentType(entry, fullPath);
+					if (resolved.isDirectory) {
 						folderCount++;
-						await countRecursive(path.join(dir, entry.name));
+						await countRecursive(fullPath);
 					} else {
+						// Files, symlinks-to-files, and broken symlinks all count as files
 						fileCount++;
 					}
 				}
@@ -479,6 +515,7 @@ export function registerFilesystemHandlers(): void {
 			const base64 = buffer.toString('base64');
 			return `data:${contentType};base64,${base64}`;
 		} catch (error) {
+			void captureException(error);
 			// Return null on failure - let caller handle gracefully
 			logger.warn(`Failed to fetch image from ${url}: ${error}`, 'fs:fetchImageAsBase64');
 			return null;

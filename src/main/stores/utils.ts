@@ -14,7 +14,6 @@ import Store from 'electron-store';
 import fsSync from 'fs';
 
 import type { BootstrapSettings } from './types';
-import type { SshRemoteConfig } from '../../shared/types';
 
 // Re-export getDefaultShell from defaults for backward compatibility
 export { getDefaultShell } from './defaults';
@@ -227,20 +226,3 @@ export function getEarlySettings(syncPath: string): {
 }
 
 // ============================================================================
-// SSH Remote Utilities
-// ============================================================================
-
-/**
- * Get SSH remote configuration by ID from a settings store.
- * Returns undefined if not found.
- *
- * Note: This is a lower-level function that takes a store instance.
- * For convenience, use getSshRemoteById() from the main stores module
- * which automatically uses the initialized settings store.
- */
-export function findSshRemoteById(
-	sshRemotes: SshRemoteConfig[],
-	sshRemoteId: string
-): SshRemoteConfig | undefined {
-	return sshRemotes.find((r) => r.id === sshRemoteId);
-}

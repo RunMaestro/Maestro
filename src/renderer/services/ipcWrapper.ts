@@ -1,10 +1,11 @@
+import { logger } from '../utils/logger';
 /**
  * IPC Wrapper Utility
  *
  * Provides a utility for wrapping IPC calls with consistent error handling patterns.
  * Reduces boilerplate in service files by abstracting try-catch patterns.
  *
- * Used by: git.ts, process.ts
+ * Used by: git.ts, process.ts, cue.ts
  *
  * @example
  * // For methods that return a default value on error (swallow errors):
@@ -22,6 +23,8 @@
  *   rethrow: true,
  * });
  */
+
+import { captureException } from '../utils/sentry';
 
 /**
  * Options for createIpcMethod when errors should be swallowed
@@ -86,16 +89,26 @@ export type IpcMethodOptions<T> = IpcMethodOptionsWithDefault<T> | IpcMethodOpti
  * });
  */
 export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<T> {
+	// Only catch the IPC call itself. The previous shape wrapped the transform
+	// in the same try/catch, which silently converted programmer errors in
+	// transform() into the swallow-path defaultValue — masking real bugs. The
+	// transform now runs outside the catch so its exceptions propagate.
+	let result: T;
 	try {
-		const result = await options.call();
-		return options.transform ? options.transform(result) : result;
+		result = await options.call();
 	} catch (error) {
-		console.error(`${options.errorContext} error:`, error);
+		logger.error(`${options.errorContext} error:`, undefined, error);
 		if (options.rethrow) {
+			// Caller is responsible for handling/reporting.
 			throw error;
 		}
+		// Swallow path: the caller never sees this error, so report it to
+		// Sentry here — otherwise IPC failures behind read methods (return
+		// default on error) would be invisible in production.
+		void captureException(error, { extra: { context: options.errorContext } });
 		return options.defaultValue as T;
 	}
+	return options.transform ? options.transform(result) : result;
 }
 
 // ============================================================================

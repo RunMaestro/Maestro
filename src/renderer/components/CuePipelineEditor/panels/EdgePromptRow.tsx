@@ -33,9 +33,20 @@ export function EdgePromptRow({
 		setLocalPrompt(edgeInfo.prompt);
 	}, [edgeInfo.prompt]);
 
-	const { debouncedCallback: debouncedUpdate } = useDebouncedCallback((...args: unknown[]) => {
-		onUpdateEdgePrompt(edgeInfo.edgeId, args[0] as string);
-	}, 300);
+	const { debouncedCallback: debouncedUpdate, flush } = useDebouncedCallback(
+		(...args: unknown[]) => {
+			onUpdateEdgePrompt(edgeInfo.edgeId, args[0] as string);
+		},
+		300
+	);
+
+	// Flush pending writes on unmount so the last keystroke commits to THIS edge
+	// before the row tears down (row remount when agent selection changes).
+	useEffect(() => {
+		return () => {
+			flush();
+		};
+	}, [flush]);
 
 	const handleChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {

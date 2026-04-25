@@ -25,55 +25,28 @@ import type {
 	BatchRunState,
 	QueuedItem,
 } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Create a mock AITab
-const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
-	id: 'tab-1',
-	agentSessionId: null,
-	name: null,
-	starred: false,
-	logs: [],
-	inputValue: '',
-	stagedImages: [],
-	createdAt: 1700000000000,
-	state: 'idle',
-	saveToHistory: true,
-	...overrides,
-});
+const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
+	createMockAITab({
+		createdAt: 1700000000000,
+		saveToHistory: true,
+		...overrides,
+	});
 
-// Create a mock Session
+// Thin wrapper: pre-populates an AI tab so input processing has a tab
+// to route messages to.
 const createMockSession = (overrides: Partial<Session> = {}): Session => {
 	const baseTab = createMockTab();
-
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
+	return baseCreateMockSession({
 		aiPid: 1234,
 		terminalPid: 5678,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		aiTabs: [baseTab],
 		activeTabId: baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
 		...overrides,
-	} as Session;
+	});
 };
 
 // Default batch state (not running)
@@ -878,7 +851,7 @@ describe('useInputProcessing', () => {
 	});
 
 	describe('forced parallel execution', () => {
-		it('bypasses queue when forceParallel is true and setting is enabled', async () => {
+		it('queues with forceParallel flag when tab is busy', async () => {
 			useSettingsStore.setState({ forcedParallelExecution: true } as any);
 
 			const busySession = createMockSession({
@@ -896,11 +869,42 @@ describe('useInputProcessing', () => {
 				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
-			// Should NOT queue — should process immediately (spawn called)
+			// Should queue (tab is busy) but with forceParallel flag
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([busySession]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].forceParallel).toBe(true);
+		});
+
+		it('sends immediately when tab is idle even if session is busy', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+
+			// Session busy (another tab running), but active tab is idle
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [
+					createMockTab({ id: 'tab-1', state: 'idle' }),
+					createMockTab({ id: 'tab-2', state: 'busy' }),
+				],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				sessionsRef: { current: [busySession] },
+				inputValue: 'forced message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			// Tab is idle — should send immediately, skipping cross-tab wait
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 
-		it('bypasses queue when forceParallel is true and AutoRun is active', async () => {
+		it('sends immediately when forceParallel and AutoRun is active but tab is idle', async () => {
 			useSettingsStore.setState({ forcedParallelExecution: true } as any);
 
 			const runningBatchState: BatchRunState = {
@@ -922,7 +926,7 @@ describe('useInputProcessing', () => {
 				await result.current.processInput(undefined, { forceParallel: true });
 			});
 
-			// Should process immediately, not queue
+			// Tab is idle — should send immediately, skipping AutoRun wait
 			expect(window.maestro.process.spawn).toHaveBeenCalled();
 		});
 
@@ -1052,6 +1056,50 @@ describe('useInputProcessing', () => {
 			expect(spawnCall.prompt).toContain('what does this function do');
 			expect(spawnCall.prompt).toContain('IMPORTANT: You are in read-only/plan mode');
 			expect(spawnCall.readOnlyMode).toBe(true);
+		});
+
+		it('does NOT force read-only when Auto Run is active AND user force-sends (Cmd+Shift+Enter / Force Send)', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true } as any);
+
+			const runningBatchState: BatchRunState = {
+				...defaultBatchState,
+				isRunning: true,
+				worktreeActive: false,
+			};
+			mockGetBatchState.mockReturnValue(runningBatchState);
+
+			// Idle write tab with an existing agent session so the prompt is sent verbatim.
+			const writeTab = createMockTab({
+				readOnlyMode: false,
+				agentSessionId: 'existing-session-456',
+				state: 'idle',
+			});
+			const session = createMockSession({
+				aiTabs: [writeTab],
+				activeTabId: writeTab.id,
+				state: 'idle',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'fix the migration',
+				activeBatchRunState: runningBatchState,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { forceParallel: true });
+			});
+
+			// Auto Run normally forces read-only; Force Send must override that.
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.prompt).toBe('fix the migration');
+			expect(spawnCall.prompt).not.toContain('read-only/plan mode');
+			expect(spawnCall.readOnlyMode).toBeFalsy();
+
+			useSettingsStore.setState({ forcedParallelExecution: false } as any);
+			mockGetBatchState.mockReturnValue(defaultBatchState);
 		});
 
 		it('does not append read-only suffix when in normal write mode', async () => {
@@ -1403,6 +1451,61 @@ describe('useInputProcessing', () => {
 
 			// Tab naming was attempted
 			expect(mockGenerateTabName).toHaveBeenCalled();
+		});
+	});
+
+	describe('retry after agent error', () => {
+		// Regression: on retry, thinking pill stayed hidden because session-level
+		// agentError was still set. That pinned session.state to 'error' via the
+		// `state === 'error' && agentError` branch in useAgentListeners (onExit:703,
+		// onData:548), even though processInput flipped state to 'busy'.
+		it('clears session and tab agent error state on AI retry', async () => {
+			const priorError = {
+				type: 'unknown' as const,
+				message: 'Agent exited with code 143',
+				timestamp: Date.now(),
+				raw: 'Agent exited with code 143',
+			};
+			const erroredTab = createMockTab({
+				state: 'idle',
+				agentError: priorError,
+			});
+			const erroredSession = createMockSession({
+				state: 'error',
+				busySource: undefined,
+				agentError: priorError,
+				agentErrorTabId: erroredTab.id,
+				agentErrorPaused: true,
+				aiTabs: [erroredTab],
+				activeTabId: erroredTab.id,
+			});
+
+			const deps = createDeps({
+				activeSession: erroredSession,
+				sessionsRef: { current: [erroredSession] },
+				inputValue: 'retry after crash',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			const updater = mockSetSessions.mock.calls[0][0];
+			const [updated] = updater([erroredSession]);
+
+			// Session transitions to busy with AI source — required by thinking pill
+			expect(updated.state).toBe('busy');
+			expect(updated.busySource).toBe('ai');
+			// Prior error fields are wiped so late onAgentError/onExit branches
+			// can't re-enter the 'error' state path
+			expect(updated.agentError).toBeUndefined();
+			expect(updated.agentErrorTabId).toBeUndefined();
+			expect(updated.agentErrorPaused).toBe(false);
+			// Active tab transitions to busy and its banner error is cleared too
+			expect(updated.aiTabs[0].state).toBe('busy');
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
 		});
 	});
 });

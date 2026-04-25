@@ -13,6 +13,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { StoredSession, SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { Group } from '../../shared/types';
+import type { Shortcut } from '../../shared/shortcut-types';
 import { getDefaultShell } from '../stores/defaults';
 
 /** UUID v4 format regex for validating stored security tokens.
@@ -41,6 +42,12 @@ export interface WebServerFactoryDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	/** Function to get the process manager reference */
 	getProcessManager: () => ProcessManager | null;
+	/** Direct CUE subscription trigger — bypasses renderer IPC round-trip */
+	triggerCueSubscription?: (
+		subscriptionName: string,
+		prompt?: string,
+		sourceAgentId?: string
+	) => boolean;
 }
 
 /**
@@ -140,6 +147,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						createdAt: tab.createdAt,
 						state: tab.state || 'idle',
 						thinkingStartTime: tab.thinkingStartTime || null,
+						hasUnread: tab.hasUnread ?? false,
 					})) || [];
 
 				return {
@@ -211,6 +219,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setGetThemeCallback(() => {
 			const themeId = settingsStore.get('activeThemeId', 'dracula');
 			return getThemeById(themeId);
+		});
+
+		server.setGetBionifyReadingModeCallback(() => {
+			return settingsStore.get<boolean>('bionifyReadingMode', false);
 		});
 
 		// Set up callback for web server to fetch custom AI commands
@@ -627,6 +639,129 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
+		server.setOpenBrowserTabCallback(async (sessionId: string, url: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for openBrowserTab', 'WebServer');
+				return false;
+			}
+
+			// Request-response: wait for the renderer to confirm the tab was
+			// actually created before telling the CLI the call succeeded.
+			return new Promise<boolean>((resolve) => {
+				const responseChannel = `remote:openBrowserTab:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result === true);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for openBrowserTab', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(false);
+					return;
+				}
+				mainWindow.webContents.send('remote:openBrowserTab', sessionId, url, responseChannel);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`openBrowserTab callback timed out for session ${sessionId}`, 'WebServer');
+					resolve(false);
+				}, 5000);
+			});
+		});
+
+		server.setOpenTerminalTabCallback(
+			async (sessionId: string, config: { cwd?: string; shell?: string; name?: string | null }) => {
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for openTerminalTab', 'WebServer');
+					return false;
+				}
+
+				return new Promise<boolean>((resolve) => {
+					const responseChannel = `remote:openTerminalTab:response:${randomUUID()}`;
+					let resolved = false;
+
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						resolve(result === true);
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for openTerminalTab', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve(false);
+						return;
+					}
+					mainWindow.webContents.send('remote:openTerminalTab', sessionId, config, responseChannel);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`openTerminalTab callback timed out for session ${sessionId}`, 'WebServer');
+						resolve(false);
+					}, 5000);
+				});
+			}
+		);
+
+		server.setNewAITabWithPromptCallback(async (sessionId: string, prompt: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
+				return false;
+			}
+
+			return new Promise<boolean>((resolve) => {
+				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result === true);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(false);
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:newAITabWithPrompt',
+					sessionId,
+					prompt,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`newAITabWithPrompt callback timed out for session ${sessionId}`,
+						'WebServer'
+					);
+					resolve(false);
+				}, 5000);
+			});
+		});
+
 		server.setRefreshAutoRunDocsCallback(async (sessionId: string) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
@@ -826,6 +961,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 				colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 				conductorProfile: settingsStore.get('conductorProfile', '') as string,
+				shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 			};
 		});
 
@@ -862,6 +998,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 							audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
 							colorBlindMode: settingsStore.get('colorBlindMode', 'false') as string,
 							conductorProfile: settingsStore.get('conductorProfile', '') as string,
+							shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
 						};
 						server.broadcastSettingsChanged(settings);
 					}
@@ -903,51 +1040,50 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to create a session
 		// Uses IPC request-response pattern — renderer creates the session and responds with sessionId
-		server.setCreateSessionCallback(
-			async (name: string, toolType: string, cwd: string, groupId?: string) => {
-				const mainWindow = getMainWindow();
-				if (!mainWindow) {
-					logger.warn('mainWindow is null for createSession', 'WebServer');
-					return null;
-				}
-
-				return new Promise((resolve) => {
-					const responseChannel = `remote:createSession:response:${randomUUID()}`;
-					let resolved = false;
-
-					const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-						if (resolved) return;
-						resolved = true;
-						clearTimeout(timeoutId);
-						resolve(result || null);
-					};
-
-					ipcMain.once(responseChannel, handleResponse);
-					if (!isWebContentsAvailable(mainWindow)) {
-						logger.warn('webContents is not available for createSession', 'WebServer');
-						ipcMain.removeListener(responseChannel, handleResponse);
-						resolve(null);
-						return;
-					}
-					mainWindow.webContents.send(
-						'remote:createSession',
-						name,
-						toolType,
-						cwd,
-						groupId,
-						responseChannel
-					);
-
-					const timeoutId = setTimeout(() => {
-						if (resolved) return;
-						resolved = true;
-						ipcMain.removeListener(responseChannel, handleResponse);
-						logger.warn(`createSession callback timed out`, 'WebServer');
-						resolve(null);
-					}, 10000);
-				});
+		server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for createSession', 'WebServer');
+				return null;
 			}
-		);
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:createSession:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || null);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for createSession', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(null);
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:createSession',
+					name,
+					toolType,
+					cwd,
+					groupId,
+					config,
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`createSession callback timed out`, 'WebServer');
+					resolve(null);
+				}, 10000);
+			});
+		});
 
 		// Set up callback for web server to delete a session
 		// Fire-and-forget pattern
@@ -1705,6 +1841,19 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			});
 		});
 
+		// Trigger a Cue subscription by name — calls engine directly in the main process.
+		// Previous implementation routed through the renderer via IPC round-trip, which
+		// caused sourceAgentId to be dropped during Electron IPC serialization.
+		server.setTriggerCueSubscriptionCallback(
+			async (subscriptionName: string, prompt?: string, sourceAgentId?: string) => {
+				if (!deps.triggerCueSubscription) {
+					logger.warn('triggerCueSubscription dependency not available', 'WebServer');
+					return false;
+				}
+				return deps.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
+			}
+		);
+
 		// ============ Usage Dashboard & Achievements Callbacks ============
 
 		// Get usage dashboard data — aggregates from session usage stats via IPC
@@ -1808,6 +1957,163 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, 10000);
 			});
 		});
+
+		// ============ Director's Notes Synopsis Callback ============
+		server.setGenerateDirectorNotesSynopsisCallback(
+			async (lookbackDays: number, provider: string) => {
+				const processManager = getProcessManager();
+				if (!processManager) {
+					return {
+						success: false,
+						synopsis: '',
+						error: 'Process manager not available',
+					};
+				}
+
+				const { groomContext } = await import('../utils/context-groomer');
+				const { getPrompt } = await import('../prompt-manager');
+				const { AgentDetector } = await import('../agents');
+				const { getAgentConfigsStore } = await import('../stores');
+
+				const agentDetector = new AgentDetector();
+				const agentConfigsStore = getAgentConfigsStore();
+
+				const agent = await agentDetector.getAgent(provider as any);
+				if (!agent || !agent.available) {
+					return {
+						success: false,
+						synopsis: '',
+						error: `Agent "${provider}" is not available.`,
+					};
+				}
+
+				const historyManager = getHistoryManager();
+				const cutoffTime = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+				const sessionIds = historyManager.listSessionsWithHistory();
+
+				// Build session name map
+				const storedSessions = sessionsStore.get('sessions', []) as Array<{
+					id: string;
+					name?: string;
+				}>;
+				const sessionNameMap = new Map<string, string>();
+				for (const s of storedSessions) {
+					if (s.id && s.name) sessionNameMap.set(s.id, s.name);
+				}
+
+				const sessionManifest: Array<{
+					sessionId: string;
+					displayName: string;
+					historyFilePath: string;
+				}> = [];
+				let agentCount = 0;
+				let entryCount = 0;
+
+				for (const sessionId of sessionIds) {
+					const filePath = historyManager.getHistoryFilePath(sessionId);
+					if (!filePath) continue;
+					const displayName = sessionNameMap.get(sessionId) || sessionId;
+					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
+
+					const entries = historyManager.getEntries(sessionId);
+					let agentHasEntries = false;
+					for (const entry of entries) {
+						if (entry.timestamp >= cutoffTime) {
+							entryCount++;
+							agentHasEntries = true;
+						}
+					}
+					if (agentHasEntries) agentCount++;
+				}
+
+				if (sessionManifest.length === 0) {
+					return {
+						success: true,
+						synopsis: `# Director's Notes\n\n*Generated for the past ${lookbackDays} days*\n\nNo history files found.`,
+						generatedAt: Date.now(),
+						stats: { agentCount: 0, entryCount: 0, durationMs: 0 },
+					};
+				}
+
+				const sanitizeDisplayName = (name: string): string =>
+					name
+						.replace(/[#*_`~\[\]()!|>]/g, '')
+						.replace(/\s+/g, ' ')
+						.trim();
+
+				const manifestLines = sessionManifest
+					.map(
+						(s) =>
+							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
+					)
+					.join('\n');
+
+				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
+				});
+				const nowDate = new Date().toLocaleDateString('en-US', {
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
+				});
+
+				const prompt = [
+					getPrompt('director-notes'),
+					'',
+					'---',
+					'',
+					'## Session History Files',
+					'',
+					`Lookback period: ${lookbackDays} days (${cutoffDate} – ${nowDate})`,
+					`Timestamp cutoff: ${cutoffTime} (only consider entries with timestamp >= this value)`,
+					`${agentCount} agents had ${entryCount} qualifying entries.`,
+					'',
+					manifestLines,
+				].join('\n');
+
+				try {
+					const allConfigs = agentConfigsStore.get('configs', {});
+					const dnAgentConfigValues = allConfigs[provider] || {};
+
+					const result = await groomContext(
+						{
+							projectRoot: process.cwd(),
+							agentType: provider as any,
+							prompt,
+							readOnlyMode: true,
+							agentConfigValues: dnAgentConfigValues,
+						},
+						processManager,
+						agentDetector
+					);
+
+					const synopsis = result.response.trim();
+					if (!synopsis) {
+						return {
+							success: false,
+							synopsis: '',
+							error: 'Agent returned an empty response.',
+						};
+					}
+
+					return {
+						success: true,
+						synopsis,
+						generatedAt: Date.now(),
+						stats: { agentCount, entryCount, durationMs: result.durationMs },
+					};
+				} catch (err) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
+					return {
+						success: false,
+						synopsis: '',
+						error: `Synopsis generation failed: ${errorMsg}`,
+					};
+				}
+			}
+		);
 
 		return server;
 	};

@@ -6,6 +6,7 @@
  */
 
 import type { BmadCommand, BmadMetadata } from '../types';
+import { logger } from '../utils/logger';
 
 /**
  * Get all BMAD commands from the main process.
@@ -22,7 +23,7 @@ export async function getBmadCommands(): Promise<BmadCommand[]> {
 		}
 		return [];
 	} catch (error) {
-		console.error('[BMAD] Failed to get commands:', error);
+		logger.error('[BMAD] Failed to get commands:', undefined, error);
 		return [];
 	}
 }
@@ -42,7 +43,7 @@ export async function getBmadMetadata(): Promise<BmadMetadata | null> {
 		}
 		return null;
 	} catch (error) {
-		console.error('[BMAD] Failed to get metadata:', error);
+		logger.error('[BMAD] Failed to get metadata:', undefined, error);
 		return null;
 	}
 }
@@ -62,7 +63,7 @@ export async function getBmadCommand(slashCommand: string): Promise<BmadCommand 
 		}
 		return null;
 	} catch (error) {
-		console.error('[BMAD] Failed to get command:', error);
+		logger.error('[BMAD] Failed to get command:', undefined, error);
 		return null;
 	}
 }

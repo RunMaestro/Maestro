@@ -22,6 +22,8 @@ import { generateParticipantColor, buildParticipantColorMap } from '../utils/par
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { formatTimestamp as formatTimestampShared } from '../../shared/formatters';
+import { useMessageGistStore } from '../stores/messageGistStore';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -38,7 +40,7 @@ interface GroupChatMessagesProps {
 	/** Whether gh CLI is available for gist publishing */
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
-	onPublishGist?: (text: string) => void;
+	onPublishGist?: (text: string, messageId?: string) => void;
 }
 
 /** Handle exposed via ref for scrolling to messages */
@@ -127,6 +129,8 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 			await safeClipboardWrite(text);
 		}, []);
 
+		const publishedGists = useMessageGistStore((s) => s.published);
+
 		const toggleExpanded = useCallback((msgKey: string) => {
 			setExpandedMessages((prev) => {
 				const next = new Set(prev);
@@ -165,11 +169,12 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 
 		// Format timestamp like AI Terminal (outside bubble)
 		// Accepts both ISO string and Unix timestamp
+		// Returns JSX for non-today dates (date on one line, time on another)
 		const formatTimestamp = (timestamp: string | number) => {
 			const date = new Date(timestamp);
 			const today = new Date();
 			const isToday = date.toDateString() === today.toDateString();
-			const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			const time = formatTimestampShared(timestamp, 'time');
 			if (isToday) {
 				return time;
 			}
@@ -437,16 +442,29 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 												<Copy className="w-3.5 h-3.5" />
 											</button>
 											{/* Publish to GitHub Gist */}
-											{ghCliAvailable && onPublishGist && (
-												<button
-													onClick={() => onPublishGist(msg.content)}
-													className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-													style={{ color: theme.colors.textDim }}
-													title="Publish as GitHub Gist"
-												>
-													<Share2 className="w-3.5 h-3.5" />
-												</button>
-											)}
+											{ghCliAvailable &&
+												onPublishGist &&
+												(() => {
+													const publishedUrl = publishedGists[msgKey]?.gistUrl;
+													return (
+														<button
+															onClick={() => onPublishGist(msg.content, msgKey)}
+															className={`p-1.5 rounded hover:!opacity-100 ${
+																publishedUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+															}`}
+															style={{
+																color: publishedUrl ? theme.colors.accent : theme.colors.textDim,
+															}}
+															title={
+																publishedUrl
+																	? `Published as Gist: ${publishedUrl}`
+																	: 'Publish as GitHub Gist'
+															}
+														>
+															<Share2 className="w-3.5 h-3.5" />
+														</button>
+													);
+												})()}
 										</div>
 									)}
 								</div>

@@ -28,6 +28,14 @@ vi.mock('../../../../main/web-server', () => ({
 	WebServer: vi.fn(),
 }));
 
+// Mock CLI server discovery so tests can assert on writes/deletes
+const mockWriteCliServerInfo = vi.fn();
+const mockDeleteCliServerInfo = vi.fn();
+vi.mock('../../../../shared/cli-server-discovery', () => ({
+	writeCliServerInfo: (...args: unknown[]) => mockWriteCliServerInfo(...args),
+	deleteCliServerInfo: (...args: unknown[]) => mockDeleteCliServerInfo(...args),
+}));
+
 import { registerWebHandlers } from '../../../../main/ipc/handlers/web';
 
 describe('web handlers', () => {
@@ -56,6 +64,7 @@ describe('web handlers', () => {
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
+			getPort: vi.fn().mockReturnValue(8080),
 			start: vi.fn().mockResolvedValue({ port: 8080, url: 'http://localhost:8080' }),
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
@@ -300,6 +309,33 @@ describe('web handlers', () => {
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
+		it('should publish CLI discovery file after starting', async () => {
+			mockWebServer.isActive.mockReturnValue(false);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(mockWriteCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					port: 8080,
+					token: 'mock-security-token',
+					pid: expect.any(Number),
+					startedAt: expect.any(Number),
+				})
+			);
+		});
+
+		it('should publish CLI discovery file even when server already running', async () => {
+			mockWebServer.isActive.mockReturnValue(true);
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(mockWriteCliServerInfo).toHaveBeenCalledWith(
+				expect.objectContaining({ port: 8080, token: 'mock-security-token' })
+			);
+		});
+
 		it('should handle start errors', async () => {
 			mockWebServer.isActive.mockReturnValue(false);
 			mockWebServer.start.mockRejectedValue(new Error('Port in use'));
@@ -308,31 +344,38 @@ describe('web handlers', () => {
 			const result = await handler!({});
 
 			expect(result).toEqual({ success: false, error: 'Port in use' });
+			expect(mockWriteCliServerInfo).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('live:stopServer', () => {
-		it('should stop web server and clean up', async () => {
+		it('should stop web server, delete discovery, and re-establish CLI server', async () => {
 			const handler = registeredHandlers.get('live:stopServer');
 			const result = await handler!({});
 
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(mockDeleteCliServerInfo).toHaveBeenCalled();
+			// ensureCliServer recreates the server and republishes discovery so
+			// maestro-cli keeps working after Live Mode is turned off.
+			expect(webServerRef.current).toBe(mockWebServer);
+			expect(mockWriteCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true });
 		});
 
-		it('should succeed when server is already null', async () => {
+		it('should still re-establish CLI server when no server existed', async () => {
 			webServerRef.current = null;
 
 			const handler = registeredHandlers.get('live:stopServer');
 			const result = await handler!({});
 
+			expect(mockCreateWebServer).toHaveBeenCalled();
+			expect(mockWriteCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true });
 		});
 	});
 
 	describe('live:disableAll', () => {
-		it('should disable all live sessions and stop server', async () => {
+		it('should disable all live sessions, stop server, and re-establish CLI', async () => {
 			mockWebServer.getLiveSessions.mockReturnValue([
 				{ sessionId: 'session-1' },
 				{ sessionId: 'session-2' },
@@ -344,7 +387,9 @@ describe('web handlers', () => {
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-1');
 			expect(mockWebServer.setSessionOffline).toHaveBeenCalledWith('session-2');
 			expect(mockWebServer.stop).toHaveBeenCalled();
-			expect(webServerRef.current).toBeNull();
+			expect(mockDeleteCliServerInfo).toHaveBeenCalled();
+			// Same as stopServer: CLI must remain reachable.
+			expect(mockWriteCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true, count: 2 });
 		});
 

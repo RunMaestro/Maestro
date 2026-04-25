@@ -13,23 +13,17 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import {
-	Music,
-	X,
-	Loader2,
-	Bot,
-	Settings,
-	FolderOpen,
-	ChevronRight,
-	RefreshCw,
-} from 'lucide-react';
+import { Music, X, Bot, Settings, FolderOpen, ChevronRight, RefreshCw } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, AgentConfig } from '../types';
 import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 import { isBetaAgent } from '../../shared/agentMetadata';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -77,9 +71,15 @@ export function AgentCreationDialog({
 	issue,
 	onCreateAgent,
 }: AgentCreationDialogProps) {
-	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+
+	useModalLayer(
+		MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION ?? 711,
+		'Create Agent for Symphony Contribution',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Filter function: only agents that support batch mode (required for Symphony)
 	const symphonyAgentFilter = useCallback((agent: AgentConfig) => {
@@ -171,7 +171,7 @@ export function AgentCreationDialog({
 				const models = await window.maestro.agents.getModels(agentId, force);
 				setAvailableModels((prev) => ({ ...prev, [agentId]: models || [] }));
 			} catch (err) {
-				console.error('Failed to load models for', agentId, err);
+				logger.error('Failed to load models for', undefined, [agentId, err]);
 			} finally {
 				setLoadingModels((prev) => ({ ...prev, [agentId]: false }));
 			}
@@ -216,29 +216,13 @@ export function AgentCreationDialog({
 			try {
 				await ac.refreshAgent();
 			} catch (err) {
-				console.error('Failed to refresh agent:', err);
+				logger.error('Failed to refresh agent:', undefined, err);
 			} finally {
 				setRefreshingAgent(null);
 			}
 		},
 		[ac.refreshAgent]
 	);
-
-	// Layer stack registration
-	useEffect(() => {
-		if (isOpen) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION ?? 711,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Create Agent for Symphony Contribution',
-				onEscape: () => onCloseRef.current(),
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [isOpen, registerLayer, unregisterLayer]);
 
 	// Handle folder selection
 	const handleSelectFolder = useCallback(async () => {
@@ -337,13 +321,9 @@ export function AgentCreationDialog({
 							Create Symphony Agent
 						</h2>
 					</div>
-					<button
-						onClick={onClose}
-						className="p-1.5 rounded hover:bg-white/10 transition-colors"
-						title="Close (Esc)"
-					>
+					<GhostIconButton onClick={onClose} padding="p-1.5" title="Close (Esc)">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Content - scrollable */}
@@ -377,7 +357,7 @@ export function AgentCreationDialog({
 
 						{ac.isDetecting ? (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+								<Spinner size={24} color={theme.colors.accent} />
 							</div>
 						) : ac.detectedAgents.length === 0 ? (
 							<div className="text-center py-4" style={{ color: theme.colors.textDim }}>
@@ -446,19 +426,18 @@ export function AgentCreationDialog({
 													>
 														Available
 													</span>
-													<button
+													<GhostIconButton
 														onClick={(e) => {
 															e.stopPropagation();
 															handleRefreshAgent(agent.id);
 														}}
-														className="p-1 rounded hover:bg-white/10 transition-colors"
 														title="Refresh detection"
-														style={{ color: theme.colors.textDim }}
+														color={theme.colors.textDim}
 													>
 														<RefreshCw
 															className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
 														/>
-													</button>
+													</GhostIconButton>
 												</div>
 											</div>
 
@@ -476,25 +455,11 @@ export function AgentCreationDialog({
 															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomPathBlur={() => {}}
-														onCustomPathClear={() => {
-															setCustomAgentPaths((prev) => {
-																const newPaths = { ...prev };
-																delete newPaths[agent.id];
-																return newPaths;
-															});
-														}}
 														customArgs={customAgentArgs[agent.id] || ''}
 														onCustomArgsChange={(value) => {
 															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
 														}}
 														onCustomArgsBlur={() => {}}
-														onCustomArgsClear={() => {
-															setCustomAgentArgs((prev) => {
-																const newArgs = { ...prev };
-																delete newArgs[agent.id];
-																return newArgs;
-															});
-														}}
 														customEnvVars={customAgentEnvVars[agent.id] || {}}
 														onEnvVarKeyChange={(oldKey, newKey, value) => {
 															const currentVars = { ...customAgentEnvVars[agent.id] };
@@ -661,7 +626,7 @@ export function AgentCreationDialog({
 					>
 						{isCreating ? (
 							<>
-								<Loader2 className="w-4 h-4 animate-spin" />
+								<Spinner size={16} />
 								Creating...
 							</>
 						) : (

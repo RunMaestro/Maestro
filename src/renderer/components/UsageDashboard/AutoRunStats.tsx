@@ -15,23 +15,9 @@
 import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
-
-/**
- * Auto Run session data shape from the API
- */
-interface AutoRunSession {
-	id: string;
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	duration: number;
-	tasksTotal?: number;
-	tasksCompleted?: number;
-	projectPath?: string;
-}
+import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -40,41 +26,6 @@ interface AutoRunStatsProps {
 	theme: Theme;
 	/** Number of columns for responsive layout (default: 6) */
 	columns?: number;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- * Examples: "12h 34m", "5m 30s", "45s"
- */
-function formatDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
- * Format large numbers with K/M suffixes for readability
- * Examples: "1.2K", "3.5M", "42"
- */
-function formatNumber(num: number): string {
-	if (num >= 1000000) {
-		return `${(num / 1000000).toFixed(1)}M`;
-	}
-	if (num >= 1000) {
-		return `${(num / 1000).toFixed(1)}K`;
-	}
-	return num.toString();
 }
 
 /**

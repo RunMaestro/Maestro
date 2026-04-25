@@ -10,6 +10,7 @@ import React, {
 import { HelpCircle, Search } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Session, Theme, HistoryEntry, HistoryEntryType } from '../types';
+import type { FileNode } from '../types/fileTree';
 import { HistoryDetailModal } from './HistoryDetailModal';
 import { HistoryHelpModal } from './HistoryHelpModal';
 import { useThrottledCallback, useListNavigation } from '../hooks';
@@ -25,16 +26,17 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
+import { logger } from '../utils/logger';
 
 interface HistoryPanelProps {
 	session: Session;
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
-	fileTree?: any[];
+	fileTree?: FileNode[];
 	onFileClick?: (path: string) => void;
 }
 
@@ -123,7 +125,7 @@ export const HistoryPanel = React.memo(
 					}
 					// Note: With virtualization, display count is managed automatically
 				} catch (error) {
-					console.error('Failed to load history:', error);
+					logger.error('Failed to load history:', undefined, error);
 					setHistoryEntries([]);
 				} finally {
 					if (!isRefresh) {
@@ -488,7 +490,7 @@ export const HistoryPanel = React.memo(
 						setSelectedIndex(-1);
 					}
 				} catch (error) {
-					console.error('Failed to delete history entry:', error);
+					logger.error('Failed to delete history entry:', undefined, error);
 				}
 			},
 			[session.id, setSelectedIndex]
@@ -691,6 +693,7 @@ export const HistoryPanel = React.memo(
 					<HistoryDetailModal
 						theme={theme}
 						entry={detailModalEntry}
+						agentId={session.toolType}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
 						onResumeSession={onResumeSession}

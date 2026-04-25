@@ -1,9 +1,20 @@
 import React, { useCallback, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Pencil, Terminal, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import {
+	X,
+	Pencil,
+	Terminal,
+	ChevronsLeft,
+	ChevronsRight,
+	Clipboard,
+	ArrowRightCircle,
+	Share2,
+} from 'lucide-react';
 import type { TerminalTab, Theme } from '../../types';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 /**
  * Props for the TerminalTabItem component.
@@ -32,6 +43,12 @@ export interface TerminalTabItemProps {
 	onCloseOtherTabs?: (tabId: string) => void;
 	onCloseTabsLeft?: (tabId: string) => void;
 	onCloseTabsRight?: (tabId: string) => void;
+	/** Copy the full terminal buffer to the clipboard. */
+	onCopyBuffer?: (tabId: string) => void;
+	/** Publish the terminal buffer as a GitHub Gist. */
+	onPublishBufferGist?: (tabId: string) => void;
+	/** Send the terminal buffer to another agent. */
+	onSendBufferToAgent?: (tabId: string) => void;
 	totalTabs?: number;
 	tabIndex?: number;
 	shortcutHint?: number | null;
@@ -64,6 +81,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onCopyBuffer,
+	onPublishBufferGist,
+	onSendBufferToAgent,
 	totalTabs,
 	tabIndex,
 	shortcutHint,
@@ -82,6 +102,17 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 		overlayMouseLeave,
 		isOverOverlayRef,
 	} = useTabHoverOverlay({ registerRef });
+
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	const ShortcutHint = ({ keys }: { keys: string[] }) => (
+		<span
+			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+		>
+			{formatShortcutKeys(keys)}
+		</span>
+	);
 
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
@@ -153,26 +184,53 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	const handleCloseOtherTabsClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseOtherTabs?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseOtherTabs, tab.id, setOverlayOpen]
+		[onSelect, onCloseOtherTabs, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsLeftClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsLeft?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsLeft, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsLeft, tab.id, setOverlayOpen]
 	);
 	const handleCloseTabsRightClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
+			onSelect(tab.id);
 			onCloseTabsRight?.(tab.id);
 			setOverlayOpen(false);
 		},
-		[onCloseTabsRight, tab.id, setOverlayOpen]
+		[onSelect, onCloseTabsRight, tab.id, setOverlayOpen]
+	);
+	const handleCopyBufferClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCopyBuffer?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCopyBuffer, tab.id, setOverlayOpen]
+	);
+	const handlePublishBufferGistClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onPublishBufferGist?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onPublishBufferGist, tab.id, setOverlayOpen]
+	);
+	const handleSendBufferToAgentClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSendBufferToAgent?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onSendBufferToAgent, tab.id, setOverlayOpen]
 	);
 
 	// Determine icon state color
@@ -372,6 +430,47 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									</button>
 								)}
 
+								{/* Buffer actions — operate on the terminal's full scrollback */}
+								{(onCopyBuffer || onSendBufferToAgent || onPublishBufferGist) && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{onCopyBuffer && (
+									<button
+										onClick={handleCopyBufferClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Buffer: Copy to Clipboard
+									</button>
+								)}
+
+								{onSendBufferToAgent && (
+									<button
+										onClick={handleSendBufferToAgentClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ArrowRightCircle
+											className="w-3.5 h-3.5"
+											style={{ color: theme.colors.textDim }}
+										/>
+										Buffer: Send to Agent
+									</button>
+								)}
+
+								{onPublishBufferGist && (
+									<button
+										onClick={handlePublishBufferGistClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Share2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Buffer: Publish as GitHub Gist
+									</button>
+								)}
+
 								{/* Close actions */}
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
@@ -382,6 +481,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								>
 									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 									Close Tab
+									{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
 								</button>
 
 								{onCloseOtherTabs && (
@@ -395,6 +495,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Other Tabs
+										{tabShortcuts.closeOtherTabs && (
+											<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+										)}
 									</button>
 								)}
 
@@ -409,6 +512,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 									>
 										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										Close Tabs to Left
+										{tabShortcuts.closeTabsLeft && (
+											<ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />
+										)}
 									</button>
 								)}
 
@@ -428,6 +534,9 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 											style={{ color: theme.colors.textDim }}
 										/>
 										Close Tabs to Right
+										{tabShortcuts.closeTabsRight && (
+											<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+										)}
 									</button>
 								)}
 							</div>

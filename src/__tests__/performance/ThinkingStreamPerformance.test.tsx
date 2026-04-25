@@ -15,6 +15,8 @@ import React from 'react';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
 import type { Theme, LogEntry, Session, AITab } from '../../renderer/types';
 
+import { createMockTheme } from '../helpers/mockTheme';
+
 // ============================================================================
 // Test Utilities
 // ============================================================================
@@ -68,26 +70,6 @@ const splitIntoChunks = (content: string, avgChunkSize: number): string[] => {
 };
 
 // Create mock theme
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentText: '#4488ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 // Mock the thinking chunk handler logic (extracted from App.tsx)
 interface ThinkingChunkBuffer {

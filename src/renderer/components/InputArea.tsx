@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import {
-	Terminal,
-	Cpu,
+	Bell,
 	Keyboard,
 	ImageIcon,
 	X,
@@ -14,7 +13,6 @@ import {
 	Tag,
 	PenLine,
 	Brain,
-	Wand2,
 	Pin,
 	Sparkles,
 	Gauge,
@@ -38,6 +36,7 @@ import { ExecutionQueueIndicator } from './ExecutionQueueIndicator';
 import { ContextWarningSash } from './ContextWarningSash';
 import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
+import { NotificationPopover } from './NotificationPopover';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 import { filterSlashCommands, highlightSlashCommand } from '../utils/search';
@@ -266,6 +265,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onModelChange,
 		onEffortChange,
 	} = props;
+
+	// State for notification popover
+	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+	const notificationBtnRef = useRef<HTMLButtonElement>(null);
 
 	// State for model/effort dropdown menus
 	const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -556,7 +559,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 				>
 					<div
-						className="overflow-y-auto max-h-64 scrollbar-thin"
+						className="overflow-y-auto max-h-96 scrollbar-thin"
 						style={{ overscrollBehavior: 'contain' }}
 					>
 						{filteredSlashCommands.map((cmd, idx) => (
@@ -564,7 +567,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								type="button"
 								key={cmd.command}
 								ref={(el) => (slashCommandItemRefs.current[idx] = el)}
-								className={`w-full px-4 py-3 text-left transition-colors ${
+								className={`w-full px-3 py-1 text-left transition-colors ${
 									idx === safeSelectedIndex ? 'font-semibold' : ''
 								}`}
 								style={{
@@ -583,10 +586,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								}}
 								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
 							>
-								<div className="font-mono text-sm">
+								<div className="font-mono text-sm leading-tight">
 									{highlightSlashCommand(cmd.command, inputValueLower.replace(/^\//, ''))}
 								</div>
-								<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
+								<div className="text-[11px] opacity-70 leading-tight">{cmd.description}</div>
 							</button>
 						))}
 					</div>
@@ -1075,7 +1078,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								/>
 								{/* Model pill — quick-change dropdown */}
 								{session.inputMode === 'ai' && onModelChange && availableModels.length > 0 && (
-									<div className="relative" ref={modelMenuRef}>
+									<div className="relative" ref={modelMenuRef} data-tour="model-selector">
 										<button
 											onClick={() => {
 												setModelMenuOpen(!modelMenuOpen);
@@ -1100,9 +1103,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 													borderColor: theme.colors.border,
 												}}
 											>
-												{availableModels.map((model) => (
+												{(availableModels.includes('')
+													? availableModels
+													: ['', ...availableModels]
+												).map((model) => (
 													<button
-														key={model}
+														key={model || '__default__'}
 														onClick={() => {
 															onModelChange(model);
 															setModelMenuOpen(false);
@@ -1128,7 +1134,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								{session.inputMode === 'ai' &&
 									onEffortChange &&
 									availableEfforts.some((e) => e !== '') && (
-										<div className="relative" ref={effortMenuRef}>
+										<div className="relative" ref={effortMenuRef} data-tour="effort-selector">
 											<button
 												onClick={() => {
 													setEffortMenuOpen(!effortMenuOpen);
@@ -1179,7 +1185,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									)}
 							</div>
 
-							<div className="flex items-center gap-2 ml-auto">
+							<div className="flex items-center gap-2 ml-auto" data-tour="toolbar-toggles">
 								{/* Save to History toggle - AI mode only */}
 								{session.inputMode === 'ai' && onToggleTabSaveToHistory && (
 									<button
@@ -1293,27 +1299,29 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					)}
 				</div>
 
-				{/* Mode Toggle & Send/Interrupt Button - Right Side */}
+				{/* Notifications & Send/Interrupt Button - Right Side */}
 				<div className="flex flex-col gap-2">
 					<button
+						ref={notificationBtnRef}
 						type="button"
-						onClick={toggleInputMode}
+						onClick={() => setNotificationPopoverOpen((prev) => !prev)}
 						className="p-2 rounded-lg border transition-all"
 						style={{
 							backgroundColor: theme.colors.bgMain,
 							borderColor: theme.colors.border,
 							color: theme.colors.textDim,
 						}}
-						title={`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`}
+						title="Notification Settings"
 					>
-						{session.inputMode === 'terminal' ? (
-							<Terminal className="w-4 h-4" />
-						) : wizardState?.isActive ? (
-							<Wand2 className="w-4 h-4" style={{ color: theme.colors.accent }} />
-						) : (
-							<Cpu className="w-4 h-4" />
-						)}
+						<Bell className="w-4 h-4" />
 					</button>
+					{notificationPopoverOpen && (
+						<NotificationPopover
+							theme={theme}
+							anchorRef={notificationBtnRef}
+							onClose={() => setNotificationPopoverOpen(false)}
+						/>
+					)}
 					{/* Send button - always visible. Stop button is now in ThinkingStatusPill */}
 					<button
 						type="button"

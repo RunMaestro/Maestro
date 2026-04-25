@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAvailableAgents, useAvailableAgentsForCapability } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { DEFAULT_CAPABILITIES, type AgentCapabilities } from '../../../renderer/hooks';
 
 // Define agent config type matching what detect() returns
@@ -50,13 +51,13 @@ const mockAgentConfigs: AgentConfigDetected[] = [
 	},
 ];
 
-// Create a minimal session for testing
+// Thin wrapper: positional signature preserved. Delegates to shared factory.
 function createMockSession(
 	id: string,
 	toolType: string,
 	state: 'idle' | 'busy' | 'error' | 'connecting' = 'idle'
 ): Session {
-	return {
+	return baseCreateMockSession({
 		id,
 		name: `Session ${id}`,
 		toolType: toolType as any,
@@ -64,28 +65,7 @@ function createMockSession(
 		cwd: '/test',
 		fullPath: '/test',
 		projectRoot: '/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		activeTimeMs: 0,
-		executionQueue: [],
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-	};
+	});
 }
 
 describe('useAvailableAgents', () => {

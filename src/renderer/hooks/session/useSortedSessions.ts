@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { Session, Group } from '../../types';
 import { stripLeadingEmojis, compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 
@@ -15,6 +15,15 @@ export interface UseSortedSessionsDeps {
 	groups: Group[];
 	/** Whether the bookmarks folder is collapsed */
 	bookmarksCollapsed: boolean;
+	/**
+	 * When true, visibleSessions excludes agents that have no unread AI tabs and aren't busy
+	 * (and whose worktree children likewise have none). The active session (or its parent) is
+	 * always kept visible so the user doesn't lose their place. Mirrors the filter applied in
+	 * useSessionCategories so jump numbers and Alt+Cmd+N shortcuts match the rendered list.
+	 */
+	showUnreadAgentsOnly?: boolean;
+	/** Active session id — kept visible even when the unread filter would exclude it */
+	activeSessionId?: string | null;
 }
 
 /**
@@ -59,7 +68,7 @@ export interface UseSortedSessionsReturn {
  * @returns Sorted and visible session arrays
  */
 export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSessionsReturn {
-	const { sessions, groups, bookmarksCollapsed } = deps;
+	const { sessions, groups, bookmarksCollapsed, showUnreadAgentsOnly, activeSessionId } = deps;
 
 	// Memoize worktree children lookup for O(1) access instead of O(n) per parent
 	// This reduces complexity from O(n²) to O(n) when building sorted sessions
@@ -185,6 +194,32 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		return { navSessions: result, navIndexMap: indexMap, bookmarkNavSize: bmSize };
 	}, [sessions, groups, worktreeChildrenByParent]);
 
+	// Build a lookup of worktree children by parent id for unread-filter checks.
+	// Reuses the same child list already computed above.
+	const childrenByParentId = worktreeChildrenByParent;
+
+	// Matches the unread-filter logic in useSessionCategories so visibleSessions (used for
+	// jump badges + Alt+Cmd+N shortcuts) stays in sync with the Left Bar's rendered list.
+	const passesUnreadFilter = useCallback(
+		(session: Session): boolean => {
+			if (!showUnreadAgentsOnly) return true;
+			const isActiveOrParentOfActive =
+				session.id === activeSessionId ||
+				childrenByParentId.get(session.id)?.some((child) => child.id === activeSessionId) ||
+				false;
+			if (isActiveOrParentOfActive) return true;
+			const hasUnread = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
+			const isBusy = session.state === 'busy';
+			const children = childrenByParentId.get(session.id);
+			const hasUnreadChildren =
+				children?.some(
+					(child) => child.aiTabs?.some((tab) => tab.hasUnread) || child.state === 'busy'
+				) ?? false;
+			return hasUnread || isBusy || hasUnreadChildren;
+		},
+		[showUnreadAgentsOnly, activeSessionId, childrenByParentId]
+	);
+
 	// Create visible sessions array for session jump shortcuts (Opt+Cmd+NUMBER)
 	// Order: Bookmarked sessions first (if bookmarks folder expanded), then groups/ungrouped
 	// Note: A session can appear twice if it's both bookmarked and in an expanded group
@@ -196,7 +231,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		// Exclude worktree children (they don't show jump numbers)
 		if (!bookmarksCollapsed) {
 			const bookmarkedSessions = sessions
-				.filter((s) => s.bookmarked && !s.parentSessionId)
+				.filter((s) => s.bookmarked && !s.parentSessionId && passesUnreadFilter(s))
 				.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 			result.push(...bookmarkedSessions);
 		}
@@ -207,6 +242,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		const groupAndUngrouped = sortedSessions.filter((session) => {
 			// Exclude worktree children - they're nested under parent and don't show jump badges
 			if (session.parentSessionId) return false;
+			if (!passesUnreadFilter(session)) return false;
 			if (!session.groupId) return true; // Ungrouped sessions always visible
 			const group = groupsById.get(session.groupId);
 			return group && !group.collapsed; // Only show if group is expanded
@@ -214,7 +250,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		result.push(...groupAndUngrouped);
 
 		return result;
-	}, [sortedSessions, groupsById, sessions, bookmarksCollapsed]);
+	}, [sortedSessions, groupsById, sessions, bookmarksCollapsed, passesUnreadFilter]);
 
 	return {
 		sortedSessions,

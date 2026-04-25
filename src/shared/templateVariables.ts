@@ -53,10 +53,9 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *
  * Maestro Variables:
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
- *   {{READ_ONLY_MODE}}    - "true" if agent is in read-only/plan mode, "false" otherwise
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -91,6 +90,10 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_GH_BRANCH}}       - Head branch (github.pull_request events)
  *   {{CUE_GH_BASE_BRANCH}}  - Base branch (github.pull_request events)
  *   {{CUE_GH_ASSIGNEES}}    - Comma-separated assignees (github.issue events)
+ *
+ *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
+ *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
+ *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  */
 
 /**
@@ -114,7 +117,7 @@ function getCurrentPlatform(): string {
  * The CLI is bundled as a JS file inside the Maestro application package,
  * so the returned value includes the `node` invocation with the full path.
  */
-function getMaestroCLIPath(): string {
+export function getMaestroCLIPath(): string {
 	const platform = getCurrentPlatform();
 	switch (platform) {
 		case 'darwin':
@@ -161,8 +164,6 @@ export interface TemplateContext {
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
-	// Read-only / plan mode state
-	readOnlyMode?: boolean;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
 		eventType?: string;
@@ -201,6 +202,12 @@ export interface TemplateContext {
 		ghBaseBranch?: string;
 		ghAssignees?: string;
 		ghMergedAt?: string;
+		// CLI trigger fields (cli.trigger)
+		cliPrompt?: string;
+		sourceAgentId?: string;
+		// Unified upstream-agent session ID — `sourceSessionId` for agent.completed,
+		// `sourceAgentId` for cli.trigger. Surfaced as {{CUE_FROM_AGENT}}.
+		fromAgent?: string;
 	};
 }
 
@@ -219,6 +226,22 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
+	{
+		variable: '{{CUE_CLI_PROMPT}}',
+		description: 'CLI prompt override (cli.trigger events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_SOURCE_AGENT_ID}}',
+		description: 'Source agent ID passed via --source-agent-id (cli.trigger events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_FROM_AGENT}}',
+		description:
+			'Upstream agent/session ID — populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)',
+		cueOnly: true,
+	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
@@ -303,7 +326,6 @@ export const TEMPLATE_VARIABLES = [
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
 	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
-	{ variable: '{{READ_ONLY_MODE}}', description: 'Read-only/plan mode (true/false)' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -334,7 +356,6 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		documentPath,
 		historyFilePath,
 		conductorProfile,
-		readOnlyMode,
 	} = context;
 	const now = new Date();
 
@@ -403,7 +424,6 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Maestro variables
 		MAESTRO_CLI_PATH: getMaestroCLIPath(),
-		READ_ONLY_MODE: String(readOnlyMode ?? false),
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
@@ -444,7 +464,24 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
+		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
+		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
+		CUE_FROM_AGENT: context.cue?.fromAgent || '',
 	};
+
+	// Add dynamic per-source output variables from the Cue context.
+	// The context builder populates `output_<NAME>` and `forwarded_<NAME>`
+	// keys from the event payload's perSourceOutputs / forwardedOutputs maps.
+	// We expose them as {{CUE_OUTPUT_<NAME>}} and {{CUE_FORWARDED_<NAME>}}.
+	if (context.cue) {
+		for (const [key, value] of Object.entries(context.cue)) {
+			if (key.startsWith('output_') && typeof value === 'string') {
+				replacements[`CUE_${key.toUpperCase()}`] = value;
+			} else if (key.startsWith('forwarded_') && typeof value === 'string') {
+				replacements[`CUE_${key.toUpperCase()}`] = value;
+			}
+		}
+	}
 
 	// Perform case-insensitive replacement
 	let result = template;

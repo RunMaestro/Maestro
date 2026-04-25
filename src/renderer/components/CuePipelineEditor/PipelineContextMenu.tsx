@@ -13,7 +13,7 @@ export interface ContextMenuState {
 	y: number;
 	nodeId: string;
 	pipelineId: string;
-	nodeType: 'trigger' | 'agent';
+	nodeType: 'trigger' | 'agent' | 'cli_output';
 }
 
 export interface PipelineContextMenuProps {

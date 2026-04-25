@@ -10,6 +10,7 @@ interface SidebarActionsProps {
 	shortcuts: Record<string, Shortcut>;
 	showUnreadAgentsOnly: boolean;
 	hasUnreadAgents: boolean;
+	sidebarWidth: number;
 	addNewSession: () => void;
 	openFeedback?: () => void;
 	setLeftSidebarOpen: (open: boolean) => void;
@@ -23,11 +24,13 @@ export const SidebarActions = memo(function SidebarActions({
 	shortcuts,
 	showUnreadAgentsOnly,
 	hasUnreadAgents,
+	sidebarWidth,
 	addNewSession,
 	openFeedback,
 	setLeftSidebarOpen,
 	toggleShowUnreadAgentsOnly,
 }: SidebarActionsProps) {
+	const compact = sidebarWidth < 320;
 	const toggleSidebarShortcutLabel = shortcuts.toggleSidebar?.keys?.length
 		? ` (${formatShortcutKeys(shortcuts.toggleSidebar.keys)})`
 		: '';
@@ -69,7 +72,7 @@ export const SidebarActions = memo(function SidebarActions({
 						className="flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 whitespace-nowrap overflow-hidden"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>
-						<Bot className="w-3 h-3 shrink-0" /> New Agent
+						{!compact && <Bot className="w-3 h-3 shrink-0" />} New Agent
 					</button>
 
 					<button
@@ -80,7 +83,7 @@ export const SidebarActions = memo(function SidebarActions({
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 						title="Send product feedback"
 					>
-						<MessageSquarePlus className="w-3 h-3 shrink-0" /> Feedback
+						{!compact && <MessageSquarePlus className="w-3 h-3 shrink-0" />} Feedback
 					</button>
 				</div>
 			)}

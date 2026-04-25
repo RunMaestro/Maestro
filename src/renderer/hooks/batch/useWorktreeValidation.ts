@@ -25,6 +25,7 @@
 import { useState, useEffect } from 'react';
 import type { WorktreeValidationState } from '../../types';
 import { hasUncommittedChanges } from '../../../shared/gitUtils';
+import { logger } from '../../utils/logger';
 
 /**
  * Dependencies required by the hook
@@ -179,7 +180,7 @@ export function useWorktreeValidation({
 					error: !sameRepo ? 'This path contains a worktree for a different repository' : undefined,
 				});
 			} catch (error) {
-				console.error('Failed to validate worktree path:', error);
+				logger.error('Failed to validate worktree path:', undefined, error);
 				setValidation({
 					checking: false,
 					exists: false,

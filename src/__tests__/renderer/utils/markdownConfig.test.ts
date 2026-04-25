@@ -1,4 +1,6 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
 
 // Mock react-syntax-highlighter before importing the module under test
 vi.mock('react-syntax-highlighter', () => ({
@@ -22,6 +24,7 @@ import {
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 /**
  * Tests for markdown configuration utilities.
  *
@@ -35,27 +38,6 @@ import type { Theme } from '../../../shared/theme-types';
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentDim: 'rgba(0, 102, 255, 0.2)',
-		accentText: '#0066ff',
-		accentForeground: '#ffffff',
-		success: '#00cc00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-		bgMain: '#1a1a1a',
-		bgSidebar: '#2a2a2a',
-		bgActivity: '#333333',
-		border: '#444444',
-	},
-};
 
 // ---------------------------------------------------------------------------
 // generateProseStyles
@@ -97,6 +79,12 @@ describe('generateProseStyles', () => {
 			expect(css).toContain('.prose table');
 			expect(css).toContain('.prose th');
 			expect(css).toContain('.prose td');
+		});
+
+		it('should allow inline code to wrap when it cannot break cleanly', () => {
+			const css = generateProseStyles({ theme: mockTheme });
+			const codeRule = css.match(/\.prose code \{[^}]*\}/)?.[0] ?? '';
+			expect(codeRule).toContain('overflow-wrap: anywhere');
 		});
 
 		it('should include blockquote, link, and hr rules', () => {
@@ -670,6 +658,12 @@ describe('generateInlineWizardPreviewProseStyles', () => {
 		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
 	});
 
+	it('should scope Bionify selectors to descendant prose blocks only', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view .prose .bionify-word');
+		expect(css).not.toContain('.doc-gen-view.prose, .doc-gen-view .prose .bionify-word');
+	});
+
 	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
 		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
 		expect(css).toContain(
@@ -746,7 +740,7 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'https://example.com', children: 'link' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('https://example.com', { ctrlKey: undefined });
 	});
 
 	it('should call onExternalLinkClick for mailto URLs', () => {
@@ -760,7 +754,9 @@ describe('createMarkdownComponents link handling', () => {
 		const element = aComponent({ node: null, href: 'mailto:test@example.com', children: 'email' });
 		const clickEvent = { preventDefault: vi.fn() } as any;
 		element.props.onClick(clickEvent);
-		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com');
+		expect(onExternalLinkClick).toHaveBeenCalledWith('mailto:test@example.com', {
+			ctrlKey: undefined,
+		});
 	});
 
 	it('should NOT call onExternalLinkClick for relative paths', () => {
@@ -816,5 +812,95 @@ describe('createMarkdownComponents link handling', () => {
 		element.props.onClick(clickEvent);
 		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
 		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Hex color swatch in inline code
+// ---------------------------------------------------------------------------
+
+describe('hex color swatch in inline code', () => {
+	it('should render a color swatch span before hex color in createMarkdownComponents', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#FF0000' });
+		// Should have two children: the swatch span and the text
+		const children = React.Children.toArray(element.props.children);
+		expect(children).toHaveLength(2);
+		const swatch = children[0] as React.ReactElement;
+		expect(swatch.type).toBe('span');
+		expect(swatch.props.style.backgroundColor).toBe('#FF0000');
+	});
+
+	it('should not render swatch for non-hex inline code', () => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: 'console.log' });
+		const children = React.Children.toArray(element.props.children);
+		expect(children).toHaveLength(1);
+	});
+
+	it('should render swatch in wizard bubble inline code', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#8B3FFC' });
+		const children = React.Children.toArray(element.props.children);
+		// swatch (or null filtered) + text
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#8B3FFC');
+	});
+
+	it('should render swatch in release notes inline code', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		const codeComponent = components.code as any;
+		const element = codeComponent({ children: '#00CC00' });
+		const children = React.Children.toArray(element.props.children);
+		const swatch = children.find(
+			(c: any) => c?.type === 'span' && c?.props?.style?.backgroundColor
+		) as React.ReactElement | undefined;
+		expect(swatch).toBeDefined();
+		expect(swatch!.props.style.backgroundColor).toBe('#00CC00');
+	});
+});
+
+describe('createMarkdownComponents reading mode', () => {
+	it('wraps paragraph prose in Bionify spans when enabled', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Paragraph = components.p as any;
+
+		const { container } = render(Paragraph({ children: 'Readable prose only' }));
+
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+		expect(container.textContent).toBe('Readable prose only');
+	});
+
+	it('leaves inline code untouched while transforming surrounding emphasis content', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Strong = components.strong as any;
+
+		render(
+			Strong({
+				children: React.createElement(
+					React.Fragment,
+					null,
+					'Before ',
+					React.createElement('code', null, 'const value = 1'),
+					' after'
+				),
+			})
+		);
+
+		expect(screen.getByText('const value = 1')).toBeInTheDocument();
+		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
 	});
 });

@@ -90,6 +90,28 @@ describe('sessionIdParser', () => {
 				type: 'ai-tab',
 			});
 		});
+
+		it('should strip forced parallel suffix from AI tab session IDs', () => {
+			const result = parseSessionId('session-123-ai-tab1-fp-1712611230000');
+			expect(result).toEqual({
+				actualSessionId: 'session-123',
+				tabId: 'tab1',
+				baseSessionId: 'session-123',
+				type: 'ai-tab',
+			});
+		});
+
+		it('should strip forced parallel suffix with UUID session and tab IDs', () => {
+			const sessionUuid = '550e8400-e29b-41d4-a716-446655440000';
+			const tabUuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+			const result = parseSessionId(`${sessionUuid}-ai-${tabUuid}-fp-1712611230000`);
+			expect(result).toEqual({
+				actualSessionId: sessionUuid,
+				tabId: tabUuid,
+				baseSessionId: sessionUuid,
+				type: 'ai-tab',
+			});
+		});
 	});
 
 	describe('parseGroupChatSessionId', () => {
@@ -178,6 +200,10 @@ describe('sessionIdParser', () => {
 				expect(getTabId('session-123')).toBe(null);
 				expect(getTabId('session-123-synopsis-1234567890')).toBe(null);
 			});
+
+			it('should strip forced parallel suffix from tab ID', () => {
+				expect(getTabId('session-123-ai-tab1-fp-1712611230000')).toBe('tab1');
+			});
 		});
 	});
 
@@ -186,6 +212,20 @@ describe('sessionIdParser', () => {
 			expect('session-ai-tab'.match(REGEX_AI_TAB)).toBeTruthy();
 			expect('session-123-ai-tab1'.match(REGEX_AI_TAB)).toBeTruthy();
 			expect('session-ai'.match(REGEX_AI_TAB)).toBeFalsy();
+		});
+
+		it('REGEX_AI_TAB should strip forced parallel suffix and extract correct tab ID', () => {
+			const match = 'session-123-ai-tab1-fp-1712611230000'.match(REGEX_AI_TAB);
+			expect(match).toBeTruthy();
+			expect(match![1]).toBe('session-123');
+			expect(match![2]).toBe('tab1');
+		});
+
+		it('REGEX_AI_TAB should handle hyphenated tab IDs without forced parallel suffix', () => {
+			const match = 'session-123-ai-main-tab'.match(REGEX_AI_TAB);
+			expect(match).toBeTruthy();
+			expect(match![1]).toBe('session-123');
+			expect(match![2]).toBe('main-tab');
 		});
 
 		it('REGEX_SYNOPSIS should match synopsis format', () => {

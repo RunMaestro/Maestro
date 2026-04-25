@@ -20,7 +20,7 @@ import { captureException } from '../utils/sentry';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { calculateClaudeCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
-import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
+import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -32,27 +32,50 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type {
+	ClaudeSessionOrigin,
+	ClaudeSessionOriginInfo,
+	ClaudeSessionOriginsData,
+} from '../stores/types';
 import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+export type { ClaudeSessionOriginsData } from '../stores/types';
 
-const LOG_CONTEXT = '[ClaudeSessionStorage]';
-const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+// Cap on parallel per-session SSH reads when listing remote sessions. Must stay
+// well below OpenSSH's default `MaxStartups` threshold (10 unauthenticated
+// connections before drops begin) so pages with many sessions don't silently
+// lose entries to rejected connections.
+const REMOTE_SESSION_READ_CONCURRENCY = 6;
+
+/**
+ * Map `items` with a bounded concurrency.
+ */
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let cursor = 0;
+	const workerCount = Math.min(Math.max(1, limit), items.length);
+	const workers = Array.from({ length: workerCount }, async () => {
+		while (true) {
+			const index = cursor++;
+			if (index >= items.length) return;
+			results[index] = await fn(items[index], index);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
 
 /**
  * Origin data structure stored in electron-store
  */
-type StoredOriginData =
-	| AgentSessionOrigin
-	| {
-			origin: AgentSessionOrigin;
-			sessionName?: string;
-			starred?: boolean;
-			contextUsage?: number;
-	  };
+type StoredOriginData = ClaudeSessionOrigin | ClaudeSessionOriginInfo;
 
-export interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, StoredOriginData>>;
-}
+const LOG_CONTEXT = '[ClaudeSessionStorage]';
+const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Extract semantic text from message content.
@@ -409,7 +432,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions from remote host via SSH
+	 * List sessions from remote host via SSH.
+	 *
+	 * Uses one SSH round-trip to enumerate and stat every `.jsonl` in the
+	 * project's session directory, then reads per-session content with bounded
+	 * concurrency to stay under sshd's MaxStartups limit.
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
@@ -417,43 +444,29 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 
-		// List directory via SSH
-		const dirResult = await readDirRemote(projectDir, sshConfig);
-		if (!dirResult.success || !dirResult.data) {
+		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
+		if (!dirResult.success) {
 			logger.info(
-				`No Claude sessions directory found on remote for project: ${projectPath}`,
+				`No Claude sessions directory found on remote for project: ${projectPath} (${dirResult.error})`,
 				LOG_CONTEXT
 			);
 			return [];
 		}
 
-		// Filter for .jsonl files
-		const sessionFiles = dirResult.data.filter(
-			(entry) => !entry.isDirectory && entry.name.endsWith('.jsonl')
-		);
+		const sessionFiles = (dirResult.data || []).filter((entry) => entry.size > 0);
 
-		// Get metadata for each session
-		const sessions = await Promise.all(
-			sessionFiles.map(async (entry) => {
+		const sessions = await mapWithConcurrency(
+			sessionFiles,
+			REMOTE_SESSION_READ_CONCURRENCY,
+			async (entry) => {
 				const sessionId = entry.name.replace('.jsonl', '');
 				const filePath = `${projectDir}/${entry.name}`;
-
 				try {
-					// Get file stats via SSH
-					const statResult = await statRemote(filePath, sshConfig);
-					if (!statResult.success || !statResult.data) {
-						logger.error(`Failed to stat remote file: ${filePath}`, LOG_CONTEXT);
-						return null;
-					}
-
 					return await parseSessionFileRemote(
 						filePath,
 						sessionId,
 						projectPath,
-						{
-							size: statResult.data.size,
-							mtimeMs: statResult.data.mtime,
-						},
+						{ size: entry.size, mtimeMs: entry.mtime },
 						sshConfig
 					);
 				} catch (error) {
@@ -464,16 +477,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					});
 					return null;
 				}
-			})
+			}
 		);
 
-		// Filter out nulls, 0-byte sessions, and sort by modified date
 		const validSessions = sessions
 			.filter((s): s is NonNullable<typeof s> => s !== null)
-			.filter((s) => s.sizeBytes > 0)
 			.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
 
-		// Attach origin info (origins are stored locally, not on remote)
 		const projectOrigins = this.getProjectOrigins(projectPath);
 		const sessionsWithOrigins = validSessions.map((session) =>
 			this.attachOriginInfo(session, projectOrigins)
@@ -581,7 +591,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions with pagination from remote host via SSH
+	 * List sessions with pagination from remote host via SSH.
+	 *
+	 * Uses one SSH round-trip to enumerate and stat every `.jsonl` in the
+	 * project's session directory, then reads the current page's contents with
+	 * bounded concurrency to stay under sshd's MaxStartups limit.
 	 */
 	private async listSessionsPaginatedRemote(
 		projectPath: string,
@@ -591,48 +605,24 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const { cursor, limit = 100 } = options || {};
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 
-		// List directory via SSH
-		const dirResult = await readDirRemote(projectDir, sshConfig);
-		if (!dirResult.success || !dirResult.data) {
+		const dirResult = await listDirWithStatsRemote(projectDir, sshConfig, { nameSuffix: '.jsonl' });
+		if (!dirResult.success) {
 			return { sessions: [], hasMore: false, totalCount: 0, nextCursor: null };
 		}
 
-		// Filter for .jsonl files
-		const sessionFiles = dirResult.data.filter(
-			(entry) => !entry.isDirectory && entry.name.endsWith('.jsonl')
-		);
-
-		// Get file stats for all session files
-		const fileStats = await Promise.all(
-			sessionFiles.map(async (entry) => {
-				const sessionId = entry.name.replace('.jsonl', '');
-				const filePath = `${projectDir}/${entry.name}`;
-				try {
-					const statResult = await statRemote(filePath, sshConfig);
-					if (!statResult.success || !statResult.data) {
-						return null;
-					}
-					return {
-						sessionId,
-						filename: entry.name,
-						filePath,
-						modifiedAt: statResult.data.mtime,
-						sizeBytes: statResult.data.size,
-					};
-				} catch {
-					return null;
-				}
-			})
-		);
-
-		const sortedFiles = fileStats
-			.filter((s): s is NonNullable<typeof s> => s !== null)
-			.filter((s) => s.sizeBytes > 0)
+		const sortedFiles = (dirResult.data || [])
+			.filter((entry) => entry.size > 0)
+			.map((entry) => ({
+				sessionId: entry.name.replace('.jsonl', ''),
+				filename: entry.name,
+				filePath: `${projectDir}/${entry.name}`,
+				modifiedAt: entry.mtime,
+				sizeBytes: entry.size,
+			}))
 			.sort((a, b) => b.modifiedAt - a.modifiedAt);
 
 		const totalCount = sortedFiles.length;
 
-		// Find cursor position
 		let startIndex = 0;
 		if (cursor) {
 			const cursorIndex = sortedFiles.findIndex((f) => f.sessionId === cursor);
@@ -643,12 +633,12 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const hasMore = startIndex + limit < totalCount;
 		const nextCursor = hasMore ? pageFiles[pageFiles.length - 1]?.sessionId : null;
 
-		// Get project origins (stored locally)
 		const projectOrigins = this.getProjectOrigins(projectPath);
 
-		// Read full content for sessions in this page
-		const sessions = await Promise.all(
-			pageFiles.map(async (fileInfo) => {
+		const sessions = await mapWithConcurrency(
+			pageFiles,
+			REMOTE_SESSION_READ_CONCURRENCY,
+			async (fileInfo) => {
 				const session = await parseSessionFileRemote(
 					fileInfo.filePath,
 					fileInfo.sessionId,
@@ -660,7 +650,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					return this.attachOriginInfo(session, projectOrigins);
 				}
 				return null;
-			})
+			}
 		);
 
 		const validSessions = sessions.filter((s): s is NonNullable<typeof s> => s !== null);
@@ -734,7 +724,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 						}
 					}
 
-					if (msgContent && msgContent.trim()) {
+					if ((msgContent && msgContent.trim()) || toolUse) {
 						messages.push({
 							type: entry.type,
 							role: entry.message?.role,
@@ -1137,11 +1127,17 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							const stats = await fs.stat(sessionFile);
 							lastActivityAt = stats.mtime.getTime();
 						} else {
-							// No session file path found, skip this stale entry
+							logger.debug(
+								`Skipping named session ${agentSessionId}: no session file path for project ${projectPath}`,
+								LOG_CONTEXT
+							);
 							continue;
 						}
 					} catch {
-						// Session file doesn't exist or is inaccessible, skip stale entry
+						logger.debug(
+							`Skipping named session ${agentSessionId}: file not found at expected path for project ${projectPath}`,
+							LOG_CONTEXT
+						);
 						continue;
 					}
 

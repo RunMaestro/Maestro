@@ -1,5 +1,7 @@
-import { useState, useRef, useMemo } from 'react';
-import { X, Award, CheckCircle, Trophy } from 'lucide-react';
+import { useState, useRef, useMemo, useCallback } from 'react';
+import { X, Award, CheckCircle, Trophy, ExternalLink } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -7,6 +9,8 @@ import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+import { openUrl } from '../utils/openUrl';
+import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
@@ -26,7 +30,22 @@ export function ShortcutsHelpModal({
 	keyboardMasteryStats,
 }: ShortcutsHelpModalProps) {
 	const [searchQuery, setSearchQuery] = useState('');
+	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
+	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
+	// Ref mirrors recording state so onBeforeClose stays stable for layer registration.
+	const recordingRef = useRef(recordingFilterShortcut);
+	recordingRef.current = recordingFilterShortcut;
+
+	// Block modal close on Escape while recording — instead, cancel the recording.
+	const handleBeforeClose = useCallback(() => {
+		if (recordingRef.current) {
+			setRecordingFilterShortcut(false);
+			setFilterShortcutKeys([]);
+			return false;
+		}
+		return true;
+	}, []);
 
 	// Combine all shortcuts for display and mastery tracking
 	const allShortcuts = useMemo(
@@ -51,8 +70,16 @@ export function ShortcutsHelpModal({
 		return KEYBOARD_MASTERY_LEVELS.find((l) => l.threshold > masteryPercentage);
 	}, [masteryPercentage]);
 	const usedShortcutIds = new Set(keyboardMasteryStats?.usedShortcuts ?? []);
+
 	const filteredShortcuts = Object.values(allShortcuts)
-		.filter((sc) => fuzzyMatch(sc.label, searchQuery) || fuzzyMatch(sc.keys.join(' '), searchQuery))
+		.filter((sc) => {
+			if (filterShortcutKeys.length > 0) {
+				const sortedFilter = [...filterShortcutKeys].sort().join('+');
+				const sortedKeys = [...sc.keys].sort().join('+');
+				return sortedKeys === sortedFilter;
+			}
+			return fuzzyMatch(sc.label, searchQuery) || fuzzyMatch(sc.keys.join(' '), searchQuery);
+		})
 		.sort((a, b) => a.label.localeCompare(b.label));
 	const filteredCount = filteredShortcuts.length;
 
@@ -65,19 +92,17 @@ export function ShortcutsHelpModal({
 						Keyboard Shortcuts
 					</h2>
 					<span
-						className="text-xs px-2 py-0.5 rounded"
+						className="text-xs px-2 py-2 rounded"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
-						{searchQuery ? `${filteredCount} / ${totalShortcuts}` : totalShortcuts}
+						{searchQuery || filterShortcutKeys.length > 0
+							? `${filteredCount} / ${totalShortcuts}`
+							: totalShortcuts}
 					</span>
 				</div>
-				<button
-					onClick={onClose}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-				>
+				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 					<X className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 			</div>
 
 			{hasNoAgents && (
@@ -88,15 +113,27 @@ export function ShortcutsHelpModal({
 					Note: Most functionality is unavailable until you've created your first agent.
 				</p>
 			)}
-			<input
-				ref={searchInputRef}
-				type="text"
-				value={searchQuery}
-				onChange={(e) => setSearchQuery(e.target.value)}
-				placeholder="Search shortcuts..."
-				className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-			/>
+			<div className="flex items-stretch gap-2">
+				<input
+					ref={searchInputRef}
+					type="text"
+					value={searchQuery}
+					onChange={(e) => {
+						setSearchQuery(e.target.value);
+						setFilterShortcutKeys([]);
+					}}
+					placeholder="Search shortcuts..."
+					className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				/>
+				<ShortcutFilterButton
+					theme={theme}
+					keys={filterShortcutKeys}
+					onKeysChange={setFilterShortcutKeys}
+					recording={recordingFilterShortcut}
+					onRecordingChange={setRecordingFilterShortcut}
+				/>
+			</div>
 			<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
 				Many shortcuts can be customized from Settings → Shortcuts.
 			</p>
@@ -166,12 +203,13 @@ export function ShortcutsHelpModal({
 			customHeader={customHeader}
 			footer={footer}
 			initialFocusRef={searchInputRef}
+			layerOptions={{ onBeforeClose: handleBeforeClose }}
 		>
-			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin -my-2">
+			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
 				{filteredShortcuts.map((sc, i) => {
 					const isUsed = usedShortcutIds.has(sc.id);
 					return (
-						<div key={i} className="flex justify-between items-center text-sm gap-2">
+						<div key={i} className="flex justify-between items-center text-sm gap-4">
 							<div className="flex items-center gap-1.5 min-w-0 flex-1">
 								{keyboardMasteryStats && (
 									<span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
@@ -210,6 +248,22 @@ export function ShortcutsHelpModal({
 						No shortcuts found
 					</div>
 				)}
+				{/* Read more link */}
+				<div
+					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<button
+						onClick={() =>
+							openUrl(buildMaestroUrl('https://docs.runmaestro.ai/keyboard-shortcuts'))
+						}
+						className="text-xs hover:opacity-80 transition-colors"
+						style={{ color: theme.colors.accent }}
+					>
+						Read more at docs.runmaestro.ai/keyboard-shortcuts
+					</button>
+				</div>
 			</div>
 		</Modal>
 	);

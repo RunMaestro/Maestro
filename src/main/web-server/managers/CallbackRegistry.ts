@@ -23,9 +23,14 @@ import type {
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
+	OpenBrowserTabCallback,
+	OpenTerminalTabCallback,
+	OpenTerminalTabConfig,
+	NewAITabWithPromptCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	GetThemeCallback,
+	GetBionifyReadingModeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
 	GetAutoRunDocsCallback,
@@ -40,6 +45,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	WebSettings,
@@ -61,12 +67,15 @@ import type {
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
 	GetCueActivityCallback,
+	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	UsageDashboardData,
 	AchievementData,
+	GenerateDirectorNotesSynopsisCallback,
+	DirectorNotesSynopsisResult,
 } from '../types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
@@ -78,6 +87,7 @@ export interface WebServerCallbacks {
 	getSessions: GetSessionsCallback | null;
 	getSessionDetail: GetSessionDetailCallback | null;
 	getTheme: GetThemeCallback | null;
+	getBionifyReadingMode: GetBionifyReadingModeCallback | null;
 	getCustomCommands: GetCustomCommandsCallback | null;
 	writeToSession: WriteToSessionCallback | null;
 	executeCommand: ExecuteCommandCallback | null;
@@ -93,6 +103,9 @@ export interface WebServerCallbacks {
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
+	openBrowserTab: OpenBrowserTabCallback | null;
+	openTerminalTab: OpenTerminalTabCallback | null;
+	newAITabWithPrompt: NewAITabWithPromptCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	getHistory: GetHistoryCallback | null;
@@ -123,8 +136,10 @@ export interface WebServerCallbacks {
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
+	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
+	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 }
 
 export class CallbackRegistry {
@@ -132,6 +147,7 @@ export class CallbackRegistry {
 		getSessions: null,
 		getSessionDetail: null,
 		getTheme: null,
+		getBionifyReadingMode: null,
 		getCustomCommands: null,
 		writeToSession: null,
 		executeCommand: null,
@@ -147,6 +163,9 @@ export class CallbackRegistry {
 		toggleBookmark: null,
 		openFileTab: null,
 		refreshFileTree: null,
+		openBrowserTab: null,
+		openTerminalTab: null,
+		newAITabWithPrompt: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		getHistory: null,
@@ -177,8 +196,10 @@ export class CallbackRegistry {
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
 		getCueActivity: null,
+		triggerCueSubscription: null,
 		getUsageDashboard: null,
 		getAchievements: null,
+		generateDirectorNotesSynopsis: null,
 	};
 
 	// ============ Getter Methods ============
@@ -193,6 +214,10 @@ export class CallbackRegistry {
 
 	getTheme(): ReturnType<GetThemeCallback> | null {
 		return this.callbacks.getTheme?.() ?? null;
+	}
+
+	getBionifyReadingMode(): ReturnType<GetBionifyReadingModeCallback> {
+		return this.callbacks.getBionifyReadingMode?.() ?? false;
 	}
 
 	getCustomCommands(): ReturnType<GetCustomCommandsCallback> | [] {
@@ -271,6 +296,21 @@ export class CallbackRegistry {
 		return this.callbacks.refreshFileTree(sessionId);
 	}
 
+	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
+		if (!this.callbacks.openBrowserTab) return false;
+		return this.callbacks.openBrowserTab(sessionId, url);
+	}
+
+	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
+		if (!this.callbacks.openTerminalTab) return false;
+		return this.callbacks.openTerminalTab(sessionId, config);
+	}
+
+	async newAITabWithPrompt(sessionId: string, prompt: string): Promise<boolean> {
+		if (!this.callbacks.newAITabWithPrompt) return false;
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
+	}
+
 	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.refreshAutoRunDocs) return false;
 		return this.callbacks.refreshAutoRunDocs(sessionId);
@@ -285,6 +325,13 @@ export class CallbackRegistry {
 			maxLoops?: number;
 			saveAsPlaybook?: string;
 			launch?: boolean;
+			worktree?: {
+				enabled: boolean;
+				path: string;
+				branchName: string;
+				createPROnCompletion: boolean;
+				prTargetBranch: string;
+			};
 		}
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
@@ -330,6 +377,7 @@ export class CallbackRegistry {
 			audioFeedbackEnabled: false,
 			colorBlindMode: 'false',
 			conductorProfile: '',
+			shortcuts: {},
 		};
 	}
 
@@ -366,10 +414,11 @@ export class CallbackRegistry {
 		name: string,
 		toolType: string,
 		cwd: string,
-		groupId?: string
+		groupId?: string,
+		config?: CreateSessionConfig
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
-		return this.callbacks.createSession(name, toolType, cwd, groupId);
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {
@@ -450,6 +499,15 @@ export class CallbackRegistry {
 		return this.callbacks.getCueActivity(sessionId, limit);
 	}
 
+	async triggerCueSubscription(
+		subscriptionName: string,
+		prompt?: string,
+		sourceAgentId?: string
+	): Promise<boolean> {
+		if (!this.callbacks.triggerCueSubscription) return false;
+		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
+	}
+
 	async getUsageDashboard(
 		timeRange: 'day' | 'week' | 'month' | 'all'
 	): Promise<UsageDashboardData> {
@@ -470,6 +528,16 @@ export class CallbackRegistry {
 		return this.callbacks.getAchievements();
 	}
 
+	async generateDirectorNotesSynopsis(
+		lookbackDays: number,
+		provider: string
+	): Promise<DirectorNotesSynopsisResult> {
+		if (!this.callbacks.generateDirectorNotesSynopsis) {
+			return { success: false, synopsis: '', error: "Director's Notes synopsis not available" };
+		}
+		return this.callbacks.generateDirectorNotesSynopsis(lookbackDays, provider);
+	}
+
 	// ============ Setter Methods ============
 
 	setGetSessionsCallback(callback: GetSessionsCallback): void {
@@ -482,6 +550,10 @@ export class CallbackRegistry {
 
 	setGetThemeCallback(callback: GetThemeCallback): void {
 		this.callbacks.getTheme = callback;
+	}
+
+	setGetBionifyReadingModeCallback(callback: GetBionifyReadingModeCallback): void {
+		this.callbacks.getBionifyReadingMode = callback;
 	}
 
 	setGetCustomCommandsCallback(callback: GetCustomCommandsCallback): void {
@@ -548,6 +620,18 @@ export class CallbackRegistry {
 
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbacks.refreshFileTree = callback;
+	}
+
+	setOpenBrowserTabCallback(callback: OpenBrowserTabCallback): void {
+		this.callbacks.openBrowserTab = callback;
+	}
+
+	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
+		this.callbacks.openTerminalTab = callback;
+	}
+
+	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
+		this.callbacks.newAITabWithPrompt = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -670,12 +754,20 @@ export class CallbackRegistry {
 		this.callbacks.getCueActivity = callback;
 	}
 
+	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
+		this.callbacks.triggerCueSubscription = callback;
+	}
+
 	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
 		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
 		this.callbacks.getAchievements = callback;
+	}
+
+	setGenerateDirectorNotesSynopsisCallback(callback: GenerateDirectorNotesSynopsisCallback): void {
+		this.callbacks.generateDirectorNotesSynopsis = callback;
 	}
 
 	// ============ Check Methods ============

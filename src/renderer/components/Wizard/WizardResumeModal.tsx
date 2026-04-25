@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, RotateCcw, FolderOpen, AlertTriangle, Bot } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import type { SerializableWizardState, WizardStep } from './WizardContext';
 import { STEP_INDEX, WIZARD_TOTAL_STEPS } from './WizardContext';
@@ -55,8 +55,7 @@ export function WizardResumeModal({
 	onStartFresh,
 	onClose,
 }: WizardResumeModalProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	useModalLayer(MODAL_PRIORITIES.WIZARD_RESUME, 'Resume Setup Wizard', onClose);
 	const resumeButtonRef = useRef<HTMLButtonElement>(null);
 	const [focusedButton, setFocusedButton] = useState<'resume' | 'fresh'>('resume');
 	const [directoryValid, setDirectoryValid] = useState<boolean | null>(null);
@@ -127,32 +126,6 @@ export function WizardResumeModal({
 	useEffect(() => {
 		resumeButtonRef.current?.focus();
 	}, []);
-
-	// Register layer on mount
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.WIZARD_RESUME,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Resume Setup Wizard',
-			onEscape: onClose,
-		});
-		layerIdRef.current = id;
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, onClose);
-		}
-	}, [onClose, updateLayerHandler]);
 
 	// Handle resume click with validation status
 	const handleResume = () => {

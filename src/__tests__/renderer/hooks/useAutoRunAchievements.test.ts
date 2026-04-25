@@ -90,28 +90,14 @@ import { useAutoRunAchievements } from '../../../renderer/hooks/batch/useAutoRun
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { CONDUCTOR_BADGES as MOCK_CONDUCTOR_BADGES } from '../../../renderer/constants/conductorBadges';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 function createMockSession(overrides: Record<string, any> = {}): any {
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test',
-		projectRoot: '/test',
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		aiLogs: [],
-		shellLogs: [],
-		messageQueue: [],
-		executionQueue: [],
-		...overrides,
-	};
+	return baseCreateMockSession(overrides as any);
 }
 
 // ============================================================================

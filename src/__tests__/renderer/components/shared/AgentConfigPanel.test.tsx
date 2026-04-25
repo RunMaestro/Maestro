@@ -8,7 +8,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
-import type { Theme, AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+
+import { createMockTheme } from '../../../helpers/mockTheme';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -43,28 +45,6 @@ vi.mock('lucide-react', () => ({
 // TEST HELPERS
 // =============================================================================
 
-function createMockTheme(): Theme {
-	return {
-		id: 'test-theme',
-		name: 'Test Theme',
-		colors: {
-			bgMain: '#1a1a1a',
-			bgSidebar: '#252525',
-			bgActivity: '#333333',
-			textMain: '#ffffff',
-			textDim: '#888888',
-			accent: '#6366f1',
-			border: '#333333',
-			success: '#22c55e',
-			error: '#ef4444',
-			warning: '#f59e0b',
-			contextFree: '#22c55e',
-			contextMedium: '#f59e0b',
-			contextHigh: '#ef4444',
-		},
-	};
-}
-
 function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		id: 'claude-code',
@@ -84,11 +64,9 @@ function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPane
 		customPath: '',
 		onCustomPathChange: vi.fn(),
 		onCustomPathBlur: vi.fn(),
-		onCustomPathClear: vi.fn(),
 		customArgs: '',
 		onCustomArgsChange: vi.fn(),
 		onCustomArgsBlur: vi.fn(),
-		onCustomArgsClear: vi.fn(),
 		customEnvVars: {},
 		onEnvVarKeyChange: vi.fn(),
 		onEnvVarValueChange: vi.fn(),
@@ -307,26 +285,6 @@ describe('AgentConfigPanel', () => {
 			// The input should show the custom path
 			const pathInput = screen.getByDisplayValue('/custom/path/to/claude');
 			expect(pathInput).toBeInTheDocument();
-		});
-
-		it('should show Reset button when custom path differs from detected path', () => {
-			render(
-				<AgentConfigPanel {...createDefaultProps({ customPath: '/custom/path/to/claude' })} />
-			);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should show Reset button when custom path matches detected path', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '/usr/local/bin/claude' })} />);
-
-			expect(screen.getByText('Reset')).toBeInTheDocument();
-		});
-
-		it('should NOT show Reset button when no custom path is set', () => {
-			render(<AgentConfigPanel {...createDefaultProps({ customPath: '' })} />);
-
-			expect(screen.queryByText('Reset')).not.toBeInTheDocument();
 		});
 
 		it('should render custom arguments input section', () => {

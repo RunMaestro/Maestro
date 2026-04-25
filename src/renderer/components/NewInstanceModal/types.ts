@@ -1,10 +1,18 @@
+import type React from 'react';
 import type { AgentConfig, Session, ToolType, Theme } from '../../types';
 
-// Maximum character length for nudge message
+// Maximum character length for nudge message and new session message
 export const NUDGE_MESSAGE_MAX_LENGTH = 1000;
+export const NEW_SESSION_MESSAGE_MAX_LENGTH = 5000;
 
 // Supported agents that are fully implemented
-export const SUPPORTED_AGENTS = ['claude-code', 'opencode', 'codex', 'factory-droid'];
+export const SUPPORTED_AGENTS = [
+	'claude-code',
+	'opencode',
+	'codex',
+	'factory-droid',
+	'copilot-cli',
+];
 
 export interface AgentDebugInfo {
 	agentId: string;
@@ -22,6 +30,8 @@ export interface SessionSshRemoteConfig {
 	enabled: boolean;
 	remoteId: string | null;
 	workingDirOverride?: string;
+	syncHistory?: boolean;
+	shareHistoryToProjectDir?: boolean;
 }
 
 export interface NewInstanceModalProps {
@@ -32,6 +42,7 @@ export interface NewInstanceModalProps {
 		workingDir: string,
 		name: string,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -53,6 +64,7 @@ export interface EditAgentModalProps {
 		name: string,
 		toolType?: ToolType,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -77,6 +89,10 @@ export interface NudgeMessageFieldProps {
 	value: string;
 	onChange: (value: string) => void;
 	maxLength?: number;
+	label?: string;
+	labelSuffix?: string;
+	description?: React.ReactNode;
+	placeholder?: string;
 }
 
 export interface RemotePathStatusProps {
@@ -105,9 +121,7 @@ export interface AgentPickerGridProps {
 	onRefreshAgent: (agentId: string) => void;
 	onDismissDebug: () => void;
 	onCustomPathChange: (agentId: string, value: string) => void;
-	onCustomPathClear: (agentId: string) => void;
 	onCustomArgsChange: (agentId: string, value: string) => void;
-	onCustomArgsClear: (agentId: string) => void;
 	onEnvVarKeyChange: (agentId: string, oldKey: string, newKey: string, value: string) => void;
 	onEnvVarValueChange: (agentId: string, key: string, value: string) => void;
 	onEnvVarRemove: (agentId: string, key: string) => void;

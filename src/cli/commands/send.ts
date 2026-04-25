@@ -2,16 +2,20 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../services/storage';
+import { resolveAgentId, getSessionById, readSettingValue } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
+import { getSettingDefault } from '../../shared/settingsMetadata';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
 	readOnly?: boolean;
 	tab?: boolean;
+	live?: boolean;
+	newTab?: boolean;
+	force?: boolean;
 }
 
 interface SendResponse {
@@ -75,6 +79,106 @@ export async function send(
 	message: string,
 	options: SendOptions
 ): Promise<void> {
+	// --new-tab requires --live (both are "route through desktop" modes)
+	if (options.newTab && !options.live) {
+		emitErrorJson('--new-tab requires --live', 'INVALID_OPTIONS');
+		process.exit(1);
+	}
+
+	// --force only applies to --live (non-live spawns fresh processes; --new-tab
+	// creates a fresh tab — neither path has a busy guard to override).
+	if (options.force && !options.live) {
+		emitErrorJson('--force requires --live', 'INVALID_OPTIONS');
+		process.exit(1);
+	}
+
+	// --force is gated by the `allowConcurrentSend` setting. It's off by default
+	// because concurrent writes can interleave responses in the target tab.
+	if (options.force) {
+		const stored = readSettingValue('allowConcurrentSend');
+		const allowConcurrentSend =
+			stored === undefined ? (getSettingDefault('allowConcurrentSend') as boolean) : stored;
+		if (allowConcurrentSend !== true) {
+			emitErrorJson(
+				'--force is disabled. Enable it with: maestro-cli settings set allowConcurrentSend true',
+				'FORCE_NOT_ALLOWED'
+			);
+			process.exit(1);
+		}
+	}
+
+	// --live mode: route message through Maestro desktop tab
+	if (options.live) {
+		if (options.session || options.readOnly) {
+			emitErrorJson('--live cannot be combined with --session or --read-only', 'INVALID_OPTIONS');
+			process.exit(1);
+		}
+		// Resolve agent ID early so partial IDs produce the CLI's normal
+		// "ambiguous / not found" error rather than a confusing server-side one.
+		let liveAgentId: string;
+		try {
+			liveAgentId = resolveAgentId(agentIdArg);
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : 'Unknown error';
+			emitErrorJson(msg, 'AGENT_NOT_FOUND');
+			process.exit(1);
+		}
+		try {
+			await withMaestroClient(async (client) => {
+				if (options.newTab) {
+					// Atomic: create a new AI tab, focus it, and dispatch the prompt
+					await client.sendCommand(
+						{ type: 'new_ai_tab_with_prompt', sessionId: liveAgentId, prompt: message },
+						'new_ai_tab_with_prompt_result'
+					);
+				} else {
+					// Write into the agent's currently-active AI tab
+					await client.sendCommand(
+						{
+							type: 'send_command',
+							sessionId: liveAgentId,
+							command: message,
+							inputMode: 'ai',
+							...(options.force ? { force: true } : {}),
+						},
+						'command_result'
+					);
+				}
+			});
+			const response: SendResponse = {
+				agentId: liveAgentId,
+				agentName: 'live',
+				sessionId: null,
+				response: null,
+				success: true,
+				usage: null,
+			};
+			console.log(JSON.stringify(response, null, 2));
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			const lowerMsg = msg.toLowerCase();
+			if (
+				lowerMsg.includes('econnrefused') ||
+				lowerMsg.includes('connection refused') ||
+				lowerMsg.includes('websocket') ||
+				lowerMsg.includes('enotfound') ||
+				lowerMsg.includes('etimedout')
+			) {
+				emitErrorJson('Maestro desktop is not running or not reachable', 'MAESTRO_NOT_RUNNING');
+			} else if (
+				lowerMsg.includes('session not found') ||
+				lowerMsg.includes('no such session') ||
+				lowerMsg.includes('unknown session')
+			) {
+				emitErrorJson(`Session not found: ${liveAgentId}`, 'SESSION_NOT_FOUND');
+			} else {
+				emitErrorJson(`Command failed: ${msg}`, 'COMMAND_FAILED');
+			}
+			process.exit(1);
+		}
+		return;
+	}
+
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {

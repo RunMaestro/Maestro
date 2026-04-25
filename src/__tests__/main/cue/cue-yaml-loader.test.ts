@@ -24,13 +24,30 @@ vi.mock('chokidar', () => ({
 // Mock fs
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
-vi.mock('fs', () => ({
-	existsSync: (...args: unknown[]) => mockExistsSync(...args),
-	readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
-}));
+// readPromptFile in cue-config-normalizer uses fs.realpathSync.native to harden
+// its containment check. These tests use fake paths (`/projects/test/...`) that
+// don't exist on disk, so we stub realpath as an identity function — the
+// mocked paths have no symlinks, making this the correct canonical path.
+const mockRealpathSyncNative = vi.fn((p: string) => p);
+vi.mock('fs', () => {
+	const realpathSync = (p: string) => mockRealpathSyncNative(p);
+	(realpathSync as unknown as { native: (p: string) => string }).native = (p: string) =>
+		mockRealpathSyncNative(p);
+	return {
+		existsSync: (...args: unknown[]) => mockExistsSync(...args),
+		readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+		realpathSync,
+	};
+});
 
 // Must import after mocks
-import { loadCueConfig, watchCueYaml, validateCueConfig } from '../../../main/cue/cue-yaml-loader';
+import {
+	findAncestorCueConfigRoot,
+	loadCueConfig,
+	loadCueConfigDetailed,
+	watchCueYaml,
+	validateCueConfig,
+} from '../../../main/cue/cue-yaml-loader';
 import * as chokidar from 'chokidar';
 
 describe('cue-yaml-loader', () => {
@@ -64,6 +81,59 @@ subscriptions:
 			const result = loadCueConfig('/projects/test');
 			expect(result).not.toBeNull();
 			expect(result!.subscriptions[0].name).toBe('canonical-sub');
+		});
+
+		it('parses an action: command shell subscription with no prompt', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: lint-on-save
+    event: file.changed
+    watch: 'src/**/*.ts'
+    action: command
+    command:
+      mode: shell
+      shell: npm run lint
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions).toHaveLength(1);
+			const sub = result!.subscriptions[0];
+			expect(sub.action).toBe('command');
+			expect(sub.command).toEqual({ mode: 'shell', shell: 'npm run lint' });
+			// `prompt` is back-filled from the command spec so the dispatch sentinel is non-empty.
+			expect(sub.prompt).toBe('npm run lint');
+		});
+
+		it('parses an action: command cli send subscription', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: relay
+    event: agent.completed
+    source_session: researcher
+    action: command
+    command:
+      mode: cli
+      cli:
+        command: send
+        target: '{{CUE_FROM_AGENT}}'
+        message: 'Result: {{CUE_SOURCE_OUTPUT}}'
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			const sub = result!.subscriptions[0];
+			expect(sub.action).toBe('command');
+			expect(sub.command).toEqual({
+				mode: 'cli',
+				cli: {
+					command: 'send',
+					target: '{{CUE_FROM_AGENT}}',
+					message: 'Result: {{CUE_SOURCE_OUTPUT}}',
+				},
+			});
 		});
 
 		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
@@ -195,8 +265,10 @@ subscriptions:
 
 			const result = loadCueConfig('/projects/test');
 			expect(result).not.toBeNull();
+			// The normalizer reads the prompt file at config-load time and stores the
+			// resolved content on `prompt`. The raw `prompt_file` field from YAML is
+			// internal-only (CueSubscriptionDocument) and not part of the runtime contract.
 			expect(result!.subscriptions[0].prompt).toBe('Prompt from external file');
-			expect(result!.subscriptions[0].prompt_file).toBe('.maestro/prompts/worker-pipeline.md');
 		});
 
 		it('keeps inline prompt when both prompt and prompt_file exist', () => {
@@ -232,8 +304,9 @@ subscriptions:
 
 			const result = loadCueConfig('/projects/test');
 			expect(result).not.toBeNull();
+			// Same rationale as the prompt_file test above: output_prompt_file is
+			// resolved into output_prompt at config-load time.
 			expect(result!.subscriptions[0].output_prompt).toBe('Format the output as markdown');
-			expect(result!.subscriptions[0].output_prompt_file).toBe('.maestro/prompts/format-output.md');
 		});
 
 		it('keeps inline output_prompt when both output_prompt and output_prompt_file exist', () => {
@@ -287,6 +360,186 @@ subscriptions:
 
 			const result = loadCueConfig('/projects/test');
 			expect(result!.subscriptions[0].source_session).toEqual(['agent-1', 'agent-2']);
+		});
+	});
+
+	describe('loadCueConfigDetailed', () => {
+		it('returns { ok: false, reason: "missing" } when no config file exists', () => {
+			mockExistsSync.mockReturnValue(false);
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result).toEqual({ ok: false, reason: 'missing' });
+		});
+
+		it('returns { ok: false, reason: "parse-error" } for malformed YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue('{ invalid yaml [');
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.reason).toBe('parse-error');
+				if (result.reason === 'parse-error') {
+					expect(result.message).toBeTruthy();
+				}
+			}
+		});
+
+		it('returns { ok: false, reason: "parse-error" } when YAML root is not a mapping', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue('- a\n- b\n- c\n');
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(false);
+			if (!result.ok && result.reason === 'parse-error') {
+				expect(result.message).toMatch(/mapping/);
+			}
+		});
+
+		it('skips per-subscription validation errors and surfaces them as warnings', () => {
+			// Lenient loader: a single broken subscription must not block valid
+			// subs in the same YAML. The bad sub is dropped, others load, and
+			// the failure is surfaced as a warning so the user can fix it.
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: bad-sub
+    event: time.heartbeat
+    prompt: Hi
+  - name: good-sub
+    event: time.heartbeat
+    prompt: Check status
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.config.subscriptions.map((s) => s.name)).toEqual(['good-sub']);
+				expect(result.warnings).toEqual(
+					expect.arrayContaining([
+						expect.stringMatching(/Skipped invalid subscription.*interval_minutes/),
+					])
+				);
+			}
+		});
+
+		it('returns { ok: false, reason: "invalid" } only for config-level errors', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions: not-an-array
+`);
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(false);
+			if (!result.ok && result.reason === 'invalid') {
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringMatching(/subscriptions/)])
+				);
+			}
+		});
+
+		it('returns { ok: true, config, warnings: [] } for a valid config', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: heartbeat-sub
+    event: time.heartbeat
+    prompt: Check status
+    interval_minutes: 5
+`);
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.config.subscriptions).toHaveLength(1);
+				expect(result.config.subscriptions[0].name).toBe('heartbeat-sub');
+				expect(result.warnings).toEqual([]);
+			}
+		});
+
+		it('surfaces a warning when prompt_file references a missing file', () => {
+			let readCount = 0;
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockImplementation((p: string) => {
+				readCount++;
+				if (String(p).endsWith('.maestro/prompts/missing.md')) {
+					throw new Error('ENOENT: no such file');
+				}
+				return `
+subscriptions:
+  - name: file-sub
+    event: time.heartbeat
+    prompt_file: .maestro/prompts/missing.md
+    interval_minutes: 5
+`;
+			});
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(readCount).toBeGreaterThanOrEqual(1);
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.warnings.length).toBeGreaterThan(0);
+				expect(result.warnings[0]).toContain('file-sub');
+				expect(result.warnings[0]).toContain('missing.md');
+			}
+		});
+
+		it('surfaces a warning when output_prompt_file references a missing file', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockImplementation((p: string) => {
+				if (String(p).endsWith('.maestro/prompts/missing-output.md')) {
+					throw new Error('ENOENT: no such file');
+				}
+				return `
+subscriptions:
+  - name: out-sub
+    event: time.heartbeat
+    prompt: Main prompt
+    output_prompt_file: .maestro/prompts/missing-output.md
+    interval_minutes: 5
+`;
+			});
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.warnings.length).toBeGreaterThan(0);
+				expect(result.warnings[0]).toContain('out-sub');
+				expect(result.warnings[0]).toContain('missing-output.md');
+			}
+		});
+
+		it('returns no warnings when prompt_file resolves successfully', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockImplementation((p: string) => {
+				if (String(p).endsWith('.maestro/prompts/exists.md')) {
+					return 'Resolved prompt body';
+				}
+				return `
+subscriptions:
+  - name: file-sub
+    event: time.heartbeat
+    prompt_file: .maestro/prompts/exists.md
+    interval_minutes: 5
+`;
+			});
+
+			const result = loadCueConfigDetailed('/projects/test');
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				expect(result.warnings).toEqual([]);
+				expect(result.config.subscriptions[0].prompt).toBe('Resolved prompt body');
+			}
 		});
 	});
 
@@ -365,8 +618,14 @@ subscriptions:
 			expect(result.errors).toHaveLength(0);
 		});
 
-		it('rejects non-object config', () => {
+		it('treats null config as valid empty config (comments-only file)', () => {
 			const result = validateCueConfig(null);
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('rejects non-object non-null config', () => {
+			const result = validateCueConfig(42);
 			expect(result.valid).toBe(false);
 			expect(result.errors[0]).toContain('non-null object');
 		});
@@ -433,7 +692,74 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file"')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
+			);
+		});
+
+		it('accepts a fan-out subscription with fan_out_prompt_files and no prompt/prompt_file', () => {
+			// Regression: Commit 7 externalized per-agent fan-out prompts to
+			// individual files. The validator USED to require `prompt` or
+			// `prompt_file`, so these YAMLs were rejected by the lenient
+			// loader partition — which caused the entire pipeline to vanish
+			// from the UI when the user saved differing per-agent prompts.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B', 'C'],
+						fan_out_prompt_files: [
+							'.maestro/prompts/a.md',
+							'.maestro/prompts/b.md',
+							'.maestro/prompts/c.md',
+						],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('accepts a fan-out subscription with legacy inline fan_out_prompts', () => {
+			// Same requirement for the older inline array shape.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'legacy-fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B'],
+						fan_out_prompts: ['do A', 'do B'],
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toEqual([]);
+		});
+
+		it('rejects a fan-out subscription with empty fan_out_prompt_files array', () => {
+			// Empty array carries no prompts — don't let it slip past the
+			// "at least one prompt source" check.
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'empty-fan-out-files',
+						event: 'app.startup',
+						fan_out: ['A'],
+						fan_out_prompt_files: [],
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 
@@ -685,6 +1011,167 @@ subscriptions:
 				const ghStateErrors = result.errors.filter((e: string) => e.includes('gh_state'));
 				expect(ghStateErrors).toHaveLength(0);
 			}
+		});
+
+		describe('action: command', () => {
+			it('accepts a shell command subscription with no prompt', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'lint',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'shell', shell: 'npm run lint' },
+						},
+					],
+				});
+				expect(result.valid).toBe(true);
+				expect(result.errors).toHaveLength(0);
+			});
+
+			it('accepts a cli send subscription with target', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'forward',
+							event: 'agent.completed',
+							source_session: 'researcher',
+							action: 'command',
+							command: {
+								mode: 'cli',
+								cli: { command: 'send', target: '{{CUE_FROM_AGENT}}' },
+							},
+						},
+					],
+				});
+				expect(result.valid).toBe(true);
+				expect(result.errors).toHaveLength(0);
+			});
+
+			it('rejects a command subscription missing the command field', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command" is required')])
+				);
+			});
+
+			it('rejects a shell command with empty shell string', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'shell', shell: '   ' },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.shell" is required')])
+				);
+			});
+
+			it('rejects a cli command with missing target', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'agent.completed',
+							source_session: 'a',
+							action: 'command',
+							command: { mode: 'cli', cli: { command: 'send', target: '' } },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.cli.target" is required')])
+				);
+			});
+
+			it('rejects a cli command with unsupported sub-command', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'broken',
+							event: 'agent.completed',
+							source_session: 'a',
+							action: 'command',
+							command: { mode: 'cli', cli: { command: 'broadcast', target: 'x' } },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.cli.command" must be "send"')])
+				);
+			});
+
+			it('rejects an unknown action value', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'bad',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							prompt: 'x',
+							action: 'invalid',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"action" must be')])
+				);
+			});
+
+			it('rejects an unknown command.mode', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'bad',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'command',
+							command: { mode: 'rocket', shell: 'true' },
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"command.mode" must be')])
+				);
+			});
+
+			it('still requires prompt or prompt_file when action is "prompt" (or omitted)', () => {
+				const result = validateCueConfig({
+					subscriptions: [
+						{
+							name: 'no-prompt',
+							event: 'time.heartbeat',
+							interval_minutes: 5,
+							action: 'prompt',
+						},
+					],
+				});
+				expect(result.valid).toBe(false);
+				expect(result.errors).toEqual(
+					expect.arrayContaining([expect.stringContaining('"prompt", "prompt_file"')])
+				);
+			});
 		});
 	});
 
@@ -1497,7 +1984,11 @@ subscriptions:
 			});
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(
-				expect.arrayContaining([expect.stringContaining('"prompt" or "prompt_file" is required')])
+				expect.arrayContaining([
+					expect.stringContaining(
+						'"prompt", "prompt_file", "fan_out_prompt_files", or "fan_out_prompts" is required'
+					),
+				])
 			);
 		});
 
@@ -1514,6 +2005,61 @@ subscriptions:
 			expect(result.errors).toEqual(
 				expect.arrayContaining([expect.stringContaining('"name" is required')])
 			);
+		});
+	});
+
+	describe('findAncestorCueConfigRoot', () => {
+		it('returns null when no ancestor has a cue config', () => {
+			mockExistsSync.mockReturnValue(false);
+			const result = findAncestorCueConfigRoot('/projects/parent/child');
+			expect(result).toBeNull();
+		});
+
+		it('finds a parent directory with .maestro/cue.yaml', () => {
+			mockExistsSync.mockImplementation((p: string) => {
+				const s = String(p);
+				// Parent has .maestro/cue.yaml, child does not
+				return s === '/projects/parent/.maestro/cue.yaml';
+			});
+			const result = findAncestorCueConfigRoot('/projects/parent/child');
+			expect(result).toBe('/projects/parent');
+		});
+
+		it('does not return the input directory itself', () => {
+			// Even if the input dir has a cue.yaml, it should only look at ancestors
+			mockExistsSync.mockImplementation((p: string) => {
+				return String(p) === '/projects/parent/child/.maestro/cue.yaml';
+			});
+			const result = findAncestorCueConfigRoot('/projects/parent/child');
+			expect(result).toBeNull();
+		});
+
+		it('finds grandparent config when parent has none', () => {
+			mockExistsSync.mockImplementation((p: string) => {
+				return String(p) === '/projects/.maestro/cue.yaml';
+			});
+			const result = findAncestorCueConfigRoot('/projects/parent/child');
+			expect(result).toBe('/projects');
+		});
+
+		it('stops after depth limit even if ancestor exists further up', () => {
+			// Place cue.yaml 6 levels up — beyond the 5-level search depth
+			mockExistsSync.mockImplementation((p: string) => {
+				return String(p) === '/a/.maestro/cue.yaml';
+			});
+			const result = findAncestorCueConfigRoot('/a/b/c/d/e/f/g');
+			// /a is 6 levels up from /a/b/c/d/e/f/g — should not be found
+			expect(result).toBeNull();
+		});
+
+		it('finds ancestor with legacy maestro-cue.yaml', () => {
+			mockExistsSync.mockImplementation((p: string) => {
+				const s = String(p);
+				// No canonical, but legacy exists at parent
+				return s === '/projects/parent/maestro-cue.yaml';
+			});
+			const result = findAncestorCueConfigRoot('/projects/parent/child');
+			expect(result).toBe('/projects/parent');
 		});
 	});
 });

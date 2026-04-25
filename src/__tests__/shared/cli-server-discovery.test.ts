@@ -29,12 +29,15 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
-	CliServerInfo,
 	writeCliServerInfo,
 	readCliServerInfo,
 	deleteCliServerInfo,
 	isCliServerRunning,
 } from '../../shared/cli-server-discovery';
+
+// Local type alias mirroring the (now-internal) CliServerInfo shape
+// expected by writeCliServerInfo. Kept in sync with shared/cli-server-discovery.ts.
+type CliServerInfo = Parameters<typeof writeCliServerInfo>[0];
 
 // Type assertions for mocked modules
 const mockFs = {

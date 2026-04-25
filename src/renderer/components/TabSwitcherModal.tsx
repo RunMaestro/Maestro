@@ -1,16 +1,30 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Star, FileText, Terminal } from 'lucide-react';
-import type { AITab, FilePreviewTab, TerminalTab, Theme, Shortcut, ToolType } from '../types';
+import { Search, Star, FileText, Terminal, Globe } from 'lucide-react';
+import type {
+	AITab,
+	FilePreviewTab,
+	TerminalTab,
+	BrowserTab,
+	Theme,
+	Shortcut,
+	ToolType,
+} from '../types';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useListNavigation } from '../hooks';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
-import { calculateContextDisplay } from '../utils/contextUsage';
+import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
+
+/** Normalize a project path for comparison (strip trailing slashes) */
+function normalizePath(p: string): string {
+	return p.replace(/\/+$/, '');
+}
 
 /** Named session from the store (not currently open) */
 interface NamedSession {
@@ -27,6 +41,7 @@ type ListItem =
 	| { type: 'open'; tab: AITab }
 	| { type: 'file'; tab: FilePreviewTab }
 	| { type: 'terminal'; tab: TerminalTab }
+	| { type: 'browser'; tab: BrowserTab }
 	| { type: 'named'; session: NamedSession };
 
 interface TabSwitcherModalProps {
@@ -36,11 +51,15 @@ interface TabSwitcherModalProps {
 	fileTabs?: FilePreviewTab[];
 	/** Terminal tabs to include in "Open Tabs" view */
 	terminalTabs?: TerminalTab[];
+	/** Browser tabs to include in "Open Tabs" view */
+	browserTabs?: BrowserTab[];
 	activeTabId: string;
 	/** Currently active file tab ID (if a file tab is active) */
 	activeFileTabId?: string | null;
 	/** Currently active terminal tab ID (if a terminal tab is active) */
 	activeTerminalTabId?: string | null;
+	/** Currently active browser tab ID (if a browser tab is active) */
+	activeBrowserTabId?: string | null;
 	projectRoot: string; // The initial project directory (used for Claude session storage)
 	agentId?: string;
 	shortcut?: Shortcut;
@@ -49,6 +68,8 @@ interface TabSwitcherModalProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to select a terminal tab */
 	onTerminalTabSelect?: (tabId: string) => void;
+	/** Handler to select a browser tab */
+	onBrowserTabSelect?: (tabId: string) => void;
 	onNamedSessionSelect: (
 		agentSessionId: string,
 		projectPath: string,
@@ -164,6 +185,7 @@ type ViewMode = 'open' | 'all-named' | 'starred';
 
 const EMPTY_FILE_TABS: FilePreviewTab[] = [];
 const EMPTY_TERMINAL_TABS: TerminalTab[] = [];
+const EMPTY_BROWSER_TABS: BrowserTab[] = [];
 
 /**
  * Tab Switcher Modal - Quick navigation between AI and file tabs with fuzzy search.
@@ -176,15 +198,18 @@ export function TabSwitcherModal({
 	tabs,
 	fileTabs = EMPTY_FILE_TABS,
 	terminalTabs = EMPTY_TERMINAL_TABS,
+	browserTabs = EMPTY_BROWSER_TABS,
 	activeTabId,
 	activeFileTabId,
 	activeTerminalTabId,
+	activeBrowserTabId,
 	projectRoot,
 	agentId = 'claude-code',
 	shortcut,
 	onTabSelect,
 	onFileTabSelect,
 	onTerminalTabSelect,
+	onBrowserTabSelect,
 	onNamedSessionSelect,
 	onClose,
 	colorBlindMode,
@@ -197,7 +222,6 @@ export function TabSwitcherModal({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 
 	const handleSearchChange = useCallback((value: string) => {
@@ -217,35 +241,7 @@ export function TabSwitcherModal({
 		onCloseRef.current = onClose;
 	});
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-
-	// Register layer on mount
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.TAB_SWITCHER,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Tab Switcher',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				onCloseRef.current();
-			});
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.TAB_SWITCHER, 'Tab Switcher', () => onCloseRef.current());
 
 	// Focus input on mount
 	useEffect(() => {
@@ -265,11 +261,15 @@ export function TabSwitcherModal({
 					if (effectiveAgentId === 'claude-code') {
 						return window.maestro.claude
 							.updateSessionName(projectRoot, tab.agentSessionId!, tab.name!)
-							.catch((err) => console.warn('[TabSwitcher] Failed to sync tab name:', err));
+							.catch((err) =>
+								logger.warn('[TabSwitcher] Failed to sync tab name:', undefined, err)
+							);
 					} else {
 						return window.maestro.agentSessions
 							.setSessionName(effectiveAgentId, projectRoot, tab.agentSessionId!, tab.name!)
-							.catch((err) => console.warn('[TabSwitcher] Failed to sync tab name:', err));
+							.catch((err) =>
+								logger.warn('[TabSwitcher] Failed to sync tab name:', undefined, err)
+							);
 					}
 				})
 			);
@@ -320,6 +320,11 @@ export function TabSwitcherModal({
 				items.push({ type: 'terminal' as const, tab });
 			}
 
+			// Add browser tabs
+			for (const tab of browserTabs) {
+				items.push({ type: 'browser' as const, tab });
+			}
+
 			// Sort alphabetically by display name
 			items.sort((a, b) => {
 				const nameA =
@@ -329,7 +334,9 @@ export function TabSwitcherModal({
 							? a.tab.name.toLowerCase()
 							: a.type === 'terminal'
 								? (a.tab.name || 'Terminal').toLowerCase()
-								: '';
+								: a.type === 'browser'
+									? (a.tab.title || a.tab.url).toLowerCase()
+									: '';
 				const nameB =
 					b.type === 'open'
 						? getTabDisplayName(b.tab).toLowerCase()
@@ -337,7 +344,9 @@ export function TabSwitcherModal({
 							? b.tab.name.toLowerCase()
 							: b.type === 'terminal'
 								? (b.tab.name || 'Terminal').toLowerCase()
-								: '';
+								: b.type === 'browser'
+									? (b.tab.title || b.tab.url).toLowerCase()
+									: '';
 				return nameA.localeCompare(nameB);
 			});
 
@@ -357,7 +366,7 @@ export function TabSwitcherModal({
 			for (const session of namedSessions) {
 				if (
 					session.starred &&
-					session.projectPath === projectRoot &&
+					normalizePath(session.projectPath) === normalizePath(projectRoot) &&
 					!openTabSessionIds.has(session.agentSessionId)
 				) {
 					items.push({ type: 'named' as const, session });
@@ -397,7 +406,10 @@ export function TabSwitcherModal({
 			// Add closed named sessions from the SAME PROJECT (not currently open)
 			// Only include sessions with actual custom names (not UUID-based names)
 			for (const session of namedSessions) {
-				if (session.projectPath === projectRoot && !openTabSessionIds.has(session.agentSessionId)) {
+				if (
+					normalizePath(session.projectPath) === normalizePath(projectRoot) &&
+					!openTabSessionIds.has(session.agentSessionId)
+				) {
 					// Skip sessions where the name is just the UUID or first octet of the UUID
 					const firstOctet = session.agentSessionId.split('-')[0].toUpperCase();
 					const isUuidBasedName =
@@ -428,7 +440,16 @@ export function TabSwitcherModal({
 
 			return items;
 		}
-	}, [viewMode, tabs, fileTabs, terminalTabs, namedSessions, openTabSessionIds, projectRoot]);
+	}, [
+		viewMode,
+		tabs,
+		fileTabs,
+		terminalTabs,
+		browserTabs,
+		namedSessions,
+		openTabSessionIds,
+		projectRoot,
+	]);
 
 	// Filter items based on search query
 	const filteredItems = useMemo(() => {
@@ -451,6 +472,9 @@ export function TabSwitcherModal({
 			} else if (item.type === 'terminal') {
 				displayName = item.tab.name || 'Terminal';
 				searchableId = item.tab.shellType + ' ' + item.tab.cwd;
+			} else if (item.type === 'browser') {
+				displayName = item.tab.title || item.tab.url;
+				searchableId = item.tab.url;
 			} else {
 				displayName = item.session.sessionName;
 				searchableId = item.session.agentSessionId;
@@ -482,6 +506,8 @@ export function TabSwitcherModal({
 					onFileTabSelect?.(item.tab.id);
 				} else if (item.type === 'terminal') {
 					onTerminalTabSelect?.(item.tab.id);
+				} else if (item.type === 'browser') {
+					onBrowserTabSelect?.(item.tab.id);
 				} else {
 					onNamedSessionSelect(
 						item.session.agentSessionId,
@@ -493,7 +519,7 @@ export function TabSwitcherModal({
 				onClose();
 			}
 		},
-		[filteredItems, onTabSelect, onFileTabSelect, onNamedSessionSelect, onClose]
+		[filteredItems, onTabSelect, onFileTabSelect, onBrowserTabSelect, onNamedSessionSelect, onClose]
 	);
 
 	// Use the list navigation hook for keyboard navigation
@@ -608,7 +634,7 @@ export function TabSwitcherModal({
 							color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
 						}}
 					>
-						Open Tabs ({tabs.length + fileTabs.length + terminalTabs.length})
+						Open Tabs ({tabs.length + fileTabs.length + terminalTabs.length + browserTabs.length})
 					</button>
 					<button
 						onClick={() => handleViewModeChange('all-named')}
@@ -622,7 +648,10 @@ export function TabSwitcherModal({
 						All Named (
 						{tabs.filter((t) => t.agentSessionId && t.name).length +
 							namedSessions.filter((s) => {
-								if (s.projectPath !== projectRoot || openTabSessionIds.has(s.agentSessionId))
+								if (
+									normalizePath(s.projectPath) !== normalizePath(projectRoot) ||
+									openTabSessionIds.has(s.agentSessionId)
+								)
 									return false;
 								const firstOctet = s.agentSessionId.split('-')[0].toUpperCase();
 								return (
@@ -746,7 +775,8 @@ export function TabSwitcherModal({
 												<>
 													<span>
 														{formatTokensCompact(
-															tab.usageStats.inputTokens + tab.usageStats.outputTokens
+															calculateDisplayInputTokens(tab.usageStats, agentId) +
+																tab.usageStats.outputTokens
 														)}{' '}
 														tokens
 													</span>
@@ -925,6 +955,70 @@ export function TabSwitcherModal({
 										}}
 									>
 										Terminal
+									</div>
+								</button>
+							);
+						} else if (item.type === 'browser') {
+							// Browser tab
+							const { tab } = item;
+							const isActive = tab.id === activeBrowserTabId;
+							const displayName = tab.title || tab.url;
+
+							return (
+								<button
+									key={tab.id}
+									ref={isSelected ? selectedItemRef : null}
+									onClick={() => handleSelectByIndex(i)}
+									className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-opacity-10"
+									style={{
+										backgroundColor: isSelected ? theme.colors.accent : 'transparent',
+										color: isSelected ? theme.colors.accentForeground : theme.colors.textMain,
+									}}
+								>
+									{/* Number Badge */}
+									{showNumber ? (
+										<div
+											className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center text-xs font-bold"
+											style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
+										>
+											{numberBadge}
+										</div>
+									) : (
+										<div className="flex-shrink-0 w-5 h-5" />
+									)}
+
+									{/* Globe Icon - shows active indicator or globe icon */}
+									<div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
+										{isActive ? (
+											<div
+												className="w-2 h-2 rounded-full"
+												style={{ backgroundColor: theme.colors.success }}
+											/>
+										) : (
+											<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										)}
+									</div>
+
+									{/* Browser Tab Info */}
+									<div className="flex flex-col flex-1 min-w-0">
+										<div className="flex items-center gap-2">
+											<span className="font-medium truncate">{displayName}</span>
+										</div>
+										{/* URL (truncated) */}
+										<div className="flex items-center gap-3 text-[10px] opacity-60 truncate">
+											<span className="truncate">{tab.url}</span>
+										</div>
+									</div>
+
+									{/* Browser indicator */}
+									<div
+										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
+										style={{
+											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
+										}}
+									>
+										Browser
 									</div>
 								</button>
 							);

@@ -13,11 +13,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useBatchStore,
 	getBatchState,
-	getBatchActions,
 	selectHasAnyActiveBatch,
 	selectActiveBatchSessionIds,
-	selectStoppingBatchSessionIds,
-	selectBatchRunState,
 } from '../../../renderer/stores/batchStore';
 import type { TaskCountEntry } from '../../../renderer/stores/batchStore';
 import type { AutoRunTreeNode } from '../../../renderer/hooks/batch/useAutoRunHandlers';
@@ -565,40 +562,6 @@ describe('batchStore', () => {
 				expect(ids).toContain('sess-3');
 			});
 		});
-
-		describe('selectStoppingBatchSessionIds', () => {
-			it('returns empty array when no stopping batches', () => {
-				expect(selectStoppingBatchSessionIds(useBatchStore.getState())).toEqual([]);
-			});
-
-			it('returns only stopping session IDs', () => {
-				useBatchStore.getState().setBatchRunStates({
-					'sess-1': { ...DEFAULT_BATCH_STATE, isRunning: true, isStopping: true },
-					'sess-2': { ...DEFAULT_BATCH_STATE, isRunning: true, isStopping: false },
-					'sess-3': { ...DEFAULT_BATCH_STATE, isRunning: false, isStopping: true },
-				});
-				const ids = selectStoppingBatchSessionIds(useBatchStore.getState());
-				// Only sess-1: isRunning=true AND isStopping=true
-				expect(ids).toEqual(['sess-1']);
-			});
-		});
-
-		describe('selectBatchRunState', () => {
-			it('returns undefined for non-existent session', () => {
-				expect(selectBatchRunState(useBatchStore.getState(), 'nope')).toBeUndefined();
-			});
-
-			it('returns batch state for existing session', () => {
-				useBatchStore.getState().dispatchBatch({
-					type: 'START_BATCH',
-					sessionId: 'sess-1',
-					payload: createStartBatchPayload({ documents: ['x.md'] }),
-				});
-				const state = selectBatchRunState(useBatchStore.getState(), 'sess-1');
-				expect(state).toBeDefined();
-				expect(state!.documents).toEqual(['x.md']);
-			});
-		});
 	});
 
 	// ==========================================================================
@@ -612,15 +575,13 @@ describe('batchStore', () => {
 			expect(state.documentList).toEqual(['test.md']);
 		});
 
-		it('getBatchActions returns working action references', () => {
-			const actions = getBatchActions();
-			actions.setDocumentList(['via-actions.md']);
+		it('useBatchStore.getState exposes working action references', () => {
+			useBatchStore.getState().setDocumentList(['via-actions.md']);
 			expect(useBatchStore.getState().documentList).toEqual(['via-actions.md']);
 		});
 
-		it('getBatchActions.dispatchBatch works', () => {
-			const actions = getBatchActions();
-			actions.dispatchBatch({
+		it('useBatchStore.getState().dispatchBatch works', () => {
+			useBatchStore.getState().dispatchBatch({
 				type: 'START_BATCH',
 				sessionId: 'sess-1',
 				payload: createStartBatchPayload(),

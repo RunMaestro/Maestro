@@ -94,12 +94,8 @@ describe('ForcedParallelWarningModal', () => {
 				/>
 			);
 
-			expect(
-				screen.getByText(/sends messages immediately, even when the agent is already working/i)
-			).toBeInTheDocument();
-			expect(
-				screen.getByText(/intended for advanced users who understand the risks/i)
-			).toBeInTheDocument();
+			expect(screen.getByText(/queue messages that skip the cross-tab wait/i)).toBeInTheDocument();
+			expect(screen.getByText(/force-send while the agent is busy/i)).toBeInTheDocument();
 		});
 
 		it('displays alert triangle icon', () => {

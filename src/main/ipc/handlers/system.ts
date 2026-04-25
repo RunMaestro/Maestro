@@ -28,17 +28,11 @@ import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import { captureException } from '../../utils/sentry';
+import type { BootstrapSettings } from '../../stores/types';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
-
-/**
- * Interface for bootstrap settings (custom storage location)
- */
-interface BootstrapSettings {
-	customSyncPath?: string;
-	iCloudSyncEnabled?: boolean; // Legacy - kept for backwards compatibility
-}
 
 /**
  * Dependencies required for system handlers
@@ -80,6 +74,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 
 			return result.filePaths[0];
 		} catch (error) {
+			void captureException(error);
 			// Log the error but return null to ensure IPC reply is sent
 			logger.error('dialog:selectFolder failed', 'Dialog', { error });
 			return null;
@@ -147,7 +142,8 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 				'JetBrains Mono',
 			];
 		} catch (error) {
-			console.error('Font detection error:', error);
+			void captureException(error);
+			logger.error('Font detection error:', undefined, error);
 			// Return common monospace fonts as fallback
 			return [
 				'Monaco',
@@ -177,6 +173,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			);
 			return shells;
 		} catch (error) {
+			void captureException(error);
 			logger.error('Shell detection error', 'ShellDetector', error);
 			// Return default shell list with all marked as unavailable
 			return [
@@ -351,7 +348,25 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	});
 
 	ipcMain.handle('tunnel:getStatus', async () => {
-		return tunnelManager.getStatus();
+		const status = tunnelManager.getStatus();
+		if (!status.isRunning || !status.url) return status;
+
+		// Append the web server's token path so the URL stays usable.
+		// tunnelManager itself is token-agnostic — composition happens here,
+		// matching tunnel:start above.
+		const webServer = getWebServer();
+		const serverUrl = webServer?.getSecureUrl();
+		if (!serverUrl) return status;
+
+		try {
+			const tokenPath = new URL(serverUrl).pathname;
+			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
+				return { ...status, url: status.url + tokenPath };
+			}
+		} catch {
+			// Malformed server URL — fall back to bare tunnel URL
+		}
+		return status;
 	});
 
 	// ============ DevTools Handlers ============

@@ -2,45 +2,29 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useKeyboardNavigation, UseKeyboardNavigationDeps } from '../../../renderer/hooks';
 import type { Session, Group, FocusArea } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
-// Create a mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: `session-${Date.now()}-${Math.random()}`,
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	cwd: '/test',
-	projectRoot: '/test',
-	fullPath: '/test',
-	port: 3000,
-	aiPid: 0,
-	inputMode: 'ai',
-	aiTabs: [
-		{
-			id: 'default-tab',
-			name: 'Main',
-			logs: [],
-		},
-	],
-	activeTabId: 'default-tab',
-	closedTabHistory: [],
-	shellLogs: [],
-	executionQueue: [],
-	usageStats: undefined,
-	contextUsage: 0,
-	workLog: [],
-	isGitRepo: false,
-	changedFiles: [],
-	gitBranches: [],
-	gitTags: [],
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	isLive: false,
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
+// Thin wrapper: pre-populates an AI tab so keyboard nav has a tab to
+// cycle through.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		id: `session-${Date.now()}-${Math.random()}`,
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test',
+		port: 3000,
+		aiTabs: [
+			{
+				id: 'default-tab',
+				name: 'Main',
+				logs: [],
+			},
+		] as any,
+		activeTabId: 'default-tab',
+		gitBranches: [],
+		gitTags: [],
+		...overrides,
+	});
 
 // Create mock dependencies
 const createMockDeps = (

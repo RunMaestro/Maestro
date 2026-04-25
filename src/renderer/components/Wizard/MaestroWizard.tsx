@@ -14,7 +14,7 @@ import {
 	INDEX_TO_STEP,
 	type WizardStep,
 } from './WizardContext';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { WizardExitConfirmModal } from './WizardExitConfirmModal';
 import { ScreenReaderAnnouncement } from './ScreenReaderAnnouncement';
@@ -110,8 +110,6 @@ export function MaestroWizard({
 		goToStep,
 		getCurrentStepNumber,
 	} = useWizard();
-
-	const { registerLayer, unregisterLayer } = useLayerStack();
 
 	// State for exit confirmation modal
 	const [showExitConfirm, setShowExitConfirm] = useState(false);
@@ -275,20 +273,9 @@ export function MaestroWizard({
 	}, [state.isOpen, displayedStep, isTransitioning]);
 
 	// Register with layer stack for Escape handling
-	useEffect(() => {
-		if (state.isOpen && !showExitConfirm) {
-			const id = registerLayer({
-				type: 'modal',
-				priority: MODAL_PRIORITIES.WIZARD,
-				blocksLowerLayers: true,
-				capturesFocus: true,
-				focusTrap: 'strict',
-				ariaLabel: 'Setup Wizard',
-				onEscape: handleCloseRequest,
-			});
-			return () => unregisterLayer(id);
-		}
-	}, [state.isOpen, showExitConfirm, registerLayer, unregisterLayer, handleCloseRequest]);
+	useModalLayer(MODAL_PRIORITIES.WIZARD, 'Setup Wizard', handleCloseRequest, {
+		enabled: state.isOpen && !showExitConfirm,
+	});
 
 	// Capture-phase handler for global shortcuts that should work anywhere in the modal
 	// This ensures Cmd+Shift+K (thinking toggle) works even when focus is on header elements

@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import type { AITab, Theme } from '../../types';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;
@@ -99,6 +101,18 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onCloseTabsLeft,
 	onCloseTabsRight,
 }: AITabOverlayMenuProps) {
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+
+	const ShortcutHint = ({ keys }: { keys: string[] }) => (
+		<span
+			className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded"
+			style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+		>
+			{formatShortcutKeys(keys)}
+		</span>
+	);
+
 	return (
 		<div
 			className="shadow-xl overflow-hidden"
@@ -173,6 +187,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 							style={{ color: tab.starred ? theme.colors.warning : theme.colors.textDim }}
 						/>
 						{tab.starred ? 'Unstar Session' : 'Star Session'}
+						{shortcuts.toggleTabStar && <ShortcutHint keys={shortcuts.toggleTabStar.keys} />}
 					</button>
 				)}
 
@@ -184,6 +199,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 				>
 					<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					Rename Tab
+					{tabShortcuts.renameTab && <ShortcutHint keys={tabShortcuts.renameTab.keys} />}
 				</button>
 
 				{/* Mark as Unread button - only show for tabs with established session */}
@@ -195,6 +211,9 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Mail className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Mark as Unread
+						{tabShortcuts.toggleTabUnread && (
+							<ShortcutHint keys={tabShortcuts.toggleTabUnread.keys} />
+						)}
 					</button>
 				)}
 
@@ -319,6 +338,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 				>
 					<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					Close Tab
+					{tabShortcuts.closeTab && <ShortcutHint keys={tabShortcuts.closeTab.keys} />}
 				</button>
 
 				{/* Close Other Tabs */}
@@ -333,6 +353,9 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Close Other Tabs
+						{tabShortcuts.closeOtherTabs && (
+							<ShortcutHint keys={tabShortcuts.closeOtherTabs.keys} />
+						)}
 					</button>
 				)}
 
@@ -348,6 +371,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Close Tabs to Left
+						{tabShortcuts.closeTabsLeft && <ShortcutHint keys={tabShortcuts.closeTabsLeft.keys} />}
 					</button>
 				)}
 
@@ -363,6 +387,9 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Close Tabs to Right
+						{tabShortcuts.closeTabsRight && (
+							<ShortcutHint keys={tabShortcuts.closeTabsRight.keys} />
+						)}
 					</button>
 				)}
 			</div>

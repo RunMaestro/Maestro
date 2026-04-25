@@ -82,6 +82,8 @@ import {
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
 	clearGitHubSeenForSubscription,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -416,5 +418,78 @@ describe('cue-db github seen tracking', () => {
 		);
 		const lastRun = runCalls[runCalls.length - 1];
 		expect(lastRun[0]).toBe('sub-1');
+	});
+});
+
+describe('safeRecordCueEvent', () => {
+	const dbPath = path.join(os.tmpdir(), 'test-cue-safe.db');
+
+	beforeEach(() => {
+		initCueDb(undefined, dbPath);
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+	});
+
+	const testEvent = {
+		id: 'safe-evt-1',
+		type: 'time.heartbeat',
+		triggerName: 'test-trigger',
+		sessionId: 'session-1',
+		subscriptionName: 'test-sub',
+		status: 'running',
+	} as const;
+
+	it('calls through successfully when DB is ready', () => {
+		safeRecordCueEvent(testEvent);
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('INSERT OR REPLACE INTO cue_events')
+		);
+	});
+
+	it('logs warn and does not throw when underlying function throws', () => {
+		mockStatement.run.mockImplementationOnce(() => {
+			throw new Error('DB locked');
+		});
+		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		expect(() => safeRecordCueEvent(testEvent)).not.toThrow();
+		consoleSpy.mockRestore();
+	});
+
+	it('does not throw when DB is unavailable (not initialized)', () => {
+		closeCueDb();
+		expect(() => safeRecordCueEvent(testEvent)).not.toThrow();
+	});
+});
+
+describe('safeUpdateCueEventStatus', () => {
+	const dbPath = path.join(os.tmpdir(), 'test-cue-safe-update.db');
+
+	beforeEach(() => {
+		initCueDb(undefined, dbPath);
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+	});
+
+	it('calls through successfully when DB is ready', () => {
+		safeUpdateCueEventStatus('evt-1', 'completed');
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('UPDATE cue_events SET status')
+		);
+	});
+
+	it('logs warn and does not throw when underlying function throws', () => {
+		mockStatement.run.mockImplementationOnce(() => {
+			throw new Error('DB locked');
+		});
+		const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		expect(() => safeUpdateCueEventStatus('evt-1', 'completed')).not.toThrow();
+		consoleSpy.mockRestore();
+	});
+
+	it('does not throw when DB is unavailable (not initialized)', () => {
+		closeCueDb();
+		expect(() => safeUpdateCueEventStatus('evt-1', 'completed')).not.toThrow();
 	});
 });

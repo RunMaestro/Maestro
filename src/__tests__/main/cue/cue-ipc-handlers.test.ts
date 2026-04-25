@@ -7,39 +7,25 @@
  * - YAML read/write/validate operations
  * - Engine enable/disable controls
  * - Error handling when engine is not initialized
+ *
+ * Phase 6 cleanup: the IPC handler is now a thin transport layer. YAML I/O
+ * lives in cue-config-repository.ts and pipeline layout I/O lives in
+ * pipeline-layout-store.ts. These tests mock those modules directly to verify
+ * the handlers correctly delegate, rather than mocking fs/path under the hood.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'fs';
 
 // Track registered IPC handlers
 const registeredHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn((name: string) => `/mock-user-data/${name}`),
-	},
 	ipcMain: {
 		handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
 			registeredHandlers.set(channel, handler);
 		}),
 	},
 }));
-
-vi.mock('fs', () => ({
-	existsSync: vi.fn(),
-	readFileSync: vi.fn(),
-	writeFileSync: vi.fn(),
-	mkdirSync: vi.fn(),
-}));
-
-vi.mock('path', async () => {
-	const actual = await vi.importActual<typeof import('path')>('path');
-	return {
-		...actual,
-		join: vi.fn((...args: string[]) => args.join('/')),
-	};
-});
 
 vi.mock('js-yaml', () => ({
 	load: vi.fn(),
@@ -58,20 +44,40 @@ vi.mock('../../../main/utils/ipcHandler', () => ({
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	validateCueConfig: vi.fn(),
-	resolveCueConfigPath: vi.fn(),
+	findAncestorCueConfigRoot: () => null,
+}));
+
+vi.mock('../../../main/cue/config/cue-config-repository', () => ({
+	readCueConfigFile: vi.fn(),
+	writeCueConfigFile: vi.fn(),
+	deleteCueConfigFile: vi.fn(),
+	writeCuePromptFile: vi.fn(),
+	pruneOrphanedPromptFiles: vi.fn(() => []),
+	removeEmptyPromptsDir: vi.fn(() => false),
+	removeEmptyMaestroDir: vi.fn(() => false),
+}));
+
+vi.mock('../../../main/cue/pipeline-layout-store', () => ({
+	savePipelineLayout: vi.fn(),
+	loadPipelineLayout: vi.fn(),
 }));
 
 vi.mock('../../../main/cue/cue-types', () => ({
 	CUE_YAML_FILENAME: 'maestro-cue.yaml', // legacy name kept in cue-types for compat
 }));
 
-vi.mock('../../../shared/maestro-paths', () => ({
-	CUE_CONFIG_PATH: '.maestro/cue.yaml',
-	MAESTRO_DIR: '.maestro',
-}));
-
 import { registerCueHandlers } from '../../../main/ipc/handlers/cue';
-import { validateCueConfig, resolveCueConfigPath } from '../../../main/cue/cue-yaml-loader';
+import { validateCueConfig } from '../../../main/cue/cue-yaml-loader';
+import {
+	readCueConfigFile,
+	writeCueConfigFile,
+	deleteCueConfigFile,
+	writeCuePromptFile,
+	pruneOrphanedPromptFiles,
+	removeEmptyPromptsDir,
+	removeEmptyMaestroDir,
+} from '../../../main/cue/config/cue-config-repository';
+import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
 import * as yaml from 'js-yaml';
 
 // Create a mock CueEngine
@@ -220,10 +226,10 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:enable', () => {
-		it('should call engine.start()', async () => {
+		it('should call engine.start() with system-boot reason', async () => {
 			const handler = registerAndGetHandler('cue:enable');
 			await handler(null);
-			expect(mockEngine.start).toHaveBeenCalledOnce();
+			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
 		});
 	});
 
@@ -278,38 +284,260 @@ describe('Cue IPC Handlers', () => {
 
 	describe('cue:readYaml', () => {
 		it('should return file content when file exists', async () => {
-			vi.mocked(resolveCueConfigPath).mockReturnValue('/projects/test/.maestro/cue.yaml');
-			vi.mocked(fs.readFileSync).mockReturnValue('subscriptions: []');
+			vi.mocked(readCueConfigFile).mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: 'subscriptions: []',
+			});
 
 			const handler = registerAndGetHandler('cue:readYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBe('subscriptions: []');
-			expect(resolveCueConfigPath).toHaveBeenCalledWith('/projects/test');
-			expect(fs.readFileSync).toHaveBeenCalledWith('/projects/test/.maestro/cue.yaml', 'utf-8');
+			expect(readCueConfigFile).toHaveBeenCalledWith('/projects/test');
 		});
 
 		it('should return null when file does not exist', async () => {
-			vi.mocked(resolveCueConfigPath).mockReturnValue(null);
+			vi.mocked(readCueConfigFile).mockReturnValue(null);
 
 			const handler = registerAndGetHandler('cue:readYaml');
 			const result = await handler(null, { projectRoot: '/projects/test' });
 			expect(result).toBeNull();
-			expect(fs.readFileSync).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('cue:writeYaml', () => {
-		it('should write content to the correct file path', async () => {
+		it('should delegate to writeCueConfigFile', async () => {
 			const content = 'subscriptions:\n  - name: test\n    event: time.heartbeat';
-			vi.mocked(fs.existsSync).mockReturnValue(true); // .maestro dir exists
 
 			const handler = registerAndGetHandler('cue:writeYaml');
 			await handler(null, { projectRoot: '/projects/test', content });
-			expect(fs.writeFileSync).toHaveBeenCalledWith(
-				'/projects/test/.maestro/cue.yaml',
-				content,
-				'utf-8'
+			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+		});
+
+		it('adds fan_out_prompt_files entries to the prune keep-set', async () => {
+			// Regression guard: without this, per-agent fan-out prompt files
+			// would be deleted by pruneOrphanedPromptFiles on every save —
+			// only `prompt_file` and `output_prompt_file` were kept.
+			vi.mocked(yaml.load).mockReturnValue({
+				subscriptions: [
+					{
+						name: 'fan-out',
+						event: 'app.startup',
+						fan_out: ['A', 'B', 'C'],
+						fan_out_prompt_files: [
+							'.maestro/prompts/a-pipe.md',
+							'.maestro/prompts/b-pipe.md',
+							'.maestro/prompts/c-pipe.md',
+						],
+					},
+				],
+			});
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			await handler(null, { projectRoot: '/projects/test', content: 'ignored-by-mock' });
+
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledTimes(1);
+			const [, keepSet] = vi.mocked(pruneOrphanedPromptFiles).mock.calls[0];
+			const kept = [...(keepSet as Iterable<string>)];
+			expect(kept).toEqual(
+				expect.arrayContaining([
+					'.maestro/prompts/a-pipe.md',
+					'.maestro/prompts/b-pipe.md',
+					'.maestro/prompts/c-pipe.md',
+				])
 			);
+		});
+
+		it('should also write external prompt files when provided', async () => {
+			const content = 'subscriptions: []';
+			const promptFiles = {
+				'.maestro/prompts/sub-1.md': 'prompt body 1',
+				'.maestro/prompts/sub-2.md': 'prompt body 2',
+			};
+
+			const handler = registerAndGetHandler('cue:writeYaml');
+			await handler(null, { projectRoot: '/projects/test', content, promptFiles });
+
+			expect(writeCueConfigFile).toHaveBeenCalledWith('/projects/test', content);
+			expect(writeCuePromptFile).toHaveBeenCalledWith(
+				'/projects/test',
+				'.maestro/prompts/sub-1.md',
+				'prompt body 1'
+			);
+			expect(writeCuePromptFile).toHaveBeenCalledWith(
+				'/projects/test',
+				'.maestro/prompts/sub-2.md',
+				'prompt body 2'
+			);
+		});
+
+		// Security-hardening tests: reject malformed prompt-file keys that
+		// could write outside the .maestro/prompts/ directory. The handler
+		// validates and throws synchronously from inside the async callback —
+		// vi.mock's `withIpcErrorLogging` preserves the rejection.
+		//
+		// Every negative case must also assert that writeCueConfigFile was
+		// NOT called — rejecting the promptFile loop must abort the whole
+		// save, otherwise the YAML would land on disk while referencing a
+		// prompt file that was never written.
+		describe('prompt-file path hardening', () => {
+			it('rejects empty string keys', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '': 'x' },
+					})
+				).rejects.toThrow(/must be a non-empty string/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects absolute paths', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '/etc/passwd.md': 'x' },
+					})
+				).rejects.toThrow(/must be a relative path/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths with parent-directory segments', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '../../escape.md': 'x' },
+					})
+				).rejects.toThrow(/"\." or "\.\." segment/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths with single-dot segments', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '.maestro/prompts/./sub.md': 'x' },
+					})
+				).rejects.toThrow(/"\." or "\.\." segment/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths that resolve outside .maestro/prompts/', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { 'not-prompts/file.md': 'x' },
+					})
+				).rejects.toThrow(/resolves outside the .maestro\/prompts directory/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects paths with mixed-in parent segments that pre-normalize to a valid location', async () => {
+				// 'prompts/../../escape.md' — .split('/') catches the '..'
+				// segment before path.resolve normalizes it away.
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '.maestro/prompts/../../escape.md': 'x' },
+					})
+				).rejects.toThrow(/"\." or "\.\." segment/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('rejects non-.md extensions', async () => {
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await expect(
+					handler(null, {
+						projectRoot: '/projects/test',
+						content: 'subscriptions: []',
+						promptFiles: { '.maestro/prompts/payload.sh': 'x' },
+					})
+				).rejects.toThrow(/must end with .md/);
+				expect(writeCuePromptFile).not.toHaveBeenCalled();
+				expect(writeCueConfigFile).not.toHaveBeenCalled();
+			});
+
+			it('normalizes Windows backslash paths to forward-slash before writing', async () => {
+				// Only meaningful on non-Windows, where path.sep is '/'. Windows
+				// already accepts both separators via path.resolve.
+				if (process.platform === 'win32') return;
+				const handler = registerAndGetHandler('cue:writeYaml');
+				await handler(null, {
+					projectRoot: '/projects/test',
+					content: 'subscriptions: []',
+					promptFiles: { '.maestro\\prompts\\sub.md': 'body' },
+				});
+				// Normalized separator is stored as the written-file key.
+				expect(writeCuePromptFile).toHaveBeenCalledWith(
+					'/projects/test',
+					'.maestro/prompts/sub.md',
+					'body'
+				);
+			});
+		});
+	});
+
+	describe('cue:deleteYaml', () => {
+		it('should delegate to deleteCueConfigFile and return its result', async () => {
+			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			const result = await handler(null, { projectRoot: '/projects/test' });
+			expect(result).toBe(true);
+			expect(deleteCueConfigFile).toHaveBeenCalledWith('/projects/test');
+		});
+
+		it('returns false when there is nothing to delete', async () => {
+			vi.mocked(deleteCueConfigFile).mockReturnValue(false);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			const result = await handler(null, { projectRoot: '/projects/test' });
+			expect(result).toBe(false);
+		});
+
+		it('prunes all .md prompt files and removes the empty prompts dir', async () => {
+			// The "Remove Cue configuration" button must collapse the project's
+			// `.maestro` footprint — deleting the yaml alone used to leave
+			// orphaned prompt files behind forever.
+			vi.mocked(deleteCueConfigFile).mockReturnValue(true);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			await handler(null, { projectRoot: '/projects/test' });
+
+			// Keep-set is empty — everything in .maestro/prompts/ is orphaned.
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
+			// Then collapse the now-empty prompts directory, then .maestro/ itself.
+			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
+			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
+		});
+
+		it('prunes prompts even when the yaml file was already absent', async () => {
+			// Users sometimes delete cue.yaml by hand, then click the Remove
+			// button. Cleanup must still run so orphaned prompts don't linger.
+			vi.mocked(deleteCueConfigFile).mockReturnValue(false);
+
+			const handler = registerAndGetHandler('cue:deleteYaml');
+			await handler(null, { projectRoot: '/projects/test' });
+
+			expect(pruneOrphanedPromptFiles).toHaveBeenCalledWith('/projects/test', []);
+			expect(removeEmptyPromptsDir).toHaveBeenCalledWith('/projects/test');
+			expect(removeEmptyMaestroDir).toHaveBeenCalledWith('/projects/test');
 		});
 	});
 
@@ -417,7 +645,7 @@ describe('Cue IPC Handlers', () => {
 	});
 
 	describe('cue:savePipelineLayout', () => {
-		it('should write layout to JSON file', async () => {
+		it('should delegate to savePipelineLayout', async () => {
 			const layout = {
 				pipelines: [{ id: 'p1', name: 'Pipeline 1', color: '#06b6d4', nodes: [], edges: [] }],
 				selectedPipelineId: 'p1',
@@ -426,11 +654,59 @@ describe('Cue IPC Handlers', () => {
 
 			const handler = registerAndGetHandler('cue:savePipelineLayout');
 			await handler(null, { layout });
-			expect(fs.writeFileSync).toHaveBeenCalledWith(
-				expect.stringContaining('cue-pipeline-layout.json'),
-				JSON.stringify(layout, null, 2),
-				'utf-8'
+			expect(savePipelineLayout).toHaveBeenCalledWith(layout);
+		});
+	});
+
+	describe('cue:triggerSubscription', () => {
+		it('should pass subscriptionName to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, { subscriptionName: 'my-sub' });
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith('my-sub', undefined, undefined);
+		});
+
+		it('should pass prompt to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, { subscriptionName: 'my-sub', prompt: 'custom prompt' });
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				'custom prompt',
+				undefined
 			);
+		});
+
+		it('should pass sourceAgentId to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, {
+				subscriptionName: 'my-sub',
+				sourceAgentId: 'agent-xyz-123',
+			});
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				undefined,
+				'agent-xyz-123'
+			);
+		});
+
+		it('should pass both prompt and sourceAgentId to engine.triggerSubscription()', async () => {
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			await handler(null, {
+				subscriptionName: 'my-sub',
+				prompt: 'override prompt',
+				sourceAgentId: 'agent-abc',
+			});
+			expect(mockEngine.triggerSubscription).toHaveBeenCalledWith(
+				'my-sub',
+				'override prompt',
+				'agent-abc'
+			);
+		});
+
+		it('should return the boolean result from engine', async () => {
+			mockEngine.triggerSubscription.mockReturnValue(false);
+			const handler = registerAndGetHandler('cue:triggerSubscription');
+			const result = await handler(null, { subscriptionName: 'nonexistent' });
+			expect(result).toBe(false);
 		});
 	});
 
@@ -441,8 +717,7 @@ describe('Cue IPC Handlers', () => {
 				selectedPipelineId: 'p1',
 				viewport: { x: 100, y: 200, zoom: 1.5 },
 			};
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(layout));
+			vi.mocked(loadPipelineLayout).mockReturnValue(layout as any);
 
 			const handler = registerAndGetHandler('cue:loadPipelineLayout');
 			const result = await handler(null);
@@ -450,7 +725,7 @@ describe('Cue IPC Handlers', () => {
 		});
 
 		it('should return null when file does not exist', async () => {
-			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(loadPipelineLayout).mockReturnValue(null);
 
 			const handler = registerAndGetHandler('cue:loadPipelineLayout');
 			const result = await handler(null);

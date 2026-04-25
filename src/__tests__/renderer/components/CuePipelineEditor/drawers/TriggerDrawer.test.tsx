@@ -2,29 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TriggerDrawer } from '../../../../../renderer/components/CuePipelineEditor/drawers/TriggerDrawer';
-import type { Theme } from '../../../../../renderer/types';
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f940',
-		accentText: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
-
+import { mockTheme } from '../../../../helpers/mockTheme';
 describe('TriggerDrawer', () => {
 	it('should render all trigger types when open', () => {
 		render(<TriggerDrawer isOpen={true} onClose={() => {}} theme={mockTheme} />);
@@ -113,14 +92,14 @@ describe('TriggerDrawer', () => {
 		expect(drawer.style.transform).toBe('translateX(0)');
 	});
 
-	it('should render exactly 7 trigger types (no agent.completed)', () => {
+	it('should render exactly 8 trigger types (no agent.completed)', () => {
 		const { container } = render(
 			<TriggerDrawer isOpen={true} onClose={() => {}} theme={mockTheme} />
 		);
 
 		// Each trigger item is a draggable div; count them
 		const draggableItems = container.querySelectorAll('[draggable="true"]');
-		expect(draggableItems.length).toBe(7);
+		expect(draggableItems.length).toBe(8);
 	});
 
 	it('should not show agent.completed when filtering by "agent"', () => {

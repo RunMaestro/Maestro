@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session } from '../../types';
+import { sanitizeBrowserTabForPersistence } from '../../utils/browserTabPersistence';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
@@ -111,6 +112,13 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const newActiveTerminalTabId = activeTerminalTabExists
 		? session.activeTerminalTabId
 		: (cleanedTerminalTabs[0]?.id ?? null);
+	const cleanedBrowserTabs = (session.browserTabs || []).map((tab) =>
+		sanitizeBrowserTabForPersistence(tab, session.id)
+	);
+	const activeBrowserTabExists = cleanedBrowserTabs.some(
+		(tab) => tab.id === session.activeBrowserTabId
+	);
+	const newActiveBrowserTabId = activeBrowserTabExists ? session.activeBrowserTabId : null;
 
 	return {
 		...sessionWithoutRuntimeFields,
@@ -119,6 +127,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// Reset terminal tab runtime state
 		terminalTabs: cleanedTerminalTabs,
 		activeTerminalTabId: newActiveTerminalTabId,
+		browserTabs: cleanedBrowserTabs,
+		activeBrowserTabId: newActiveBrowserTabId,
 		// Reset runtime-only session state - processes don't survive app restart
 		state: 'idle',
 		busySource: undefined,
@@ -143,6 +153,13 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		fileTreeLoading: undefined,
 		fileTreeLoadingProgress: undefined,
 		fileTreeLastScanTime: undefined,
+		// Error and retry-backoff are transient UI state. Persisting them
+		// would restore a stale error on next launch (from a previous
+		// failed load, potentially from an outdated code path) and the
+		// `hasLoadedOnce` gate in useFileTreeManagement would block the
+		// auto-loader from making a fresh attempt.
+		fileTreeError: undefined,
+		fileTreeRetryAt: undefined,
 		// Don't persist file preview history — stores full file content that can be
 		// re-read from disk on demand. Another major contributor to session file bloat.
 		filePreviewHistory: undefined,

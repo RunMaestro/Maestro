@@ -21,7 +21,8 @@ import {
 } from './group-chat-storage';
 import { appendToLog } from './group-chat-log';
 import { IProcessManager, isModeratorActive } from './group-chat-moderator';
-import { groupChatParticipantPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
+import { logger } from '../utils/logger';
 
 /**
  * In-memory store for active participant sessions.
@@ -45,7 +46,7 @@ export function getParticipantSystemPrompt(
 	groupChatName: string,
 	logPath: string
 ): string {
-	return groupChatParticipantPrompt
+	return getPrompt('group-chat-participant')
 		.replace(/\{\{GROUP_CHAT_NAME\}\}/g, groupChatName)
 		.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
 		.replace(/\{\{LOG_PATH\}\}/g, logPath);
@@ -89,40 +90,40 @@ export async function addParticipant(
 	sessionOverrides?: SessionOverrides,
 	_sshStore?: unknown
 ): Promise<GroupChatParticipant> {
-	console.log(`[GroupChat:Debug] ========== ADD PARTICIPANT ==========`);
-	console.log(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
-	console.log(`[GroupChat:Debug] Participant Name: ${name}`);
-	console.log(`[GroupChat:Debug] Agent ID: ${agentId}`);
+	logger.debug(`[GroupChat:Debug] ========== ADD PARTICIPANT ==========`);
+	logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
+	logger.debug(`[GroupChat:Debug] Participant Name: ${name}`);
+	logger.debug(`[GroupChat:Debug] Agent ID: ${agentId}`);
 
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
-		console.log(`[GroupChat:Debug] ERROR: Group chat not found!`);
+		logger.debug(`[GroupChat:Debug] ERROR: Group chat not found!`);
 		throw new Error(`Group chat not found: ${groupChatId}`);
 	}
 
-	console.log(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
+	logger.debug(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
 
 	// Check if moderator is active
 	if (!isModeratorActive(groupChatId)) {
-		console.log(`[GroupChat:Debug] ERROR: Moderator not active!`);
+		logger.debug(`[GroupChat:Debug] ERROR: Moderator not active!`);
 		throw new Error(
 			`Moderator must be active before adding participants to group chat: ${groupChatId}`
 		);
 	}
 
-	console.log(`[GroupChat:Debug] Moderator is active: true`);
+	logger.debug(`[GroupChat:Debug] Moderator is active: true`);
 
 	// Idempotent: if participant already exists, return it without spawning a new process
 	const existingParticipant = chat.participants.find((p) => p.name === name);
 	if (existingParticipant) {
-		console.log(`[GroupChat:Debug] Participant '${name}' already exists, returning existing`);
+		logger.debug(`[GroupChat:Debug] Participant '${name}' already exists, returning existing`);
 		return existingParticipant;
 	}
 
 	// Generate a stable participant record ID. Actual task runs use separate
 	// batch session IDs created by the router per moderator handoff.
 	const sessionId = `group-chat-${groupChatId}-participant-${name}-${uuidv4()}`;
-	console.log(`[GroupChat:Debug] Generated participant record ID: ${sessionId}`);
+	logger.debug(`[GroupChat:Debug] Generated participant record ID: ${sessionId}`);
 
 	// Create participant record
 	const participant: GroupChatParticipant = {
@@ -135,8 +136,8 @@ export async function addParticipant(
 
 	// Add participant to the group chat
 	await addParticipantToChat(groupChatId, participant);
-	console.log(`[GroupChat:Debug] Participant added to chat storage`);
-	console.log(`[GroupChat:Debug] =====================================`);
+	logger.debug(`[GroupChat:Debug] Participant added to chat storage`);
+	logger.debug(`[GroupChat:Debug] =====================================`);
 
 	return participant;
 }
@@ -211,16 +212,14 @@ export async function removeParticipant(
 	participantName: string,
 	processManager?: IProcessManager
 ): Promise<void> {
+	// Removal is idempotent: the UI may fire this for a stale participant that was
+	// already removed (e.g. a duplicate click, or removal via another code path).
+	// Treat chat-missing and participant-missing as no-ops rather than throwing.
 	const chat = await loadGroupChat(groupChatId);
-	if (!chat) {
-		throw new Error(`Group chat not found: ${groupChatId}`);
-	}
+	if (!chat) return;
 
-	// Find the participant to get session info before removal
 	const participant = await getParticipant(groupChatId, participantName);
-	if (!participant) {
-		throw new Error(`Participant '${participantName}' not found in group chat`);
-	}
+	if (!participant) return;
 
 	// Get the session ID from our active sessions map
 	const key = getParticipantKey(groupChatId, participantName);

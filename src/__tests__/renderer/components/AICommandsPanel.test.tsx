@@ -18,6 +18,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { AICommandsPanel } from '../../../renderer/components/AICommandsPanel';
 import type { Theme, CustomAICommand } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock the useTemplateAutocomplete hook
 const mockAutocompleteState = {
 	isOpen: false,
@@ -62,26 +63,6 @@ vi.mock('../../../renderer/components/TemplateAutocompleteDropdown', () => ({
 }));
 
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#f8f8f2',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 // Helper to create mock commands
 const createMockCommand = (overrides: Partial<CustomAICommand> = {}): CustomAICommand => ({

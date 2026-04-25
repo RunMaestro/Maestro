@@ -4,44 +4,7 @@ import {
 	SessionValidationResult,
 } from '../../../renderer/utils/sessionValidation';
 import type { Session, ToolType } from '../../../renderer/types';
-
-// Helper to create a minimal mock session for testing
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'test-id',
-		name: 'Test Session',
-		toolType: 'claude-code' as ToolType,
-		state: 'idle',
-		cwd: '/Users/test/project',
-		fullPath: '/Users/test/project',
-		projectRoot: '/Users/test/project',
-		isGitRepo: false,
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 1234,
-		terminalPid: 0,
-		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		shellCwd: '/Users/test/project',
-		aiCommandHistory: [],
-		shellCommandHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
+import { createMockSession } from '../../helpers/mockSession';
 
 describe('sessionValidation', () => {
 	describe('validateNewSession', () => {

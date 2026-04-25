@@ -5,8 +5,8 @@ import {
 	AIOverviewTab,
 	_resetCacheForTesting,
 } from '../../../../renderer/components/DirectorNotes/AIOverviewTab';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock useSettings hook
 vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
@@ -14,13 +14,22 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 			provider: 'claude-code',
 			defaultLookbackDays: 7,
 		},
+		bionifyReadingMode: false,
 	}),
 }));
 
 // Mock MarkdownRenderer
 vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
-	MarkdownRenderer: ({ content }: { content: string }) => (
-		<div data-testid="markdown-renderer">{content}</div>
+	MarkdownRenderer: ({
+		content,
+		enableBionifyReadingMode,
+	}: {
+		content: string;
+		enableBionifyReadingMode?: boolean;
+	}) => (
+		<div data-testid="markdown-renderer" data-bionify={enableBionifyReadingMode ? 'on' : 'off'}>
+			{content}
+		</div>
 	),
 }));
 
@@ -40,6 +49,18 @@ vi.mock('../../../../renderer/utils/markdownConfig', () => ({
 	generateTerminalProseStyles: () => '.director-notes-content { color: inherit; }',
 }));
 
+// Mock notifyToast so we can assert the unmount-completion toast shape
+const mockNotifyToast = vi.fn();
+vi.mock('../../../../renderer/stores/notificationStore', () => ({
+	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+}));
+
+// Mock modalStore so the toast onClick handler doesn't explode in tests
+const mockOpenModal = vi.fn();
+vi.mock('../../../../renderer/stores/modalStore', () => ({
+	useModalStore: { getState: () => ({ openModal: mockOpenModal }) },
+}));
+
 // Mock navigator.clipboard
 const mockWriteText = vi.fn().mockResolvedValue(undefined);
 Object.defineProperty(navigator, 'clipboard', {
@@ -48,26 +69,6 @@ Object.defineProperty(navigator, 'clipboard', {
 });
 
 // Mock theme
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-		scrollbar: '#44475a',
-		scrollbarHover: '#6272a4',
-	},
-};
 
 // Mock IPC APIs
 const mockGenerateSynopsis = vi.fn();
@@ -138,6 +139,7 @@ describe('AIOverviewTab', () => {
 				provider: 'claude-code',
 			})
 		);
+		expect(screen.getByTestId('markdown-renderer')).toHaveAttribute('data-bionify', 'off');
 	});
 
 	it('calls onSynopsisReady when synopsis is generated', async () => {
@@ -324,6 +326,62 @@ describe('AIOverviewTab', () => {
 		const { hasCachedSynopsis } =
 			await import('../../../../renderer/components/DirectorNotes/AIOverviewTab');
 		expect(hasCachedSynopsis()).toBe(true);
+	});
+
+	it('fires a completion toast that opts in to the custom notification command when generation finishes after unmount', async () => {
+		let resolveGeneration!: (value: any) => void;
+		mockGenerateSynopsis.mockReturnValue(
+			new Promise((resolve) => {
+				resolveGeneration = resolve;
+			})
+		);
+
+		const { unmount } = render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledTimes(1);
+		});
+
+		unmount();
+
+		await act(async () => {
+			resolveGeneration({
+				success: true,
+				synopsis: '# Cached Result',
+				generatedAt: 1234567890,
+			});
+		});
+
+		expect(mockNotifyToast).toHaveBeenCalledTimes(1);
+		const toastArg = mockNotifyToast.mock.calls[0][0];
+		expect(toastArg).toMatchObject({
+			type: 'success',
+			title: "Director's Notes",
+			message: expect.stringMatching(/synopsis is ready/i),
+		});
+		// Regression guard: synopsis completion must flow through the custom audio/TTS
+		// notification command when the user has one configured.
+		expect(toastArg.skipCustomNotification).toBeUndefined();
+		// Clicking the toast should open Director's Notes directly to the AI Overview tab.
+		expect(typeof toastArg.onClick).toBe('function');
+		toastArg.onClick();
+		expect(mockOpenModal).toHaveBeenCalledWith('directorNotes', { initialTab: 'ai-overview' });
+	});
+
+	it('does not fire a completion toast when generation finishes while still mounted', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: true,
+			synopsis: '# Synopsis',
+			generatedAt: 1234567890,
+		});
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
+		});
+
+		expect(mockNotifyToast).not.toHaveBeenCalled();
 	});
 
 	it('closes save modal when close button is clicked', async () => {

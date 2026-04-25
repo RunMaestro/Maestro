@@ -66,6 +66,7 @@ import type { Session, LastResponsePreview } from '../hooks/useSessions';
 // Keeping import for TypeScript types only if needed
 import { QuickActionsMenu, type CommandPaletteAction } from './QuickActionsMenu';
 import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
+import { resolveWebShortcuts } from '../constants/webShortcuts';
 import { useMobileViewState } from '../hooks/useMobileViewState';
 import { useMobileAutoReconnect } from '../hooks/useMobileAutoReconnect';
 
@@ -1076,7 +1077,7 @@ export default function MobileApp() {
 	const { theme } = useTheme();
 	const isOffline = useOfflineStatus();
 	const webTerminalRef = useRef<WebTerminalHandle>(null);
-	const { setDesktopTheme } = useDesktopTheme();
+	const { bionifyReadingMode, setDesktopTheme, setDesktopBionifyReadingMode } = useDesktopTheme();
 
 	// View state persistence and screen tracking (hook consolidates multiple effects)
 	const {
@@ -1112,6 +1113,8 @@ export default function MobileApp() {
 	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
 	const [showLeftPanel, setShowLeftPanel] = useState(false);
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+	// Bell filter state is lifted so it survives LeftPanel unmount/remount on mobile.
+	const [showUnreadAgentsOnly, setShowUnreadAgentsOnly] = useState(false);
 	const [showRightDrawer, setShowRightDrawer] = useState(false);
 	const [rightDrawerTab, setRightDrawerTab] = useState<RightDrawerTab>('files');
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
@@ -1347,6 +1350,7 @@ export default function MobileApp() {
 		hapticTapPattern: HAPTIC_PATTERNS.tap,
 		onResponseComplete: handleResponseComplete,
 		onThemeUpdate: setDesktopTheme,
+		onBionifyReadingModeUpdate: setDesktopBionifyReadingMode,
 		onCustomCommands: setCustomCommands,
 		onAutoRunStateChange: (sessionId, state) => {
 			webLogger.info(
@@ -2116,15 +2120,67 @@ export default function MobileApp() {
 		setShowCommandPalette(false);
 	}, []);
 
-	// Keyboard shortcuts (Cmd+J mode toggle, Cmd+[/] tab navigation, Cmd+K command palette)
+	// Configurable keyboard shortcuts — defaults merged with user overrides from
+	// desktop settings. Web-supported action IDs are curated in webShortcuts.ts.
+	const resolvedShortcuts = useMemo(
+		() => resolveWebShortcuts(settingsHook.settings?.shortcuts),
+		[settingsHook.settings?.shortcuts]
+	);
+
 	useMobileKeyboardHandler({
-		activeSessionId,
+		shortcuts: resolvedShortcuts,
 		activeSession,
-		handleModeToggle,
-		handleSelectTab,
-		onOpenCommandPalette: handleOpenCommandPalette,
-		onCloseCommandPalette: handleCloseCommandPalette,
 		isCommandPaletteOpen: showCommandPalette,
+		onCloseCommandPalette: handleCloseCommandPalette,
+		actions: {
+			quickAction: () => {
+				if (showCommandPalette) handleCloseCommandPalette();
+				else handleOpenCommandPalette();
+			},
+			toggleMode: () => {
+				if (!activeSessionId) return;
+				const currentMode = activeSession?.inputMode || 'ai';
+				handleModeToggle(currentMode === 'ai' ? 'terminal' : 'ai');
+			},
+			prevTab: () => {
+				const tabs = activeSession?.aiTabs;
+				if (!tabs || tabs.length < 2) return;
+				const i = tabs.findIndex((t) => t.id === activeSession?.activeTabId);
+				if (i === -1) return;
+				handleSelectTab(tabs[(i - 1 + tabs.length) % tabs.length].id);
+			},
+			nextTab: () => {
+				const tabs = activeSession?.aiTabs;
+				if (!tabs || tabs.length < 2) return;
+				const i = tabs.findIndex((t) => t.id === activeSession?.activeTabId);
+				if (i === -1) return;
+				handleSelectTab(tabs[(i + 1) % tabs.length].id);
+			},
+			cyclePrev: () => {
+				if (sessions.length < 2) return;
+				const i = sessions.findIndex((s) => s.id === activeSessionId);
+				if (i === -1) return;
+				handleSelectSession(sessions[(i - 1 + sessions.length) % sessions.length].id);
+			},
+			cycleNext: () => {
+				if (sessions.length < 2) return;
+				const i = sessions.findIndex((s) => s.id === activeSessionId);
+				if (i === -1) return;
+				handleSelectSession(sessions[(i + 1) % sessions.length].id);
+			},
+			newInstance: () => setShowAgentCreation(true),
+			settings: () => setShowSettingsPanel(true),
+			goToFiles: () => handleOpenRightDrawer('files'),
+			goToHistory: () => handleOpenRightDrawer('history'),
+			goToAutoRun: () => handleOpenRightDrawer('autorun'),
+			agentSessions: () => setShowAllSessions(true),
+			usageDashboard: () => setShowUsageDashboard(true),
+			openCue: () => setShowCuePanel(true),
+			newGroupChat: () => setShowGroupChatSetup(true),
+			killInstance: () => {
+				void handleInterrupt();
+			},
+		},
 	});
 
 	// Swipe-from-edge gestures to open left panel / right drawer
@@ -2922,6 +2978,7 @@ export default function MobileApp() {
 						maxHeight="none"
 						thinkingMode={thinkingMode}
 						sessionState={activeSession?.state}
+						enableBionifyReadingMode={bionifyReadingMode}
 					/>
 				)}
 			</div>
@@ -3229,6 +3286,8 @@ export default function MobileApp() {
 						onResizeStart={isMobile ? undefined : leftPanelResize.onResizeStart}
 						collapsedGroups={collapsedGroups}
 						setCollapsedGroups={setCollapsedGroups}
+						showUnreadOnly={showUnreadAgentsOnly}
+						setShowUnreadOnly={setShowUnreadAgentsOnly}
 						groups={agentManagement.groups}
 						onCreateGroup={agentManagement.createGroup}
 						onMoveToGroup={agentManagement.moveToGroup}
@@ -3344,6 +3403,7 @@ export default function MobileApp() {
 				onNavigate={handleNavigateResponse}
 				onClose={handleCloseResponseViewer}
 				sessionName={activeSession?.name}
+				enableBionifyReadingMode={bionifyReadingMode}
 			/>
 		</div>
 	);

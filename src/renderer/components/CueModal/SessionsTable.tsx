@@ -2,7 +2,7 @@
  * SessionsTable — Table of Cue-enabled sessions with status, pipeline info, and actions.
  */
 
-import { FileCode, GitFork, Play, Trash2 } from 'lucide-react';
+import { AlertTriangle, FileCode, GitFork, Play, Trash2 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import {
@@ -72,7 +72,24 @@ export function SessionsTable({
 							style={{ borderColor: theme.colors.border }}
 						>
 							<td className="py-2" style={{ color: theme.colors.textMain }}>
-								{s.sessionName}
+								<span className="inline-flex items-center gap-1.5">
+									{s.ownershipWarning && (
+										<span
+											role="img"
+											tabIndex={0}
+											title={s.ownershipWarning}
+											aria-label={s.ownershipWarning}
+											className="inline-flex focus:outline-none focus-visible:ring-1 focus-visible:ring-current rounded"
+										>
+											<AlertTriangle
+												className="w-3.5 h-3.5 flex-shrink-0"
+												style={{ color: theme.colors.error }}
+												aria-hidden="true"
+											/>
+										</span>
+									)}
+									{s.sessionName}
+								</span>
 							</td>
 							<td className="py-2" style={{ color: theme.colors.textDim }}>
 								{s.toolType}
@@ -91,6 +108,11 @@ export function SessionsTable({
 											{colors.map((color, i) => (
 												<PipelineDot key={color} color={color} name={pipelineNames[i] ?? ''} />
 											))}
+											{colors.length > 1 && (
+												<span style={{ color: theme.colors.textDim, fontSize: '0.7rem' }}>
+													×{colors.length}
+												</span>
+											)}
 										</span>
 									);
 								})()}
@@ -118,6 +140,14 @@ export function SessionsTable({
 										const gs = graphSessions.find((g) => g.sessionId === s.sessionId);
 										const subs = gs?.subscriptions.filter((sub) => sub.enabled !== false) ?? [];
 										if (subs.length === 0 || !s.enabled) return null;
+										// Build a tooltip that makes fan-out semantics explicit. A single sub
+										// with fan_out fires the trigger once and runs every target — clicking
+										// Run Now on any participant row fans out to all of them, which would
+										// otherwise be a surprising side-effect.
+										const fanOutSub = subs.find((sub) => sub.fan_out && sub.fan_out.length > 1);
+										const tooltip = fanOutSub
+											? `Run ${fanOutSub.name} now — fans out to ${fanOutSub.fan_out!.length} agents`
+											: `Run all ${subs.length} subscription(s) now`;
 										return (
 											<button
 												onClick={() => {
@@ -127,7 +157,7 @@ export function SessionsTable({
 												}}
 												className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
 												style={{ color: theme.colors.success }}
-												title={`Run all ${subs.length} subscription(s) now`}
+												title={tooltip}
 											>
 												<Play className="w-3.5 h-3.5" />
 												Run Now

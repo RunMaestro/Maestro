@@ -329,6 +329,133 @@ describe('auto-run command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
+	it('should send worktree config when --worktree flags are provided', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		let sentMessage: Record<string, unknown> | undefined;
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					sentMessage = msg;
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			launch: true,
+			worktree: true,
+			branch: 'feature/auto',
+			worktreePath: '/tmp/wt',
+			createPr: true,
+			prTargetBranch: 'main',
+		});
+
+		expect(sentMessage).toBeDefined();
+		expect(sentMessage!.worktree).toEqual({
+			enabled: true,
+			path: '/tmp/wt',
+			branchName: 'feature/auto',
+			createPROnCompletion: true,
+			prTargetBranch: 'main',
+		});
+	});
+
+	it('should error when --worktree is used without --launch', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			worktree: true,
+			branch: 'feature/x',
+			worktreePath: '/tmp/wt',
+		});
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('--worktree requires --launch')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should error when --worktree is used without --branch', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			launch: true,
+			worktree: true,
+			worktreePath: '/tmp/wt',
+		});
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('--worktree requires --branch')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should error when --worktree is used without --worktree-path', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			launch: true,
+			worktree: true,
+			branch: 'feature/x',
+		});
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			expect.stringContaining('--worktree requires --worktree-path')
+		);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should error when worktree flags are provided without --worktree', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		await autoRun(['/path/to/doc.md'], {
+			agent: 'agent-123',
+			launch: true,
+			branch: 'feature/x',
+		});
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('require --worktree'));
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should omit worktree field when --worktree is not provided', async () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(resolveAgentId).mockReturnValue('agent-123');
+
+		let sentMessage: Record<string, unknown> | undefined;
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			const mockClient = {
+				sendCommand: vi.fn().mockImplementation((msg) => {
+					sentMessage = msg;
+					return Promise.resolve({
+						type: 'configure_auto_run_result',
+						success: true,
+					});
+				}),
+			};
+			return action(mockClient as never);
+		});
+
+		await autoRun(['/path/to/doc.md'], { agent: 'agent-123', launch: true });
+
+		expect(sentMessage).toBeDefined();
+		expect(sentMessage!.worktree).toBeUndefined();
+	});
+
 	it('should error when server returns failure', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		vi.mocked(resolveAgentId).mockReturnValue('agent-123');

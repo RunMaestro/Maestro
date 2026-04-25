@@ -54,8 +54,10 @@ export function RightPanel({
 	onClose,
 	onFileSelect,
 	projectPath,
+	onAutoRunOpenDocument,
 	onAutoRunOpenSetup,
 	sendRequest,
+	send,
 	onViewDiff,
 	panelRef,
 	width,
@@ -271,7 +273,14 @@ export function RightPanel({
 						<HistoryTabContent sessionId={sessionId} projectPath={projectPath} />
 					)}
 					{currentTab === 'autorun' && (
-						<AutoRunTabContent autoRunState={autoRunState} onOpenSetup={onAutoRunOpenSetup} />
+						<AutoRunTabContent
+							sessionId={sessionId}
+							autoRunState={autoRunState}
+							onOpenSetup={onAutoRunOpenSetup}
+							sendRequest={sendRequest}
+							send={send}
+							onOpenDocument={onAutoRunOpenDocument}
+						/>
 					)}
 					{currentTab === 'git' && (
 						<GitStatusPanel sessionId={sessionId} gitStatus={gitStatus} onViewDiff={onViewDiff} />

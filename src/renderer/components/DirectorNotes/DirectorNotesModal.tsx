@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
-import { X, History, Sparkles, Loader2, Clapperboard, HelpCircle } from 'lucide-react';
+import { X, History, Sparkles, Clapperboard, HelpCircle } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
@@ -50,8 +52,6 @@ export function DirectorNotesModal({
 	const [overviewGenerating, setOverviewGenerating] = useState(false);
 
 	// Layer stack registration for Escape handling
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const modalRef = useRef<HTMLDivElement>(null);
 
 	// Tab content refs for focus management
@@ -82,29 +82,22 @@ export function DirectorNotesModal({
 	activeTabRef.current = activeTab;
 
 	// Register modal layer
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.DIRECTOR_NOTES,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			onEscape: () => {
-				// Delegate Escape to the active tab first (e.g. to close search)
-				const tabRef =
-					activeTabRef.current === 'history'
-						? historyTabRef
-						: activeTabRef.current === 'overview'
-							? overviewTabRef
-							: null;
-				if (tabRef?.current?.onEscape?.()) return;
-				onCloseRef.current();
-			},
-		});
-		return () => {
-			if (layerIdRef.current) unregisterLayer(layerIdRef.current);
-		};
-	}, [registerLayer, unregisterLayer]);
+	useModalLayer(
+		MODAL_PRIORITIES.DIRECTOR_NOTES,
+		undefined,
+		() => {
+			// Delegate Escape to the active tab first (e.g. to close search)
+			const tabRef =
+				activeTabRef.current === 'history'
+					? historyTabRef
+					: activeTabRef.current === 'overview'
+						? overviewTabRef
+						: null;
+			if (tabRef?.current?.onEscape?.()) return;
+			onCloseRef.current();
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Focus the active tab content when tab changes (including initial mount)
 	useEffect(() => {
@@ -210,9 +203,9 @@ export function DirectorNotesModal({
 					</div>
 
 					{/* Close button */}
-					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Tab navigation */}
@@ -239,11 +232,7 @@ export function DirectorNotesModal({
 									cursor: isDisabled ? 'default' : 'pointer',
 								}}
 							>
-								{showGenerating ? (
-									<Loader2 className="w-4 h-4 animate-spin" />
-								) : (
-									<Icon className="w-4 h-4" />
-								)}
+								{showGenerating ? <Spinner size={16} /> : <Icon className="w-4 h-4" />}
 								{tab.label}
 								{showGenerating && <span className="text-[10px] font-normal">generating…</span>}
 							</button>
@@ -259,7 +248,7 @@ export function DirectorNotesModal({
 					<Suspense
 						fallback={
 							<div className="flex items-center justify-center h-full">
-								<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={32} color={theme.colors.textDim} />
 							</div>
 						}
 					>

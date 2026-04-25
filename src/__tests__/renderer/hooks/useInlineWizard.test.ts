@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
 
@@ -377,7 +378,7 @@ describe('useInlineWizard', () => {
 				mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add feature' });
 
 				const { result } = renderHook(() => useInlineWizard());
-				const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+				const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 				await act(async () => {
 					await result.current.startWizard('add feature', undefined, '/test/project');
@@ -859,7 +860,7 @@ describe('useInlineWizard', () => {
 	describe('retryLastMessage', () => {
 		it('should not retry when there is no error', async () => {
 			const { result } = renderHook(() => useInlineWizard());
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			await act(async () => {
 				await result.current.retryLastMessage();
@@ -874,7 +875,7 @@ describe('useInlineWizard', () => {
 
 		it('should not retry when there is no last message', async () => {
 			const { result } = renderHook(() => useInlineWizard());
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			// Set an error but don't send a message
 			act(() => {

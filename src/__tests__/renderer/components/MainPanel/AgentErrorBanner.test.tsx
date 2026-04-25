@@ -4,13 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentErrorBanner } from '../../../../renderer/components/MainPanel/AgentErrorBanner';
 import type { AgentError, Theme } from '../../../../renderer/types';
 
-const mockTheme = {
-	colors: {
-		error: '#ef4444',
-		textMain: '#ffffff',
-		textDim: '#888888',
-	},
-} as Theme;
+import { mockTheme } from '../../../helpers/mockTheme';
 
 function makeError(overrides: Partial<AgentError> = {}): AgentError {
 	return {

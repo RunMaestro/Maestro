@@ -3,7 +3,7 @@ import { Diff, Hunk } from 'react-diff-view';
 import { Plus, Minus, ImageIcon } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ImageDiffViewer } from './ImageDiffViewer';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
@@ -24,8 +24,6 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 }: GitDiffViewerProps) {
 	const [activeTab, setActiveTab] = useState(0);
 	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 
 	// Store onClose in ref to avoid re-registering layer on every parent re-render
 	const onCloseRef = useRef(onClose);
@@ -37,30 +35,9 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// Register layer on mount
 	// Note: Using 'modal' type so App.tsx blocks all shortcuts and lets this component
 	// handle its own Cmd+Shift+[] for tab navigation
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.GIT_DIFF,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			ariaLabel: 'Git Diff Preview',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]); // Removed onClose from deps
-
-	// Update handler when dependencies change (not really needed since onClose uses ref)
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(MODAL_PRIORITIES.GIT_DIFF, 'Git Diff Preview', () => onCloseRef.current(), {
+		focusTrap: 'lenient',
+	});
 
 	// Auto-scroll to active tab when it changes
 	useEffect(() => {

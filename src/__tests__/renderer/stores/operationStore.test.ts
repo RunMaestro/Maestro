@@ -9,11 +9,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useOperationStore,
-	getOperationState,
-	getOperationActions,
 	selectIsAnySummarizing,
 	selectIsAnyMerging,
-	selectIsAnyOperationInProgress,
 } from '../../../renderer/stores/operationStore';
 import type {
 	TabSummarizeState,
@@ -429,43 +426,6 @@ describe('operationStore', () => {
 				expect(selectIsAnyMerging(useOperationStore.getState())).toBe(true);
 			});
 		});
-
-		describe('selectIsAnyOperationInProgress', () => {
-			it('returns false when all idle', () => {
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(false);
-			});
-
-			it('returns true when summarizing', () => {
-				useOperationStore
-					.getState()
-					.setSummarizeTabState('tab-1', createSummarizeState({ state: 'summarizing' }));
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(true);
-			});
-
-			it('returns true when merging', () => {
-				useOperationStore
-					.getState()
-					.setMergeTabState('tab-1', createMergeState({ state: 'merging' }));
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(true);
-			});
-
-			it('returns true when transfer is grooming', () => {
-				useOperationStore.getState().setTransferState({ state: 'grooming' });
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(true);
-			});
-
-			it('returns true when transfer is creating', () => {
-				useOperationStore.getState().setTransferState({ state: 'creating' });
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(true);
-			});
-
-			it('returns false when transfer is error or complete', () => {
-				useOperationStore.getState().setTransferState({ state: 'error' });
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(false);
-				useOperationStore.getState().setTransferState({ state: 'complete' });
-				expect(selectIsAnyOperationInProgress(useOperationStore.getState())).toBe(false);
-			});
-		});
 	});
 
 	// ==========================================================================
@@ -536,19 +496,20 @@ describe('operationStore', () => {
 	// ==========================================================================
 
 	describe('non-React access', () => {
-		it('getOperationState returns current snapshot', () => {
+		it('useOperationStore.getState() returns current snapshot', () => {
 			useOperationStore.getState().setGlobalMergeInProgress(true);
-			expect(getOperationState().globalMergeInProgress).toBe(true);
+			expect(useOperationStore.getState().globalMergeInProgress).toBe(true);
 		});
 
-		it('getOperationActions returns working methods', () => {
-			const actions = getOperationActions();
-			actions.setSummarizeTabState('tab-1', createSummarizeState({ state: 'summarizing' }));
+		it('useOperationStore.getState() exposes working methods', () => {
+			useOperationStore
+				.getState()
+				.setSummarizeTabState('tab-1', createSummarizeState({ state: 'summarizing' }));
 			expect(useOperationStore.getState().summarizeStates.get('tab-1')?.state).toBe('summarizing');
 		});
 
-		it('getOperationActions returns all expected methods', () => {
-			const actions = getOperationActions();
+		it('useOperationStore.getState() exposes all expected methods', () => {
+			const state = useOperationStore.getState();
 			const expectedMethods = [
 				'setSummarizeTabState',
 				'updateSummarizeTabState',
@@ -565,7 +526,7 @@ describe('operationStore', () => {
 				'resetAll',
 			];
 			for (const method of expectedMethods) {
-				expect(typeof (actions as any)[method]).toBe('function');
+				expect(typeof (state as any)[method]).toBe('function');
 			}
 		});
 	});

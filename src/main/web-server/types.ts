@@ -5,6 +5,7 @@
 
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
+import type { Shortcut } from '../../shared/shortcut-types';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -50,6 +51,7 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	hasUnread?: boolean;
 }
 
 /**
@@ -293,6 +295,17 @@ export type ReorderTabCallback = (
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
+export type NewAITabWithPromptCallback = (sessionId: string, prompt: string) => Promise<boolean>;
+export type OpenBrowserTabCallback = (sessionId: string, url: string) => Promise<boolean>;
+export interface OpenTerminalTabConfig {
+	cwd?: string;
+	shell?: string;
+	name?: string | null;
+}
+export type OpenTerminalTabCallback = (
+	sessionId: string,
+	config: OpenTerminalTabConfig
+) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
@@ -303,6 +316,13 @@ export type ConfigureAutoRunCallback = (
 		maxLoops?: number;
 		saveAsPlaybook?: string;
 		launch?: boolean;
+		worktree?: {
+			enabled: boolean;
+			path: string;
+			branchName: string;
+			createPROnCompletion: boolean;
+			prTargetBranch: string;
+		};
 	}
 ) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
@@ -310,6 +330,11 @@ export type ConfigureAutoRunCallback = (
  * Callback type for fetching current theme.
  */
 export type GetThemeCallback = () => Theme | null;
+
+/**
+ * Callback type for fetching the current global Bionify reading-mode setting.
+ */
+export type GetBionifyReadingModeCallback = () => boolean;
 
 /**
  * Callback type for fetching custom AI commands.
@@ -353,6 +378,8 @@ export interface WebSettings {
 	audioFeedbackEnabled: boolean;
 	colorBlindMode: string;
 	conductorProfile: string;
+	/** User-customized keyboard shortcuts (partial overrides of DEFAULT_SHORTCUTS). */
+	shortcuts: Record<string, Shortcut>;
 }
 
 /**
@@ -465,11 +492,33 @@ export type MoveSessionToGroupCallback = (
 	sessionId: string,
 	groupId: string | null
 ) => Promise<boolean>;
+/**
+ * Optional configuration fields for session creation via CLI/web.
+ * These map 1:1 to the optional params of createNewSession in useSessionCrud.ts.
+ */
+export interface CreateSessionConfig {
+	nudgeMessage?: string;
+	newSessionMessage?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customModel?: string;
+	customEffort?: string;
+	customContextWindow?: number;
+	customProviderPath?: string;
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
+}
+
 export type CreateSessionCallback = (
 	name: string,
 	toolType: string,
 	cwd: string,
-	groupId?: string
+	groupId?: string,
+	config?: CreateSessionConfig
 ) => Promise<{ sessionId: string } | null>;
 export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type RenameSessionCallback = (sessionId: string, newName: string) => Promise<boolean>;
@@ -588,6 +637,11 @@ export type GetCueActivityCallback = (
 	sessionId?: string,
 	limit?: number
 ) => Promise<CueActivityEntry[]>;
+export type TriggerCueSubscriptionCallback = (
+	subscriptionName: string,
+	prompt?: string,
+	sourceAgentId?: string
+) => Promise<boolean>;
 
 // =============================================================================
 // Usage Dashboard Types
@@ -632,3 +686,24 @@ export type GetUsageDashboardCallback = (
 	timeRange: 'day' | 'week' | 'month' | 'all'
 ) => Promise<UsageDashboardData>;
 export type GetAchievementsCallback = () => Promise<AchievementData[]>;
+
+// =============================================================================
+// Director's Notes Callback Types
+// =============================================================================
+
+export interface DirectorNotesSynopsisResult {
+	success: boolean;
+	synopsis: string;
+	generatedAt?: number;
+	stats?: {
+		agentCount: number;
+		entryCount: number;
+		durationMs: number;
+	};
+	error?: string;
+}
+
+export type GenerateDirectorNotesSynopsisCallback = (
+	lookbackDays: number,
+	provider: string
+) => Promise<DirectorNotesSynopsisResult>;

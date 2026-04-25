@@ -18,7 +18,12 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
 	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
 	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
-	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Meta', 'Shift', 'm'] },
+	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
+	openMemoryViewer: {
+		id: 'openMemoryViewer',
+		label: 'Open Memory Viewer',
+		keys: ['Meta', 'Shift', 'm'],
+	},
 	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
 	quickAction: { id: 'quickAction', label: 'Quick Actions', keys: ['Meta', 'k'] },
 	agentSwitcher: { id: 'agentSwitcher', label: 'Switch Agent', keys: ['Meta', 'o'] },
@@ -86,7 +91,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
-		label: 'Next Unread Tab',
+		label: 'Next Unread / Draft Tab',
 		keys: ['Alt', 'Meta', 'ArrowDown'],
 	},
 	jumpToTerminal: {
@@ -155,15 +160,6 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
 	},
-};
-
-// Terminal tab shortcuts
-export const TERMINAL_SHORTCUTS: Record<string, Shortcut> = {
-	newTerminalTab: {
-		id: 'newTerminalTab',
-		label: 'New Terminal Tab',
-		keys: ['Control', 'Shift', '`'],
-	},
 	clearTerminal: {
 		id: 'clearTerminal',
 		label: 'Clear Terminal',
@@ -175,6 +171,13 @@ export const TERMINAL_SHORTCUTS: Record<string, Shortcut> = {
 export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
+	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
+	newFileTab: { id: 'newFileTab', label: 'New File', keys: ['Alt', 'n'] },
+	focusBrowserAddress: {
+		id: 'focusBrowserAddress',
+		label: 'Focus Browser Address Bar',
+		keys: ['Meta', 'l'],
+	},
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },

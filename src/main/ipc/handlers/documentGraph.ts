@@ -225,10 +225,3 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 
 	logger.debug(`${LOG_CONTEXT} Document Graph IPC handlers registered`);
 }
-
-/**
- * Get the current number of active watchers (for testing/debugging)
- */
-export function getDocumentGraphWatcherCount(): number {
-	return documentGraphWatchers.size;
-}

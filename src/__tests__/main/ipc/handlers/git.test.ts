@@ -4274,7 +4274,7 @@ branch refs/heads/bugfix-123
 			vi.useRealTimers();
 		});
 
-		it('should debounce rapid directory additions', async () => {
+		it('should use per-directory debounce so multiple worktrees are each detected', async () => {
 			vi.useFakeTimers();
 
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);
@@ -4320,7 +4320,7 @@ branch refs/heads/bugfix-123
 			const handler = handlers.get('git:watchWorktreeDirectory');
 			await handler!({} as any, 'session-debounce', '/parent/worktrees');
 
-			// Simulate rapid directory additions
+			// Simulate rapid directory additions for different paths
 			await addDirCallback!('/parent/worktrees/dir1');
 			await vi.advanceTimersByTimeAsync(100);
 			await addDirCallback!('/parent/worktrees/dir2');
@@ -4330,8 +4330,71 @@ branch refs/heads/bugfix-123
 			// Fast-forward past debounce
 			await vi.advanceTimersByTimeAsync(600);
 
-			// Only the last directory should be processed due to debouncing
-			expect(checkedPaths).toEqual(['/parent/worktrees/dir3']);
+			// All three directories should be processed (per-directory debounce)
+			expect(checkedPaths).toHaveLength(3);
+			expect(checkedPaths).toContain('/parent/worktrees/dir1');
+			expect(checkedPaths).toContain('/parent/worktrees/dir2');
+			expect(checkedPaths).toContain('/parent/worktrees/dir3');
+
+			vi.useRealTimers();
+		});
+
+		it('should debounce repeated addDir events for the same directory', async () => {
+			vi.useFakeTimers();
+
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let addDirCallback: Function | undefined;
+			const mockWatcher = {
+				on: vi.fn((event: string, cb: Function) => {
+					if (event === 'addDir') {
+						addDirCallback = cb;
+					}
+					return mockWatcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+
+			const mockWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					send: vi.fn(),
+					isDestroyed: vi.fn().mockReturnValue(false),
+				},
+			};
+			const { BrowserWindow } = await import('electron');
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+
+			const checkedPaths: string[] = [];
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					checkedPaths.push(cwd as string);
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					return { stdout: String(cwd), stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'feature\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:watchWorktreeDirectory');
+			await handler!({} as any, 'session-debounce-same', '/parent/worktrees');
+
+			// Simulate repeated addDir for the SAME path (e.g., rapid filesystem events)
+			await addDirCallback!('/parent/worktrees/dir1');
+			await vi.advanceTimersByTimeAsync(100);
+			await addDirCallback!('/parent/worktrees/dir1');
+			await vi.advanceTimersByTimeAsync(100);
+			await addDirCallback!('/parent/worktrees/dir1');
+
+			await vi.advanceTimersByTimeAsync(600);
+
+			// Should only process once despite three events for the same path
+			expect(checkedPaths).toEqual(['/parent/worktrees/dir1']);
 
 			vi.useRealTimers();
 		});
@@ -4432,6 +4495,54 @@ branch refs/heads/bugfix-123
 			expect(mockWindow.webContents.send).not.toHaveBeenCalled();
 
 			vi.useRealTimers();
+		});
+
+		it('should not kill a new watcher when unwatch races with watch (StrictMode)', async () => {
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let closeResolveA: (() => void) | undefined;
+			const mockWatcherA = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn(
+					() =>
+						new Promise<void>((r) => {
+							closeResolveA = r;
+						})
+				),
+			};
+			const mockWatcherB = {
+				on: vi.fn().mockReturnThis(),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch)
+				.mockReturnValueOnce(mockWatcherA as any)
+				.mockReturnValueOnce(mockWatcherB as any);
+
+			const watchHandler = handlers.get('git:watchWorktreeDirectory');
+			const unwatchHandler = handlers.get('git:unwatchWorktreeDirectory');
+
+			// Create initial watcher A
+			await watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Simulate React StrictMode: unwatch and watch fire concurrently.
+			// Start unwatch (will await watcher.close() which we control)
+			const unwatchPromise = unwatchHandler!({} as any, 'race-session');
+
+			// Before unwatch resolves, start watch — this creates watcher B
+			const watchPromise = watchHandler!({} as any, 'race-session', '/some/path');
+
+			// Now let watcher A's close resolve (unwatch resumes)
+			closeResolveA!();
+			await unwatchPromise;
+			await watchPromise;
+
+			// Watcher B should still be functional — the late-resolving unwatch
+			// must NOT have removed it from the map
+			expect(mockWatcherB.close).not.toHaveBeenCalled();
+
+			// Verify watcher B is the active watcher by unwatching and confirming B is closed
+			await unwatchHandler!({} as any, 'race-session');
+			expect(mockWatcherB.close).toHaveBeenCalled();
 		});
 
 		it('should handle multiple watch/unwatch cycles for same session', async () => {

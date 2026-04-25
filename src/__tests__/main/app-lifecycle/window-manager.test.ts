@@ -12,12 +12,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+const webContentsEventHandlers = new Map<string, (...args: any[]) => void>();
+const guestWebContentsEventHandlers = new Map<string, (...args: any[]) => void>();
+
+const mockGuestWebContents = {
+	getType: vi.fn(() => 'webview'),
+	setWindowOpenHandler: vi.fn(),
+	on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+		guestWebContentsEventHandlers.set(event, handler);
+	}),
+	executeJavaScript: vi.fn().mockResolvedValue(undefined),
+};
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
 	send: vi.fn(),
 	openDevTools: vi.fn(),
-	on: vi.fn(),
+	getType: vi.fn(() => 'window'),
+	on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+		webContentsEventHandlers.set(event, handler);
+	}),
 	setWindowOpenHandler: vi.fn(),
 	session: {
 		setPermissionRequestHandler: vi.fn(),
@@ -110,6 +124,8 @@ describe('app-lifecycle/window-manager', () => {
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
 		lastBrowserWindowOptions = null;
+		webContentsEventHandlers.clear();
+		guestWebContentsEventHandlers.clear();
 
 		mockWindowStateStore = {
 			store: {
@@ -127,6 +143,8 @@ describe('app-lifecycle/window-manager', () => {
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
+		mockWebContents.getType.mockReturnValue('window');
+		mockGuestWebContents.getType.mockReturnValue('webview');
 	});
 
 	afterEach(() => {
@@ -173,6 +191,148 @@ describe('app-lifecycle/window-manager', () => {
 			const result = windowManager.createWindow();
 
 			expect(result).toBeInstanceOf(MockBrowserWindow);
+		});
+
+		it('enables webviewTag while keeping sandboxed renderer prefs', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions?.webPreferences).toMatchObject({
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+				webviewTag: true,
+			});
+		});
+
+		it('blocks unsafe webview attachments that use disallowed partitions or URLs', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const handler = webContentsEventHandlers.get('will-attach-webview');
+			expect(handler).toBeTruthy();
+
+			const preventDefault = vi.fn();
+			const webPreferences: Record<string, unknown> = {
+				partition: 'persist:unexpected',
+				preload: '/tmp/preload.js',
+			};
+
+			handler?.({ preventDefault } as any, webPreferences, {
+				src: 'file:///tmp/escape.html',
+			} as any);
+
+			expect(preventDefault).toHaveBeenCalled();
+			expect(webPreferences.preload).toBeUndefined();
+			expect(webPreferences.nodeIntegration).toBe(false);
+			expect(mockLogger.warn).toHaveBeenCalled();
+		});
+
+		it('hardens attached browser-tab guests with popup and navigation restrictions', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			expect(attachHandler).toBeTruthy();
+
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			expect(mockGuestWebContents.setWindowOpenHandler).toHaveBeenCalledWith(expect.any(Function));
+			expect(mockGuestWebContents.on).toHaveBeenCalledWith('will-navigate', expect.any(Function));
+			expect(mockGuestWebContents.on).toHaveBeenCalledWith('will-redirect', expect.any(Function));
+		});
+
+		it('blocks unsafe browser-tab guest navigations after attachment', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const navigateHandler = guestWebContentsEventHandlers.get('will-navigate');
+			expect(navigateHandler).toBeTruthy();
+
+			const blockedEvent = { preventDefault: vi.fn() };
+			navigateHandler?.(blockedEvent as any, 'file:///etc/passwd');
+			expect(blockedEvent.preventDefault).toHaveBeenCalled();
+
+			const allowedEvent = { preventDefault: vi.fn() };
+			navigateHandler?.(allowedEvent as any, 'http://localhost:7100/');
+			expect(allowedEvent.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('denies browser-tab guest popup requests in the main process', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const handler = mockGuestWebContents.setWindowOpenHandler.mock.calls[0][0];
+			expect(handler({ url: 'https://popup.example.com' })).toEqual({ action: 'deny' });
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
@@ -613,11 +773,11 @@ describe('app-lifecycle/window-manager', () => {
 
 			// Clipboard permissions should be allowed
 			const allowedCb = vi.fn();
-			handler(null, 'clipboard-read', allowedCb);
+			handler(mockWebContents, 'clipboard-read', allowedCb);
 			expect(allowedCb).toHaveBeenCalledWith(true);
 
 			const writeCb = vi.fn();
-			handler(null, 'clipboard-sanitized-write', writeCb);
+			handler(mockWebContents, 'clipboard-sanitized-write', writeCb);
 			expect(writeCb).toHaveBeenCalledWith(true);
 
 			// All other permissions should be denied
@@ -627,6 +787,145 @@ describe('app-lifecycle/window-manager', () => {
 				handler(null, perm, cb);
 				expect(cb).toHaveBeenCalledWith(false);
 			}
+		});
+
+		it('injects shortcut listener into browser-tab guests on dom-ready and did-navigate', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			// Should register dom-ready and did-navigate handlers for injection
+			expect(mockGuestWebContents.on).toHaveBeenCalledWith('dom-ready', expect.any(Function));
+			expect(mockGuestWebContents.on).toHaveBeenCalledWith('did-navigate', expect.any(Function));
+
+			// Trigger dom-ready — should call executeJavaScript
+			const domReadyHandler = mockGuestWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'dom-ready'
+			)?.[1];
+			domReadyHandler?.();
+			expect(mockGuestWebContents.executeJavaScript).toHaveBeenCalled();
+		});
+
+		it('forwards keyboard shortcuts from browser-tab guest via console-message', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const consoleHandler = mockGuestWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'console-message'
+			)?.[1];
+			expect(consoleHandler).toBeDefined();
+
+			// console-message args: (event, level, message, line, sourceId)
+			// level=1 (info), message is args[2]
+			const payload = JSON.stringify({
+				key: 't',
+				code: 'KeyT',
+				meta: true,
+				control: false,
+				alt: false,
+				shift: false,
+			});
+			consoleHandler?.({}, 1, `__MAESTRO_KEY__${payload}`, 0, '');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'browser-tab:shortcutKey',
+				expect.objectContaining({ key: 't', meta: true })
+			);
+		});
+
+		it('ignores console-message events without the __MAESTRO_KEY__ prefix', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const attachHandler = webContentsEventHandlers.get('did-attach-webview');
+			attachHandler?.({} as any, mockGuestWebContents as any);
+
+			const consoleHandler = mockGuestWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'console-message'
+			)?.[1];
+
+			// Regular console message — should not forward
+			consoleHandler?.({}, 1, 'Hello world', 0, '');
+			expect(mockWebContents.send).not.toHaveBeenCalledWith(
+				'browser-tab:shortcutKey',
+				expect.anything()
+			);
+		});
+
+		it('denies clipboard permission requests from browser-tab guests', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			const handler = mockWebContents.session.setPermissionRequestHandler.mock.calls[0][0];
+			const callback = vi.fn();
+			handler(mockGuestWebContents, 'clipboard-read', callback);
+
+			expect(callback).toHaveBeenCalledWith(false);
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				'Blocked browser-tab permission request: clipboard-read',
+				'Window',
+				expect.objectContaining({
+					permission: 'clipboard-read',
+					type: 'webview',
+				})
+			);
 		});
 	});
 });

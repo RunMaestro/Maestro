@@ -9,6 +9,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { X, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../hooks/useCue';
+import { formatElapsedTime as formatDuration } from '../../shared/formatters';
 
 export interface CuePanelProps {
 	/** Close the panel */
@@ -51,15 +52,6 @@ function formatRelativeTime(timestamp: number): string {
 	if (hours < 24) return `${hours}h ago`;
 	const days = Math.floor(hours / 24);
 	return `${days}d ago`;
-}
-
-function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	return `${minutes}m ${remainingSeconds}s`;
 }
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {

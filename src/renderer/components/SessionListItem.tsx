@@ -58,6 +58,8 @@ export interface SessionListItemProps {
 	renameValue: string;
 	/** Current search mode for conditional display */
 	searchMode: 'title' | 'user' | 'assistant' | 'all';
+	/** Current search query (used to highlight matches inside the preview) */
+	searchQuery?: string;
 	/** Search result info for content searches (optional) */
 	searchResultInfo?: SearchResultInfo | null;
 	/** Theme for styling */
@@ -85,6 +87,43 @@ export interface SessionListItemProps {
 /**
  * SessionListItem component for rendering a single session row
  */
+/**
+ * Render a preview string with case-insensitive occurrences of `query` visually
+ * emphasized. Falls back to plain text if the query is empty or not present.
+ */
+function renderHighlightedPreview(
+	preview: string,
+	query: string | undefined,
+	accentColor: string
+): React.ReactNode {
+	if (!query) return preview;
+	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const regex = new RegExp(`(${escaped})`, 'gi');
+	const parts = preview.split(regex);
+	if (parts.length === 1) return preview;
+	let offset = 0;
+	return parts.map((part) => {
+		const key = offset;
+		offset += part.length;
+		return regex.test(part) ? (
+			<mark
+				key={key}
+				style={{
+					backgroundColor: accentColor,
+					color: '#fff',
+					padding: '0 2px',
+					borderRadius: '2px',
+					fontStyle: 'normal',
+				}}
+			>
+				{part}
+			</mark>
+		) : (
+			<span key={key}>{part}</span>
+		);
+	});
+}
+
 export function SessionListItem({
 	session,
 	index,
@@ -94,6 +133,7 @@ export function SessionListItem({
 	renamingSessionId,
 	renameValue,
 	searchMode,
+	searchQuery,
 	searchResultInfo,
 	theme,
 	selectedItemRef,
@@ -297,7 +337,13 @@ export function SessionListItem({
 					{/* Show match preview for content searches */}
 					{searchResultInfo && searchResultInfo.matchPreview && searchMode !== 'title' && (
 						<span className="truncate italic max-w-[400px]" style={{ color: theme.colors.accent }}>
-							"{searchResultInfo.matchPreview}"
+							"
+							{renderHighlightedPreview(
+								searchResultInfo.matchPreview,
+								searchQuery,
+								theme.colors.accent
+							)}
+							"
 						</span>
 					)}
 				</div>

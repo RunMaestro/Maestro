@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppSessionModals } from '../../../renderer/components/AppModals';
 import type { Theme, Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock all child modal components
 vi.mock('../../../renderer/components/NewInstanceModal', () => ({
@@ -76,17 +77,7 @@ const testTheme: Theme = {
 };
 
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Agent 1',
-		state: 'idle',
-		toolType: 'claude-code',
-		cwd: '/tmp',
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		aiTabs: [],
-		...overrides,
-	} as Session;
+	return baseCreateMockSession({ name: 'Agent 1', cwd: '/tmp', ...overrides });
 }
 
 const defaultProps = {

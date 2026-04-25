@@ -238,6 +238,44 @@ describe('graphDataBuilder', () => {
 			const uniqueIds = new Set(nodeIds);
 			expect(nodeIds.length).toBe(uniqueIds.size);
 		});
+
+		it('should terminate directory scan when symlink cycle would recurse forever', async () => {
+			// Simulate a cycle: /test always reports a "loop" subdir that resolves
+			// back to /test. Without depth protection this recurses indefinitely.
+			const cyclicReadDir = vi.fn().mockImplementation(async (dirPath: string) => [
+				{
+					name: 'entry.md',
+					isDirectory: false,
+					path: `${dirPath.replace(/\/$/, '')}/entry.md`,
+				},
+				{
+					name: 'loop',
+					isDirectory: true,
+					// Always points back to the root, as a symlink cycle would
+					path: '/test',
+				},
+			]);
+
+			vi.stubGlobal('window', {
+				maestro: {
+					fs: {
+						readDir: cyclicReadDir,
+						readFile: vi.fn().mockResolvedValue('# entry\n'),
+						stat: vi.fn().mockResolvedValue({ size: 10, modifiedAt: '2024-01-01T00:00:00.000Z' }),
+					},
+				},
+			});
+
+			// The call must complete — depth cap prevents runaway recursion
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'entry.md',
+			});
+
+			expect(result.nodes.length).toBeGreaterThan(0);
+			// readDir should be called a bounded number of times (depth cap is 10)
+			expect(cyclicReadDir.mock.calls.length).toBeLessThanOrEqual(12);
+		});
 	});
 
 	describe('cross-directory wiki link resolution', () => {

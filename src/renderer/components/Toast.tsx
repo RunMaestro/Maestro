@@ -2,29 +2,12 @@ import React, { memo, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
+import { openUrl } from '../utils/openUrl';
+import { formatDurationParts as formatDuration } from '../../shared/formatters';
 
 interface ToastContainerProps {
 	theme: Theme;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
-}
-
-function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-
-	const days = Math.floor(totalSeconds / 86400);
-	const hours = Math.floor((totalSeconds % 86400) / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	const parts: string[] = [];
-	if (days > 0) parts.push(`${days}d`);
-	if (hours > 0) parts.push(`${hours}h`);
-	if (minutes > 0) parts.push(`${minutes}m`);
-	if (seconds > 0 && days === 0) parts.push(`${seconds}s`); // Skip seconds when showing days
-
-	return parts.join(' ') || '0s';
 }
 
 const ToastItem = memo(function ToastItem({
@@ -229,7 +212,7 @@ const ToastItem = memo(function ToastItem({
 							style={{ color: theme.colors.accent }}
 							onClick={(e) => {
 								e.stopPropagation();
-								window.maestro.shell.openExternal(toast.actionUrl!);
+								openUrl(toast.actionUrl!);
 							}}
 						>
 							<svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

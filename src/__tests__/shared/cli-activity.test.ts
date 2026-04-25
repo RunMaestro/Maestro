@@ -26,15 +26,15 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
-	CliActivityStatus,
-	readCliActivities,
 	registerCliActivity,
-	updateCliActivity,
 	unregisterCliActivity,
 	getCliActivityForSession,
 	isSessionBusyWithCli,
-	cleanupStaleActivities,
 } from '../../shared/cli-activity';
+
+// Local type alias mirroring the (now-internal) CliActivityStatus shape
+// expected by registerCliActivity. Kept in sync with shared/cli-activity.ts.
+type CliActivityStatus = Parameters<typeof registerCliActivity>[0];
 
 // Type assertions for mocked modules
 const mockFs = {
@@ -95,7 +95,7 @@ describe('cli-activity', () => {
 				mockOs.homedir.mockReturnValue('/Users/testuser');
 
 				// Call a function that uses getConfigDir internally
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				// Verify the path was constructed correctly
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
@@ -118,7 +118,7 @@ describe('cli-activity', () => {
 				const originalAppdata = process.env.APPDATA;
 				process.env.APPDATA = 'C:\\Users\\testuser\\AppData\\Roaming';
 
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
 					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'maestro', 'cli-activity.json'),
@@ -134,7 +134,7 @@ describe('cli-activity', () => {
 				const originalAppdata = process.env.APPDATA;
 				delete process.env.APPDATA;
 
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
 					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'maestro', 'cli-activity.json'),
@@ -152,7 +152,7 @@ describe('cli-activity', () => {
 				const originalXdg = process.env.XDG_CONFIG_HOME;
 				process.env.XDG_CONFIG_HOME = '/home/testuser/.custom-config';
 
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
 					path.join('/home/testuser/.custom-config', 'maestro', 'cli-activity.json'),
@@ -168,7 +168,7 @@ describe('cli-activity', () => {
 				const originalXdg = process.env.XDG_CONFIG_HOME;
 				delete process.env.XDG_CONFIG_HOME;
 
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
 					path.join('/home/testuser', '.config', 'maestro', 'cli-activity.json'),
@@ -186,7 +186,7 @@ describe('cli-activity', () => {
 				const originalXdg = process.env.XDG_CONFIG_HOME;
 				delete process.env.XDG_CONFIG_HOME;
 
-				readCliActivities();
+				getCliActivityForSession('any-session');
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
 					path.join('/home/testuser', '.config', 'maestro', 'cli-activity.json'),
@@ -195,57 +195,6 @@ describe('cli-activity', () => {
 
 				process.env.XDG_CONFIG_HOME = originalXdg;
 			});
-		});
-	});
-
-	describe('readCliActivities', () => {
-		it('should return empty array when file does not exist', () => {
-			mockFs.readFileSync.mockImplementation(() => {
-				throw new Error('ENOENT: no such file or directory');
-			});
-
-			const activities = readCliActivities();
-			expect(activities).toEqual([]);
-		});
-
-		it('should return empty array when file contains invalid JSON', () => {
-			mockFs.readFileSync.mockReturnValue('not valid json');
-
-			const activities = readCliActivities();
-			expect(activities).toEqual([]);
-		});
-
-		it('should return empty array when activities array is missing', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({}));
-
-			const activities = readCliActivities();
-			expect(activities).toEqual([]);
-		});
-
-		it('should return activities when file contains valid data', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			const activities = readCliActivities();
-			expect(activities).toHaveLength(1);
-			expect(activities[0].sessionId).toBe('session-123');
-		});
-
-		it('should return multiple activities', () => {
-			mockFs.readFileSync.mockReturnValue(
-				JSON.stringify({ activities: [sampleActivity, anotherActivity] })
-			);
-
-			const activities = readCliActivities();
-			expect(activities).toHaveLength(2);
-			expect(activities[0].sessionId).toBe('session-123');
-			expect(activities[1].sessionId).toBe('session-456');
-		});
-
-		it('should return empty array when null activities', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: null }));
-
-			const activities = readCliActivities();
-			expect(activities).toEqual([]);
 		});
 	});
 
@@ -310,65 +259,6 @@ describe('cli-activity', () => {
 				'[CLI Activity] Failed to write activity file:',
 				expect.any(Error)
 			);
-		});
-	});
-
-	describe('updateCliActivity', () => {
-		it('should update an existing activity', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			updateCliActivity('session-123', { currentTask: 'Updated task' });
-
-			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities[0].currentTask).toBe('Updated task');
-		});
-
-		it('should update multiple fields', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			updateCliActivity('session-123', {
-				currentTask: 'Updated task',
-				currentDocument: 'new-doc.md',
-			});
-
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities[0].currentTask).toBe('Updated task');
-			expect(parsed.activities[0].currentDocument).toBe('new-doc.md');
-		});
-
-		it('should preserve unchanged fields', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			updateCliActivity('session-123', { currentTask: 'Updated task' });
-
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities[0].playbookId).toBe('playbook-456');
-			expect(parsed.activities[0].pid).toBe(12345);
-		});
-
-		it('should do nothing if session not found', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			updateCliActivity('non-existent-session', { currentTask: 'Updated task' });
-
-			expect(mockFs.writeFileSync).not.toHaveBeenCalled();
-		});
-
-		it('should update correct session when multiple exist', () => {
-			mockFs.readFileSync.mockReturnValue(
-				JSON.stringify({ activities: [sampleActivity, anotherActivity] })
-			);
-
-			updateCliActivity('session-456', { currentTask: 'Updated second' });
-
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities[0].currentTask).toBe('Running tests'); // Unchanged
-			expect(parsed.activities[1].currentTask).toBe('Updated second');
 		});
 	});
 
@@ -504,82 +394,6 @@ describe('cli-activity', () => {
 			expect(process.kill).toHaveBeenCalledWith(99999, 0);
 
 			process.kill = originalKill;
-		});
-	});
-
-	describe('cleanupStaleActivities', () => {
-		it('should remove activities with dead processes', () => {
-			const deadActivity: CliActivityStatus = {
-				...sampleActivity,
-				pid: 11111, // Dead process
-			};
-			const aliveActivity: CliActivityStatus = {
-				...anotherActivity,
-				pid: 22222, // Alive process
-			};
-
-			mockFs.readFileSync.mockReturnValue(
-				JSON.stringify({ activities: [deadActivity, aliveActivity] })
-			);
-
-			const originalKill = process.kill;
-			process.kill = vi.fn().mockImplementation((pid: number) => {
-				if (pid === 11111) {
-					throw new Error('ESRCH: No such process');
-				}
-				return true; // Process exists
-			}) as unknown as typeof process.kill;
-
-			cleanupStaleActivities();
-
-			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities).toHaveLength(1);
-			expect(parsed.activities[0].pid).toBe(22222);
-
-			process.kill = originalKill;
-		});
-
-		it('should not write if no stale activities', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
-
-			const originalKill = process.kill;
-			process.kill = vi.fn().mockReturnValue(true) as unknown as typeof process.kill;
-
-			cleanupStaleActivities();
-
-			expect(mockFs.writeFileSync).not.toHaveBeenCalled();
-
-			process.kill = originalKill;
-		});
-
-		it('should remove all activities if all are stale', () => {
-			mockFs.readFileSync.mockReturnValue(
-				JSON.stringify({ activities: [sampleActivity, anotherActivity] })
-			);
-
-			const originalKill = process.kill;
-			process.kill = vi.fn().mockImplementation(() => {
-				throw new Error('ESRCH: No such process');
-			}) as unknown as typeof process.kill;
-
-			cleanupStaleActivities();
-
-			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
-			const [, writtenContent] = mockFs.writeFileSync.mock.calls[0];
-			const parsed = JSON.parse(writtenContent as string);
-			expect(parsed.activities).toHaveLength(0);
-
-			process.kill = originalKill;
-		});
-
-		it('should handle empty activities list', () => {
-			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
-
-			cleanupStaleActivities();
-
-			expect(mockFs.writeFileSync).not.toHaveBeenCalled();
 		});
 	});
 
@@ -721,7 +535,7 @@ describe('cli-activity', () => {
 	});
 
 	describe('integration scenarios', () => {
-		it('should support full lifecycle: register -> update -> get -> unregister', () => {
+		it('should support full lifecycle: register -> get -> unregister', () => {
 			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
 
 			// Register
@@ -731,17 +545,13 @@ describe('cli-activity', () => {
 			// Simulate subsequent reads returning the registered activity
 			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
 
-			// Update
-			updateCliActivity('session-123', { currentTask: 'New task' });
-			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(2);
-
 			// Get
 			const activity = getCliActivityForSession('session-123');
 			expect(activity).toBeDefined();
 
 			// Unregister
 			unregisterCliActivity('session-123');
-			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(3);
+			expect(mockFs.writeFileSync).toHaveBeenCalledTimes(2);
 		});
 
 		it('should support multiple concurrent sessions', () => {

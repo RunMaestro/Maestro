@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { UpdateStatus } from '../types';
 import {
 	X,
 	Download,
 	ExternalLink,
-	Loader2,
 	CheckCircle2,
 	AlertCircle,
 	RefreshCw,
@@ -12,12 +12,15 @@ import {
 	RotateCcw,
 	FlaskConical,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
 import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
+import { openUrl } from '../utils/openUrl';
 
 interface Release {
 	tag_name: string;
@@ -35,20 +38,6 @@ interface UpdateCheckResult {
 	releases: Release[];
 	releasesUrl: string;
 	assetsReady: boolean;
-	error?: string;
-}
-
-interface UpdateStatus {
-	status:
-		| 'idle'
-		| 'checking'
-		| 'available'
-		| 'not-available'
-		| 'downloading'
-		| 'downloaded'
-		| 'error';
-	info?: { version: string };
-	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
 	error?: string;
 }
 
@@ -190,13 +179,9 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						style={{ color: theme.colors.textDim }}
 					/>
 				</button>
-				<button
-					onClick={onClose}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-				>
+				<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close">
 					<X className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 			</div>
 		</div>
 	);
@@ -214,7 +199,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			<div className="space-y-4 -my-2">
 				{loading ? (
 					<div className="flex flex-col items-center justify-center py-8 gap-3">
-						<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.accent }} />
+						<Spinner size={32} color={theme.colors.accent} />
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
 							Checking for updates...
 						</span>
@@ -226,7 +211,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							{result.error}
 						</span>
 						<button
-							onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+							onClick={() => openUrl(result.releasesUrl)}
 							className="flex items-center gap-2 text-sm hover:underline"
 							style={{ color: theme.colors.accent }}
 						>
@@ -374,7 +359,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								</div>
 								<p style={{ color: theme.colors.textDim }}>{downloadError}</p>
 								<button
-									onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+									onClick={() => openUrl(result.releasesUrl)}
 									className="flex items-center gap-1 mt-2 hover:underline"
 									style={{ color: theme.colors.accent }}
 								>
@@ -436,7 +421,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg text-sm"
 									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 								>
-									<Loader2 className="w-4 h-4 animate-spin" />
+									<Spinner size={16} />
 									Binaries are still building...
 								</div>
 							) : (
@@ -448,7 +433,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								>
 									{isDownloading ? (
 										<>
-											<Loader2 className="w-4 h-4 animate-spin" />
+											<Spinner size={16} />
 											Downloading...
 										</>
 									) : (
@@ -462,7 +447,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 							{/* Fallback link */}
 							<button
-								onClick={() => window.maestro.shell.openExternal(result.releasesUrl)}
+								onClick={() => openUrl(result.releasesUrl)}
 								className="w-full flex items-center justify-center gap-2 p-2 rounded text-xs transition-colors hover:bg-white/5"
 								style={{ color: theme.colors.textDim }}
 							>
@@ -486,9 +471,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						</div>
 						<button
 							onClick={() =>
-								window.maestro.shell.openExternal(
-									result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases'
-								)
+								openUrl(result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases')
 							}
 							className="flex items-center gap-2 text-xs hover:underline mt-2"
 							style={{ color: theme.colors.accent }}

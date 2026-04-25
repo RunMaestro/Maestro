@@ -5,20 +5,25 @@
  * upstream output inclusion, and pipeline membership display.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { Theme } from '../../../types';
 import {
 	CUE_COLOR,
 	type PipelineNode,
+	type PipelineEdge,
 	type AgentNodeData,
 	type TriggerNodeData,
 	type CuePipeline,
+	type IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { useDebouncedCallback } from '../../../hooks/utils';
+import { registerPendingEdit } from '../../../hooks/cue/pendingEditsRegistry';
 import type { IncomingTriggerEdgeInfo } from './NodeConfigPanel';
 import { EdgePromptRow } from './EdgePromptRow';
 import { CueSelect } from './CueSelect';
+import { UpstreamSourcesPanel } from './UpstreamSourcesPanel';
+import { computeTransitiveUpstream } from '../utils/transitiveUpstream';
 import { getInputStyle, getLabelStyle } from './triggers/triggerConfigStyles';
 
 interface AgentConfigPanelProps {
@@ -28,8 +33,10 @@ interface AgentConfigPanelProps {
 	hasOutgoingEdge?: boolean;
 	hasIncomingAgentEdges?: boolean;
 	incomingAgentEdgeCount?: number;
+	incomingAgentEdges?: IncomingAgentEdgeInfo[];
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
 	onUpdateNode: (nodeId: string, data: Partial<AgentNodeData>) => void;
+	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
 	expanded?: boolean;
@@ -42,8 +49,10 @@ export function AgentConfigPanel({
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
+	incomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdge,
 	onUpdateEdgePrompt,
 	onSwitchToAgent,
 	expanded,
@@ -66,18 +75,41 @@ export function AgentConfigPanel({
 		setLocalOutputPrompt(data.outputPrompt ?? '');
 	}, [data.outputPrompt]);
 
-	const { debouncedCallback: debouncedUpdateInput } = useDebouncedCallback((...args: unknown[]) => {
-		const inputPrompt = args[0] as string;
-		onUpdateNode(node.id, { inputPrompt } as Partial<AgentNodeData>);
-	}, 300);
+	const { debouncedCallback: debouncedUpdateInput, flush: flushInput } = useDebouncedCallback(
+		(...args: unknown[]) => {
+			const inputPrompt = args[0] as string;
+			onUpdateNode(node.id, { inputPrompt } as Partial<AgentNodeData>);
+		},
+		300
+	);
 
-	const { debouncedCallback: debouncedUpdateOutput } = useDebouncedCallback(
+	const { debouncedCallback: debouncedUpdateOutput, flush: flushOutput } = useDebouncedCallback(
 		(...args: unknown[]) => {
 			const outputPrompt = args[0] as string;
 			onUpdateNode(node.id, { outputPrompt } as Partial<AgentNodeData>);
 		},
 		300
 	);
+
+	// Flush any pending prompt writes on unmount. Combined with the `key={node.id}`
+	// applied by the parent, this guarantees the user's last keystrokes commit to
+	// THIS node before the component is torn down on selection change — otherwise
+	// the 300ms debounce would race against React unmount and drop the edit.
+	//
+	// Also register with the pending-edits registry so `handleSave` can flush
+	// this panel's pending writes before it reads pipelineState — clicking Save
+	// within 300ms of a keystroke would otherwise persist stale/empty prompts.
+	useEffect(() => {
+		const unregister = registerPendingEdit(() => {
+			flushInput();
+			flushOutput();
+		});
+		return () => {
+			flushInput();
+			flushOutput();
+			unregister();
+		};
+	}, [flushInput, flushOutput]);
 
 	const handleInputPromptChange = useCallback(
 		(e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -95,12 +127,47 @@ export function AgentConfigPanel({
 		[debouncedUpdateOutput]
 	);
 
-	// Find which pipelines contain this agent
-	const agentPipelines = pipelines.filter((p) =>
-		p.nodes.some(
-			(n) => n.type === 'agent' && (n.data as AgentNodeData).sessionId === data.sessionId
-		)
+	// Single pass over `pipelines` derives both values we need downstream:
+	//   - `owningPipeline`: the pipeline containing THIS node by node.id.
+	//     Used as the input to `computeTransitiveUpstream` below. Memoized
+	//     so the transitive-walk memo's input stays referentially stable.
+	//   - `agentPipelines`: every pipeline containing this AGENT (by
+	//     sessionId). The same agent can appear in multiple pipelines, so
+	//     this is a superset of `owningPipeline`.
+	// Previously these were two separate `useMemo` calls that each scanned
+	// `pipelines` independently — merging them halves the work.
+	const { owningPipeline, agentPipelines } = useMemo(() => {
+		let owning: CuePipeline | undefined;
+		const matching: CuePipeline[] = [];
+		for (const p of pipelines) {
+			let ownsThisNode = false;
+			let containsAgent = false;
+			for (const n of p.nodes) {
+				if (n.id === node.id) ownsThisNode = true;
+				if (n.type === 'agent' && (n.data as AgentNodeData).sessionId === data.sessionId) {
+					containsAgent = true;
+				}
+				if (ownsThisNode && containsAgent) break;
+			}
+			if (ownsThisNode && !owning) owning = p;
+			if (containsAgent) matching.push(p);
+		}
+		return { owningPipeline: owning, agentPipelines: matching };
+	}, [pipelines, node.id, data.sessionId]);
+
+	// Forwarded upstream sources — these agents relay output through an
+	// intermediate node rather than having a direct edge. The layout and
+	// input-prompt hints treat direct + forwarded identically (both expose
+	// per-source template variables and render the UpstreamSourcesPanel),
+	// so we compute this once here and derive `hasAnyUpstream` from it.
+	const forwardedUpstream = useMemo(
+		() =>
+			owningPipeline
+				? computeTransitiveUpstream(owningPipeline, node.id).filter((r) => !r.isDirect)
+				: [],
+		[owningPipeline, node.id]
 	);
+	const hasAnyUpstream = !!hasIncomingAgentEdges || forwardedUpstream.length > 0;
 
 	// Detect if this agent has an incoming edge from a GitHub trigger
 	const hasGitHubTrigger = agentPipelines.some((p) => {
@@ -160,8 +227,15 @@ export function AgentConfigPanel({
 				style={{
 					display: 'flex',
 					gap: 12,
+					// When upstream-sources or fan-in cards sit below, the prompts
+					// row must not greedily eat all available height. Use flex: 1
+					// with a sane minHeight so the row shrinks and the panel scrolls
+					// if needed, keeping the cards reachable. `hasAnyUpstream` —
+					// not just direct edges — because UpstreamSourcesPanel also
+					// renders when only forwarded sources exist, and the layout
+					// must reserve space for it in that case too.
 					flex: 1,
-					minHeight: 0,
+					minHeight: hasAnyUpstream ? 100 : 0,
 					minWidth: 0,
 				}}
 			>
@@ -222,26 +296,31 @@ export function AgentConfigPanel({
 								}}
 							>
 								Input Prompt
-								{hasIncomingAgentEdges && data.includeUpstreamOutput !== false && (
-									<span
-										style={{
-											fontWeight: 400,
-											color: theme.colors.textDim,
-											fontSize: 10,
-										}}
-									>
-										(optional)
-									</span>
-								)}
+								{hasIncomingAgentEdges &&
+									incomingAgentEdges?.some((e) => e.includeUpstreamOutput) && (
+										<span
+											style={{
+												fontWeight: 400,
+												color: theme.colors.textDim,
+												fontSize: 10,
+											}}
+										>
+											(optional)
+										</span>
+									)}
 							</span>
 							<textarea
 								value={localInputPrompt}
 								onChange={handleInputPromptChange}
 								placeholder={
-									hasIncomingAgentEdges && data.includeUpstreamOutput !== false
+									hasIncomingAgentEdges && incomingAgentEdges?.some((e) => e.includeUpstreamOutput)
 										? 'Optional — upstream output is auto-included. Add instructions to guide how the agent processes it.'
-										: hasIncomingAgentEdges
-											? 'Instructions for this agent. Use {{CUE_SOURCE_OUTPUT}} to include upstream output.'
+										: hasAnyUpstream
+											? // Direct AND forwarded-only cases both show the upstream
+												// card below, so the "use per-source variables" hint
+												// applies equally — forwarded sources are reached via
+												// {{CUE_FORWARDED_<NAME>}} vars listed in the card.
+												'Instructions for this agent. Use per-source variables from the card below.'
 											: hasGitHubTrigger
 												? 'Use {{CUE_GH_URL}}, {{CUE_GH_NUMBER}}, {{CUE_GH_TITLE}}, {{CUE_GH_BODY}} etc. for GitHub context...'
 												: 'Prompt sent when this agent receives data from the pipeline...'
@@ -256,44 +335,6 @@ export function AgentConfigPanel({
 								}}
 							/>
 						</label>
-						{hasIncomingAgentEdges && (
-							<label
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									gap: 6,
-									fontSize: 11,
-									color: theme.colors.textDim,
-									cursor: 'pointer',
-									marginTop: 4,
-									flexShrink: 0,
-								}}
-							>
-								<input
-									type="checkbox"
-									checked={data.includeUpstreamOutput !== false}
-									onChange={(e) =>
-										onUpdateNode(node.id, {
-											includeUpstreamOutput: e.target.checked,
-										} as Partial<AgentNodeData>)
-									}
-									style={{ accentColor: CUE_COLOR }}
-								/>
-								<span>
-									Auto-include upstream output
-									<span
-										style={{
-											color: theme.colors.textDim,
-											fontSize: 10,
-											marginLeft: 4,
-											opacity: 0.7,
-										}}
-									>
-										— use {'{{CUE_SOURCE_OUTPUT}}'} to control placement
-									</span>
-								</span>
-							</label>
-						)}
 						<div
 							style={{
 								color: theme.colors.textDim,
@@ -375,6 +416,18 @@ export function AgentConfigPanel({
 					</div>
 				</div>
 			</div>
+
+			{/* Upstream Sources — per-source output controls. The panel self-gates
+			    when there are no direct OR forwarded sources, so an agent with
+			    only forwarded upstream still sees the box. We hand it the
+			    pre-computed `forwardedUpstream` list so the transitive graph
+			    walk runs once per render up here, not again inside the panel. */}
+			<UpstreamSourcesPanel
+				theme={theme}
+				incomingAgentEdges={incomingAgentEdges ?? []}
+				onUpdateEdge={onUpdateEdge}
+				forwardedSources={forwardedUpstream}
+			/>
 
 			{/* Fan-in Settings — full width below prompts */}
 			{(incomingAgentEdgeCount ?? 0) > 1 && (

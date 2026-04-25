@@ -29,7 +29,7 @@ vi.mock('fs', () => ({
 	readFileSync: vi.fn(),
 }));
 
-import { getCustomSyncPath, getEarlySettings, findSshRemoteById } from '../../../main/stores/utils';
+import { getCustomSyncPath, getEarlySettings } from '../../../main/stores/utils';
 import type { BootstrapSettings } from '../../../main/stores/types';
 import type Store from 'electron-store';
 
@@ -272,43 +272,6 @@ describe('stores/utils', () => {
 				useNativeTitleBar: false,
 				autoHideMenuBar: false,
 			});
-		});
-	});
-
-	describe('findSshRemoteById', () => {
-		const mockSshRemotes = [
-			{ id: 'remote-1', name: 'Server 1', host: 'server1.example.com', username: 'user1' },
-			{ id: 'remote-2', name: 'Server 2', host: 'server2.example.com', username: 'user2' },
-			{ id: 'remote-3', name: 'Server 3', host: 'server3.example.com', username: 'user3' },
-		];
-
-		it('should find remote by id', () => {
-			const result = findSshRemoteById(mockSshRemotes as any, 'remote-2');
-
-			expect(result).toEqual(mockSshRemotes[1]);
-		});
-
-		it('should return undefined for non-existent id', () => {
-			const result = findSshRemoteById(mockSshRemotes as any, 'non-existent');
-
-			expect(result).toBeUndefined();
-		});
-
-		it('should return undefined for empty array', () => {
-			const result = findSshRemoteById([], 'remote-1');
-
-			expect(result).toBeUndefined();
-		});
-
-		it('should find first matching remote when duplicates exist', () => {
-			const remotesWithDuplicates = [
-				{ id: 'remote-1', name: 'First', host: 'first.example.com', username: 'user1' },
-				{ id: 'remote-1', name: 'Second', host: 'second.example.com', username: 'user2' },
-			];
-
-			const result = findSshRemoteById(remotesWithDuplicates as any, 'remote-1');
-
-			expect(result?.name).toBe('First');
 		});
 	});
 });

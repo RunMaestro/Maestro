@@ -20,6 +20,7 @@ import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { isBetaAgent } from '../../../../shared/agentMetadata';
+import { logger } from '../../../utils/logger';
 
 interface AgentSelectionScreenProps {
 	theme: Theme;
@@ -38,7 +39,7 @@ export interface AgentTile {
 
 /**
  * Define the agents to display in the grid
- * Supported agents: Claude Code, Codex, OpenCode (shown first)
+ * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, Copilot (shown first)
  * Unsupported agents: shown ghosted with "Coming soon" (at bottom)
  */
 export const AGENT_TILES: AgentTile[] = [
@@ -71,6 +72,13 @@ export const AGENT_TILES: AgentTile[] = [
 		description: "Factory's AI coding assistant",
 		brandColor: '#3B82F6', // Factory blue
 	},
+	{
+		id: 'copilot-cli',
+		name: 'Copilot-CLI',
+		supported: true,
+		description: "GitHub's AI coding assistant",
+		brandColor: '#24292F', // GitHub dark gray
+	},
 	// Coming soon agents at the bottom
 	{
 		id: 'gemini-cli',
@@ -79,18 +87,11 @@ export const AGENT_TILES: AgentTile[] = [
 		description: 'Coming soon',
 		brandColor: '#4285F4', // Google blue
 	},
-	{
-		id: 'qwen3-coder',
-		name: 'Qwen3 Coder',
-		supported: false,
-		description: 'Coming soon',
-		brandColor: '#6366F1', // Indigo/purple
-	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 6 items)
+// Grid dimensions for keyboard navigation
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = Math.ceil(AGENT_TILES.length / GRID_COLS);
 
 /**
  * Get SVG logo for an agent with brand colors
@@ -198,29 +199,6 @@ export function AgentLogo({
 				</svg>
 			);
 
-		case 'qwen3-coder':
-			// Qwen - Alibaba cloud inspired
-			return (
-				<svg
-					className="w-12 h-12"
-					viewBox="0 0 48 48"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-					style={{ opacity }}
-				>
-					{/* Qwen - Q with code element */}
-					<circle cx="24" cy="22" r="14" stroke={color} strokeWidth="2.5" fill="none" />
-					<path d="M30 30l8 10" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
-					<path
-						d="M18 22l4 4 6-8"
-						stroke={color}
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-					/>
-				</svg>
-			);
-
 		case 'factory-droid':
 			// Factory Droid - pinwheel/flower logo
 			return (
@@ -272,6 +250,27 @@ export function AgentLogo({
 						fillOpacity="0.9"
 						transform="rotate(120 13.6 18)"
 					/>
+				</svg>
+			);
+
+		case 'copilot-cli':
+			return (
+				<svg
+					className="w-12 h-12"
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M24 9c-7.2 0-13 5.4-13 12 0 4.5 2.3 8 6.4 10.3V37l6.6-3.4L30.6 37v-5.7C34.7 29 37 25.5 37 21c0-6.6-5.8-12-13-12Z"
+						stroke={color}
+						strokeWidth="2"
+						fill="none"
+					/>
+					<circle cx="19" cy="21" r="2.5" fill={color} />
+					<circle cx="29" cy="21" r="2.5" fill={color} />
+					<path d="M18 27.5h12" stroke={color} strokeWidth="2" strokeLinecap="round" />
 				</svg>
 			);
 
@@ -448,7 +447,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setIsDetecting(false);
 				}
 			} catch (error) {
-				console.error('Failed to detect agents:', error);
+				logger.error('Failed to detect agents:', undefined, error);
 				if (mounted) {
 					if (sshRemoteConfig?.enabled) {
 						setSshConnectionError(
@@ -484,7 +483,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					setSshRemotes(configsResult.configs);
 				}
 			} catch (error) {
-				console.error('Failed to load SSH remotes:', error);
+				logger.error('Failed to load SSH remotes:', undefined, error);
 			}
 		}
 		loadSshRemotes();
@@ -696,7 +695,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
 					setAvailableModels(models);
 				} catch (err) {
-					console.error('Failed to load models:', err);
+					logger.error('Failed to load models:', undefined, err);
 				} finally {
 					setLoadingModels(false);
 				}
@@ -790,7 +789,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (err) {
-			console.error('Failed to refresh models:', err);
+			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
 			setLoadingModels(false);
 		}
@@ -948,21 +947,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 								}
 								await refreshAgentDetection();
 							}}
-							onCustomPathClear={async () => {
-								setCustomPath('');
-								// Clear custom path in agent detector before refreshing
-								if (configuringAgentId) {
-									await window.maestro.agents.setCustomPath(configuringAgentId, null);
-								}
-								await refreshAgentDetection();
-							}}
 							customArgs={customArgs}
 							onCustomArgsChange={setCustomArgs}
 							onCustomArgsBlur={() => {
 								// Wizard state is already updated via setCustomArgs - no provider-level save
-							}}
-							onCustomArgsClear={() => {
-								setCustomArgs('');
 							}}
 							customEnvVars={customEnvVars}
 							onEnvVarKeyChange={(oldKey, newKey, value) => {

@@ -35,7 +35,28 @@ import {
 	parseGroomedOutput,
 	estimateTextTokenCount,
 } from '../utils/contextExtractor';
-import { contextSummarizePrompt } from '../../prompts';
+import { logger } from '../utils/logger';
+
+let cachedContextSummarizePrompt: string | null = null;
+let contextSummarizerPromptsLoaded = false;
+
+export async function loadContextSummarizerPrompts(force = false): Promise<void> {
+	if (contextSummarizerPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('context-summarize');
+	if (!result.success) {
+		throw new Error(`Failed to load context-summarize prompt: ${result.error}`);
+	}
+	cachedContextSummarizePrompt = result.content!;
+	contextSummarizerPromptsLoaded = true;
+}
+
+function getContextSummarizePrompt(): string {
+	if (!contextSummarizerPromptsLoaded || cachedContextSummarizePrompt === null) {
+		return '';
+	}
+	return cachedContextSummarizePrompt;
+}
 
 /**
  * Configuration options for the summarization service.
@@ -171,7 +192,11 @@ export class ContextSummarizationService {
 			});
 
 			const prompt = this.buildSummarizationPrompt(formattedContext);
-			console.log('[ContextSummarizer] Calling groomContext API, prompt length:', prompt.length);
+			logger.info(
+				'[ContextSummarizer] Calling groomContext API, prompt length:',
+				undefined,
+				prompt.length
+			);
 
 			const summarizedText = await window.maestro.context.groomContext(
 				request.projectRoot,
@@ -185,7 +210,11 @@ export class ContextSummarizationService {
 					customEnvVars: request.customEnvVars,
 				}
 			);
-			console.log('[ContextSummarizer] Received response, length:', summarizedText?.length || 0);
+			logger.info(
+				'[ContextSummarizer] Received response, length:',
+				undefined,
+				summarizedText?.length || 0
+			);
 
 			onProgress({
 				stage: 'summarizing',
@@ -276,7 +305,7 @@ export class ContextSummarizationService {
 				message: `Consolidation pass ${consolidationDepth}/${MAX_CONSOLIDATION_DEPTH}...`,
 			});
 
-			console.log(
+			logger.info(
 				`[ContextSummarizer] Consolidation pass ${consolidationDepth}: ${compactedTokens} tokens > ${TARGET_COMPACTED_TOKENS} target`
 			);
 
@@ -302,10 +331,10 @@ export class ContextSummarizationService {
 			if (newTokens < compactedTokens * 0.9) {
 				combinedSummary = consolidated;
 				compactedTokens = newTokens;
-				console.log(`[ContextSummarizer] Consolidation reduced to ${compactedTokens} tokens`);
+				logger.info(`[ContextSummarizer] Consolidation reduced to ${compactedTokens} tokens`);
 			} else {
 				// Not making progress, stop trying
-				console.log(`[ContextSummarizer] Consolidation not reducing size, stopping`);
+				logger.info(`[ContextSummarizer] Consolidation not reducing size, stopping`);
 				break;
 			}
 		}
@@ -380,7 +409,7 @@ Please provide the consolidated summary:`;
 	 * @returns Complete prompt to send to the summarization agent
 	 */
 	private buildSummarizationPrompt(formattedContext: string): string {
-		return `${contextSummarizePrompt}
+		return `${getContextSummarizePrompt()}
 
 ${formattedContext}
 
@@ -466,7 +495,7 @@ Please provide a comprehensive but compacted summary of the above conversation, 
 		try {
 			await window.maestro.context.cancelGrooming();
 		} catch (error) {
-			console.error('[ContextSummarizer] Failed to cancel grooming:', error);
+			logger.error('[ContextSummarizer] Failed to cancel grooming:', undefined, error);
 		}
 	}
 

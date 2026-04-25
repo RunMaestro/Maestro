@@ -13,11 +13,17 @@ import {
 	BookMarked,
 	Image,
 	Variable,
+	Wand2,
+	Terminal,
+	ArrowDownToLine,
+	Globe,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal } from '../ui/Modal';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { openUrl } from '../../utils/openUrl';
+import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 
 interface AutoRunnerHelpModalProps {
 	theme: Theme;
@@ -58,6 +64,103 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						documents together for complex workflows—a collection of Auto Run documents is called a{' '}
 						<strong style={{ color: theme.colors.textMain }}>Playbook</strong>.
 					</p>
+				</section>
+
+				{/* Playbooks & the Wizard */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<BookMarked className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Playbooks</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							A single Auto Run document handles one phase of work. Group multiple documents
+							together and you have a{' '}
+							<strong style={{ color: theme.colors.textMain }}>Playbook</strong>—a reusable,
+							shareable workflow that can be run with one click.
+						</p>
+						<p>
+							Playbooks can be <strong style={{ color: theme.colors.textMain }}>exported</strong> as
+							ZIP files to share with teammates, or{' '}
+							<strong style={{ color: theme.colors.textMain }}>imported</strong> from ZIPs you
+							receive. The <strong style={{ color: theme.colors.textMain }}>PlayBooks</strong> is a
+							public library of community-contributed playbooks you can browse and install directly
+							from the toolbar.
+						</p>
+					</div>
+				</section>
+
+				{/* Creating Playbooks */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Wand2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Creating Playbooks</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>There are several ways to create playbooks, from guided to hands-on:</p>
+						<div className="space-y-3">
+							<div className="flex items-start gap-2">
+								<Wand2 className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Wizard</strong> — The easiest
+									path. Click <strong style={{ color: theme.colors.textMain }}>Wizard</strong> in
+									the toolbar to start a guided conversation that discovers your project, then
+									generates a multi-phase playbook tailored to your goals. Great for first-time
+									users or unfamiliar codebases.
+								</div>
+							</div>
+							<div className="flex items-start gap-2">
+								<Terminal
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Slash Commands</strong> —
+									Built-in modules that generate playbooks from structured specifications. Type a
+									command in the AI terminal to kick off planning:
+									<div
+										className="font-mono text-xs p-2 mt-1.5 rounded border space-y-0.5"
+										style={{
+											backgroundColor: theme.colors.bgActivity,
+											borderColor: theme.colors.border,
+										}}
+									>
+										<div>
+											<code style={{ color: theme.colors.accent }}>/speckit</code> — Spec-driven
+											development workflow
+										</div>
+										<div>
+											<code style={{ color: theme.colors.accent }}>/openspec</code> — Change
+											management workflow
+										</div>
+										<div>
+											<code style={{ color: theme.colors.accent }}>/bmad</code> — Business analysis
+											& design method
+										</div>
+									</div>
+								</div>
+							</div>
+							<div className="flex items-start gap-2">
+								<FileText
+									className="w-4 h-4 mt-0.5 shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>Manual</strong> — Write markdown
+									documents directly in your Runner Docs folder. Full control over task structure
+									and ordering. See the sections below for format details.
+								</div>
+							</div>
+							<div className="flex items-start gap-2">
+								<Globe className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
+								<div>
+									<strong style={{ color: theme.colors.textMain }}>PlayBooks</strong> — Browse
+									community playbooks and import them as starting points. Customize to fit your
+									project.
+								</div>
+							</div>
+						</div>
+					</div>
 				</section>
 
 				{/* Setting Up */}
@@ -336,17 +439,16 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					</div>
 				</section>
 
-				{/* Playbooks */}
+				{/* Saving & Sharing Playbooks */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
-						<BookMarked className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h3 className="font-bold">Playbooks</h3>
+						<ArrowDownToLine className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Saving & Sharing Playbooks</h3>
 					</div>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
-							A <strong style={{ color: theme.colors.textMain }}>Playbook</strong> is a collection
-							of Auto Run documents configured to run together. Save your batch run configurations
-							for quick reuse. A playbook stores:
+							Save your current batch configuration as a named playbook for quick reuse. A saved
+							playbook stores:
 						</p>
 						<ul className="list-disc ml-4 space-y-1">
 							<li>Document selection and order</li>
@@ -359,10 +461,7 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 							or discarded.
 						</p>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Sharing Playbooks:</strong> Export
-							playbooks as ZIP files to share with others, or import playbooks you've received.
-							Browse the <strong style={{ color: theme.colors.textMain }}>Playbook Exchange</strong>{' '}
-							to discover and download community-contributed playbooks for common workflows.
+							Export playbooks as ZIP files to share with teammates, or import ZIPs you've received.
 						</p>
 					</div>
 				</section>
@@ -498,6 +597,21 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						</div>
 					</div>
 				</section>
+
+				{/* Read more link */}
+				<div
+					className="mt-4 pt-3 border-t flex items-center gap-1.5"
+					style={{ borderColor: theme.colors.border }}
+				>
+					<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<button
+						onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/autorun-playbooks'))}
+						className="text-xs hover:opacity-80 transition-colors"
+						style={{ color: theme.colors.accent }}
+					>
+						Read more at docs.runmaestro.ai/autorun-playbooks
+					</button>
+				</div>
 			</div>
 		</Modal>
 	);

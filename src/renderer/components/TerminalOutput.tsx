@@ -12,12 +12,12 @@ import {
 	AlertCircle,
 	Save,
 	Share2,
-	Zap,
+	Hammer,
+	GitFork,
 } from 'lucide-react';
-import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
+import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../types';
 import type { FileNode } from '../types/fileTree';
 import Convert from 'ansi-to-html';
-import DOMPurify from 'dompurify';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getActiveTab } from '../utils/tabHelpers';
@@ -34,6 +34,8 @@ import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useMessageGistStore } from '../stores/messageGistStore';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -114,6 +116,9 @@ const summarizeToolInput = (input: Record<string, unknown>): ToolSummary | null 
 	return { description, detail: detail ?? '' };
 };
 
+const isHiddenProgressEntry = (log: LogEntry): boolean =>
+	log.source === 'system' && log.id.startsWith('hidden-progress:');
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -126,7 +131,6 @@ interface LogItemProps {
 	theme: Theme;
 	fontFamily: string;
 	maxOutputLines: number;
-	outputSearchQuery: string;
 	lastUserCommand?: string;
 	// Expansion state
 	isExpanded: boolean;
@@ -175,7 +179,13 @@ interface LogItemProps {
 	onSaveToFile?: (text: string) => void;
 	// Publish to GitHub Gist (AI mode only, non-user messages, requires gh CLI)
 	ghCliAvailable?: boolean;
-	onPublishGist?: (text: string) => void;
+	onPublishGist?: (text: string, messageId?: string) => void;
+	publishedGistUrl?: string;
+	// Fork conversation from this message (AI mode only, user messages and AI responses — source 'user' | 'ai' | 'stdout')
+	onForkConversation?: (logId: string) => void;
+	bionifyReadingMode: boolean;
+	bionifyIntensity: number;
+	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
 }
@@ -189,7 +199,6 @@ const LogItemComponent = memo(
 		theme,
 		fontFamily,
 		maxOutputLines,
-		outputSearchQuery,
 		lastUserCommand,
 		isExpanded,
 		onToggleExpanded,
@@ -218,6 +227,11 @@ const LogItemComponent = memo(
 		onSaveToFile,
 		ghCliAvailable,
 		onPublishGist,
+		publishedGistUrl,
+		onForkConversation,
+		bionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		userMessageAlignment,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
@@ -251,76 +265,6 @@ const LogItemComponent = memo(
 				}, 50); // Small delay to allow React to re-render
 			}
 		}, [isExpanded, log.id, onToggleExpanded, scrollContainerRef]);
-
-		// Helper function to highlight search matches in text
-		const highlightMatches = (text: string, query: string): React.ReactNode => {
-			if (!query) return text;
-
-			const parts: React.ReactNode[] = [];
-			let lastIndex = 0;
-			const lowerText = text.toLowerCase();
-			const lowerQuery = query.toLowerCase();
-			let searchIndex = 0;
-
-			while (searchIndex < lowerText.length) {
-				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
-				if (matchStart === -1) break;
-
-				if (matchStart > lastIndex) {
-					parts.push(text.substring(lastIndex, matchStart));
-				}
-
-				parts.push(
-					<span
-						key={`match-${matchStart}`}
-						style={{
-							backgroundColor: theme.colors.warning,
-							color: theme.mode === 'light' ? '#fff' : '#000',
-							padding: '1px 2px',
-							borderRadius: '2px',
-						}}
-					>
-						{text.substring(matchStart, matchStart + query.length)}
-					</span>
-				);
-
-				lastIndex = matchStart + query.length;
-				searchIndex = lastIndex;
-			}
-
-			if (lastIndex < text.length) {
-				parts.push(text.substring(lastIndex));
-			}
-
-			return parts.length > 0 ? parts : text;
-		};
-
-		// Helper function to add search highlighting markers to text (before ANSI conversion)
-		const addHighlightMarkers = (text: string, query: string): string => {
-			if (!query) return text;
-
-			let result = '';
-			let lastIndex = 0;
-			const lowerText = text.toLowerCase();
-			const lowerQuery = query.toLowerCase();
-			let searchIndex = 0;
-
-			while (searchIndex < lowerText.length) {
-				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
-				if (matchStart === -1) break;
-
-				result += text.substring(lastIndex, matchStart);
-				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.mode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
-				result += text.substring(matchStart, matchStart + query.length);
-				result += '</mark>';
-
-				lastIndex = matchStart + query.length;
-				searchIndex = lastIndex;
-			}
-
-			result += text.substring(lastIndex);
-			return result;
-		};
 
 		// Strip command echo from terminal output
 		let textToProcess = log.text;
@@ -375,19 +319,12 @@ const LogItemComponent = memo(
 		// For stderr entries, use stderr content; for all others, use stdout content
 		const contentToDisplay = log.source === 'stderr' ? filteredStderr : filteredStdout;
 
-		// Apply search highlighting before ANSI conversion for terminal output
-		const contentWithHighlights =
-			isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(contentToDisplay, outputSearchQuery)
-				: contentToDisplay;
-
-		// PERF: Convert ANSI codes to HTML, using cache when no search highlighting is applied
-		// When search is active, highlighting markers change the text so we can't use cache
+		// PERF: Convert ANSI codes to HTML using cache.
+		// Search highlighting is now applied at the scroll-container level via CSS Custom
+		// Highlight API in TerminalOutput, so per-log markers are no longer needed.
 		const htmlContent =
 			isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(contentWithHighlights))
-					: getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
+				? getCachedAnsiHtml(contentToDisplay, theme.id, ansiConverter)
 				: contentToDisplay;
 
 		const filteredText = contentToDisplay;
@@ -402,18 +339,11 @@ const LogItemComponent = memo(
 				? filteredText.split('\n').slice(0, maxOutputLines).join('\n')
 				: filteredText;
 
-		// Apply highlighting to truncated text as well
-		const displayTextWithHighlights =
-			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user' && outputSearchQuery
-				? addHighlightMarkers(displayText, outputSearchQuery)
-				: displayText;
-
-		// PERF: Sanitize with DOMPurify, using cache when no search highlighting
+		// PERF: Sanitize with DOMPurify, using cache for ANSI conversion.
+		// Search highlighting is handled at the scroll-container level.
 		const displayHtmlContent =
 			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user'
-				? outputSearchQuery
-					? DOMPurify.sanitize(ansiConverter.toHtml(displayTextWithHighlights))
-					: getCachedAnsiHtml(displayText, theme.id, ansiConverter)
+				? getCachedAnsiHtml(displayText, theme.id, ansiConverter)
 				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
@@ -579,6 +509,9 @@ const LogItemComponent = memo(
 										content={log.text}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -587,6 +520,52 @@ const LogItemComponent = memo(
 								) : (
 									log.text
 								)}
+							</div>
+						</div>
+					)}
+					{isHiddenProgressEntry(log) && (
+						<div
+							className="px-4 py-1.5 text-xs border-l-2"
+							style={{
+								color: theme.colors.textMain,
+								borderColor: theme.colors.accent,
+							}}
+						>
+							<div className="flex items-start gap-2">
+								<span
+									className="px-1.5 py-0.5 rounded shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}30`,
+										color: theme.colors.accent,
+									}}
+								>
+									{log.metadata?.hiddenProgress?.kind === 'tool'
+										? log.metadata.hiddenProgress.toolName || 'working'
+										: 'thinking'}
+								</span>
+								{log.metadata?.toolState?.status === 'completed' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
+										✓
+									</span>
+								) : log.metadata?.toolState?.status === 'failed' ||
+								  log.metadata?.toolState?.status === 'error' ? (
+									<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+										!
+									</span>
+								) : (
+									<span
+										className="animate-pulse shrink-0 pt-0.5"
+										style={{ color: theme.colors.warning }}
+									>
+										●
+									</span>
+								)}
+								<span
+									className="break-words whitespace-pre-wrap opacity-80"
+									style={{ color: theme.colors.textMain }}
+								>
+									{log.text}
+								</span>
 							</div>
 						</div>
 					)}
@@ -630,6 +609,11 @@ const LogItemComponent = memo(
 												✓
 											</span>
 										)}
+										{log.metadata?.toolState?.status === 'failed' && (
+											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.error }}>
+												!
+											</span>
+										)}
 										{toolSummary?.description && (
 											<span
 												className="opacity-50 break-words"
@@ -653,7 +637,8 @@ const LogItemComponent = memo(
 								</div>
 							);
 						})()}
-					{log.source !== 'error' &&
+					{!isHiddenProgressEntry(log) &&
+						log.source !== 'error' &&
 						log.source !== 'thinking' &&
 						log.source !== 'tool' &&
 						(hasNoMatches ? (
@@ -688,6 +673,9 @@ const LogItemComponent = memo(
 											content={displayText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
@@ -742,7 +730,7 @@ const LogItemComponent = memo(
 									) : log.source === 'user' && isTerminal ? (
 										<div style={{ fontFamily }}>
 											<span style={{ color: theme.colors.accent }}>$ </span>
-											{highlightMatches(filteredText, outputSearchQuery)}
+											{filteredText}
 										</div>
 									) : log.aiCommand ? (
 										<div className="space-y-3">
@@ -763,7 +751,7 @@ const LogItemComponent = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
+											<div>{filteredText}</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -771,13 +759,16 @@ const LogItemComponent = memo(
 											content={filteredText}
 											theme={theme}
 											onCopy={copyToClipboard}
+											enableBionifyReadingMode={bionifyReadingMode}
+											bionifyIntensity={bionifyIntensity}
+											bionifyAlgorithm={bionifyAlgorithm}
 											fileTree={fileTree}
 											cwd={cwd}
 											projectRoot={projectRoot}
 											onFileClick={onFileClick}
 										/>
 									) : (
-										<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
+										<div>{filteredText}</div>
 									)}
 								</div>
 								<button
@@ -812,7 +803,7 @@ const LogItemComponent = memo(
 										style={{ color: theme.colors.textMain, fontFamily }}
 									>
 										<span style={{ color: theme.colors.accent }}>$ </span>
-										{highlightMatches(filteredText, outputSearchQuery)}
+										{filteredText}
 									</div>
 								) : log.aiCommand ? (
 									<div className="space-y-3">
@@ -837,7 +828,7 @@ const LogItemComponent = memo(
 											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
-											{highlightMatches(filteredText, outputSearchQuery)}
+											{filteredText}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -846,6 +837,9 @@ const LogItemComponent = memo(
 										content={filteredText}
 										theme={theme}
 										onCopy={copyToClipboard}
+										enableBionifyReadingMode={bionifyReadingMode}
+										bionifyIntensity={bionifyIntensity}
+										bionifyAlgorithm={bionifyAlgorithm}
 										fileTree={fileTree}
 										cwd={cwd}
 										projectRoot={projectRoot}
@@ -857,7 +851,7 @@ const LogItemComponent = memo(
 										className="whitespace-pre-wrap text-sm break-words"
 										style={{ color: theme.colors.textMain }}
 									>
-										{highlightMatches(filteredText, outputSearchQuery)}
+										{filteredText}
 									</div>
 								)}
 							</>
@@ -913,13 +907,34 @@ const LogItemComponent = memo(
 								<Save className="w-3.5 h-3.5" />
 							</button>
 						)}
+						{/* Fork conversation — user messages and AI responses (source='stdout' in AI mode, or 'ai' if ever set) */}
+						{(log.source === 'user' || log.source === 'ai' || log.source === 'stdout') &&
+							isAIMode &&
+							onForkConversation && (
+								<button
+									onClick={() => onForkConversation(log.id)}
+									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+									style={{ color: theme.colors.textDim }}
+									title="Fork conversation from here"
+								>
+									<GitFork className="w-3.5 h-3.5" />
+								</button>
+							)}
 						{/* Publish to GitHub Gist - only for AI responses when gh CLI available */}
 						{log.source !== 'user' && isAIMode && ghCliAvailable && onPublishGist && (
 							<button
-								onClick={() => onPublishGist(log.text)}
-								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-								style={{ color: theme.colors.textDim }}
-								title="Publish as GitHub Gist"
+								onClick={() => onPublishGist(log.text, log.id)}
+								className={`p-1.5 rounded hover:!opacity-100 ${
+									publishedGistUrl ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+								}`}
+								style={{
+									color: publishedGistUrl ? theme.colors.accent : theme.colors.textDim,
+								}}
+								title={
+									publishedGistUrl
+										? `Published as Gist: ${publishedGistUrl}`
+										: 'Publish as GitHub Gist'
+								}
 							>
 								<Share2 className="w-3.5 h-3.5" />
 							</button>
@@ -976,13 +991,22 @@ const LogItemComponent = memo(
 									<Trash2 className="w-3.5 h-3.5" />
 								</button>
 							))}
+						{/* Read-only mode indicator for messages sent in read-only/plan mode */}
+						{isUserMessage && isAIMode && log.readOnly && (
+							<span title="Sent in read-only mode" className="flex items-center">
+								<Eye
+									className="w-3.5 h-3.5"
+									style={{ color: theme.colors.warning, opacity: 0.7 }}
+								/>
+							</span>
+						)}
 						{/* Force parallel indicator for messages sent via Cmd+Shift+Enter */}
 						{isUserMessage && isAIMode && log.forceParallel && (
 							<span
 								title="Sent via forced parallel execution (bypassed queue)"
 								className="flex items-center"
 							>
-								<Zap
+								<Hammer
 									className="w-3.5 h-3.5"
 									style={{ color: theme.colors.warning, opacity: 0.7 }}
 								/>
@@ -1011,19 +1035,25 @@ const LogItemComponent = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
+			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
 			prevProps.filterMode.regex === nextProps.filterMode.regex &&
 			prevProps.activeLocalFilter === nextProps.activeLocalFilter &&
 			prevProps.deleteConfirmLogId === nextProps.deleteConfirmLogId &&
-			prevProps.outputSearchQuery === nextProps.outputSearchQuery &&
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
+			prevProps.bionifyReadingMode === nextProps.bionifyReadingMode &&
+			prevProps.bionifyIntensity === nextProps.bionifyIntensity &&
+			prevProps.bionifyAlgorithm === nextProps.bionifyAlgorithm &&
 			prevProps.fontFamily === nextProps.fontFamily &&
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
-			prevProps.ghCliAvailable === nextProps.ghCliAvailable
+			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
+			prevProps.onForkConversation === nextProps.onForkConversation &&
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl
 		);
 	}
 );
@@ -1037,8 +1067,10 @@ interface TerminalOutputProps {
 	activeFocus: FocusArea;
 	outputSearchOpen: boolean;
 	outputSearchQuery: string;
+	outputSearchRegex: boolean;
 	setOutputSearchOpen: (open: boolean) => void;
 	setOutputSearchQuery: (query: string) => void;
+	setOutputSearchRegex: (regex: boolean) => void;
 	setActiveFocus: (focus: FocusArea) => void;
 	setLightboxImage: (
 		image: string | null,
@@ -1050,6 +1082,11 @@ interface TerminalOutputProps {
 	maxOutputLines: number;
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
+	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
+	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
+	getForceSendContext?: (
+		item: QueuedItem
+	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
 	onInterrupt?: () => void; // Callback to interrupt the current process
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
@@ -1057,6 +1094,7 @@ interface TerminalOutputProps {
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
+	onForkConversation?: (logId: string) => void; // Fork conversation from a specific message
 	fileTree?: FileNode[]; // File tree for linking file references
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
@@ -1065,7 +1103,7 @@ interface TerminalOutputProps {
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
 	userMessageAlignment?: 'left' | 'right'; // User message bubble alignment (default: right)
 	ghCliAvailable?: boolean; // Whether gh CLI is available for gist publishing
-	onPublishMessageGist?: (text: string) => void; // Callback to publish a single message as a gist
+	onPublishMessageGist?: (text: string, messageId?: string) => void; // Callback to publish a single message as a gist
 	onOpenInTab?: (file: {
 		path: string;
 		name: string;
@@ -1086,8 +1124,10 @@ export const TerminalOutput = memo(
 			activeFocus: _activeFocus,
 			outputSearchOpen,
 			outputSearchQuery,
+			outputSearchRegex,
 			setOutputSearchOpen,
 			setOutputSearchQuery,
+			setOutputSearchRegex,
 			setActiveFocus,
 			setLightboxImage,
 			inputRef,
@@ -1095,6 +1135,9 @@ export const TerminalOutput = memo(
 			maxOutputLines,
 			onDeleteLog,
 			onRemoveQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
 			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
 			onAtBottomChange,
@@ -1102,6 +1145,7 @@ export const TerminalOutput = memo(
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
+			onForkConversation,
 			fileTree,
 			cwd,
 			projectRoot,
@@ -1113,6 +1157,10 @@ export const TerminalOutput = memo(
 			ghCliAvailable,
 			onPublishMessageGist,
 		} = props;
+		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+		const publishedGists = useMessageGistStore((s) => s.published);
+		const globalBionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
 
 		// Use the forwarded ref if provided, otherwise create a local one
 		const localRef = useRef<HTMLDivElement>(null);
@@ -1241,6 +1289,12 @@ export const TerminalOutput = memo(
 				});
 			}
 		}, [outputSearchOpen, updateLayerHandler]);
+
+		// Search match navigation state (populated by effect below after filteredLogs is defined)
+		const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+		const [totalMatches, setTotalMatches] = useState(0);
+		const [regexError, setRegexError] = useState<string | null>(null);
+		const matchRangesRef = useRef<Range[]>([]);
 
 		const toggleExpanded = useCallback((logId: string) => {
 			setExpandedLogs((prev) => {
@@ -1397,16 +1451,142 @@ export const TerminalOutput = memo(
 			return result;
 		}, [activeLogs]);
 
-		// PERF: Debounce search query to avoid filtering on every keystroke
+		// PERF: Debounce search query so the highlight pass doesn't run on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
-		// Filter logs based on search query - memoized for performance
-		// Uses debounced query to reduce CPU usage during rapid typing
-		const filteredLogs = useMemo(() => {
-			if (!debouncedSearchQuery) return collapsedLogs;
-			const lowerQuery = debouncedSearchQuery.toLowerCase();
-			return collapsedLogs.filter((log) => log.text.toLowerCase().includes(lowerQuery));
-		}, [collapsedLogs, debouncedSearchQuery]);
+		// Search no longer filters logs — all logs stay visible. Matches are highlighted and
+		// navigated inline via CSS Custom Highlight API (see highlight effect below).
+		const filteredLogs = collapsedLogs;
+
+		// ============================================================================
+		// Search match navigation (CSS Custom Highlight API)
+		// ============================================================================
+		// Pattern mirrors `useFilePreviewSearch.ts` markdown path: walks text nodes in the
+		// scroll container, builds Range objects for matches, and uses the Custom Highlight
+		// API to paint them without mutating the DOM. The "current" match gets a separate
+		// highlight with accent color; prev/next navigation just moves the index.
+		useEffect(() => {
+			const query = debouncedSearchQuery.trim();
+			const clearHighlights = () => {
+				if ('highlights' in CSS) {
+					(CSS as unknown as { highlights: Map<string, unknown> }).highlights.delete(
+						'terminal-search-all'
+					);
+					(CSS as unknown as { highlights: Map<string, unknown> }).highlights.delete(
+						'terminal-search-current'
+					);
+				}
+			};
+			if (!outputSearchOpen || !query) {
+				clearHighlights();
+				matchRangesRef.current = [];
+				setTotalMatches(0);
+				setCurrentMatchIndex(0);
+				setRegexError(null);
+				return;
+			}
+
+			const container = scrollContainerRef.current;
+			if (!container) return;
+
+			// Build the match regex — plain text is escaped; regex mode is validated.
+			let regex: RegExp;
+			try {
+				if (outputSearchRegex) {
+					regex = new RegExp(query, 'gi');
+				} else {
+					const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+					regex = new RegExp(escaped, 'gi');
+				}
+				setRegexError(null);
+			} catch (err) {
+				setRegexError(err instanceof Error ? err.message : 'Invalid regex');
+				clearHighlights();
+				matchRangesRef.current = [];
+				setTotalMatches(0);
+				return;
+			}
+
+			// Walk text nodes, collect Range objects for each match.
+			const ranges: Range[] = [];
+			const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+			let textNode: Node | null = walker.nextNode();
+			while (textNode !== null) {
+				const text = textNode.textContent || '';
+				if (text) {
+					regex.lastIndex = 0;
+					let m: RegExpExecArray | null = regex.exec(text);
+					while (m !== null) {
+						if (m[0].length === 0) {
+							regex.lastIndex++;
+						} else {
+							const range = document.createRange();
+							range.setStart(textNode, m.index);
+							range.setEnd(textNode, m.index + m[0].length);
+							ranges.push(range);
+						}
+						m = regex.exec(text);
+					}
+				}
+				textNode = walker.nextNode();
+			}
+
+			matchRangesRef.current = ranges;
+			setTotalMatches(ranges.length);
+			setCurrentMatchIndex((prev) => (ranges.length === 0 ? 0 : Math.min(prev, ranges.length - 1)));
+
+			if (!('highlights' in CSS) || ranges.length === 0) {
+				clearHighlights();
+				return;
+			}
+			const Highlight = (window as unknown as { Highlight: new (...r: Range[]) => unknown })
+				.Highlight;
+			const highlights = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+			highlights.set('terminal-search-all', new Highlight(...ranges));
+			// Current highlight is applied by the separate effect below so navigation doesn't
+			// require re-walking the DOM.
+
+			return clearHighlights;
+		}, [debouncedSearchQuery, outputSearchRegex, outputSearchOpen, filteredLogs]);
+
+		// Update the "current" highlight and scroll it into view when index changes.
+		useEffect(() => {
+			if (!('highlights' in CSS)) return;
+			const highlights = (CSS as unknown as { highlights: Map<string, unknown> }).highlights;
+			const ranges = matchRangesRef.current;
+			if (ranges.length === 0 || currentMatchIndex < 0 || currentMatchIndex >= ranges.length) {
+				highlights.delete('terminal-search-current');
+				return;
+			}
+			const current = ranges[currentMatchIndex];
+			const Highlight = (window as unknown as { Highlight: new (...r: Range[]) => unknown })
+				.Highlight;
+			highlights.set('terminal-search-current', new Highlight(current));
+
+			// Scroll the current match into view, centered in the scroll container.
+			const scrollParent = scrollContainerRef.current;
+			const rect = current.getBoundingClientRect();
+			if (scrollParent && rect.height > 0) {
+				const parentRect = scrollParent.getBoundingClientRect();
+				const offset = rect.top - parentRect.top + scrollParent.scrollTop;
+				const targetScroll = offset - scrollParent.clientHeight / 2 + rect.height / 2;
+				scrollParent.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
+			}
+		}, [currentMatchIndex, totalMatches]);
+
+		const goToNextMatch = useCallback(() => {
+			setCurrentMatchIndex((i) => {
+				if (totalMatches === 0) return 0;
+				return (i + 1) % totalMatches;
+			});
+		}, [totalMatches]);
+
+		const goToPrevMatch = useCallback(() => {
+			setCurrentMatchIndex((i) => {
+				if (totalMatches === 0) return 0;
+				return (i - 1 + totalMatches) % totalMatches;
+			});
+		}, [totalMatches]);
 
 		// PERF: Throttle scroll handler to reduce state updates (4ms = ~240fps for smooth scrollbar)
 		// The actual logic is in handleScrollInner, wrapped with useThrottledCallback
@@ -1714,23 +1894,120 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
+				{/* CSS for Custom Highlight API — paints matches without mutating DOM */}
+				<style>{`
+					::highlight(terminal-search-all) {
+						background-color: ${theme.colors.warning};
+						color: ${theme.mode === 'light' ? '#fff' : '#000'};
+					}
+					::highlight(terminal-search-current) {
+						background-color: ${theme.colors.accent};
+						color: #fff;
+					}
+				`}</style>
 				{/* Output Search */}
 				{outputSearchOpen && (
-					<div className="sticky top-0 z-10 pb-4">
-						<input
-							type="text"
-							value={outputSearchQuery}
-							onChange={(e) => setOutputSearchQuery(e.target.value)}
-							placeholder={
-								isAIMode ? 'Filter output... (Esc to close)' : 'Search output... (Esc to close)'
-							}
-							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-							style={{
-								borderColor: theme.colors.accent,
-								color: theme.colors.textMain,
-								backgroundColor: theme.colors.bgSidebar,
-							}}
-						/>
+					<div
+						className="sticky top-0 z-10 px-3 pt-3 pb-4"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<div className="flex items-center gap-2">
+							<button
+								onClick={() => setOutputSearchRegex(!outputSearchRegex)}
+								className="flex items-center gap-1.5 pl-1 pr-2 rounded border text-xs font-medium whitespace-nowrap transition-colors self-stretch"
+								style={{
+									borderColor: outputSearchRegex
+										? theme.colors.accent
+										: regexError
+											? theme.colors.error
+											: theme.colors.border,
+									backgroundColor: outputSearchRegex
+										? theme.colors.accent + '20'
+										: theme.colors.bgSidebar,
+									color: outputSearchRegex ? theme.colors.accent : theme.colors.textDim,
+								}}
+								title={outputSearchRegex ? 'Switch to plain-text search' : 'Switch to regex search'}
+							>
+								{/* Pill marker: bg/fg inverted vs. the surrounding button */}
+								<span
+									className="px-1.5 py-0.5 rounded font-mono leading-none"
+									style={{
+										backgroundColor: outputSearchRegex ? theme.colors.accent : theme.colors.textDim,
+										color: outputSearchRegex
+											? theme.colors.accentForeground
+											: theme.colors.bgSidebar,
+									}}
+								>
+									{outputSearchRegex ? '.*' : 'Aa'}
+								</span>
+								<span>{outputSearchRegex ? 'Regex' : 'Plain Text'}</span>
+							</button>
+							<input
+								type="text"
+								value={outputSearchQuery}
+								onChange={(e) => setOutputSearchQuery(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && !e.shiftKey) {
+										e.preventDefault();
+										goToNextMatch();
+									} else if (e.key === 'Enter' && e.shiftKey) {
+										e.preventDefault();
+										goToPrevMatch();
+									}
+								}}
+								placeholder={
+									outputSearchRegex
+										? 'Regex search... (Enter: next, Shift+Enter: prev)'
+										: 'Search output... (Enter: next, Shift+Enter: prev)'
+								}
+								className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
+								style={{
+									borderColor: regexError ? theme.colors.error : theme.colors.accent,
+									color: theme.colors.textMain,
+									backgroundColor: theme.colors.bgSidebar,
+									fontFamily: outputSearchRegex
+										? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+										: undefined,
+								}}
+								spellCheck={outputSearchRegex ? false : undefined}
+								autoFocus
+							/>
+							{outputSearchQuery.trim() && (
+								<>
+									<span
+										className="text-xs whitespace-nowrap"
+										style={{
+											color: regexError ? theme.colors.error : theme.colors.textDim,
+										}}
+										title={regexError ?? undefined}
+									>
+										{regexError
+											? 'Invalid regex'
+											: totalMatches > 0
+												? `${currentMatchIndex + 1}/${totalMatches}`
+												: 'No matches'}
+									</span>
+									<button
+										onClick={goToPrevMatch}
+										disabled={totalMatches === 0}
+										className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+										style={{ color: theme.colors.textDim }}
+										title="Previous match (Shift+Enter)"
+									>
+										<ChevronUp className="w-4 h-4" />
+									</button>
+									<button
+										onClick={goToNextMatch}
+										disabled={totalMatches === 0}
+										className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+										style={{ color: theme.colors.textDim }}
+										title="Next match (Enter)"
+									>
+										<ChevronDown className="w-4 h-4" />
+									</button>
+								</>
+							)}
+						</div>
 					</div>
 				)}
 				{/* Prose styles for markdown rendering - injected once at container level for performance */}
@@ -1757,7 +2034,6 @@ export const TerminalOutput = memo(
 							theme={theme}
 							fontFamily={fontFamily}
 							maxOutputLines={maxOutputLines}
-							outputSearchQuery={outputSearchQuery}
 							lastUserCommand={
 								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
 							}
@@ -1780,6 +2056,7 @@ export const TerminalOutput = memo(
 							markdownEditMode={markdownEditMode}
 							onToggleMarkdownEditMode={toggleMarkdownEditMode}
 							onReplayMessage={onReplayMessage}
+							onForkConversation={onForkConversation}
 							fileTree={fileTree}
 							cwd={cwd}
 							projectRoot={projectRoot}
@@ -1788,6 +2065,10 @@ export const TerminalOutput = memo(
 							onSaveToFile={handleSaveToFile}
 							ghCliAvailable={ghCliAvailable}
 							onPublishGist={onPublishMessageGist}
+							publishedGistUrl={publishedGists[log.id]?.gistUrl}
+							bionifyReadingMode={globalBionifyReadingMode}
+							bionifyIntensity={globalBionifyIntensity}
+							bionifyAlgorithm={globalBionifyAlgorithm}
 							userMessageAlignment={userMessageAlignment}
 						/>
 					))}
@@ -1798,6 +2079,9 @@ export const TerminalOutput = memo(
 							executionQueue={session.executionQueue}
 							theme={theme}
 							onRemoveQueuedItem={onRemoveQueuedItem}
+							onForceSendQueuedItem={onForceSendQueuedItem}
+							forcedParallelEnabled={forcedParallelEnabled}
+							getForceSendContext={getForceSendContext}
 							activeTabId={activeTabId || undefined}
 						/>
 					)}

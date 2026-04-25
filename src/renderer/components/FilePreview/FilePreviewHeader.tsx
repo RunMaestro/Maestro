@@ -6,7 +6,6 @@ import {
 	ChevronRight,
 	Clipboard,
 	Copy,
-	Loader2,
 	Globe,
 	Save,
 	Edit,
@@ -14,6 +13,7 @@ import {
 	GitGraph,
 	ExternalLink,
 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatFileSize, formatDateTime } from './filePreviewUtils';
@@ -145,11 +145,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 										: 'No changes to save'
 								}
 							>
-								{isSaving ? (
-									<Loader2 className="w-3.5 h-3.5 animate-spin" />
-								) : (
-									<Save className="w-3.5 h-3.5" />
-								)}
+								{isSaving ? <Spinner size={14} /> : <Save className="w-3.5 h-3.5" />}
 								{isSaving ? 'Saving...' : 'Save'}
 							</button>
 						)}

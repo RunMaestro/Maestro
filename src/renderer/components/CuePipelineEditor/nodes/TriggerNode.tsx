@@ -11,10 +11,16 @@ export interface TriggerNodeDataProps {
 	label: string;
 	configSummary: string;
 	onConfigure?: (compositeId: string) => void;
-	/** Callback to manually trigger this pipeline */
-	onTriggerPipeline?: (pipelineName: string) => void;
-	/** Pipeline name for triggering */
+	/** Callback to manually trigger the subscription owned by this trigger node. */
+	onTriggerPipeline?: (subscriptionName: string) => void;
+	/** The pipeline this node belongs to — shown in the Play button's aria-label. */
 	pipelineName?: string;
+	/** The Cue subscription this specific trigger node owns. In multi-trigger
+	 *  pipelines, distinct trigger nodes map to distinct subscriptions
+	 *  (`pipeline.name`, `pipeline.name-chain-1`, etc.). The Play button MUST
+	 *  fire this sub name — firing the pipeline name only matches the first
+	 *  trigger, leaving chain triggers (e.g. GitHub PR polls) unreachable. */
+	subscriptionName?: string;
 	/** Whether the pipeline config is saved (play only works when saved) */
 	isSaved?: boolean;
 	/** Whether this pipeline is currently running */
@@ -148,44 +154,58 @@ export const TriggerNode = memo(function TriggerNode({
 					gap: 2,
 				}}
 			>
-				{/* Play button — only when pipeline is saved */}
-				{data.isSaved && data.onTriggerPipeline && data.pipelineName && (
-					<button
-						type="button"
-						onClick={(e) => {
-							e.stopPropagation();
-							if (!data.isRunning) {
-								data.onTriggerPipeline!(data.pipelineName!);
-							}
-						}}
-						disabled={data.isRunning}
-						aria-label={data.isRunning ? 'Running' : `Run ${data.pipelineName}`}
-						style={{
-							display: 'flex',
-							alignItems: 'center',
-							justifyContent: 'center',
-							cursor: data.isRunning ? 'default' : 'pointer',
-							color: data.isRunning
-								? (theme?.colors.success ?? '#22c55e')
-								: `${theme?.colors.success ?? '#22c55e'}90`,
-							padding: 4,
-							borderRadius: 4,
-							border: 'none',
-							backgroundColor: 'transparent',
-							transition: 'color 0.15s',
-						}}
-						onMouseEnter={(e) => {
-							if (!data.isRunning) e.currentTarget.style.color = theme?.colors.success ?? '#22c55e';
-						}}
-						onMouseLeave={(e) => {
-							if (!data.isRunning)
-								e.currentTarget.style.color = `${theme?.colors.success ?? '#22c55e'}90`;
-						}}
-						title={data.isRunning ? 'Running…' : 'Run now'}
-					>
-						{data.isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-					</button>
-				)}
+				{/* Play button — only when pipeline is saved. Fires THIS trigger's
+				 *  subscription (sub name populated by yamlToPipeline on load).
+				 *  Falls back to pipelineName only for legacy pipelines where the
+				 *  sub name wasn't stamped on the node; for post-fix data this
+				 *  correctly targets per-trigger chain subs like "Pipeline 1-chain-2".
+				 *
+				 *  The fire target is computed ONCE with truthy semantics so an
+				 *  empty-string `subscriptionName` can't render a button that
+				 *  fires the empty sub name. Rendering, click, and aria-label
+				 *  all use the same resolved target. */}
+				{(() => {
+					const fireTarget = data.subscriptionName || data.pipelineName;
+					if (!data.isSaved || !data.onTriggerPipeline || !fireTarget) return null;
+					return (
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								if (!data.isRunning) {
+									data.onTriggerPipeline!(fireTarget);
+								}
+							}}
+							disabled={data.isRunning}
+							aria-label={data.isRunning ? 'Running' : `Run ${fireTarget}`}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								cursor: data.isRunning ? 'default' : 'pointer',
+								color: data.isRunning
+									? (theme?.colors.success ?? '#22c55e')
+									: `${theme?.colors.success ?? '#22c55e'}90`,
+								padding: 4,
+								borderRadius: 4,
+								border: 'none',
+								backgroundColor: 'transparent',
+								transition: 'color 0.15s',
+							}}
+							onMouseEnter={(e) => {
+								if (!data.isRunning)
+									e.currentTarget.style.color = theme?.colors.success ?? '#22c55e';
+							}}
+							onMouseLeave={(e) => {
+								if (!data.isRunning)
+									e.currentTarget.style.color = `${theme?.colors.success ?? '#22c55e'}90`;
+							}}
+							title={data.isRunning ? 'Running…' : 'Run now'}
+						>
+							{data.isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+						</button>
+					);
+				})()}
 
 				{/* Gear icon */}
 				<button

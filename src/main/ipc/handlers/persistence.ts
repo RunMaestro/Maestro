@@ -71,6 +71,15 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			}
 		}
 
+		// Broadcast Bionify reading-mode changes to connected web clients
+		if (key === 'bionifyReadingMode' && webServer && webServer.getWebClientCount() > 0) {
+			webServer.broadcastBionifyReadingModeChange(Boolean(value));
+			logger.info(
+				`Broadcasted Bionify reading mode change to web clients: ${Boolean(value)}`,
+				'WebServer'
+			);
+		}
+
 		// Broadcast custom commands changes to connected web clients
 		if (key === 'customAICommands' && webServer && webServer.getWebClientCount() > 0) {
 			webServer.broadcastCustomCommands(value);

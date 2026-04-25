@@ -13,6 +13,7 @@ import type { ContextSource, DuplicateDetectionResult, DuplicateInfo } from '../
 import type { ToolType } from '../../shared/types';
 import { countTokens, estimateTokens } from './tokenCounter';
 import { calculateContextTokens } from './contextUsage';
+import { logger } from './logger';
 
 /**
  * Extract context from an AI tab's conversation logs.
@@ -26,7 +27,7 @@ import { calculateContextTokens } from './contextUsage';
  * const activeTab = getActiveTab(session);
  * if (activeTab) {
  *   const context = extractTabContext(activeTab, session.name, session);
- *   console.log(`Extracted ${context.logs.length} log entries`);
+ *   logger.info(`Extracted ${context.logs.length} log entries`);
  * }
  */
 export function extractTabContext(
@@ -84,7 +85,7 @@ interface StoredSessionResult {
  *   'abc123-session-id'
  * );
  * if (context) {
- *   console.log(`Loaded ${context.logs.length} messages from stored session`);
+ *   logger.info(`Loaded ${context.logs.length} messages from stored session`);
  * }
  */
 export async function extractStoredSessionContext(
@@ -128,7 +129,7 @@ export async function extractStoredSessionContext(
 			agentType: agentId,
 		};
 	} catch (error) {
-		console.error('Failed to extract stored session context:', error);
+		logger.error('Failed to extract stored session context:', undefined, error);
 		return null;
 	}
 }
@@ -437,7 +438,7 @@ function mapHeaderToSource(header: string): LogEntry['source'] {
  *
  * @example
  * const tokens = estimateTokenCount(context);
- * console.log(`Approximately ${tokens} tokens`);
+ * logger.info(`Approximately ${tokens} tokens`);
  */
 export function estimateTokenCount(context: ContextSource): number {
 	// If we have usage stats, use the actual token counts with agent-specific logic
@@ -527,7 +528,7 @@ export function estimateTextTokenCount(text: string): number {
  *
  * @example
  * const { duplicates, estimatedSavings } = findDuplicateContent(contexts);
- * console.log(`Found ${duplicates.length} duplicates, saving ~${estimatedSavings} tokens`);
+ * logger.info(`Found ${duplicates.length} duplicates, saving ~${estimatedSavings} tokens`);
  */
 export function findDuplicateContent(contexts: ContextSource[]): DuplicateDetectionResult {
 	const duplicates: DuplicateInfo[] = [];

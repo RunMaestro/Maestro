@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import { WorktreeRunSection } from '../../../renderer/components/WorktreeRunSection';
-import type { Theme, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { gitService } from '../../../renderer/services/git';
+
+import { createMockTheme } from '../../helpers/mockTheme';
 
 // Mock gitService
 vi.mock('../../../renderer/services/git', () => ({
@@ -34,32 +38,22 @@ function createMockTheme(): Theme {
 		},
 	};
 }
-
+// Thin wrapper: configures a worktree parent session with matching cwd and
+// worktreeConfig so the WorktreeRunSection has state to render.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
+	return baseCreateMockSession({
 		id: 'parent-1',
 		name: 'Test Agent',
-		toolType: 'claude-code',
 		cwd: '/project',
 		fullPath: '/project',
 		projectRoot: '/project',
-		state: 'idle',
-		tabs: [],
-		activeTabIndex: 0,
 		isGitRepo: true,
-		isLive: false,
-		changedFiles: [],
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		worktreeConfig: {
 			basePath: '/project/worktrees',
 			watchEnabled: false,
 		},
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 function createWorktreeChild(overrides: Partial<Session> = {}): Session {

@@ -19,12 +19,16 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { HistoryPanel, HistoryPanelHandle } from '../../../renderer/components/HistoryPanel';
-import type { Theme, Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
+import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
+import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock child components
 vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 	HistoryDetailModal: ({
@@ -106,47 +110,14 @@ vi.mock('../../../renderer/components/HistoryHelpModal', () => ({
 }));
 
 // Create mock theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		buttonBg: '#0e639c',
-		buttonText: '#ffffff',
-	},
-};
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/test/project',
-	projectRoot: '/test/project',
-	aiPid: 1234,
-	terminalPid: 5678,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		aiPid: 1234,
+		terminalPid: 5678,
+		isGitRepo: true,
+		...overrides,
+	});
 
 // Create mock history entry factory
 const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -221,7 +192,7 @@ describe('HistoryPanel', () => {
 			},
 		};
 
-		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
@@ -467,7 +438,11 @@ describe('HistoryPanel', () => {
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load history:', expect.any(Error));
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
+					'Failed to load history:',
+					undefined,
+					expect.any(Error)
+				);
 				expect(screen.getByText(/No history yet/)).toBeInTheDocument();
 			});
 		});
@@ -1063,6 +1038,7 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(consoleErrorSpy).toHaveBeenCalledWith(
 					'Failed to delete history entry:',
+					undefined,
 					expect.any(Error)
 				);
 			});
@@ -1228,7 +1204,7 @@ describe('HistoryPanel', () => {
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
-			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789');
+			expect(onOpenSessionAsTab).toHaveBeenCalledWith('abc12345-def-789', '/test/project');
 		});
 
 		it('should render summary with truncation', async () => {

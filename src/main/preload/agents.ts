@@ -9,42 +9,10 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AgentCapabilities, AgentConfig } from '../../shared/types';
 
-/**
- * Capability flags that determine what features are available for each agent.
- * This is a simplified version for the renderer - full definition in agent-capabilities.ts
- */
-export interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-}
-
-/**
- * Agent configuration
- */
-export interface AgentConfig {
-	id: string;
-	name: string;
-	command: string;
-	args?: string[];
-	available: boolean;
-	path?: string;
-	capabilities?: AgentCapabilities;
-}
+// Re-export for consumers that import from preload
+export type { AgentCapabilities, AgentConfig } from '../../shared/types';
 
 /**
  * Agent refresh result
@@ -189,9 +157,10 @@ export function createAgentsApi() {
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
-			customPath?: string
+			customPath?: string,
+			sshRemoteId?: string
 		): Promise<{ name: string; prompt?: string }[] | null> =>
-			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath),
+			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
 	};
 }
 

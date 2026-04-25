@@ -1,5 +1,6 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
+import { useSessionStore } from '../../stores/sessionStore';
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -76,13 +77,63 @@ export function useFilePreviewHandlers({
 	);
 
 	const handleFilePreviewSave = useCallback(
-		async (path: string, content: string) => {
-			await window.maestro.fs.writeFile(path, content, filePreviewSshRemoteId);
-			if (activeFileTabId) {
-				onFileTabEditContentChange?.(activeFileTabId, undefined, content);
+		async (path: string, content: string): Promise<boolean> => {
+			let savePath = path;
+
+			// Untitled file — prompt for save location
+			if (!path) {
+				const chosen = await window.maestro.dialog.saveFile({
+					title: 'Save File',
+					defaultPath: activeSession?.fullPath ? `${activeSession.fullPath}/Untitled` : undefined,
+				});
+				if (!chosen) return false; // User cancelled
+				savePath = chosen;
 			}
+
+			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
+
+			if (activeFileTabId) {
+				if (!path) {
+					// Update tab metadata with the real path
+					const fileName = savePath.split('/').pop() || 'Untitled';
+					const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
+					const nameWithoutExt = ext ? fileName.slice(0, -ext.length) : fileName;
+					const { setSessions } = useSessionStore.getState();
+					const sessionId = activeSession?.id;
+					setSessions((prev: Session[]) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								filePreviewTabs: s.filePreviewTabs.map((tab) =>
+									tab.id === activeFileTabId
+										? {
+												...tab,
+												path: savePath,
+												name: nameWithoutExt,
+												extension: ext,
+												content,
+												editContent: undefined,
+												lastModified: Date.now(),
+											}
+										: tab
+								),
+							};
+						})
+					);
+				} else {
+					onFileTabEditContentChange?.(activeFileTabId, undefined, content);
+				}
+			}
+			return true;
 		},
-		[activeFileTabId, onFileTabEditContentChange, filePreviewSshRemoteId]
+		[
+			activeFileTabId,
+			activeSession?.id,
+			activeSession?.fullPath,
+			onFileTabEditContentChange,
+			filePreviewSshRemoteId,
+		]
 	);
 
 	// Compute cwd for FilePreview - memoized to prevent recalculation on every render

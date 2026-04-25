@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, FocusArea } from '../../types';
 import { shouldOpenExternally, getAllFolderPaths } from '../../utils/fileExplorer';
+import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { logger } from '../../utils/logger';
 
 /** Loading state for file preview (shown while fetching remote files) */
 export interface FilePreviewLoading {
@@ -63,7 +65,7 @@ export interface UseAppHandlersReturn {
 
 	// File handlers
 	/** Handle file click in file explorer */
-	handleFileClick: (node: { name: string; type: string }, path: string) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string) => Promise<void>;
 	/** Update working directory via folder selection dialog */
 	updateSessionWorkingDirectory: () => Promise<void>;
 
@@ -180,7 +182,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	// --- FILE HANDLERS ---
 
 	const handleFileClick = useCallback(
-		async (node: { name: string; type: string }, path: string) => {
+		async (node: FileNode, path: string) => {
 			if (!activeSession) return; // Guard against null session
 			if (node.type === 'file') {
 				// Construct full file path using projectRoot (not fullPath which can diverge from file tree root)
@@ -232,7 +234,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					});
 					setActiveFocus('main');
 				} catch (error) {
-					console.error('Failed to read file:', error);
+					logger.error('Failed to read file:', undefined, error);
 				} finally {
 					// Clear loading state
 					useFileExplorerStore.getState().setFilePreviewLoading(null);

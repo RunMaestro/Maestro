@@ -40,7 +40,7 @@ export function shellEscape(str: string): string {
  * @param args Array of strings to escape
  * @returns Array of escaped strings
  */
-export function shellEscapeArgs(args: string[]): string[] {
+function shellEscapeArgs(args: string[]): string[] {
 	return args.map(shellEscape);
 }
 

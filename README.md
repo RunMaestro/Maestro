@@ -12,7 +12,7 @@ Maestro is a cross-platform desktop app for orchestrating your fleet of AI agent
 
 Collaborate with AI to create detailed specification documents, then let Auto Run execute them automatically, each task in a fresh session with clean context. Allowing for long-running unattended sessions, my current record is nearly 24 hours of continuous runtime.
 
-Run multiple agents in parallel with a Linear/Superhuman-level responsive interface. Currently supporting **Claude Code**, **OpenAI Codex**, **OpenCode**, and **Factory Droid** with plans for additional agentic coding tools (Gemini CLI, Qwen3 Coder) based on user demand.
+Run multiple agents in parallel with a Linear/Superhuman-level responsive interface. Currently supporting **Claude Code**, **OpenAI Codex**, **OpenCode**, **Factory Droid**, and **Copilot-CLI** (beta) with plans for additional agentic coding tools (Gemini CLI) based on user demand.
 
 > **How It Works:** Maestro is a pass-through to your AI provider. Whatever MCP tools, skills, permissions, or authentication you have configured in Claude Code, Codex, or OpenCode works identically in Maestro. The only difference is we're not running interactively—each task gets a prompt and returns a response, whether it's a new session or resuming a prior one.
 
@@ -83,7 +83,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map for overview.
 
-> **Note**: Maestro supports Claude Code, OpenAI Codex, OpenCode, and Factory Droid. Support for additional agents (Gemini CLI, Qwen3 Coder) may be added in future releases based on community demand.
+> **Note**: Maestro supports Claude Code, OpenAI Codex, OpenCode, Factory Droid, and Copilot-CLI (beta). Support for additional agents (Gemini CLI) may be added in future releases based on community demand.
 
 ## Quick Start
 
@@ -106,6 +106,7 @@ npm run dev
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - Anthropic's AI coding assistant
   - [OpenAI Codex](https://github.com/openai/codex) - OpenAI's coding agent
   - [OpenCode](https://github.com/sst/opencode) - Open-source AI coding assistant
+  - [Copilot-CLI](https://docs.github.com/copilot/how-tos/copilot-cli) - GitHub's terminal coding agent (beta, multi-model via [models.dev](https://models.dev))
 - Git (optional, for git-aware features)
 
 ### Essential Keyboard Shortcuts
@@ -181,3 +182,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture detai
 ## License
 
 [AGPL-3.0 License](LICENSE)
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=runmaestro%2Fmaestro&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=runmaestro/maestro&type=date&legend=top-left" />
+ </picture>
+</a>

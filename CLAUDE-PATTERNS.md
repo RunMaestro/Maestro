@@ -370,3 +370,17 @@ When adding a new Encore Feature, gate **all** access points:
 When adding a new Encore Feature, mirror this pattern across all access points.
 
 See [CONTRIBUTING.md → Encore Features](CONTRIBUTING.md#encore-features-feature-gating) for the full contributor guide.
+
+## 13. Browser Tab Keyboard Interception
+
+When a `<webview>` has focus, keyboard events are trapped in its guest Chromium process — the renderer's `window` keydown handler never sees them. Maestro uses a three-layer approach to ensure app shortcuts (tab cycling, Cmd+L, etc.) still work:
+
+1. **Main process `before-input-event`** — intercepts shortcuts before the guest page sees them, sends via `browser-tab:shortcutKey` IPC
+2. **Renderer IPC listener** — blurs the webview and re-dispatches as a native `KeyboardEvent` on `window`
+3. **Focus-steal prevention** — `BrowserTabView` blocks auto-focus from page content (autofocus elements, `window.focus()`) so the webview only captures keyboard input after an explicit user click
+
+**Key files:** `window-manager.ts` (before-input-event + guest injection), `preload/system.ts` (IPC bridge), `useMainKeyboardHandler.ts` (IPC → dispatch), `BrowserTabView.tsx` (focus guard)
+
+**Pitfall:** Tab navigation filters (e.g., `showUnreadOnly` in `tabHelpers.ts`) must explicitly handle `browser` type tabs — they are not AI tabs and will be silently skipped if they fall through to the AI tab lookup.
+
+See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IPC-PATTERNS.md#browser-tab-shortcut-forwarding) for the full event flow.

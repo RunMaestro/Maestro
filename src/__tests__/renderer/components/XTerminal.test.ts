@@ -221,4 +221,14 @@ describe('evaluateCustomKeyEvent', () => {
 		const e = makeKeyEvent({ key: 'c', ctrlKey: true });
 		expect(evaluateCustomKeyEvent(e)).toBe('handle');
 	});
+
+	it('returns "passthrough" for Alt+Meta combos (e.g., Alt+Cmd+J for terminal cycling)', () => {
+		const e = makeKeyEvent({ key: 'j', altKey: true, metaKey: true });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
+
+	it('does not treat Alt+Meta+Arrow as terminal navigation', () => {
+		const e = makeKeyEvent({ key: 'ArrowLeft', altKey: true, metaKey: true, type: 'keydown' });
+		expect(evaluateCustomKeyEvent(e)).toBe('passthrough');
+	});
 });

@@ -562,6 +562,7 @@ const mockMaestro = {
 		confirmQuit: vi.fn(),
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
+		onBrowserTabShortcutKey: vi.fn().mockReturnValue(() => {}),
 	},
 	wakatime: {
 		checkCli: vi.fn().mockResolvedValue({ available: false }),
@@ -580,6 +581,16 @@ const mockMaestro = {
 		writeYaml: vi.fn().mockResolvedValue(undefined),
 		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
 		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+	},
+	// Core Prompts API (disk-based prompts loaded at runtime)
+	prompts: {
+		get: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getAll: vi.fn().mockResolvedValue({ success: true, prompts: [] }),
+		getAllIds: vi.fn().mockResolvedValue({ success: true, ids: [] }),
+		save: vi.fn().mockResolvedValue({ success: true }),
+		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

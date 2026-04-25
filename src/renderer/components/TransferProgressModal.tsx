@@ -14,17 +14,18 @@
  * - Elapsed time tracking
  * - Cancel functionality with confirmation
  * - Agent-specific messaging (source → target)
- *
- * Based on MergeProgressModal patterns, adapted for cross-agent transfer workflow.
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
-import { X, Check, Loader2, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { X, Check, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, ToolType } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getAgentDisplayName } from '../services/contextGroomer';
+import { formatElapsedTime } from '../../shared/formatters';
 
 /**
  * Progress stage definition for transfer display
@@ -74,20 +75,6 @@ export interface TransferProgressModalProps {
 }
 
 /**
- * Format milliseconds as a readable time string
- */
-function formatElapsedTime(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-
-	if (minutes > 0) {
-		return `${minutes}m ${remainingSeconds}s`;
-	}
-	return `${remainingSeconds}s`;
-}
-
-/**
  * Elapsed time display component with auto-updating timer
  */
 const ElapsedTimeDisplay = memo(
@@ -114,7 +101,7 @@ ElapsedTimeDisplay.displayName = 'ElapsedTimeDisplay';
 /**
  * Animated spinner component
  */
-function Spinner({ theme }: { theme: Theme }) {
+function CircularSpinner({ theme }: { theme: Theme }) {
 	return (
 		<div className="relative">
 			<div
@@ -260,8 +247,6 @@ export function TransferProgressModal({
 	const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
 	// Layer stack registration
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const onCancelRef = useRef(onCancel);
 	const onCompleteRef = useRef(onComplete);
 
@@ -288,32 +273,9 @@ export function TransferProgressModal({
 	}, [progress.stage]);
 
 	// Register layer on mount
-	useEffect(() => {
-		if (!isOpen) return;
-
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.TRANSFER_PROGRESS,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Transfer Progress',
-			onEscape: handleEscape,
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [isOpen, registerLayer, unregisterLayer, handleEscape]);
-
-	// Update handler when callbacks change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, handleEscape);
-		}
-	}, [updateLayerHandler, handleEscape]);
+	useModalLayer(MODAL_PRIORITIES.TRANSFER_PROGRESS, 'Transfer Progress', handleEscape, {
+		enabled: isOpen,
+	});
 
 	// Get the current stage index
 	const currentStageIndex = useMemo(() => {
@@ -381,15 +343,19 @@ export function TransferProgressModal({
 						{isComplete ? 'Transfer Complete' : 'Transferring Context...'}
 					</h2>
 					{isComplete && (
-						<button
-							type="button"
-							onClick={() => onComplete?.() || onCancel()}
-							className="p-1 rounded hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-							aria-label="Close modal"
+						<GhostIconButton
+							onClick={() => {
+								if (onComplete) {
+									onComplete();
+								} else {
+									onCancel();
+								}
+							}}
+							ariaLabel="Close modal"
+							color={theme.colors.textDim}
 						>
 							<X className="w-4 h-4" />
-						</button>
+						</GhostIconButton>
 					)}
 				</div>
 
@@ -412,7 +378,7 @@ export function TransferProgressModal({
 								<Check className="w-6 h-6" style={{ color: theme.colors.success }} />
 							</div>
 						) : (
-							<Spinner theme={theme} />
+							<CircularSpinner theme={theme} />
 						)}
 					</div>
 
@@ -472,10 +438,7 @@ export function TransferProgressModal({
 												<Check className="w-3 h-3" style={{ color: '#fff' }} />
 											</div>
 										) : isActive ? (
-											<Loader2
-												className="w-5 h-5 animate-spin"
-												style={{ color: theme.colors.accent }}
-											/>
+											<Spinner size={20} color={theme.colors.accent} />
 										) : (
 											<div
 												className="w-5 h-5 rounded-full border-2"

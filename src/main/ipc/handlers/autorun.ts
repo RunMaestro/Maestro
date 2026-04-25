@@ -5,6 +5,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { SshRemoteConfig } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -15,6 +16,7 @@ import {
 	existsRemote,
 	mkdirRemote,
 	deleteRemote,
+	statRemote,
 } from '../../utils/remote-fs';
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 
@@ -54,7 +56,7 @@ function getSshRemoteById(
 
 // State managed by this module
 const autoRunWatchers = new Map<string, FSWatcher>();
-let autoRunWatchDebounceTimer: NodeJS.Timeout | null = null;
+const autoRunWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -76,25 +78,71 @@ interface TreeNode {
 /**
  * Recursively scan directory for markdown files
  */
-async function scanDirectory(dirPath: string, relativePath: string = ''): Promise<TreeNode[]> {
+async function resolveLocalEntryType(
+	dirPath: string,
+	entry: { name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink?: () => boolean }
+): Promise<{ isDirectory: boolean; isFile: boolean; isSymlink: boolean }> {
+	let isDirectory = entry.isDirectory();
+	let isFile = entry.isFile();
+	const isSymlink = typeof entry.isSymbolicLink === 'function' ? entry.isSymbolicLink() : false;
+	if (isSymlink) {
+		try {
+			const stats = await fs.stat(path.join(dirPath, entry.name));
+			isDirectory = stats.isDirectory();
+			isFile = stats.isFile();
+		} catch {
+			isDirectory = false;
+			isFile = false;
+		}
+	}
+	return { isDirectory, isFile, isSymlink };
+}
+
+async function scanDirectory(
+	dirPath: string,
+	relativePath: string = '',
+	visitedRealPaths: Set<string> = new Set()
+): Promise<TreeNode[]> {
+	const realPath =
+		typeof (fs as any).realpath === 'function'
+			? await fs.realpath(dirPath).catch(() => path.resolve(dirPath))
+			: path.resolve(dirPath);
+	if (visitedRealPaths.has(realPath)) {
+		return [];
+	}
+	visitedRealPaths.add(realPath);
+
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 	const nodes: TreeNode[] = [];
 
-	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = entries
-		.filter((entry) => !entry.name.startsWith('.'))
-		.sort((a, b) => {
-			if (a.isDirectory() && !b.isDirectory()) return -1;
-			if (!a.isDirectory() && b.isDirectory()) return 1;
-			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-		});
+	// Resolve symlinks so symlinked folders/files are classified by target type.
+	// Broken symlinks are skipped (they can't contribute .md files).
+	const resolvedEntries = await Promise.all(
+		entries
+			.filter((entry) => !entry.name.startsWith('.'))
+			.map(async (entry) => ({
+				entry,
+				...(await resolveLocalEntryType(dirPath, entry)),
+			}))
+	);
 
-	for (const entry of sortedEntries) {
+	// Sort entries: folders first, then files, both alphabetically
+	const sortedEntries = resolvedEntries.sort((a, b) => {
+		if (a.isDirectory && !b.isDirectory) return -1;
+		if (!a.isDirectory && b.isDirectory) return 1;
+		return a.entry.name.toLowerCase().localeCompare(b.entry.name.toLowerCase());
+	});
+
+	for (const { entry, isDirectory, isFile } of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDirectory()) {
+		if (isDirectory) {
 			// Recursively scan subdirectory
-			const children = await scanDirectory(path.join(dirPath, entry.name), entryRelativePath);
+			const children = await scanDirectory(
+				path.join(dirPath, entry.name),
+				entryRelativePath,
+				visitedRealPaths
+			);
 			// Only include folders that contain .md files (directly or in subfolders)
 			if (children.length > 0) {
 				nodes.push({
@@ -104,7 +152,7 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 					children,
 				});
 			}
-		} else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -117,6 +165,33 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 	return nodes;
 }
 
+async function resolveRemoteEntryType(
+	dirPath: string,
+	entry: { name: string; isDirectory: boolean; isSymlink: boolean },
+	sshRemote: SshRemoteConfig
+): Promise<{ isDirectory: boolean; isFile: boolean }> {
+	if (!entry.isSymlink) {
+		return {
+			isDirectory: entry.isDirectory,
+			isFile: !entry.isDirectory,
+		};
+	}
+
+	const fullPath = `${dirPath}/${entry.name}`;
+	const statResult = await statRemote(fullPath, sshRemote);
+	if (!statResult.success || !statResult.data) {
+		return {
+			isDirectory: false,
+			isFile: false,
+		};
+	}
+
+	return {
+		isDirectory: statResult.data.isDirectory,
+		isFile: !statResult.data.isDirectory,
+	};
+}
+
 /**
  * Recursively scan directory for markdown files on a remote host via SSH.
  * This is the SSH version of scanDirectory.
@@ -124,35 +199,57 @@ async function scanDirectory(dirPath: string, relativePath: string = ''): Promis
 async function scanDirectoryRemote(
 	dirPath: string,
 	sshRemote: SshRemoteConfig,
-	relativePath: string = ''
+	relativePath: string = '',
+	visitedPaths: Set<string> = new Set()
 ): Promise<TreeNode[]> {
+	const normalizedPath = dirPath.replace(/\/+/g, '/');
+	if (visitedPaths.has(normalizedPath)) {
+		return [];
+	}
+	visitedPaths.add(normalizedPath);
+
 	const result = await readDirRemote(dirPath, sshRemote);
 	if (!result.success || !result.data) {
 		logger.warn(`${LOG_CONTEXT} Failed to read remote directory: ${result.error}`, LOG_CONTEXT);
 		return [];
 	}
 
+	const resolvedEntries = await Promise.all(
+		result.data
+			.filter((entry) => !entry.name.startsWith('.'))
+			.map(async (entry) => ({
+				entry,
+				...(await resolveRemoteEntryType(dirPath, entry, sshRemote)),
+			}))
+	);
+
 	const nodes: TreeNode[] = [];
 
 	// Sort entries: folders first, then files, both alphabetically
-	const sortedEntries = result.data
-		.filter((entry) => !entry.name.startsWith('.'))
-		.sort((a, b) => {
-			if (a.isDirectory && !b.isDirectory) return -1;
-			if (!a.isDirectory && b.isDirectory) return 1;
-			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-		});
+	const sortedEntries = resolvedEntries.sort((a, b) => {
+		if (a.isDirectory && !b.isDirectory) return -1;
+		if (!a.isDirectory && b.isDirectory) return 1;
+		return a.entry.name.toLowerCase().localeCompare(b.entry.name.toLowerCase());
+	});
 
-	for (const entry of sortedEntries) {
+	for (const { entry, isDirectory, isFile } of sortedEntries) {
 		const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
-		if (entry.isDirectory) {
+		if (isDirectory) {
+			// Avoid infinite recursion on remote symlink cycles.
+			// We currently don't have remote realpath canonicalization in remote-fs,
+			// so skip descending into symlinked directories.
+			if (entry.isSymlink) {
+				continue;
+			}
+
 			// Recursively scan subdirectory
 			// Use forward slashes for remote paths (Unix style)
 			const children = await scanDirectoryRemote(
 				`${dirPath}/${entry.name}`,
 				sshRemote,
-				entryRelativePath
+				entryRelativePath,
+				visitedPaths
 			);
 			// Only include folders that contain .md files (directly or in subfolders)
 			if (children.length > 0) {
@@ -163,7 +260,7 @@ async function scanDirectoryRemote(
 					children,
 				});
 			}
-		} else if (!entry.isDirectory && !entry.isSymlink && entry.name.toLowerCase().endsWith('.md')) {
+		} else if (isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Add .md file (without extension in name, but keep in path)
 			nodes.push({
 				name: entry.name.slice(0, -3),
@@ -211,7 +308,19 @@ function validatePathWithinFolder(filePath: string, folderPath: string): boolean
  * Recursively check if a directory contains any markdown files.
  * Optimized to return early as soon as one .md file is found.
  */
-async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
+async function checkForMarkdownFiles(
+	dirPath: string,
+	visitedRealPaths: Set<string> = new Set()
+): Promise<boolean> {
+	const realPath =
+		typeof (fs as any).realpath === 'function'
+			? await fs.realpath(dirPath).catch(() => path.resolve(dirPath))
+			: path.resolve(dirPath);
+	if (visitedRealPaths.has(realPath)) {
+		return false;
+	}
+	visitedRealPaths.add(realPath);
+
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
 	for (const entry of entries) {
@@ -220,14 +329,17 @@ async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
 			continue;
 		}
 
-		if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+		const fullPath = path.join(dirPath, entry.name);
+		const resolved = await resolveDirentType(entry, fullPath);
+
+		if (resolved.isFile && entry.name.toLowerCase().endsWith('.md')) {
 			// Found a markdown file - return immediately
 			return true;
 		}
 
-		if (entry.isDirectory()) {
-			// Recursively check subdirectory
-			const hasFiles = await checkForMarkdownFiles(path.join(dirPath, entry.name));
+		if (resolved.isDirectory) {
+			// Recursively check subdirectory (follows symlinked folders)
+			const hasFiles = await checkForMarkdownFiles(fullPath, visitedRealPaths);
 			if (hasFiles) {
 				return true;
 			}
@@ -386,15 +498,6 @@ export function registerAutorunHandlers(
 		createIpcHandler(
 			handlerOpts('writeDoc'),
 			async (folderPath: string, filename: string, content: string, sshRemoteId?: string) => {
-				// DEBUG: Log all write attempts to trace cross-session contamination
-				logger.info(
-					`[DEBUG] writeDoc called: folder=${folderPath}, file=${filename}, content.length=${content.length}, content.slice(0,50)="${content.slice(0, 50).replace(/\n/g, '\\n')}"`,
-					LOG_CONTEXT
-				);
-				console.log(
-					`[DEBUG writeDoc] folder=${folderPath}, file=${filename}, content.length=${content.length}`
-				);
-
 				// Decode any URL-encoded characters to catch encoded traversal attempts
 				let decodedFilename: string;
 				try {
@@ -674,8 +777,8 @@ export function registerAutorunHandlers(
 					// Filter files that start with the docName prefix
 					const images = dirResult.data
 						.filter((entry) => {
-							// Only include files (not directories or symlinks)
-							if (entry.isDirectory || entry.isSymlink) {
+							// Only include files (not directories)
+							if (entry.isDirectory) {
 								return false;
 							}
 							// Check if filename starts with docName-
@@ -806,6 +909,12 @@ export function registerAutorunHandlers(
 				if (autoRunWatchers.has(folderPath)) {
 					autoRunWatchers.get(folderPath)?.close();
 					autoRunWatchers.delete(folderPath);
+					const debouncePrefix = `${folderPath}:`;
+					for (const [key, timer] of autoRunWatchDebounceTimers) {
+						if (!key.startsWith(debouncePrefix)) continue;
+						clearTimeout(timer);
+						autoRunWatchDebounceTimers.delete(key);
+					}
 				}
 
 				// Create folder if it doesn't exist (agent will create files in it)
@@ -841,13 +950,15 @@ export function registerAutorunHandlers(
 					// Get filename relative to watch folder
 					const filename = path.relative(folderPath, filePath);
 
-					// Debounce to avoid flooding with events during rapid saves
-					if (autoRunWatchDebounceTimer) {
-						clearTimeout(autoRunWatchDebounceTimer);
+					// Debounce per file to avoid flooding without dropping unrelated file events
+					const debounceKey = `${folderPath}:${filename}`;
+					const existingTimer = autoRunWatchDebounceTimers.get(debounceKey);
+					if (existingTimer) {
+						clearTimeout(existingTimer);
 					}
 
-					autoRunWatchDebounceTimer = setTimeout(() => {
-						autoRunWatchDebounceTimer = null;
+					const timer = setTimeout(() => {
+						autoRunWatchDebounceTimers.delete(debounceKey);
 						// Send event to renderer
 						const mainWindow = getMainWindow();
 						if (isWebContentsAvailable(mainWindow)) {
@@ -861,6 +972,7 @@ export function registerAutorunHandlers(
 							logger.info(`Auto Run file changed: ${filename} (${eventType})`, LOG_CONTEXT);
 						}
 					}, 300); // 300ms debounce
+					autoRunWatchDebounceTimers.set(debounceKey, timer);
 				};
 
 				watcher.on('add', handleFileChange('rename'));
@@ -887,6 +999,12 @@ export function registerAutorunHandlers(
 				autoRunWatchers.get(folderPath)?.close();
 				autoRunWatchers.delete(folderPath);
 				logger.info(`Stopped watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
+			}
+			const debouncePrefix = `${folderPath}:`;
+			for (const [key, timer] of autoRunWatchDebounceTimers) {
+				if (!key.startsWith(debouncePrefix)) continue;
+				clearTimeout(timer);
+				autoRunWatchDebounceTimers.delete(key);
 			}
 			return {};
 		})
@@ -1202,8 +1320,8 @@ export function registerAutorunHandlers(
 						for (const entry of dirResult.data) {
 							const entryPath = `${dirPath}/${entry.name}`;
 
-							if (entry.isDirectory && !entry.isSymlink) {
-								// Recurse into subdirectory
+							if (entry.isDirectory) {
+								// Recurse into subdirectory (including symlinked dirs)
 								deleted += await deleteBackupsRemoteRecursive(entryPath);
 							} else if (!entry.isDirectory && entry.name.endsWith('.backup.md')) {
 								// Delete backup file
@@ -1276,11 +1394,4 @@ export function registerAutorunHandlers(
 	});
 
 	logger.debug(`${LOG_CONTEXT} Auto Run IPC handlers registered`);
-}
-
-/**
- * Get the current number of active watchers (for testing/debugging)
- */
-export function getAutoRunWatcherCount(): number {
-	return autoRunWatchers.size;
 }

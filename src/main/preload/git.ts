@@ -69,6 +69,14 @@ export interface WorktreeDiscoveredData {
 }
 
 /**
+ * Removed worktree event data
+ */
+export interface WorktreeRemovedData {
+	sessionId: string;
+	worktreePath: string;
+}
+
+/**
  * Creates the git API object for preload exposure
  */
 export function createGitApi() {
@@ -357,6 +365,13 @@ export function createGitApi() {
 				callback(data);
 			ipcRenderer.on('worktree:discovered', handler);
 			return () => ipcRenderer.removeListener('worktree:discovered', handler);
+		},
+
+		onWorktreeRemoved: (callback: (data: WorktreeRemovedData) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, data: WorktreeRemovedData) =>
+				callback(data);
+			ipcRenderer.on('worktree:removed', handler);
+			return () => ipcRenderer.removeListener('worktree:removed', handler);
 		},
 	};
 }

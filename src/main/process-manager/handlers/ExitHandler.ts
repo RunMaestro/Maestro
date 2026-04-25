@@ -7,6 +7,7 @@ import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import { captureException } from '../../utils/sentry';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -140,10 +141,12 @@ export class ExitHandler {
 			managedProcess.sshRemoteId &&
 			(code !== 0 || managedProcess.stderrBuffer)
 		) {
-			// SSH errors can appear in stdout OR stderr, so check both
+			// Only check stderr for SSH errors — NOT stdout.
+			// Stdout contains structured JSONL agent output whose text content (e.g.,
+			// assistant messages quoting shell commands) can false-positive match SSH
+			// error patterns like "command not found". Real SSH transport errors appear
+			// on stderr (shell init failures, connection drops, missing binaries).
 			const stderrToCheck = managedProcess.stderrBuffer || '';
-			const stdoutToCheck = managedProcess.stdoutBuffer || managedProcess.streamedText || '';
-			const combinedOutput = `${stdoutToCheck}\n${stderrToCheck}`;
 
 			// Log detailed info before SSH error check to help debug shell parse errors
 			logger.info('[ProcessManager] Checking for SSH errors at exit', 'ProcessManager', {
@@ -152,11 +155,9 @@ export class ExitHandler {
 				sshRemoteId: managedProcess.sshRemoteId,
 				stderrLength: stderrToCheck.length,
 				stderrPreview: stderrToCheck.substring(0, 300),
-				stdoutLength: stdoutToCheck.length,
-				combinedLength: combinedOutput.length,
 			});
 
-			const sshError = matchSshErrorPattern(combinedOutput);
+			const sshError = matchSshErrorPattern(stderrToCheck);
 			if (sshError) {
 				managedProcess.errorEmitted = true;
 				const agentError: AgentError = {
@@ -169,7 +170,6 @@ export class ExitHandler {
 					raw: {
 						exitCode: code,
 						stderr: stderrToCheck,
-						stdout: stdoutToCheck.substring(0, 1000), // Truncate for log size
 					},
 				};
 				// Log at INFO level so it's visible in system logs
@@ -178,7 +178,6 @@ export class ExitHandler {
 					exitCode: code,
 					errorType: sshError.type,
 					errorMessage: sshError.message,
-					stdoutPreview: stdoutToCheck.substring(0, 500),
 					stderrPreview: stderrToCheck.substring(0, 500),
 				});
 				this.emitter.emit('agent-error', sessionId, agentError);
@@ -191,7 +190,6 @@ export class ExitHandler {
 						sessionId,
 						exitCode: code,
 						sshRemoteId: managedProcess.sshRemoteId,
-						stdoutPreview: stdoutToCheck.substring(0, 500),
 						stderrPreview: stderrToCheck.substring(0, 500),
 					}
 				);
@@ -264,6 +262,7 @@ export class ExitHandler {
 				this.emitter.emit('usage', sessionId, usageStats);
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to parse JSON response', 'ProcessManager', {
 				sessionId,
 				error: String(error),

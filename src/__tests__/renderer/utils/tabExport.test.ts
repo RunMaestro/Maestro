@@ -9,28 +9,10 @@ vi.mock('marked', () => ({
 
 import { generateTabExportHtml } from '../../../renderer/utils/tabExport';
 import type { AITab, LogEntry, Theme } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#1e1f29',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: 'rgba(189, 147, 249, 0.1)',
-		accentText: '#bd93f9',
-		accentForeground: '#282a36',
-		success: '#50fa7b',
-		warning: '#f1fa8c',
-		error: '#ff5555',
-	},
-};
 
 const mockSession = {
 	name: 'My Session',
@@ -49,18 +31,13 @@ function createLogEntry(overrides?: Partial<LogEntry>): LogEntry {
 }
 
 function createMockTab(overrides?: Partial<AITab>): AITab {
-	return {
+	return createMockAITab({
 		id: 'tab-001',
 		agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
 		name: 'Test Tab',
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
 		createdAt: 1703116800000, // 2023-12-21T00:00:00.000Z
-		state: 'idle',
 		...overrides,
-	};
+	});
 }
 
 describe('tabExport', () => {
@@ -121,6 +98,7 @@ describe('tabExport', () => {
 				const tab = createMockTab({ name: null, agentSessionId: null });
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
+				// getTabDisplayName returns 'New Session' for unnamed tabs without agentSessionId
 				expect(html).toContain('New Session');
 				expect(html).toContain('<title>New Session - Maestro Tab Export</title>');
 			});
@@ -133,15 +111,15 @@ describe('tabExport', () => {
 
 				expect(html).toContain('--bg-primary: #282a36');
 				expect(html).toContain('--bg-secondary: #21222c');
-				expect(html).toContain('--bg-tertiary: #1e1f29');
+				expect(html).toContain('--bg-tertiary: #343746');
 				expect(html).toContain('--text-primary: #f8f8f2');
 				expect(html).toContain('--text-secondary: #6272a4');
 				expect(html).toContain('--text-dim: #6272a4');
 				expect(html).toContain('--border: #44475a');
 				expect(html).toContain('--accent: #bd93f9');
-				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.1)');
+				expect(html).toContain('--accent-dim: rgba(189, 147, 249, 0.2)');
 				expect(html).toContain('--success: #50fa7b');
-				expect(html).toContain('--warning: #f1fa8c');
+				expect(html).toContain('--warning: #ffb86c');
 				expect(html).toContain('--error: #ff5555');
 			});
 

@@ -22,6 +22,52 @@ const MAX_GROWTH_PERCENT = 3;
 const MIN_PREV_CONTEXT_FRACTION = 0.05;
 
 /**
+ * Calculate total input tokens for display on a single history entry or tab header.
+ *
+ * Agents partition their input-token accounting differently:
+ *
+ * - **Claude models** report `inputTokens` as the UNCACHED input delta only.
+ *   `cacheReadInputTokens` and `cacheCreationInputTokens` are tracked separately
+ *   and must be ADDED back to reflect the full size of the input that the model
+ *   actually processed. On a resumed session almost all input lands in
+ *   `cacheReadInputTokens`, leaving `inputTokens` at single-digit values that
+ *   look absurd to users (see issue #844).
+ *
+ * - **OpenAI/Codex models** report `inputTokens` inclusive of cached input.
+ *   `cacheReadInputTokens` is reported separately for display only and must
+ *   NOT be double-counted (see codex-output-parser.ts).
+ *
+ * Use this for per-entry / per-tab "input tokens" displays. For the context
+ * window percentage gauge, use `calculateContextTokens` / `calculateContextDisplay`
+ * — those also add `outputTokens` for OpenAI-style combined-limit models.
+ *
+ * @param stats - The usage statistics containing token counts
+ * @param agentId - The agent identifier; defaults to the Claude formula
+ * @returns Total input tokens to show the user
+ */
+export function calculateDisplayInputTokens(
+	stats: {
+		inputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+	},
+	agentId?: ToolType | string
+): number {
+	// OpenAI/Codex: inputTokens already includes cached input, do not add cache fields.
+	if (agentId && COMBINED_CONTEXT_AGENTS.has(agentId as ToolType)) {
+		return stats.inputTokens || 0;
+	}
+
+	// Claude (and unknown agents, as a safe default): inputTokens is uncached only,
+	// add the cache partitions to reflect the real input size.
+	return (
+		(stats.inputTokens || 0) +
+		(stats.cacheReadInputTokens || 0) +
+		(stats.cacheCreationInputTokens || 0)
+	);
+}
+
+/**
  * Calculate total context tokens based on agent-specific semantics.
  *
  * For a single Anthropic API call, the total input context is the sum of:
@@ -168,11 +214,17 @@ export function calculateContextDisplay(
 
 	let tokens = raw;
 	if (raw > contextWindow) {
-		if (fallbackPercentage != null && fallbackPercentage >= 0) {
+		if (
+			fallbackPercentage != null &&
+			Number.isFinite(fallbackPercentage) &&
+			fallbackPercentage >= 0
+		) {
 			// Accumulated multi-tool turn: derive tokens from preserved percentage
-			tokens = Math.round((fallbackPercentage / 100) * contextWindow);
+			const boundedFallback = Math.min(100, fallbackPercentage);
+			tokens = Math.round((boundedFallback / 100) * contextWindow);
 		} else {
-			// No fallback available: cap to context window
+			// We don't have a trustworthy fallback percentage yet, so clamp to the
+			// configured window instead of displaying an impossible token total.
 			tokens = contextWindow;
 		}
 	}

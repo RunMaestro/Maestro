@@ -31,32 +31,6 @@ export const SYMPHONY_REPOS_DIR = 'symphony-repos';
 // Branch naming
 export const BRANCH_TEMPLATE = 'symphony/issue-{issue}-{timestamp}';
 
-// PR templates
-export const DRAFT_PR_TITLE_TEMPLATE = '[WIP] Symphony: {issue-title} (#{issue})';
-export const DRAFT_PR_BODY_TEMPLATE = `## Maestro Symphony Contribution
-
-Working on #{issue} via [Maestro Symphony](https://runmaestro.ai).
-
-**Status:** In Progress
-**Started:** {timestamp}
-
----
-
-This PR will be updated automatically when the Auto Run completes.`;
-
-export const READY_PR_BODY_TEMPLATE = `## Maestro Symphony Contribution
-
-Closes #{issue}
-
-**Documents Processed:** {docs}
-**Tasks Completed:** {tasks}
-**Time Spent:** {time}
-**Tokens Used:** {tokens}
-
----
-
-*Contributed via [Maestro Symphony](https://runmaestro.ai)*`;
-
 // Categories with display info
 // New categories can be added here without changing the SymphonyCategory type.
 // Unknown categories in the registry fall back to title-cased name with 📦 emoji.

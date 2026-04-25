@@ -184,14 +184,3 @@ export function startMemoryMonitoring(thresholdMB: number = 500, intervalMs: num
 		'Memory'
 	);
 }
-
-/**
- * Stops the memory monitoring interval.
- */
-export function stopMemoryMonitoring(): void {
-	if (memoryMonitorInterval) {
-		clearInterval(memoryMonitorInterval);
-		memoryMonitorInterval = null;
-		logger.info('Memory monitoring stopped', 'Memory');
-	}
-}

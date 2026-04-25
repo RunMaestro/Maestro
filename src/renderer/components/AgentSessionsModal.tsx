@@ -9,6 +9,9 @@ import {
 	Loader2,
 	Star,
 } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
+import { EmptyStatePlaceholder } from './ui/EmptyStatePlaceholder';
 import type { Theme, Session } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { useListNavigation } from '../hooks';
@@ -311,7 +314,9 @@ export function AgentSessionsModal({
 				}
 				setTotalMessages(result.total);
 				setHasMoreMessages(result.hasMore);
-				setMessagesOffset(offset + result.messages.length);
+				setMessagesOffset((prev) =>
+					offset === 0 ? result.messages.length : prev + result.messages.length
+				);
 			} catch (error) {
 				console.error('Failed to load messages:', error);
 			} finally {
@@ -443,16 +448,16 @@ export function AgentSessionsModal({
 				>
 					{viewingSession ? (
 						<>
-							<button
+							<GhostIconButton
 								onClick={() => {
 									setViewingSession(null);
 									setMessages([]);
 								}}
-								className="p-1 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
+								color={theme.colors.textDim}
+								ariaLabel="Go back"
 							>
 								<ChevronLeft className="w-5 h-5" />
-							</button>
+							</GhostIconButton>
 							<div className="flex-1 min-w-0">
 								<div
 									className="text-sm font-medium truncate"
@@ -579,7 +584,7 @@ export function AgentSessionsModal({
 
 						{messagesLoading && messages.length === 0 && (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						)}
 					</div>
@@ -591,14 +596,18 @@ export function AgentSessionsModal({
 					>
 						{loading ? (
 							<div className="flex items-center justify-center py-8">
-								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+								<Spinner size={24} color={theme.colors.textDim} />
 							</div>
 						) : filteredSessions.length === 0 ? (
-							<div className="px-4 py-8 text-center" style={{ color: theme.colors.textDim }}>
-								{sessions.length === 0
-									? 'No Claude sessions found for this project'
-									: 'No sessions match your search'}
-							</div>
+							<EmptyStatePlaceholder
+								theme={theme}
+								title={
+									sessions.length === 0
+										? 'No sessions found for this project'
+										: 'No sessions match your search'
+								}
+								verticalPadding="py-8"
+							/>
 						) : (
 							<>
 								{filteredSessions.map((session, i) => {
@@ -660,10 +669,7 @@ export function AgentSessionsModal({
 									<div className="py-3 flex justify-center items-center">
 										{isLoadingMoreSessions ? (
 											<div className="flex items-center gap-2">
-												<Loader2
-													className="w-4 h-4 animate-spin"
-													style={{ color: theme.colors.accent }}
-												/>
+												<Spinner size={16} color={theme.colors.accent} />
 												<span className="text-xs" style={{ color: theme.colors.textDim }}>
 													Loading more sessions...
 												</span>

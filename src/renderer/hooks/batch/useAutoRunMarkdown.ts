@@ -13,6 +13,9 @@ import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
 import { MermaidRenderer } from '../../components/MermaidRenderer';
 import { AttachmentImage } from '../../components/AutoRun/AttachmentImage';
 import React from 'react';
+import { openUrl } from '../../utils/openUrl';
+import { countMarkdownTasks } from './batchUtils';
+import { logger } from '../../utils/logger';
 
 export interface UseAutoRunMarkdownParams {
 	theme: Theme;
@@ -36,6 +39,10 @@ export interface UseAutoRunMarkdownParams {
 	openLightboxByFilename: (filename: string) => void;
 	// Preview ref for anchor scrolling
 	previewRef: RefObject<HTMLElement>;
+	// Bionify reading mode (opt-in per preview surface)
+	enableBionifyReadingMode?: boolean;
+	bionifyIntensity?: number;
+	bionifyAlgorithm?: string;
 }
 
 export interface UseAutoRunMarkdownReturn {
@@ -60,19 +67,17 @@ export function useAutoRunMarkdown({
 	handleMatchRendered,
 	openLightboxByFilename,
 	previewRef,
+	enableBionifyReadingMode = false,
+	bionifyIntensity,
+	bionifyAlgorithm,
 }: UseAutoRunMarkdownParams): UseAutoRunMarkdownReturn {
 	// 1. Memoize prose CSS styles - only regenerate when theme changes
 	const proseStyles = useMemo(() => generateAutoRunProseStyles(theme), [theme]);
 
 	// 2. Parse task counts from saved content only (not live during editing)
 	const taskCounts = useMemo(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-		const completedMatches = savedContent.match(completedRegex) || [];
-		const uncheckedMatches = savedContent.match(uncheckedRegex) || [];
-		const completed = completedMatches.length;
-		const total = completed + uncheckedMatches.length;
-		return { completed, total };
+		const counts = countMarkdownTasks(savedContent);
+		return { completed: counts.checked, total: counts.total };
 	}, [savedContent]);
 
 	// 3. Token counting based on saved content only (not live during editing)
@@ -94,7 +99,7 @@ export function useAutoRunMarkdown({
 			})
 			.catch((err) => {
 				if (!isActive) return;
-				console.error('Failed to count tokens:', err);
+				logger.error('Failed to count tokens:', undefined, err);
 				setTokenCount(null);
 			});
 
@@ -167,10 +172,13 @@ export function useAutoRunMarkdown({
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			// Provide container ref for anchor link scrolling
 			containerRef: previewRef,
 			// No search highlighting here - added separately when needed
+			enableBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 		});
 
 		// Add custom image renderer for AttachmentImage
@@ -187,7 +195,16 @@ export function useAutoRunMarkdown({
 					...props,
 				}),
 		};
-	}, [theme, folderPath, sshRemoteId, openLightboxByFilename, handleFileClick]);
+	}, [
+		theme,
+		folderPath,
+		sshRemoteId,
+		openLightboxByFilename,
+		handleFileClick,
+		enableBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
+	]);
 
 	// 10. Search-highlighted components - only used in preview mode with active search
 	// This allows the base components to remain stable during editing
@@ -204,8 +221,10 @@ export function useAutoRunMarkdown({
 					React.createElement(MermaidRenderer, { chart: code, theme: t }),
 			},
 			onFileClick: handleFileClick,
-			onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			containerRef: previewRef,
+			// Disable Bionify transforms while searching so match highlights stay visible.
+			enableBionifyReadingMode: false,
 			searchHighlight: {
 				query: searchQuery,
 				currentMatchIndex,

@@ -244,18 +244,68 @@ textarea::placeholder {
 
 @keyframes settings-search-flash {
 	0% {
-		outline: 2px solid rgba(99, 102, 241, 0.8);
-		outline-offset: 2px;
+		outline-color: var(--settings-search-jump-color, rgba(99, 102, 241, 0.8));
+		outline-width: 2px;
+	}
+	85% {
+		outline-color: var(--settings-search-jump-color, rgba(99, 102, 241, 0.8));
+		outline-width: 2px;
 	}
 	100% {
-		outline: 2px solid rgba(99, 102, 241, 0);
-		outline-offset: 2px;
+		outline-color: transparent;
+		outline-width: 2px;
+	}
+}
+
+@keyframes settings-search-arrow {
+	0% {
+		opacity: 0;
+		transform: translate(-12px, -50%);
+	}
+	15%,
+	35%,
+	55% {
+		opacity: 1;
+		transform: translate(0, -50%);
+	}
+	25%,
+	45% {
+		opacity: 1;
+		transform: translate(6px, -50%);
+	}
+	85% {
+		opacity: 1;
+		transform: translate(0, -50%);
+	}
+	100% {
+		opacity: 0;
+		transform: translate(0, -50%);
 	}
 }
 
 .settings-search-highlight {
-	animation: settings-search-flash 1.5s ease-out;
+	position: relative;
+	animation: settings-search-flash 3s ease-out;
+	outline: 2px solid transparent;
+	outline-offset: 4px;
 	border-radius: 8px;
+}
+
+.settings-search-highlight::before {
+	content: '';
+	position: absolute;
+	left: -22px;
+	top: 50%;
+	width: 0;
+	height: 0;
+	border-top: 9px solid transparent;
+	border-bottom: 9px solid transparent;
+	border-left: 12px solid var(--settings-search-jump-color, #6366f1);
+	filter: drop-shadow(0 0 6px var(--settings-search-jump-color, #6366f1));
+	transform: translate(-12px, -50%);
+	opacity: 0;
+	animation: settings-search-arrow 3s ease-out;
+	pointer-events: none;
 }
 
 @keyframes check-pop {

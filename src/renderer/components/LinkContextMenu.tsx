@@ -5,10 +5,11 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
-import { Copy, ExternalLink } from 'lucide-react';
+import { Copy, ExternalLink, Globe } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { openInMaestroBrowser, openInSystemBrowser } from '../utils/openUrl';
 
 export interface LinkContextMenuState {
 	x: number;
@@ -48,12 +49,17 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 		onDismiss();
 	}, [menu.url, onDismiss]);
 
-	const handleOpen = useCallback(() => {
-		if (/^https?:\/\/|^mailto:/.test(menu.url)) {
-			window.maestro.shell.openExternal(menu.url);
-		}
+	const isOpenable = /^https?:\/\/|^mailto:/.test(menu.url);
+
+	const handleOpenMaestro = useCallback(() => {
+		if (isOpenable) openInMaestroBrowser(menu.url);
 		onDismiss();
-	}, [menu.url, onDismiss]);
+	}, [menu.url, isOpenable, onDismiss]);
+
+	const handleOpenSystem = useCallback(() => {
+		if (isOpenable) openInSystemBrowser(menu.url);
+		onDismiss();
+	}, [menu.url, isOpenable, onDismiss]);
 
 	return (
 		<div
@@ -65,7 +71,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '200px',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
@@ -78,12 +84,20 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				Copy Link
 			</button>
 			<button
-				onClick={handleOpen}
+				onClick={handleOpenMaestro}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				<Globe className="w-3.5 h-3.5" />
+				Open in Maestro Browser
+			</button>
+			<button
+				onClick={handleOpenSystem}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
 				<ExternalLink className="w-3.5 h-3.5" />
-				Open in Browser
+				Open in System Browser
 			</button>
 		</div>
 	);

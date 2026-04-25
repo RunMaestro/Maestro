@@ -27,6 +27,8 @@ import { MaestroSilhouette } from './MaestroSilhouette';
 import { formatTokensCompact } from '../utils/formatters';
 import maestroWandIcon from '../assets/icon-wand.png';
 import { safeClipboardWriteBlob } from '../utils/clipboard';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 /**
  * Circular progress ring with 11 segments that fill as badges are unlocked
@@ -259,7 +261,7 @@ function BadgeTooltip({
 			<button
 				onClick={(e) => {
 					e.stopPropagation();
-					window.maestro.shell.openExternal(badge.exampleConductor.wikipediaUrl);
+					openUrl(badge.exampleConductor.wikipediaUrl);
 				}}
 				className="flex items-center justify-center gap-1 text-xs mt-2 hover:underline w-full"
 				style={{ color: theme.colors.accent }}
@@ -426,7 +428,7 @@ export function AchievementCard({
 				img.src = base64DataUrl;
 			});
 		} catch (error) {
-			console.error('Failed to load image:', error);
+			logger.error('Failed to load image:', undefined, error);
 			return null;
 		}
 	}, []);
@@ -942,7 +944,7 @@ export function AchievementCard({
 			}
 		} catch (error) {
 			// Canvas/image generation errors — not clipboard
-			console.error('Failed to generate share image:', error);
+			logger.error('Failed to generate share image:', undefined, error);
 		}
 	}, [generateShareImage]);
 
@@ -955,7 +957,7 @@ export function AchievementCard({
 			link.href = canvas.toDataURL('image/png');
 			link.click();
 		} catch (error) {
-			console.error('Failed to download image:', error);
+			logger.error('Failed to download image:', undefined, error);
 		}
 	}, [generateShareImage, currentLevel]);
 

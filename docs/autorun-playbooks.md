@@ -95,6 +95,8 @@ Each task executes in a completely fresh AI session with its own unique session 
 
 This isolation is critical for playbooks with `Reset on Completion` documents that loop indefinitely. Each loop creates a fresh working copy from the original document, and the AI approaches it without memory of previous iterations.
 
+> **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
+
 ## Environment Variables
 
 Maestro sets environment variables that your agent hooks can use to customize behavior:

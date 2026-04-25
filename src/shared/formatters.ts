@@ -11,8 +11,15 @@
  * - formatActiveTime: Duration display (1D, 2H 30M, <1M)
  * - formatElapsedTime: Precise elapsed time (1h 10m, 30s, 500ms)
  * - formatElapsedTimeColon: Timer-style elapsed time (mm:ss or hh:mm:ss)
+ * - formatDurationHuman: Human-readable duration without ms precision (1h 5m, 30s, 0s)
+ * - formatDurationCompact: Compact duration without seconds in minute range (5m, 2h 30m)
+ * - formatDurationVerbose: Verbose duration with full words (5 minutes 30 seconds)
+ * - formatDurationParts: Multi-part duration with days support (2d 5h 30m)
+ * - formatDurationDecimal: Decimal duration for CLI output (5.2m, 1.3h)
  * - formatCost: USD currency display ($1.23, <$0.01)
  * - estimateTokenCount: Estimate token count from text (~4 chars/token)
+ * - estimateTokensFromLogs: Estimate token count from log entry arrays
+ * - formatTimestamp: Format timestamps in various styles (time, datetime, smart, full)
  * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
  * - truncateCommand: Truncate command text for display with ellipsis
  */
@@ -39,8 +46,8 @@ export function formatSize(bytes: number): string {
  * @returns Formatted string (e.g., "1.5k", "2.3M", "1.0B")
  */
 export function formatNumber(num: number): string {
-	if (num < 1000) return num.toFixed(1);
-	if (num < 1000000) return `${(num / 1000).toFixed(1)}k`;
+	if (num < 1000) return num.toString();
+	if (num < 1000000) return `${(num / 1000).toFixed(1)}K`;
 	if (num < 1000000000) return `${(num / 1000000).toFixed(1)}M`;
 	return `${(num / 1000000000).toFixed(1)}B`;
 }
@@ -249,4 +256,183 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 	const singleLine = command.replace(/\n/g, ' ').trim();
 	if (singleLine.length <= maxLength) return singleLine;
 	return singleLine.slice(0, maxLength - 1) + '…';
+}
+
+/**
+ * Format duration in milliseconds as human-readable string without millisecond precision.
+ * Suitable for dashboard displays where sub-second precision is unnecessary.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "0s", "45s", "5m 30s", "2h 15m")
+ */
+export function formatDurationHuman(ms: number): string {
+	if (ms === 0) return '0s';
+
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	if (hours > 0) {
+		return `${hours}h ${minutes}m`;
+	}
+	if (minutes > 0) {
+		return `${minutes}m ${seconds}s`;
+	}
+	return `${seconds}s`;
+}
+
+/**
+ * Format duration in milliseconds compactly, omitting seconds in the minute range.
+ * Useful for summary displays where second-level precision is noise.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "0s", "45s", "5m", "2h 15m")
+ */
+export function formatDurationCompact(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+	if (hours > 0) {
+		return `${hours}h ${minutes}m`;
+	}
+	if (minutes > 0) {
+		return `${minutes}m`;
+	}
+	return `${totalSeconds}s`;
+}
+
+/**
+ * Format duration in milliseconds with full English words.
+ * Suitable for celebratory or detailed displays.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "5 minutes 30 seconds", "1 hour 15 minutes")
+ */
+export function formatDurationVerbose(ms: number): string {
+	const seconds = Math.floor(ms / 1000);
+	const minutes = Math.floor(seconds / 60);
+	const hours = Math.floor(minutes / 60);
+
+	if (hours > 0) {
+		const remainingMinutes = minutes % 60;
+		if (remainingMinutes > 0) {
+			return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
+		}
+		return `${hours} hour${hours > 1 ? 's' : ''}`;
+	}
+
+	if (minutes > 0) {
+		const remainingSeconds = seconds % 60;
+		if (remainingSeconds > 0) {
+			return `${minutes} minute${minutes > 1 ? 's' : ''} ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}`;
+		}
+		return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+	}
+
+	return `${seconds} second${seconds > 1 ? 's' : ''}`;
+}
+
+/**
+ * Format duration in milliseconds as multi-part string with days support.
+ * Useful for toast notifications and long-running processes.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "5s", "2m 30s", "1h 15m", "3d 2h 15m")
+ */
+export function formatDurationParts(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	const totalSeconds = Math.floor(ms / 1000);
+	if (totalSeconds < 60) return `${totalSeconds}s`;
+
+	const days = Math.floor(totalSeconds / 86400);
+	const hours = Math.floor((totalSeconds % 86400) / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	const parts: string[] = [];
+	if (days > 0) parts.push(`${days}d`);
+	if (hours > 0) parts.push(`${hours}h`);
+	if (minutes > 0) parts.push(`${minutes}m`);
+	if (seconds > 0 && days === 0) parts.push(`${seconds}s`);
+
+	return parts.join(' ') || '0s';
+}
+
+/**
+ * Format duration in milliseconds as decimal string for compact CLI output.
+ * Uses single-decimal precision with appropriate unit suffix.
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Formatted string (e.g., "500ms", "5.2s", "3.1m", "1.5h")
+ */
+export function formatDurationDecimal(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
+	return `${(ms / 3600_000).toFixed(1)}h`;
+}
+
+/**
+ * Estimate token count from an array of log entries.
+ * Uses the same ~4 characters per token heuristic as estimateTokenCount.
+ *
+ * @param logs - Array of objects with text property
+ * @returns Estimated total token count
+ */
+export function estimateTokensFromLogs(logs: { text: string }[]): number {
+	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
+	return Math.ceil(totalChars / 4);
+}
+
+/**
+ * Format a timestamp for display in various styles.
+ *
+ * Styles:
+ * - 'time': Time only (e.g., "2:30 PM")
+ * - 'datetime': Date and time (e.g., "Jan 5, 2:30 PM")
+ * - 'smart': Time if today, date+time otherwise (default)
+ * - 'full': Full locale string (e.g., "1/5/2025, 2:30:00 PM")
+ *
+ * @param timestamp - Unix timestamp in milliseconds, or ISO date string
+ * @param style - Output format style (default: 'smart')
+ * @returns Formatted timestamp string
+ */
+export function formatTimestamp(
+	timestamp: number | string,
+	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
+): string {
+	const date = new Date(timestamp);
+
+	switch (style) {
+		case 'time':
+			return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+		case 'datetime':
+			return date.toLocaleString([], {
+				month: 'short',
+				day: 'numeric',
+				hour: 'numeric',
+				minute: '2-digit',
+			});
+
+		case 'full':
+			return date.toLocaleString();
+
+		case 'smart':
+		default: {
+			const now = new Date();
+			const isToday = date.toDateString() === now.toDateString();
+
+			if (isToday) {
+				return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			}
+			return (
+				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+				' ' +
+				date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		}
+	}
 }

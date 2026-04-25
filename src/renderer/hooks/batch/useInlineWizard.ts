@@ -455,7 +455,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						});
 					}
 				} catch (error) {
-					console.warn(`[useInlineWizard] Failed to load ${doc.filename}:`, error);
+					logger.warn(`[useInlineWizard] Failed to load ${doc.filename}:`, undefined, error);
 					docsWithContent.push({
 						...doc,
 						content: '(Failed to load content)',
@@ -698,7 +698,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			} catch (error) {
 				// Handle any errors during initialization
 				const errorMessage = error instanceof Error ? error.message : 'Failed to initialize wizard';
-				console.error('[useInlineWizard] startWizard error:', error);
+				logger.error('[useInlineWizard] startWizard error:', undefined, error);
 
 				setTabState(effectiveTabId, (prev) => ({
 					...prev,
@@ -733,7 +733,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					sessionId: session.sessionId,
 				});
 			} catch (error) {
-				console.warn('[useInlineWizard] Failed to end conversation session:', error);
+				logger.warn('[useInlineWizard] Failed to end conversation session:', undefined, error);
 			}
 			conversationSessionsMap.current.delete(tabId);
 		}
@@ -768,7 +768,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			// Guard against concurrent calls - prevents race conditions
 			const currentState = tabStatesRef.current.get(tabId);
 			if (currentState?.isWaiting) {
-				console.warn('[useInlineWizard] Already waiting for response, ignoring duplicate send');
+				logger.warn('[useInlineWizard] Already waiting for response, ignoring duplicate send');
 				return;
 			}
 
@@ -807,7 +807,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					hasCapabilityCached(currentState.agentType, 'supportsWizard') &&
 					effectiveAutoRunFolderPath
 				) {
-					console.log('[useInlineWizard] Auto-creating session for direct message in ask mode');
+					logger.info('[useInlineWizard] Auto-creating session for direct message in ask mode');
 					// Use historyFilePath from state (fetched during startWizard)
 					session = startInlineWizardConversation({
 						mode: 'new',
@@ -828,14 +828,18 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					conversationSessionsMap.current.set(tabId, session);
 					// Update mode to 'new' since we're proceeding with a new plan
 					setTabState(tabId, (prev) => ({ ...prev, mode: 'new' }));
-					console.log('[useInlineWizard] Session created:', session.sessionId);
+					logger.info('[useInlineWizard] Session created:', undefined, session.sessionId);
 				} else {
-					console.error('[useInlineWizard] No active conversation session, currentState:', {
-						mode: currentState?.mode,
-						agentType: currentState?.agentType,
-						projectPath: currentState?.projectPath,
-						autoRunFolderPath: currentState?.autoRunFolderPath,
-					});
+					logger.error(
+						'[useInlineWizard] No active conversation session, currentState:',
+						undefined,
+						{
+							mode: currentState?.mode,
+							agentType: currentState?.agentType,
+							projectPath: currentState?.projectPath,
+							autoRunFolderPath: currentState?.autoRunFolderPath,
+						}
+					);
 					setTabState(tabId, (prev) => ({
 						...prev,
 						isWaiting: false,
@@ -888,7 +892,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				} else {
 					// Handle error response
 					const errorMessage = result.error || 'Failed to get response from AI';
-					console.error('[useInlineWizard] sendWizardMessage error:', errorMessage);
+					logger.error('[useInlineWizard] sendWizardMessage error:', undefined, errorMessage);
 
 					setTabState(tabId, (prev) => ({
 						...prev,
@@ -900,7 +904,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-				console.error('[useInlineWizard] sendMessage error:', error);
+				logger.error('[useInlineWizard] sendMessage error:', undefined, error);
 
 				setTabState(tabId, (prev) => ({
 					...prev,
@@ -1019,8 +1023,9 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					});
 
 					conversationSessionsMap.current.set(tabId, session);
-					console.log(
+					logger.info(
 						'[useInlineWizard] Conversation session started after mode selection:',
+						undefined,
 						session.sessionId
 					);
 				}
@@ -1135,7 +1140,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			// Only retry if we have a last message and there's an error
 			if (!lastContent || !currentState?.error) {
-				console.warn('[useInlineWizard] Cannot retry: no last message or no error');
+				logger.warn('[useInlineWizard] Cannot retry: no last message or no error');
 				return;
 			}
 
@@ -1240,7 +1245,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			// Validate we have the required state
 			if (!currentState?.agentType || !effectiveAutoRunFolderPath) {
 				const errorMsg = 'Cannot generate documents: missing agent type or Auto Run folder path';
-				console.error('[useInlineWizard]', errorMsg);
+				logger.error('[useInlineWizard]', undefined, errorMsg);
 				setTabState(tabId, (prev) => ({ ...prev, error: errorMsg }));
 				callbacks?.onError?.(errorMsg);
 				return;
@@ -1277,11 +1282,11 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					conductorProfile: currentState.conductorProfile,
 					callbacks: {
 						onStart: () => {
-							console.log('[useInlineWizard] Document generation started');
+							logger.info('[useInlineWizard] Document generation started');
 							callbacks?.onStart?.();
 						},
 						onProgress: (message) => {
-							console.log('[useInlineWizard] Progress:', message);
+							logger.info('[useInlineWizard] Progress:', undefined, message);
 							// Try to extract progress info from message (e.g., "Saving 1 of 3 document(s)...")
 							const progressMatch = message.match(/(\d+)\s+(?:of|\/)\s+(\d+)/);
 							if (progressMatch) {
@@ -1312,7 +1317,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onChunk?.(chunk);
 						},
 						onDocumentComplete: (doc) => {
-							console.log('[useInlineWizard] Document saved:', doc.filename);
+							logger.info('[useInlineWizard] Document saved:', undefined, doc.filename);
 							// Add document to the list as it completes
 							// Update progress and select the newly created document
 							setTabState(tabId, (prev) => {
@@ -1333,7 +1338,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onDocumentComplete?.(doc);
 						},
 						onComplete: (allDocs) => {
-							console.log('[useInlineWizard] All documents complete:', allDocs.length);
+							logger.info('[useInlineWizard] All documents complete:', undefined, allDocs.length);
 							// Set final state - mark generation as complete so UI shows Continue button
 							// Don't wait for the service function to return (it may be doing cleanup)
 							setTabState(tabId, (prev) => ({
@@ -1348,7 +1353,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 							callbacks?.onComplete?.(allDocs);
 						},
 						onError: (error) => {
-							console.error('[useInlineWizard] Generation error:', error);
+							logger.error('[useInlineWizard] Generation error:', undefined, error);
 							callbacks?.onError?.(error);
 						},
 					},
@@ -1394,7 +1399,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 			} catch (error) {
 				const errorMessage =
 					error instanceof Error ? error.message : 'Unknown error during document generation';
-				console.error('[useInlineWizard] generateDocuments error:', error);
+				logger.error('[useInlineWizard] generateDocuments error:', undefined, error);
 
 				// Clear streaming state on error
 				setTabState(tabId, (prev) => ({

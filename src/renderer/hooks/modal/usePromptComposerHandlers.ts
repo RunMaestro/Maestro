@@ -68,8 +68,8 @@ export function usePromptComposerHandlers(
 		useGroupChatStore.getState();
 
 	// --- Settings ---
-	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
-	const { setEnterToSendAI } = useSettingsStore.getState();
+	const enterToSendAIExpanded = useSettingsStore((s) => s.enterToSendAIExpanded);
+	const { setEnterToSendAIExpanded } = useSettingsStore.getState();
 
 	const handlePromptComposerSubmit = useCallback(
 		(value: string) => {
@@ -82,7 +82,7 @@ export function usePromptComposerHandlers(
 				setInputValue(value);
 			}
 		},
-		[activeGroupChatId]
+		[activeGroupChatId, setInputValue]
 	);
 
 	const handlePromptComposerSend = useCallback(
@@ -187,8 +187,8 @@ export function usePromptComposerHandlers(
 	}, [activeSession]);
 
 	const handlePromptToggleEnterToSend = useCallback(
-		() => setEnterToSendAI(!enterToSendAI),
-		[enterToSendAI]
+		() => setEnterToSendAIExpanded(!enterToSendAIExpanded),
+		[enterToSendAIExpanded]
 	);
 
 	return {

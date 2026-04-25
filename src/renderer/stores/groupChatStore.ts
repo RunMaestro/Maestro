@@ -9,7 +9,7 @@
  * Refs (groupChatInputRef, groupChatMessagesRef) stay outside the store
  * since they are React-specific and don't trigger re-renders.
  *
- * Can be used outside React via getGroupChatState() / getGroupChatActions().
+ * Can be used outside React via useGroupChatStore.getState().
  */
 
 import { create } from 'zustand';
@@ -221,42 +221,3 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			groupChatError: null,
 		}),
 }));
-
-// ============================================================================
-// Non-React access
-// ============================================================================
-
-/**
- * Get current group chat state snapshot.
- * Use outside React (services, orchestrators, IPC handlers).
- */
-export function getGroupChatState() {
-	return useGroupChatStore.getState();
-}
-
-/**
- * Get stable group chat action references outside React.
- */
-export function getGroupChatActions() {
-	const state = useGroupChatStore.getState();
-	return {
-		setGroupChats: state.setGroupChats,
-		setActiveGroupChatId: state.setActiveGroupChatId,
-		setGroupChatMessages: state.setGroupChatMessages,
-		setGroupChatState: state.setGroupChatState,
-		setParticipantStates: state.setParticipantStates,
-		setModeratorUsage: state.setModeratorUsage,
-		setGroupChatStates: state.setGroupChatStates,
-		setAllGroupChatParticipantStates: state.setAllGroupChatParticipantStates,
-		setGroupChatExecutionQueue: state.setGroupChatExecutionQueue,
-		setGroupChatReadOnlyMode: state.setGroupChatReadOnlyMode,
-		setGroupChatRightTab: state.setGroupChatRightTab,
-		setGroupChatParticipantColors: state.setGroupChatParticipantColors,
-		setGroupChatStagedImages: state.setGroupChatStagedImages,
-		setGroupChatError: state.setGroupChatError,
-		appendParticipantLiveOutput: state.appendParticipantLiveOutput,
-		clearParticipantLiveOutput: state.clearParticipantLiveOutput,
-		clearGroupChatError: state.clearGroupChatError,
-		resetGroupChatState: state.resetGroupChatState,
-	};
-}

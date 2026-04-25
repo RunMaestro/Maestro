@@ -17,6 +17,7 @@ import { useSessionStore, selectActiveSession } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -252,7 +253,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 						const fpMainKey = fpKeys[fpKeys.length - 1];
 						const metaPressed = e.metaKey || e.ctrlKey;
 
-						console.log('[ForcedParallel] Shortcut check:', {
+						logger.info('[ForcedParallel] Shortcut check:', undefined, {
 							metaPressed,
 							fpNeedsMeta,
 							shiftKey: e.shiftKey,
@@ -275,14 +276,14 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 							e.key.toLowerCase() === fpMainKey
 						) {
 							e.preventDefault();
-							console.log('[ForcedParallel] Shortcut matched, calling processInput');
+							logger.info('[ForcedParallel] Shortcut matched, calling processInput');
 							processInput(undefined, { forceParallel: true });
 							return;
 						}
 					}
 				}
 
-				if (enterToSendAI && !e.shiftKey && !e.metaKey) {
+				if (enterToSendAI && !e.shiftKey) {
 					e.preventDefault();
 					processInput();
 				} else if (!enterToSendAI && (e.metaKey || e.ctrlKey)) {

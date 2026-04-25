@@ -15,6 +15,7 @@ import {
 	Trash2,
 	Bot,
 } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Session, Group, Theme } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
@@ -36,6 +37,9 @@ import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
+import { cueService } from '../../services/cue';
+import { captureException } from '../../utils/sentry';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -103,6 +107,7 @@ interface SessionListProps {
 	onRenameGroupChat?: (id: string) => void;
 	onDeleteGroupChat?: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
+	onDeleteAllArchivedGroupChats?: () => void;
 }
 
 function SessionListInner(props: SessionListProps) {
@@ -131,24 +136,20 @@ function SessionListInner(props: SessionListProps) {
 	const contextWarningRedThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
-	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 
-	// Cue session status map: sessionId → { count, active } (only active when Encore Feature enabled)
+	// Cue session status map: sessionId → { count, active }
+	// Always fetched — the indicator shows whenever a .maestro/cue.yaml has subscriptions,
+	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
 		Map<string, { count: number; active: boolean }>
 	>(new Map());
 	useEffect(() => {
-		if (!maestroCueEnabled) {
-			setCueSessionMap(new Map());
-			return;
-		}
-
 		let mounted = true;
 
 		const fetchCueStatus = async () => {
 			try {
-				const statuses = await window.maestro.cue.getStatus();
+				const statuses = await cueService.getStatus();
 				if (!mounted) return;
 				const map = new Map<string, { count: number; active: boolean }>();
 				for (const s of statuses) {
@@ -160,13 +161,20 @@ function SessionListInner(props: SessionListProps) {
 					}
 				}
 				setCueSessionMap(map);
-			} catch {
-				// Cue engine may not be initialized yet
+			} catch (err: unknown) {
+				// "Cue engine not initialized" is the expected pre-init case;
+				// treat anything else as a real failure and surface it. Note
+				// that cueService.getStatus already swallows IPC failures and
+				// returns the default ([]), so this catch is a defense-in-depth
+				// backstop for engine-not-ready and any future contract change.
+				const message = err instanceof Error ? err.message : String(err);
+				if (message.includes('Cue engine not initialized')) return;
+				captureException(err, { extra: { context: 'SessionList.fetchCueStatus' } });
 			}
 		};
 
 		fetchCueStatus();
-		const unsubscribe = window.maestro.cue.onActivityUpdate(() => {
+		const unsubscribe = cueService.onActivityUpdate(() => {
 			fetchCueStatus();
 		});
 
@@ -174,7 +182,8 @@ function SessionListInner(props: SessionListProps) {
 			mounted = false;
 			unsubscribe();
 		};
-	}, [maestroCueEnabled]);
+		// Re-fetch when sessions change so newly added agents show their Cue indicator
+	}, [sessions.length]);
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
@@ -254,6 +263,7 @@ function SessionListInner(props: SessionListProps) {
 		onRenameGroupChat,
 		onDeleteGroupChat,
 		onArchiveGroupChat,
+		onDeleteAllArchivedGroupChats,
 	} = props;
 
 	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
@@ -332,8 +342,14 @@ function SessionListInner(props: SessionListProps) {
 
 	const handleMoveToGroup = useCallback(
 		(sessionId: string, groupId: string) => {
+			const normalizedGroupId = groupId || undefined;
 			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, groupId: groupId || undefined } : s))
+				prev.map((s) => {
+					if (s.id === sessionId) return { ...s, groupId: normalizedGroupId };
+					// Also update worktree children to keep groupId in sync
+					if (s.parentSessionId === sessionId) return { ...s, groupId: normalizedGroupId };
+					return s;
+				})
 			);
 		},
 		[setSessions]
@@ -397,26 +413,21 @@ function SessionListInner(props: SessionListProps) {
 	}, [liveOverlayOpen, menuOpen]);
 
 	// Listen for tour UI actions to control hamburger menu state
-	useEffect(() => {
-		const handleTourAction = (event: Event) => {
-			const customEvent = event as CustomEvent<{ type: string; value?: string }>;
-			const { type } = customEvent.detail;
+	useEventListener('tour:action', (event: Event) => {
+		const customEvent = event as CustomEvent<{ type: string; value?: string }>;
+		const { type } = customEvent.detail;
 
-			switch (type) {
-				case 'openHamburgerMenu':
-					setMenuOpen(true);
-					break;
-				case 'closeHamburgerMenu':
-					setMenuOpen(false);
-					break;
-				default:
-					break;
-			}
-		};
-
-		window.addEventListener('tour:action', handleTourAction);
-		return () => window.removeEventListener('tour:action', handleTourAction);
-	}, []);
+		switch (type) {
+			case 'openHamburgerMenu':
+				setMenuOpen(true);
+				break;
+			case 'closeHamburgerMenu':
+				setMenuOpen(false);
+				break;
+			default:
+				break;
+		}
+	});
 
 	// Get git file change counts per session from focused context
 	// Using useGitFileStatus instead of full useGitStatus reduces re-renders
@@ -815,19 +826,19 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 						<div className="flex items-center">
 							{/* Hamburger Menu */}
-							<div className="relative z-10" ref={menuRef} data-tour="hamburger-menu">
-								<button
+							<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
+								<GhostIconButton
 									onClick={() => setMenuOpen(!menuOpen)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
-									style={{ color: theme.colors.textDim }}
+									padding="p-2"
 									title="Menu"
+									color={theme.colors.textDim}
 								>
 									<Menu className="w-4 h-4" />
-								</button>
+								</GhostIconButton>
 								{/* Menu Overlay */}
 								{menuOpen && (
 									<div
-										className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+										className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 										data-tour="hamburger-menu-contents"
 										style={{
 											backgroundColor: theme.colors.bgSidebar,
@@ -848,21 +859,17 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					<div className="w-full flex flex-col items-center gap-2 relative" ref={menuRef}>
-						<button
-							onClick={() => setMenuOpen(!menuOpen)}
-							className="p-2 rounded hover:bg-white/10 transition-colors"
-							title="Menu"
-						>
+					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
+						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
 								style={{ color: theme.colors.accent }}
 							/>
-						</button>
+						</GhostIconButton>
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div
-								className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
+								className="absolute top-full left-0 -mt-px w-72 rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
 								style={{
 									backgroundColor: theme.colors.bgSidebar,
 									border: `1px solid ${theme.colors.border}`,
@@ -1268,6 +1275,7 @@ function SessionListInner(props: SessionListProps) {
 								onRenameGroupChat={onRenameGroupChat}
 								onDeleteGroupChat={onDeleteGroupChat}
 								onArchiveGroupChat={onArchiveGroupChat}
+								onDeleteAllArchivedGroupChats={onDeleteAllArchivedGroupChats}
 								isExpanded={groupChatsExpanded}
 								onExpandedChange={setGroupChatsExpanded}
 								groupChatState={groupChatState}
@@ -1301,6 +1309,7 @@ function SessionListInner(props: SessionListProps) {
 				shortcuts={shortcuts}
 				showUnreadAgentsOnly={showUnreadAgentsOnly}
 				hasUnreadAgents={hasUnreadAgents}
+				sidebarWidth={leftSidebarWidthState}
 				addNewSession={addNewSession}
 				openFeedback={props.openFeedback}
 				setLeftSidebarOpen={setLeftSidebarOpen}
@@ -1357,11 +1366,7 @@ function SessionListInner(props: SessionListProps) {
 							? () => onCreateGroupAndMove(contextMenuSession.id)
 							: createNewGroup
 					}
-					onConfigureCue={
-						onConfigureCue && maestroCueEnabled
-							? () => onConfigureCue(contextMenuSession)
-							: undefined
-					}
+					onConfigureCue={onConfigureCue ? () => onConfigureCue(contextMenuSession) : undefined}
 				/>
 			)}
 		</div>

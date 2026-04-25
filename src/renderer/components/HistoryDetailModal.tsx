@@ -17,18 +17,20 @@ import {
 	AlertTriangle,
 	Server,
 } from 'lucide-react';
-import type { Theme, HistoryEntry } from '../types';
+import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
+import { formatTimestamp } from '../../shared/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
-import { calculateContextDisplay } from '../utils/contextUsage';
+import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -47,6 +49,12 @@ interface HistoryDetailModalProps {
 	cwd?: string;
 	projectRoot?: string;
 	onFileClick?: (path: string) => void;
+	/**
+	 * Agent identifier (session.toolType) used to display input tokens correctly.
+	 * Claude reports `inputTokens` as the uncached delta only, so we add the cache
+	 * partitions to show the real input size — see calculateDisplayInputTokens.
+	 */
+	agentId?: ToolType;
 }
 
 export function HistoryDetailModal({
@@ -64,9 +72,9 @@ export function HistoryDetailModal({
 	cwd,
 	projectRoot,
 	onFileClick,
+	agentId,
 }: HistoryDetailModalProps) {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const [copiedSessionId, setCopiedSessionId] = useState(false);
@@ -99,35 +107,13 @@ export function HistoryDetailModal({
 		}
 	}, [hasNext, filteredEntries, currentIndex, onNavigate]);
 
-	// Register layer on mount
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.CONFIRM, // Use same priority as confirm modal
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			onEscape: () => {
-				onCloseRef.current();
-			},
-		});
-		layerIdRef.current = id;
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Keep escape handler up to date
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				onCloseRef.current();
-			});
+	useModalLayer(MODAL_PRIORITIES.CONFIRM, undefined, () => {
+		if (showDeleteConfirm) {
+			setShowDeleteConfirm(false);
+			return;
 		}
-	}, [onClose, updateLayerHandler]);
+		onCloseRef.current();
+	});
 
 	// Focus delete button when confirmation modal appears
 	useEffect(() => {
@@ -155,16 +141,7 @@ export function HistoryDetailModal({
 		return () => window.removeEventListener('keydown', handleKeyDown);
 	}, [goToPrev, goToNext, showDeleteConfirm]);
 
-	// Format timestamp
-	const formatTime = (timestamp: number) => {
-		const date = new Date(timestamp);
-		return date.toLocaleString([], {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	};
+	const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'datetime');
 
 	// Get pill color based on type
 	const getPillColor = () => {
@@ -515,7 +492,9 @@ export function HistoryDetailModal({
 									<div className="flex items-center gap-3 text-xs font-mono">
 										<span style={{ color: theme.colors.accent }}>
 											<span style={{ color: theme.colors.textDim }}>In:</span>{' '}
-											{(entry.usageStats.inputTokens ?? 0).toLocaleString('en-US')}
+											{calculateDisplayInputTokens(entry.usageStats, agentId).toLocaleString(
+												'en-US'
+											)}
 										</span>
 										<span style={{ color: theme.colors.success }}>
 											<span style={{ color: theme.colors.textDim }}>Out:</span>{' '}
@@ -562,6 +541,7 @@ export function HistoryDetailModal({
 						cwd={cwd}
 						projectRoot={projectRoot}
 						onFileClick={onFileClick}
+						enableBionifyReadingMode={bionifyReadingMode}
 					/>
 				</div>
 

@@ -11,6 +11,8 @@ import type { AgentId } from './agentIds';
 /**
  * Human-readable display names for every agent.
  * Keyed by AgentId so TypeScript enforces completeness when a new ID is added.
+ *
+ * @internal Use getAgentDisplayName() instead of importing directly.
  */
 export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	terminal: 'Terminal',
@@ -20,7 +22,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
 	'factory-droid': 'Factory Droid',
-	aider: 'Aider',
+	'copilot-cli': 'Copilot-CLI',
 };
 
 /**
@@ -63,11 +65,13 @@ export function getReadOnlyModeTooltip(agentId: AgentId | string): string {
 /**
  * Agents currently in beta/experimental status.
  * Used to render "(Beta)" badges throughout the UI.
+ *
+ * @internal Use isBetaAgent() instead of importing directly.
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
-	'codex',
 	'opencode',
 	'factory-droid',
+	'copilot-cli',
 ]);
 
 /**

@@ -33,3 +33,11 @@ If the moderator asks you to execute, run, or process an Auto Run document or Pl
 - only execute the document when Maestro starts the native Auto Run flow
 
 Please respond to this request.{{READ_ONLY_INSTRUCTION}}
+
+---
+
+## Do Not Prompt The User
+
+Do NOT call any tool that waits for user input (e.g. `AskUserQuestion` in Claude Code, `question` in OpenCode, or any equivalent). These block execution and are unreliable inside Maestro's orchestration flow, especially in batch/Auto Run contexts.
+
+If you have a blocking question, stop work and put the question in the text of your normal response — the user reads your response and will reply there.

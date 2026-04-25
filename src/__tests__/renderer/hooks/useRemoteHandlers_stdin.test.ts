@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, CustomAICommand } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -72,13 +73,14 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 // Helpers
 // ============================================================================
 
+// Thin wrapper: populates an AI tab and terminal draft so remote command
+// dispatching code has state to operate on.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -88,19 +90,12 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				logs: [],
 				stagedImages: [],
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test',
-		shellLogs: [],
 		shellCwd: '/test',
 		terminalDraftInput: '',
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemoteHandlersDeps {
@@ -162,6 +157,15 @@ beforeEach(() => {
 				args: [],
 				capabilities: { supportsStreamJsonInput: true },
 			}),
+		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
+			}),
+		},
+		history: {
+			getFilePath: vi.fn().mockResolvedValue(null),
 		},
 	};
 

@@ -6,11 +6,7 @@
  */
 
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR } from '../../shared/maestro-paths';
-
-/**
- * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
- */
-export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
+import { logger } from './logger';
 
 /**
  * Represents an existing Auto Run document.
@@ -84,7 +80,7 @@ export async function hasExistingAutoRunDocs(projectPath: string): Promise<boole
 
 		return result.files.length > 0;
 	} catch (error) {
-		console.debug('[existingDocsDetector] hasExistingAutoRunDocs error:', error);
+		logger.debug('[existingDocsDetector] hasExistingAutoRunDocs error:', undefined, error);
 		return false;
 	}
 }
@@ -111,7 +107,7 @@ export async function getExistingAutoRunDocs(projectPath: string): Promise<Exist
 			path: `${folderPath}/${name}.md`,
 		}));
 	} catch (error) {
-		console.debug('[existingDocsDetector] getExistingAutoRunDocs error:', error);
+		logger.debug('[existingDocsDetector] getExistingAutoRunDocs error:', undefined, error);
 		return [];
 	}
 }
@@ -133,7 +129,7 @@ export async function getExistingAutoRunDocsCount(projectPath: string): Promise<
 
 		return result.files.length;
 	} catch (error) {
-		console.debug('[existingDocsDetector] getExistingAutoRunDocsCount error:', error);
+		logger.debug('[existingDocsDetector] getExistingAutoRunDocsCount error:', undefined, error);
 		return 0;
 	}
 }

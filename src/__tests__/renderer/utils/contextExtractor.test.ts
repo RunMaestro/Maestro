@@ -11,6 +11,13 @@ import {
 } from '../../../renderer/utils/contextExtractor';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 import type { ContextSource } from '../../../renderer/types/contextMerge';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+
+// Thin wrapper: context extraction tests assert against the default id
+// 'session-123', so preserve that default via the shared factory.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({ id: 'session-123', ...overrides });
 
 // Mock window.maestro for extractStoredSessionContext tests
 const mockAgentSessionsRead = vi.fn();
@@ -22,55 +29,14 @@ vi.stubGlobal('window', {
 	},
 });
 
-// Helper to create a mock session
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-123',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
-
 // Helper to create a mock tab
 function createMockTab(overrides: Partial<AITab> = {}): AITab {
-	return {
+	return createMockAITab({
 		id: 'tab-123',
 		agentSessionId: 'agent-session-456',
 		name: 'Test Tab',
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
 		...overrides,
-	};
+	});
 }
 
 // Helper to create a mock log entry

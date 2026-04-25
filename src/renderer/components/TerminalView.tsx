@@ -14,6 +14,7 @@ import { captureException } from '../utils/sentry';
 import { notifyToast } from '../stores/notificationStore';
 import type { Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Types
@@ -25,6 +26,8 @@ export interface TerminalViewHandle {
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
+	/** Read the full scrollback + visible buffer for the specified terminal tab. */
+	getTerminalBuffer(tabId: string): string;
 }
 
 interface TerminalViewProps {
@@ -41,6 +44,11 @@ interface TerminalViewProps {
 	onSearchClose?: () => void;
 	/** Whether the terminal panel is currently visible (inputMode === 'terminal'). Used to trigger repaint when returning from AI mode. */
 	isVisible?: boolean;
+	/** Copy the highlighted terminal selection to the clipboard. */
+	onCopySelection?: (text: string) => void;
+	/** Send the highlighted terminal selection to another agent. Tab ID is supplied so the
+	 *  handler can derive a display name (e.g. "Terminal 2") for the target agent modal. */
+	onSendSelectionToAgent?: (tabId: string, text: string) => void;
 }
 
 // ============================================================================
@@ -62,6 +70,8 @@ export const TerminalView = memo(
 			searchOpen,
 			onSearchClose,
 			isVisible,
+			onCopySelection,
+			onSendSelectionToAgent,
 		},
 		ref
 	) {
@@ -76,6 +86,7 @@ export const TerminalView = memo(
 		// Dedup spawn-failure toasts: batch rapid failures into a single notification
 		const spawnFailureCountRef = useRef(0);
 		const spawnFailureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const spawnFailureLastMessageRef = useRef<string | null>(null);
 		// Stable refs for callback props — prevents spawnPtyForTab from getting a new
 		// identity on every render, which would re-trigger the spawn useEffect in a loop.
 		const onTabPidChangeRef = useRef(onTabPidChange);
@@ -87,20 +98,29 @@ export const TerminalView = memo(
 		// triggers many tabs at once) into a single toast with a count.
 		const notifySpawnFailure = useCallback((message: string) => {
 			spawnFailureCountRef.current++;
+			// Always store the most recent message, but never let a non-SSH message
+			// overwrite an SSH-specific one (SSH messages take precedence).
+			if (
+				!spawnFailureLastMessageRef.current ||
+				message.startsWith('SSH ') ||
+				!spawnFailureLastMessageRef.current.startsWith('SSH ')
+			) {
+				spawnFailureLastMessageRef.current = message;
+			}
 			if (spawnFailureTimerRef.current) {
 				clearTimeout(spawnFailureTimerRef.current);
 			}
 			spawnFailureTimerRef.current = setTimeout(() => {
 				const count = spawnFailureCountRef.current;
+				const lastMessage = spawnFailureLastMessageRef.current ?? message;
 				spawnFailureCountRef.current = 0;
+				spawnFailureLastMessageRef.current = null;
 				spawnFailureTimerRef.current = null;
 				notifyToast({
 					type: 'error',
 					title: count > 1 ? `Failed to start ${count} terminals` : 'Failed to start terminal',
 					message:
-						count > 1
-							? `${count} shell processes could not be started. Check system PTY availability.`
-							: message,
+						count > 1 ? `${count} terminals could not be started. ${lastMessage}` : lastMessage,
 				});
 			}, 200);
 		}, []);
@@ -112,9 +132,16 @@ export const TerminalView = memo(
 			ref,
 			(): TerminalViewHandle => ({
 				clearActiveTerminal() {
-					if (activeTab) {
-						terminalRefs.current.get(activeTab.id)?.clear();
-					}
+					if (!activeTab) return;
+					// xterm.clear() removes scrollback but keeps the current prompt line
+					// exactly where it is — which looks like nothing happened when the user
+					// has just the prompt visible. Also send Ctrl+L to the PTY so the shell
+					// redraws the current line at the top of a fresh screen.
+					terminalRefs.current.get(activeTab.id)?.clear();
+					const terminalSessionId = getTerminalSessionId(session.id, activeTab.id);
+					window.maestro.process.write(terminalSessionId, '\x0c').catch(() => {
+						// Write failures are surfaced by the process exit handler
+					});
 				},
 				focusActiveTerminal() {
 					if (activeTab) {
@@ -133,6 +160,9 @@ export const TerminalView = memo(
 					if (!activeTab) return false;
 					return terminalRefs.current.get(activeTab.id)?.searchPrevious() ?? false;
 				},
+				getTerminalBuffer(tabId: string): string {
+					return terminalRefs.current.get(tabId)?.getBuffer() ?? '';
+				},
 			}),
 			[activeTab]
 		);
@@ -150,19 +180,30 @@ export const TerminalView = memo(
 				// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
 				// to sshRemoteId which is set after an AI agent connects. Without this fallback,
 				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
+				//
+				// workingDirOverride must be a REMOTE path. Fallback chain:
+				//   1. sessionSshRemoteConfig.workingDirOverride — user-configured remote project root
+				//   2. session.remoteCwd — tracked remote cwd (set after agent reports cd)
+				//   3. session.cwd — the working directory from session creation; for SSH sessions
+				//      this IS a remote path (the user types a remote path when SSH is enabled)
 				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
 					? {
 							...session.sessionSshRemoteConfig,
 							workingDirOverride:
-								session.sessionSshRemoteConfig.workingDirOverride || session.cwd || undefined,
+								session.sessionSshRemoteConfig.workingDirOverride ||
+								session.remoteCwd ||
+								session.cwd ||
+								undefined,
 						}
 					: session.sshRemoteId
 						? {
 								enabled: true,
 								remoteId: session.sshRemoteId,
-								// Use session.cwd as the remote working directory so the terminal starts
-								// in the project directory rather than the remote home directory.
-								workingDirOverride: session.cwd || undefined,
+								workingDirOverride:
+									session.remoteCwd ||
+									session.sessionSshRemoteConfig?.workingDirOverride ||
+									session.cwd ||
+									undefined,
 							}
 						: undefined;
 
@@ -184,7 +225,9 @@ export const TerminalView = memo(
 							// Spawn failed — close the tab and notify via batched toast
 							setTimeout(() => closeTerminalTab(tabId), 0);
 							notifySpawnFailure(
-								'The shell process could not be started. Check system PTY availability.'
+								effectiveSshConfig?.enabled
+									? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
+									: 'The shell process could not be started. Check system PTY availability.'
 							);
 						}
 					})
@@ -209,6 +252,7 @@ export const TerminalView = memo(
 			[
 				session.id,
 				session.cwd,
+				session.remoteCwd,
 				session.sessionSshRemoteConfig,
 				session.sshRemoteId,
 				defaultShell,
@@ -290,7 +334,7 @@ export const TerminalView = memo(
 					const tabId = tab.id;
 					if (age < 2000) {
 						// Startup failure — close tab and show error toast
-						console.warn(
+						logger.warn(
 							`[TerminalView] Shell exited ${age}ms after creation (exit code: ${tab.exitCode ?? '?'}). Closing tab.`
 						);
 						setTimeout(() => closeTerminalTab(tabId), 0);
@@ -357,6 +401,12 @@ export const TerminalView = memo(
 							style={{ pointerEvents: isActive ? 'auto' : 'none' }}
 						>
 							<XTerminal
+								onCopySelection={onCopySelection}
+								onSendSelectionToAgent={
+									onSendSelectionToAgent
+										? (text: string) => onSendSelectionToAgent(tab.id, text)
+										: undefined
+								}
 								ref={(handle) => {
 									if (handle) {
 										terminalRefs.current.set(tab.id, handle);

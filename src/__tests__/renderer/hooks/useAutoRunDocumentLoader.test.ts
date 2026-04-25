@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Now import the hook and stores
@@ -29,13 +30,11 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 // Helpers
 // ============================================================================
 
+// Thin wrapper: pre-populates an AI tab so the auto run doc loader has a
+// tab to hydrate.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -44,20 +43,11 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				logs: [],
 				state: 'idle',
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		terminalTabs: [],
-		executionQueue: [],
-		manualHistory: [],
-		historyIndex: -1,
-		cwd: '/test',
-		thinkingStartTime: null,
-		isStarred: false,
-		isUnread: false,
-		hasUnseenOutput: false,
 		createdAt: Date.now(),
 		...overrides,
-	} as unknown as Session;
+	});
 }
 
 // ============================================================================

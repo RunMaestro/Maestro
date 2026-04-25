@@ -12,8 +12,10 @@ import { render, screen, act } from '@testing-library/react';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
-import type { Theme, Session, Shortcut, Group, GroupChat } from '../../../renderer/types';
+import type { Session, Shortcut, Group, GroupChat } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Track props passed to sub-components
 let capturedInfoProps: Record<string, unknown> = {};
 let capturedConfirmProps: Record<string, unknown> = {};
@@ -142,38 +144,8 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 // Import after mocks are set up
 const { AppModals } = await import('../../../renderer/components/AppModals');
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
-
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
-		name: 'Test Agent',
-		state: 'idle',
-		toolType: 'claude-code',
-		cwd: '/tmp',
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
+	return baseCreateMockSession({ name: 'Test Agent', cwd: '/tmp', ...overrides });
 }
 
 function createMockGroup(overrides: Partial<Group> = {}): Group {

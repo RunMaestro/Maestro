@@ -8,7 +8,7 @@ import { Clock, Zap, Terminal, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueRunResult } from '../../hooks/useCue';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
-import { formatDuration, formatPayloadEntries } from './cueModalUtils';
+import { cleanStderrForDisplay, formatDuration, formatPayloadEntries } from './cueModalUtils';
 
 interface ActivityLogDetailProps {
 	entry: CueRunResult;
@@ -18,7 +18,11 @@ interface ActivityLogDetailProps {
 export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 	const payloadEntries = formatPayloadEntries(entry.event.payload);
 	const hasStdout = entry.stdout.trim().length > 0;
-	const hasStderr = entry.stderr.trim().length > 0;
+	// Apply the benign-stderr filter at display time too so older log entries
+	// (captured before the backend filter existed) don't paint the red Errors
+	// panel with agent-CLI diagnostics that aren't actually errors.
+	const displayStderr = cleanStderrForDisplay(entry.stderr);
+	const hasStderr = displayStderr.trim().length > 0;
 
 	return (
 		<div
@@ -128,7 +132,7 @@ export function ActivityLogDetail({ entry, theme }: ActivityLogDetailProps) {
 						className="rounded px-2 py-1.5 text-[11px] max-h-32 overflow-y-auto whitespace-pre-wrap break-all"
 						style={{ backgroundColor: `${theme.colors.error}10`, color: theme.colors.error }}
 					>
-						{entry.stderr.slice(-3000)}
+						{displayStderr.slice(-3000)}
 					</pre>
 				</div>
 			)}

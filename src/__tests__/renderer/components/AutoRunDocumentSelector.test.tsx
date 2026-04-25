@@ -6,8 +6,8 @@ import {
 	AutoRunDocumentSelector,
 	DocTreeNode,
 } from '../../../renderer/components/AutoRun/AutoRunDocumentSelector';
-import type { Theme } from '../../../renderer/types';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -49,25 +49,6 @@ vi.mock('../../../renderer/utils/theme', () => ({
 }));
 
 // Test theme
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		border: '#374151',
-		accent: '#6366f1',
-		accentForeground: '#ffffff',
-		textMain: '#e5e7eb',
-		textDim: '#9ca3af',
-		success: '#22c55e',
-		warning: '#eab308',
-		error: '#ef4444',
-		purple: '#8b5cf6',
-	},
-};
 
 const defaultProps = {
 	theme: mockTheme,
@@ -143,6 +124,17 @@ describe('AutoRunDocumentSelector', () => {
 
 			const changeFolderButton = screen.getByTitle('Change folder');
 			expect(changeFolderButton).toBeInTheDocument();
+		});
+
+		it('does not render a Bionify toggle (toggled globally via Cmd+K)', () => {
+			render(<AutoRunDocumentSelector {...defaultProps} selectedDocument="doc1" />);
+
+			expect(
+				screen.queryByTitle('Enable Bionify for this document preview')
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle('Disable Bionify for this document preview')
+			).not.toBeInTheDocument();
 		});
 
 		it('applies theme colors to dropdown button', () => {
@@ -371,6 +363,43 @@ describe('AutoRunDocumentSelector', () => {
 			fireEvent.click(screen.getByText('nested-doc.md'));
 
 			expect(defaultProps.onSelectDocument).toHaveBeenCalledWith('folder1/nested-doc');
+		});
+
+		it('auto-expands folders to reveal selected document when dropdown opens', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
+					documentTree={documentTree}
+					selectedDocument="folder1/subfolder/deep-doc"
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /deep-doc\.md/i });
+			fireEvent.click(button);
+
+			// Both folder1 and folder1/subfolder should be auto-expanded
+			expect(screen.getByText('deep-doc.md')).toBeInTheDocument();
+			// The selected file should have data-selected attribute
+			const selectedButton = screen.getByText('deep-doc.md').closest('button');
+			expect(selectedButton).toHaveAttribute('data-selected', 'true');
+		});
+
+		it('auto-expands parent folder for single-level nested selection', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={['folder1/nested-doc', 'folder1/subfolder/deep-doc', 'root-doc']}
+					documentTree={documentTree}
+					selectedDocument="folder1/nested-doc"
+				/>
+			);
+
+			const button = screen.getByRole('button', { name: /nested-doc\.md/i });
+			fireEvent.click(button);
+
+			// folder1 should be auto-expanded, nested-doc visible
+			expect(screen.getByText('nested-doc.md')).toBeInTheDocument();
 		});
 
 		it('renders root-level file in tree', () => {

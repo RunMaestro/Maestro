@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
 interface QuitConfirmModalProps {
@@ -18,6 +18,8 @@ interface QuitConfirmModalProps {
 	busyAgentCount: number;
 	/** Names of busy agents for display */
 	busyAgentNames: string[];
+	/** Active terminal tasks (e.g., "rc: npm test") */
+	activeTerminalTasks?: string[];
 	/** Callback when user confirms quit */
 	onConfirmQuit: () => void;
 	/** Callback when user cancels (stays in app) */
@@ -34,45 +36,18 @@ export function QuitConfirmModal({
 	theme,
 	busyAgentCount,
 	busyAgentNames,
+	activeTerminalTasks = [],
 	onConfirmQuit,
 	onCancel,
 }: QuitConfirmModalProps): JSX.Element {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const cancelButtonRef = useRef<HTMLButtonElement>(null);
-	const onCancelRef = useRef(onCancel);
-	onCancelRef.current = onCancel;
+
+	useModalLayer(MODAL_PRIORITIES.QUIT_CONFIRM, 'Confirm Quit Application', onCancel);
 
 	// Focus Cancel button on mount (safer default action)
 	useEffect(() => {
 		cancelButtonRef.current?.focus();
 	}, []);
-
-	// Register with layer stack
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.QUIT_CONFIRM,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Confirm Quit Application',
-			onEscape: () => onCancelRef.current(),
-		});
-		layerIdRef.current = id;
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update escape handler when onCancel changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCancelRef.current());
-		}
-	}, [onCancel, updateLayerHandler]);
 
 	// Handle keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -85,8 +60,11 @@ export function QuitConfirmModal({
 
 	const agentText = busyAgentCount === 1 ? 'agent is' : 'agents are';
 	const hasAutoRun = busyAgentNames.some((n) => n.includes('(Auto Run)'));
+	const hasTerminalTasks = activeTerminalTasks.length > 0;
 	const displayNames = busyAgentNames.slice(0, 3);
 	const remainingCount = busyAgentNames.length - 3;
+	const displayTerminalTasks = activeTerminalTasks.slice(0, 3);
+	const remainingTerminalCount = activeTerminalTasks.length - 3;
 
 	return (
 		<div
@@ -129,48 +107,107 @@ export function QuitConfirmModal({
 						className="text-sm leading-relaxed"
 						style={{ color: theme.colors.textMain }}
 					>
-						{busyAgentCount} {agentText} currently {hasAutoRun ? 'active' : 'thinking'}. Quitting
-						now will interrupt their work.
+						{busyAgentCount > 0 && (
+							<>
+								{busyAgentCount} {agentText} currently {hasAutoRun ? 'active' : 'thinking'}.{' '}
+							</>
+						)}
+						{hasTerminalTasks && (
+							<>
+								{activeTerminalTasks.length} terminal{' '}
+								{activeTerminalTasks.length === 1 ? 'task is' : 'tasks are'} running.{' '}
+							</>
+						)}
+						Quitting now will interrupt{' '}
+						{busyAgentCount > 0 && hasTerminalTasks
+							? 'all active work'
+							: busyAgentCount > 0
+								? 'their work'
+								: 'these tasks'}
+						.
 					</p>
 
 					{/* List of busy agents */}
-					<div
-						className="mt-4 p-3 rounded-lg border"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-						}}
-					>
-						<div className="text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-							Active Agents
-						</div>
-						<div className="flex flex-wrap gap-2">
-							{displayNames.map((name, index) => (
-								<span
-									key={`${name}-${index}`}
-									className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
-									style={{
-										backgroundColor: `${theme.colors.warning}15`,
-										color: theme.colors.warning,
-									}}
-								>
+					{busyAgentCount > 0 && (
+						<div
+							className="mt-4 p-3 rounded-lg border"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							<div className="text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+								Active Agents
+							</div>
+							<div className="flex flex-wrap gap-2">
+								{displayNames.map((name, index) => (
 									<span
-										className="w-1.5 h-1.5 rounded-full animate-pulse"
-										style={{ backgroundColor: theme.colors.warning }}
-									/>
-									{name}
-								</span>
-							))}
-							{remainingCount > 0 && (
-								<span
-									className="inline-flex items-center px-2 py-1 rounded text-xs"
-									style={{ color: theme.colors.textDim }}
-								>
-									+{remainingCount} more
-								</span>
-							)}
+										key={`${name}-${index}`}
+										className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
+										style={{
+											backgroundColor: `${theme.colors.warning}15`,
+											color: theme.colors.warning,
+										}}
+									>
+										<span
+											className="w-1.5 h-1.5 rounded-full animate-pulse"
+											style={{ backgroundColor: theme.colors.warning }}
+										/>
+										{name}
+									</span>
+								))}
+								{remainingCount > 0 && (
+									<span
+										className="inline-flex items-center px-2 py-1 rounded text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										+{remainingCount} more
+									</span>
+								)}
+							</div>
 						</div>
-					</div>
+					)}
+
+					{/* List of active terminal tasks */}
+					{hasTerminalTasks && (
+						<div
+							className="mt-4 p-3 rounded-lg border"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							<div className="text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+								Running Terminal Tasks
+							</div>
+							<div className="flex flex-wrap gap-2">
+								{displayTerminalTasks.map((task, index) => (
+									<span
+										key={`${task}-${index}`}
+										className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium font-mono"
+										style={{
+											backgroundColor: `${theme.colors.success}15`,
+											color: theme.colors.success,
+										}}
+									>
+										<span
+											className="w-1.5 h-1.5 rounded-full"
+											style={{ backgroundColor: theme.colors.success }}
+										/>
+										{task}
+									</span>
+								))}
+								{remainingTerminalCount > 0 && (
+									<span
+										className="inline-flex items-center px-2 py-1 rounded text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										+{remainingTerminalCount} more
+									</span>
+								)}
+							</div>
+						</div>
+					)}
 
 					{/* Actions */}
 					<div className="mt-5 flex items-center justify-center gap-2 flex-nowrap">

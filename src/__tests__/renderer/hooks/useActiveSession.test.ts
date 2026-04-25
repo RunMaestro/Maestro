@@ -9,30 +9,14 @@ import { renderHook } from '@testing-library/react';
 import { useActiveSession } from '../../../renderer/hooks/session/useActiveSession';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
+// Thin wrapper: pre-populates an AI tab so the hook selects a non-empty
+// active session.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
+	return baseCreateMockSession({
 		id: 'sess-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -43,22 +27,14 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				inputValue: '',
 				stagedImages: [],
 				createdAt: 1700000000000,
-				state: 'idle' as const,
+				state: 'idle',
 				saveToHistory: true,
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
-		filePreviewTabs: [],
-		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 beforeEach(() => {

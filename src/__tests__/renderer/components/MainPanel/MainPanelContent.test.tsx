@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { MainPanelContent } from '../../../../renderer/components/MainPanel/MainPanelContent';
 import type { Session, Theme, AITab, FilePreviewTab } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(
@@ -63,6 +64,10 @@ vi.mock('../../../../renderer/components/InlineWizard', () => ({
 		React.createElement('div', { 'data-testid': 'document-generation' }),
 }));
 
+vi.mock('../../../../renderer/components/MainPanel/BrowserTabView', () => ({
+	BrowserTabView: (props: any) => React.createElement('div', { 'data-testid': 'browser-tab-view' }),
+}));
+
 vi.mock('../../../../renderer/components/TerminalView', () => {
 	const TerminalView = React.forwardRef((props: any, ref: any) =>
 		React.createElement('div', {
@@ -77,15 +82,6 @@ vi.mock('../../../../renderer/components/TerminalView', () => {
 		createTabPidChangeHandler: vi.fn(() => vi.fn()),
 	};
 });
-
-const mockTheme = {
-	colors: {
-		bgMain: '#1a1a1a',
-		accent: '#3b82f6',
-		textMain: '#ffffff',
-		textDim: '#888888',
-	},
-} as Theme;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
 	return {
@@ -112,6 +108,8 @@ function makeDefaultProps() {
 		filePreviewLoading: null,
 		activeFileTabId: null as string | null | undefined,
 		activeFileTab: null as FilePreviewTab | null | undefined,
+		activeBrowserTabId: null as string | null | undefined,
+		activeBrowserTab: null as any,
 		memoizedFilePreviewFile: null,
 		filePreviewCwd: '',
 		filePreviewSshRemoteId: undefined,
@@ -124,6 +122,7 @@ function makeDefaultProps() {
 		handleFilePreviewScrollPositionChange: vi.fn(),
 		handleFilePreviewSearchQueryChange: vi.fn(),
 		handleFilePreviewReload: vi.fn(),
+		handleBrowserTabUpdate: vi.fn(),
 		terminalViewRefs: { current: new Map() } as any,
 		mountedTerminalSessionIds: [] as string[],
 		mountedTerminalSessionsRef: { current: new Map() } as any,
@@ -218,6 +217,23 @@ describe('MainPanelContent', () => {
 		props.filePreviewLoading = { name: 'test.ts', path: '/test/test.ts' };
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByText(/Loading/)).toBeInTheDocument();
+	});
+
+	it('renders BrowserTabView when browser tab is active', () => {
+		const props = makeDefaultProps();
+		props.activeBrowserTabId = 'browser-1';
+		props.activeBrowserTab = {
+			id: 'browser-1',
+			url: 'https://example.com/',
+			title: 'Example',
+			createdAt: Date.now(),
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<MainPanelContent {...props} />);
+		expect(screen.getByTestId('browser-tab-view')).toBeInTheDocument();
+		expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
 	});
 
 	it('renders TerminalView for mounted terminal sessions', () => {

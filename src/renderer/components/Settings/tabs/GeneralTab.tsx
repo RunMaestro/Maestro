@@ -29,10 +29,12 @@ import {
 	ExternalLink,
 	Keyboard,
 	AlertTriangle,
+	Clock,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { captureException } from '../../../utils/sentry';
 import type { Theme, ShellInfo } from '../../../types';
+import type { MaestroCliStatus } from '../../../../shared/maestro-cli';
 import {
 	formatMetaKey,
 	formatEnterToSend,
@@ -42,6 +44,7 @@ import { ForcedParallelWarningModal } from '../../ForcedParallelWarningModal';
 import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
+import { logger } from '../../../utils/logger';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -49,6 +52,8 @@ export interface GeneralTabProps {
 }
 
 export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
+	const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown';
+
 	const {
 		// Conductor Profile
 		conductorProfile,
@@ -68,6 +73,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Input settings
 		enterToSendAI,
 		setEnterToSendAI,
+		enterToSendAIExpanded,
+		setEnterToSendAIExpanded,
 		defaultSaveToHistory,
 		setDefaultSaveToHistory,
 		defaultShowThinking,
@@ -75,6 +82,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// Browser settings
+		useSystemBrowser,
+		setUseSystemBrowser,
+		browserHomeUrl,
+		setBrowserHomeUrl,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -95,6 +107,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setForcedParallelExecution,
 		forcedParallelAcknowledged,
 		setForcedParallelAcknowledged,
+		// Auto Run
+		autoRunInactivityTimeoutMin,
+		setAutoRunInactivityTimeoutMin,
 		// Shortcuts
 		shortcuts,
 	} = useSettings();
@@ -113,6 +128,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [syncMigrating, setSyncMigrating] = useState(false);
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [syncMigratedCount, setSyncMigratedCount] = useState<number | null>(null);
+	const [maestroCliStatus, setMaestroCliStatus] = useState<MaestroCliStatus | null>(null);
+	const [maestroCliStatusError, setMaestroCliStatusError] = useState<string | null>(null);
+	const [maestroCliChecking, setMaestroCliChecking] = useState(false);
+	const [maestroCliInstalling, setMaestroCliInstalling] = useState(false);
+	const [maestroCliInstallMessage, setMaestroCliInstallMessage] = useState<string | null>(null);
 
 	// Forced Parallel Execution modal state
 	const [showForcedParallelWarning, setShowForcedParallelWarning] = useState(false);
@@ -137,9 +157,58 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setShowForcedParallelWarning(false);
 	}, []);
 
+	const checkMaestroCliStatus = useCallback(async () => {
+		setMaestroCliChecking(true);
+		setMaestroCliStatusError(null);
+		try {
+			const status = await window.maestro.maestroCli.checkStatus();
+			setMaestroCliStatus(status);
+		} catch (err) {
+			setMaestroCliStatusError('Failed to check Maestro CLI status');
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'GeneralTab: Maestro CLI status check' },
+			});
+		} finally {
+			setMaestroCliChecking(false);
+		}
+	}, []);
+
+	const installOrUpdateMaestroCli = useCallback(async () => {
+		setMaestroCliInstalling(true);
+		setMaestroCliInstallMessage(null);
+		setMaestroCliStatusError(null);
+		try {
+			const result = await window.maestro.maestroCli.installOrUpdate();
+			setMaestroCliStatus(result.status);
+			if (result.pathUpdateError) {
+				setMaestroCliStatusError(result.pathUpdateError);
+			}
+			if (result.restartRequired) {
+				setMaestroCliInstallMessage(
+					'CLI installed. Open a new terminal for PATH changes to apply.'
+				);
+			} else if (result.success && result.status.versionMatch) {
+				setMaestroCliInstallMessage('CLI is installed and matches this Maestro version.');
+			} else {
+				setMaestroCliInstallMessage(
+					'CLI was installed but version/path check still needs attention.'
+				);
+			}
+		} catch (err) {
+			setMaestroCliStatusError('Failed to install/update Maestro CLI');
+			captureException(err instanceof Error ? err : new Error(String(err)), {
+				extra: { context: 'GeneralTab: Maestro CLI install/update' },
+			});
+		} finally {
+			setMaestroCliInstalling(false);
+		}
+	}, []);
+
 	// Load sync settings when modal opens
 	useEffect(() => {
 		if (!isOpen) return;
+		setMaestroCliInstallMessage(null);
+		void checkMaestroCliStatus();
 
 		// Load sync settings
 		Promise.all([
@@ -156,7 +225,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setSyncMigratedCount(null);
 			})
 			.catch((err) => {
-				console.error('Failed to load sync settings:', err);
+				logger.error('Failed to load sync settings:', undefined, err);
 				setSyncError('Failed to load storage settings');
 				// Report to Sentry so production failures surface in dashboards
 				// rather than only being visible in the user's console.
@@ -164,7 +233,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					extra: { context: 'GeneralTab: failed to load sync/storage settings' },
 				});
 			});
-	}, [isOpen]);
+	}, [checkMaestroCliStatus, isOpen]);
 
 	const loadShells = async () => {
 		if (shellsLoaded) return;
@@ -176,7 +245,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setShellsLoaded(true);
 			}
 		} catch (error) {
-			console.error('Failed to load shells:', error);
+			logger.error('Failed to load shells:', undefined, error);
 		} finally {
 			setShellsLoading(false);
 		}
@@ -199,30 +268,27 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				<p className="text-xs opacity-50 mb-2">
 					Tell us a little about yourself so that agents created under Maestro know how to work and
 					communicate with you. As the conductor, you orchestrate the symphony of AI agents.
-					(Optional, max 1000 characters)
+					(Optional, max 5000 characters)
 				</p>
-				<div className="relative">
-					<textarea
-						value={conductorProfile}
-						onChange={(e) => setConductorProfile(e.target.value)}
-						placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
-						className="w-full p-3 pb-8 rounded border bg-transparent outline-none text-sm resize-none"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							minHeight: '100px',
-						}}
-						maxLength={1000}
-					/>
-					<div
-						className="absolute bottom-2 right-2 text-xs px-1 rounded"
-						style={{
-							color: conductorProfile.length > 900 ? theme.colors.warning : theme.colors.textDim,
-							backgroundColor: theme.colors.bgSidebar,
-						}}
-					>
-						{conductorProfile.length}/1000
-					</div>
+				<textarea
+					value={conductorProfile}
+					onChange={(e) => setConductorProfile(e.target.value)}
+					placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
+					className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						minHeight: '100px',
+					}}
+					maxLength={5000}
+				/>
+				<div
+					className="text-xs mt-1 text-right"
+					style={{
+						color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
+					}}
+				>
+					{conductorProfile.length}/5000
 				</div>
 			</div>
 
@@ -507,6 +573,117 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				</div>
 			</div>
 
+			{/* Maestro CLI Management */}
+			<div data-setting-id="general-maestro-cli">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Terminal className="w-3 h-3" />
+					Maestro CLI
+				</div>
+				<div
+					className="p-3 rounded border space-y-2"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="text-xs opacity-70">
+						Check whether <code>maestro-cli</code> is available in your PATH and whether its version
+						matches Maestro v{maestroCliStatus?.expectedVersion || appVersion}.
+					</div>
+
+					{maestroCliStatus && !maestroCliChecking && (
+						<div className="text-xs space-y-1">
+							<div>
+								<span style={{ color: theme.colors.textDim }}>PATH:</span>{' '}
+								<span
+									style={{
+										color:
+											maestroCliStatus.inPath || maestroCliStatus.inShellPath
+												? theme.colors.success
+												: theme.colors.warning,
+									}}
+								>
+									{maestroCliStatus.inPath
+										? 'Detected'
+										: maestroCliStatus.inShellPath
+											? 'Detected (shell PATH)'
+											: 'Not detected'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Installed version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.installedVersion || 'Not installed'}
+								</span>
+							</div>
+							<div>
+								<span style={{ color: theme.colors.textDim }}>Expected version:</span>{' '}
+								<span style={{ color: theme.colors.textMain }}>
+									{maestroCliStatus.expectedVersion}
+								</span>
+							</div>
+							{maestroCliStatus.commandPath && (
+								<div className="break-all">
+									<span style={{ color: theme.colors.textDim }}>Command path:</span>{' '}
+									<code>{maestroCliStatus.commandPath}</code>
+								</div>
+							)}
+							{maestroCliStatus.needsInstallOrUpdate && (
+								<div style={{ color: theme.colors.warning }}>
+									Mismatch or missing CLI detected. Install/update to sync versions.
+								</div>
+							)}
+						</div>
+					)}
+
+					<div
+						role={maestroCliStatusError ? 'alert' : 'status'}
+						aria-live={maestroCliStatusError ? 'assertive' : 'polite'}
+						aria-atomic="true"
+						className="text-xs space-y-1"
+					>
+						{maestroCliChecking && <div className="opacity-60">Checking Maestro CLI status...</div>}
+						{maestroCliStatusError && (
+							<div style={{ color: theme.colors.warning }}>{maestroCliStatusError}</div>
+						)}
+						{maestroCliInstallMessage && (
+							<div style={{ color: theme.colors.success }}>{maestroCliInstallMessage}</div>
+						)}
+					</div>
+
+					<div className="flex gap-2">
+						<button
+							onClick={() => void checkMaestroCliStatus()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliChecking ? 'Checking...' : 'Check now'}
+						</button>
+						<button
+							onClick={() => void installOrUpdateMaestroCli()}
+							disabled={maestroCliChecking || maestroCliInstalling}
+							className="px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: theme.colors.accentDim,
+								color: theme.colors.textMain,
+								opacity: maestroCliChecking || maestroCliInstalling ? 0.6 : 1,
+							}}
+						>
+							{maestroCliInstalling
+								? 'Installing...'
+								: maestroCliStatus?.needsInstallOrUpdate
+									? 'Install / Update CLI'
+									: 'Reinstall CLI'}
+						</button>
+					</div>
+					<div className="text-[11px] opacity-50">
+						Install target: <code>{maestroCliStatus?.installDir || '~/.local/bin'}</code>
+					</div>
+				</div>
+			</div>
+
 			{/* Input Behavior Settings */}
 			<div data-setting-id="general-input-behavior">
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
@@ -541,6 +718,34 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 						{enterToSendAI
 							? 'Press Enter to send. Use Shift+Enter for new line.'
 							: `Press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
+					</p>
+				</div>
+
+				{/* Expanded AI Mode Setting (Prompt Composer) */}
+				<div
+					className="mb-4 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="flex items-center justify-between mb-2">
+						<div className="text-sm font-medium">Expanded AI Interaction Mode</div>
+						<button
+							onClick={() => setEnterToSendAIExpanded(!enterToSendAIExpanded)}
+							className="px-3 py-1.5 rounded text-xs font-mono transition-all"
+							style={{
+								backgroundColor: enterToSendAIExpanded
+									? theme.colors.accentDim
+									: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							{formatEnterToSend(enterToSendAIExpanded)}
+						</button>
+					</div>
+					<p className="text-xs opacity-50">
+						{enterToSendAIExpanded
+							? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
+							: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
 					</p>
 				</div>
 
@@ -617,6 +822,31 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					onCancel={handleForcedParallelCancel}
 					theme={theme}
 				/>
+			</div>
+
+			{/* Auto Run Inactivity Timeout */}
+			<div data-setting-id="general-autorun-inactivity-timeout">
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Clock className="w-3 h-3" />
+					Auto Run Inactivity Timeout
+				</div>
+				<ToggleButtonGroup
+					options={[
+						{ value: 30, label: '30 min' },
+						{ value: 60, label: '1 hr' },
+						{ value: 240, label: '4 hr' },
+						{ value: 480, label: '8 hr' },
+						{ value: 0, label: 'Unlimited' },
+					]}
+					value={autoRunInactivityTimeoutMin}
+					onChange={setAutoRunInactivityTimeoutMin}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Auto Run force-kills a task if the agent produces no output for this long. Increase for
+					long refactors, heavy test runs, or web-research tasks driving a browser. Choose Unlimited
+					to disable the watchdog entirely.
+				</p>
 			</div>
 
 			{/* Default History Toggle */}
@@ -885,6 +1115,50 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					onChange={setCrashReportingEnabled}
 					theme={theme}
 				/>
+			</div>
+
+			{/* Default Browser */}
+			<div data-setting-id="general-browser">
+				<SettingCheckbox
+					icon={ExternalLink}
+					sectionLabel="Default Browser"
+					title="Use system browser for links"
+					description="Controls the default browser for clicking links. Use Ctrl+Click on URLs to get a context menu and choose the specific browser."
+					checked={useSystemBrowser}
+					onChange={setUseSystemBrowser}
+					theme={theme}
+				/>
+				<div
+					className="mt-3 p-3 rounded border"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div className="block text-xs opacity-60 mb-1">Browser Home URL</div>
+					<div className="flex gap-2">
+						<input
+							type="text"
+							value={browserHomeUrl}
+							onChange={(e) => setBrowserHomeUrl(e.target.value)}
+							placeholder="https://runmaestro.ai/#leaderboard"
+							className="flex-1 p-1.5 rounded border bg-transparent outline-none text-xs font-mono"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						/>
+						{browserHomeUrl !== 'https://runmaestro.ai/#leaderboard' && (
+							<button
+								onClick={() => setBrowserHomeUrl('https://runmaestro.ai/#leaderboard')}
+								className="px-2 py-1 rounded text-xs"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									color: theme.colors.textDim,
+								}}
+							>
+								Reset
+							</button>
+						)}
+					</div>
+					<p className="text-xs opacity-40 mt-2">
+						The URL loaded when opening a new browser tab (Cmd+B).
+					</p>
+				</div>
 			</div>
 
 			{/* Settings Storage Location */}

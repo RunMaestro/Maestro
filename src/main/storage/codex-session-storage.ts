@@ -235,6 +235,7 @@ async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save Codex session cache', LOG_CONTEXT, { error });
 	}
 }
@@ -1262,7 +1263,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				const firstLine = content.split('\n')[0];
 				if (firstLine) {
 					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-					if (metadata.id === sessionId) {
+					const metadataId = metadata?.payload?.id || metadata.id;
+					if (metadataId === sessionId) {
 						return filePath;
 					}
 				}
@@ -1296,7 +1298,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					const firstLine = result.data.split('\n')[0];
 					if (firstLine) {
 						const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-						if (metadata.id === sessionId) {
+						const metadataId = metadata?.payload?.id || metadata.id;
+						if (metadataId === sessionId) {
 							return filePath;
 						}
 					}

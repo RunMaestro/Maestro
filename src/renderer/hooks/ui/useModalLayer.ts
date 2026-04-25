@@ -45,6 +45,12 @@ export interface UseModalLayerOptions {
 	blocksLowerLayers?: boolean;
 	/** Whether this layer captures keyboard focus. Defaults to true */
 	capturesFocus?: boolean;
+	/**
+	 * Whether the layer should be registered. Defaults to true.
+	 * Set to `false` (e.g. when `!isOpen`) to skip registration without
+	 * unmounting the host component.
+	 */
+	enabled?: boolean;
 }
 
 /**
@@ -70,7 +76,7 @@ export interface UseModalLayerOptions {
  */
 export function useModalLayer(
 	priority: number,
-	ariaLabel: string,
+	ariaLabel: string | undefined,
 	onEscape: () => void,
 	options: UseModalLayerOptions = {}
 ): void {
@@ -80,13 +86,20 @@ export function useModalLayer(
 		focusTrap = 'strict',
 		blocksLowerLayers = true,
 		capturesFocus = true,
+		enabled = true,
 	} = options;
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
+	const onEscapeRef = useRef(onEscape);
+	onEscapeRef.current = onEscape;
 
-	// Register layer on mount
+	// Register layer on mount (and re-register when `enabled` flips)
 	useEffect(() => {
+		if (!enabled) {
+			return;
+		}
+
 		const id = registerLayer({
 			type: 'modal',
 			priority,
@@ -96,16 +109,18 @@ export function useModalLayer(
 			ariaLabel,
 			isDirty,
 			onBeforeClose,
-			onEscape,
+			onEscape: () => onEscapeRef.current(),
 		});
 		layerIdRef.current = id;
 
 		return () => {
 			if (layerIdRef.current) {
 				unregisterLayer(layerIdRef.current);
+				layerIdRef.current = undefined;
 			}
 		};
 	}, [
+		enabled,
 		registerLayer,
 		unregisterLayer,
 		priority,
@@ -120,7 +135,7 @@ export function useModalLayer(
 	// Update handler when onEscape changes (without re-registering)
 	useEffect(() => {
 		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, onEscape);
+			updateLayerHandler(layerIdRef.current, () => onEscapeRef.current());
 		}
 	}, [onEscape, updateLayerHandler]);
 }

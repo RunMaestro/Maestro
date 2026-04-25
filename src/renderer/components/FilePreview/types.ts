@@ -12,7 +12,7 @@ export interface FilePreviewProps {
 	theme: any;
 	markdownEditMode: boolean;
 	setMarkdownEditMode: (value: boolean) => void;
-	onSave?: (path: string, content: string) => Promise<void>;
+	onSave?: (path: string, content: string) => Promise<boolean | void>;
 	shortcuts: Record<string, any>;
 	/** File tree for linking file references */
 	fileTree?: FileNode[];

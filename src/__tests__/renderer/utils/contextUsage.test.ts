@@ -7,6 +7,7 @@ import {
 	estimateContextUsage,
 	calculateContextTokens,
 	calculateContextDisplay,
+	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
 } from '../../../renderer/utils/contextUsage';
@@ -395,7 +396,7 @@ describe('calculateContextDisplay', () => {
 		expect(result.contextWindow).toBe(0);
 	});
 
-	it('should cap tokens to context window when no fallbackPercentage is provided', () => {
+	it('should clamp tokens to the window when accumulated values exceed it without a fallback', () => {
 		const result = calculateContextDisplay(
 			{
 				inputTokens: 50000,
@@ -406,7 +407,22 @@ describe('calculateContextDisplay', () => {
 			'claude-code'
 			// no fallback
 		);
-		// Raw = 1008000 > 200000, no fallback, so tokens capped to context window
+		// Raw = 1008000 > 200000, but no fallback, so clamp to the configured window
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
+	});
+
+	it('should clamp fallback percentages above 100 before deriving tokens', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			150
+		);
 		expect(result.tokens).toBe(200000);
 		expect(result.percentage).toBe(100);
 	});
@@ -451,5 +467,63 @@ describe('DEFAULT_CONTEXT_WINDOWS', () => {
 		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['terminal']).toBe(0);
+	});
+});
+
+describe('calculateDisplayInputTokens', () => {
+	// Reproduces the issue #844 scenario: a Claude Code entry whose usage comes
+	// from a resumed session. The new `input_tokens` delta is tiny, but the
+	// conversation actually lives in `cache_read_input_tokens`.
+	it('adds cache tokens back for Claude so resumed conversations do not look empty', () => {
+		const stats: Partial<UsageStats> = {
+			inputTokens: 5,
+			cacheReadInputTokens: 47_382,
+			cacheCreationInputTokens: 1_204,
+		};
+		// Before the fix this displayed as 5 — see issue #844.
+		expect(calculateDisplayInputTokens(stats, 'claude-code')).toBe(48_591);
+	});
+
+	it('treats missing cache fields as zero (older history entries)', () => {
+		expect(calculateDisplayInputTokens({ inputTokens: 1_000 }, 'claude-code')).toBe(1_000);
+	});
+
+	it('defaults to the Claude formula when agentId is omitted', () => {
+		// Safe default: Claude Code is the most common provider, and the fallback
+		// over-counts rather than under-counts if we guess wrong.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 10,
+			cacheReadInputTokens: 500,
+			cacheCreationInputTokens: 100,
+		};
+		expect(calculateDisplayInputTokens(stats)).toBe(610);
+	});
+
+	it('returns inputTokens as-is for Codex (cached tokens already included)', () => {
+		// Per codex-output-parser.ts: cached_input_tokens is a SUBSET of input_tokens.
+		// Adding cacheReadInputTokens would double-count.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 12_000,
+			cacheReadInputTokens: 8_000, // reported for display only; already in inputTokens
+			cacheCreationInputTokens: 0,
+		};
+		expect(calculateDisplayInputTokens(stats, 'codex')).toBe(12_000);
+	});
+
+	it('handles all-zero / empty stats without throwing', () => {
+		expect(calculateDisplayInputTokens({}, 'claude-code')).toBe(0);
+		expect(calculateDisplayInputTokens({}, 'codex')).toBe(0);
+	});
+
+	it('treats unknown agent types as Claude-family', () => {
+		// If a new agent is added and this helper isn't updated, the Claude formula
+		// is the safer default — the worst case is an over-count on a single entry,
+		// not an "abnormally low" under-count that regresses issue #844.
+		const stats: Partial<UsageStats> = {
+			inputTokens: 3,
+			cacheReadInputTokens: 2_000,
+			cacheCreationInputTokens: 50,
+		};
+		expect(calculateDisplayInputTokens(stats, 'brand-new-agent')).toBe(2_053);
 	});
 });

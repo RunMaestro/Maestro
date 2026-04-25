@@ -15,6 +15,7 @@
  */
 
 import { ipcMain, BrowserWindow } from 'electron';
+import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -32,6 +33,7 @@ import {
 	STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
 import { app } from 'electron';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -91,6 +93,7 @@ async function saveLegacyGlobalStatsCache(cache: LegacyGlobalStatsCache): Promis
 		await fs.mkdir(cacheDir, { recursive: true });
 		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to save legacy global stats cache', LOG_CONTEXT, { error });
 	}
 }
@@ -106,21 +109,7 @@ function handlerOpts(operation: string, context: string = LOG_CONTEXT) {
 	return { context, operation, logSuccess: false };
 }
 
-/**
- * Claude session origin types
- */
-type ClaudeSessionOrigin = 'user' | 'auto';
-
-interface ClaudeSessionOriginInfo {
-	origin: ClaudeSessionOrigin;
-	sessionName?: string;
-	starred?: boolean;
-	contextUsage?: number;
-}
-
-interface ClaudeSessionOriginsData {
-	origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
-}
+// ClaudeSessionOriginInfo and ClaudeSessionOriginsData imported from stores/types
 
 /**
  * Dependencies required for Claude handlers
@@ -175,6 +164,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				await fs.access(projectDir);
 				logger.info(`Claude sessions directory exists: ${projectDir}`, LOG_CONTEXT);
 			} catch (err) {
+				// Expected first-run state: project has no Claude history yet.
+				// Don't send to Sentry — the other fs.access catches in this file also omit it.
 				logger.info(
 					`No Claude sessions directory found for project: ${projectPath} (tried: ${projectDir}), error: ${err}`,
 					LOG_CONTEXT
@@ -307,6 +298,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 							durationSeconds,
 						};
 					} catch (error) {
+						void captureException(error);
 						logger.error(`Error reading session file: ${filename}`, LOG_CONTEXT, error);
 						return null;
 					}
@@ -531,6 +523,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 								sessionName,
 							};
 						} catch (error) {
+							void captureException(error);
 							logger.error(`Error reading session file: ${fileInfo.filename}`, LOG_CONTEXT, error);
 							return null;
 						}
@@ -769,6 +762,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						isComplete: processedCount >= sessionsToProcess.length,
 					});
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error parsing session file: ${filename}`, LOG_CONTEXT, error);
 				}
 			}
@@ -1042,6 +1036,7 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const currentTotals = calculateGlobalTotals(newCache);
 					sendUpdate({ ...currentTotals, isComplete: processedCount >= sessionsToProcess.length });
 				} catch (error) {
+					void captureException(error);
 					logger.error(`Error parsing global session file: ${sessionKey}`, LOG_CONTEXT, error);
 				}
 			}

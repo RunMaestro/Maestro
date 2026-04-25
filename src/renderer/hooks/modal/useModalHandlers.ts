@@ -18,7 +18,8 @@ import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
@@ -166,7 +167,6 @@ export function useModalHandlers(
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
 	const historicalAgentError = useModalStore(selectAgentErrorHistorical);
-	const sessions = useSessionStore((s) => s.sessions);
 	const logViewerOpen = useModalStore(selectLogViewerOpen);
 	const shortcutsHelpOpen = useModalStore(selectShortcutsHelpOpen);
 	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
@@ -176,13 +176,12 @@ export function useModalHandlers(
 	// Derived State
 	// ====================================================================
 
-	const errorSession = useMemo(
+	const errorSessionSelector = useMemo(
 		() =>
-			agentErrorModalSessionId
-				? (sessions.find((s) => s.id === agentErrorModalSessionId) ?? null)
-				: null,
-		[agentErrorModalSessionId, sessions]
+			agentErrorModalSessionId ? selectSessionById(agentErrorModalSessionId) : () => undefined,
+		[agentErrorModalSessionId]
 	);
+	const errorSession = useSessionStore(errorSessionSelector) ?? null;
 
 	// ====================================================================
 	// Group A: Simple Close Handlers
@@ -606,6 +605,8 @@ export function useModalHandlers(
 
 	const handleCloseSendToAgent = useCallback(() => {
 		getModalActions().setSendToAgentModalOpen(false);
+		// Drop any queued terminal-buffer send so it doesn't bleed into the next open
+		useTabStore.getState().setPendingTerminalBufferSend(null);
 	}, []);
 
 	const handleCloseQueueBrowser = useCallback(() => {
@@ -623,10 +624,22 @@ export function useModalHandlers(
 	const handleQuickActionsRenameTab = useCallback(() => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
-		if (currentSession?.inputMode === 'ai' && currentSession.activeTabId) {
+		if (!currentSession) return;
+
+		const actions = getModalActions();
+
+		if (currentSession.inputMode === 'terminal' && currentSession.activeTerminalTabId) {
+			const termTab = currentSession.terminalTabs?.find(
+				(t) => t.id === currentSession.activeTerminalTabId
+			);
+			if (termTab) {
+				actions.setRenameTabId(termTab.id);
+				actions.setRenameTabInitialName(termTab.name || '');
+				actions.setRenameTabModalOpen(true);
+			}
+		} else if (currentSession.inputMode === 'ai' && currentSession.activeTabId) {
 			const activeTab = currentSession.aiTabs?.find((t) => t.id === currentSession.activeTabId);
 			if (activeTab) {
-				const actions = getModalActions();
 				actions.setRenameTabId(activeTab.id);
 				actions.setRenameTabInitialName(getInitialRenameValue(activeTab));
 				actions.setRenameTabModalOpen(true);

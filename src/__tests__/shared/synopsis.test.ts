@@ -3,18 +3,15 @@
  *
  * Coverage:
  * - parseSynopsis: Parse synopsis response into summary and full text
- * - isNothingToReport: Check if response indicates nothing to report
  * - NOTHING_TO_REPORT: Sentinel token constant
- * - ParsedSynopsis: Interface for parsed result
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-	parseSynopsis,
-	ParsedSynopsis,
-	isNothingToReport,
-	NOTHING_TO_REPORT,
-} from '../../shared/synopsis';
+import { parseSynopsis, NOTHING_TO_REPORT } from '../../shared/synopsis';
+
+// Local alias mirroring the (now-internal) ParsedSynopsis shape returned by
+// parseSynopsis. Kept in sync with shared/synopsis.ts.
+type ParsedSynopsis = ReturnType<typeof parseSynopsis>;
 
 describe('synopsis', () => {
 	describe('parseSynopsis', () => {
@@ -355,33 +352,6 @@ detail line two`;
 				expect(result.nothingToReport).toBe(false);
 				expect(result.shortSummary).toBe('Task completed');
 			});
-		});
-	});
-
-	describe('isNothingToReport', () => {
-		it('should return true for exact NOTHING_TO_REPORT', () => {
-			expect(isNothingToReport('NOTHING_TO_REPORT')).toBe(true);
-		});
-
-		it('should return true when NOTHING_TO_REPORT is embedded in response', () => {
-			expect(isNothingToReport('Some preamble\nNOTHING_TO_REPORT\nSome postamble')).toBe(true);
-		});
-
-		it('should return true with ANSI codes around token', () => {
-			expect(isNothingToReport('\x1b[32mNOTHING_TO_REPORT\x1b[0m')).toBe(true);
-		});
-
-		it('should return false for normal responses', () => {
-			expect(isNothingToReport('**Summary:** Fixed the bug')).toBe(false);
-		});
-
-		it('should return false for empty string', () => {
-			expect(isNothingToReport('')).toBe(false);
-		});
-
-		it('should return false for partial matches', () => {
-			expect(isNothingToReport('NOTHING_TO')).toBe(false);
-			expect(isNothingToReport('TO_REPORT')).toBe(false);
 		});
 	});
 

@@ -19,6 +19,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type { FileNode } from '../../../renderer/types/fileTree';
 import type { UseFileExplorerEffectsDeps } from '../../../renderer/hooks/git/useFileExplorerEffects';
 
@@ -49,36 +50,13 @@ vi.mock('../../../renderer/utils/fileExplorer', () => ({
 
 // --- Test Helpers ---
 
+// Thin wrapper: seeds an expanded folder so file explorer effects can
+// exercise expansion state.
 const createMockSession = (overrides: Partial<Session> = {}): Session =>
-	({
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
+	baseCreateMockSession({
 		fileExplorerExpanded: ['src'],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: 'tab-1',
-		closedTabHistory: [],
 		...overrides,
-	}) as Session;
+	});
 
 const createDeps = (
 	overrides: Partial<UseFileExplorerEffectsDeps> = {}

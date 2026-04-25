@@ -5,20 +5,23 @@ import {
 	ExternalLink,
 	FileCode,
 	BarChart3,
-	Loader2,
 	Trophy,
 	Globe,
 	Check,
 	BookOpen,
 } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
+import { GhostIconButton } from './ui/GhostIconButton';
 import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
 import type { GlobalAgentStats } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import pedramAvatar from '../assets/pedram-avatar.png';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
+import { formatDurationHuman } from '../../shared/formatters';
 import { Modal } from './ui/Modal';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 interface AboutModalProps {
 	theme: Theme;
@@ -76,7 +79,7 @@ export function AboutModal({
 				}
 			})
 			.catch((error) => {
-				console.error('Failed to load global agent stats:', error);
+				logger.error('Failed to load global agent stats:', undefined, error);
 				setLoading(false);
 				// On error, mark as complete to stop showing loading state
 				setIsStatsComplete(true);
@@ -89,20 +92,7 @@ export function AboutModal({
 
 	// formatTokensCompact and formatSize imported from ../utils/formatters
 
-	// Format duration from milliseconds
-	const formatDuration = (ms: number): string => {
-		const seconds = Math.floor(ms / 1000);
-		const minutes = Math.floor(seconds / 60);
-		const hours = Math.floor(minutes / 60);
-
-		if (hours > 0) {
-			return `${hours}h ${minutes % 60}m`;
-		}
-		if (minutes > 0) {
-			return `${minutes}m ${seconds % 60}s`;
-		}
-		return `${seconds}s`;
-	};
+	const formatDuration = formatDurationHuman;
 
 	// Custom escape handler that checks for badge overlay first
 	// Uses refs to avoid dependency changes that would cause infinite loops
@@ -126,54 +116,36 @@ export function AboutModal({
 				<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					About Maestro
 				</h2>
-				<button
-					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai'))
-					}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
+				<GhostIconButton
+					onClick={() => openUrl(buildMaestroUrl('https://runmaestro.ai'))}
 					title="Visit runmaestro.ai"
-					aria-label="Visit runmaestro.ai"
-					style={{ color: theme.colors.accent }}
+					ariaLabel="Visit runmaestro.ai"
+					color={theme.colors.accent}
 				>
 					<Globe className="w-4 h-4" />
-				</button>
-				<button
-					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://runmaestro.ai/discord'))
-					}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
+				</GhostIconButton>
+				<GhostIconButton
+					onClick={() => openUrl(buildMaestroUrl('https://runmaestro.ai/discord'))}
 					title="Join our Discord"
-					aria-label="Join our Discord"
-					style={{ color: theme.colors.accent }}
+					ariaLabel="Join our Discord"
+					color={theme.colors.accent}
 				>
 					<svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
 						<path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
 					</svg>
-				</button>
-				<button
-					type="button"
-					onClick={() =>
-						window.maestro.shell.openExternal(buildMaestroUrl('https://docs.runmaestro.ai/'))
-					}
-					className="p-1 rounded hover:bg-white/10 transition-colors"
+				</GhostIconButton>
+				<GhostIconButton
+					onClick={() => openUrl(buildMaestroUrl('https://docs.runmaestro.ai/'))}
 					title="Documentation"
-					aria-label="Documentation"
-					style={{ color: theme.colors.accent }}
+					ariaLabel="Documentation"
+					color={theme.colors.accent}
 				>
 					<BookOpen className="w-4 h-4" />
-				</button>
+				</GhostIconButton>
 			</div>
-			<button
-				type="button"
-				onClick={onClose}
-				className="p-1 rounded hover:bg-white/10 transition-colors"
-				style={{ color: theme.colors.textDim }}
-				aria-label="Close modal"
-			>
+			<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close modal">
 				<X className="w-4 h-4" />
-			</button>
+			</GhostIconButton>
 		</div>
 	);
 
@@ -233,13 +205,11 @@ export function AboutModal({
 						<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 							Global Statistics
 						</span>
-						{!isStatsComplete && (
-							<Loader2 className="w-3 h-3 animate-spin" style={{ color: theme.colors.textDim }} />
-						)}
+						{!isStatsComplete && <Spinner size={12} color={theme.colors.textDim} />}
 					</div>
 					{loading ? (
 						<div className="flex items-center justify-center py-4 gap-2">
-							<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+							<Spinner size={16} color={theme.colors.textDim} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
 								Loading stats...
 							</span>
@@ -342,9 +312,7 @@ export function AboutModal({
 				<div className="flex gap-2">
 					{/* Project Link */}
 					<button
-						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/RunMaestro/Maestro')
-						}
+						onClick={() => openUrl('https://github.com/RunMaestro/Maestro')}
 						className="flex-1 flex items-center justify-between p-3 rounded border hover:bg-white/5 transition-colors"
 						style={{ borderColor: theme.colors.border }}
 					>
@@ -388,88 +356,69 @@ export function AboutModal({
 				{/* Divider */}
 				<div className="border-t" style={{ borderColor: theme.colors.border }} />
 
-				{/* Creator Section - side by side layout */}
-				<div
-					className="flex items-center gap-4 p-3 rounded border"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-				>
-					{/* Left side - Creator info */}
-					<div className="flex items-center gap-3 flex-1">
-						<img
-							src={pedramAvatar}
-							alt="Pedram Amini"
-							className="w-12 h-12 rounded-full border-2"
-							style={{ borderColor: theme.colors.accent }}
-						/>
-						<div>
-							<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-								Pedram Amini
-							</div>
-							<div className="text-xs opacity-70 mb-1" style={{ color: theme.colors.textDim }}>
-								Founder, Hacker, Investor, Advisor
-							</div>
-							<div className="flex items-center gap-2 text-xs">
-								<button
-									onClick={() =>
-										window.maestro.shell.openExternal('https://github.com/pedramamini')
-									}
-									className="inline-flex items-center gap-1 hover:underline cursor-pointer"
-									style={{
-										color: theme.colors.accent,
-										background: 'none',
-										border: 'none',
-										padding: 0,
-									}}
-								>
-									GitHub
-								</button>
-								<span style={{ color: theme.colors.textDim }}>·</span>
-								<button
-									onClick={() =>
-										window.maestro.shell.openExternal('https://www.linkedin.com/in/pedramamini/')
-									}
-									className="inline-flex items-center gap-1 hover:underline cursor-pointer"
-									style={{
-										color: theme.colors.accent,
-										background: 'none',
-										border: 'none',
-										padding: 0,
-									}}
-								>
-									LinkedIn
-								</button>
-							</div>
-						</div>
-					</div>
-
-					{/* Vertical divider */}
-					<div className="h-14 w-px" style={{ backgroundColor: theme.colors.border }} />
-
-					{/* Right side - Made in Austin */}
-					<div className="flex flex-col items-center justify-center px-2">
-						<span className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
-							Made in Austin, TX
-						</span>
+				{/* Origin Section - centered */}
+				<div className="flex flex-col items-center gap-2 py-1">
+					<span className="text-xs" style={{ color: theme.colors.textMain }}>
+						Born in Austin, TX
+					</span>
+					<div className="flex items-center gap-4">
 						{/* Texas Flag - Lone Star Flag */}
 						<button
-							onClick={() => window.maestro.shell.openExternal('https://www.sanjacsaloon.com')}
+							onClick={() => openUrl('https://www.sanjacsaloon.com')}
 							className="hover:opacity-100 transition-opacity cursor-pointer"
 							style={{ background: 'none', border: 'none', padding: 0 }}
 						>
 							<svg viewBox="0 0 150 100" className="w-10 h-7" style={{ opacity: 0.7 }}>
-								{/* Blue vertical stripe */}
 								<rect x="0" y="0" width="50" height="100" fill="#002868" />
-								{/* White horizontal stripe */}
 								<rect x="50" y="0" width="100" height="50" fill="#FFFFFF" />
-								{/* Red horizontal stripe */}
 								<rect x="50" y="50" width="100" height="50" fill="#BF0A30" />
-								{/* White five-pointed star */}
 								<polygon
 									points="25,15 29.5,30 45,30 32.5,40 37,55 25,45 13,55 17.5,40 5,30 20.5,30"
 									fill="#FFFFFF"
 								/>
 							</svg>
 						</button>
+						{/* American Flag */}
+						<svg viewBox="0 0 150 100" className="w-10 h-7" style={{ opacity: 0.7 }}>
+							{/* Red and white stripes */}
+							<rect x="0" y="0" width="150" height="100" fill="#BF0A30" />
+							<rect x="0" y="7.69" width="150" height="7.69" fill="#FFFFFF" />
+							<rect x="0" y="23.08" width="150" height="7.69" fill="#FFFFFF" />
+							<rect x="0" y="38.46" width="150" height="7.69" fill="#FFFFFF" />
+							<rect x="0" y="53.85" width="150" height="7.69" fill="#FFFFFF" />
+							<rect x="0" y="69.23" width="150" height="7.69" fill="#FFFFFF" />
+							<rect x="0" y="84.62" width="150" height="7.69" fill="#FFFFFF" />
+							{/* Blue canton */}
+							<rect x="0" y="0" width="60" height="53.85" fill="#002868" />
+							{/* Stars - simplified 5 rows */}
+							<circle cx="6" cy="5" r="2" fill="#FFFFFF" />
+							<circle cx="18" cy="5" r="2" fill="#FFFFFF" />
+							<circle cx="30" cy="5" r="2" fill="#FFFFFF" />
+							<circle cx="42" cy="5" r="2" fill="#FFFFFF" />
+							<circle cx="54" cy="5" r="2" fill="#FFFFFF" />
+							<circle cx="12" cy="13" r="2" fill="#FFFFFF" />
+							<circle cx="24" cy="13" r="2" fill="#FFFFFF" />
+							<circle cx="36" cy="13" r="2" fill="#FFFFFF" />
+							<circle cx="48" cy="13" r="2" fill="#FFFFFF" />
+							<circle cx="6" cy="21" r="2" fill="#FFFFFF" />
+							<circle cx="18" cy="21" r="2" fill="#FFFFFF" />
+							<circle cx="30" cy="21" r="2" fill="#FFFFFF" />
+							<circle cx="42" cy="21" r="2" fill="#FFFFFF" />
+							<circle cx="54" cy="21" r="2" fill="#FFFFFF" />
+							<circle cx="12" cy="29" r="2" fill="#FFFFFF" />
+							<circle cx="24" cy="29" r="2" fill="#FFFFFF" />
+							<circle cx="36" cy="29" r="2" fill="#FFFFFF" />
+							<circle cx="48" cy="29" r="2" fill="#FFFFFF" />
+							<circle cx="6" cy="37" r="2" fill="#FFFFFF" />
+							<circle cx="18" cy="37" r="2" fill="#FFFFFF" />
+							<circle cx="30" cy="37" r="2" fill="#FFFFFF" />
+							<circle cx="42" cy="37" r="2" fill="#FFFFFF" />
+							<circle cx="54" cy="37" r="2" fill="#FFFFFF" />
+							<circle cx="12" cy="45" r="2" fill="#FFFFFF" />
+							<circle cx="24" cy="45" r="2" fill="#FFFFFF" />
+							<circle cx="36" cy="45" r="2" fill="#FFFFFF" />
+							<circle cx="48" cy="45" r="2" fill="#FFFFFF" />
+						</svg>
 					</div>
 				</div>
 			</div>

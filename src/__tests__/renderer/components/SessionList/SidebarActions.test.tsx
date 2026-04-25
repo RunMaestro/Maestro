@@ -3,22 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { SidebarActions } from '../../../../renderer/components/SessionList/SidebarActions';
 import type { Theme } from '../../../../renderer/types';
 
-const mockTheme: Theme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
-		textMain: '#e0e0e0',
-		textDim: '#888888',
-		accent: '#e94560',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		error: '#ff4444',
-		success: '#00cc66',
-		warning: '#ffaa00',
-	},
-} as Theme;
+import { mockTheme } from '../../../helpers/mockTheme';
 
 const defaultShortcuts = {
 	toggleSidebar: { keys: ['Cmd', 'B'], label: 'Toggle Sidebar' },

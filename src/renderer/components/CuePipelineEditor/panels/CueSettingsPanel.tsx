@@ -4,9 +4,9 @@
  * Configures: timeout, failure behavior, concurrency, queue size.
  */
 
-import { useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import type { Theme } from '../../../types';
-import type { CueSettings } from '../../../../main/cue/cue-types';
+import type { CueSettings } from '../../../../shared/cue';
 import { useClickOutside } from '../../../hooks/ui';
 import { CueSelect } from './CueSelect';
 
@@ -17,7 +17,7 @@ interface CueSettingsPanelProps {
 	onClose: () => void;
 }
 
-export function CueSettingsPanel({ settings, theme, onChange, onClose }: CueSettingsPanelProps) {
+function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettingsPanelProps) {
 	const panelRef = useRef<HTMLDivElement>(null);
 
 	useClickOutside(panelRef, onClose);
@@ -181,3 +181,6 @@ export function CueSettingsPanel({ settings, theme, onChange, onClose }: CueSett
 		</div>
 	);
 }
+
+// Phase 14B — memoized so the panel doesn't re-render on canvas drag ticks.
+export const CueSettingsPanel = React.memo(CueSettingsPanelInner);

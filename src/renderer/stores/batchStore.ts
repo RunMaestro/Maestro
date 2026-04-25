@@ -9,7 +9,7 @@
  * existing batchReducer function to the current state. Hooks retain their
  * async orchestration; this store owns the state layer only.
  *
- * Can be used outside React via getBatchState() / getBatchActions().
+ * Can be used outside React via getBatchState().
  */
 
 import { create } from 'zustand';
@@ -99,23 +99,8 @@ export function selectHasAnyActiveBatch(s: BatchStoreState): boolean {
 /** List of session IDs with active batches */
 export function selectActiveBatchSessionIds(s: BatchStoreState): string[] {
 	return Object.entries(s.batchRunStates)
-		.filter(([, state]) => state.isRunning)
+		.filter(([, state]) => state.isRunning && !state.errorPaused)
 		.map(([sessionId]) => sessionId);
-}
-
-/** List of session IDs that are in stopping state */
-export function selectStoppingBatchSessionIds(s: BatchStoreState): string[] {
-	return Object.entries(s.batchRunStates)
-		.filter(([, state]) => state.isRunning && state.isStopping)
-		.map(([sessionId]) => sessionId);
-}
-
-/** Get batch run state for a specific session */
-export function selectBatchRunState(
-	s: BatchStoreState,
-	sessionId: string
-): BatchRunState | undefined {
-	return s.batchRunStates[sessionId];
 }
 
 // ============================================================================
@@ -179,23 +164,4 @@ export const useBatchStore = create<BatchStore>()((set) => ({
  */
 export function getBatchState() {
 	return useBatchStore.getState();
-}
-
-/**
- * Get stable batch action references outside React.
- */
-export function getBatchActions() {
-	const state = useBatchStore.getState();
-	return {
-		setDocumentList: state.setDocumentList,
-		setDocumentTree: state.setDocumentTree,
-		setIsLoadingDocuments: state.setIsLoadingDocuments,
-		setDocumentTaskCounts: state.setDocumentTaskCounts,
-		updateTaskCount: state.updateTaskCount,
-		clearDocumentList: state.clearDocumentList,
-		dispatchBatch: state.dispatchBatch,
-		setBatchRunStates: state.setBatchRunStates,
-		setCustomPrompt: state.setCustomPrompt,
-		clearCustomPrompts: state.clearCustomPrompts,
-	};
 }

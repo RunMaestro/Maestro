@@ -4,7 +4,7 @@
  * These tests verify the document parsing and iterate mode functionality.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import {
 	parseGeneratedDocuments,
 	splitIntoPhases,
@@ -12,6 +12,7 @@ import {
 	generateWizardFolderBaseName,
 	countTasks,
 	generateDocumentPrompt,
+	loadInlineWizardDocGenPrompts,
 	type DocumentGenerationConfig,
 } from '../../../renderer/services/inlineWizardDocumentGeneration';
 
@@ -415,6 +416,33 @@ CONTENT:
 	});
 
 	describe('generateDocumentPrompt', () => {
+		beforeAll(async () => {
+			const fs = require('fs');
+			const path = require('path');
+			const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+			(window as any).maestro = {
+				...(window as any).maestro,
+				prompts: {
+					get: vi.fn((id: string) => {
+						const filenameMap: Record<string, string> = {
+							'wizard-document-generation': 'wizard-document-generation.md',
+							'wizard-inline-iterate-generation': 'wizard-inline-iterate-generation.md',
+						};
+						const filename = filenameMap[id];
+						if (!filename)
+							return Promise.resolve({ success: false, error: `Unknown prompt: ${id}` });
+						try {
+							const content = fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+							return Promise.resolve({ success: true, content });
+						} catch (e: any) {
+							return Promise.resolve({ success: false, error: e.message });
+						}
+					}),
+				},
+			};
+			await loadInlineWizardDocGenPrompts(true);
+		});
+
 		// Helper to create a minimal config for testing
 		const createTestConfig = (
 			overrides: Partial<DocumentGenerationConfig> = {}

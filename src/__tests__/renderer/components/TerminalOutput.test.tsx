@@ -143,8 +143,10 @@ const createDefaultProps = (
 	activeFocus: 'main',
 	outputSearchOpen: false,
 	outputSearchQuery: '',
+	outputSearchRegex: false,
 	setOutputSearchOpen: vi.fn(),
 	setOutputSearchQuery: vi.fn(),
+	setOutputSearchRegex: vi.fn(),
 	setActiveFocus: vi.fn(),
 	setLightboxImage: vi.fn(),
 	inputRef: { current: null } as React.RefObject<HTMLTextAreaElement>,
@@ -238,6 +240,36 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTitle('Message delivered')).toBeInTheDocument();
 		});
 
+		it('shows read-only eye indicator for messages sent in read-only mode', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'Read-only message', source: 'user', readOnly: true }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByTitle('Sent in read-only mode')).toBeInTheDocument();
+		});
+
+		it('does not show read-only indicator for messages sent without read-only flag', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: 'Regular message', source: 'user' })];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
+		});
+
 		it('collapses consecutive AI responses in AI mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
@@ -265,7 +297,9 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ outputSearchOpen: true });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByPlaceholderText('Filter output... (Esc to close)')).toBeInTheDocument();
+			expect(
+				screen.getByPlaceholderText('Search output... (Enter: next, Shift+Enter: prev)')
+			).toBeInTheDocument();
 		});
 
 		it('calls setOutputSearchQuery when typing in search', async () => {
@@ -276,16 +310,20 @@ describe('TerminalOutput', () => {
 			});
 			render(<TerminalOutput {...props} />);
 
-			const searchInput = screen.getByPlaceholderText('Filter output... (Esc to close)');
+			const searchInput = screen.getByPlaceholderText(
+				'Search output... (Enter: next, Shift+Enter: prev)'
+			);
 			fireEvent.change(searchInput, { target: { value: 'test query' } });
 
 			expect(setOutputSearchQuery).toHaveBeenCalledWith('test query');
 		});
 
-		it('filters logs based on search query', () => {
+		it('keeps all logs visible when searching (highlight-only, no filter)', () => {
+			// NOTE: use a source that isn't collapsed into response groups (stdout/stderr
+			// are merged by `collapsedLogs`), so each log produces its own DOM item.
 			const logs: LogEntry[] = [
-				createLogEntry({ text: 'This contains hello world', source: 'stdout' }),
-				createLogEntry({ text: 'This does not match', source: 'stdout' }),
+				createLogEntry({ text: 'This contains hello world', source: 'tool' }),
+				createLogEntry({ text: 'This does not match', source: 'tool' }),
 			];
 
 			const session = createDefaultSession({
@@ -300,9 +338,9 @@ describe('TerminalOutput', () => {
 
 			const { container } = render(<TerminalOutput {...props} />);
 
-			// Only one log should match the filter
+			// All logs should remain visible; search highlights rather than filters.
 			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(1);
+			expect(logItems.length).toBe(2);
 		});
 
 		it('opens search when Cmd+F is pressed', () => {
@@ -332,7 +370,7 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(
-				screen.queryByPlaceholderText('Filter output... (Esc to close)')
+				screen.queryByPlaceholderText('Search output... (Enter: next, Shift+Enter: prev)')
 			).not.toBeInTheDocument();
 		});
 
@@ -345,7 +383,9 @@ describe('TerminalOutput', () => {
 			});
 			render(<TerminalOutput {...props} />);
 
-			const searchInput = screen.getByPlaceholderText('Filter output... (Esc to close)');
+			const searchInput = screen.getByPlaceholderText(
+				'Search output... (Enter: next, Shift+Enter: prev)'
+			);
 
 			// The input should show the current query value
 			expect(searchInput).toHaveValue('initial');
@@ -389,6 +429,22 @@ describe('TerminalOutput', () => {
 			unmount();
 
 			expect(mockUnregisterLayer).toHaveBeenCalled();
+		});
+
+		it('shows "Plain Text" label on regex toggle when in plain mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: false });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Plain Text')).toBeInTheDocument();
+			expect(screen.queryByText('Regex')).not.toBeInTheDocument();
+		});
+
+		it('shows "Regex" label on regex toggle when in regex mode', () => {
+			const props = createDefaultProps({ outputSearchOpen: true, outputSearchRegex: true });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Regex')).toBeInTheDocument();
+			expect(screen.queryByText('Plain Text')).not.toBeInTheDocument();
 		});
 	});
 
@@ -768,6 +824,183 @@ describe('TerminalOutput', () => {
 
 			// Modal should be closed
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
+		});
+
+		describe('force send button', () => {
+			const forceSendSession = () =>
+				createDefaultSession({
+					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
+				});
+
+			it('does not render Force Send button when forcedParallelEnabled is false', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: false,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('does not render Force Send button when target tab is busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: true,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('does not render Force Send button when no other tabs are busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
+
+			it('renders Force Send button when enabled, target idle, and another tab busy', () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeInTheDocument();
+			});
+
+			it('shows confirmation modal listing other busy tabs', async () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [
+							{ id: 'tab-2', displayName: 'Refactor' },
+							{ id: 'tab-3', displayName: 'A1B2C3D4' },
+						],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+				expect(screen.getByText('2 OTHER TABS WORKING')).toBeInTheDocument();
+				expect(screen.getByText('Refactor')).toBeInTheDocument();
+				expect(screen.getByText('A1B2C3D4')).toBeInTheDocument();
+			});
+
+			it('uses singular label when exactly one other tab is busy', async () => {
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				expect(screen.getByText('1 OTHER TAB WORKING')).toBeInTheDocument();
+			});
+
+			it('calls onForceSendQueuedItem when confirmed', async () => {
+				const onForceSendQueuedItem = vi.fn();
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem,
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				// Now click the "Force Send" confirm button inside the modal (the second occurrence).
+				const buttons = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(buttons[buttons.length - 1]);
+				});
+				expect(onForceSendQueuedItem).toHaveBeenCalledWith('q1');
+			});
+
+			it('dismisses Force Send modal on Escape without calling handler', async () => {
+				const onForceSendQueuedItem = vi.fn();
+				const props = createDefaultProps({
+					session: forceSendSession(),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem,
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				const triggers = screen.getAllByRole('button', { name: /Force Send/ });
+				await act(async () => {
+					fireEvent.click(triggers[0]);
+				});
+				const overlay = screen.getByText('Force Send Message?').closest('[class*="fixed inset-0"]');
+				await act(async () => {
+					fireEvent.keyDown(overlay!, { key: 'Escape' });
+				});
+				expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
+				expect(onForceSendQueuedItem).not.toHaveBeenCalled();
+			});
+
+			it('hides Force Send button when item already has forceParallel flag', () => {
+				const props = createDefaultProps({
+					session: createDefaultSession({
+						executionQueue: [
+							{
+								id: 'q1',
+								type: 'message',
+								text: 'already force-parallel',
+								tabId: 'tab-1',
+								forceParallel: true,
+							},
+						],
+					}),
+					forcedParallelEnabled: true,
+					onForceSendQueuedItem: vi.fn(),
+					getForceSendContext: () => ({
+						targetTabBusy: false,
+						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+					}),
+				});
+				render(<TerminalOutput {...props} />);
+				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+			});
 		});
 	});
 
@@ -1700,6 +1933,68 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('someWeirdField=true')).toBeInTheDocument();
 		});
 
+		describe('hidden progress rendering', () => {
+			it('renders hidden tool progress with the polished activity treatment', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Reading src/renderer/App.tsx',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'running',
+								input: { path: 'src/renderer/App.tsx' },
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'view',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('view')).toBeInTheDocument();
+				expect(screen.getByText('Reading src/renderer/App.tsx')).toBeInTheDocument();
+				expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			});
+
+			it('uses the standard failed icon treatment for hidden progress', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Command failed',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'failed',
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'bash',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('!')).toBeInTheDocument();
+				expect(screen.queryByText('×')).not.toBeInTheDocument();
+			});
+		});
+
 		it('renders any tool with string input fields generically', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2319,7 +2614,7 @@ describe('memoization behavior', () => {
 			const gistButton = screen.getByTitle('Publish as GitHub Gist');
 			fireEvent.click(gistButton);
 
-			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share');
+			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
 		});
 	});
 });

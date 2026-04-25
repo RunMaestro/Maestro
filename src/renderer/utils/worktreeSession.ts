@@ -61,6 +61,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		cwd: params.path,
 		fullPath: params.path,
 		projectRoot: params.path,
+		createdAt: Date.now(),
 		isGitRepo: true,
 		gitBranches: params.gitBranches,
 		gitTags: params.gitTags,
@@ -109,6 +110,8 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
+		browserTabs: [],
+		activeBrowserTabId: null,
 		terminalTabs: [],
 		activeTerminalTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
@@ -120,6 +123,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
 		nudgeMessage: isLegacy ? undefined : params.parentSession.nudgeMessage,
+		newSessionMessage: isLegacy ? undefined : params.parentSession.newSessionMessage,
 		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,
 	} as Session;
 }

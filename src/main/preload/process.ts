@@ -10,6 +10,10 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { UsageStats } from '../../shared/types';
+
+// Re-export for consumers that import from preload
+export type { UsageStats } from '../../shared/types';
 
 /**
  * Helper to log via the main process logger.
@@ -97,18 +101,7 @@ export interface ActiveProcess {
 	childProcesses?: Array<{ pid: number; command: string }>;
 }
 
-/**
- * Usage statistics from AI responses
- */
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
+// UsageStats imported and re-exported from shared/types above
 
 /**
  * Agent error information
@@ -476,6 +469,99 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote open browser tab from CLI/web interface.
+		 * Renderer must ack success via sendRemoteOpenBrowserTabResponse.
+		 * If the callback throws synchronously, ack false first so the CLI
+		 * doesn't wait for the 5s response timeout, then rethrow for Sentry.
+		 */
+		onRemoteOpenBrowserTab: (
+			callback: (sessionId: string, url: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, url: string, responseChannel: string) => {
+				try {
+					callback(sessionId, url, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, false);
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:openBrowserTab', handler);
+			return () => ipcRenderer.removeListener('remote:openBrowserTab', handler);
+		},
+
+		/**
+		 * Send response for remote open browser tab
+		 */
+		sendRemoteOpenBrowserTabResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote open terminal tab from CLI/web interface.
+		 * Renderer must ack success via sendRemoteOpenTerminalTabResponse.
+		 * Ack false before rethrowing synchronous callback errors so the CLI
+		 * doesn't wait for the 5s response timeout.
+		 */
+		onRemoteOpenTerminalTab: (
+			callback: (
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null },
+				responseChannel: string
+			) => {
+				try {
+					callback(sessionId, config, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, false);
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:openTerminalTab', handler);
+			return () => ipcRenderer.removeListener('remote:openTerminalTab', handler);
+		},
+
+		/**
+		 * Send response for remote open terminal tab
+		 */
+		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
+		 * Subscribe to remote "new AI tab with prompt" from CLI/web interface.
+		 * Renderer must ack success via sendRemoteNewAITabWithPromptResponse.
+		 * Ack false before rethrowing synchronous callback errors so the CLI
+		 * doesn't wait for the 5s response timeout.
+		 */
+		onRemoteNewAITabWithPrompt: (
+			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, prompt: string, responseChannel: string) => {
+				try {
+					callback(sessionId, prompt, responseChannel);
+				} catch (error) {
+					ipcRenderer.send(responseChannel, false);
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:newAITabWithPrompt', handler);
+			return () => ipcRenderer.removeListener('remote:newAITabWithPrompt', handler);
+		},
+
+		/**
+		 * Send response for remote "new AI tab with prompt"
+		 */
+		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
 		 * Subscribe to remote refresh auto-run docs from web interface
 		 */
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {
@@ -653,6 +739,7 @@ export function createProcessApi() {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -662,8 +749,9 @@ export function createProcessApi() {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
-			) => callback(name, toolType, cwd, groupId, responseChannel);
+			) => callback(name, toolType, cwd, groupId, config, responseChannel);
 			ipcRenderer.on('remote:createSession', handler);
 			return () => ipcRenderer.removeListener('remote:createSession', handler);
 		},
@@ -1080,6 +1168,47 @@ export function createProcessApi() {
 		 * Send response for remote get Cue activity
 		 */
 		sendRemoteGetCueActivityResponse: (responseChannel: string, result: unknown): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Listen for remote trigger Cue subscription requests (from web/CLI clients)
+		 */
+		onRemoteTriggerCueSubscription: (
+			callback: (
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string,
+				sourceAgentId: string | undefined
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string,
+				sourceAgentId: string | undefined
+			) => {
+				try {
+					Promise.resolve(callback(subscriptionName, prompt, responseChannel, sourceAgentId)).catch(
+						(error) => {
+							console.error('[Cue] Remote trigger callback failed:', error);
+							ipcRenderer.send(responseChannel, false);
+						}
+					);
+				} catch (error) {
+					console.error('[Cue] Remote trigger callback threw:', error);
+					ipcRenderer.send(responseChannel, false);
+				}
+			};
+			ipcRenderer.on('remote:triggerCueSubscription', handler);
+			return () => ipcRenderer.removeListener('remote:triggerCueSubscription', handler);
+		},
+
+		/**
+		 * Send response for remote trigger Cue subscription
+		 */
+		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
 

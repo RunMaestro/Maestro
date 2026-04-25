@@ -280,6 +280,66 @@ describe('inlineWizardConversation', () => {
 
 			await messagePromise;
 		});
+
+		it('should apply Copilot read-only wizard args and parse final_answer responses', async () => {
+			const mockAgent = {
+				id: 'copilot-cli',
+				available: true,
+				command: 'copilot',
+				args: [],
+				readOnlyArgs: [
+					'--allow-tool=read,url',
+					'--deny-tool=write,shell,memory,github',
+					'--no-ask-user',
+				],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'copilot-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.args).toEqual(
+				expect.arrayContaining([
+					'--allow-tool=read,url',
+					'--deny-tool=write,shell,memory,github',
+					'--no-ask-user',
+				])
+			);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(
+				session.sessionId,
+				'{"type":"assistant.message","data":{"phase":"final_answer","content":"{\\"confidence\\":91,\\"ready\\":true,\\"message\\":\\"Ready to proceed\\"}"}}\n'
+			);
+			dataCallback(
+				session.sessionId,
+				'{"type":"result","sessionId":"copilot-session-123","exitCode":0,"usage":{"sessionDurationMs":1200}}\n'
+			);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					agentSessionId: 'copilot-session-123',
+					response: expect.objectContaining({
+						confidence: 91,
+						ready: true,
+						message: 'Ready to proceed',
+					}),
+				})
+			);
+		});
 	});
 
 	describe('activity-based timeout', () => {

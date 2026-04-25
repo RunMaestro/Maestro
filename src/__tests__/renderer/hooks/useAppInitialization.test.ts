@@ -23,6 +23,8 @@ const mockSettingsState: Record<string, unknown> = {
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: '',
 	osNotificationsEnabled: false,
+	idleNotificationEnabled: false,
+	idleNotificationCommand: '',
 	autoRunStats: {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -94,6 +96,7 @@ vi.mock('../../../renderer/stores/tabStore', () => ({
 const mockSetDefaultDuration = vi.fn();
 const mockSetAudioFeedback = vi.fn();
 const mockSetOsNotifications = vi.fn();
+const mockSetIdleNotification = vi.fn();
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	useNotificationStore: Object.assign(vi.fn(), {
@@ -101,6 +104,7 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 			setDefaultDuration: mockSetDefaultDuration,
 			setAudioFeedback: mockSetAudioFeedback,
 			setOsNotifications: mockSetOsNotifications,
+			setIdleNotification: mockSetIdleNotification,
 		}),
 		setState: vi.fn(),
 		subscribe: vi.fn(() => vi.fn()),
@@ -183,6 +187,8 @@ function resetStores() {
 	mockSettingsState.audioFeedbackEnabled = false;
 	mockSettingsState.audioFeedbackCommand = '';
 	mockSettingsState.osNotificationsEnabled = false;
+	mockSettingsState.idleNotificationEnabled = false;
+	mockSettingsState.idleNotificationCommand = '';
 	mockSettingsState.autoRunStats = {
 		cumulativeTimeMs: 0,
 		totalRuns: 0,
@@ -778,6 +784,15 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockSetOsNotifications).toHaveBeenCalledWith(true);
+		});
+
+		it('should sync idle notification settings', async () => {
+			mockSettingsState.idleNotificationEnabled = true;
+			mockSettingsState.idleNotificationCommand = 'say Maestro is idle';
+			renderHook(() => useAppInitialization());
+			await act(flushPromises);
+
+			expect(mockSetIdleNotification).toHaveBeenCalledWith(true, 'say Maestro is idle');
 		});
 	});
 

@@ -226,7 +226,7 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
 	thinkingStartTime: number;
 }) {
 	const colors = useThemeColors();
-	const [elapsedSeconds, setElapsedSeconds] = useState(
+	const [elapsedSeconds, setElapsedSeconds] = useState(() =>
 		Math.floor((Date.now() - thinkingStartTime) / 1000)
 	);
 

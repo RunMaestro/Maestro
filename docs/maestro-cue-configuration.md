@@ -1,5 +1,5 @@
 ---
-title: Cue Configuration Reference
+title: Cue Configuration
 description: Complete YAML schema reference for .maestro/cue.yaml configuration files.
 icon: file-code
 ---
@@ -22,15 +22,20 @@ Maestro discovers this file automatically when the Cue Encore Feature is enabled
 ## Full Schema
 
 ```yaml
+# Pipeline comment — groups subscriptions into a named pipeline in the UI
+# Pipeline: My Pipeline (color: #06b6d4)
+
 # Subscriptions define trigger-prompt pairings
 subscriptions:
   - name: string # Required. Unique identifier for this subscription
     event: string # Required. Event type (see Event Types)
     enabled: boolean # Optional. Default: true
-    prompt: string # Required. Prompt text or path to a .md file
+    prompt: string # Required (or use prompt_file). Inline prompt text
+    prompt_file: string # Required (or use prompt). Path to a .md file
     output_prompt: string # Optional. Follow-up prompt sent after the main run completes
     output_prompt_file: string # Optional. Path to a .md file for the output prompt
     label: string # Optional. Human-readable label displayed in the Cue dashboard
+    agent_id: string # Optional. UUID of the target agent
 
     # Event-specific fields
     interval_minutes: number # Required for time.heartbeat
@@ -49,7 +54,20 @@ settings:
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
   queue_size: number # Default: 10. Max queued events (0-50)
+  owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
+
+## Sharing a workspace across agents
+
+When two or more agents are registered against the same project directory (for example, one agent using Opus and another using Sonnet, both pointing at the same vault), every _unowned_ subscription (one without an explicit `agent_id`) would otherwise fire once per agent. Maestro resolves this as follows:
+
+- **`settings.owner_agent_id` set and matched by some agent in the root** — that agent is the owner; other agents in the same root skip unowned subscriptions.
+- **`settings.owner_agent_id` set but matched by nobody** — the config is dead. Every agent in that project root skips unowned subscriptions, and each row in the Cue dashboard is flagged with a red warning linking to this setting.
+- **`settings.owner_agent_id` unset and multiple agents share the root** — the first agent in the session list wins. Non-winner rows in the Cue dashboard are flagged with a red warning naming the winner and pointing to `owner_agent_id` as the override.
+
+Accepted values for `owner_agent_id`: the agent's internal id (UUID) **or** its display name (e.g. `Obsidian`).
+
+Subscriptions with an explicit `agent_id` continue to fan out independently of ownership — useful when a single shared config intentionally targets multiple agents in the same workspace.
 
 ## Subscriptions
 
@@ -57,33 +75,39 @@ Each subscription is a trigger-prompt pairing. When the trigger fires, Cue sends
 
 ### Required Fields
 
-| Field    | Type   | Description                                                            |
-| -------- | ------ | ---------------------------------------------------------------------- |
-| `name`   | string | Unique identifier. Used in logs, history, and as a reference in chains |
-| `event`  | string | One of the eight [event types](./maestro-cue-events)                   |
-| `prompt` | string | The prompt to send, either inline text or a path to a `.md` file       |
+| Field    | Type   | Description                                                                   |
+| -------- | ------ | ----------------------------------------------------------------------------- |
+| `name`   | string | Unique identifier. Used in logs, history, and as a reference in chains        |
+| `event`  | string | One of the nine [event types](./maestro-cue-events)                           |
+| `prompt` | string | The prompt to send as inline text. Required unless `prompt_file` is specified |
+
+<Note>
+Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_file` takes precedence.
+</Note>
 
 ### Optional Fields
 
-| Field                | Type            | Default | Description                                                             |
-| -------------------- | --------------- | ------- | ----------------------------------------------------------------------- |
-| `enabled`            | boolean         | `true`  | Set to `false` to pause a subscription without removing it              |
-| `interval_minutes`   | number          | —       | Timer interval. Required for `time.heartbeat`                           |
-| `schedule_times`     | list of strings | —       | Times in `HH:MM` format. Required for `time.scheduled`                  |
-| `schedule_days`      | list of strings | —       | Days of week (`mon`–`sun`). Optional for `time.scheduled`               |
-| `watch`              | string (glob)   | —       | File glob pattern. Required for `file.changed`, `task.pending`          |
-| `source_session`     | string or list  | —       | Source agent name(s). Required for `agent.completed`                    |
-| `fan_out`            | list of strings | —       | Target agent names to fan out to                                        |
-| `filter`             | object          | —       | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))  |
-| `repo`               | string          | —       | GitHub repo (`owner/repo`). Auto-detected from git remote               |
-| `poll_minutes`       | number          | varies  | Poll interval for `github.*` (default 5) and `task.pending` (default 1) |
-| `output_prompt`      | string          | —       | Follow-up prompt sent after the main run completes successfully         |
-| `output_prompt_file` | string          | —       | Path to a `.md` file for the output prompt (alternative to inline)      |
-| `label`              | string          | —       | Human-readable label displayed in the Cue dashboard and pipeline editor |
+| Field                | Type            | Default | Description                                                                 |
+| -------------------- | --------------- | ------- | --------------------------------------------------------------------------- |
+| `enabled`            | boolean         | `true`  | Set to `false` to pause a subscription without removing it                  |
+| `agent_id`           | string (UUID)   | —       | UUID of the target agent. Auto-assigned by the Pipeline Editor              |
+| `prompt_file`        | string          | —       | Path to a `.md` file containing the prompt (alternative to inline `prompt`) |
+| `interval_minutes`   | number          | —       | Timer interval. Required for `time.heartbeat`                               |
+| `schedule_times`     | list of strings | —       | Times in `HH:MM` format. Required for `time.scheduled`                      |
+| `schedule_days`      | list of strings | —       | Days of week (`mon`–`sun`). Optional for `time.scheduled`                   |
+| `watch`              | string (glob)   | —       | File glob pattern. Required for `file.changed`, `task.pending`              |
+| `source_session`     | string or list  | —       | Source agent name(s). Required for `agent.completed`                        |
+| `fan_out`            | list of strings | —       | Target agent names to fan out to                                            |
+| `filter`             | object          | —       | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))      |
+| `repo`               | string          | —       | GitHub repo (`owner/repo`). Auto-detected from git remote                   |
+| `poll_minutes`       | number          | varies  | Poll interval for `github.*` (default 5) and `task.pending` (default 1)     |
+| `output_prompt`      | string          | —       | Follow-up prompt sent after the main run completes successfully             |
+| `output_prompt_file` | string          | —       | Path to a `.md` file for the output prompt (alternative to inline)          |
+| `label`              | string          | —       | Human-readable label displayed in the Cue dashboard and pipeline editor     |
 
 ### Prompt Field
 
-The `prompt` field accepts either inline text or a file path:
+Prompts can be provided inline or via a separate file.
 
 **Inline prompt:**
 
@@ -92,13 +116,13 @@ prompt: |
   Please lint the file {{CUE_FILE_PATH}} and fix any errors.
 ```
 
-**File reference:**
+**File reference (using `prompt_file`):**
 
 ```yaml
-prompt: prompts/lint-check.md
+prompt_file: .maestro/prompts/my-prompt.md
 ```
 
-File paths are resolved relative to the project root. Prompt files support the same `{{VARIABLE}}` template syntax as inline prompts.
+File paths are resolved relative to the project root. Prompt files support the same `{{VARIABLE}}` template syntax as inline prompts. Using `prompt_file` keeps your `cue.yaml` clean when prompts are long or complex — the Pipeline Editor uses this approach by default, storing prompt files in `.maestro/prompts/`.
 
 ### Output Prompt (Two-Phase Runs)
 
@@ -133,9 +157,48 @@ subscriptions:
 The output prompt only fires when the main run completes successfully. If the main run times out or fails, the output phase is skipped.
 </Note>
 
+### Pipelines
+
+A **pipeline** groups multiple subscriptions under a single name in the Pipeline Editor. This is useful when you have related automations (e.g., a daily scan and a weekly review) that logically belong together.
+
+**Defining a pipeline:**
+
+Add a pipeline comment at the top of your `cue.yaml`, then use a naming convention to group subscriptions:
+
+```yaml
+# Pipeline: My Pipeline (color: #06b6d4)
+
+subscriptions:
+  - name: My Pipeline
+    event: time.scheduled
+    schedule_times:
+      - '09:00'
+    prompt_file: .maestro/prompts/my-pipeline-daily.md
+
+  - name: My Pipeline-chain-1
+    event: time.scheduled
+    schedule_times:
+      - '17:00'
+    prompt_file: .maestro/prompts/my-pipeline-eod.md
+```
+
+**How it works:**
+
+1. The `# Pipeline: Name (color: hex)` comment declares the pipeline name and its color in the UI
+2. The first subscription's `name` matches the pipeline name exactly
+3. Additional subscriptions in the same pipeline use the convention `Name-chain-N` (e.g., `My Pipeline-chain-1`, `My Pipeline-chain-2`)
+4. All subscriptions with matching names appear as separate trigger lines within a single pipeline in the Pipeline Editor
+
+**Notes:**
+
+- The `color` in the comment sets the pipeline's dot color in the UI (any valid hex color)
+- Each subscription in a pipeline can have its own event type, schedule, and prompt — they don't need to share configuration
+- Use the `label` field to give each line a descriptive name (e.g., "Daily Analysis", "Weekly Review")
+- The Pipeline Editor creates this structure automatically when you use the visual editor
+
 ### Labels
 
-The `label` field provides a human-readable name displayed in the Cue dashboard and pipeline editor. Labels are purely cosmetic — the engine ignores them.
+The `label` field provides a human-readable name displayed in the Cue dashboard and pipeline editor. When subscriptions are grouped into a pipeline, the label distinguishes each line within the pipeline.
 
 ```yaml
 subscriptions:
@@ -218,7 +281,7 @@ The engine validates your YAML on every load. Common validation errors:
 | Error                                   | Fix                                                          |
 | --------------------------------------- | ------------------------------------------------------------ |
 | `"name" is required`                    | Every subscription needs a unique `name` field               |
-| `"event" is required`                   | Specify one of the eight event types                         |
+| `"event" is required`                   | Specify one of the nine event types                          |
 | `"prompt" is required`                  | Provide inline text or a file path                           |
 | `"interval_minutes" is required`        | `time.heartbeat` events must specify a positive interval     |
 | `"schedule_times" is required`          | `time.scheduled` events must have at least one `HH:MM` time  |
@@ -234,12 +297,15 @@ The inline YAML editor in the Cue Modal shows validation errors in real-time as 
 
 ## Complete Example
 
-A realistic configuration demonstrating multiple event types working together:
+A realistic configuration demonstrating a pipeline with multiple trigger lines, mixed event types, and external prompt files:
 
 ```yaml
+# Pipeline: DevOps (color: #10b981)
+
 subscriptions:
   # Lint TypeScript files on save
-  - name: lint-on-save
+  - name: DevOps
+    label: Lint on Save
     event: file.changed
     watch: 'src/**/*.ts'
     filter:
@@ -248,16 +314,9 @@ subscriptions:
       The file {{CUE_FILE_PATH}} was modified.
       Run `npx eslint {{CUE_FILE_PATH}} --fix` and report any remaining issues.
 
-  # Run tests every 30 minutes
-  - name: periodic-tests
-    event: time.heartbeat
-    interval_minutes: 30
-    prompt: |
-      Run the test suite with `npm test`.
-      If any tests fail, investigate and fix them.
-
   # Morning standup on weekdays
-  - name: morning-standup
+  - name: DevOps-chain-1
+    label: Morning Standup
     event: time.scheduled
     schedule_times:
       - '09:00'
@@ -271,7 +330,8 @@ subscriptions:
       Generate a standup report from recent git activity.
 
   # Review new PRs automatically
-  - name: pr-review
+  - name: DevOps-chain-2
+    label: PR Review
     event: github.pull_request
     poll_minutes: 3
     filter:
@@ -287,7 +347,8 @@ subscriptions:
       Please review this PR for code quality, potential bugs, and style issues.
 
   # Work on pending tasks from TODO.md
-  - name: task-worker
+  - name: DevOps-chain-3
+    label: Task Worker
     event: task.pending
     watch: 'TODO.md'
     poll_minutes: 5
@@ -299,18 +360,10 @@ subscriptions:
       Pick the highest priority task and complete it.
       When done, check off the task in the file.
 
-  # Chain: deploy after tests pass
-  - name: deploy-after-tests
-    event: agent.completed
-    source_session: 'test-runner'
-    filter:
-      status: completed
-      exitCode: 0
-    prompt: |
-      Tests passed successfully. Deploy to staging with `npm run deploy:staging`.
-
 settings:
   timeout_minutes: 45
   max_concurrent: 2
   queue_size: 15
 ```
+
+All four subscriptions appear as separate trigger lines within a single **DevOps** pipeline in the Pipeline Editor.

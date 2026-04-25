@@ -146,6 +146,7 @@ interface GroupChatListProps {
 	onRenameGroupChat: (id: string) => void;
 	onDeleteGroupChat: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
+	onDeleteAllArchivedGroupChats?: () => void;
 	/** Controlled expanded state (lifted to parent for keyboard navigation) */
 	isExpanded?: boolean;
 	/** Callback when expanded state changes */
@@ -170,6 +171,7 @@ export function GroupChatList({
 	onRenameGroupChat,
 	onDeleteGroupChat,
 	onArchiveGroupChat,
+	onDeleteAllArchivedGroupChats,
 	isExpanded: controlledIsExpanded,
 	onExpandedChange,
 	groupChatState = 'idle',
@@ -386,6 +388,20 @@ export function GroupChatList({
 								);
 							})}
 						</div>
+					)}
+					{/* Delete All Archived button */}
+					{showArchived && archivedCount > 0 && onDeleteAllArchivedGroupChats && (
+						<button
+							onClick={onDeleteAllArchivedGroupChats}
+							className="flex items-center gap-1.5 w-full px-3 py-1.5 mt-1 text-xs rounded hover:opacity-80 transition-opacity"
+							style={{
+								color: theme.colors.error,
+								backgroundColor: `${theme.colors.error}10`,
+							}}
+						>
+							<Trash2 className="w-3 h-3" />
+							<span>Delete All Archived</span>
+						</button>
 					)}
 				</div>
 			)}

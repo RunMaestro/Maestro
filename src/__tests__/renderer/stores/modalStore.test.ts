@@ -9,7 +9,6 @@ import {
 	useModalActions,
 	selectModalOpen,
 	selectModalData,
-	selectModal,
 	getModalActions,
 	type ModalId,
 	type SettingsModalData,
@@ -300,8 +299,8 @@ describe('modalStore', () => {
 			expect(result.current).toEqual({ tab: 'theme' });
 		});
 
-		it('provides full entry via selectModal', () => {
-			const { result } = renderHook(() => useModalStore(selectModal('settings')));
+		it('provides full entry via modals map', () => {
+			const { result } = renderHook(() => useModalStore((s) => s.modals.get('settings')));
 
 			expect(result.current).toBeUndefined();
 
@@ -411,6 +410,7 @@ describe('modalStore', () => {
 				'renameTab',
 				'renameGroup',
 				'agentSessions',
+				'memoryViewer',
 				'queueBrowser',
 				'batchRunner',
 				'autoRunSetup',

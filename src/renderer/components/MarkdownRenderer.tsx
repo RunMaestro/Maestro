@@ -4,16 +4,21 @@ import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from '../utils/syntaxTheme';
-import { Clipboard, Loader2, ImageOff } from 'lucide-react';
+import { Clipboard, ImageOff } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
+import type { PluggableList } from 'unified';
+import type { ExtraProps } from 'react-markdown';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
+import { extractHexColor } from '../../shared/hexColor';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
-import { REMARK_GFM_PLUGINS } from '../utils/markdownConfig';
+import { REMARK_GFM_PLUGINS, applyReadableTextTransforms } from '../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from './LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from './FileContextMenu';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
+import { openUrl } from '../utils/openUrl';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -124,7 +129,7 @@ const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProp
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading image...
 				</span>
@@ -208,6 +213,68 @@ const CodeBlockWithCopy = memo(
 CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
 
 // ============================================================================
+// fixMarkdownLinkSpaces — pre-process markdown so CommonMark can parse links
+// whose URL destinations contain spaces.
+//
+// CommonMark rejects spaces in link destinations, but AI agents (e.g. Codex)
+// often emit links like [file.ts](/path/with spaces/file.ts).
+//
+// Strategy: walk the text looking for [label]( patterns, then find the
+// balanced closing ), and if the URL portion contains spaces, rewrite to
+// CommonMark's angle-bracket destination syntax: [label](<url>).
+//
+// This handles:
+//   - Nested brackets in labels:  [src/[id].tsx](path with spaces)
+//   - Balanced parens in URLs:    [file](path (copy)/file.ts)
+//   - Multiple links per line:    [a](x y) and [b](z w)
+//   - No-op for URLs without spaces
+// ============================================================================
+
+// Matches a markdown link label (with one level of nested brackets) followed
+// by the opening paren of the URL destination.
+const LINK_LABEL_REGEX = /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(/g;
+
+function fixMarkdownLinkSpaces(text: string): string {
+	let result = '';
+	let lastEnd = 0;
+	let m;
+
+	LINK_LABEL_REGEX.lastIndex = 0;
+	while ((m = LINK_LABEL_REGEX.exec(text)) !== null) {
+		const label = m[1];
+		const urlStart = m.index + m[0].length;
+
+		// Walk forward to find the closing ) with balanced parens
+		let depth = 1;
+		let i = urlStart;
+		while (i < text.length && depth > 0) {
+			if (text[i] === '(') depth++;
+			else if (text[i] === ')') depth--;
+			i++;
+		}
+
+		if (depth !== 0) continue; // Unbalanced — skip
+
+		const url = text.slice(urlStart, i - 1); // Exclude closing )
+
+		if (url.includes(' ')) {
+			result += text.slice(lastEnd, m.index);
+			if (url.includes('<') || url.includes('>')) {
+				// Angle brackets in URL would break <url> syntax — fall back to %20
+				result += `[${label}](${url.replace(/ /g, '%20')})`;
+			} else {
+				result += `[${label}](<${url}>)`;
+			}
+			lastEnd = i;
+			LINK_LABEL_REGEX.lastIndex = i;
+		}
+	}
+
+	result += text.slice(lastEnd);
+	return result;
+}
+
+// ============================================================================
 // MarkdownRenderer - Unified markdown rendering component for AI responses
 // ============================================================================
 
@@ -232,6 +299,12 @@ interface MarkdownRendererProps {
 	allowRawHtml?: boolean;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+	/** Apply Bionify reading-mode emphasis to prose text only when explicitly enabled */
+	enableBionifyReadingMode?: boolean;
+	/** Visual intensity for Bionify emphasis */
+	bionifyIntensity?: number;
+	/** Algorithm string controlling Bionify highlight lengths */
+	bionifyAlgorithm?: string;
 }
 
 /**
@@ -258,6 +331,9 @@ export const MarkdownRenderer = memo(
 		onFileClick,
 		allowRawHtml = false,
 		sshRemoteId,
+		enableBionifyReadingMode = false,
+		bionifyIntensity,
+		bionifyAlgorithm,
 	}: MarkdownRendererProps) => {
 		// Resolve homeDir for tilde path expansion (module-level cache, fetched once)
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -278,7 +354,11 @@ export const MarkdownRenderer = memo(
 
 		// Memoize remark plugins to avoid recreating on every render
 		const remarkPlugins = useMemo(() => {
-			const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
+			const plugins: PluggableList = [
+				...REMARK_GFM_PLUGINS,
+				remarkFrontmatter,
+				remarkFrontmatterTable,
+			];
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			// OR if we have homeDir for tilde paths (even without file tree or projectRoot)
@@ -294,10 +374,12 @@ export const MarkdownRenderer = memo(
 		// Defense-in-depth: sanitize raw HTML with DOMPurify before markdown parsing
 		// to strip script tags, event handlers, and other XSS vectors
 		const sanitizedContent = useMemo(() => {
+			const processed = fixMarkdownLinkSpaces(content);
+
 			if (allowRawHtml) {
-				return DOMPurify.sanitize(content);
+				return DOMPurify.sanitize(processed);
 			}
-			return content;
+			return processed;
 		}, [content, allowRawHtml]);
 
 		// Right-click context menus for links and file references
@@ -305,6 +387,14 @@ export const MarkdownRenderer = memo(
 		const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
 		const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
 		const dismissFileMenu = useCallback(() => setFileMenu(null), []);
+
+		const withReadableTransforms = (children: React.ReactNode) =>
+			applyReadableTextTransforms(children, {
+				theme,
+				enableBionifyReadingMode,
+				bionifyIntensity,
+				bionifyAlgorithm,
+			});
 
 		return (
 			<div
@@ -318,7 +408,9 @@ export const MarkdownRenderer = memo(
 						a: ({ node: _node, href, children, ...props }) => {
 							// Check for maestro-file:// protocol OR data-maestro-file attribute
 							// (data attribute is fallback when rehype strips custom protocols)
-							const dataFilePath = (props as any)['data-maestro-file'];
+							const dataFilePath = (props as Record<string, unknown>)['data-maestro-file'] as
+								| string
+								| undefined;
 							const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
 							const filePath =
 								dataFilePath ||
@@ -333,11 +425,11 @@ export const MarkdownRenderer = memo(
 										if (isMaestroFile && filePath && onFileClick) {
 											onFileClick(filePath);
 										} else if (href) {
-											// Open http/https URLs via openExternal; file:// URLs via openPath
+											// Open http/https URLs via openUrl; file:// URLs via openPath
 											if (/^file:\/\//.test(href)) {
 												window.maestro.shell.openPath(href.replace(/^file:\/\//, ''));
 											} else if (/^https?:\/\//.test(href)) {
-												window.maestro.shell.openExternal(href);
+												openUrl(href, { ctrlKey: e.ctrlKey });
 											} else {
 												// Attempt to convert non-standard URLs (e.g. git@host:user/repo)
 												try {
@@ -348,7 +440,7 @@ export const MarkdownRenderer = memo(
 																.replace(/\.git$/, '')
 														: href;
 													if (/^https?:\/\//.test(converted)) {
-														window.maestro.shell.openExternal(converted);
+														openUrl(converted, { ctrlKey: e.ctrlKey });
 													}
 												} catch {
 													// Silently ignore unparseable URLs
@@ -384,12 +476,16 @@ export const MarkdownRenderer = memo(
 								</a>
 							);
 						},
-						pre: ({ children }: any) => {
+						pre: ({ children }: JSX.IntrinsicElements['pre'] & ExtraProps) => {
 							// In react-markdown v10, block code is <pre><code>...</code></pre>
 							// Extract the code element and render with SyntaxHighlighter
 							const codeElement = React.Children.toArray(children).find(
-								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
-							) as React.ReactElement<any> | undefined;
+								(child) =>
+									React.isValidElement(child) &&
+									(child.type === 'code' || child.props?.node?.tagName === 'code')
+							) as
+								| React.ReactElement<{ className?: string; children?: React.ReactNode }>
+								| undefined;
 
 							if (codeElement?.props) {
 								const { className, children: codeChildren } = codeElement.props;
@@ -410,18 +506,72 @@ export const MarkdownRenderer = memo(
 							// Fallback: render as-is
 							return <pre>{children}</pre>;
 						},
-						code: ({ node: _node, className, children, ...props }: any) => {
+						code: ({
+							node: _node,
+							className,
+							children,
+							...props
+						}: JSX.IntrinsicElements['code'] & ExtraProps) => {
 							// Inline code only — block code is handled by the pre component above
+							const hexColor = extractHexColor(children);
 							return (
 								<code className={className} {...props}>
+									{hexColor && (
+										<span
+											style={{
+												display: 'inline-block',
+												width: '0.75em',
+												height: '0.75em',
+												backgroundColor: hexColor,
+												borderRadius: '2px',
+												marginRight: '0.35em',
+												verticalAlign: 'middle',
+												border: '1px solid rgba(128, 128, 128, 0.3)',
+											}}
+										/>
+									)}
 									{children}
 								</code>
 							);
 						},
-						img: ({ node: _node, src, alt, ...props }: any) => {
+						p: ({ node: _node, children, ...props }: any) => (
+							<p {...props}>{withReadableTransforms(children)}</p>
+						),
+						li: ({ node: _node, children, ...props }: any) => (
+							<li {...props}>{withReadableTransforms(children)}</li>
+						),
+						blockquote: ({ node: _node, children, ...props }: any) => (
+							<blockquote {...props}>{withReadableTransforms(children)}</blockquote>
+						),
+						h1: ({ node: _node, children, ...props }: any) => (
+							<h1 {...props}>{withReadableTransforms(children)}</h1>
+						),
+						h2: ({ node: _node, children, ...props }: any) => (
+							<h2 {...props}>{withReadableTransforms(children)}</h2>
+						),
+						h3: ({ node: _node, children, ...props }: any) => (
+							<h3 {...props}>{withReadableTransforms(children)}</h3>
+						),
+						h4: ({ node: _node, children, ...props }: any) => (
+							<h4 {...props}>{withReadableTransforms(children)}</h4>
+						),
+						h5: ({ node: _node, children, ...props }: any) => (
+							<h5 {...props}>{withReadableTransforms(children)}</h5>
+						),
+						h6: ({ node: _node, children, ...props }: any) => (
+							<h6 {...props}>{withReadableTransforms(children)}</h6>
+						),
+						img: ({
+							node: _node,
+							src,
+							alt,
+							...props
+						}: JSX.IntrinsicElements['img'] & ExtraProps) => {
 							// Use LocalImage component to handle file:// URLs via IPC
 							// Extract width from data-maestro-width attribute if present
-							const widthStr = props['data-maestro-width'];
+							const widthStr = (props as Record<string, unknown>)['data-maestro-width'] as
+								| string
+								| undefined;
 							const width = widthStr ? parseInt(widthStr, 10) : undefined;
 
 							return (
@@ -434,7 +584,11 @@ export const MarkdownRenderer = memo(
 								/>
 							);
 						},
-						table: ({ node: _node, style, ...props }: any) => (
+						table: ({
+							node: _node,
+							style,
+							...props
+						}: JSX.IntrinsicElements['table'] & ExtraProps) => (
 							<div className="overflow-x-auto scrollbar-thin" style={{ maxWidth: '100%' }}>
 								<table
 									{...props}
@@ -446,7 +600,12 @@ export const MarkdownRenderer = memo(
 								/>
 							</div>
 						),
-						th: ({ node: _node, style, ...props }: any) => (
+						th: ({
+							node: _node,
+							style,
+							children,
+							...props
+						}: JSX.IntrinsicElements['th'] & ExtraProps) => (
 							<th
 								{...props}
 								style={{
@@ -456,9 +615,16 @@ export const MarkdownRenderer = memo(
 									whiteSpace: 'nowrap',
 									...(style || {}),
 								}}
-							/>
+							>
+								{withReadableTransforms(children)}
+							</th>
 						),
-						td: ({ node: _node, style, ...props }: any) => (
+						td: ({
+							node: _node,
+							style,
+							children,
+							...props
+						}: JSX.IntrinsicElements['td'] & ExtraProps) => (
 							<td
 								{...props}
 								style={{
@@ -470,14 +636,18 @@ export const MarkdownRenderer = memo(
 									verticalAlign: 'top',
 									...(style || {}),
 								}}
-							/>
+							>
+								{withReadableTransforms(children)}
+							</td>
 						),
 						// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 						// pass through as strings from AI-generated HTML, which React rejects.
 						// Fixes MAESTRO-8Q
-						details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
-							<details {...props} />
-						),
+						details: ({
+							node: _node,
+							onToggle: _onToggle,
+							...props
+						}: JSX.IntrinsicElements['details'] & ExtraProps) => <details {...props} />,
 					}}
 				>
 					{sanitizedContent}

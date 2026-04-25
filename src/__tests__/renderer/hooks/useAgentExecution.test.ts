@@ -2,53 +2,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentExecution } from '../../../renderer/hooks';
 import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
-const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
-	id: 'tab-1',
-	agentSessionId: null,
-	name: null,
-	starred: false,
-	logs: [],
-	inputValue: '',
-	stagedImages: [],
-	createdAt: 1700000000000,
-	state: 'idle',
-	saveToHistory: true,
-	...overrides,
-});
+const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
+	createMockAITab({
+		createdAt: 1700000000000,
+		saveToHistory: true,
+		...overrides,
+	});
 
+// Thin wrapper: pre-populates an AI tab so agent execution has a tab
+// target for spawned processes.
 const createMockSession = (overrides: Partial<Session> = {}): Session => {
 	const baseTab = createMockTab();
-
-	return {
-		id: 'session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
+	return baseCreateMockSession({
 		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
 		aiTabs: [baseTab],
 		activeTabId: baseTab.id,
-		closedTabHistory: [],
-		executionQueue: [],
-		activeTimeMs: 0,
 		...overrides,
-	};
+	});
 };
 
 const baseUsage: UsageStats = {
@@ -115,6 +88,13 @@ describe('useAgentExecution', () => {
 				}),
 			},
 			process: mockProcess,
+			prompts: {
+				...window.maestro.prompts,
+				get: vi.fn().mockResolvedValue({
+					success: true,
+					content: 'Maestro System Context: {{AGENT_NAME}}',
+				}),
+			},
 		};
 	});
 
@@ -163,7 +143,7 @@ describe('useAgentExecution', () => {
 				outputTokens: 3,
 				totalCostUsd: 0.02,
 			});
-			onExitHandler?.(targetSessionId);
+			onExitHandler?.(targetSessionId, 0);
 		});
 
 		const resultData = await spawnPromise;
@@ -188,6 +168,45 @@ describe('useAgentExecution', () => {
 
 		expect(updatedSession.state).toBe('idle');
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
+	});
+
+	it('includes appendSystemPrompt in batch spawns', async () => {
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockTab({ state: 'busy' })],
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Batch task');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.appendSystemPrompt).toBeDefined();
+		expect(typeof spawnConfig.appendSystemPrompt).toBe('string');
+		expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+
+		// Clean up
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
 	});
 
 	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {

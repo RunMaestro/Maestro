@@ -2,6 +2,7 @@ import { lazy, memo, Suspense } from 'react';
 import { useModalActions } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
+import { useMessageGistStore } from '../stores/messageGistStore';
 import { useUIStore } from '../stores/uiStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
@@ -9,6 +10,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
 import { DebugPackageModal } from './DebugPackageModal';
+import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { AppOverlays } from './AppOverlays';
 import { PlaygroundPanel } from './PlaygroundPanel';
@@ -31,6 +33,9 @@ import type {
 } from '../types';
 import type { FileTabInfo } from '../hooks/ui/useAppHandlers';
 import type { MainPanelHandle } from './MainPanel';
+import type { FileNode } from '../types/fileTree';
+import { openUrl } from '../utils/openUrl';
+import { logger } from '../utils/logger';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -90,7 +95,7 @@ export interface AppStandaloneModalsProps {
 
 	// --- Director's Notes ---
 	onDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
-	onFileClick: (node: { name: string; type: string }, path: string) => void;
+	onFileClick: (node: FileNode, path: string) => void;
 
 	// --- Cue ---
 	shortcuts: Record<string, Shortcut>;
@@ -222,6 +227,8 @@ function AppStandaloneModalsInner({
 		windowsWarningModalOpen,
 		setWindowsWarningModalOpen,
 		setDebugPackageModalOpen,
+		debugApplicationStatsOpen,
+		setDebugApplicationStatsOpen,
 		playgroundOpen,
 		setPlaygroundOpen,
 		debugWizardModalOpen,
@@ -242,6 +249,7 @@ function AppStandaloneModalsInner({
 		deleteAgentSession,
 		settingsModalOpen,
 		settingsTab,
+		settingsPromptId,
 		wizardResumeModalOpen,
 		wizardResumeState,
 		tourOpen,
@@ -305,6 +313,14 @@ function AppStandaloneModalsInner({
 				isOpen={debugWizardModalOpen}
 				onClose={() => setDebugWizardModalOpen(false)}
 			/>
+
+			{/* --- DEBUG: VIEW APPLICATION STATS --- */}
+			{debugApplicationStatsOpen && (
+				<DebugApplicationStatsModal
+					theme={theme}
+					onClose={() => setDebugApplicationStatsOpen(false)}
+				/>
+			)}
 
 			{/* --- MARKETPLACE MODAL (lazy-loaded) --- */}
 			{activeSession && activeSession.autoRunFolderPath && marketplaceModalOpen && (
@@ -400,12 +416,22 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					onSuccess={(gistUrl, isPublic) => {
+						const publishedAt = Date.now();
 						// Save gist URL for the file if it's from file preview tab (not tab context)
 						if (activeFileTab && !tabGistContent) {
 							saveFileGistUrl(activeFileTab.path, {
 								gistUrl,
 								isPublic,
-								publishedAt: Date.now(),
+								publishedAt,
+							});
+						}
+						// Save gist URL for the individual message, if the publish originated from one.
+						// In-memory only — intentionally not persisted across app restarts.
+						if (tabGistContent?.messageId) {
+							useMessageGistStore.getState().setMessageGist(tabGistContent.messageId, {
+								gistUrl,
+								isPublic,
+								publishedAt,
 							});
 						}
 						// Copy the gist URL to clipboard
@@ -423,7 +449,11 @@ function AppStandaloneModalsInner({
 						useTabStore.getState().setTabGistContent(null);
 					}}
 					existingGist={
-						activeFileTab && !tabGistContent ? fileGistUrls[activeFileTab.path] : undefined
+						tabGistContent?.messageId
+							? useMessageGistStore.getState().published[tabGistContent.messageId]
+							: activeFileTab && !tabGistContent
+								? fileGistUrls[activeFileTab.path]
+								: undefined
 					}
 				/>
 			)}
@@ -473,13 +503,13 @@ function AppStandaloneModalsInner({
 									});
 								}
 							} catch (error) {
-								console.error('[DocumentGraph] Failed to open file:', error);
+								logger.error('[DocumentGraph] Failed to open file:', undefined, error);
 							}
 							useFileExplorerStore.getState().setIsGraphViewOpen(false);
 						}}
 						onExternalLinkOpen={(url) => {
 							// Open external URL in default browser
-							window.maestro.shell.openExternal(url);
+							openUrl(url);
 						}}
 						focusFilePath={graphFocusFilePath}
 						defaultShowExternalLinks={documentGraphShowExternalLinks}
@@ -533,6 +563,7 @@ function AppStandaloneModalsInner({
 						theme={theme}
 						themes={THEMES}
 						initialTab={settingsTab}
+						initialSelectedPromptId={settingsPromptId}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

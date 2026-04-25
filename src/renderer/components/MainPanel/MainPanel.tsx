@@ -12,13 +12,16 @@ import { LogViewer } from '../LogViewer';
 import { FilePreviewHandle } from '../FilePreview';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { AgentSessionsBrowser } from '../AgentSessionsBrowser';
+import { MemoryViewer } from '../MemoryViewer';
 import { TabBar } from '../TabBar';
+import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
 import { useAgentCapabilities } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useTerminalMounting } from '../../hooks/terminal/useTerminalMounting';
+import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -37,6 +40,7 @@ export const MainPanel = React.memo(
 		const {
 			logViewerOpen,
 			agentSessionsOpen,
+			memoryViewerOpen,
 			activeAgentSessionId,
 			activeSession,
 			thinkingItems,
@@ -69,6 +73,7 @@ export const MainPanel = React.memo(
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
+			setMemoryViewerOpen,
 			setActiveAgentSessionId,
 			onResumeAgentSession,
 			onNewAgentSession,
@@ -95,6 +100,9 @@ export const MainPanel = React.memo(
 			currentSessionBatchState,
 			onStopBatchRun,
 			onRemoveQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
 			onOpenQueueBrowser,
 			isMobileLandscape = false,
 			showFlashNotification,
@@ -145,6 +153,9 @@ export const MainPanel = React.memo(
 
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		// Imperative handle for the currently-mounted BrowserTabView. Only the active browser
+		// tab is rendered, so this points to that one (or null if no browser tab is active).
+		const browserViewRef = useRef<BrowserTabViewHandle | null>(null);
 		// Terminal session mounting lifecycle (refs, state, effects)
 		const {
 			terminalViewRefs,
@@ -175,8 +186,15 @@ export const MainPanel = React.memo(
 			unifiedTabs,
 			activeFileTabId,
 			activeFileTab,
+			activeBrowserTabId,
+			activeBrowserTab,
 			onFileTabSelect,
 			onFileTabClose,
+			onNewFileTab,
+			onNewBrowserTab,
+			onBrowserTabSelect,
+			onBrowserTabClose,
+			onBrowserTabUpdate,
 			onFileTabEditModeChange,
 			onFileTabEditContentChange,
 			// Terminal tab callbacks (Phase 8)
@@ -249,32 +267,49 @@ export const MainPanel = React.memo(
 			[setLogViewerOpen, setActiveSessionId, setSessions]
 		);
 
-		// Fetch available models, effort levels, and agent defaults when agent type changes
+		// Fetch available models, effort levels, and agent defaults when agent type changes.
+		// Uses a stale flag to prevent race conditions when switching between agents —
+		// without this, a slow response (e.g., `opencode models` subprocess) from the
+		// previous agent can overwrite the current agent's model list.
 		useEffect(() => {
 			if (!activeSession?.toolType) return;
+			let stale = false;
 			const agentId = activeSession.toolType;
 			// Fetch models
 			window.maestro.agents
 				.getModels(agentId)
-				.then(setPillModels)
-				.catch(() => setPillModels([]));
+				.then((models) => {
+					if (!stale) setPillModels(models);
+				})
+				.catch(() => {
+					if (!stale) setPillModels([]);
+				});
 			// Fetch effort options — use the effort-related config key for this agent
 			const effortKey = agentId === 'codex' ? 'reasoningEffort' : 'effort';
 			window.maestro.agents
 				.getConfigOptions(agentId, effortKey)
-				.then(setPillEfforts)
-				.catch(() => setPillEfforts([]));
+				.then((efforts) => {
+					if (!stale) setPillEfforts(efforts);
+				})
+				.catch(() => {
+					if (!stale) setPillEfforts([]);
+				});
 			// Fetch agent-level config for default model/effort
 			window.maestro.agents
 				.getConfig(agentId)
 				.then((config) => {
+					if (stale) return;
 					setAgentDefaultModel(config?.model || '');
 					setAgentDefaultEffort(config?.effort || config?.reasoningEffort || '');
 				})
 				.catch(() => {
+					if (stale) return;
 					setAgentDefaultModel('');
 					setAgentDefaultEffort('');
 				});
+			return () => {
+				stale = true;
+			};
 		}, [activeSession?.toolType]);
 
 		// Resolved current model/effort: session override > agent config > empty
@@ -320,11 +355,167 @@ export const MainPanel = React.memo(
 						terminalViewRefs.current.get(activeSession.id)?.focusActiveTerminal();
 					}
 				},
+				focusBrowserAddressBar: () => {
+					if (activeSession?.activeBrowserTabId) {
+						const input = document.getElementById(
+							`browser-tab-address-${activeSession.activeBrowserTabId}`
+						) as HTMLInputElement | null;
+						if (input) {
+							input.focus();
+							input.select();
+						}
+					}
+				},
+				reloadBrowserTab: () => {
+					if (activeSession?.activeBrowserTabId) {
+						const host = document.querySelector('[data-testid="browser-tab-host"]');
+						const webview = host?.querySelector('webview') as
+							| (HTMLElement & { reload: () => void; stop: () => void; isLoading: () => boolean })
+							| null;
+						if (webview) {
+							try {
+								if (webview.isLoading()) {
+									webview.stop();
+								} else {
+									webview.reload();
+								}
+							} catch {
+								// webview not ready
+							}
+						}
+					}
+				},
 				openTerminalSearch: () => {
 					setTerminalSearchOpen(true);
 				},
 			}),
 			[refreshGitStatus, activeSession?.id]
+		);
+
+		// Terminal buffer action wrappers — resolve the terminal tab's scrollback to text,
+		// then delegate to the App-level text handlers (copy / gist / send to agent).
+		const resolveBuffer = useCallback(
+			(tabId: string): { content: string; displayName: string } | null => {
+				if (!activeSession) return null;
+				const terminalTab = activeSession.terminalTabs?.find((t) => t.id === tabId);
+				if (!terminalTab) return null;
+				const handle = terminalViewRefs.current.get(activeSession.id);
+				const content = handle?.getTerminalBuffer(tabId) ?? '';
+				const terminalIndex = (activeSession.terminalTabs ?? []).findIndex((t) => t.id === tabId);
+				const displayName = getTerminalTabDisplayName(
+					terminalTab,
+					terminalIndex >= 0 ? terminalIndex : 0
+				);
+				return { content, displayName };
+			},
+			[activeSession, terminalViewRefs]
+		);
+
+		const handleCopyTerminalBuffer = useCallback(
+			(tabId: string) => {
+				const resolved = resolveBuffer(tabId);
+				if (!resolved) return;
+				props.onCopyText?.(resolved.content, 'Terminal Buffer');
+			},
+			[resolveBuffer, props.onCopyText]
+		);
+
+		const handlePublishTerminalBufferGist = useCallback(
+			(tabId: string) => {
+				const resolved = resolveBuffer(tabId);
+				if (!resolved) return;
+				props.onPublishTextAsGist?.(resolved.content, resolved.displayName);
+			},
+			[resolveBuffer, props.onPublishTextAsGist]
+		);
+
+		const handleSendTerminalBufferToAgent = useCallback(
+			(tabId: string) => {
+				const resolved = resolveBuffer(tabId);
+				if (!resolved) return;
+				props.onSendTextToAgent?.(resolved.content, resolved.displayName);
+			},
+			[resolveBuffer, props.onSendTextToAgent]
+		);
+
+		// Right-click "Copy to Clipboard" on highlighted text in XTerminal.
+		const handleCopyTerminalSelection = useCallback(
+			(text: string) => {
+				props.onCopyText?.(text, 'Terminal Selection');
+			},
+			[props.onCopyText]
+		);
+
+		// Right-click "Send to Agent" on highlighted text — resolve the tab's display name
+		// so the Send-to-Agent modal shows e.g. "Terminal 2 Selection" as the source.
+		const handleSendTerminalSelectionToAgent = useCallback(
+			(tabId: string, text: string) => {
+				if (!activeSession) return;
+				const tabIndex = (activeSession.terminalTabs ?? []).findIndex((t) => t.id === tabId);
+				const tab = activeSession.terminalTabs?.[tabIndex];
+				const baseName = tab
+					? getTerminalTabDisplayName(tab, tabIndex >= 0 ? tabIndex : 0)
+					: 'Terminal';
+				props.onSendTextToAgent?.(text, `${baseName} Selection`);
+			},
+			[activeSession, props.onSendTextToAgent]
+		);
+
+		// Browser content action wrappers — extract the rendered text of a browser tab
+		// (activating it first if necessary) and delegate to the App-level text handlers.
+		const resolveBrowserContent = useCallback(
+			async (
+				tabId: string
+			): Promise<{ content: string; displayName: string; url: string } | null> => {
+				if (!activeSession) return null;
+				const browserTab = activeSession.browserTabs?.find((t) => t.id === tabId);
+				if (!browserTab) return null;
+				const isAlreadyActive =
+					activeSession.activeBrowserTabId === tabId &&
+					activeSession.inputMode === 'ai' &&
+					!activeSession.activeFileTabId;
+				if (!isAlreadyActive) {
+					// Switch to the requested browser tab so it gets mounted, then wait briefly
+					// for the BrowserTabView to register its imperative handle on the next tick.
+					onBrowserTabSelect?.(tabId);
+					for (let i = 0; i < 20; i++) {
+						await new Promise((r) => setTimeout(r, 50));
+						if (browserViewRef.current?.getTabId() === tabId) break;
+					}
+				}
+				const handle = browserViewRef.current;
+				if (!handle || handle.getTabId() !== tabId) return null;
+				const content = await handle.getContent();
+				const displayName =
+					(browserTab.title && browserTab.title.trim()) ||
+					(() => {
+						try {
+							return new URL(browserTab.url).host || browserTab.url;
+						} catch {
+							return browserTab.url || 'Browser Tab';
+						}
+					})();
+				return { content, displayName, url: browserTab.url };
+			},
+			[activeSession, onBrowserTabSelect]
+		);
+
+		const handleCopyBrowserContent = useCallback(
+			async (tabId: string) => {
+				const resolved = await resolveBrowserContent(tabId);
+				if (!resolved) return;
+				props.onCopyText?.(resolved.content, 'Page Content');
+			},
+			[resolveBrowserContent, props.onCopyText]
+		);
+
+		const handleSendBrowserContentToAgent = useCallback(
+			async (tabId: string) => {
+				const resolved = await resolveBrowserContent(tabId);
+				if (!resolved) return;
+				props.onSendTextToAgent?.(resolved.content, resolved.displayName);
+			},
+			[resolveBrowserContent, props.onSendTextToAgent]
 		);
 
 		// Handler for input focus - select session in sidebar
@@ -434,6 +625,22 @@ export const MainPanel = React.memo(
 			);
 		}
 
+		// Show memory viewer (only if agent supports per-project memory)
+		if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
+			return (
+				<div
+					className="flex-1 flex flex-col min-w-0 relative"
+					style={{ backgroundColor: theme.colors.bgMain }}
+				>
+					<MemoryViewer
+						theme={theme}
+						activeSession={activeSession || undefined}
+						onClose={() => setMemoryViewerOpen(false)}
+					/>
+				</div>
+			);
+		}
+
 		// Show empty state when no active session
 		if (!activeSession) {
 			return (
@@ -456,7 +663,7 @@ export const MainPanel = React.memo(
 			<>
 				<ErrorBoundary>
 					<div
-						className="flex-1 flex flex-col relative"
+						className="flex-1 flex flex-col relative isolate"
 						style={{
 							minWidth: '400px',
 							backgroundColor: theme.colors.bgMain,
@@ -485,6 +692,7 @@ export const MainPanel = React.memo(
 								getContextColor={getContextColor}
 								setGitLogOpen={setGitLogOpen}
 								setAgentSessionsOpen={setAgentSessionsOpen}
+								setMemoryViewerOpen={setMemoryViewerOpen}
 								setActiveAgentSessionId={setActiveAgentSessionId}
 								onStopBatchRun={onStopBatchRun}
 								onOpenWorktreeConfig={onOpenWorktreeConfig}
@@ -530,8 +738,13 @@ export const MainPanel = React.memo(
 									// Unified tab system props (Phase 4)
 									unifiedTabs={unifiedTabs}
 									activeFileTabId={activeFileTabId}
+									activeBrowserTabId={activeBrowserTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									onNewFileTab={onNewFileTab}
+									onNewBrowserTab={onNewBrowserTab}
+									onBrowserTabSelect={onBrowserTabSelect}
+									onBrowserTabClose={onBrowserTabClose}
 									// Terminal tab props (Phase 8)
 									onNewTerminalTab={onNewTerminalTab}
 									activeTerminalTabId={activeSession.activeTerminalTabId}
@@ -539,6 +752,17 @@ export const MainPanel = React.memo(
 									onTerminalTabSelect={onTerminalTabSelect}
 									onTerminalTabClose={onTerminalTabClose}
 									onTerminalTabRename={onTerminalTabRename}
+									onCopyTerminalBuffer={props.onCopyText ? handleCopyTerminalBuffer : undefined}
+									onPublishTerminalBufferGist={
+										props.onPublishTextAsGist ? handlePublishTerminalBufferGist : undefined
+									}
+									onSendTerminalBufferToAgent={
+										props.onSendTextToAgent ? handleSendTerminalBufferToAgent : undefined
+									}
+									onCopyBrowserContent={props.onCopyText ? handleCopyBrowserContent : undefined}
+									onSendBrowserContentToAgent={
+										props.onSendTextToAgent ? handleSendBrowserContentToAgent : undefined
+									}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 								/>
@@ -564,6 +788,8 @@ export const MainPanel = React.memo(
 							filePreviewLoading={filePreviewLoading}
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
+							activeBrowserTabId={activeBrowserTabId}
+							activeBrowserTab={activeBrowserTab}
 							memoizedFilePreviewFile={memoizedFilePreviewFile}
 							filePreviewCwd={filePreviewCwd}
 							filePreviewSshRemoteId={filePreviewSshRemoteId}
@@ -576,11 +802,17 @@ export const MainPanel = React.memo(
 							handleFilePreviewScrollPositionChange={handleFilePreviewScrollPositionChange}
 							handleFilePreviewSearchQueryChange={handleFilePreviewSearchQueryChange}
 							handleFilePreviewReload={handleFilePreviewReload}
+							handleBrowserTabUpdate={onBrowserTabUpdate}
+							browserViewRef={browserViewRef}
 							terminalViewRefs={terminalViewRefs}
 							mountedTerminalSessionIds={mountedTerminalSessionIds}
 							mountedTerminalSessionsRef={mountedTerminalSessionsRef}
 							terminalSearchOpen={terminalSearchOpen}
 							setTerminalSearchOpen={setTerminalSearchOpen}
+							onTerminalCopySelection={props.onCopyText ? handleCopyTerminalSelection : undefined}
+							onTerminalSendSelectionToAgent={
+								props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
+							}
 							isMobileLandscape={isMobileLandscape}
 							activeTabContextUsage={activeTabContextUsage}
 							contextWarningsEnabled={contextWarningsEnabled}
@@ -635,6 +867,9 @@ export const MainPanel = React.memo(
 							thinkingItems={thinkingItems}
 							onStopBatchRun={onStopBatchRun}
 							onRemoveQueuedItem={onRemoveQueuedItem}
+							onForceSendQueuedItem={onForceSendQueuedItem}
+							forcedParallelEnabled={forcedParallelEnabled}
+							getForceSendContext={getForceSendContext}
 							onOpenQueueBrowser={onOpenQueueBrowser}
 							showFlashNotification={showFlashNotification}
 							summarizeProgress={summarizeProgress}
@@ -657,6 +892,7 @@ export const MainPanel = React.memo(
 							onInputBlur={props.onInputBlur}
 							onOpenPromptComposer={props.onOpenPromptComposer}
 							onReplayMessage={props.onReplayMessage}
+							onForkConversation={props.onForkConversation}
 							fileTree={props.fileTree}
 							onFileClick={props.onFileClick}
 							refreshFileTree={props.refreshFileTree}

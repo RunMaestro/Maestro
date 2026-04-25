@@ -285,6 +285,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'text', (node: Text, index, parent) => {
 			if (!parent || index === undefined) return;
 
+			// Skip text nodes inside link nodes — the link visitor handles those
+			if (parent.type === 'link') return;
+
 			const text = node.value;
 			const replacements: (Text | Link | Image)[] = [];
 			let lastIndex = 0;
@@ -566,6 +569,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 		visit(tree, 'inlineCode', (node: any, index, parent) => {
 			if (!parent || index === undefined) return;
 
+			// Skip inline code inside link nodes — the link visitor handles those
+			if (parent.type === 'link') return;
+
 			const code = node.value;
 
 			// Check if this inline code is a file path
@@ -690,8 +696,31 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			// Decode URL-encoded characters (e.g., %20 -> space)
 			const decodedHref = decodeURIComponent(href);
 
-			// Try to resolve the reference as a file path
-			const resolvedPath = findClosestMatch(decodedHref, filenameIndex, allPaths, cwd);
+			let resolvedPath: string | null = null;
+
+			// Handle absolute paths first — agents (e.g. Codex) emit [file.tsx](/Users/name/Project/src/file.tsx)
+			// These should be resolved directly, not searched via filename index
+			if (projectRoot && decodedHref.startsWith('/')) {
+				resolvedPath = toRelativePath(decodedHref);
+			}
+
+			// Handle tilde paths (e.g., [file](~/Projects/file.tsx))
+			if (!resolvedPath && homeDir && decodedHref.startsWith('~/')) {
+				const absolutePath = homeDir + decodedHref.slice(1);
+				const relativePath = toRelativePath(absolutePath);
+				if (relativePath) {
+					resolvedPath = relativePath;
+				} else {
+					// Outside projectRoot — use file:// URL
+					node.url = `file://${absolutePath}`;
+					return;
+				}
+			}
+
+			// Fall back to file tree search for relative references
+			if (!resolvedPath) {
+				resolvedPath = findClosestMatch(decodedHref, filenameIndex, allPaths, cwd);
+			}
 
 			if (resolvedPath) {
 				// Convert to maestro-file:// protocol

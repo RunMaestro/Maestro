@@ -5,34 +5,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ParsedDeepLink } from '../../shared/types';
-
-/**
- * Shell information
- */
-export interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
-
-/**
- * Update status from electron-updater
- */
-export interface UpdateStatus {
-	status:
-		| 'idle'
-		| 'checking'
-		| 'available'
-		| 'not-available'
-		| 'downloading'
-		| 'downloaded'
-		| 'error';
-	info?: { version: string };
-	progress?: { percent: number; bytesPerSecond: number; total: number; transferred: number };
-	error?: string;
-}
+import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
+export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
 /**
  * Creates the dialog API object for preload exposure
@@ -209,6 +183,25 @@ export function createAppApi() {
 		 * Fired when the app is activated via a deep link from OS notification clicks,
 		 * external apps, or CLI commands.
 		 */
+		/**
+		 * Listen for keyboard shortcuts forwarded from browser tab webviews.
+		 * When a webview has focus, keystrokes don't reach the renderer's window
+		 * event listener, so the main process intercepts them and forwards here.
+		 */
+		onBrowserTabShortcutKey: (
+			callback: (input: {
+				key: string;
+				code: string;
+				meta: boolean;
+				control: boolean;
+				alt: boolean;
+				shift: boolean;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, input: Parameters<typeof callback>[0]) => callback(input);
+			ipcRenderer.on('browser-tab:shortcutKey', handler);
+			return () => ipcRenderer.removeListener('browser-tab:shortcutKey', handler);
+		},
 		onDeepLink: (callback: (deepLink: ParsedDeepLink) => void): (() => void) => {
 			const handler = (_: unknown, deepLink: ParsedDeepLink) => callback(deepLink);
 			ipcRenderer.on('app:deepLink', handler);

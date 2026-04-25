@@ -48,13 +48,13 @@ export function ForcedParallelWarningModal({
 				</div>
 				<div>
 					<p className="text-sm leading-relaxed mb-3" style={{ color: theme.colors.textMain }}>
-						This sends messages immediately, even when the agent is already working. If two
-						operations modify the same files simultaneously, one may overwrite the other's changes.
+						This lets you queue messages that skip the cross-tab wait. Your message still waits for
+						the current tab to finish, but dispatches immediately afterward — without waiting for
+						other tabs to clear.
 					</p>
 					<p className="text-xs leading-relaxed" style={{ color: theme.colors.textDim }}>
-						This is intended for advanced users who understand the risks. Use the assigned shortcut
-						key to force-send while the agent is busy. Regular send keys will continue to queue
-						normally.
+						Use the assigned shortcut key to force-send while the agent is busy. Regular send keys
+						will continue to queue normally.
 					</p>
 				</div>
 			</div>

@@ -16,28 +16,11 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThinkingStatusPill } from '../../../renderer/components/ThinkingStatusPill';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
+import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
+import { createMockSession } from '../../helpers/mockSession';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#999999',
-		accent: '#007acc',
-		border: '#404040',
-		error: '#f44747',
-		warning: '#cca700',
-		success: '#4ec9b0',
-		textOnAccent: '#ffffff',
-		selectionBg: '#264f78',
-		buttonHover: '#2d2d2d',
-	},
-};
 
 // Helper to create a mock session
 function createMockSession(overrides: Partial<Session> = {}): Session {
@@ -63,20 +46,13 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 	};
 }
 
+// Helper to create a mock AITab with component-specific defaults (non-null name).
 // Helper to create a mock AITab
 function createMockAITab(overrides: Partial<AITab> = {}): AITab {
-	return {
-		id: 'tab-1',
+	return createBaseMockAITab({
 		name: 'Tab 1',
-		state: 'idle',
-		agentSessionId: null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
 		...overrides,
-	};
+	});
 }
 
 // Helper to create a busy/thinking session
@@ -659,7 +635,7 @@ describe('ThinkingStatusPill', () => {
 					onStopAutoRun={() => {}}
 				/>
 			);
-			expect(screen.getByText('AutoRun Stopping...')).toBeInTheDocument();
+			expect(screen.getByText('AutoRun Stopping')).toBeInTheDocument();
 			expect(screen.getByText('Stopping')).toBeInTheDocument();
 		});
 
@@ -705,8 +681,11 @@ describe('ThinkingStatusPill', () => {
 			expect(screen.getByText('0m 0s')).toBeInTheDocument();
 		});
 
-		it('prioritizes AutoRun over thinking items', () => {
-			const item = createThinkingItem({ name: 'Thinking Session' });
+		it('surfaces a same-session thinking item as concurrent work during AutoRun', () => {
+			// AutoRun spawns its agent in isolation and does NOT set any tab to state='busy',
+			// so any busy tab in the active session (e.g. a plan-mode / read-only tab) is
+			// legitimate concurrent work and must appear on the +N badge.
+			const item = createThinkingItem({ id: 'active-session', name: 'Plan Mode Tab' });
 			const autoRunState: BatchRunState = {
 				isRunning: true,
 				isPaused: false,
@@ -719,10 +698,211 @@ describe('ThinkingStatusPill', () => {
 				batchName: 'Batch',
 			};
 			render(
-				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} autoRunState={autoRunState} />
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
 			);
 			expect(screen.getByText('AutoRun')).toBeInTheDocument();
-			expect(screen.queryByText('Thinking Session')).not.toBeInTheDocument();
+			expect(screen.getByText('+1')).toBeInTheDocument();
+			expect(screen.getByTitle('+1 more running')).toBeInTheDocument();
+		});
+
+		it('shows +N badge when concurrent thinking items exist from other sessions', () => {
+			const concurrentItem1 = createThinkingItem({
+				id: 'other-session-1',
+				name: 'Parallel Agent 1',
+			});
+			const concurrentItem2 = createThinkingItem({
+				id: 'other-session-2',
+				name: 'Parallel Agent 2',
+			});
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[concurrentItem1, concurrentItem2]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
+			expect(screen.getByText('+2')).toBeInTheDocument();
+			expect(screen.getByTitle('+2 more running')).toBeInTheDocument();
+		});
+
+		it('does not show +N badge when there are no concurrent thinking items', () => {
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 3,
+				completedTasks: 1,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
+			expect(screen.queryByText(/\+\d/)).not.toBeInTheDocument();
+		});
+
+		it('shows +N badge for force-parallel / plan-mode tabs on the same session during AutoRun', () => {
+			// AutoRun does NOT put its own tab into thinkingItems (it never sets state='busy'),
+			// so the only entries are the real concurrent tabs — e.g. a force-parallel write tab
+			// and a plan-mode read-only tab running alongside AutoRun on the same session.
+			const parallelTab = createThinkingItemWithTab(
+				{ id: 'active-session', name: 'SANS AI Pentesting' },
+				{ id: 'tab-parallel', name: 'Proposal vs Outline' }
+			);
+			const planModeTab = createThinkingItemWithTab(
+				{ id: 'active-session', name: 'SANS AI Pentesting' },
+				{ id: 'tab-plan', name: 'Plan Review' }
+			);
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[parallelTab, planModeTab]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
+			expect(screen.getByText('+2')).toBeInTheDocument();
+			expect(screen.getByTitle('+2 more running')).toBeInTheDocument();
+		});
+
+		it('shows expanded dropdown with all running processes on hover', () => {
+			const concurrentItem = createThinkingItem({ id: 'other-session', name: 'Parallel Read' });
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[concurrentItem]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+
+			const badge = screen.getByText('+1');
+			fireEvent.mouseEnter(badge.closest('.relative')!);
+
+			expect(screen.getByText('Running Processes')).toBeInTheDocument();
+			// AutoRun appears as its own entry in the dropdown
+			expect(screen.getByText('2/5 tasks')).toBeInTheDocument();
+			// Concurrent thinking item appears in the dropdown
+			expect(screen.getByText('Parallel Read')).toBeInTheDocument();
+		});
+
+		it('closes expanded dropdown on mouse leave', () => {
+			const concurrentItem = createThinkingItem({ id: 'other-session', name: 'Parallel Read' });
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[concurrentItem]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+
+			const badge = screen.getByText('+1');
+			const hoverTarget = badge.closest('.relative')!;
+			fireEvent.mouseEnter(hoverTarget);
+			expect(screen.getByText('Running Processes')).toBeInTheDocument();
+
+			fireEvent.mouseLeave(hoverTarget);
+			expect(screen.queryByText('Running Processes')).not.toBeInTheDocument();
+		});
+
+		it('calls onSessionClick from concurrent item in AutoRun dropdown', () => {
+			const onSessionClick = vi.fn();
+			const concurrentItem = createThinkingItemWithTab(
+				{ id: 'other-session', name: 'Parallel Agent' },
+				{ id: 'tab-parallel', name: 'Read Tab' }
+			);
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isPaused: false,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+				startTime: Date.now(),
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[concurrentItem]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			const badge = screen.getByText('+1');
+			fireEvent.mouseEnter(badge.closest('.relative')!);
+
+			// Click the concurrent item row in the dropdown
+			const rows = screen.getAllByRole('button');
+			const parallelRow = rows.find((row) => row.textContent?.includes('Parallel Agent'));
+			expect(parallelRow).toBeDefined();
+			fireEvent.click(parallelRow!);
+
+			expect(onSessionClick).toHaveBeenCalledWith('other-session', 'tab-parallel');
 		});
 	});
 
@@ -874,6 +1054,42 @@ describe('ThinkingStatusPill', () => {
 			const claudeButton = screen.getByText('ABC12345');
 			expect(claudeButton.tagName).toBe('BUTTON');
 			expect(claudeButton).toHaveStyle({ color: '#ff0000' });
+		});
+
+		it('re-renders when concurrent thinking items change during AutoRun', () => {
+			// AutoRun does NOT mark its own tab as busy, so every thinkingItem is a
+			// concurrent tab and contributes to the +N badge.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				totalTasks: 5,
+				currentTaskIndex: 2,
+				startTime: Date.now(),
+				completedTasks: 3,
+			} as BatchRunState;
+
+			const { rerender } = render(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+
+			expect(screen.queryByText(/\+\d/)).not.toBeInTheDocument();
+
+			const concurrentItem = createThinkingItem({ id: 'other-session', name: 'Parallel Agent' });
+			rerender(
+				<ThinkingStatusPill
+					thinkingItems={[concurrentItem]}
+					theme={mockTheme}
+					autoRunState={autoRunState}
+					activeSessionId="active-session"
+				/>
+			);
+
+			expect(screen.getByText('+1')).toBeInTheDocument();
 		});
 
 		it('re-renders when namedSessions changes for thinking item', () => {

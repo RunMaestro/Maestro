@@ -9,7 +9,7 @@
 import { useEffect, useRef } from 'react';
 import { AlertCircle } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 interface WizardExitConfirmModalProps {
@@ -40,42 +40,14 @@ export function WizardExitConfirmModal({
 	onCancel,
 	onQuitWithoutSaving,
 }: WizardExitConfirmModalProps): JSX.Element {
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-	const layerIdRef = useRef<string>();
 	const stayButtonRef = useRef<HTMLButtonElement>(null);
-	const onCancelRef = useRef(onCancel);
-	onCancelRef.current = onCancel;
+
+	useModalLayer(MODAL_PRIORITIES.WIZARD_EXIT_CONFIRM, 'Confirm Exit Setup Wizard', onCancel);
 
 	// Focus "Stay" button on mount (safer default action)
 	useEffect(() => {
 		stayButtonRef.current?.focus();
 	}, []);
-
-	// Register with layer stack
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.WIZARD_EXIT_CONFIRM,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Confirm Exit Setup Wizard',
-			onEscape: () => onCancelRef.current(),
-		});
-		layerIdRef.current = id;
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [registerLayer, unregisterLayer]);
-
-	// Update escape handler when onCancel changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCancelRef.current());
-		}
-	}, [onCancel, updateLayerHandler]);
 
 	// Handle keyboard navigation
 	const handleKeyDown = (e: React.KeyboardEvent) => {

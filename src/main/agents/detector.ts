@@ -22,9 +22,60 @@ import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
+import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = 'AgentDetector';
+
+const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+const MODELS_DEV_FETCH_TIMEOUT_MS = 3000;
+
+/** Read the user's configured Copilot CLI model from ~/.copilot/config.json (if present). */
+function readCopilotConfiguredModel(): string | null {
+	try {
+		const configPath = path.join(os.homedir(), '.copilot', 'config.json');
+		const configContent = fs.readFileSync(configPath, 'utf8');
+		const config = JSON.parse(configContent);
+		if (typeof config?.model === 'string' && config.model.length > 0) {
+			return config.model;
+		}
+	} catch {
+		// Config may not exist or be malformed — fall through to null.
+	}
+	return null;
+}
+
+/**
+ * Fetch the list of Copilot CLI models from the models.dev catalog.
+ * Returns null when the request fails or the schema doesn't match; callers
+ * should fall back to the user-configured model in that case.
+ */
+async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
+	try {
+		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		if (!response.ok) {
+			return null;
+		}
+		const data = (await response.json()) as Record<string, unknown>;
+		const copilotProvider = data?.['github-copilot'] as
+			| { models?: Record<string, unknown> }
+			| undefined;
+		const models = copilotProvider?.models;
+		if (models && typeof models === 'object') {
+			return Object.keys(models).sort();
+		}
+		return null;
+	} catch (err) {
+		logger.warn('Failed to fetch models from models.dev for copilot-cli', LOG_CONTEXT, {
+			error: String(err),
+		});
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
 
 // ============ Agent Detector Class ============
 
@@ -266,8 +317,10 @@ export class AgentDetector {
 					// Claude Code: no CLI listing command.
 					// Discover models dynamically from two sources:
 					// 1. Well-known aliases (always valid, resolve to latest in each tier)
+					//    Includes [1m] variants for 1M extended context window
+					//    (requires extra usage enabled at claude.ai/settings/usage)
 					// 2. Historical model usage from ~/.claude/stats-cache.json
-					const models: string[] = ['sonnet', 'opus', 'haiku'];
+					const models: string[] = ['sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]'];
 					try {
 						const statsPath = path.join(os.homedir(), '.claude', 'stats-cache.json');
 						const statsContent = fs.readFileSync(statsPath, 'utf8');
@@ -316,28 +369,70 @@ export class AgentDetector {
 				}
 
 				case 'opencode': {
-					// OpenCode: `opencode models` returns one model per line
-					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					// OpenCode: merge models from two sources:
+					// 1. `opencode models` CLI command (runtime-available models)
+					// 2. opencode.json config files (provider-defined models that may
+					//    not appear in `opencode models` output, e.g. cloud providers)
+					const seen = new Set<string>();
+					const models: string[] = [];
 
-					if (result.exitCode !== 0) {
+					// Source 1: CLI discovery
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+					if (result.exitCode === 0) {
+						const cliModels = result.stdout
+							.split('\n')
+							.map((line) => line.trim())
+							.filter((line) => line.length > 0);
+						for (const m of cliModels) {
+							if (!seen.has(m)) {
+								seen.add(m);
+								models.push(m);
+							}
+						}
+					} else {
 						logger.warn(
-							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,
 							LOG_CONTEXT,
 							{ stderr: result.stderr }
 						);
-						return [];
 					}
 
-					// Parse output: one model per line (e.g., "opencode/gpt-5-nano", "ollama/gpt-oss:latest")
-					const models = result.stdout
-						.split('\n')
-						.map((line) => line.trim())
-						.filter((line) => line.length > 0);
+					// Source 2: opencode.json config files
+					const configModels = await discoverModelsFromLocalConfigs();
+					for (const m of configModels) {
+						if (!seen.has(m)) {
+							seen.add(m);
+							models.push(m);
+						}
+					}
 
 					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
 						models,
 					});
 					return models;
+				}
+
+				case 'copilot-cli': {
+					// Copilot CLI: fetch available models from models.dev API (github-copilot
+					// provider) and merge with the user's configured model from
+					// ~/.copilot/config.json. Falls back to just the configured model if the
+					// API is unavailable.
+					const userModel = readCopilotConfiguredModel();
+					const apiModels = await fetchCopilotModelsFromApi();
+
+					if (apiModels !== null) {
+						const models = [...apiModels];
+						if (userModel && !models.includes(userModel)) {
+							models.unshift(userModel);
+						}
+						logger.info(
+							`Discovered ${models.length} models for ${agentId} from models.dev`,
+							LOG_CONTEXT
+						);
+						return models;
+					}
+
+					return userModel ? [userModel] : [];
 				}
 
 				default:
@@ -458,6 +553,7 @@ export class AgentDetector {
 				}
 			}
 		} catch (error) {
+			void captureException(error);
 			logger.debug(`Config option discovery failed for ${agentId}:${optionKey}`, LOG_CONTEXT, {
 				error,
 			});

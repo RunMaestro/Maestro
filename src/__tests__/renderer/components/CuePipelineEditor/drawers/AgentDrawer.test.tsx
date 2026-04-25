@@ -1,29 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentDrawer } from '../../../../../renderer/components/CuePipelineEditor/drawers/AgentDrawer';
-import type { Theme } from '../../../../../renderer/types';
 
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f940',
-		accentText: '#bd93f9',
-		accentForeground: '#f8f8f2',
-		border: '#44475a',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
-
+import { mockTheme } from '../../../../helpers/mockTheme';
 const mockGroups = [
 	{ id: 'grp-1', name: 'Dev', emoji: '🛠️' },
 	{ id: 'grp-2', name: 'Ops', emoji: '🚀' },
@@ -142,17 +121,21 @@ describe('AgentDrawer', () => {
 			/>
 		);
 
-		// Verify group order: Alpha before Zeta, Ungrouped last
+		// Verify group order: Alpha before Zeta, Ungrouped last. The top-level
+		// "Nodes" header (standalone Command pill) is expected to appear first
+		// above the agent groups.
 		const groupHeaders = container.querySelectorAll('[style*="text-transform: uppercase"]');
 		const headerTexts = Array.from(groupHeaders).map((el) => el.textContent);
-		expect(headerTexts).toEqual(['🅰️ Alpha', '⚡ Zeta', 'Ungrouped']);
+		expect(headerTexts).toEqual(['Nodes', '🅰️ Alpha', '⚡ Zeta', 'Ungrouped']);
 
-		// Verify agent order within each group by checking DOM order
-		// Each draggable row: <div draggable> > <svg(Bot)> > <div(flex)> > <div(name)> + <div(toolType)>
-		// The name is in the first div child with fontWeight:500
-		const agentNames = Array.from(container.querySelectorAll('[draggable="true"]')).map(
-			(el) => el.querySelector('[style*="font-weight: 500"]')?.textContent
-		);
+		// Verify agent order within each group by checking DOM order. Each agent
+		// row: <div draggable> > <svg(Bot)> > <div(flex)> > <div(name)> + <div(toolType)>.
+		// The name is in the first div child with fontWeight:500. Skip the
+		// top-level standalone "Command" pill (also draggable, fontWeight:500) —
+		// that's a node template, not an agent.
+		const agentNames = Array.from(container.querySelectorAll('[draggable="true"]'))
+			.map((el) => el.querySelector('[style*="font-weight: 500"]')?.textContent)
+			.filter((name): name is string => !!name && name !== 'Command');
 		expect(agentNames).toEqual(['Alice', 'Charlie', 'Bravo', 'Delta', 'Echo']);
 	});
 
@@ -202,5 +185,69 @@ describe('AgentDrawer', () => {
 		vi.advanceTimersByTime(100);
 		expect(input).toHaveFocus();
 		vi.useRealTimers();
+	});
+
+	describe('standalone Command pill', () => {
+		it('renders a draggable Command pill in the Nodes section', () => {
+			render(
+				<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+			);
+
+			expect(screen.getByText('Command')).toBeInTheDocument();
+			expect(screen.getByText('shell or maestro-cli')).toBeInTheDocument();
+			const pill = screen.getByTestId('command-pill');
+			expect(pill).toHaveAttribute('draggable', 'true');
+		});
+
+		it('sets drag payload to an unbound command (no owningSessionId)', () => {
+			render(
+				<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+			);
+
+			const pill = screen.getByTestId('command-pill');
+			let dragPayload: string | null = null;
+			const dataTransfer = {
+				setData: (format: string, value: string) => {
+					if (format === 'application/cue-pipeline') dragPayload = value;
+				},
+				effectAllowed: '',
+			};
+			fireEvent.dragStart(pill, { dataTransfer });
+
+			expect(dragPayload).not.toBeNull();
+			const parsed = JSON.parse(dragPayload!);
+			expect(parsed).toEqual({ type: 'command' });
+			// The drop handler takes undefined/'' owningSessionId as the "unbound"
+			// signal — the user picks the owning agent in CommandConfigPanel.
+			expect(parsed.owningSessionId).toBeUndefined();
+		});
+
+		it('hides the Command pill when searching (keeps results list clean)', () => {
+			render(
+				<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+			);
+
+			const input = screen.getByPlaceholderText('Search agents...');
+			fireEvent.change(input, { target: { value: 'maestro' } });
+
+			expect(screen.queryByTestId('command-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render per-agent terminal drag handles on session rows', () => {
+			// Sanity check that the legacy "Terminal icon on each row" pattern
+			// is gone — agent rows should have exactly one draggable ancestor
+			// (the row itself), not a nested one.
+			const { container } = render(
+				<AgentDrawer isOpen={true} onClose={() => {}} sessions={mockSessions} theme={mockTheme} />
+			);
+
+			const maestroRow = screen.getByText('Maestro').closest('[draggable="true"]');
+			expect(maestroRow).not.toBeNull();
+			const nestedDraggable = maestroRow!.querySelector('[draggable="true"]');
+			expect(nestedDraggable).toBeNull();
+
+			// And the old footer hint is gone.
+			expect(container.textContent).not.toMatch(/Drag the.*on a session row/i);
+		});
 	});
 });

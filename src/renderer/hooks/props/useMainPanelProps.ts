@@ -22,6 +22,7 @@ import type {
 	FilePreviewTab,
 	ThinkingItem,
 	AgentError,
+	QueuedItem,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
@@ -42,6 +43,7 @@ export interface UseMainPanelPropsDeps {
 	// Core state (primitives for memoization)
 	logViewerOpen: boolean;
 	agentSessionsOpen: boolean;
+	memoryViewerOpen: boolean;
 	activeAgentSessionId: string | null;
 	activeSession: Session | null;
 	thinkingItems: ThinkingItem[];
@@ -117,6 +119,7 @@ export interface UseMainPanelPropsDeps {
 	setGitDiffPreview: (preview: string | null) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
+	setMemoryViewerOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setInputValue: (value: string) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -159,6 +162,11 @@ export interface UseMainPanelPropsDeps {
 	handleStopBatchRun: (sessionId?: string) => void;
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
+	handleForceSendQueuedItem: (itemId: string) => void;
+	forcedParallelEnabled: boolean;
+	getForceSendContext: (
+		item: QueuedItem
+	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
 	handleOpenQueueBrowser: () => void;
 
 	// Tab management handlers
@@ -189,8 +197,19 @@ export interface UseMainPanelPropsDeps {
 	unifiedTabs: UnifiedTab[];
 	activeFileTabId: string | null;
 	activeFileTab: FilePreviewTab | null;
+	activeBrowserTabId: string | null;
+	activeBrowserTab: import('../../types').BrowserTab | null;
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
+	handleNewFileTab: () => void;
+	handleNewBrowserTab: () => void;
+	handleBrowserTabSelect: (tabId: string) => void;
+	handleBrowserTabClose: (tabId: string) => void;
+	handleBrowserTabUpdate: (
+		sessionId: string,
+		tabId: string,
+		updates: Partial<import('../../types').BrowserTab>
+	) => void;
 
 	// Terminal tab callbacks (Phase 8)
 	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
@@ -212,6 +231,7 @@ export interface UseMainPanelPropsDeps {
 	handleMainPanelInputBlur: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
+	handleForkConversation: (logId: string) => void;
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
@@ -229,6 +249,12 @@ export interface UseMainPanelPropsDeps {
 	handleCopyContext: (tabId: string) => void;
 	handleExportHtml: (tabId: string) => void;
 	handlePublishTabGist: (tabId: string) => void;
+	/** Copy arbitrary text to the clipboard (used by terminal buffer actions) */
+	handleCopyText: (text: string, subject?: string) => void;
+	/** Queue arbitrary text for the Gist publish modal (used by terminal buffer actions) */
+	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for Send to Agent transfer (used by terminal buffer actions) */
+	handleSendTextToAgent: (text: string, sourceName: string) => void;
 	cancelTab: (tabId: string) => void;
 	cancelMergeTab: (tabId: string) => void;
 	recordShortcutUsage: (shortcutId: string) => { newLevel: number | null };
@@ -291,6 +317,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// State props
 			logViewerOpen: deps.logViewerOpen,
 			agentSessionsOpen: deps.agentSessionsOpen,
+			memoryViewerOpen: deps.memoryViewerOpen,
 			activeAgentSessionId: deps.activeAgentSessionId,
 			activeSession: deps.activeSession,
 			thinkingItems: deps.thinkingItems,
@@ -308,6 +335,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			setGitDiffPreview: deps.setGitDiffPreview,
 			setLogViewerOpen: deps.setLogViewerOpen,
 			setAgentSessionsOpen: deps.setAgentSessionsOpen,
+			setMemoryViewerOpen: deps.setMemoryViewerOpen,
 			setActiveAgentSessionId: deps.setActiveAgentSessionId,
 			onResumeAgentSession: deps.handleResumeSession,
 			onNewAgentSession: deps.handleNewAgentSession,
@@ -351,6 +379,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onStopBatchRun: deps.handleStopBatchRun,
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
+			onForceSendQueuedItem: deps.handleForceSendQueuedItem,
+			forcedParallelEnabled: deps.forcedParallelEnabled,
+			getForceSendContext: deps.getForceSendContext,
 			onOpenQueueBrowser: deps.handleOpenQueueBrowser,
 			// Tab management handlers
 			onTabSelect: deps.handleTabSelect,
@@ -374,8 +405,15 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			unifiedTabs: deps.unifiedTabs,
 			activeFileTabId: deps.activeFileTabId,
 			activeFileTab: deps.activeFileTab,
+			activeBrowserTabId: deps.activeBrowserTabId,
+			activeBrowserTab: deps.activeBrowserTab,
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
+			onNewFileTab: deps.handleNewFileTab,
+			onNewBrowserTab: deps.handleNewBrowserTab,
+			onBrowserTabSelect: deps.handleBrowserTabSelect,
+			onBrowserTabClose: deps.handleBrowserTabClose,
+			onBrowserTabUpdate: deps.handleBrowserTabUpdate,
 			// Terminal tab callbacks (Phase 8)
 			onNewTerminalTab: deps.handleOpenTerminalTab,
 			onTerminalTabSelect: deps.handleTerminalTabSelect,
@@ -393,6 +431,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onInputBlur: deps.handleMainPanelInputBlur,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
+			onForkConversation: deps.handleForkConversation,
 			fileTree: deps.fileTree,
 			onFileClick: deps.handleMainPanelFileClick,
 			canGoBack: deps.canGoBack,
@@ -419,6 +458,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onCopyContext: deps.handleCopyContext,
 			onExportHtml: deps.handleExportHtml,
 			onPublishTabGist: deps.handlePublishTabGist,
+			onCopyText: deps.handleCopyText,
+			onPublishTextAsGist: deps.handlePublishTextAsGist,
+			onSendTextToAgent: deps.handleSendTextToAgent,
 			// Summarization progress props
 			summarizeProgress: deps.summarizeProgress,
 			summarizeResult: deps.summarizeResult,
@@ -445,10 +487,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),
-			onPublishMessageGist: (text: string) => {
+			onPublishMessageGist: (text: string, messageId?: string) => {
 				if (!text.trim()) return;
 				const filename = `ai_response_${Date.now()}.md`;
-				useTabStore.getState().setTabGistContent({ filename, content: text });
+				useTabStore.getState().setTabGistContent({ filename, content: text, messageId });
 				deps.setGistPublishModalOpen(true);
 			},
 			hasGist: deps.hasGist,
@@ -483,6 +525,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			// Primitive dependencies for minimal re-computation
 			deps.logViewerOpen,
 			deps.agentSessionsOpen,
+			deps.memoryViewerOpen,
 			deps.activeAgentSessionId,
 			deps.activeSession?.id, // Use ID instead of full object
 			deps.activeSession?.activeTabId,
@@ -534,6 +577,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setGitDiffPreview,
 			deps.setLogViewerOpen,
 			deps.setAgentSessionsOpen,
+			deps.setMemoryViewerOpen,
 			deps.setActiveAgentSessionId,
 			deps.handleResumeSession,
 			deps.handleNewAgentSession,
@@ -564,6 +608,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleStopBatchRun,
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
+			deps.handleForceSendQueuedItem,
+			deps.forcedParallelEnabled,
+			deps.getForceSendContext,
 			deps.handleOpenQueueBrowser,
 			deps.handleTabSelect,
 			deps.handleTabClose,
@@ -588,8 +635,15 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.unifiedTabs,
 			deps.activeFileTabId,
 			deps.activeFileTab,
+			deps.activeBrowserTabId,
+			deps.activeBrowserTab,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
+			deps.handleNewFileTab,
+			deps.handleNewBrowserTab,
+			deps.handleBrowserTabSelect,
+			deps.handleBrowserTabClose,
+			deps.handleBrowserTabUpdate,
 			// Terminal tab (Phase 8)
 			deps.handleOpenTerminalTab,
 			deps.handleTerminalTabSelect,
@@ -605,6 +659,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleMainPanelInputBlur,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
+			deps.handleForkConversation,
 			deps.handleMainPanelFileClick,
 			deps.handleNavigateBack,
 			deps.handleNavigateForward,

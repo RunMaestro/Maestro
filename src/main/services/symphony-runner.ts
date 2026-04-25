@@ -12,6 +12,7 @@ import { ensureForkSetup } from '../utils/symphony-fork';
 import { resolveGhPath } from '../utils/cliDetection';
 import type { DocumentReference } from '../../shared/symphony-types';
 import { PLAYBOOKS_DIR } from '../../shared/maestro-paths';
+import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[SymphonyRunner]';
 
@@ -23,6 +24,7 @@ async function cleanupLocalRepo(localPath: string): Promise<void> {
 		await fs.rm(localPath, { recursive: true, force: true });
 		logger.info('Cleaned up local repository', LOG_CONTEXT, { localPath });
 	} catch (error) {
+		void captureException(error);
 		logger.warn('Failed to cleanup local repository', LOG_CONTEXT, { localPath, error });
 	}
 }
@@ -173,6 +175,7 @@ async function downloadFile(url: string, destPath: string): Promise<boolean> {
 		await fs.writeFile(destPath, Buffer.from(buffer));
 		return true;
 	} catch (error) {
+		void captureException(error);
 		logger.error('Error downloading file', LOG_CONTEXT, { url, error });
 		return false;
 	}

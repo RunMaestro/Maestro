@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import DOMPurify from 'dompurify';
 import type { Theme } from '../types';
+import { logger } from '../utils/logger';
 
 // Track theme for mermaid initialization
 let lastThemeId: string | null = null;
@@ -374,7 +375,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				}
 			} catch (err) {
 				if (cancelled) return;
-				console.error('Mermaid rendering error:', err);
+				logger.error('Mermaid rendering error:', undefined, err);
 				setError(err instanceof Error ? err.message : 'Failed to render diagram');
 
 				// Clean up any orphaned mermaid error elements injected into the DOM

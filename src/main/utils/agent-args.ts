@@ -11,6 +11,19 @@ type BuildAgentArgsOptions = {
 	modelId?: string;
 	yoloMode?: boolean;
 	agentSessionId?: string;
+	/**
+	 * Force the agent's batch-mode args (batchModePrefix / batchModeArgs /
+	 * jsonOutputArgs) to be applied even when `prompt` is an empty string. The
+	 * default behavior gates these on `options.prompt` being truthy so that a
+	 * bare interactive launch (no prompt) doesn't accidentally enable batch
+	 * mode. Callers that NEVER launch interactive mode — e.g. Cue, which spawns
+	 * with `stdio: ['ignore', 'pipe', 'pipe']` and no TTY — must set this so an
+	 * empty-after-substitution prompt (e.g. `{{CUE_SOURCE_OUTPUT}}` resolving
+	 * to `""` when the upstream run produced no parseable stdout) doesn't
+	 * silently fall back to interactive mode and fail with
+	 * "stdin is not a terminal".
+	 */
+	forceBatchMode?: boolean;
 };
 
 type AgentConfigOverrides = {
@@ -29,6 +42,7 @@ type AgentConfigResolution = {
 	modelSource: 'session' | 'agent' | 'default';
 };
 
+/** Parse a space-separated custom args string into an array, respecting quoted segments. */
 function parseCustomArgs(customArgs?: string): string[] {
 	if (!customArgs || typeof customArgs !== 'string') {
 		return [];
@@ -43,6 +57,34 @@ function parseCustomArgs(customArgs?: string): string[] {
 	});
 }
 
+/** Check whether jsonOutputArgs (exact sequence or flag key) are already present in the args list. */
+function hasJsonOutputFlag(haystack: string[], jsonOutputArgs: string[]): boolean {
+	if (jsonOutputArgs.length === 0) return true;
+
+	// Check if the exact arg sequence is already present
+	for (let i = 0; i <= haystack.length - jsonOutputArgs.length; i++) {
+		let match = true;
+		for (let j = 0; j < jsonOutputArgs.length; j++) {
+			if (haystack[i + j] !== jsonOutputArgs[j]) {
+				match = false;
+				break;
+			}
+		}
+		if (match) return true;
+	}
+
+	// Also check if the flag key (e.g., --format, --output-format) is already
+	// present with a different value — avoid appending a conflicting duplicate
+	// that the dedup step would mangle.
+	const flagKey = jsonOutputArgs[0];
+	if (flagKey?.startsWith('-') && jsonOutputArgs.length > 1) {
+		return haystack.includes(flagKey);
+	}
+
+	return false;
+}
+
+/** Build the final CLI arguments for an agent process based on mode, config, and user options. */
 export function buildAgentArgs(
 	agent: AgentConfig | null | undefined,
 	options: BuildAgentArgsOptions
@@ -53,11 +95,18 @@ export function buildAgentArgs(
 		return finalArgs;
 	}
 
-	if (agent.batchModePrefix && options.prompt) {
+	// Batch-mode gate: normally we infer "batch mode" from the presence of a
+	// truthy prompt, so a bare interactive launch (no prompt) doesn't get batch
+	// args it never asked for. Callers that never launch interactive mode pass
+	// `forceBatchMode: true` so this path still fires when the prompt is an
+	// empty string (e.g. a Cue template variable that resolved to nothing).
+	const inBatchMode = Boolean(options.prompt) || options.forceBatchMode === true;
+
+	if (agent.batchModePrefix && inBatchMode) {
 		finalArgs = [...agent.batchModePrefix, ...finalArgs];
 	}
 
-	if (agent.batchModeArgs && options.prompt) {
+	if (agent.batchModeArgs && inBatchMode) {
 		// Skip batch mode args (e.g. -y, --dangerously-bypass-approvals-and-sandbox)
 		// when readOnlyMode is active. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
@@ -67,7 +116,11 @@ export function buildAgentArgs(
 		}
 	}
 
-	if (agent.jsonOutputArgs && !finalArgs.some((arg) => agent.jsonOutputArgs!.includes(arg))) {
+	// Only inject JSON output args when a prompt is provided (batch/non-interactive mode).
+	// Interactive sessions must not receive these flags (e.g., Copilot rejects --output-format json
+	// in interactive mode). Agents that need JSON output in interactive mode should include
+	// the relevant flags in their base `args` or `batchModeArgs` instead.
+	if (agent.jsonOutputArgs && inBatchMode && !hasJsonOutputFlag(finalArgs, agent.jsonOutputArgs)) {
 		finalArgs = [...finalArgs, ...agent.jsonOutputArgs];
 	}
 
@@ -116,6 +169,7 @@ export function buildAgentArgs(
 	return dedupedArgs;
 }
 
+/** Apply agent configuration overrides (custom args, env vars, model selection) to base args. */
 export function applyAgentConfigOverrides(
 	agent: AgentConfig | null | undefined,
 	baseArgs: string[],
@@ -133,7 +187,7 @@ export function applyAgentConfigOverrides(
 
 			let value: any;
 			if (option.key === 'model') {
-				if (overrides.sessionCustomModel !== undefined) {
+				if (overrides.sessionCustomModel !== undefined && overrides.sessionCustomModel !== '') {
 					value = overrides.sessionCustomModel;
 					modelSource = 'session';
 				} else if (agentConfigValues[option.key] !== undefined) {
@@ -208,6 +262,7 @@ export function applyAgentConfigOverrides(
 	};
 }
 
+/** Resolve the effective context window size from session, agent config, or defaults. */
 export function getContextWindowValue(
 	agent: AgentConfig | null | undefined,
 	agentConfigValues: Record<string, any>,

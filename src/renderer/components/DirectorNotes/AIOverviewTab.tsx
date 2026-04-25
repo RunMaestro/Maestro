@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Save, Loader2, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import { RefreshCw, Save, Clock, Copy, Check, Bot, History, Timer } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
@@ -49,7 +50,6 @@ function fireSynopsisReadyToast() {
 		type: 'success',
 		title: "Director's Notes",
 		message: 'AI Synopsis is ready. Click to view.',
-		skipCustomNotification: true,
 		onClick: () => {
 			useModalStore.getState().openModal('directorNotes', { initialTab: 'ai-overview' });
 		},
@@ -57,7 +57,7 @@ function fireSynopsisReadyToast() {
 }
 
 export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
-	const { directorNotesSettings } = useSettings();
+	const { directorNotesSettings, bionifyReadingMode } = useSettings();
 	const [lookbackDays, setLookbackDays] = useState(directorNotesSettings.defaultLookbackDays);
 	const [synopsis, setSynopsis] = useState<string>(cachedSynopsis?.content ?? '');
 	const [generatedAt, setGeneratedAt] = useState<number | null>(
@@ -259,11 +259,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						opacity: isGenerating ? 0.5 : 1,
 					}}
 				>
-					{isGenerating ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
-					) : (
-						<RefreshCw className="w-3.5 h-3.5" />
-					)}
+					{isGenerating ? <Spinner size={14} /> : <RefreshCw className="w-3.5 h-3.5" />}
 					{isGenerating ? 'Regenerating…' : 'Regenerate'}
 				</button>
 
@@ -361,12 +357,13 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 							content={synopsis}
 							theme={theme}
 							onCopy={(text) => safeClipboardWrite(text)}
+							enableBionifyReadingMode={bionifyReadingMode}
 						/>
 					</div>
 				) : isGenerating ? (
 					<div className="flex items-center justify-center h-full">
 						<div className="flex items-center gap-3">
-							<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
+							<Spinner size={24} color={theme.colors.accent} />
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								Generating…
 							</p>

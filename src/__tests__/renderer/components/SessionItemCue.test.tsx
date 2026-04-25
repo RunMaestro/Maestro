@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SessionItem } from '../../../renderer/components/SessionItem';
 import type { Session, Theme } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -49,26 +50,18 @@ const defaultTheme: Theme = {
 	},
 };
 
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	cwd: '/home/user/project',
-	projectRoot: '/home/user/project',
-	aiPid: 12345,
-	terminalPid: 12346,
-	aiLogs: [],
-	shellLogs: [],
-	isGitRepo: true,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	messageQueue: [],
-	contextUsage: 30,
-	activeTimeMs: 60000,
-	...overrides,
-});
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		cwd: '/home/user/project',
+		fullPath: '/home/user/project',
+		projectRoot: '/home/user/project',
+		aiPid: 12345,
+		terminalPid: 12346,
+		isGitRepo: true,
+		contextUsage: 30,
+		activeTimeMs: 60000,
+		...overrides,
+	});
 
 const defaultProps = {
 	variant: 'flat' as const,

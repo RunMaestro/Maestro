@@ -18,7 +18,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GroupChatHistoryPanel } from '../../../renderer/components/GroupChatHistoryPanel';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import type { Theme } from '../../../renderer/types';
+
+import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	GroupChatHistoryEntry,
 	GroupChatHistoryEntryType,
@@ -27,26 +28,6 @@ import type {
 // ============================================================================
 // TEST HELPERS
 // ============================================================================
-
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1e1e1e',
-		bgSidebar: '#252526',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#808080',
-		accent: '#007acc',
-		border: '#404040',
-		success: '#4ec9b0',
-		warning: '#dcdcaa',
-		error: '#f14c4c',
-		buttonBg: '#0e639c',
-		buttonText: '#ffffff',
-	},
-};
 
 const createMockEntry = (
 	overrides: Partial<GroupChatHistoryEntry> = {}

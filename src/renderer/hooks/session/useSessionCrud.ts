@@ -16,7 +16,7 @@
 
 import { useCallback, useState } from 'react';
 import type { ToolType, Session, AITab } from '../../types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -25,7 +25,8 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
-import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -57,6 +58,7 @@ export interface UseSessionCrudReturn {
 		workingDir: string,
 		name: string,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -130,6 +132,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			workingDir: string,
 			name: string,
 			nudgeMessage?: string,
+			newSessionMessage?: string,
 			customPath?: string,
 			customArgs?: string,
 			customEnvVars?: Record<string, string>,
@@ -146,7 +149,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				// Get agent definition to get correct command
 				const agent = await (window as any).maestro.agents.get(agentId);
 				if (!agent) {
-					console.error(`Agent not found: ${agentId}`);
+					logger.error(`Agent not found: ${agentId}`);
 					return;
 				}
 				const currentSessions = useSessionStore.getState().sessions;
@@ -158,7 +161,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					sessionSshRemoteConfig?.enabled ? sessionSshRemoteConfig.remoteId : null
 				);
 				if (!validation.valid) {
-					console.error(`Session validation failed: ${validation.error}`);
+					logger.error(`Session validation failed: ${validation.error}`);
 					notifyToast({
 						type: 'error',
 						title: 'Agent Creation Failed',
@@ -212,6 +215,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					cwd: workingDir,
 					fullPath: workingDir,
 					projectRoot: workingDir,
+					createdAt: Date.now(),
 					isGitRepo,
 					gitBranches,
 					gitTags,
@@ -247,11 +251,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					closedTabHistory: [],
 					filePreviewTabs: [],
 					activeFileTabId: null,
+					browserTabs: [],
+					activeBrowserTabId: null,
 					terminalTabs: [],
 					activeTerminalTabId: null,
 					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 					unifiedClosedTabHistory: [],
 					nudgeMessage,
+					newSessionMessage,
 					customPath,
 					customArgs,
 					customEnvVars,
@@ -259,7 +266,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customContextWindow,
 					customProviderPath,
 					sessionSshRemoteConfig,
-					autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
+					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 				};
 
 				setSessions((prev) => [...prev, newSession]);
@@ -275,7 +282,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
 			} catch (error) {
-				console.error('Failed to create session:', error);
+				logger.error('Failed to create session:', undefined, error);
 			}
 		},
 		[setSessions, setActiveSessionId, setActiveFocus, inputRef]
@@ -286,7 +293,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// ========================================================================
 	const deleteSession = useCallback(
 		(id: string) => {
-			const session = useSessionStore.getState().sessions.find((s) => s.id === id);
+			const session = selectSessionById(id)(useSessionStore.getState());
 			if (!session) return;
 			setDeleteAgentSession(session);
 		},
@@ -315,12 +322,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						try {
 							await (window as any).maestro.process.kill(`${session.id}-ai`);
 						} catch (error) {
-							console.error('Failed to kill AI process:', error);
+							logger.error('Failed to kill AI process:', undefined, error);
 						}
 						try {
 							await (window as any).maestro.process.kill(`${session.id}-terminal`);
 						} catch (error) {
-							console.error('Failed to kill terminal process:', error);
+							logger.error('Failed to kill terminal process:', undefined, error);
 						}
 						// Kill terminal tab PTYs — each tab has its own PTY
 						for (const tab of session.terminalTabs || []) {
@@ -329,13 +336,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 									getTerminalSessionId(session.id, tab.id)
 								);
 							} catch (error) {
-								console.error('Failed to kill terminal tab process:', error);
+								logger.error('Failed to kill terminal tab process:', undefined, error);
 							}
 						}
 						try {
 							await (window as any).maestro.playbooks.deleteAll(session.id);
 						} catch (error) {
-							console.error('Failed to delete playbooks:', error);
+							logger.error('Failed to delete playbooks:', undefined, error);
 						}
 					}
 
@@ -408,13 +415,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						(window as any).maestro.claude
 							.updateSessionName(session.projectRoot, providerSessionId, newName)
 							.catch((err: Error) =>
-								console.warn('[finishRenamingSession] Failed to sync session name:', err)
+								logger.warn('[finishRenamingSession] Failed to sync session name:', undefined, err)
 							);
 					} else {
 						(window as any).maestro.agentSessions
 							.setSessionName(agentId, session.projectRoot, providerSessionId, newName)
 							.catch((err: Error) =>
-								console.warn('[finishRenamingSession] Failed to sync session name:', err)
+								logger.warn('[finishRenamingSession] Failed to sync session name:', undefined, err)
 							);
 					}
 				}
@@ -465,7 +472,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
 				setSessions((prev) =>
-					prev.map((s) => (s.id === pendingMoveToGroupSessionId ? { ...s, groupId } : s))
+					prev.map((s) => {
+						if (s.id === pendingMoveToGroupSessionId) return { ...s, groupId };
+						// Also update worktree children to keep groupId in sync
+						if (s.parentSessionId === pendingMoveToGroupSessionId) return { ...s, groupId };
+						return s;
+					})
 				);
 				setPendingMoveToGroupSessionId(null);
 			}

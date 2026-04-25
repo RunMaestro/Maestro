@@ -5,6 +5,7 @@ CUE-NOTES.md
 CUE-REFACTORING.md
 Auto\ Run\ Docs/
 Work\ Trees/
+.worktrees/
 community-data/
 .mcp.json
 specs/
@@ -25,7 +26,6 @@ node_modules/
 # Build outputs
 dist/
 release/
-src/generated/
 *.log
 tmp/
 scratch/

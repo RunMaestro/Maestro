@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Loader2, Image } from 'lucide-react';
+import { Image } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import { imageCache, resolveImagePath } from './filePreviewUtils';
 
 /**
@@ -138,7 +139,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 					minWidth: '200px',
 				}}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading image...
 				</span>

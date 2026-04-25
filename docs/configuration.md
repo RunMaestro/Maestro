@@ -18,9 +18,29 @@ Settings are organized into tabs:
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                           |
 | **Notifications**               | OS notifications, custom command notifications, toast notification duration                                                                                                                          |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                   |
+| **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                             |
 | **Environment**                 | Global environment variables that cascade to all agents and terminal sessions                                                                                                                        |
 | **WakaTime** _(in General tab)_ | WakaTime integration toggle, API key, detailed file tracking                                                                                                                                         |
+
+## Maestro Prompts
+
+Maestro ships with 23 core system prompts that control wizard conversations, Auto Run behavior, group chat moderation, context management, and more. You can customize any of them via the **Maestro Prompts** tab in Settings.
+
+**To edit a prompt:**
+
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **Maestro Prompts** tab
+2. Select a prompt from the category list on the left
+3. Edit the content in the editor
+4. Click **Save** — changes take effect immediately (no restart needed)
+
+**To reset a prompt:**
+
+Click **Reset to Default** to restore the bundled version. This also takes effect immediately.
+
+Customizations are stored separately from bundled prompts and survive app updates. You can also access the four most common prompts directly from **Quick Actions** (`Cmd+K` / `Ctrl+K`): Maestro System Prompt, Auto Run Default, Commit Command, and Group Chat Moderator.
+
+For template variables, the `{{INCLUDE:name}}` and `{{REF:name}}` directives, creating reusable prompt fragments, and more, see the full [Prompt Customization](/prompt-customization) guide.
 
 ## Conductor Profile
 

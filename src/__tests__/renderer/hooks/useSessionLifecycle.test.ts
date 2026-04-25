@@ -24,6 +24,8 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
@@ -46,43 +48,20 @@ function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 	} as AITab;
 }
 
+// Thin wrapper: lifecycle tests need a session with a pre-populated AI tab
+// and a group membership so deletion/rename code paths execute.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
 		cwd: '/projects/myapp',
 		fullPath: '/projects/myapp',
 		projectRoot: '/projects/myapp',
-		toolType: 'claude-code' as any,
 		groupId: 'group-1',
-		inputMode: 'ai' as any,
-		state: 'idle' as any,
 		aiTabs: [createMockAITab()],
 		activeTabId: 'tab-1',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		aiPid: 0,
-		terminalPid: 0,
 		port: 3000,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 // ============================================================================
@@ -187,6 +166,7 @@ describe('useSessionLifecycle', () => {
 					'New Name',
 					undefined, // toolType unchanged
 					'nudge msg',
+					'init msg',
 					'/custom/path',
 					'--arg1',
 					{ MY_VAR: 'value' },
@@ -199,6 +179,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('New Name');
 			expect(updated.nudgeMessage).toBe('nudge msg');
+			expect(updated.newSessionMessage).toBe('init msg');
 			expect(updated.customPath).toBe('/custom/path');
 			expect(updated.customArgs).toBe('--arg1');
 			expect(updated.customEnvVars).toEqual({ MY_VAR: 'value' });
@@ -234,6 +215,7 @@ describe('useSessionLifecycle', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				nudgeMessage: 'old nudge',
+				newSessionMessage: 'old init',
 				customPath: '/old/path',
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
@@ -247,6 +229,7 @@ describe('useSessionLifecycle', () => {
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated.name).toBe('Name Only');
 			expect(updated.nudgeMessage).toBeUndefined();
+			expect(updated.newSessionMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
 		});
 

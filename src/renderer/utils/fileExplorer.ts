@@ -4,6 +4,7 @@ import {
 } from '../../shared/treeUtils';
 import { isImageFile } from '../../shared/gitUtils';
 import { shouldIgnore, parseGitignoreContent, LOCAL_IGNORE_DEFAULTS } from '../../shared/globUtils';
+import { logger } from './logger';
 
 /**
  * Check if a file should be opened in external app based on extension
@@ -151,6 +152,33 @@ interface LoadingState {
 	ignorePatterns: string[];
 	/** Whether this is an SSH remote context */
 	isRemote: boolean;
+	/** Max file entries before we stop walking. Folders do not count. */
+	maxEntries: number;
+	/** True once we've hit the entry cap and started skipping further files. */
+	truncated: boolean;
+	/** Optional abort signal — when aborted, the recursion stops issuing new readDir calls. */
+	signal?: AbortSignal;
+}
+
+/** Thrown when a file tree load is aborted via {@link AbortSignal}. */
+export class FileTreeAbortError extends Error {
+	constructor() {
+		super('File tree load aborted');
+		this.name = 'FileTreeAbortError';
+	}
+}
+
+/**
+ * Result returned by {@link loadFileTree}. Wraps the tree with metadata so
+ * callers can detect when the scan was truncated by the entry cap.
+ */
+export interface FileTreeLoadResult {
+	/** The loaded file tree (sorted, folders first). */
+	tree: FileTreeNode[];
+	/** True if the scan stopped early because the entry cap was reached. */
+	truncated: boolean;
+	/** Total file entries observed during the scan (may exceed maxEntries by the last batch). */
+	filesFound: number;
 }
 
 /** Files that should always appear in the file tree regardless of ignore patterns */
@@ -165,22 +193,35 @@ export interface LocalFileTreeOptions {
 }
 
 /**
- * Load file tree from directory recursively
+ * Load file tree from directory recursively.
+ *
+ * Applies two independent limits:
+ * - `maxDepth` — hard cap on recursion depth. Enforced the same way at every
+ *   level.
+ * - `maxEntries` — soft cap on the number of file entries (folders are not
+ *   counted). Once reached, further files are skipped and the returned result
+ *   is flagged `truncated`. Pass `Infinity` to disable.
+ *
  * @param dirPath - The directory path to load
- * @param maxDepth - Maximum recursion depth (default: 10)
+ * @param maxDepth - Maximum recursion depth (default: 5)
  * @param currentDepth - Current recursion depth (internal use)
  * @param sshContext - Optional SSH context for remote file operations
  * @param onProgress - Optional callback for progress updates (useful for SSH)
  * @param localOptions - Optional configuration for local (non-SSH) scans
+ * @param maxEntries - Maximum number of file entries to load before truncating
+ *   (default: `Infinity`, meaning no cap). Callers that surface results to the
+ *   user should pass the `fileExplorerMaxEntries` setting.
  */
 export async function loadFileTree(
 	dirPath: string,
-	maxDepth = 10,
+	maxDepth = 5,
 	currentDepth = 0,
 	sshContext?: SshContext,
 	onProgress?: FileTreeProgressCallback,
-	localOptions?: LocalFileTreeOptions
-): Promise<FileTreeNode[]> {
+	localOptions?: LocalFileTreeOptions,
+	maxEntries: number = Number.POSITIVE_INFINITY,
+	signal?: AbortSignal
+): Promise<FileTreeLoadResult> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
 	// Build effective ignore patterns
@@ -226,9 +267,13 @@ export async function loadFileTree(
 		onProgress,
 		ignorePatterns,
 		isRemote,
+		maxEntries: maxEntries > 0 ? maxEntries : Number.POSITIVE_INFINITY,
+		truncated: false,
+		signal,
 	};
 
-	return loadFileTreeRecursive(dirPath, maxDepth, currentDepth, sshContext, state);
+	const tree = await loadFileTreeRecursive(dirPath, maxDepth, currentDepth, sshContext, state);
+	return { tree, truncated: state.truncated, filesFound: state.filesFound };
 }
 
 /**
@@ -260,9 +305,11 @@ async function loadFileTreeRecursive(
 	state: LoadingState
 ): Promise<FileTreeNode[]> {
 	if (currentDepth >= maxDepth) return [];
+	if (state.signal?.aborted) throw new FileTreeAbortError();
 
 	try {
 		const entries = await window.maestro.fs.readDir(dirPath, sshContext?.sshRemoteId);
+		if (state.signal?.aborted) throw new FileTreeAbortError();
 		const tree: FileTreeNode[] = [];
 
 		// Update progress: we've scanned a directory
@@ -284,7 +331,11 @@ async function loadFileTreeRecursive(
 		for (const entry of entries) {
 			const normalizedName = entry.name.normalize('NFC');
 			if (seen.has(normalizedName)) {
-				console.warn('[loadFileTree] readDir returned duplicate entry:', entry.name, 'in', dirPath);
+				logger.warn('[loadFileTree] readDir returned duplicate entry:', undefined, [
+					entry.name,
+					'in',
+					dirPath,
+				]);
 				continue;
 			}
 			seen.add(normalizedName);
@@ -295,20 +346,29 @@ async function loadFileTreeRecursive(
 			}
 
 			if (entry.isDirectory) {
+				if (state.signal?.aborted) throw new FileTreeAbortError();
 				// Wrap child directory reads in try/catch so a single failing
 				// subdirectory (permissions, spaces in name over SSH, broken
 				// symlinks, etc.) doesn't kill the entire tree walk.
 				let children: FileTreeNode[] = [];
-				try {
-					children = await loadFileTreeRecursive(
-						`${dirPath}/${entry.name}`,
-						maxDepth,
-						currentDepth + 1,
-						sshContext,
-						state
-					);
-				} catch {
-					// Skip unreadable child directories — show them as empty folders
+				if (state.filesFound < state.maxEntries) {
+					try {
+						children = await loadFileTreeRecursive(
+							`${dirPath}/${entry.name}`,
+							maxDepth,
+							currentDepth + 1,
+							sshContext,
+							state
+						);
+					} catch (childErr) {
+						// Re-throw aborts so the whole walk stops; skip unreadable child
+						// directories so a single failing subdir doesn't kill the walk.
+						if (childErr instanceof FileTreeAbortError) throw childErr;
+					}
+				} else {
+					// Cap hit before we could recurse: fold this in as an empty placeholder
+					// so the user still sees that the folder exists.
+					state.truncated = true;
 				}
 				tree.push({
 					name: entry.name,
@@ -316,6 +376,12 @@ async function loadFileTreeRecursive(
 					children,
 				});
 			} else if (entry.isFile) {
+				if (state.filesFound >= state.maxEntries) {
+					state.truncated = true;
+					// Stop adding files at this level; siblings in deeper dirs
+					// also short-circuit via the directory guard above.
+					continue;
+				}
 				state.filesFound++;
 				tree.push({
 					name: entry.name,
@@ -340,7 +406,8 @@ async function loadFileTreeRecursive(
 			return a.name.localeCompare(b.name);
 		});
 	} catch (error) {
-		console.error('Error loading file tree:', error);
+		if (error instanceof FileTreeAbortError) throw error;
+		logger.error('Error loading file tree:', undefined, error);
 		throw error; // Propagate error to be caught by caller
 	}
 }

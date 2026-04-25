@@ -63,6 +63,7 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
 		registerLayer: vi.fn(() => 'layer-123'),
 		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
 	}),
 }));
 

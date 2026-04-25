@@ -3,7 +3,7 @@
  *
  * Tests the general settings tab including:
  * - Section rendering (About Me, Shell, Log Level, GitHub CLI, etc.)
- * - Conductor Profile textarea with character count and limit
+ * - Conductor Profile textarea with character count and 5000-char limit
  * - Shell detection, selection, and configuration
  * - Custom shell path, arguments, and environment variables
  * - Log level toggle buttons
@@ -24,8 +24,9 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { GeneralTab } from '../../../../../renderer/components/Settings/tabs/GeneralTab';
-import type { Theme, ShellInfo } from '../../../../../renderer/types';
+import type { ShellInfo } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock platformUtils
 vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	getOpenInLabel: vi.fn(() => 'Open in Finder'),
@@ -43,6 +44,7 @@ const mockSetShellEnvVars = vi.fn();
 const mockSetGhPath = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetEnterToSendAI = vi.fn();
+const mockSetEnterToSendAIExpanded = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
@@ -77,6 +79,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Input settings
 		enterToSendAI: true,
 		setEnterToSendAI: mockSetEnterToSendAI,
+		enterToSendAIExpanded: false,
+		setEnterToSendAIExpanded: mockSetEnterToSendAIExpanded,
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',
@@ -102,27 +106,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		...mockUseSettingsOverrides,
 	}),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockShells: ShellInfo[] = [
 	{ id: 'zsh', name: 'Zsh', path: '/bin/zsh', available: true },
@@ -204,14 +187,14 @@ describe('GeneralTab', () => {
 			expect(textarea).toBeInTheDocument();
 		});
 
-		it('should display character count as 0/1000 when empty', async () => {
+		it('should display character count as 0/5000 when empty', async () => {
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('0/1000')).toBeInTheDocument();
+			expect(screen.getByText('0/5000')).toBeInTheDocument();
 		});
 
 		it('should display character count matching profile length', async () => {
@@ -222,10 +205,10 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('11/1000')).toBeInTheDocument();
+			expect(screen.getByText('11/5000')).toBeInTheDocument();
 		});
 
-		it('should have maxLength of 1000 on the textarea', async () => {
+		it('should have maxLength of 5000 on the textarea', async () => {
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 
 			await act(async () => {
@@ -233,7 +216,7 @@ describe('GeneralTab', () => {
 			});
 
 			const textarea = screen.getByPlaceholderText(/I'm a senior developer/) as HTMLTextAreaElement;
-			expect(textarea.maxLength).toBe(1000);
+			expect(textarea.maxLength).toBe(5000);
 		});
 
 		it('should call setConductorProfile when text changes', async () => {

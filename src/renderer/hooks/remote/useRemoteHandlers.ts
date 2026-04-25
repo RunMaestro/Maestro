@@ -22,7 +22,8 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { filterYoloArgs } from '../../utils/agentArgs';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -121,7 +122,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}>;
 			const { sessionId, command, inputMode: webInputMode } = customEvent.detail;
 
-			console.log('[Remote] Processing remote command via event:', {
+			logger.info('[Remote] Processing remote command via event:', undefined, {
 				sessionId,
 				command: command.substring(0, 50),
 				webInputMode,
@@ -130,14 +131,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// Find the session directly from sessionsRef (not from React state which may be stale)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
-				console.log('[Remote] ERROR: Session not found in sessionsRef:', sessionId);
+				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
 				return;
 			}
 
 			// Use web's inputMode if provided, otherwise fall back to session state
 			const effectiveInputMode = webInputMode || session.inputMode;
 
-			console.log('[Remote] Found session:', {
+			logger.info('[Remote] Found session:', undefined, {
 				id: session.id,
 				agentSessionId: session.agentSessionId || 'none',
 				state: session.state,
@@ -148,7 +149,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
-				console.log('[Remote] Terminal mode - using runCommand for clean output');
+				logger.info('[Remote] Terminal mode - using runCommand for clean output');
 
 				// Add user message to shell logs and set state to busy
 				setSessions((prev) =>
@@ -187,7 +188,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						cwd: commandCwd,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
-					console.log('[Remote] Terminal command completed successfully');
+					logger.info('[Remote] Terminal command completed successfully');
 				} catch (error: unknown) {
 					captureException(error, {
 						extra: {
@@ -227,13 +228,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 			// Handle AI mode for batch-mode agents
 			if (!hasCapabilityCached(session.toolType, 'supportsBatchMode')) {
-				console.log('[Remote] Not a batch-mode agent, skipping');
+				logger.info('[Remote] Not a batch-mode agent, skipping');
 				return;
 			}
 
 			// Check if session is busy
 			if (session.state === 'busy') {
-				console.log('[Remote] Session is busy, cannot process command');
+				logger.info('[Remote] Session is busy, cannot process command');
 				return;
 			}
 
@@ -244,7 +245,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// Handle slash commands (custom AI commands only)
 			if (command.trim().startsWith('/')) {
 				const commandText = command.trim();
-				console.log('[Remote] Detected slash command:', commandText);
+				logger.info('[Remote] Detected slash command:', undefined, commandText);
 
 				const matchingCustomCommand = customAICommandsRef.current.find(
 					(cmd) => cmd.command === commandText
@@ -266,8 +267,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					matchingBmadCommand;
 
 				if (matchingCommand) {
-					console.log(
-						'[Remote] Found matching command:',
+					logger.info('[Remote] Found matching command:', undefined, [
 						matchingCommand.command,
 						matchingSpeckitCommand
 							? '(spec-kit)'
@@ -275,8 +275,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								? '(openspec)'
 								: matchingBmadCommand
 									? '(bmad)'
-									: '(custom)'
-					);
+									: '(custom)',
+					]);
 
 					// Get git branch for template substitution
 					let gitBranch: string | undefined;
@@ -312,13 +312,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						description: matchingCommand.description,
 					};
 
-					console.log(
+					logger.info(
 						'[Remote] Substituted prompt (first 100 chars):',
+						undefined,
 						promptToSend.substring(0, 100)
 					);
 				} else {
 					// Unknown slash command
-					console.log('[Remote] Unknown slash command:', commandText);
+					logger.info('[Remote] Unknown slash command:', undefined, commandText);
 					addLogToActiveTab(sessionId, {
 						source: 'system',
 						text: `Unknown command: ${commandText}`,
@@ -331,7 +332,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// Get agent configuration for this session's tool type
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
-					console.log(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
+					logger.info(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
 					return;
 				}
 
@@ -346,7 +347,12 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 
 				// Include tab ID in targetSessionId for proper output routing
 				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
-				const commandToUse = agent.path ?? agent.command;
+				const commandToUse = agent.path ?? agent.command ?? '';
+
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: activeTab?.id,
+				});
 
 				// Determine whether to send the prompt via stdin on Windows to avoid
 				// exceeding the command line length limit. Remote commands may include
@@ -358,12 +364,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					hasImages: false, // Remote commands do not send images
 				});
 
-				console.log('[Remote] Spawning agent:', {
+				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
 					activeTabId: activeTab?.id,
 					tabAgentSessionId: tabAgentSessionId || 'NEW SESSION',
 					isResume: !!tabAgentSessionId,
+					hasAppendSystemPrompt: !!appendSystemPrompt,
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend.substring(0, 100),
@@ -397,7 +404,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								: s.aiTabs;
 
 						if (!activeTab) {
-							console.error(
+							logger.error(
 								'[runAICommand] No active tab found - session has no aiTabs, this should not happen'
 							);
 							return s;
@@ -428,6 +435,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
+					appendSystemPrompt,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,
@@ -442,7 +450,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sendPromptViaStdinRaw,
 				});
 
-				console.log(`[Remote] ${session.toolType} spawn initiated successfully`);
+				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
 			} catch (error: unknown) {
 				captureException(error, {
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },
@@ -473,7 +481,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								: s.aiTabs;
 
 						if (!activeTab) {
-							console.error(
+							logger.error(
 								'[runAICommand error] No active tab found - session has no aiTabs, this should not happen'
 							);
 							return s;

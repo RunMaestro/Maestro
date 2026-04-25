@@ -256,7 +256,8 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 
 **Advanced configuration options:**
 
-- **Nudge Message** — An initial prompt sent when the agent starts
+- **New Session Message** — A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
+- **Nudge Message** — A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages — they are not included in Auto Run tasks.
 - **Custom Path** — Override the default executable path
 - **Custom Arguments** — Additional command-line arguments
 - **Environment Variables** — Custom environment variables for the agent process
@@ -264,7 +265,7 @@ Agents are the core of Maestro — each agent represents an AI coding assistant 
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, nudge message, custom paths, arguments, environment variables, and model.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, and model.
 
 ### Deleting Agents
 

@@ -1,5 +1,6 @@
 import GithubSlugger from 'github-slugger';
 import type { TocEntry } from './types';
+import { formatSize } from '../../../shared/formatters';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -41,6 +42,7 @@ const LANGUAGE_MAP: Record<string, string> = {
 	jsx: 'jsx',
 	json: 'json',
 	md: 'markdown',
+	mdx: 'markdown',
 	py: 'python',
 	rb: 'ruby',
 	go: 'go',
@@ -61,6 +63,8 @@ const LANGUAGE_MAP: Record<string, string> = {
 	xml: 'xml',
 	csv: 'csv',
 	tsv: 'csv',
+	jsonl: 'jsonl',
+	ndjson: 'jsonl',
 };
 
 /** Map filename extension to syntax highlighting language code */
@@ -68,6 +72,41 @@ export const getLanguageFromFilename = (filename: string): string => {
 	const ext = filename.split('.').pop()?.toLowerCase();
 	return LANGUAGE_MAP[ext || ''] || 'text';
 };
+
+// ─── Readable Text Detection ──────────────────────────────────────────────────
+
+/** Plain prose extensions that should be rendered as readable text (supporting Bionify). */
+export const READABLE_TEXT_EXTENSIONS = new Set(['txt', 'text', 'rst', 'adoc', 'asc']);
+
+/** Basenames (no extension) typically treated as readable prose. */
+export const READABLE_TEXT_BASENAMES = new Set([
+	'readme',
+	'changelog',
+	'contributing',
+	'license',
+	'copying',
+	'authors',
+	'notice',
+	'todo',
+]);
+
+/**
+ * Whether a filename should render in the readable-text preview branch
+ * (plain prose that benefits from Bionify). Files with an extension are
+ * matched against the readable-text extension set first; only extensionless
+ * files fall back to the basename set (so `README.ts` is NOT readable text).
+ */
+export function isReadableTextPreview(filename: string): boolean {
+	const lowerFilename = filename.toLowerCase();
+	const dotIndex = lowerFilename.lastIndexOf('.');
+
+	if (dotIndex !== -1) {
+		const ext = lowerFilename.slice(dotIndex + 1);
+		return READABLE_TEXT_EXTENSIONS.has(ext);
+	}
+
+	return READABLE_TEXT_BASENAMES.has(lowerFilename);
+}
 
 // ─── Binary Detection ─────────────────────────────────────────────────────────
 
@@ -148,10 +187,7 @@ export const isBinaryExtension = (filename: string): boolean => {
 /** Format file size in human-readable format */
 export const formatFileSize = (bytes: number): string => {
 	if (bytes <= 0) return '0 B';
-	const k = 1024;
-	const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
-	return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+	return formatSize(bytes);
 };
 
 /** Format ISO date/time for display */

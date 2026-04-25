@@ -16,6 +16,7 @@ import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Dependencies interface
@@ -69,12 +70,40 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		try {
 			await cancelPendingSynopsis(activeSession.id);
 		} catch (synopsisErr) {
-			console.warn('[useInterruptHandler] Failed to cancel pending synopsis:', synopsisErr);
+			logger.warn(
+				'[useInterruptHandler] Failed to cancel pending synopsis:',
+				undefined,
+				synopsisErr
+			);
 		}
 
 		try {
-			// Send interrupt signal (Ctrl+C)
-			await (window as any).maestro.process.interrupt(targetSessionId);
+			// Interrupt the primary process and any forced-parallel processes for this tab.
+			// Forced parallel spawns append `-fp-{timestamp}` to the session ID, so we need
+			// to find and interrupt those as well.
+			const interruptPromises: Promise<void>[] = [
+				(window as any).maestro.process.interrupt(targetSessionId),
+			];
+
+			if (currentMode === 'ai') {
+				try {
+					const activeProcesses = await window.maestro.process.getActiveProcesses();
+					const fpPrefix = `${targetSessionId}-fp-`;
+					const fpProcesses = activeProcesses.filter((p) => p.sessionId.startsWith(fpPrefix));
+					for (const fp of fpProcesses) {
+						interruptPromises.push((window as any).maestro.process.interrupt(fp.sessionId));
+					}
+				} catch {
+					// Non-critical — forced parallel lookup failure shouldn't block interrupt
+				}
+			}
+
+			const results = await Promise.allSettled(interruptPromises);
+			// If the primary interrupt failed, throw to trigger force-kill fallback.
+			// Secondary (forced-parallel) failures are non-critical.
+			if (results[0].status === 'rejected') {
+				throw results[0].reason;
+			}
 
 			// Check if there are queued items to process after interrupt
 			const currentSession = sessionsRef.current?.find((s) => s.id === activeSession.id);
@@ -213,12 +242,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 			if (queuedItemToProcess) {
 				setTimeout(() => {
 					processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item).catch(
-						(err) => console.error('[useInterruptHandler] Failed to process queued item:', err)
+						(err) =>
+							logger.error('[useInterruptHandler] Failed to process queued item:', undefined, err)
 					);
 				}, 0);
 			}
 		} catch (error) {
-			console.error('Failed to interrupt process:', error);
+			logger.error('Failed to interrupt process:', undefined, error);
 
 			// If interrupt fails, offer to kill the process
 			const shouldKill = confirm(
@@ -228,7 +258,27 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 
 			if (shouldKill) {
 				try {
-					await (window as any).maestro.process.kill(targetSessionId);
+					// Kill primary process and any forced-parallel processes
+					const killPromises: Promise<void>[] = [
+						(window as any).maestro.process.kill(targetSessionId),
+					];
+					if (currentMode === 'ai') {
+						try {
+							const activeProcesses = await window.maestro.process.getActiveProcesses();
+							const fpPrefix = `${targetSessionId}-fp-`;
+							for (const fp of activeProcesses.filter((p) => p.sessionId.startsWith(fpPrefix))) {
+								killPromises.push((window as any).maestro.process.kill(fp.sessionId));
+							}
+						} catch {
+							// Non-critical
+						}
+					}
+					const killResults = await Promise.allSettled(killPromises);
+					// If the primary kill failed, throw to trigger kill error handling.
+					// Secondary (forced-parallel) failures are non-critical.
+					if (killResults[0].status === 'rejected') {
+						throw killResults[0].reason;
+					}
 
 					const killLog: LogEntry = {
 						id: generateId(),
@@ -384,15 +434,16 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						setTimeout(() => {
 							processQueuedItem(queuedItemAfterKill!.sessionId, queuedItemAfterKill!.item).catch(
 								(err) =>
-									console.error(
+									logger.error(
 										'[useInterruptHandler] Failed to process queued item after kill:',
+										undefined,
 										err
 									)
 							);
 						}, 0);
 					}
 				} catch (killError: unknown) {
-					console.error('Failed to kill process:', killError);
+					logger.error('Failed to kill process:', undefined, killError);
 					const killErrorMessage =
 						killError instanceof Error ? killError.message : String(killError);
 					const errorLog: LogEntry = {

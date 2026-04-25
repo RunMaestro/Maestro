@@ -39,8 +39,12 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | System Process Monitor      | `Opt+Cmd+P`           | `Alt+Ctrl+P`           |
 | Usage Dashboard             | `Opt+Cmd+U`           | `Alt+Ctrl+U`           |
 | Jump to Nearest Terminal    | `Opt+Cmd+J`           | `Alt+Ctrl+J`           |
+| Jump to Bottom              | `Opt+J`               | `Alt+J`                |
 | Toggle Bookmark             | `Cmd+Shift+B`         | `Ctrl+Shift+B`         |
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
+| Director's Notes            | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
+| Maestro Cue                 | `Opt+Q`               | `Alt+Q`                |
+| Forced Parallel Send        | `Cmd+Shift+Enter`     | `Ctrl+Shift+Enter`     |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
 | Cycle Focus Backwards       | `Shift+Tab`           | `Shift+Tab`            |
 
@@ -62,37 +66,42 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 These shortcuts work in AI Terminal mode and affect the current tab:
 
-| Action                 | macOS         | Windows/Linux  |
-| ---------------------- | ------------- | -------------- |
-| Toggle Save to History | `Cmd+S`       | `Ctrl+S`       |
-| Toggle Read-Only Mode  | `Cmd+R`       | `Ctrl+R`       |
-| Toggle Show Thinking   | `Cmd+Shift+K` | `Ctrl+Shift+K` |
-| Toggle Tab Star        | `Cmd+Shift+S` | `Ctrl+Shift+S` |
-| Toggle Tab Unread      | `Opt+Shift+U` | `Alt+Shift+U`  |
-| Filter Unread Agents   | `Cmd+Shift+U` | `Ctrl+Shift+U` |
-| Filter Unread Tabs     | `Cmd+U`       | `Ctrl+U`       |
-| Open Image Carousel    | `Cmd+Y`       | `Ctrl+Y`       |
-| Open Prompt Composer   | `Cmd+Shift+P` | `Ctrl+Shift+P` |
+| Action                 | macOS          | Windows/Linux   |
+| ---------------------- | -------------- | --------------- |
+| Toggle Save to History | `Cmd+S`        | `Ctrl+S`        |
+| Toggle Read-Only Mode  | `Cmd+R`        | `Ctrl+R`        |
+| Toggle Show Thinking   | `Cmd+Shift+K`  | `Ctrl+Shift+K`  |
+| Toggle Tab Star        | `Cmd+Shift+S`  | `Ctrl+Shift+S`  |
+| Toggle Tab Unread      | `Opt+Shift+U`  | `Alt+Shift+U`   |
+| Filter Unread Agents   | `Cmd+Shift+U`  | `Ctrl+Shift+U`  |
+| Filter Unread Tabs     | `Cmd+U`        | `Ctrl+U`        |
+| Next Unread/Draft Tab  | `Opt+Cmd+Down` | `Alt+Ctrl+Down` |
+| Open Image Carousel    | `Cmd+Y`        | `Ctrl+Y`        |
+| Open Prompt Composer   | `Cmd+Shift+P`  | `Ctrl+Shift+P`  |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
 ## Tab Management Shortcuts
 
-| Action              | macOS                   | Windows/Linux             |
-| ------------------- | ----------------------- | ------------------------- |
-| New Tab             | `Cmd+T`                 | `Ctrl+T`                  |
-| Close Tab           | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs      | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs    | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left  | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab   | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab        | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab            | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher        | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab          | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Go to Tab 1-9       | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab      | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                    | macOS                   | Windows/Linux             |
+| ------------------------- | ----------------------- | ------------------------- |
+| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab              | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
+| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
 
 ### Tab Switcher
 
@@ -131,7 +140,13 @@ The bulk close operations (Close All, Close Others, Close Left, Close Right) are
 | Decrease Font Size | `Cmd+-`       | `Ctrl+-`       |
 | Reset Font Size    | `Cmd+Shift+0` | `Ctrl+Shift+0` |
 
-## Tab Completion (Command Terminal)
+## Command Terminal
+
+| Action         | macOS         | Windows/Linux  |
+| -------------- | ------------- | -------------- |
+| Clear Terminal | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+
+### Tab Completion
 
 The Command Terminal provides intelligent tab completion for faster command entry:
 
@@ -178,6 +193,7 @@ In AI mode, use `@` to reference files in your prompts:
 | Filter History (in History tab) | `Cmd+F`                            | `Ctrl+F`                           |
 | Search Output (in Main Window)  | `Cmd+F`                            | `Ctrl+F`                           |
 | Search System Logs              | `Cmd+F`                            | `Ctrl+F`                           |
+| Search Director's Notes         | `Cmd+F`                            | `Ctrl+F`                           |
 | Open File Preview               | `Enter` on selected file           | `Enter` on selected file           |
 | Close Preview/Filter/Modal      | `Esc`                              | `Esc`                              |
 

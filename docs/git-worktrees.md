@@ -133,6 +133,8 @@ The confirmation dialog shows the full path to the worktree directory so you kno
 
 **Auto Run integration:** You can dispatch an Auto Run directly into a new worktree from the run configuration modal — no need to create the worktree first. See [Run in Worktree](./autorun-playbooks#run-in-worktree) for details.
 
+**CLI integration:** The same worktree-backed Auto Run is also reachable from the command line via `maestro-cli auto-run --worktree --branch <name> --worktree-path <path> --launch` (add `--create-pr` to open a PR on completion). See [CLI — Configuring Auto-Run](./cli#configuring-auto-run).
+
 ## Tips
 
 - **Name branches descriptively** — The branch name becomes the worktree directory name

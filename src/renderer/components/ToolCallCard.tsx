@@ -1,5 +1,6 @@
 import { useState, memo } from 'react';
-import { ChevronDown, ChevronRight, Clock, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 
 /**
@@ -51,9 +52,7 @@ function StatusIcon({ status, theme }: { status?: string; theme: Theme }) {
 			return <CheckCircle2 className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />;
 		case 'running':
 		case 'pending':
-			return (
-				<Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: theme.colors.warning }} />
-			);
+			return <Spinner size={14} color={theme.colors.warning} />;
 		case 'error':
 		case 'failed':
 			return <AlertCircle className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />;

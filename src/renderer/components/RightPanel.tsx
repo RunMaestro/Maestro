@@ -10,13 +10,13 @@ import React, {
 import {
 	PanelRightClose,
 	PanelRightOpen,
-	Loader2,
 	GitBranch,
 	Skull,
 	AlertTriangle,
 	Play,
 	XCircle,
 } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -31,7 +31,8 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import type { FileNode } from '../types/fileTree';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -58,7 +59,7 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: any, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -73,6 +74,7 @@ interface RightPanelProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => Promise<void>;
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
+	cancelFileTreeLoad: (sessionId: string) => void;
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
 
@@ -100,7 +102,7 @@ interface RightPanelProps {
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
@@ -110,15 +112,12 @@ interface RightPanelProps {
 
 	// Document Graph handlers
 	onFocusFileInGraph?: (relativePath: string) => void;
-	onOpenLastDocumentGraph?: () => void;
 }
 
 export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
 		// === State from stores (direct subscriptions — no prop drilling) ===
-		const session = useSessionStore(
-			(s) => s.sessions.find((x) => x.id === s.activeSessionId) ?? null
-		);
+		const session = useSessionStore(selectActiveSession);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -133,12 +132,12 @@ export const RightPanel = memo(
 		const fileExplorerIconTheme = useSettingsStore((s) => s.fileExplorerIconTheme);
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
+		const autoRunDisabled = useSettingsStore((s) => s.autoRunDisabled);
 
 		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
 		const filteredFileTree = useFileExplorerStore((s) => s.filteredFileTree);
 		const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
-		const lastGraphFocusFile = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 		const setFileTreeFilter = useFileExplorerStore((s) => s.setFileTreeFilter);
 		const setFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 		const setSelectedFileIndex = useFileExplorerStore((s) => s.setSelectedFileIndex);
@@ -170,6 +169,7 @@ export const RightPanel = memo(
 			collapseAllFolders,
 			updateSessionWorkingDirectory,
 			refreshFileTree,
+			cancelFileTreeLoad,
 			onAutoRefreshChange,
 			onShowFlash,
 			onAutoRunContentChange,
@@ -194,7 +194,6 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onFocusFileInGraph,
-			onOpenLastDocumentGraph,
 		} = props;
 
 		// === Values derived from session ===
@@ -209,7 +208,7 @@ export const RightPanel = memo(
 			transitionClass: rightPanelTransitionClass,
 		} = useResizablePanel({
 			width: rightPanelWidth,
-			minWidth: 384,
+			minWidth: 240,
 			maxWidth: 800,
 			settingsKey: 'rightPanelWidth',
 			setWidth: setRightPanelWidth,
@@ -441,7 +440,7 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{['files', 'history', 'autorun'].map((tab) => (
+					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -520,6 +519,7 @@ export const RightPanel = memo(
 							collapseAllFolders={collapseAllFolders}
 							updateSessionWorkingDirectory={updateSessionWorkingDirectory}
 							refreshFileTree={refreshFileTree}
+							cancelFileTreeLoad={cancelFileTreeLoad}
 							setSessions={setSessions}
 							onAutoRefreshChange={onAutoRefreshChange}
 							onShowFlash={onShowFlash}
@@ -527,8 +527,6 @@ export const RightPanel = memo(
 							fileExplorerIconTheme={fileExplorerIconTheme}
 							setShowHiddenFiles={setShowHiddenFiles}
 							onFocusFileInGraph={onFocusFileInGraph}
-							lastGraphFocusFile={lastGraphFocusFile}
-							onOpenLastDocumentGraph={onOpenLastDocumentGraph}
 						/>
 					</div>
 
@@ -548,7 +546,7 @@ export const RightPanel = memo(
 						</div>
 					)}
 
-					{activeRightTab === 'autorun' && (
+					{activeRightTab === 'autorun' && !autoRunDisabled && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
 						</div>
@@ -556,7 +554,7 @@ export const RightPanel = memo(
 				</div>
 
 				{/* Auto Run Expanded Modal */}
-				{autoRunExpanded && session && (
+				{autoRunExpanded && session && !autoRunDisabled && (
 					<AutoRunExpandedModal {...autoRunSharedProps} onClose={handleCollapseAutoRun} />
 				)}
 
@@ -575,10 +573,7 @@ export const RightPanel = memo(
 								{errorPaused ? (
 									<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.error }} />
 								) : (
-									<Loader2
-										className="w-4 h-4 animate-spin"
-										style={{ color: theme.colors.warning }}
-									/>
+									<Spinner size={16} color={theme.colors.warning} />
 								)}
 								{errorPaused ? (
 									<button
@@ -594,7 +589,7 @@ export const RightPanel = memo(
 										className="text-xs font-bold uppercase"
 										style={{ color: theme.colors.textMain }}
 									>
-										{currentSessionBatchState.isStopping ? 'Stopping...' : 'Auto Run Active'}
+										{currentSessionBatchState.isStopping ? 'Stopping' : 'Auto Run Active'}
 									</span>
 								)}
 								{currentSessionBatchState.worktreeActive && (

@@ -38,6 +38,23 @@ vi.mock('electron-store', () => {
 	};
 });
 
+vi.mock('../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn((id: string) => {
+		const fs = require('fs');
+		const path = require('path');
+		const promptsDir = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'prompts');
+		const filenameMap: Record<string, string> = {
+			'group-chat-participant': 'group-chat-participant.md',
+			'group-chat-participant-request': 'group-chat-participant-request.md',
+			'group-chat-moderator-system': 'group-chat-moderator-system.md',
+			'group-chat-moderator-synthesis': 'group-chat-moderator-synthesis.md',
+		};
+		const filename = filenameMap[id];
+		if (!filename) throw new Error(`Unknown prompt ID in test mock: ${id}`);
+		return fs.readFileSync(path.join(promptsDir, filename), 'utf-8');
+	}),
+}));
+
 import {
 	addParticipant,
 	sendToParticipant,
@@ -333,18 +350,18 @@ describe('group-chat-agent', () => {
 			expect(isParticipantActive(chat.id, 'Client')).toBe(false);
 		});
 
-		it('throws for unknown participant', async () => {
+		it('is a no-op for unknown participant (idempotent)', async () => {
 			const chat = await createTestChatWithModerator('Unknown Remove Test');
 
-			await expect(removeParticipant(chat.id, 'Unknown', mockProcessManager)).rejects.toThrow(
-				/not found/i
-			);
+			await expect(
+				removeParticipant(chat.id, 'Unknown', mockProcessManager)
+			).resolves.toBeUndefined();
 		});
 
-		it('throws for non-existent chat', async () => {
+		it('is a no-op for non-existent chat (idempotent)', async () => {
 			await expect(
 				removeParticipant('non-existent-id', 'Client', mockProcessManager)
-			).rejects.toThrow(/not found/i);
+			).resolves.toBeUndefined();
 		});
 
 		it('handles removal when process manager not provided', async () => {

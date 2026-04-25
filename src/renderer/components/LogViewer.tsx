@@ -15,11 +15,12 @@ import {
 import type { Theme } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useThrottledCallback } from '../hooks';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
 import { useSessionStore } from '../stores/sessionStore';
+import { logger } from '../utils/logger';
 
 interface SystemLogEntry {
 	timestamp: number;
@@ -132,13 +133,10 @@ export function LogViewer({
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const scrollTargetRef = useRef<HTMLDivElement | null>(null);
-	const layerIdRef = useRef<string>();
 
 	// Store onClose in ref to avoid re-registering layer when callback identity changes
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
 	const toggleDataExpanded = (index: number) => {
 		setExpandedData((prev) => {
@@ -235,46 +233,20 @@ export function LogViewer({
 
 	// Register layer on mount
 	// Note: Using 'modal' type because LogViewer blocks all shortcuts (like the original modalOpen check)
-	useEffect(() => {
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.LOG_VIEWER,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			ariaLabel: 'System Log Viewer',
-			onEscape: () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			},
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
+	useModalLayer(
+		MODAL_PRIORITIES.LOG_VIEWER,
+		'System Log Viewer',
+		() => {
+			if (searchOpen) {
+				setSearchOpen(false);
+				setSearchQuery('');
+				containerRef.current?.focus();
+			} else {
+				onCloseRef.current();
 			}
-		};
-	}, [registerLayer, unregisterLayer]); // Note: onClose NOT in deps (using ref)
-
-	// Update layer handler when dependencies change
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => {
-				if (searchOpen) {
-					setSearchOpen(false);
-					setSearchQuery('');
-					containerRef.current?.focus();
-				} else {
-					onCloseRef.current();
-				}
-			});
-		}
-	}, [searchOpen, updateLayerHandler]); // Note: onClose NOT in deps (using ref)
+		},
+		{ focusTrap: 'lenient' }
+	);
 
 	// Auto-focus container on mount for keyboard navigation
 	useEffect(() => {
@@ -296,7 +268,7 @@ export function LogViewer({
 			// Reverse to show newest first
 			setLogs(systemLogs.reverse());
 		} catch (error) {
-			console.error('Failed to load logs:', error);
+			logger.error('Failed to load logs:', undefined, error);
 		}
 	};
 
@@ -306,7 +278,7 @@ export function LogViewer({
 			setLogs([]);
 			setFilteredLogs([]);
 		} catch (error) {
-			console.error('Failed to clear logs:', error);
+			logger.error('Failed to clear logs:', undefined, error);
 		}
 	};
 

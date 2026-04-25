@@ -191,6 +191,11 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 	}),
 }));
 
+// Mock cliDetection to provide a resolved SSH path
+vi.mock('../../../../main/utils/cliDetection', () => ({
+	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
+}));
+
 describe('process IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockProcessManager: {
@@ -1058,18 +1063,39 @@ describe('process IPC handlers', () => {
 				},
 			});
 
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'ssh',
-					args: expect.arrayContaining(['devuser@dev.example.com']),
-					toolType: 'terminal',
-				})
-			);
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.command).toBe('ssh');
+			expect(spawnCall.toolType).toBe('terminal');
+			const args: string[] = spawnCall.args;
+
+			// Verify SSH options appear before destination and in correct paired order
+			const hostIndex = args.indexOf('devuser@dev.example.com');
+			expect(hostIndex).toBeGreaterThan(0);
+
+			const expectedOptions = [
+				['StrictHostKeyChecking=accept-new'],
+				['ConnectTimeout=10'],
+				['ClearAllForwardings=yes'],
+			];
+			let lastOptionIndex = -1;
+			for (const [value] of expectedOptions) {
+				const oIndex = args.indexOf('-o', lastOptionIndex + 1);
+				expect(oIndex).toBeGreaterThan(lastOptionIndex);
+				expect(oIndex).toBeLessThan(hostIndex);
+				expect(args[oIndex + 1]).toBe(value);
+				lastOptionIndex = oIndex + 1;
+			}
+
+			// -t must appear before the destination for all SSH terminal sessions
+			const tIndex = args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
+
 			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5001, success: true });
 		});
 
-		it('should add -t flag and remote cd command when workingDirOverride is set', async () => {
+		it('should add remote cd command when workingDirOverride is set', async () => {
 			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
 				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
 				return defaultValue;
@@ -1094,10 +1120,88 @@ describe('process IPC handlers', () => {
 			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
 			expect(tIndex).toBeGreaterThanOrEqual(0);
 			expect(tIndex).toBeLessThan(hostIndex);
-			// Remote command to cd and exec shell must be the last arg
+			// Destination must appear before the remote command
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
-			expect(lastArg).toContain('/remote/project');
-			expect(lastArg).toContain('exec $SHELL');
+			// Path must be shell-escaped (single-quoted) to prevent injection
+			expect(lastArg).toContain("cd '/remote/project'");
+			expect(lastArg).toContain('exec "$SHELL"');
+			// SSH options must be present
+			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
+			expect(spawnCall.args).toContain('ConnectTimeout=10');
+		});
+
+		it('should shell-escape workingDirOverride to prevent injection', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5010, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/tmp/$(whoami)',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Single-quoted path prevents command substitution
+			expect(lastArg).toContain("cd '/tmp/$(whoami)'");
+			expect(lastArg).toContain('exec "$SHELL"');
+		});
+
+		it('should expand tilde in workingDirOverride for remote shell', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5011, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/project',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
+			expect(lastArg).toContain('cd "$HOME"/\'project\'');
+			expect(lastArg).toContain('exec "$SHELL"');
+		});
+
+		it('should handle bare tilde workingDirOverride', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5012, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			expect(lastArg).toContain('cd "$HOME"');
+			expect(lastArg).toContain('exec "$SHELL"');
 		});
 
 		it('should include port flag for non-default SSH port', async () => {
@@ -1119,6 +1223,13 @@ describe('process IPC handlers', () => {
 			const portIndex = spawnCall.args.indexOf('-p');
 			expect(portIndex).toBeGreaterThanOrEqual(0);
 			expect(spawnCall.args[portIndex + 1]).toBe('2222');
+			// Port must appear before destination
+			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
+			expect(portIndex).toBeLessThan(hostIndex);
+			// -t must appear before destination
+			const tIndex = spawnCall.args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should include identity file flag when privateKeyPath is set', async () => {
@@ -1139,6 +1250,13 @@ describe('process IPC handlers', () => {
 			const keyIndex = spawnCall.args.indexOf('-i');
 			expect(keyIndex).toBeGreaterThanOrEqual(0);
 			expect(spawnCall.args[keyIndex + 1]).toBe('~/.ssh/id_ed25519');
+			// Identity file must appear before destination
+			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
+			expect(keyIndex).toBeLessThan(hostIndex);
+			// -t must appear before destination
+			const tIndex = spawnCall.args.indexOf('-t');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
 		});
 
 		it('should return failure when SSH is enabled but remote config not found', async () => {
@@ -1182,6 +1300,119 @@ describe('process IPC handlers', () => {
 
 			expect(mockProcessManager.spawnTerminalTab).toHaveBeenCalled();
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+
+		it('should export merged env vars in the remote command for SSH terminals', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				if (key === 'shellEnvVars') return { GLOBAL_VAR: 'from-global' };
+				return defaultValue;
+			});
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': { customEnvVars: { AGENT_VAR: 'from-agent' } },
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5020, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				toolType: 'claude-code',
+				sessionCustomEnvVars: { SESSION_VAR: 'from-session' },
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/remote/project',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// All env var layers must be exported in the remote command
+			expect(lastArg).toContain("export GLOBAL_VAR='from-global'");
+			expect(lastArg).toContain("export AGENT_VAR='from-agent'");
+			expect(lastArg).toContain("export SESSION_VAR='from-session'");
+			expect(lastArg).toContain("cd '/remote/project'");
+			expect(lastArg).toContain('exec "$SHELL"');
+		});
+
+		it('should export env vars even without workingDirOverride for SSH terminals', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				if (key === 'shellEnvVars') return {};
+				return defaultValue;
+			});
+			mockAgentConfigsStore.get.mockReturnValue({
+				'claude-code': { customEnvVars: { MY_VAR: 'my-value' } },
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5021, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				toolType: 'claude-code',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			expect(lastArg).toContain("export MY_VAR='my-value'");
+			expect(lastArg).toContain('exec "$SHELL"');
+		});
+
+		it('should shell-escape env var values in SSH terminal remote command', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				if (key === 'shellEnvVars') return { TRICKY: "val'ue with spaces" };
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5022, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			// Value must be shell-escaped (single-quoted with internal quotes escaped)
+			expect(lastArg).toContain('export TRICKY=');
+			expect(lastArg).not.toContain("val'ue"); // Raw quote must not appear
+		});
+
+		it('should skip env vars with invalid names in SSH terminal remote command', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				if (key === 'shellEnvVars')
+					return { VALID_VAR: 'ok', '123BAD': 'skip', 'ALSO VALID NOT': 'skip' };
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5023, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			expect(lastArg).toContain("export VALID_VAR='ok'");
+			expect(lastArg).not.toContain('123BAD');
+			expect(lastArg).not.toContain('ALSO VALID NOT');
 		});
 	});
 
@@ -2113,6 +2344,117 @@ describe('process IPC handlers', () => {
 			expect(spawnCall.sshStdinScript).toContain('Maestro SSH system prompt');
 			expect(spawnCall.sshStdinScript).toContain('Fix the bug remotely');
 			expect(spawnCall.sshStdinScript).toContain('# User Request');
+		});
+
+		it('should skip embedding system prompt on resume for unsupported agents', async () => {
+			const mockAgent = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				requiresPty: true,
+				path: '/usr/local/bin/copilot',
+				capabilities: {
+					supportsAppendSystemPrompt: false,
+					supportsResume: true,
+				},
+				resumeArgs: (sessionId: string) => [`--resume=${sessionId}`],
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'Follow-up question',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				agentSessionId: 'prior-session-uuid', // Resume signal
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// --append-system-prompt should NOT be in args (agent doesn't support it)
+			expect(spawnCall.args).not.toContain('--append-system-prompt');
+			// System prompt should NOT be embedded in the user prompt on resume
+			expect(spawnCall.prompt).toBe('Follow-up question');
+			expect(spawnCall.prompt).not.toContain('Maestro system prompt');
+			expect(spawnCall.prompt).not.toContain('# User Request');
+		});
+
+		it('should still embed system prompt on first turn (no agentSessionId) for unsupported agents', async () => {
+			const mockAgent = {
+				id: 'copilot-cli',
+				name: 'Copilot-CLI',
+				requiresPty: true,
+				path: '/usr/local/bin/copilot',
+				capabilities: {
+					supportsAppendSystemPrompt: false,
+					supportsResume: true,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'copilot-cli',
+				cwd: '/home/user/project',
+				command: 'copilot',
+				args: [],
+				prompt: 'First message',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				// No agentSessionId — this is a fresh session
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			// First turn: should embed in the user prompt
+			expect(spawnCall.prompt).toContain('You are Maestro system prompt content');
+			expect(spawnCall.prompt).toContain('First message');
+			expect(spawnCall.prompt).toContain('# User Request');
+		});
+
+		it('should still send --append-system-prompt on resume for natively-supported agents', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				requiresPty: true,
+				path: '/usr/local/bin/claude',
+				capabilities: {
+					supportsAppendSystemPrompt: true,
+					supportsStreamJsonInput: true,
+					supportsResume: true,
+				},
+				resumeArgs: (sessionId: string) => ['--resume', sessionId],
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-1',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'Follow-up question',
+				appendSystemPrompt: 'You are Maestro system prompt content',
+				agentSessionId: 'prior-session-uuid', // Resume signal
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			if (process.platform !== 'win32') {
+				// Non-Windows: flag is still passed every turn (not persisted in transcript)
+				const idx = spawnCall.args.indexOf('--append-system-prompt');
+				expect(idx).toBeGreaterThan(-1);
+				expect(spawnCall.args[idx + 1]).toBe('You are Maestro system prompt content');
+			}
+			// User prompt stays clean regardless
+			expect(spawnCall.prompt).toBe('Follow-up question');
 		});
 
 		it('should not add --append-system-prompt when appendSystemPrompt is not provided', async () => {

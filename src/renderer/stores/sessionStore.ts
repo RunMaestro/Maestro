@@ -17,6 +17,7 @@ import { create } from 'zustand';
 import type { Session, Group, LogEntry, AITab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 // ============================================================================
 // Store Types
@@ -307,7 +308,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 					: getActiveTab(session);
 
 				if (!targetTab) {
-					console.error(
+					logger.error(
 						'[addLogToTab] No target tab found - session has no aiTabs, this should not happen'
 					);
 					return session;
@@ -350,86 +351,12 @@ export const selectSessionById =
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
 
-/**
- * Select all bookmarked sessions.
- *
- * @example
- * const bookmarked = useSessionStore(selectBookmarkedSessions);
- */
-export const selectBookmarkedSessions = (state: SessionStore): Session[] =>
-	state.sessions.filter((s) => s.bookmarked);
-
-/**
- * Select sessions belonging to a specific group.
- *
- * @example
- * const groupSessions = useSessionStore(selectSessionsByGroup('group-1'));
- */
-export const selectSessionsByGroup =
-	(groupId: string) =>
-	(state: SessionStore): Session[] =>
-		state.sessions.filter((s) => s.groupId === groupId);
-
-/**
- * Select ungrouped sessions (no groupId set).
- *
- * @example
- * const ungrouped = useSessionStore(selectUngroupedSessions);
- */
-export const selectUngroupedSessions = (state: SessionStore): Session[] =>
-	state.sessions.filter((s) => !s.groupId && !s.parentSessionId);
-
-/**
- * Select a group by ID.
- *
- * @example
- * const group = useSessionStore(selectGroupById('group-1'));
- */
-export const selectGroupById =
-	(id: string) =>
-	(state: SessionStore): Group | undefined =>
-		state.groups.find((g) => g.id === id);
-
-/**
- * Select session count.
- *
- * @example
- * const count = useSessionStore(selectSessionCount);
- */
-export const selectSessionCount = (state: SessionStore): number => state.sessions.length;
-
-/**
- * Select whether initial load is complete (sessions loaded from disk).
- *
- * @example
- * const ready = useSessionStore(selectIsReady);
- */
-export const selectIsReady = (state: SessionStore): boolean =>
-	state.sessionsLoaded && state.initialLoadComplete;
-
-/**
- * Select whether any session is currently busy (agent actively processing).
- *
- * @example
- * const anyBusy = useSessionStore(selectIsAnySessionBusy);
- */
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 
 // ============================================================================
 // Non-React Access
 // ============================================================================
-
-/**
- * Get current session store state outside React.
- * Replaces sessionsRef.current, groupsRef.current, activeSessionIdRef.current.
- *
- * @example
- * const { sessions, activeSessionId } = getSessionState();
- */
-export function getSessionState() {
-	return useSessionStore.getState();
-}
 
 /**
  * Update a session by ID using a mapper function.
@@ -470,37 +397,4 @@ export function updateAiTab(
 			};
 		})
 	);
-}
-
-/**
- * Get stable action references outside React.
- * These never change, so they're safe to call from anywhere.
- *
- * @example
- * const { setSessions, setActiveSessionId } = getSessionActions();
- */
-export function getSessionActions() {
-	const state = useSessionStore.getState();
-	return {
-		setSessions: state.setSessions,
-		addSession: state.addSession,
-		removeSession: state.removeSession,
-		updateSession: state.updateSession,
-		setActiveSessionId: state.setActiveSessionId,
-		setActiveSessionIdInternal: state.setActiveSessionIdInternal,
-		setGroups: state.setGroups,
-		addGroup: state.addGroup,
-		removeGroup: state.removeGroup,
-		updateGroup: state.updateGroup,
-		toggleGroupCollapsed: state.toggleGroupCollapsed,
-		setSessionsLoaded: state.setSessionsLoaded,
-		setInitialLoadComplete: state.setInitialLoadComplete,
-		setInitialFileTreeReady: state.setInitialFileTreeReady,
-		toggleBookmark: state.toggleBookmark,
-		addRemovedWorktreePath: state.addRemovedWorktreePath,
-		setRemovedWorktreePaths: state.setRemovedWorktreePaths,
-		setCyclePosition: state.setCyclePosition,
-		resetCyclePosition: state.resetCyclePosition,
-		addLogToTab: state.addLogToTab,
-	};
 }

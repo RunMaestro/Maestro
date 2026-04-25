@@ -5,8 +5,8 @@ import {
 	AutoRunBottomPanel,
 	type AutoRunBottomPanelProps,
 } from '../../../../renderer/components/AutoRun/AutoRunBottomPanel';
-import type { Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 vi.mock('../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
 }));
@@ -26,26 +26,6 @@ vi.mock('lucide-react', () => ({
 		</span>
 	),
 }));
-
-const mockTheme: Theme = {
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgActivity: '#0f3460',
-		border: '#374151',
-		accent: '#6366f1',
-		accentForeground: '#ffffff',
-		textMain: '#e5e7eb',
-		textDim: '#9ca3af',
-		success: '#22c55e',
-		warning: '#eab308',
-		error: '#ef4444',
-		purple: '#8b5cf6',
-	},
-};
 
 const defaultProps: AutoRunBottomPanelProps = {
 	theme: mockTheme,

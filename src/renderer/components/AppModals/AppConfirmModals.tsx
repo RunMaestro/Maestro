@@ -26,6 +26,8 @@ export interface AppConfirmModalsProps {
 	onCancelQuit: () => void;
 	/** Session IDs with active auto-runs (batch processing) */
 	activeBatchSessionIds?: string[];
+	/** Active terminal tasks (e.g., "rc: npm test") for quit warning */
+	activeTerminalTasks?: string[];
 }
 
 /**
@@ -50,6 +52,7 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 	onConfirmQuit,
 	onCancelQuit,
 	activeBatchSessionIds = [],
+	activeTerminalTasks = [],
 }: AppConfirmModalsProps) {
 	// Compute busy agents for QuitConfirmModal
 	const busyAgents = sessions.filter(
@@ -89,6 +92,7 @@ export const AppConfirmModals = memo(function AppConfirmModals({
 					theme={theme}
 					busyAgentCount={allActiveAgents.length}
 					busyAgentNames={allActiveNames}
+					activeTerminalTasks={activeTerminalTasks}
 					onConfirmQuit={onConfirmQuit}
 					onCancel={onCancelQuit}
 				/>

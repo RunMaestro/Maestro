@@ -293,6 +293,19 @@ describe('ResponseViewer', () => {
 			render(<ResponseViewer isOpen={true} response={createMockResponse()} onClose={vi.fn()} />);
 			expect(screen.getByRole('heading', { name: 'Response' })).toBeInTheDocument();
 		});
+
+		it('applies Bionify emphasis to plain-text response segments when enabled', () => {
+			const { container } = render(
+				<ResponseViewer
+					isOpen={true}
+					response={createMockResponse({ text: 'Readable prose response.' })}
+					enableBionifyReadingMode={true}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
+		});
 	});
 
 	describe('ANSI code stripping', () => {
@@ -322,6 +335,24 @@ describe('ResponseViewer', () => {
 	});
 
 	describe('Code block parsing and syntax highlighting', () => {
+		it('routes markdown-looking responses through the markdown renderer', () => {
+			render(
+				<ResponseViewer
+					isOpen={true}
+					response={createMockResponse({
+						text: '# Heading\n\nVisit [docs](https://example.com)\n\n- one\n- two',
+					})}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByRole('link', { name: 'docs' })).toHaveAttribute(
+				'href',
+				'https://example.com'
+			);
+			expect(screen.queryByTestId('syntax-highlighter')).not.toBeInTheDocument();
+		});
+
 		it('renders code blocks with syntax highlighting', () => {
 			const textWithCode = 'Some text\n```typescript\nconst x = 1;\n```\nMore text';
 			render(
@@ -350,6 +381,22 @@ describe('ResponseViewer', () => {
 			expect(highlighters).toHaveLength(2);
 			expect(highlighters[0]).toHaveAttribute('data-language', 'javascript');
 			expect(highlighters[1]).toHaveAttribute('data-language', 'python');
+		});
+
+		it('does not bionify code blocks when reading mode is enabled', () => {
+			const { container } = render(
+				<ResponseViewer
+					isOpen={true}
+					response={createMockResponse({ text: 'Intro\n```ts\nconst value = 1;\n```' })}
+					enableBionifyReadingMode={true}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(container.querySelector('.bionify-word-emphasis')).toBeInTheDocument();
+			expect(
+				screen.getByTestId('syntax-highlighter').querySelector('.bionify-word-emphasis')
+			).toBeNull();
 		});
 
 		it('shows language label for code blocks', () => {

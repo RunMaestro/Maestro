@@ -17,7 +17,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { getSyntaxStyle } from '../../utils/syntaxTheme';
-import { Eye, Edit, ChevronDown, ChevronRight, X, Loader2, FileText, Check } from 'lucide-react';
+import { Eye, Edit, ChevronDown, ChevronRight, X, FileText, Check } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { GeneratedDocument } from '../Wizard/WizardContext';
 import { AustinFactsDisplay } from './AustinFactsDisplay';
@@ -25,6 +26,7 @@ import { MermaidRenderer } from '../MermaidRenderer';
 import { formatSize, formatElapsedTime } from '../../../shared/formatters';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useClickOutside } from '../../hooks/ui/useClickOutside';
+import { openUrl } from '../../utils/openUrl';
 
 const REMARK_PLUGINS = [remarkGfm];
 
@@ -283,7 +285,7 @@ function MarkdownImage({
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading...
 				</span>
@@ -637,7 +639,7 @@ export function DocumentEditor({
 					href={href}
 					onClick={(e) => {
 						e.preventDefault();
-						if (href) window.maestro.shell.openExternal(href);
+						if (href) openUrl(href);
 					}}
 					style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
 				>

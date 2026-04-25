@@ -27,7 +27,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
 3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (23 boolean fields)
-4. **Add display name & beta status** to `src/shared/agentMetadata.ts` → `AGENT_DISPLAY_NAMES` record, optionally add to `BETA_AGENTS` set
+4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
 6. **Sync renderer interfaces** — add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
 
@@ -337,14 +337,14 @@ const AGENT_DEFINITIONS: AgentConfig[] = [
 Edit `src/shared/agentMetadata.ts`:
 
 ```typescript
-// Add to AGENT_DISPLAY_NAMES record
-export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
+// Add to the internal AGENT_DISPLAY_NAMES record (not exported - use getAgentDisplayName() to read)
+const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	// ... existing agents
 	'your-agent': 'Your Agent',
 };
 
-// If beta, add to BETA_AGENTS set
-export const BETA_AGENTS: ReadonlySet<AgentId> = new Set([
+// If beta, add to the internal BETA_AGENTS set (not exported - use isBetaAgent() to read)
+const BETA_AGENTS: ReadonlySet<AgentId> = new Set([
 	'codex',
 	'opencode',
 	'factory-droid',
@@ -938,13 +938,15 @@ codex exec --json resume <thread_id> "continue"
 
 ---
 
-### Qwen3 Coder 📋 Planned
+### Copilot-CLI ✅ Fully Implemented
 
-**Status:** Not yet implemented
+**Status:** Beta (shipped in RC; marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
 
-**To Add:**
-
-1. Agent definition in `agents/definitions.ts`
-2. Capabilities in `agents/capabilities.ts` (likely local model, no cost tracking)
-3. Output parser for Qwen JSON format
-4. Error patterns (likely minimal for local models)
+- **Agent ID:** `copilot-cli`
+- **Binary:** `copilot`
+- **CLI Flags:** `-p/--prompt`, `--output-format json`, `--continue`, `--resume[=session-id]`, `--allow-tool`, `--deny-tool`, `--no-ask-user`, `--model`
+- **Output Parser:** `src/main/parsers/copilot-output-parser.ts` — handles concatenated JSONL (no newline separators), `assistant.message_delta` / `assistant.message` / `assistant.reasoning*` / `tool.execution_start|complete` / `session.shutdown` / `result` events, and per-process tool-name tracking.
+- **Session Storage:** `src/main/storage/copilot-session-storage.ts` — reads `~/.copilot/session-state/<session-id>/workspace.yaml` + `events.jsonl`, supports local and SSH-remote.
+- **Error Patterns:** auth failures, rate limiting, token exhaustion (7 variants), network errors, model-availability errors, session-not-found.
+- **Model Discovery:** Fetches the `github-copilot` model list from [models.dev](https://models.dev) (3s timeout) and merges it with the user's configured model from `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
+- **Known Limitations:** Interactive PTY mode does not go through `wrapSpawnWithSsh()`, so interactive Copilot-CLI over SSH is not supported. Batch mode (`-p`) works over SSH.

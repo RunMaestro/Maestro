@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // Mock gitService before any imports that use it
@@ -43,9 +44,10 @@ import type { Session } from '../../../renderer/types';
 
 const mockGit = {
 	scanWorktreeDirectory: vi.fn().mockResolvedValue({ gitSubdirs: [] }),
-	watchWorktreeDirectory: vi.fn(),
+	watchWorktreeDirectory: vi.fn().mockResolvedValue({ success: true }),
 	unwatchWorktreeDirectory: vi.fn(),
 	onWorktreeDiscovered: vi.fn().mockReturnValue(() => {}),
+	onWorktreeRemoved: vi.fn().mockReturnValue(() => {}),
 	worktreeSetup: vi.fn().mockResolvedValue({ success: true }),
 	removeWorktree: vi.fn().mockResolvedValue({ success: true }),
 };
@@ -1142,6 +1144,89 @@ describe('Effects', () => {
 			expect(worktreeSessions.some((s) => s.id === 'existing-startup')).toBe(true);
 			expect(worktreeSessions.some((s) => s.worktreeBranch === 'new-branch')).toBe(true);
 		});
+		it('removes stale child sessions whose worktree no longer exists on disk', async () => {
+			vi.useFakeTimers();
+
+			const staleChild = createChildSession({
+				id: 'stale-child',
+				cwd: '/projects/worktrees/deleted-branch',
+				worktreeBranch: 'deleted-branch',
+				parentSessionId: 'parent-1',
+			});
+
+			const validChild = createChildSession({
+				id: 'valid-child',
+				cwd: '/projects/worktrees/valid-branch',
+				worktreeBranch: 'valid-branch',
+				parentSessionId: 'parent-1',
+			});
+
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/projects/worktrees/valid-branch',
+						branch: 'valid-branch',
+						name: 'valid-branch',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig, staleChild, validChild],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.id === 'stale-child')).toBe(false);
+			expect(sessions.some((s) => s.id === 'valid-child')).toBe(true);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'info', title: 'Worktree Removed' })
+			);
+		});
+
+		it('exposes refreshWorktreeState that can be called manually', async () => {
+			const parentWithConfig = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: false },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{
+						path: '/projects/worktrees/manual-branch',
+						branch: 'manual-branch',
+						name: 'manual-branch',
+					},
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithConfig],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			const { result } = renderHook(() => useWorktreeHandlers());
+
+			await act(async () => {
+				await result.current.refreshWorktreeState();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.worktreeBranch === 'manual-branch')).toBe(true);
+		});
 	});
 
 	describe('File watcher effect', () => {
@@ -1187,6 +1272,387 @@ describe('Effects', () => {
 
 			expect(cleanupFn).toHaveBeenCalled();
 			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledWith('parent-1');
+		});
+
+		it('does NOT restart watcher when unrelated sessions are added or removed', () => {
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Watcher started once on mount
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledTimes(0);
+
+			// Add an unrelated session (no worktreeConfig)
+			act(() => {
+				useSessionStore.getState().setSessions((prev) => [
+					...prev,
+					{
+						...createChildSession({ id: 'unrelated-agent', parentSessionId: undefined }),
+						worktreeConfig: undefined,
+					},
+				]);
+			});
+
+			// Watcher should NOT have been torn down and restarted
+			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledTimes(0);
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+		});
+
+		it('does NOT restart watcher when worktree child sessions are added', () => {
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledTimes(0);
+
+			// Add a worktree child session (has parentSessionId but no worktreeConfig)
+			act(() => {
+				useSessionStore.getState().setSessions((prev) => [
+					...prev,
+					createChildSession({
+						id: 'new-child',
+						parentSessionId: 'parent-1',
+						worktreeBranch: 'feature-2',
+						cwd: '/projects/worktrees/feature-2',
+					}),
+				]);
+			});
+
+			// Watcher should NOT have been torn down and restarted
+			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledTimes(0);
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+		});
+
+		it('DOES restart watcher when worktreeConfig changes on a parent session', () => {
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+
+			// Change the basePath on the parent session
+			act(() => {
+				useSessionStore
+					.getState()
+					.setSessions((prev) =>
+						prev.map((s) =>
+							s.id === 'parent-1'
+								? { ...s, worktreeConfig: { basePath: '/new/worktrees', watchEnabled: true } }
+								: s
+						)
+					);
+			});
+
+			// Watcher should have been torn down and restarted with new path
+			expect(mockGit.unwatchWorktreeDirectory).toHaveBeenCalledWith('parent-1');
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(2);
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenLastCalledWith('parent-1', '/new/worktrees');
+		});
+
+		it('DOES restart watcher when a new parent session gets worktreeConfig', () => {
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(1);
+
+			// Add a second parent session with its own worktreeConfig
+			act(() => {
+				useSessionStore.getState().setSessions((prev) => [
+					...prev,
+					{
+						...mockParentSession,
+						id: 'parent-2',
+						name: 'Second Parent',
+						cwd: '/projects/other-app',
+						worktreeConfig: { basePath: '/projects/other-worktrees', watchEnabled: true },
+					},
+				]);
+			});
+
+			// Watcher effect should re-run and start watchers for both parents
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledTimes(3); // 1 initial + 2 on re-run
+			expect(mockGit.watchWorktreeDirectory).toHaveBeenCalledWith(
+				'parent-2',
+				'/projects/other-worktrees'
+			);
+		});
+
+		it('logs error when watcher IPC call fails', async () => {
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			mockGit.watchWorktreeDirectory.mockResolvedValueOnce({
+				success: false,
+				error: 'Directory not found',
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Let the promise settle
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('[WorktreeWatcher]'),
+				undefined,
+				expect.stringContaining('Directory not found')
+			);
+
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('Visibility-change rescan', () => {
+		it('rescans worktree directories when app regains focus', async () => {
+			vi.useFakeTimers();
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{ path: '/projects/worktrees/cli-branch', branch: 'cli-branch', name: 'cli-branch' },
+				],
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: true,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Run startup scan timer
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// Reset mock to track visibility-change calls separately
+			mockGit.scanWorktreeDirectory.mockClear();
+			mockGit.scanWorktreeDirectory.mockResolvedValue({
+				gitSubdirs: [
+					{ path: '/projects/worktrees/cli-branch', branch: 'cli-branch', name: 'cli-branch' },
+					{
+						path: '/projects/worktrees/new-cli-branch',
+						branch: 'new-cli-branch',
+						name: 'new-cli-branch',
+					},
+				],
+			});
+
+			// Simulate app regaining focus
+			await act(async () => {
+				Object.defineProperty(document, 'hidden', { value: false, writable: true });
+				document.dispatchEvent(new Event('visibilitychange'));
+				await vi.runAllTimersAsync();
+			});
+
+			// Should have rescanned
+			expect(mockGit.scanWorktreeDirectory).toHaveBeenCalledWith('/projects/worktrees', undefined);
+
+			// New worktree session should have been created
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.some((s) => s.worktreeBranch === 'new-cli-branch')).toBe(true);
+		});
+
+		it('does NOT rescan when app is hidden', () => {
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			mockGit.scanWorktreeDirectory.mockClear();
+
+			// Simulate app going to background
+			Object.defineProperty(document, 'hidden', { value: true, writable: true });
+			document.dispatchEvent(new Event('visibilitychange'));
+
+			expect(mockGit.scanWorktreeDirectory).not.toHaveBeenCalled();
+		});
+
+		it('cleans up visibility listener on unmount', () => {
+			const removeListenerSpy = vi.spyOn(document, 'removeEventListener');
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			const { unmount } = renderHook(() => useWorktreeHandlers());
+
+			unmount();
+
+			expect(removeListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+
+			removeListenerSpy.mockRestore();
+		});
+	});
+
+	describe('Worktree removal detection', () => {
+		it('removes child session when worktree:removed event fires', () => {
+			let removalCallback: ((data: any) => void) | undefined;
+			mockGit.onWorktreeRemoved.mockImplementation((cb: any) => {
+				removalCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			const child = createChildSession({
+				id: 'child-to-remove',
+				cwd: '/projects/worktrees/feature-1',
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch, child],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Simulate worktree removal from CLI
+			act(() => {
+				removalCallback!({
+					sessionId: 'parent-1',
+					worktreePath: '/projects/worktrees/feature-1',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions.find((s) => s.id === 'child-to-remove')).toBeUndefined();
+			expect(sessions.find((s) => s.id === 'parent-1')).toBeDefined();
+		});
+
+		it('does not remove sessions when path does not match any child', () => {
+			let removalCallback: ((data: any) => void) | undefined;
+			mockGit.onWorktreeRemoved.mockImplementation((cb: any) => {
+				removalCallback = cb;
+				return () => {};
+			});
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			const child = createChildSession({
+				id: 'child-stays',
+				cwd: '/projects/worktrees/feature-1',
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch, child],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			renderHook(() => useWorktreeHandlers());
+
+			// Fire removal for a path that doesn't match any child
+			act(() => {
+				removalCallback!({
+					sessionId: 'parent-1',
+					worktreePath: '/projects/worktrees/nonexistent',
+				});
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions).toHaveLength(2);
+		});
+
+		it('cleans up removal listener on unmount', () => {
+			const cleanupFn = vi.fn();
+			mockGit.onWorktreeRemoved.mockReturnValue(cleanupFn);
+
+			const parentWithWatch = {
+				...mockParentSession,
+				worktreeConfig: { basePath: '/projects/worktrees', watchEnabled: true },
+			};
+
+			useSessionStore.setState({
+				sessions: [parentWithWatch],
+				activeSessionId: 'parent-1',
+				sessionsLoaded: false,
+			} as any);
+
+			const { unmount } = renderHook(() => useWorktreeHandlers());
+			unmount();
+
+			expect(cleanupFn).toHaveBeenCalled();
 		});
 	});
 });

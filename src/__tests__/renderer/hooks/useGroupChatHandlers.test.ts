@@ -457,6 +457,78 @@ describe('useGroupChatHandlers', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// handleDeleteAllArchivedGroupChats
+	// -----------------------------------------------------------------------
+	describe('handleDeleteAllArchivedGroupChats', () => {
+		it('opens a confirm modal listing archived count', () => {
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Active', archived: false } as any,
+					{ id: 'gc-2', name: 'Old Chat', archived: true } as any,
+					{ id: 'gc-3', name: 'Older Chat', archived: true } as any,
+				],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleDeleteAllArchivedGroupChats());
+
+			const confirmModal = useModalStore.getState().modals.get('confirm');
+			expect(confirmModal?.open).toBe(true);
+			expect((confirmModal?.data as any)?.message).toContain('2 archived group chats');
+		});
+
+		it('does nothing when no archived chats exist', () => {
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Active', archived: false } as any],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleDeleteAllArchivedGroupChats());
+
+			const confirmModal = useModalStore.getState().modals.get('confirm');
+			expect(confirmModal?.open ?? false).toBe(false);
+		});
+
+		it('onConfirm deletes all archived chats and removes them from store', async () => {
+			useGroupChatStore.setState({
+				groupChats: [
+					{ id: 'gc-1', name: 'Active', archived: false } as any,
+					{ id: 'gc-2', name: 'Archived1', archived: true } as any,
+					{ id: 'gc-3', name: 'Archived2', archived: true } as any,
+				],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleDeleteAllArchivedGroupChats());
+
+			// Invoke the onConfirm callback
+			const confirmData = useModalStore.getState().modals.get('confirm')?.data as any;
+			await act(() => confirmData.onConfirm());
+
+			expect(mockGroupChat.delete).toHaveBeenCalledTimes(2);
+			expect(mockGroupChat.delete).toHaveBeenCalledWith('gc-2');
+			expect(mockGroupChat.delete).toHaveBeenCalledWith('gc-3');
+
+			const remaining = useGroupChatStore.getState().groupChats;
+			expect(remaining).toHaveLength(1);
+			expect(remaining[0].id).toBe('gc-1');
+		});
+
+		it('uses singular grammar for a single archived chat', () => {
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Solo', archived: true } as any],
+			});
+
+			const { result } = renderHook(() => useGroupChatHandlers());
+			act(() => result.current.handleDeleteAllArchivedGroupChats());
+
+			const confirmData = useModalStore.getState().modals.get('confirm')?.data as any;
+			expect(confirmData.message).toContain('1 archived group chat?');
+			expect(confirmData.message).not.toContain('chats?');
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// handleSendGroupChatMessage
 	// -----------------------------------------------------------------------
 	describe('handleSendGroupChatMessage', () => {

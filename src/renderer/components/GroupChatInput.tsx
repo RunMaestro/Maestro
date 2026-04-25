@@ -30,6 +30,7 @@ import {
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
 import { normalizeMentionName } from '../utils/participantColors';
+import { logger } from '../utils/logger';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -400,12 +401,12 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			files.forEach((file) => {
 				// Validate file type
 				if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-					console.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
+					logger.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
 					return;
 				}
 				// Validate file size
 				if (file.size > MAX_IMAGE_SIZE) {
-					console.warn(
+					logger.warn(
 						`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: 10MB)`
 					);
 					return;

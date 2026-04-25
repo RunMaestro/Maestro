@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
  * This file makes the window.maestro API available throughout the renderer.
@@ -7,6 +8,32 @@
 declare module '*.md?raw' {
 	const content: string;
 	export default content;
+}
+
+interface HTMLWebViewElement extends HTMLElement {
+	src: string;
+	partition: string;
+	canGoBack: () => boolean;
+	canGoForward: () => boolean;
+	goBack: () => void;
+	goForward: () => void;
+	reload: () => void;
+	stop: () => void;
+	getURL: () => string;
+	getTitle: () => string;
+	isLoading: () => boolean;
+	getWebContentsId?: () => number;
+}
+
+declare namespace JSX {
+	interface IntrinsicElements {
+		webview: React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+			allowpopups?: boolean | 'true' | 'false';
+			partition?: string;
+			src?: string;
+			useragent?: string;
+		};
+	}
 }
 
 type AutoRunTreeNode = {
@@ -51,109 +78,16 @@ interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
 }
 
-interface AgentConfigOption {
-	key: string;
-	type: 'checkbox' | 'text' | 'number' | 'select';
-	label: string;
-	description: string;
-	default: any;
-	options?: string[];
-}
+type AgentConfigOption = import('../shared/types').AgentConfigOption;
+type AgentCapabilities = import('../shared/types').AgentCapabilities;
+type AgentConfig = import('../shared/types').AgentConfig;
 
-interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-	supportsThinkingDisplay: boolean;
-	supportsContextMerge: boolean;
-	supportsContextExport: boolean;
-	supportsWizard: boolean;
-	supportsGroupChatModeration: boolean;
-	usesJsonLineOutput: boolean;
-	usesCombinedContextWindow: boolean;
-	supportsAppendSystemPrompt: boolean;
-}
+type DirectoryEntry = import('../shared/types').DirectoryEntry;
+type ShellInfo = import('../shared/types').ShellInfo;
 
-interface AgentConfig {
-	id: string;
-	name: string;
-	binaryName?: string;
-	available: boolean;
-	path?: string;
-	customPath?: string;
-	command: string;
-	args?: string[];
-	hidden?: boolean;
-	configOptions?: AgentConfigOption[];
-	yoloModeArgs?: string[];
-	readOnlyCliEnforced?: boolean;
-	capabilities?: AgentCapabilities;
-}
+type UsageStats = import('../shared/types').UsageStats;
 
-interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection: boolean;
-	supportsStreamJsonInput: boolean;
-	supportsContextMerge: boolean;
-	supportsContextExport: boolean;
-	supportsWizard: boolean;
-	supportsGroupChatModeration: boolean;
-	usesJsonLineOutput: boolean;
-	usesCombinedContextWindow: boolean;
-	supportsAppendSystemPrompt: boolean;
-}
-
-interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
-
-interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
-
-interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
-
-type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
 /**
  * Result type for reading session messages from agent storage.
@@ -214,6 +148,10 @@ type GroupChatData = {
 	draftMessage?: string;
 	archived?: boolean;
 };
+
+import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
+import type { CueLogPayload } from '../shared/cue-log-types';
+import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -315,6 +253,7 @@ interface MaestroAPI {
 				cueSessionName?: string;
 				cueSubscriptionName?: string;
 				cueEventType?: string;
+				childProcesses?: Array<{ pid: number; command: string }>;
 			}>
 		>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
@@ -358,6 +297,22 @@ interface MaestroAPI {
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
+		onRemoteOpenBrowserTab: (
+			callback: (sessionId: string, url: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteOpenBrowserTabResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteOpenTerminalTab: (
+			callback: (
+				sessionId: string,
+				config: { cwd?: string; shell?: string; name?: string | null },
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteOpenTerminalTabResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteNewAITabWithPrompt: (
+			callback: (sessionId: string, prompt: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void) => () => void;
 		onRemoteConfigureAutoRun: (
 			callback: (
@@ -405,6 +360,7 @@ interface MaestroAPI {
 				toolType: string,
 				cwd: string,
 				groupId: string | undefined,
+				config: Record<string, unknown> | undefined,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -438,6 +394,15 @@ interface MaestroAPI {
 			callback: (sessionId: string, filePath: string | undefined, responseChannel: string) => void
 		) => () => void;
 		sendRemoteGetGitDiffResponse: (responseChannel: string, result: any) => void;
+		onRemoteTriggerCueSubscription: (
+			callback: (
+				subscriptionName: string,
+				prompt: string | undefined,
+				responseChannel: string,
+				sourceAgentId: string | undefined
+			) => void
+		) => () => void;
+		sendRemoteTriggerCueSubscriptionResponse: (responseChannel: string, result: unknown) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
@@ -553,6 +518,7 @@ interface MaestroAPI {
 				createdAt: number;
 				state: 'idle' | 'busy';
 				thinkingStartTime?: number | null;
+				hasUnread?: boolean;
 			}>,
 			activeTabId: string
 		) => Promise<void>;
@@ -785,6 +751,9 @@ interface MaestroAPI {
 				worktree: { path: string; name: string; branch: string | null };
 			}) => void
 		) => () => void;
+		onWorktreeRemoved: (
+			callback: (data: { sessionId: string; worktreePath: string }) => void
+		) => () => void;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
@@ -897,7 +866,8 @@ interface MaestroAPI {
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
-			customPath?: string
+			customPath?: string,
+			sshRemoteId?: string
 		) => Promise<{ name: string; prompt?: string }[] | null>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
@@ -1222,6 +1192,16 @@ interface MaestroAPI {
 		confirmQuit: () => void;
 		cancelQuit: () => void;
 		onSystemResume: (callback: () => void) => () => void;
+		onBrowserTabShortcutKey: (
+			callback: (input: {
+				key: string;
+				code: string;
+				meta: boolean;
+				control: boolean;
+				alt: boolean;
+				shift: boolean;
+			}) => void
+		) => () => void;
 		/** @see ParsedDeepLink in src/shared/types.ts — keep in sync */
 		onDeepLink: (
 			callback: (deepLink: {
@@ -1864,6 +1844,35 @@ interface MaestroAPI {
 				sizeEstimate: string;
 			}>;
 			error?: string;
+		}>;
+		getAppStats: () => Promise<{
+			timestamp: number;
+			platform: NodeJS.Platform;
+			main: {
+				rss: number;
+				heapTotal: number;
+				heapUsed: number;
+				external: number;
+				arrayBuffers: number;
+			};
+			electronProcesses: Array<{
+				pid: number;
+				type: string;
+				name?: string;
+				serviceName?: string;
+				cpuPercent?: number;
+				workingSetBytes?: number;
+				peakWorkingSetBytes?: number;
+			}>;
+			managedProcesses: Array<{
+				sessionId: string;
+				toolType: string;
+				pid?: number;
+				isTerminal?: boolean;
+				isBatchMode: boolean;
+				startTime?: number;
+				rssBytes?: number;
+			}>;
 		}>;
 	};
 	// Sync API (custom storage location)
@@ -3003,104 +3012,23 @@ interface MaestroAPI {
 
 	// Cue API (event-driven automation)
 	cue: {
-		getSettings: () => Promise<{
-			timeout_minutes: number;
-			timeout_on_fail: 'break' | 'continue';
-			max_concurrent: number;
-			queue_size: number;
-		}>;
-		getStatus: () => Promise<
-			Array<{
-				sessionId: string;
-				sessionName: string;
-				toolType: string;
-				projectRoot: string;
-				enabled: boolean;
-				subscriptionCount: number;
-				activeRuns: number;
-				lastTriggered?: string;
-				nextTrigger?: string;
-			}>
-		>;
-		getGraphData: () => Promise<
-			Array<{
-				sessionId: string;
-				sessionName: string;
-				toolType: string;
-				subscriptions: Array<{
-					name: string;
-					event:
-						| 'time.heartbeat'
-						| 'time.scheduled'
-						| 'file.changed'
-						| 'agent.completed'
-						| 'github.pull_request'
-						| 'github.issue'
-						| 'task.pending';
-					enabled: boolean;
-					prompt: string;
-					interval_minutes?: number;
-					schedule_times?: string[];
-					schedule_days?: string[];
-					watch?: string;
-					source_session?: string | string[];
-					fan_out?: string[];
-					filter?: Record<string, string | number | boolean>;
-					repo?: string;
-					poll_minutes?: number;
-				}>;
-			}>
-		>;
-		getActiveRuns: () => Promise<
-			Array<{
-				runId: string;
-				sessionId: string;
-				sessionName: string;
-				subscriptionName: string;
-				event: {
-					id: string;
-					type: 'time.heartbeat' | 'time.scheduled' | 'file.changed' | 'agent.completed';
-					timestamp: string;
-					triggerName: string;
-					payload: Record<string, unknown>;
-				};
-				status: 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
-				stdout: string;
-				stderr: string;
-				exitCode: number | null;
-				durationMs: number;
-				startedAt: string;
-				endedAt: string;
-			}>
-		>;
-		getActivityLog: (limit?: number) => Promise<
-			Array<{
-				runId: string;
-				sessionId: string;
-				sessionName: string;
-				subscriptionName: string;
-				event: {
-					id: string;
-					type: 'time.heartbeat' | 'time.scheduled' | 'file.changed' | 'agent.completed';
-					timestamp: string;
-					triggerName: string;
-					payload: Record<string, unknown>;
-				};
-				status: 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
-				stdout: string;
-				stderr: string;
-				exitCode: number | null;
-				durationMs: number;
-				startedAt: string;
-				endedAt: string;
-			}>
-		>;
+		getSettings: () => Promise<CueSettings>;
+		getStatus: () => Promise<CueSessionStatus[]>;
+		getGraphData: () => Promise<CueGraphSession[]>;
+		getActiveRuns: () => Promise<CueRunResult[]>;
+		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
 		stopRun: (runId: string) => Promise<boolean>;
 		stopAll: () => Promise<void>;
-		triggerSubscription: (subscriptionName: string) => Promise<boolean>;
+		triggerSubscription: (
+			subscriptionName: string,
+			prompt?: string,
+			sourceAgentId?: string
+		) => Promise<boolean>;
 		getQueueStatus: () => Promise<Record<string, number>>;
+		getMetrics: () => Promise<import('../main/cue/cue-metrics').CueMetrics | null>;
+		getFanInHealth: () => Promise<import('../main/cue/cue-fan-in-tracker').FanInHealthEntry[]>;
 		refreshSession: (sessionId: string, projectRoot: string) => Promise<void>;
 		removeSession: (sessionId: string) => Promise<void>;
 		readYaml: (projectRoot: string) => Promise<string | null>;
@@ -3113,34 +3041,95 @@ interface MaestroAPI {
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
 		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
 		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
-		onActivityUpdate: (
-			callback: (data: {
-				runId: string;
-				sessionId: string;
-				sessionName: string;
-				subscriptionName: string;
-				event: {
-					id: string;
-					type: 'time.heartbeat' | 'time.scheduled' | 'file.changed' | 'agent.completed';
-					timestamp: string;
-					triggerName: string;
-					payload: Record<string, unknown>;
-				};
-				status: 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
-				stdout: string;
-				stderr: string;
-				exitCode: number | null;
-				durationMs: number;
-				startedAt: string;
-				endedAt: string;
-			}) => void
-		) => () => void;
+		onActivityUpdate: (callback: (data: CueLogPayload) => void) => () => void;
 	};
 
 	// WakaTime API (CLI check, API key validation)
 	wakatime: {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
+	};
+
+	// Maestro CLI API (status check + install/update)
+	maestroCli: {
+		checkStatus: () => Promise<MaestroCliStatus>;
+		installOrUpdate: () => Promise<MaestroCliInstallResult>;
+	};
+
+	prompts: {
+		get: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getAll: () => Promise<{
+			success: boolean;
+			prompts?: Array<{
+				id: string;
+				filename: string;
+				description: string;
+				category: string;
+				content: string;
+				isModified: boolean;
+			}>;
+			error?: string;
+		}>;
+		getAllIds: () => Promise<{ success: boolean; ids?: string[]; error?: string }>;
+		save: (id: string, content: string) => Promise<{ success: boolean; error?: string }>;
+		reset: (id: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		listFiles: () => Promise<{
+			success: boolean;
+			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;
+			error?: string;
+		}>;
+	};
+
+	// Per-project memory API (Claude Code memory viewer)
+	memory: {
+		list: (
+			projectPath: string,
+			agentId?: string
+		) => Promise<{
+			success: boolean;
+			directoryPath?: string;
+			exists?: boolean;
+			entries?: Array<{
+				name: string;
+				size: number;
+				createdAt: string;
+				modifiedAt: string;
+			}>;
+			stats?: {
+				fileCount: number;
+				firstCreatedAt: string | null;
+				lastModifiedAt: string | null;
+				totalBytes: number;
+			};
+			error?: string;
+		}>;
+		read: (
+			projectPath: string,
+			filename: string,
+			agentId?: string
+		) => Promise<{ success: boolean; content?: string; error?: string }>;
+		write: (
+			projectPath: string,
+			filename: string,
+			content: string,
+			agentId?: string
+		) => Promise<{ success: boolean; error?: string }>;
+		create: (
+			projectPath: string,
+			filename: string,
+			content: string,
+			agentId?: string
+		) => Promise<{ success: boolean; error?: string }>;
+		delete: (
+			projectPath: string,
+			filename: string,
+			agentId?: string
+		) => Promise<{ success: boolean; error?: string }>;
+		getPath: (
+			projectPath: string,
+			agentId?: string
+		) => Promise<{ success: boolean; path?: string; error?: string }>;
 	};
 }
 

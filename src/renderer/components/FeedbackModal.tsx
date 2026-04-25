@@ -12,7 +12,7 @@ interface FeedbackModalProps {
 }
 
 export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: FeedbackModalProps) {
-	const [width, setWidth] = useState(420);
+	const [width, setWidth] = useState(462);
 
 	return (
 		<Modal
@@ -22,6 +22,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 			onClose={onClose}
 			width={width}
 			maxHeight="85vh"
+			allowOverflow
 			contentClassName="flex-1 flex flex-col min-h-0 p-0"
 		>
 			<FeedbackChatView

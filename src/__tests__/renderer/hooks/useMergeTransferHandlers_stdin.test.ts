@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -107,13 +108,14 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 // Helpers
 // ============================================================================
 
+// Thin wrapper: pre-populates an AI tab with chat logs so merge/transfer
+// handlers have content to merge.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test/project',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -129,18 +131,11 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				starred: false,
 				createdAt: Date.now(),
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test/project',
-		shellLogs: [],
 		shellCwd: '/test',
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as unknown as Session;
+	});
 }
 
 // Stable deps to avoid reference changes between renders
@@ -198,6 +193,15 @@ beforeEach(() => {
 		},
 		process: {
 			spawn: vi.fn().mockResolvedValue(undefined),
+		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
+			}),
+		},
+		history: {
+			getFilePath: vi.fn().mockResolvedValue(null),
 		},
 	};
 });

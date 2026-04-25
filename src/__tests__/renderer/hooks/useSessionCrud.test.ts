@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // ============================================================================
@@ -39,10 +40,6 @@ vi.mock('../../../renderer/utils/ids', () => ({
 
 vi.mock('../../../renderer/utils/sessionValidation', () => ({
 	validateNewSession: vi.fn(() => ({ valid: true, error: null })),
-}));
-
-vi.mock('../../../renderer/components/Wizard', () => ({
-	AUTO_RUN_FOLDER_NAME: '.maestro/playbooks',
 }));
 
 // ============================================================================
@@ -298,6 +295,7 @@ describe('useSessionCrud', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined,
 					{ enabled: true, remoteId: 'remote-1' }
 				);
 			});
@@ -320,6 +318,7 @@ describe('useSessionCrud', () => {
 					'claude-code',
 					'/test/project',
 					'Remote Session',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -360,7 +359,7 @@ describe('useSessionCrud', () => {
 
 		it('handles agent not found', async () => {
 			mockMaestro.agents.get.mockResolvedValueOnce(null);
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
@@ -384,6 +383,7 @@ describe('useSessionCrud', () => {
 					'/test/project',
 					'Custom Session',
 					'Do X first',
+					'Init instructions',
 					'/custom/path',
 					'--flag',
 					{ API_KEY: 'secret' },
@@ -395,6 +395,7 @@ describe('useSessionCrud', () => {
 
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.nudgeMessage).toBe('Do X first');
+			expect(session.newSessionMessage).toBe('Init instructions');
 			expect(session.customPath).toBe('/custom/path');
 			expect(session.customArgs).toBe('--flag');
 			expect(session.customEnvVars).toEqual({ API_KEY: 'secret' });
@@ -839,7 +840,7 @@ describe('useSessionCrud', () => {
 
 		it('continues even if process kill fails', async () => {
 			mockMaestro.process.kill.mockRejectedValueOnce(new Error('kill failed'));
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleError = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			useSessionStore.setState({
 				groups: [{ id: 'grp-1', name: 'Error Group' }],

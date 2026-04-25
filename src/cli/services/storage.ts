@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { Group, SessionInfo, HistoryEntry } from '../../shared/types';
+import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
@@ -589,4 +589,49 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 			`[WARNING] Failed to write history entry: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
+}
+
+// ============================================================================
+// SSH Remote Helpers
+// ============================================================================
+
+/**
+ * Read all SSH remote configurations from settings
+ */
+export function readSshRemotes(): SshRemoteConfig[] {
+	const settings = readSettings();
+	return (settings.sshRemotes as SshRemoteConfig[]) || [];
+}
+
+/**
+ * Write SSH remotes array back to settings
+ */
+export function writeSshRemotes(remotes: SshRemoteConfig[]): void {
+	writeSettingValue('sshRemotes', remotes);
+}
+
+/**
+ * Resolve an SSH remote ID (partial or full)
+ * Throws if ambiguous or not found
+ */
+export function resolveSshRemoteId(partialId: string): string {
+	const remotes = readSshRemotes();
+	const allIds = remotes.map((r) => r.id);
+	const resolution = resolveId(partialId, allIds);
+
+	if (resolution.ambiguous) {
+		const matchList = resolution.matches
+			.map((id) => {
+				const remote = remotes.find((r) => r.id === id);
+				return `  ${id.slice(0, 8)}  ${remote?.name || 'Unknown'}`;
+			})
+			.join('\n');
+		throw new Error(`Ambiguous SSH remote ID '${partialId}'. Matches:\n${matchList}`);
+	}
+
+	if (!resolution.id) {
+		throw new Error(`SSH remote not found: ${partialId}`);
+	}
+
+	return resolution.id;
 }

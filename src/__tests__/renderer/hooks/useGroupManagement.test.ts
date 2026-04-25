@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupManagement, type UseGroupManagementDeps } from '../../../renderer/hooks';
 import type { Group, Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
@@ -26,37 +27,7 @@ const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
 	...overrides,
 });
 
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'session-1',
-	name: 'Test Session',
-	toolType: 'claude-code',
-	state: 'idle',
-	cwd: '/test/project',
-	fullPath: '/test/project',
-	projectRoot: '/test/project',
-	aiLogs: [],
-	shellLogs: [],
-	workLog: [],
-	contextUsage: 0,
-	inputMode: 'ai',
-	aiPid: 0,
-	terminalPid: 0,
-	port: 0,
-	isLive: false,
-	changedFiles: [],
-	isGitRepo: false,
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	activeTimeMs: 0,
-	aiTabs: [],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	terminalTabs: [],
-	activeTerminalTabId: null,
-	...overrides,
-});
+// createMockSession imported from shared helper
 
 const createDeps = (overrides: Partial<UseGroupManagementDeps> = {}): UseGroupManagementDeps => ({
 	groups: [createMockGroup()],

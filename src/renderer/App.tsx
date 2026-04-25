@@ -6,7 +6,7 @@ import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
 import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
-// DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
+import { initializeRendererPrompts } from './services/promptInit';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 // AppOverlays, PlaygroundPanel, DebugWizardModal, DebugPackageModal, WindowsWarningModal,
@@ -57,6 +57,7 @@ import {
 	useAgentExecution,
 	useAgentCapabilities,
 	useMergeTransferHandlers,
+	useForkConversation,
 	useSummarizeAndContinue,
 	// Git
 	useFileTreeManagement,
@@ -96,6 +97,8 @@ import {
 	useInterruptHandler,
 	// Tour actions (right panel control from tour overlay)
 	useTourActions,
+	// Idle notification (fires command when all agents/batches finish)
+	useIdleNotification,
 	// Queue handlers (queue browser UI operations)
 	useQueueHandlers,
 	// Queue processing (execution queue processing + startup recovery)
@@ -170,6 +173,7 @@ import {
 	navigateToClosestTerminalTab,
 	hasActiveWizard,
 	findNextUnreadSession,
+	getTabDisplayName,
 } from './utils/tabHelpers';
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
@@ -232,6 +236,8 @@ function MaestroConsoleInner() {
 		setDebugWizardModalOpen,
 		// Debug Package Modal — debugPackageModalOpen now self-sourced in AppStandaloneModals
 		setDebugPackageModalOpen,
+		// Debug Application Stats Modal — self-sourced in AppStandaloneModals
+		setDebugApplicationStatsOpen,
 		// Windows Warning Modal — windowsWarningModalOpen now self-sourced in AppStandaloneModals
 		// Confirmation Modal
 		confirmModalOpen,
@@ -268,6 +274,9 @@ function MaestroConsoleInner() {
 		setAgentSessionsOpen,
 		activeAgentSessionId,
 		setActiveAgentSessionId,
+		// Memory Viewer (Claude Code per-project memory)
+		memoryViewerOpen,
+		setMemoryViewerOpen,
 		// Batch Runner Modal
 		setBatchRunnerModalOpen,
 		// Auto Run Setup Modal
@@ -311,7 +320,8 @@ function MaestroConsoleInner() {
 		setDirectorNotesOpen,
 		// Maestro Cue Modal — cueModalOpen now self-sourced in AppStandaloneModals
 		setCueModalOpen,
-		// Maestro Cue YAML Editor — open state, sessionId, projectRoot, closeCueYamlEditor now self-sourced in AppStandaloneModals
+		// Maestro Cue YAML Editor — open state, sessionId, projectRoot self-sourced in AppStandaloneModals
+		closeCueYamlEditor,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -372,6 +382,7 @@ function MaestroConsoleInner() {
 		customThemeColors,
 		enterToSendAI,
 		setEnterToSendAI,
+		enterToSendAIExpanded,
 		defaultSaveToHistory,
 		defaultShowThinking,
 		rightPanelWidth,
@@ -435,6 +446,13 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!encoreFeatures.usageStats) setUsageDashboardOpen(false);
 	}, [encoreFeatures.usageStats, setUsageDashboardOpen]);
+
+	useEffect(() => {
+		if (!encoreFeatures.maestroCue) {
+			setCueModalOpen(false);
+			closeCueYamlEditor();
+		}
+	}, [encoreFeatures.maestroCue, setCueModalOpen, closeCueYamlEditor]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
@@ -524,6 +542,7 @@ function MaestroConsoleInner() {
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	// groupChatsExpanded moved to useCycleSession hook
 	const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
+	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 	const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
@@ -766,6 +785,7 @@ function MaestroConsoleInner() {
 		activeTab,
 		unifiedTabs,
 		activeFileTab,
+		activeBrowserTab,
 		isResumingSession,
 		fileTabBackHistory,
 		fileTabForwardHistory,
@@ -794,6 +814,11 @@ function MaestroConsoleInner() {
 		handleOpenFileTab,
 		handleSelectFileTab,
 		handleCloseFileTab,
+		handleNewFileTab,
+		handleNewBrowserTab,
+		handleSelectBrowserTab,
+		handleCloseBrowserTab,
+		handleUpdateBrowserTab,
 		handleFileTabEditModeChange,
 		handleFileTabEditContentChange,
 		handleFileTabScrollPositionChange,
@@ -838,6 +863,7 @@ function MaestroConsoleInner() {
 		handleUpdateGroupChat,
 		handleArchiveGroupChat,
 		deleteGroupChatWithConfirmation,
+		handleDeleteAllArchivedGroupChats,
 		handleProcessMonitorNavigateToGroupChat,
 		handleOpenModeratorSession,
 		handleJumpToGroupChatMessage,
@@ -948,6 +974,7 @@ function MaestroConsoleInner() {
 		handleCloseDeleteWorktreeModal,
 		handleConfirmDeleteWorktree,
 		handleConfirmAndDeleteWorktreeOnDisk,
+		refreshWorktreeState,
 	} = useWorktreeHandlers();
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
@@ -1076,6 +1103,9 @@ function MaestroConsoleInner() {
 		activeSessionIdRef,
 		setActiveSessionId,
 	});
+
+	// Fork conversation hook - creates a new tab in the current session from a point in conversation history
+	const handleForkConversation = useForkConversation(sessions, setSessions, activeSessionId);
 
 	// Summarize & Continue hook for context compaction (non-blocking, per-tab)
 	const {
@@ -1245,6 +1275,7 @@ function MaestroConsoleInner() {
 			rightPanelRef,
 			defaultSaveToHistory,
 			defaultShowThinking,
+			showFlash: showSuccessFlash,
 		});
 
 	// handleDirectorNotesResumeSession — extracted to useModalHandlers (Tier 3C)
@@ -1315,7 +1346,14 @@ function MaestroConsoleInner() {
 	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
 
 	// Tab export handlers (copy context, export HTML, publish gist) — extracted to useTabExportHandlers
-	const { handleCopyContext, handleExportHtml, handlePublishTabGist } = useTabExportHandlers({
+	const {
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
+		handleCopyText,
+		handlePublishTextAsGist,
+		handleSendTextToAgent,
+	} = useTabExportHandlers({
 		sessionsRef,
 		activeSessionIdRef,
 		themeRef,
@@ -1414,6 +1452,52 @@ function MaestroConsoleInner() {
 		activeSessionIdRef,
 	});
 
+	// Force Send: dispatch a queued item immediately with forceParallel=true.
+	// Mirrors the user's manual flow (copy text → delete queued → Cmd+Shift+Enter)
+	// but as a single click. Only useful when another tab in this agent is busy
+	// AND this tab is idle — processInput(forceParallel:true) then sends now.
+	const handleForceSendQueuedItem = useCallback(
+		(itemId: string) => {
+			const sessionId = activeSessionIdRef.current;
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) return;
+			const item = session.executionQueue.find((i) => i.id === itemId);
+			if (!item) return;
+			const text = item.type === 'command' ? (item.command ?? '') : (item.text ?? '');
+			if (!text) return;
+
+			// Remove the item from the queue first so processInput doesn't see a duplicate.
+			updateSessionWith(sessionId, (s) => ({
+				...s,
+				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
+			}));
+
+			// Preserve the item's attached images through the send path.
+			// stagedImages lives on the active tab; processInput reads it below.
+			if (item.images && item.images.length > 0) {
+				setStagedImages(item.images);
+			}
+
+			// Dispatch with forceParallel — same code path as Cmd+Shift+Enter.
+			processInput(text, { forceParallel: true });
+		},
+		[processInput, setStagedImages]
+	);
+
+	// Build (tab→busy summary) lookup used by the Force Send button to decide
+	// visibility and to populate the confirmation modal's "other tabs working"
+	// list. Computed from the current session's tab states at call time.
+	const getForceSendContext = useCallback((item: QueuedItem) => {
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!session) return null;
+		const targetTab = session.aiTabs.find((t) => t.id === item.tabId);
+		const targetTabBusy = targetTab?.state === 'busy';
+		const otherBusyTabs = session.aiTabs
+			.filter((t) => t.id !== item.tabId && t.state === 'busy')
+			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) }));
+		return { targetTabBusy, otherBusyTabs };
+	}, []);
+
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
 		if (!activeSession) return;
@@ -1458,6 +1542,7 @@ function MaestroConsoleInner() {
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
 		(tab: RightPanelTab) => {
+			if (tab === 'autorun' && settings.autoRunDisabled) return;
 			if (tab === 'autorun' && activeSession && !activeSession.autoRunFolderPath) {
 				// No folder configured - show setup modal
 				setAutoRunSetupModalOpen(true);
@@ -1535,6 +1620,8 @@ function MaestroConsoleInner() {
 			sessions,
 			groups,
 			bookmarksCollapsed,
+			showUnreadAgentsOnly,
+			activeSessionId,
 		});
 
 	// --- KEYBOARD NAVIGATION ---
@@ -1637,7 +1724,7 @@ function MaestroConsoleInner() {
 				);
 			}
 		} else {
-			showSuccessFlash('No unread tabs');
+			showSuccessFlash('No unread or draft tabs');
 		}
 	}, [sortedSessions, setSessions, setActiveSessionId, showSuccessFlash]);
 
@@ -1680,6 +1767,9 @@ function MaestroConsoleInner() {
 	// Tour actions (right panel control from tour overlay) — extracted to useTourActions hook
 	useTourActions();
 
+	// Idle notification — fires configured command when all agents/batches finish
+	useIdleNotification();
+
 	// Queue processing (execution, startup recovery) — extracted to useQueueProcessing hook
 	const { processQueuedItem } = useQueueProcessing({
 		conductorProfile,
@@ -1700,18 +1790,23 @@ function MaestroConsoleInner() {
 
 	// --- FILE TREE MANAGEMENT ---
 	// Extracted hook for file tree operations (refresh, git state, filtering)
-	const { refreshFileTree, refreshGitFileState, filteredFileTree } = useFileTreeManagement({
-		sessions,
-		sessionsRef,
-		setSessions,
-		activeSessionId,
-		activeSession,
-		rightPanelRef,
-		sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
-		sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
-		localIgnorePatterns: settings.localIgnorePatterns,
-		localHonorGitignore: settings.localHonorGitignore,
-	});
+	const { refreshFileTree, refreshGitFileState, cancelFileTreeLoad, filteredFileTree } =
+		useFileTreeManagement({
+			sessions,
+			sessionsRef,
+			setSessions,
+			activeSessionId,
+			activeSession,
+			rightPanelRef,
+			sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
+			sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
+			localIgnorePatterns: settings.localIgnorePatterns,
+			localHonorGitignore: settings.localHonorGitignore,
+			fileExplorerMaxDepth: settings.fileExplorerMaxDepth,
+			fileExplorerMaxEntries: settings.fileExplorerMaxEntries,
+			sshReduceEntryCapEnabled: settings.sshReduceEntryCapEnabled,
+			sshReduceEntryCapFraction: settings.sshReduceEntryCapFraction,
+		});
 
 	// --- FILE EXPLORER EFFECTS ---
 	// Extracted hook for file explorer side effects and keyboard navigation (Phase 2.6)
@@ -1871,12 +1966,25 @@ function MaestroConsoleInner() {
 		handleQuickActionsToggleMarkdownEditMode,
 		handleQuickActionsSummarizeAndContinue,
 		handleQuickActionsAutoRunResetTasks,
+		handleQuickActionsClearActiveTerminal,
+		handleQuickActionsCloseCurrentTab,
+		handleQuickActionsMoveTabToFirst,
+		handleQuickActionsMoveTabToLast,
+		handleQuickActionsCopyTabContext,
+		handleQuickActionsExportTabHtml,
+		handleQuickActionsPublishTabGist,
 	} = useQuickActionsHandlers({
 		refreshGitFileState,
+		refreshWorktreeState,
 		mainPanelRef,
 		rightPanelRef,
 		handleSummarizeAndContinue,
 		processQueuedItem,
+		handleCloseCurrentTab,
+		handleUnifiedTabReorder,
+		handleCopyContext,
+		handleExportHtml,
+		handlePublishTabGist,
 	});
 
 	// Queue browser handlers — extracted to useQueueHandlers hook
@@ -1952,6 +2060,7 @@ function MaestroConsoleInner() {
 		setGitLogOpen,
 		setActiveAgentSessionId,
 		setAgentSessionsOpen,
+		setMemoryViewerOpen,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
@@ -2056,6 +2165,12 @@ function MaestroConsoleInner() {
 		handleCloseTerminalTab,
 		mainPanelRef,
 
+		// File tab handler for keyboard shortcut (Alt+N)
+		handleNewFileTab,
+
+		// Browser tab handler for keyboard shortcut (Cmd+B)
+		handleNewBrowserTab,
+
 		// Session bookmark toggle
 		toggleBookmark,
 
@@ -2104,6 +2219,7 @@ function MaestroConsoleInner() {
 		// Core state
 		logViewerOpen,
 		agentSessionsOpen,
+		memoryViewerOpen,
 		activeAgentSessionId,
 		activeSession,
 		thinkingItems,
@@ -2172,6 +2288,7 @@ function MaestroConsoleInner() {
 		setGitDiffPreview,
 		setLogViewerOpen,
 		setAgentSessionsOpen,
+		setMemoryViewerOpen,
 		setActiveAgentSessionId,
 		setInputValue,
 		setStagedImages,
@@ -2208,6 +2325,9 @@ function MaestroConsoleInner() {
 		handleStopBatchRun,
 		handleDeleteLog,
 		handleRemoveQueuedItem,
+		handleForceSendQueuedItem,
+		forcedParallelEnabled: settings.forcedParallelExecution,
+		getForceSendContext,
 		handleOpenQueueBrowser,
 
 		// Tab management handlers
@@ -2235,8 +2355,15 @@ function MaestroConsoleInner() {
 		unifiedTabs,
 		activeFileTabId: activeSession?.activeFileTabId ?? null,
 		activeFileTab,
+		activeBrowserTabId: activeSession?.activeBrowserTabId ?? null,
+		activeBrowserTab,
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
+		handleNewFileTab,
+		handleNewBrowserTab,
+		handleBrowserTabSelect: handleSelectBrowserTab,
+		handleBrowserTabClose: handleCloseBrowserTab,
+		handleBrowserTabUpdate: handleUpdateBrowserTab,
 
 		// Terminal tab callbacks (Phase 8)
 		handleOpenTerminalTab,
@@ -2254,6 +2381,7 @@ function MaestroConsoleInner() {
 		handleMainPanelInputBlur,
 		handleOpenPromptComposer,
 		handleReplayMessage,
+		handleForkConversation,
 		handleMainPanelFileClick,
 		handleNavigateBack: handleFileTabNavigateBack,
 		handleNavigateForward: handleFileTabNavigateForward,
@@ -2271,6 +2399,9 @@ function MaestroConsoleInner() {
 		handleCopyContext,
 		handleExportHtml,
 		handlePublishTabGist,
+		handleCopyText,
+		handlePublishTextAsGist,
+		handleSendTextToAgent,
 		cancelTab,
 		cancelMergeTab,
 		recordShortcutUsage,
@@ -2359,6 +2490,7 @@ function MaestroConsoleInner() {
 		handleOpenRenameGroupChatModal,
 		handleOpenDeleteGroupChatModal,
 		handleArchiveGroupChat,
+		handleDeleteAllArchivedGroupChats,
 	});
 
 	const rightPanelProps = useRightPanelProps({
@@ -2379,6 +2511,7 @@ function MaestroConsoleInner() {
 		collapseAllFolders,
 		updateSessionWorkingDirectory,
 		refreshFileTree,
+		cancelFileTreeLoad,
 		handleAutoRefreshChange,
 		showSuccessFlash,
 
@@ -2412,7 +2545,6 @@ function MaestroConsoleInner() {
 
 		// Document Graph handlers
 		handleFocusFileInGraph,
-		handleOpenLastDocumentGraph,
 	});
 
 	return (
@@ -2625,6 +2757,7 @@ function MaestroConsoleInner() {
 					setUsageDashboardOpen={encoreFeatures.usageStats ? setUsageDashboardOpen : undefined}
 					setActiveRightTab={setActiveRightTab}
 					setAgentSessionsOpen={setAgentSessionsOpen}
+					setMemoryViewerOpen={setMemoryViewerOpen}
 					setActiveAgentSessionId={setActiveAgentSessionId}
 					setGitDiffPreview={setGitDiffPreview}
 					setGitLogOpen={setGitLogOpen}
@@ -2647,6 +2780,7 @@ function MaestroConsoleInner() {
 					wizardGoToStep={wizardGoToStep}
 					setDebugWizardModalOpen={setDebugWizardModalOpen}
 					setDebugPackageModalOpen={setDebugPackageModalOpen}
+					setDebugApplicationStatsOpen={setDebugApplicationStatsOpen}
 					startTour={handleQuickActionsStartTour}
 					setFuzzyFileSearchOpen={setFuzzyFileSearchOpen}
 					onEditAgent={handleQuickActionsEditAgent}
@@ -2672,6 +2806,13 @@ function MaestroConsoleInner() {
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
 					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
 					onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
+					onClearActiveTerminal={handleQuickActionsClearActiveTerminal}
+					onCloseCurrentTab={handleQuickActionsCloseCurrentTab}
+					onMoveTabToFirst={handleQuickActionsMoveTabToFirst}
+					onMoveTabToLast={handleQuickActionsMoveTabToLast}
+					onCopyTabContext={handleQuickActionsCopyTabContext}
+					onExportTabHtml={handleQuickActionsExportTabHtml}
+					onPublishTabGist={handleQuickActionsPublishTabGist}
 					isFilePreviewOpen={!!activeSession?.activeFileTabId}
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={() => setGistPublishModalOpen(true)}
@@ -2708,6 +2849,7 @@ function MaestroConsoleInner() {
 					onTabSelect={handleUtilityTabSelect}
 					onFileTabSelect={handleUtilityFileTabSelect}
 					onTerminalTabSelect={handleSelectTerminalTab}
+					onBrowserTabSelect={handleSelectBrowserTab}
 					onNamedSessionSelect={handleNamedSessionSelect}
 					filteredFileTree={filteredFileTree}
 					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
@@ -2752,7 +2894,7 @@ function MaestroConsoleInner() {
 					promptSupportsThinking={
 						!activeGroupChatId && hasActiveSessionCapability('supportsThinkingDisplay')
 					}
-					promptEnterToSend={enterToSendAI}
+					promptEnterToSend={enterToSendAIExpanded}
 					onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
 					onCloseQueueBrowser={handleCloseQueueBrowser}
 					onRemoveQueueItem={handleRemoveQueueItem}
@@ -2985,10 +3127,12 @@ function MaestroConsoleInner() {
 									participantColors={groupChatParticipantColors}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
-									onPublishMessageGist={(text: string) => {
+									onPublishMessageGist={(text: string, messageId?: string) => {
 										if (!text.trim()) return;
 										const filename = `group_chat_response_${Date.now()}.md`;
-										useTabStore.getState().setTabGistContent({ filename, content: text });
+										useTabStore
+											.getState()
+											.setTabGistContent({ filename, content: text, messageId });
 										setGistPublishModalOpen(true);
 									}}
 								/>
@@ -3066,6 +3210,23 @@ function MaestroConsoleInner() {
  * InlineWizardProvider - inline /wizard command state management
  */
 export default function MaestroConsole() {
+	const [promptsReady, setPromptsReady] = useState(false);
+
+	useEffect(() => {
+		initializeRendererPrompts()
+			.then(() => setPromptsReady(true))
+			.catch((err) => {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: { context: 'MaestroConsole.initializeRendererPrompts' },
+				});
+				setPromptsReady(true); // Allow app to render; features degrade gracefully
+			});
+	}, []);
+
+	if (!promptsReady) {
+		return null;
+	}
+
 	return (
 		<InlineWizardProvider>
 			<InputProvider>

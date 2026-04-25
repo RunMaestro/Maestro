@@ -19,13 +19,12 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { useThemeColors, useTheme } from '../components/ThemeProvider';
+import { useThemeColors } from '../components/ThemeProvider';
 import type { LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import { webLogger } from '../utils/logger';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { formatTimestamp } from '../../shared/formatters';
+import { WebReadingContent } from './WebReadingContent';
 
 /**
  * Represents a response item that can be navigated to
@@ -61,165 +60,8 @@ export interface ResponseViewerProps {
 	onClose: () => void;
 	/** Session name for display context */
 	sessionName?: string;
-}
-
-/**
- * Format timestamp to human-readable string
- */
-function formatTimestamp(timestamp: number): string {
-	const date = new Date(timestamp);
-	return date.toLocaleString('en-US', {
-		month: 'short',
-		day: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-	});
-}
-
-/**
- * Language mapping for common file extensions and language identifiers
- */
-const LANGUAGE_MAP: Record<string, string> = {
-	ts: 'typescript',
-	tsx: 'tsx',
-	js: 'javascript',
-	jsx: 'jsx',
-	json: 'json',
-	md: 'markdown',
-	py: 'python',
-	python: 'python',
-	rb: 'ruby',
-	ruby: 'ruby',
-	go: 'go',
-	golang: 'go',
-	rs: 'rust',
-	rust: 'rust',
-	java: 'java',
-	c: 'c',
-	cpp: 'cpp',
-	'c++': 'cpp',
-	cs: 'csharp',
-	csharp: 'csharp',
-	php: 'php',
-	html: 'html',
-	css: 'css',
-	scss: 'scss',
-	sass: 'sass',
-	sql: 'sql',
-	sh: 'bash',
-	bash: 'bash',
-	shell: 'bash',
-	zsh: 'bash',
-	yaml: 'yaml',
-	yml: 'yaml',
-	toml: 'toml',
-	xml: 'xml',
-	swift: 'swift',
-	kotlin: 'kotlin',
-	kt: 'kotlin',
-	scala: 'scala',
-	r: 'r',
-	lua: 'lua',
-	perl: 'perl',
-	dockerfile: 'dockerfile',
-	docker: 'dockerfile',
-	makefile: 'makefile',
-	make: 'makefile',
-	graphql: 'graphql',
-	gql: 'graphql',
-	diff: 'diff',
-	patch: 'diff',
-};
-
-/**
- * Normalize language identifier to a known language
- */
-function normalizeLanguage(lang: string | undefined): string {
-	if (!lang) return 'text';
-	const normalized = lang.toLowerCase().trim();
-	return LANGUAGE_MAP[normalized] || normalized || 'text';
-}
-
-/**
- * Represents a parsed segment of the response text
- */
-interface TextSegment {
-	type: 'text' | 'code';
-	content: string;
-	language?: string;
-}
-
-/**
- * Parse response text to identify code blocks
- * Supports markdown-style triple backticks with optional language identifier
- */
-function parseTextWithCodeBlocks(text: string): TextSegment[] {
-	const segments: TextSegment[] = [];
-
-	// Regex to match code blocks: ```language\ncode\n```
-	// Supports optional language identifier after opening backticks
-	const codeBlockRegex = /```([^\n\r`]*)\n?([\s\S]*?)```/g;
-
-	let lastIndex = 0;
-	let match;
-
-	while ((match = codeBlockRegex.exec(text)) !== null) {
-		// Add text before the code block
-		if (match.index > lastIndex) {
-			const textContent = text.slice(lastIndex, match.index);
-			if (textContent.trim()) {
-				segments.push({
-					type: 'text',
-					content: textContent,
-				});
-			}
-		}
-
-		// Add the code block
-		let language = (match[1] || '').trim();
-		let code = match[2] || '';
-
-		if (!code.trim() && language.includes(' ')) {
-			const [languageToken, ...inlineCodeParts] = language.split(/\s+/);
-			const inlineCode = inlineCodeParts.join(' ');
-			if (inlineCode.trim()) {
-				language = languageToken;
-				code = inlineCode;
-			}
-		}
-
-		// Only add non-empty code blocks
-		if (code.trim()) {
-			segments.push({
-				type: 'code',
-				content: code.trimEnd(), // Remove trailing whitespace but keep leading
-				language: normalizeLanguage(language),
-			});
-		}
-
-		lastIndex = match.index + match[0].length;
-	}
-
-	// Add any remaining text after the last code block
-	if (lastIndex < text.length) {
-		const remainingText = text.slice(lastIndex);
-		if (remainingText.trim()) {
-			segments.push({
-				type: 'text',
-				content: remainingText,
-			});
-		}
-	}
-
-	// If no code blocks were found, return the entire text as a single segment
-	if (segments.length === 0 && text.trim()) {
-		segments.push({
-			type: 'text',
-			content: text,
-		});
-	}
-
-	return segments;
+	/** Whether to apply Bionify reading mode to plain-text response segments */
+	enableBionifyReadingMode?: boolean;
 }
 
 /**
@@ -238,9 +80,9 @@ export function ResponseViewer({
 	isLoading = false,
 	onClose,
 	sessionName,
+	enableBionifyReadingMode = false,
 }: ResponseViewerProps) {
 	const colors = useThemeColors();
-	const { isDark } = useTheme();
 	const contentRef = useRef<HTMLDivElement>(null);
 	// Vertical swipe state (for dismiss)
 	const [touchStartY, setTouchStartY] = useState<number | null>(null);
@@ -251,8 +93,6 @@ export function ResponseViewer({
 	const [touchDeltaX, setTouchDeltaX] = useState(0);
 	const [isDraggingX, setIsDraggingX] = useState(false);
 	const [swipeDirection, setSwipeDirection] = useState<'horizontal' | 'vertical' | null>(null);
-	// Track which code block was recently copied (by index) for visual feedback
-	const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 	// Pinch-to-zoom state
 	const [zoomScale, setZoomScale] = useState(1);
 	const [isPinching, setIsPinching] = useState(false);
@@ -293,25 +133,6 @@ export function ResponseViewer({
 		}
 		return sessionName;
 	}, [allResponses, currentIndex, sessionName]);
-
-	// Copy code block content to clipboard
-	const copyCodeBlock = useCallback(async (content: string, index: number) => {
-		try {
-			await navigator.clipboard.writeText(content);
-			setCopiedIndex(index);
-			triggerHaptic(HAPTIC_PATTERNS.success);
-			// Reset the copied state after 2 seconds
-			setTimeout(() => {
-				setCopiedIndex((current) => (current === index ? null : current));
-			}, 2000);
-		} catch (err) {
-			webLogger.error('Failed to copy code', 'ResponseViewer', err);
-			triggerHaptic(HAPTIC_PATTERNS.error);
-		}
-	}, []);
-
-	// Select syntax highlighting style based on theme mode
-	const syntaxStyle = isDark ? vscDarkPlus : vs;
 
 	// Threshold for swipe-to-dismiss (pixels)
 	const DISMISS_THRESHOLD = 100;
@@ -613,9 +434,6 @@ export function ResponseViewer({
 	const displayText = stripAnsiCodes(rawDisplayText);
 	const hasMoreContent = !fullText && displayResponse.fullLength > displayResponse.text.length;
 
-	// Parse the display text to extract code blocks for syntax highlighting
-	const parsedSegments = parseTextWithCodeBlocks(displayText);
-
 	// Calculate opacity based on swipe progress (vertical for dismiss)
 	const backdropOpacity = Math.max(0, 1 - touchDeltaY / (DISMISS_THRESHOLD * 2));
 
@@ -696,7 +514,9 @@ export function ResponseViewer({
 								{activeSessionName}
 							</span>
 						)}
-						<span style={{ opacity: 0.7 }}>{formatTimestamp(displayResponse.timestamp)}</span>
+						<span style={{ opacity: 0.7 }}>
+							{formatTimestamp(displayResponse.timestamp, 'datetime')}
+						</span>
 					</div>
 				</div>
 
@@ -826,7 +646,8 @@ export function ResponseViewer({
 								</button>
 							</div>
 						)}
-						{/* Response content with syntax-highlighted code blocks */}
+						{/* No dedicated browser-tab reader exists in the web client yet, so the
+						    response viewer is the nearest real browser-adjacent long-form reader. */}
 						<div
 							ref={zoomableRef}
 							onTouchStart={handleDoubleTap}
@@ -840,137 +661,16 @@ export function ResponseViewer({
 								touchAction: zoomScale > 1 ? 'pan-x pan-y' : 'auto',
 							}}
 						>
-							{parsedSegments.map((segment, index) => {
-								if (segment.type === 'code') {
-									const isCopied = copiedIndex === index;
-									return (
-										<div
-											key={index}
-											style={{
-												borderRadius: '8px',
-												overflow: 'hidden',
-												border: `1px solid ${colors.border}`,
-											}}
-										>
-											{/* Code block header with language label and copy button */}
-											<div
-												style={{
-													display: 'flex',
-													alignItems: 'center',
-													justifyContent: 'space-between',
-													padding: '4px 8px 4px 12px',
-													backgroundColor: colors.bgActivity,
-													borderBottom: `1px solid ${colors.border}`,
-													minHeight: '28px',
-												}}
-											>
-												{/* Language label */}
-												<span
-													style={{
-														fontSize: '11px',
-														fontWeight: 500,
-														color: colors.textDim,
-														textTransform: 'uppercase',
-														letterSpacing: '0.5px',
-													}}
-												>
-													{segment.language && segment.language !== 'text'
-														? segment.language
-														: 'code'}
-												</span>
-												{/* Copy button */}
-												<button
-													onClick={() => copyCodeBlock(segment.content, index)}
-													style={{
-														display: 'flex',
-														alignItems: 'center',
-														gap: '4px',
-														padding: '4px 8px',
-														borderRadius: '4px',
-														border: 'none',
-														backgroundColor: isCopied ? `${colors.success}20` : 'transparent',
-														color: isCopied ? colors.success : colors.textDim,
-														fontSize: '11px',
-														fontWeight: 500,
-														cursor: 'pointer',
-														transition: 'all 0.2s ease',
-													}}
-													aria-label={isCopied ? 'Copied!' : 'Copy code'}
-												>
-													{isCopied ? (
-														<>
-															<svg
-																width="14"
-																height="14"
-																viewBox="0 0 24 24"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<polyline points="20 6 9 17 4 12" />
-															</svg>
-															Copied
-														</>
-													) : (
-														<>
-															<svg
-																width="14"
-																height="14"
-																viewBox="0 0 24 24"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-																<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-															</svg>
-															Copy
-														</>
-													)}
-												</button>
-											</div>
-											<SyntaxHighlighter
-												language={segment.language || 'text'}
-												style={syntaxStyle}
-												customStyle={{
-													margin: 0,
-													padding: '12px',
-													fontSize: '12px',
-													lineHeight: 1.5,
-													backgroundColor: colors.bgActivity,
-													borderRadius: 0,
-												}}
-												wrapLongLines={true}
-												showLineNumbers={false}
-											>
-												{segment.content}
-											</SyntaxHighlighter>
-										</div>
-									);
-								}
-
-								// Regular text segment
-								return (
-									<div
-										key={index}
-										style={{
-											fontFamily:
-												'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-											fontSize: '13px',
-											lineHeight: 1.6,
-											color: colors.textMain,
-											whiteSpace: 'pre-wrap',
-											wordBreak: 'break-word',
-										}}
-									>
-										{segment.content}
-									</div>
-								);
-							})}
+							<WebReadingContent
+								content={displayText}
+								enableBionifyReadingMode={enableBionifyReadingMode}
+								fontSize={13}
+								textColor={colors.textMain}
+								codeBackgroundColor={colors.bgActivity}
+								codeBorderColor={colors.border}
+								codeSuccessColor={colors.success}
+								logContext="ResponseViewer"
+							/>
 						</div>
 
 						{/* Truncation notice */}

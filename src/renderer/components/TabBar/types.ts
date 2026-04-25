@@ -9,6 +9,8 @@ export interface TabBarProps {
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
+	onNewFileTab?: () => void;
+	onNewBrowserTab?: () => void;
 	/** Handler to create a new terminal tab (shown in the + button popover) */
 	onNewTerminalTab?: () => void;
 	onRequestRename?: (tabId: string) => void;
@@ -54,6 +56,12 @@ export interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+	/** Currently active browser tab ID (null if no browser tab is active) */
+	activeBrowserTabId?: string | null;
+	/** Handler to select a browser tab */
+	onBrowserTabSelect?: (tabId: string) => void;
+	/** Handler to close a browser tab */
+	onBrowserTabClose?: (tabId: string) => void;
 
 	// === Terminal Tab Props (Phase 8) ===
 	/** Currently active terminal tab ID (null if no terminal tab is active) */
@@ -66,6 +74,16 @@ export interface TabBarProps {
 	onTerminalTabClose?: (tabId: string) => void;
 	/** Handler to rename a terminal tab */
 	onTerminalTabRename?: (tabId: string) => void;
+	/** Handler to copy a terminal tab's full buffer to clipboard */
+	onCopyTerminalBuffer?: (tabId: string) => void;
+	/** Handler to publish a terminal tab's buffer as a GitHub Gist */
+	onPublishTerminalBufferGist?: (tabId: string) => void;
+	/** Handler to send a terminal tab's buffer to another agent */
+	onSendTerminalBufferToAgent?: (tabId: string) => void;
+	/** Handler to copy the rendered text of a browser tab to the clipboard */
+	onCopyBrowserContent?: (tabId: string) => void;
+	/** Handler to send the rendered text of a browser tab to another agent */
+	onSendBrowserContentToAgent?: (tabId: string) => void;
 
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */

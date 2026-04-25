@@ -425,6 +425,77 @@ describe('remarkFileLinks', () => {
 		});
 	});
 
+	describe('markdown links with absolute path hrefs', () => {
+		it('converts markdown link with absolute path href to maestro-file link', async () => {
+			// Agents like Codex emit [display](absolute-path) style links
+			const result = await processMarkdown(
+				'Modified [src/components/CameraModal.tsx](/Users/pedram/Project/src/components/CameraModal.tsx) to add callback.',
+				[
+					{
+						name: 'src',
+						type: 'folder',
+						children: [
+							{
+								name: 'components',
+								type: 'folder',
+								children: [{ name: 'CameraModal.tsx', type: 'file' }],
+							},
+						],
+					},
+				],
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain(
+				'[src/components/CameraModal.tsx](maestro-file://src/components/CameraModal.tsx)'
+			);
+		});
+
+		it('converts markdown link with absolute path href even when file not in tree', async () => {
+			// Absolute paths within projectRoot should link even without file tree match
+			const result = await processMarkdown(
+				'See [App.tsx](/Users/pedram/Project/src/App.tsx) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[App.tsx](maestro-file://src/App.tsx)');
+		});
+
+		it('does not convert markdown link with absolute path outside projectRoot', async () => {
+			const result = await processMarkdown(
+				'See [file.tsx](/other/path/file.tsx) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			// Should remain unconverted
+			expect(result).not.toContain('maestro-file://');
+		});
+
+		it('converts markdown link with tilde path href to maestro-file link', async () => {
+			const result = await processMarkdown(
+				'See [README.md](~/Project/OPSWAT/README.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[README.md](maestro-file://OPSWAT/README.md)');
+		});
+
+		it('converts markdown link with tilde path outside projectRoot to file:// URL', async () => {
+			const result = await processMarkdown(
+				'See [notes.md](~/Documents/notes.md) for details.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project',
+				'/Users/pedram'
+			);
+			expect(result).toContain('[notes.md](file:///Users/pedram/Documents/notes.md)');
+		});
+	});
+
 	describe('inline code paths (backticks)', () => {
 		it('converts absolute path in backticks to link with filename display', async () => {
 			const result = await processMarkdown(

@@ -27,6 +27,7 @@ import {
 	EXTERNAL_NODE_WIDTH,
 	EXTERNAL_NODE_HEIGHT,
 } from './mindMapLayouts';
+import { logger } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -1282,7 +1283,7 @@ export function convertToMindMapData(
 	graphNodes.forEach((node) => {
 		// Skip if we've already processed this node ID
 		if (nodeMap.has(node.id)) {
-			console.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
+			logger.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
 			return;
 		}
 

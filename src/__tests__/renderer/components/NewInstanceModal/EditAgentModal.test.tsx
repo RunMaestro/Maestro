@@ -231,8 +231,8 @@ describe('EditAgentModal', () => {
 		);
 
 		await waitFor(() => {
-			const select = screen.getByRole('combobox');
-			expect(select).toBeInTheDocument();
+			const providerSelect = screen.getByDisplayValue('Claude Code');
+			expect(providerSelect).toBeInTheDocument();
 		});
 	});
 
@@ -248,13 +248,10 @@ describe('EditAgentModal', () => {
 			/>
 		);
 
-		await waitFor(() => {
-			const select = screen.getByRole('combobox');
-			expect(select).toBeInTheDocument();
-		});
+		const providerSelect = await screen.findByDisplayValue('Claude Code');
 
 		// Change provider
-		fireEvent.change(screen.getByRole('combobox'), { target: { value: 'codex' } });
+		fireEvent.change(providerSelect, { target: { value: 'codex' } });
 
 		await waitFor(() => {
 			expect(
@@ -293,6 +290,7 @@ describe('EditAgentModal', () => {
 			'Original Name',
 			undefined, // toolType not changed
 			'Be helpful',
+			undefined, // newSessionMessage
 			'/custom/claude',
 			'--verbose',
 			{ API_KEY: 'test-key' },
@@ -319,8 +317,28 @@ describe('EditAgentModal', () => {
 			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
 		});
 
-		const dialog = screen.getByRole('group');
-		fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
+		fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+		expect(onSave).toHaveBeenCalled();
+	});
+
+	it('should trigger save on Cmd+S when form is valid', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+		});
+
+		fireEvent.keyDown(window, { key: 's', metaKey: true });
 
 		expect(onSave).toHaveBeenCalled();
 	});
@@ -338,11 +356,10 @@ describe('EditAgentModal', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByRole('group')).toBeInTheDocument();
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
 		});
 
-		const dialog = screen.getByRole('group');
-		fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
+		fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
 
 		expect(onSave).not.toHaveBeenCalled();
 	});
@@ -420,6 +437,157 @@ describe('EditAgentModal', () => {
 			);
 			expect(textarea).toHaveValue('Test nudge');
 		});
+	});
+
+	it('should show NewSessionMessageField with session new session message', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ newSessionMessage: 'Init instructions' })}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			const textarea = screen.getByPlaceholderText(
+				'Instructions sent with the first message of every new session...'
+			);
+			expect(textarea).toHaveValue('Init instructions');
+		});
+	});
+
+	it('should set workingDirOverride from projectRoot when saving SSH session without explicit override (regression: SSH terminal cwd)', async () => {
+		// Regression test: when an SSH session has no explicit workingDirOverride
+		// (e.g., created before the fix), saving it should populate workingDirOverride
+		// from session.projectRoot so SSH terminals cd to the correct remote directory.
+		const sshSession = createSession({
+			projectRoot: '/home/devuser/my-project',
+			cwd: '/home/devuser/my-project',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				// No workingDirOverride — this is the regression scenario
+			},
+		});
+
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={sshSession}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		// workingDirOverride should be populated from projectRoot
+		expect(onSave).toHaveBeenCalledWith(
+			expect.any(String), // sessionId
+			expect.any(String), // name
+			undefined, // toolType not changed
+			'Be concise', // nudgeMessage
+			undefined, // newSessionMessage
+			'/custom/claude', // customPath
+			'--verbose', // customArgs
+			{ API_KEY: 'test-key' }, // customEnvVars
+			'claude-sonnet', // model
+			100000, // contextWindow
+			expect.objectContaining({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/devuser/my-project',
+			})
+		);
+	});
+
+	it('should preserve explicit workingDirOverride when saving SSH session (regression: SSH terminal cwd)', async () => {
+		// When a session already has an explicit workingDirOverride, saving should keep it
+		// (not overwrite it with projectRoot).
+		const sshSession = createSession({
+			projectRoot: '/home/devuser/project',
+			cwd: '/home/devuser/project',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/explicit/remote/path',
+			},
+		});
+
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [
+				{
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+					port: 22,
+					username: 'devuser',
+					privateKeyPath: '/path/to/key',
+					enabled: true,
+				},
+			],
+		});
+
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={sshSession}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByText('Save Changes'));
+
+		// Explicit workingDirOverride should be preserved, not replaced by projectRoot
+		expect(onSave).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.any(String),
+			undefined,
+			'Be concise', // nudgeMessage
+			undefined, // newSessionMessage
+			'/custom/claude', // customPath
+			'--verbose', // customArgs
+			{ API_KEY: 'test-key' }, // customEnvVars
+			'claude-sonnet', // model
+			100000, // contextWindow
+			expect.objectContaining({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/explicit/remote/path',
+			})
+		);
 	});
 
 	it('should render SSH remote selector when remotes exist', async () => {

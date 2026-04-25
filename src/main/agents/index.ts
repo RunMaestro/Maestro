@@ -47,6 +47,18 @@ export {
 	checkBinaryExists,
 } from './path-prober';
 
+// ============ OpenCode Config ============
+export {
+	type OpenCodeConfig,
+	type OpenCodeProvider,
+	type OpenCodeModelEntry,
+	getOpenCodeConfigPaths,
+	getOpenCodeCommandDirs,
+	parseOpenCodeConfig,
+	extractModelsFromConfig,
+	discoverModelsFromLocalConfigs,
+} from './opencode-config';
+
 // ============ Session Storage ============
 export {
 	type AgentSessionOrigin,

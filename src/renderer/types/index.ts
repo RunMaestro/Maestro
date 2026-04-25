@@ -12,6 +12,12 @@ export type {
 	AgentError,
 	AgentErrorType,
 	AgentErrorRecovery,
+	AgentCapabilities,
+	AgentConfig,
+	AgentConfigOption,
+	DirectoryEntry,
+	ShellInfo,
+	UpdateStatus,
 	ToolType,
 	Group,
 	UsageStats,
@@ -53,7 +59,13 @@ import type { AgentError } from '../../shared/types';
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
 export type RightPanelTab = 'files' | 'history' | 'autorun';
-export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands';
+export type SettingsTab =
+	| 'general'
+	| 'shortcuts'
+	| 'theme'
+	| 'notifications'
+	| 'aicommands'
+	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
@@ -162,11 +174,7 @@ export interface SessionWizardState {
 	toolExecutions?: Array<{ toolName: string; state?: unknown; timestamp: number }>;
 }
 
-export interface Shortcut {
-	id: string;
-	label: string;
-	keys: string[];
-}
+export type { Shortcut } from '../../shared/shortcut-types';
 
 export interface FileArtifact {
 	path: string;
@@ -199,9 +207,13 @@ export interface LogEntry {
 	// For tool execution entries - stores tool state and details
 	metadata?: {
 		toolState?: {
-			status?: 'running' | 'completed' | 'error';
+			status?: 'running' | 'completed' | 'error' | 'failed';
 			input?: unknown;
 			output?: unknown;
+		};
+		hiddenProgress?: {
+			kind: 'thinking' | 'tool';
+			toolName?: string;
 		};
 	};
 }
@@ -226,6 +238,8 @@ export interface QueuedItem {
 	tabName?: string; // Tab name at time of queuing (for display)
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
+	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait
+	forceParallel?: boolean;
 }
 
 export interface WorkLogItem {
@@ -499,10 +513,28 @@ export interface TerminalTab {
 }
 
 /**
+ * Browser Tab for embedded web browsing via Electron webview.
+ * Browser tabs persist their chrome state, but guest contents are recreated on restore.
+ */
+export interface BrowserTab {
+	id: string; // Unique tab ID (UUID)
+	url: string; // Current URL shown in the address bar
+	title: string; // Last known document title (falls back to URL)
+	createdAt: number; // Timestamp for ordering
+	partition?: string; // Persisted Electron partition so browser tabs share session data per agent
+	canGoBack: boolean; // Navigation state for toolbar back button
+	canGoForward: boolean; // Navigation state for toolbar forward button
+	isLoading: boolean; // Current loading state for toolbar and restore UX
+	favicon?: string | null; // Optional site icon URL/data for tab chrome
+	// Runtime-only: populated by the embedded Electron browser surface, never persisted
+	webContentsId?: number;
+}
+
+/**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -512,7 +544,8 @@ export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal'; id: string };
 export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
 	| { type: 'file'; id: string; data: FilePreviewTab }
-	| { type: 'terminal'; id: string; data: TerminalTab };
+	| { type: 'terminal'; id: string; data: TerminalTab }
+	| { type: 'browser'; id: string; data: BrowserTab };
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
@@ -522,7 +555,8 @@ export type UnifiedTab =
 export type ClosedTabEntry =
 	| { type: 'ai'; tab: AITab; unifiedIndex: number; closedAt: number }
 	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number }
-	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number };
+	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number }
+	| { type: 'browser'; tab: BrowserTab; unifiedIndex: number; closedAt: number };
 
 export interface Session {
 	id: string;
@@ -533,6 +567,7 @@ export interface Session {
 	cwd: string;
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
+	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs — terminal tabs use xterm.js with direct PTY streaming
 	shellLogs: LogEntry[];
@@ -581,6 +616,10 @@ export interface Session {
 		folderCount: number;
 		totalSize: number;
 	};
+	/** True when the last file tree load hit the entry cap and stopped early. */
+	fileTreeTruncated?: boolean;
+	/** Entry cap that was in effect when the file tree was last loaded. */
+	fileTreeLoadedCap?: number;
 	/** Loading progress for file tree (shown during slow SSH connections) */
 	fileTreeLoadingProgress?: {
 		directoriesScanned: number;
@@ -648,14 +687,19 @@ export interface Session {
 	// Currently active file tab ID (null if an AI tab or terminal tab is active)
 	activeFileTabId: string | null;
 
+	// Browser Tabs - embedded web browsing (coexists with AI, file, and terminal tabs)
+	browserTabs: BrowserTab[];
+	// Currently active browser tab ID (null if an AI, file, or terminal tab is active)
+	activeBrowserTabId: string | null;
+
 	// Terminal tab management — each tab has its own PTY session with xterm.js rendering
 	terminalTabs: TerminalTab[];
 	// Currently active terminal tab ID (null if an AI or file tab is active)
 	activeTerminalTabId: string | null;
 
-	// Unified tab ordering - determines visual order of all tabs (AI, file, and terminal)
+	// Unified tab ordering - determines visual order of all tabs (AI, file, browser, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
-	// Stack of recently closed tabs (AI, file, and terminal) for undo (max 25, runtime-only, not persisted)
+	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
 
@@ -684,6 +728,10 @@ export interface Session {
 	// Nudge message - appended to every interactive user message (max 1000 chars)
 	// Not visible in UI, but sent to the agent with each message
 	nudgeMessage?: string;
+
+	// New session message - prefixed to the first message when creating a new session/tab
+	// Not visible in UI, but sent to the agent with the initial message only
+	newSessionMessage?: string;
 
 	// Agent error state - set when an agent error is detected
 	// Cleared when user dismisses the error or takes recovery action
@@ -727,7 +775,8 @@ export interface Session {
 		enabled: boolean; // Whether SSH is enabled for this session
 		remoteId: string | null; // SSH remote config ID to use
 		workingDirOverride?: string; // Override remote working directory
-		syncHistory?: boolean; // Whether to sync history to .maestro/history/ on the remote
+		syncHistory?: boolean; // When SSH is enabled: push entries to the remote's .maestro/history/
+		shareHistoryToProjectDir?: boolean; // Mirror entries to the local project's .maestro/history/ (independent of SSH; for remote-controlled agents)
 	};
 
 	// SSH connection status - runtime only, not persisted
@@ -738,59 +787,7 @@ export interface Session {
 	symphonyMetadata?: SymphonySessionMetadata;
 }
 
-export interface AgentConfigOption {
-	key: string;
-	type: 'checkbox' | 'text' | 'number' | 'select';
-	label: string;
-	description: string;
-	default: any;
-	options?: string[];
-	dynamic?: boolean; // If true, options are fetched at runtime via agents:getConfigOptions IPC
-	argBuilder?: (value: any) => string[];
-}
-
-export interface AgentCapabilities {
-	supportsResume: boolean;
-	supportsReadOnlyMode: boolean;
-	supportsJsonOutput: boolean;
-	supportsSessionId: boolean;
-	supportsImageInput: boolean;
-	supportsImageInputOnResume: boolean;
-	supportsSlashCommands: boolean;
-	supportsSessionStorage: boolean;
-	supportsCostTracking: boolean;
-	supportsUsageStats: boolean;
-	supportsBatchMode: boolean;
-	requiresPromptToStart: boolean;
-	supportsStreaming: boolean;
-	supportsResultMessages: boolean;
-	supportsModelSelection?: boolean;
-	supportsStreamJsonInput?: boolean;
-	supportsThinkingDisplay?: boolean;
-	supportsContextMerge?: boolean;
-	supportsContextExport?: boolean;
-	supportsWizard?: boolean;
-	supportsGroupChatModeration?: boolean;
-	usesJsonLineOutput?: boolean;
-	usesCombinedContextWindow?: boolean;
-	supportsAppendSystemPrompt?: boolean;
-}
-
-export interface AgentConfig {
-	id: string;
-	name: string;
-	binaryName?: string;
-	available: boolean;
-	path?: string;
-	customPath?: string; // User-specified custom path (shown in UI even if not available)
-	command?: string;
-	args?: string[];
-	hidden?: boolean; // If true, agent is hidden from UI (internal use only)
-	configOptions?: AgentConfigOption[]; // Agent-specific configuration options
-	yoloModeArgs?: string[]; // Args for YOLO/full-access mode (e.g., ['--dangerously-skip-permissions'])
-	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
-	capabilities?: AgentCapabilities; // Agent capabilities (added at runtime)
-}
+// AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above
 
 // Process spawning configuration
 export interface ProcessConfig {
@@ -828,21 +825,7 @@ export interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
 }
 
-// Directory entry from fs:readDir
-export interface DirectoryEntry {
-	name: string;
-	isDirectory: boolean;
-	isFile: boolean;
-	path: string;
-}
-
-// Shell information from shells:detect
-export interface ShellInfo {
-	id: string;
-	name: string;
-	available: boolean;
-	path?: string;
-}
+// DirectoryEntry and ShellInfo re-exported from shared/types above
 
 // Custom AI command definition for user-configurable slash commands
 export interface CustomAICommand {

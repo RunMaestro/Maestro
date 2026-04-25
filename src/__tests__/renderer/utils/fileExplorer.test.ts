@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../renderer/utils/logger';
 import {
 	shouldOpenExternally,
-	loadFileTree,
+	loadFileTree as loadFileTreeRaw,
 	getAllFolderPaths,
 	flattenTree,
 	compareFileTrees,
 	FileTreeNode,
 } from '../../../renderer/utils/fileExplorer';
 import { matchGlobPattern, shouldIgnore } from '../../../shared/globUtils';
+
+/**
+ * Test helper: calls loadFileTree and unwraps the `.tree` field so existing
+ * assertions that treat the result as a FileTreeNode[] continue to work.
+ * Truncation behavior is covered by dedicated tests that use `loadFileTreeRaw`.
+ */
+const loadFileTree = async (...args: Parameters<typeof loadFileTreeRaw>): Promise<FileTreeNode[]> =>
+	(await loadFileTreeRaw(...args)).tree;
 
 describe('fileExplorer utils', () => {
 	// ============================================================================
@@ -350,12 +359,12 @@ describe('fileExplorer utils', () => {
 			const error = new Error('Permission denied');
 			vi.mocked(window.maestro.fs.readDir).mockRejectedValue(error);
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			await expect(loadFileTree('/restricted')).rejects.toThrow('Permission denied');
 			consoleSpy.mockRestore();
 		});
 
-		it('respects default maxDepth of 10', async () => {
+		it('respects default maxDepth of 5', async () => {
 			// Setup recursive structure
 			const setupMocks = () => {
 				vi.mocked(window.maestro.fs.readDir).mockResolvedValue([
@@ -366,8 +375,8 @@ describe('fileExplorer utils', () => {
 
 			await loadFileTree('/project');
 
-			// Should be called maxDepth times (10) for each level, then stop
-			expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(10);
+			// Should be called maxDepth times (5) for each level, then stop
+			expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(5);
 		});
 
 		it('handles entries that are neither file nor directory', async () => {
@@ -505,7 +514,7 @@ describe('fileExplorer utils', () => {
 			]);
 			vi.mocked(window.maestro.fs.readDir).mockResolvedValue([]); // Empty children
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -526,7 +535,7 @@ describe('fileExplorer utils', () => {
 					{ name: 'guide.md', isFile: true, isDirectory: false, path: '/project/docs/guide.md' }, // duplicate child
 				]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -546,7 +555,7 @@ describe('fileExplorer utils', () => {
 				{ name: nfdName, isFile: true, isDirectory: false }, // same visual name, different Unicode form
 			]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -567,7 +576,7 @@ describe('fileExplorer utils', () => {
 					{ name: nfdName, isFile: true, isDirectory: false }, // NFD duplicate in child
 				]);
 
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
 
 			expect(consoleSpy).toHaveBeenCalled();
@@ -576,6 +585,73 @@ describe('fileExplorer utils', () => {
 			expect(result).toHaveLength(1);
 			expect(result[0].children).toHaveLength(1);
 			expect(result[0].children![0].name.normalize('NFC')).toBe(nfcName);
+		});
+
+		// ============================================================================
+		// maxEntries truncation
+		// ============================================================================
+		describe('maxEntries cap', () => {
+			it('reports truncated=false when scan stays under cap', async () => {
+				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+					{ name: 'a.txt', isFile: true, isDirectory: false },
+					{ name: 'b.txt', isFile: true, isDirectory: false },
+				]);
+
+				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 10);
+				expect(result.truncated).toBe(false);
+				expect(result.filesFound).toBe(2);
+				expect(result.tree).toHaveLength(2);
+			});
+
+			it('stops adding files and sets truncated=true when cap is hit', async () => {
+				// 5 files at root, cap set to 3
+				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+					{ name: 'a.txt', isFile: true, isDirectory: false },
+					{ name: 'b.txt', isFile: true, isDirectory: false },
+					{ name: 'c.txt', isFile: true, isDirectory: false },
+					{ name: 'd.txt', isFile: true, isDirectory: false },
+					{ name: 'e.txt', isFile: true, isDirectory: false },
+				]);
+
+				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+				expect(result.truncated).toBe(true);
+				expect(result.filesFound).toBe(3);
+				expect(result.tree).toHaveLength(3);
+			});
+
+			it('skips recursion into sibling folders once cap is reached', async () => {
+				// Root: folder "full" + folder "skipped". "full" fills the cap.
+				vi.mocked(window.maestro.fs.readDir)
+					.mockResolvedValueOnce([
+						{ name: 'full', isFile: false, isDirectory: true },
+						{ name: 'skipped', isFile: false, isDirectory: true },
+					])
+					.mockResolvedValueOnce([
+						// "full" contents: 3 files, matches the cap
+						{ name: 'a.txt', isFile: true, isDirectory: false },
+						{ name: 'b.txt', isFile: true, isDirectory: false },
+						{ name: 'c.txt', isFile: true, isDirectory: false },
+					]);
+
+				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+				expect(result.truncated).toBe(true);
+				// "skipped" folder is still in the tree (as empty), but readDir was not called on it
+				expect(window.maestro.fs.readDir).toHaveBeenCalledTimes(2);
+				const skipped = result.tree.find((n) => n.name === 'skipped');
+				expect(skipped).toBeDefined();
+				expect(skipped?.children).toEqual([]);
+			});
+
+			it('treats Infinity (and omitted cap) as unlimited', async () => {
+				vi.mocked(window.maestro.fs.readDir).mockResolvedValueOnce([
+					{ name: 'a.txt', isFile: true, isDirectory: false },
+					{ name: 'b.txt', isFile: true, isDirectory: false },
+				]);
+
+				const result = await loadFileTreeRaw('/project');
+				expect(result.truncated).toBe(false);
+				expect(result.tree).toHaveLength(2);
+			});
 		});
 	});
 

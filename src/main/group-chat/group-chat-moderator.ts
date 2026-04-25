@@ -11,8 +11,9 @@
 import * as os from 'os';
 import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage';
 import { appendToLog, readLog } from './group-chat-log';
-import { groupChatModeratorSystemPrompt, groupChatModeratorSynthesisPrompt } from '../../prompts';
+import { getPrompt } from '../prompt-manager';
 import { powerManager } from '../power-manager';
+import { logger } from '../utils/logger';
 
 /**
  * Interface for the process manager dependency.
@@ -55,12 +56,6 @@ export interface IProcessManager {
 const activeModeratorSessions = new Map<string, string>();
 
 /**
- * Stale session threshold in milliseconds (30 minutes).
- * Sessions older than this are considered stale and will be cleaned up.
- */
-const STALE_SESSION_THRESHOLD_MS = 30 * 60 * 1000;
-
-/**
  * Tracks last activity time for each moderator session.
  * Maps groupChatId -> timestamp
  */
@@ -70,38 +65,6 @@ const sessionActivityTimestamps = new Map<string, number>();
  * Cleanup interval reference for clearing on shutdown.
  */
 let cleanupIntervalId: NodeJS.Timeout | null = null;
-
-/**
- * Starts periodic cleanup of stale moderator sessions.
- * Should be called once during application initialization.
- */
-export function startSessionCleanup(): void {
-	if (cleanupIntervalId) return; // Already running
-
-	// Run cleanup every 10 minutes
-	cleanupIntervalId = setInterval(
-		() => {
-			const now = Date.now();
-			const staleIds: string[] = [];
-
-			for (const [groupChatId, timestamp] of sessionActivityTimestamps) {
-				if (now - timestamp > STALE_SESSION_THRESHOLD_MS) {
-					staleIds.push(groupChatId);
-				}
-			}
-
-			for (const id of staleIds) {
-				activeModeratorSessions.delete(id);
-				sessionActivityTimestamps.delete(id);
-			}
-
-			if (staleIds.length > 0) {
-				console.log(`[GroupChatModerator] Cleaned up ${staleIds.length} stale session(s)`);
-			}
-		},
-		10 * 60 * 1000
-	);
-}
 
 /**
  * Stops the periodic session cleanup.
@@ -128,7 +91,7 @@ function touchSession(groupChatId: string): void {
  * Loaded from src/prompts/group-chat-moderator-system.md
  */
 export function getModeratorSystemPrompt(): string {
-	return groupChatModeratorSystemPrompt;
+	return getPrompt('group-chat-moderator-system');
 }
 
 /**
@@ -137,7 +100,7 @@ export function getModeratorSystemPrompt(): string {
  * Loaded from src/prompts/group-chat-moderator-synthesis.md
  */
 export function getModeratorSynthesisPrompt(): string {
-	return groupChatModeratorSynthesisPrompt;
+	return getPrompt('group-chat-moderator-synthesis');
 }
 
 /**
@@ -156,16 +119,16 @@ export async function spawnModerator(
 	_processManager: IProcessManager,
 	_cwd: string = os.homedir()
 ): Promise<string> {
-	console.log(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
-	console.log(`[GroupChat:Debug] Chat ID: ${chat.id}`);
-	console.log(`[GroupChat:Debug] Chat Name: ${chat.name}`);
-	console.log(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
+	logger.debug(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
+	logger.debug(`[GroupChat:Debug] Chat ID: ${chat.id}`);
+	logger.debug(`[GroupChat:Debug] Chat Name: ${chat.name}`);
+	logger.debug(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
 
 	// Generate a session ID prefix for this group chat's moderator
 	// Each message will use this prefix with a timestamp suffix
 	const sessionIdPrefix = `group-chat-${chat.id}-moderator`;
 
-	console.log(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
+	logger.debug(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
 
 	// Store the session mapping (using prefix as identifier)
 	activeModeratorSessions.set(chat.id, sessionIdPrefix);
@@ -176,9 +139,11 @@ export async function spawnModerator(
 	// Update the group chat with the moderator session ID prefix
 	await updateGroupChat(chat.id, { moderatorSessionId: sessionIdPrefix });
 
-	console.log(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
-	console.log(`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`);
-	console.log(`[GroupChat:Debug] ==========================================`);
+	logger.debug(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
+	logger.debug(
+		`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`
+	);
+	logger.debug(`[GroupChat:Debug] ==========================================`);
 
 	return sessionIdPrefix;
 }

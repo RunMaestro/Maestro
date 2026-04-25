@@ -25,7 +25,7 @@ describe('Forwarding Listeners', () => {
 			getWebServer: () => null,
 			patterns: {
 				REGEX_AI_SUFFIX: /-ai-.+$/,
-				REGEX_AI_TAB_ID: /-ai-(.+)$/,
+				REGEX_AI_TAB_ID: /-ai-(.+?)(?:-fp-\d+)?$/,
 			},
 		};
 

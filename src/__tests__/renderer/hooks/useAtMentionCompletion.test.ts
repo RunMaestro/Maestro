@@ -7,45 +7,19 @@ import {
 } from '../../../renderer/hooks';
 import type { Session } from '../../../renderer/types';
 import type { FileNode } from '../../../renderer/types/fileTree';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
 
 /**
- * Creates a minimal mock Session with just the fields needed for useAtMentionCompletion
+ * Creates a minimal mock Session with just the fields needed for
+ * useAtMentionCompletion. Positional signature is preserved for
+ * convenience; delegates to the shared factory.
  */
 function createMockSession(fileTree: FileNode[] | null = []): Session {
-	return {
-		id: 'test-session-1',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test/project',
-		fullPath: '/test/project',
-		projectRoot: '/test/project',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: fileTree as any[],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-	};
+	return baseCreateMockSession({ fileTree: fileTree as any[] });
 }
 
 /**

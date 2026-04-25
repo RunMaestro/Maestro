@@ -19,6 +19,7 @@ import { format, subDays, startOfWeek, addDays, getDay } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
+import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 
 // Metric display mode
 type MetricMode = 'count' | 'duration';
@@ -198,24 +199,6 @@ function build4HourBlockGrid(
 	});
 
 	return { dayColumns: columns, maxCount, maxDuration };
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
 }
 
 /**

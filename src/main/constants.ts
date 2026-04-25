@@ -51,8 +51,9 @@ export const REGEX_PARTICIPANT_FALLBACK = new RegExp(
 
 // Web broadcast session ID patterns
 // Tab IDs may contain dashes (e.g., UUIDs), so we match everything after the -ai- delimiter
+// The optional -fp-{timestamp} suffix is stripped (forced parallel execution uses unique session IDs)
 export const REGEX_AI_SUFFIX = /-ai-.+$/;
-export const REGEX_AI_TAB_ID = /-ai-(.+)$/;
+export const REGEX_AI_TAB_ID = /-ai-(.+?)(?:-fp-\d+)?$/;
 
 // Auto Run session ID patterns (batch and synopsis operations)
 // Format: {sessionId}-batch-{timestamp} or {sessionId}-synopsis-{timestamp}
@@ -75,27 +76,13 @@ export const MAX_GROUP_CHAT_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
 // ============================================================================
 // Debug logs in hot paths (data handlers) are disabled in production to avoid
 // performance overhead from string interpolation and console I/O on every data chunk.
-export const DEBUG_GROUP_CHAT =
+const DEBUG_GROUP_CHAT =
 	process.env.NODE_ENV === 'development' || process.env.DEBUG_GROUP_CHAT === '1';
 
 /** Log debug message only in development mode. Avoids overhead in production. */
 export function debugLog(prefix: string, message: string, ...args: unknown[]): void {
 	if (DEBUG_GROUP_CHAT) {
 		console.log(`[${prefix}] ${message}`, ...args);
-	}
-}
-
-/**
- * Lazy debug logging - accepts a callback to avoid string construction costs in production.
- * Use this for expensive string operations (e.g., JSON.stringify, template literals with computations).
- *
- * @example
- * // Instead of: debugLog('Parser', `Parsed ${items.length} items: ${JSON.stringify(items)}`)
- * // Use: debugLogLazy('Parser', () => `Parsed ${items.length} items: ${JSON.stringify(items)}`)
- */
-export function debugLogLazy(prefix: string, messageFn: () => string, ...args: unknown[]): void {
-	if (DEBUG_GROUP_CHAT) {
-		console.log(`[${prefix}] ${messageFn()}`, ...args);
 	}
 }
 

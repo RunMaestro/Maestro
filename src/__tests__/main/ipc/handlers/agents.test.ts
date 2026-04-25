@@ -21,33 +21,40 @@ vi.mock('electron', () => ({
 }));
 
 // Mock agents module (capabilities exports)
-vi.mock('../../../../main/agents', () => ({
-	getAgentCapabilities: vi.fn(),
-	AGENT_DEFINITIONS: [
-		{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
-		{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
-		{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
-		{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
-	],
-	DEFAULT_CAPABILITIES: {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
-		supportsImageInputOnResume: false,
-		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false,
-		supportsStreaming: false,
-		supportsResultMessages: false,
-		supportsModelSelection: false,
-		supportsStreamJsonInput: false,
-	},
-}));
+vi.mock('../../../../main/agents', async () => {
+	const opencodeConfig = await import('../../../../main/agents/opencode-config');
+	return {
+		getAgentCapabilities: vi.fn(),
+		AGENT_DEFINITIONS: [
+			{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
+			{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
+			{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
+			{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
+		],
+		DEFAULT_CAPABILITIES: {
+			supportsResume: false,
+			supportsReadOnlyMode: false,
+			supportsJsonOutput: false,
+			supportsSessionId: false,
+			supportsImageInput: false,
+			supportsImageInputOnResume: false,
+			supportsSlashCommands: false,
+			supportsSessionStorage: false,
+			supportsCostTracking: false,
+			supportsUsageStats: false,
+			supportsBatchMode: false,
+			requiresPromptToStart: false,
+			supportsStreaming: false,
+			supportsResultMessages: false,
+			supportsModelSelection: false,
+			supportsStreamJsonInput: false,
+		},
+		parseOpenCodeConfig: opencodeConfig.parseOpenCodeConfig,
+		extractModelsFromConfig: opencodeConfig.extractModelsFromConfig,
+		getOpenCodeConfigPaths: opencodeConfig.getOpenCodeConfigPaths,
+		getOpenCodeCommandDirs: opencodeConfig.getOpenCodeCommandDirs,
+	};
+});
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -282,6 +289,90 @@ describe('agents IPC handlers', () => {
 			// configOptions should still exist but without argBuilder
 			expect(result[0].configOptions[0].argBuilder).toBeUndefined();
 			expect(result[0].configOptions[0].key).toBe('test');
+		});
+
+		describe('SSH remote detection (issue #878)', () => {
+			let mockSettingsStore: {
+				get: ReturnType<typeof vi.fn>;
+				set: ReturnType<typeof vi.fn>;
+			};
+
+			beforeEach(() => {
+				mockSettingsStore = {
+					get: vi.fn().mockReturnValue([
+						{
+							id: 'remote-1',
+							host: 'dev.example.com',
+							username: 'dev',
+							port: 22,
+							enabled: true,
+						},
+					]),
+					set: vi.fn(),
+				};
+
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: mockSettingsStore as any,
+				});
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'mock'],
+				});
+			});
+
+			it("uses POSIX 'command -v' (not 'which') to probe each agent binary", async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '/home/dev/.local/bin/claude\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				await handler!({} as any, 'remote-1');
+
+				// Every probe should invoke 'command -v <binary>', never 'which'.
+				// Asserting one call per AGENT_DEFINITION catches regressions that
+				// silently skip agents instead of just dropping to zero.
+				const calls = vi.mocked(buildSshCommand).mock.calls;
+				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
+				for (const [, options] of calls) {
+					expect(options.command).toBe('command');
+					expect(options.args[0]).toBe('-v');
+				}
+			});
+
+			it('marks the agent available and records the resolved remote path', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: '/home/dev/.claude/local/claude\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(true);
+				expect(claude.path).toBe('/home/dev/.claude/local/claude');
+			});
+
+			it('marks the agent unavailable when command -v exits non-zero', async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 1,
+					stdout: '',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:detect');
+				const result = await handler!({} as any, 'remote-1');
+
+				const claude = result.find((a: any) => a.id === 'claude-code');
+				expect(claude.available).toBe(false);
+				expect(claude.path).toBeUndefined();
+			});
 		});
 	});
 

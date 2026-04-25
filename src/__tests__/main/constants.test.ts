@@ -12,9 +12,7 @@ import {
 	REGEX_PARTICIPANT_FALLBACK,
 	REGEX_AI_SUFFIX,
 	REGEX_AI_TAB_ID,
-	DEBUG_GROUP_CHAT,
 	debugLog,
-	debugLogLazy,
 	MAX_GROUP_CHAT_BUFFER_SIZE,
 } from '../../main/constants';
 
@@ -239,12 +237,6 @@ describe('main/constants', () => {
 		});
 	});
 
-	describe('DEBUG_GROUP_CHAT', () => {
-		it('should be a boolean', () => {
-			expect(typeof DEBUG_GROUP_CHAT).toBe('boolean');
-		});
-	});
-
 	describe('debugLog', () => {
 		let consoleSpy: ReturnType<typeof vi.spyOn>;
 
@@ -269,48 +261,6 @@ describe('main/constants', () => {
 			debugLog('TestPrefix', 'Test message');
 			// If DEBUG_GROUP_CHAT is true, it will log; if false, it won't
 			// We're just testing it doesn't throw
-		});
-	});
-
-	describe('debugLogLazy', () => {
-		let consoleSpy: ReturnType<typeof vi.spyOn>;
-
-		beforeEach(() => {
-			consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		});
-
-		afterEach(() => {
-			consoleSpy.mockRestore();
-		});
-
-		it('should be a function', () => {
-			expect(typeof debugLogLazy).toBe('function');
-		});
-
-		it('should accept prefix, message callback, and additional args', () => {
-			// Function should not throw regardless of DEBUG_GROUP_CHAT value
-			expect(() =>
-				debugLogLazy('TestPrefix', () => 'Test message', { extra: 'data' })
-			).not.toThrow();
-		});
-
-		it('should not call message callback when DEBUG_GROUP_CHAT is false', () => {
-			// This test verifies the lazy evaluation behavior
-			// In production (DEBUG_GROUP_CHAT=false), the callback should not be called
-			const messageFn = vi.fn(() => 'Expensive computation result');
-
-			debugLogLazy('TestPrefix', messageFn);
-
-			// If DEBUG_GROUP_CHAT is false, messageFn should not be called
-			// If true, it will be called - either way, no error
-			// The key point is that in production, expensive computations are avoided
-		});
-
-		it('should handle callbacks that return complex strings', () => {
-			const items = [1, 2, 3];
-			expect(() =>
-				debugLogLazy('Parser', () => `Parsed ${items.length} items: ${JSON.stringify(items)}`)
-			).not.toThrow();
 		});
 	});
 

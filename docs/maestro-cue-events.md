@@ -1,10 +1,10 @@
 ---
 title: Cue Event Types
-description: Detailed reference for all eight Maestro Cue event types with configuration, payloads, and examples.
+description: Detailed reference for all nine Maestro Cue event types with configuration, payloads, and examples.
 icon: calendar-check
 ---
 
-Cue supports eight event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
+Cue supports nine event types. Each type watches for a different kind of activity and produces a payload that can be injected into prompts via [template variables](./maestro-cue-advanced#template-variables).
 
 ## app.startup
 
@@ -412,3 +412,59 @@ Same as `github.pull_request`, except:
 | `{{CUE_GH_ASSIGNEES}}` | Comma-separated assignee logins | `alice, bob` |
 
 The branch-specific variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) are not available for issues.
+
+---
+
+## cli.trigger
+
+Fires only when explicitly triggered from the command line via `maestro-cli cue trigger <name>`. Unlike other event types, `cli.trigger` has no background watcher or poller — it waits for a manual invocation.
+
+**No additional fields required** — just `name`, `event`, `prompt`, and optionally `enabled`.
+
+**Behavior:**
+
+- Does nothing on its own — only fires when you run `maestro-cli cue trigger <subscription-name>`
+- Supports an optional `--prompt` flag to override or supply the prompt at invocation time
+- The override text is available in the prompt template as `{{CUE_CLI_PROMPT}}`
+- Ideal for deployment scripts, CI/CD integration, on-demand reviews, or ad-hoc automation
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: deploy
+    event: cli.trigger
+    prompt: |
+      Run the deployment pipeline for the current branch.
+
+      Additional instructions: {{CUE_CLI_PROMPT}}
+    enabled: true
+```
+
+**Triggering from the command line:**
+
+```bash
+# Basic trigger — uses the configured prompt as-is
+maestro-cli cue trigger deploy
+
+# With a prompt override — {{CUE_CLI_PROMPT}} receives this text
+maestro-cli cue trigger deploy --prompt "Deploy to staging only"
+
+# JSON output for scripting
+maestro-cli cue trigger deploy --json
+```
+
+**Discovering available subscriptions:**
+
+```bash
+# List all subscriptions across agents
+maestro-cli cue list
+```
+
+**Payload fields:**
+
+| Variable               | Description                                 | Example             |
+| ---------------------- | ------------------------------------------- | ------------------- |
+| `{{CUE_CLI_PROMPT}}`   | Prompt text passed via `--prompt` flag      | `Deploy to staging` |
+| `{{CUE_TRIGGER_NAME}}` | Name of the subscription that was triggered | `deploy`            |
+| `{{CUE_EVENT_TYPE}}`   | Always `cli.trigger`                        | `cli.trigger`       |

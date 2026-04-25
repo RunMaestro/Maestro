@@ -157,6 +157,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'When true, pressing Enter sends messages in AI mode. When false, Ctrl+Enter sends.',
 		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
+	enterToSendAIExpanded: {
+		description:
+			'When true, pressing Enter sends messages in the expanded Prompt Composer. When false, Ctrl+Enter sends.',
+		type: 'boolean',
 		default: false,
 		category: 'editor',
 	},
@@ -194,6 +201,27 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Display chat as raw text without markdown rendering.',
 		type: 'boolean',
 		default: false,
+		category: 'editor',
+	},
+	bionifyReadingMode: {
+		description:
+			'Apply Bionify reading emphasis to opted-in long-form reading surfaces like File Preview and Auto Run.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	bionifyIntensity: {
+		description:
+			'Visual strength of Bionify emphasis. Higher values increase emphasis weight and lower the opacity of trailing characters.',
+		type: 'number',
+		default: 1,
+		category: 'editor',
+	},
+	bionifyAlgorithm: {
+		description:
+			'Algorithm string controlling highlighted characters per word length. Format: "+|- len1 len2 len3 len4 fraction".',
+		type: 'string',
+		default: '- 0 1 1 2 0.4',
 		category: 'editor',
 	},
 	showHiddenFiles: {
@@ -251,6 +279,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'string',
 		default: '',
 		sensitive: true,
+		category: 'advanced',
+	},
+	allowConcurrentSend: {
+		description:
+			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
+		type: 'boolean',
+		default: false,
 		category: 'advanced',
 	},
 
@@ -337,6 +372,20 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'How long toast notifications remain visible, in seconds.',
 		type: 'number',
 		default: 20,
+		category: 'notifications',
+	},
+	idleNotificationEnabled: {
+		description:
+			'Run a custom command when all agents and Auto Runs finish and Maestro becomes idle.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	idleNotificationCommand: {
+		description:
+			'Shell command to execute when Maestro becomes idle (no agents or Auto Runs running).',
+		type: 'string',
+		default: 'say Maestro is idle',
 		category: 'notifications',
 	},
 
@@ -437,6 +486,22 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'boolean',
 		default: false,
 		category: 'file-indexing',
+	},
+
+	// --- Auto Run ---
+	autoRunDisabled: {
+		description:
+			'Globally disable Auto Run. When true, prevents all Auto Run operations from starting.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	autoRunInactivityTimeoutMin: {
+		description:
+			'Minutes of no agent output before the Auto Run watchdog considers a task stalled and force-kills it. Set to 0 to disable the watchdog (unlimited).',
+		type: 'number',
+		default: 240,
+		category: 'advanced',
 	},
 
 	// --- Stats & Tracking ---
@@ -578,11 +643,26 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'integrations',
 	},
 
+	// --- Browser ---
+	useSystemBrowser: {
+		description:
+			'Controls the default browser for clicking links. Ctrl+click shows a context menu to choose the browser.',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	browserHomeUrl: {
+		description: 'The default URL loaded when opening a new browser tab.',
+		type: 'string',
+		default: 'https://runmaestro.ai/#leaderboard',
+		category: 'editor',
+	},
+
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',
 		type: 'object',
-		default: { directorNotes: false },
+		default: { directorNotes: false, usageStats: true, symphony: true, maestroCue: false },
 		category: 'advanced',
 	},
 	directorNotesSettings: {
@@ -603,6 +683,13 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Suppress the Windows experimental support warning dialog.',
 		type: 'boolean',
 		default: false,
+		category: 'internal',
+	},
+	lastSelectedPromptId: {
+		description:
+			'ID of the prompt most recently edited in Settings → Maestro Prompts. Restored on reopen.',
+		type: 'string',
+		default: null,
 		category: 'internal',
 	},
 };

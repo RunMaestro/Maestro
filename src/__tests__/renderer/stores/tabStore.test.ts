@@ -1,20 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import {
-	useTabStore,
-	selectActiveTab,
-	selectActiveFileTab,
-	selectUnifiedTabs,
-	selectTabById,
-	selectFileTabById,
-	selectTabCount,
-	selectAllTabs,
-	selectAllFileTabs,
-	getTabState,
-	getTabActions,
-} from '../../../renderer/stores/tabStore';
+import { useTabStore } from '../../../renderer/stores/tabStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AITab, FilePreviewTab, TerminalTab } from '../../../renderer/types';
+import {
+	createMockAITab as createBaseMockAITab,
+	createMockFileTab as createBaseMockFileTab,
+} from '../../helpers/mockTab';
+import { createMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Test Helpers
@@ -22,77 +15,25 @@ import type { Session, AITab, FilePreviewTab, TerminalTab } from '../../../rende
 
 function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 	const id = overrides.id ?? `tab-${Math.random().toString(36).slice(2, 8)}`;
-	return {
+	return createBaseMockAITab({
 		id,
-		agentSessionId: null,
-		name: overrides.name ?? null,
-		starred: false,
-		logs: [],
-		inputValue: '',
-		stagedImages: [],
-		createdAt: Date.now(),
-		state: 'idle',
 		hasUnread: false,
 		isAtBottom: true,
 		...overrides,
-	} as AITab;
+	});
 }
 
 function createMockFileTab(overrides: Partial<FilePreviewTab> = {}): FilePreviewTab {
 	const id = overrides.id ?? `file-${Math.random().toString(36).slice(2, 8)}`;
-	return {
+	return createBaseMockFileTab({
 		id,
 		path: overrides.path ?? `/test/${id}.ts`,
 		name: overrides.name ?? id,
-		extension: overrides.extension ?? '.ts',
-		content: overrides.content ?? 'test content',
-		scrollTop: 0,
-		searchQuery: '',
-		editMode: false,
-		editContent: undefined,
-		createdAt: Date.now(),
-		lastModified: Date.now(),
 		...overrides,
-	} as FilePreviewTab;
+	});
 }
 
-function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: overrides.id ?? `session-${Math.random().toString(36).slice(2, 8)}`,
-		name: overrides.name ?? 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/test',
-		fullPath: '/test',
-		projectRoot: '/test',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		executionQueue: [],
-		activeTimeMs: 0,
-		aiTabs: [],
-		activeTabId: '',
-		closedTabHistory: [],
-		filePreviewTabs: [],
-		activeFileTabId: null,
-		unifiedTabOrder: [],
-		unifiedClosedTabHistory: [],
-		terminalTabs: [],
-		activeTerminalTabId: null,
-		...overrides,
-	} as Session;
-}
+// createMockSession imported from shared helper
 
 /**
  * Set up sessionStore with an active session that has tabs.
@@ -631,177 +572,61 @@ describe('tabStore', () => {
 	// Selectors
 	// ========================================================================
 
-	describe('selectors', () => {
-		describe('selectActiveTab', () => {
-			it('should return the active AI tab', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const tab2 = createMockAITab({ id: 'tab-2' });
-				setupSessionWithTabs([tab1, tab2], [], 'tab-2');
+	describe('session state access (tab derivations)', () => {
+		it('exposes the active AI tab via activeTabId', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2], [], 'tab-2');
 
-				const result = selectActiveTab(useSessionStore.getState());
-				expect(result).toBeDefined();
-				expect(result!.id).toBe('tab-2');
-			});
-
-			it('should fall back to first tab if activeTabId not found', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				setupSessionWithTabs([tab1], [], 'non-existent');
-
-				const result = selectActiveTab(useSessionStore.getState());
-				expect(result).toBeDefined();
-				expect(result!.id).toBe('tab-1');
-			});
-
-			it('should return undefined with no active session', () => {
-				const result = selectActiveTab(useSessionStore.getState());
-				expect(result).toBeUndefined();
-			});
+			const session = useSessionStore.getState().sessions[0];
+			const active = session.aiTabs.find((t) => t.id === session.activeTabId);
+			expect(active?.id).toBe('tab-2');
 		});
 
-		describe('selectActiveFileTab', () => {
-			it('should return the active file tab', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const fileTab1 = createMockFileTab({ id: 'file-1' });
-				setupSessionWithTabs([tab1], [fileTab1], 'tab-1', 'file-1');
+		it('exposes the active file tab via activeFileTabId', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			setupSessionWithTabs([tab1], [fileTab1], 'tab-1', 'file-1');
 
-				const result = selectActiveFileTab(useSessionStore.getState());
-				expect(result).toBeDefined();
-				expect(result!.id).toBe('file-1');
-			});
-
-			it('should return undefined when no file tab is active', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				setupSessionWithTabs([tab1]);
-
-				const result = selectActiveFileTab(useSessionStore.getState());
-				expect(result).toBeUndefined();
-			});
+			const session = useSessionStore.getState().sessions[0];
+			const activeFile = session.filePreviewTabs.find((t) => t.id === session.activeFileTabId);
+			expect(activeFile?.id).toBe('file-1');
 		});
 
-		describe('selectUnifiedTabs', () => {
-			it('should return tabs in unified order', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const tab2 = createMockAITab({ id: 'tab-2' });
-				const fileTab1 = createMockFileTab({ id: 'file-1' });
+		it('looks up AI tab by ID', () => {
+			const tab1 = createMockAITab({ id: 'tab-1', name: 'Found' });
+			setupSessionWithTabs([tab1]);
 
-				const sessionId = 'test-session';
-				const session = createMockSession({
-					id: sessionId,
-					aiTabs: [tab1, tab2],
-					activeTabId: 'tab-1',
-					filePreviewTabs: [fileTab1],
-					unifiedTabOrder: [
-						{ type: 'ai', id: 'tab-1' },
-						{ type: 'file', id: 'file-1' },
-						{ type: 'ai', id: 'tab-2' },
-					],
-				});
-
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: sessionId,
-				});
-
-				const result = selectUnifiedTabs(useSessionStore.getState());
-				expect(result).toHaveLength(3);
-				expect(result[0]).toEqual({ type: 'ai', id: 'tab-1', data: tab1 });
-				expect(result[1]).toEqual({ type: 'file', id: 'file-1', data: fileTab1 });
-				expect(result[2]).toEqual({ type: 'ai', id: 'tab-2', data: tab2 });
-			});
-
-			it('should include orphan tabs not in unified order', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const tab2 = createMockAITab({ id: 'tab-2' });
-
-				const session = createMockSession({
-					id: 'test',
-					aiTabs: [tab1, tab2],
-					activeTabId: 'tab-1',
-					unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
-					// tab-2 is NOT in unified order
-				});
-
-				useSessionStore.setState({
-					sessions: [session],
-					activeSessionId: 'test',
-				});
-
-				const result = selectUnifiedTabs(useSessionStore.getState());
-				expect(result).toHaveLength(2);
-				expect(result[0].id).toBe('tab-1');
-				expect(result[1].id).toBe('tab-2');
-			});
-
-			it('should return empty array with no active session', () => {
-				const result = selectUnifiedTabs(useSessionStore.getState());
-				expect(result).toEqual([]);
-			});
+			const session = useSessionStore.getState().sessions[0];
+			const found = session.aiTabs.find((t) => t.id === 'tab-1');
+			expect(found?.name).toBe('Found');
 		});
 
-		describe('selectTabById', () => {
-			it('should find tab by ID', () => {
-				const tab1 = createMockAITab({ id: 'tab-1', name: 'Found' });
-				setupSessionWithTabs([tab1]);
+		it('looks up file tab by ID', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab = createMockFileTab({ id: 'file-1', name: 'app' });
+			setupSessionWithTabs([tab1], [fileTab]);
 
-				const result = selectTabById('tab-1')(useSessionStore.getState());
-				expect(result).toBeDefined();
-				expect(result!.name).toBe('Found');
-			});
-
-			it('should return undefined for non-existent tab', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				setupSessionWithTabs([tab1]);
-
-				const result = selectTabById('non-existent')(useSessionStore.getState());
-				expect(result).toBeUndefined();
-			});
+			const session = useSessionStore.getState().sessions[0];
+			const found = session.filePreviewTabs.find((t) => t.id === 'file-1');
+			expect(found?.name).toBe('app');
 		});
 
-		describe('selectFileTabById', () => {
-			it('should find file tab by ID', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const fileTab = createMockFileTab({ id: 'file-1', name: 'app' });
-				setupSessionWithTabs([tab1], [fileTab]);
+		it('reports AI tab count', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			setupSessionWithTabs([tab1, tab2]);
 
-				const result = selectFileTabById('file-1')(useSessionStore.getState());
-				expect(result).toBeDefined();
-				expect(result!.name).toBe('app');
-			});
+			expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(2);
 		});
 
-		describe('selectTabCount', () => {
-			it('should return count of AI tabs', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const tab2 = createMockAITab({ id: 'tab-2' });
-				setupSessionWithTabs([tab1, tab2]);
+		it('exposes all file tabs', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const fileTab1 = createMockFileTab({ id: 'file-1' });
+			const fileTab2 = createMockFileTab({ id: 'file-2' });
+			setupSessionWithTabs([tab1], [fileTab1, fileTab2]);
 
-				expect(selectTabCount(useSessionStore.getState())).toBe(2);
-			});
-
-			it('should return 0 with no active session', () => {
-				expect(selectTabCount(useSessionStore.getState())).toBe(0);
-			});
-		});
-
-		describe('selectAllTabs / selectAllFileTabs', () => {
-			it('should return all AI tabs', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const tab2 = createMockAITab({ id: 'tab-2' });
-				setupSessionWithTabs([tab1, tab2]);
-
-				const result = selectAllTabs(useSessionStore.getState());
-				expect(result).toHaveLength(2);
-			});
-
-			it('should return all file tabs', () => {
-				const tab1 = createMockAITab({ id: 'tab-1' });
-				const fileTab1 = createMockFileTab({ id: 'file-1' });
-				const fileTab2 = createMockFileTab({ id: 'file-2' });
-				setupSessionWithTabs([tab1], [fileTab1, fileTab2]);
-
-				const result = selectAllFileTabs(useSessionStore.getState());
-				expect(result).toHaveLength(2);
-			});
+			expect(useSessionStore.getState().sessions[0].filePreviewTabs).toHaveLength(2);
 		});
 	});
 
@@ -822,11 +647,16 @@ describe('tabStore', () => {
 			expect(result.current).toEqual({ filename: 'test.md', content: 'hello' });
 		});
 
-		it('should subscribe to tab selectors via sessionStore', () => {
+		it('should subscribe to tab state via sessionStore', () => {
 			const tab1 = createMockAITab({ id: 'tab-1', name: 'First' });
 			setupSessionWithTabs([tab1]);
 
-			const { result } = renderHook(() => useSessionStore(selectActiveTab));
+			const { result } = renderHook(() =>
+				useSessionStore((s) => {
+					const active = s.sessions.find((sess) => sess.id === s.activeSessionId);
+					return active?.aiTabs.find((t) => t.id === active.activeTabId);
+				})
+			);
 
 			expect(result.current).toBeDefined();
 			expect(result.current!.id).toBe('tab-1');
@@ -845,9 +675,9 @@ describe('tabStore', () => {
 	// ========================================================================
 
 	describe('action stability', () => {
-		it('should return stable action references from getTabActions', () => {
-			const actions1 = getTabActions();
-			const actions2 = getTabActions();
+		it('should return stable action references from useTabStore.getState()', () => {
+			const actions1 = useTabStore.getState();
+			const actions2 = useTabStore.getState();
 
 			expect(actions1.createTab).toBe(actions2.createTab);
 			expect(actions1.closeTab).toBe(actions2.closeTab);
@@ -862,20 +692,19 @@ describe('tabStore', () => {
 	// ========================================================================
 
 	describe('non-React access', () => {
-		it('should provide current state via getTabState', () => {
+		it('should provide current state via useTabStore.getState()', () => {
 			const { setTabGistContent } = useTabStore.getState();
 			setTabGistContent({ filename: 'a.ts', content: 'code' });
 
-			const state = getTabState();
+			const state = useTabStore.getState();
 			expect(state.tabGistContent).toEqual({ filename: 'a.ts', content: 'code' });
 		});
 
-		it('should provide working actions via getTabActions', () => {
+		it('should provide working actions via useTabStore.getState()', () => {
 			const tab1 = createMockAITab({ id: 'tab-1', starred: false });
 			setupSessionWithTabs([tab1]);
 
-			const actions = getTabActions();
-			actions.starTab('tab-1');
+			useTabStore.getState().starTab('tab-1');
 
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].starred).toBe(true);
@@ -1035,7 +864,7 @@ describe('closeTerminalTab', () => {
 		setupSessionWithTerminalTabs([tab1, tab2]);
 
 		act(() => {
-			getTabActions().closeTerminalTab('term-2');
+			useTabStore.getState().closeTerminalTab('term-2');
 		});
 
 		expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
@@ -1051,7 +880,7 @@ describe('closeTerminalTab', () => {
 		setupSessionWithTerminalTabs([tab1]);
 
 		act(() => {
-			getTabActions().closeTerminalTab('term-1');
+			useTabStore.getState().closeTerminalTab('term-1');
 		});
 
 		// PTY should be killed

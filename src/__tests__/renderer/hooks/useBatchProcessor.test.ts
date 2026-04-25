@@ -22,6 +22,8 @@ import type {
 // Import the exported functions directly
 import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // Mock notifyToast so we can verify toast notifications
 const { mockNotifyToast } = vi.hoisted(() => ({
@@ -577,24 +579,15 @@ describe('countUnfinishedTasks + uncheckAllTasks integration', () => {
 
 describe('useBatchProcessor hook', () => {
 	// Mock sessions and groups
-	const createMockSession = (overrides?: Partial<Session>): Session => ({
-		id: 'test-session-id',
-		name: 'Test Session',
-		toolType: 'claude-code',
-		state: 'idle',
-		inputMode: 'ai',
-		cwd: '/test/path',
-		projectRoot: '/test/path',
-		aiPid: 0,
-		terminalPid: 0,
-		aiLogs: [],
-		shellLogs: [],
-		isGitRepo: true,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		messageQueue: [],
-		...overrides,
-	});
+	const createMockSession = (overrides?: Partial<Session>): Session =>
+		baseCreateMockSession({
+			id: 'test-session-id',
+			cwd: '/test/path',
+			fullPath: '/test/path',
+			projectRoot: '/test/path',
+			isGitRepo: true,
+			...overrides,
+		});
 
 	const createMockGroup = (overrides?: Partial<Group>): Group => ({
 		id: 'test-group-id',
@@ -913,6 +906,40 @@ describe('useBatchProcessor hook', () => {
 	});
 
 	describe('startBatchRun', () => {
+		it('should not start when autoRunDisabled is true', async () => {
+			useSettingsStore.setState({ autoRunDisabled: true });
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'test', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
+
+			// Reset for other tests
+			useSettingsStore.setState({ autoRunDisabled: false });
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];
@@ -1171,6 +1198,80 @@ describe('useBatchProcessor hook', () => {
 			await waitFor(() => {
 				expect(batchFinished).toBe(true);
 			});
+		});
+	});
+
+	describe('killBatchRun', () => {
+		it('should flush stats and history with non-zero elapsed time when force-killed', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			// Hold the agent response so the batch stays "running" until we kill it
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			// Start batch (don't await)
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			// Wait for startAutoRun to fire (flush state ref is populated right after)
+			await waitFor(() => {
+				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
+			});
+			// Wait for the agent to be spawned (batch is mid-task)
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalled();
+			});
+
+			// Give the tracker a visible chunk of elapsed time before killing
+			await new Promise((r) => setTimeout(r, 25));
+
+			// Force-kill the batch
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			// endAutoRun must have been called with a non-zero duration so the recorded Auto Run
+			// time isn't lost. Previously this was called after timeTracking.stopTracking() had
+			// already zeroed the tracker, producing a 0ms duration.
+			expect(window.maestro.stats.endAutoRun).toHaveBeenCalledTimes(1);
+			const endCall = (window.maestro.stats.endAutoRun as ReturnType<typeof vi.fn>).mock.calls[0];
+			expect(endCall[0]).toBe('auto-run-id'); // statsAutoRunId from setup mock
+			expect(endCall[1]).toBeGreaterThan(0); // elapsed duration in ms
+			expect(endCall[2]).toBe(0); // completedTasks — nothing finished before kill
+
+			// A history entry tagged as AUTO must be written with the elapsed time
+			const historyEntry = mockOnAddHistoryEntry.mock.calls.find(
+				(call) => call[0]?.type === 'AUTO'
+			)?.[0];
+			expect(historyEntry).toBeDefined();
+			expect(historyEntry.elapsedTimeMs).toBeGreaterThan(0);
+			expect(historyEntry.success).toBe(false);
+
+			// Let the held agent promise resolve so the hung batch loop can unwind
+			resolveAgent!({ success: true, agentSessionId: 'test-session' });
 		});
 	});
 

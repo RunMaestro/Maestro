@@ -32,11 +32,23 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 describe('useMainKeyboardHandler', () => {
 	// Track event listeners for cleanup
 	let addedListeners: { type: string; handler: EventListener }[] = [];
+	let originalMaestro: unknown;
 	const originalAddEventListener = window.addEventListener;
 	const originalRemoveEventListener = window.removeEventListener;
 
 	beforeEach(() => {
 		addedListeners = [];
+		originalMaestro = (window as any).maestro;
+		const maestroObj = ((window as any).maestro ?? {}) as Record<string, unknown>;
+		const processObj = ((maestroObj.process as Record<string, unknown> | undefined) ??
+			{}) as Record<string, unknown>;
+		(window as any).maestro = {
+			...maestroObj,
+			process: {
+				...processObj,
+				write: vi.fn(),
+			},
+		};
 		window.addEventListener = vi.fn((type, handler) => {
 			addedListeners.push({ type, handler: handler as EventListener });
 			originalAddEventListener.call(window, type, handler as EventListener);
@@ -52,6 +64,7 @@ describe('useMainKeyboardHandler', () => {
 	afterEach(() => {
 		window.addEventListener = originalAddEventListener;
 		window.removeEventListener = originalRemoveEventListener;
+		(window as any).maestro = originalMaestro;
 	});
 
 	describe('hook initialization', () => {
@@ -1335,7 +1348,8 @@ describe('useMainKeyboardHandler', () => {
 
 				expect(mockNavigateToUnifiedTabByIndex).toHaveBeenCalledWith(
 					mockSession,
-					0 // index 0 for Cmd+1
+					0, // index 0 for Cmd+1
+					false // showUnreadOnly
 				);
 			});
 
@@ -1384,21 +1398,36 @@ describe('useMainKeyboardHandler', () => {
 
 				expect(mockNavigateToUnifiedTabByIndex).toHaveBeenCalledWith(
 					mockSession,
-					1 // index 1 for Cmd+2
+					1, // index 1 for Cmd+2
+					false // showUnreadOnly
 				);
 			});
 
-			it('should not execute tab jump when showUnreadOnly is active', () => {
+			it('forwards showUnreadOnly so Cmd+1 jumps to the Nth visible tab when filter is on', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
-				const mockNavigateToUnifiedTabByIndex = vi.fn();
-				const mockSetSessions = vi.fn();
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					unifiedTabOrder: ['ai-tab-1'],
+					inputMode: 'ai',
+				};
+				const mockNavigateToUnifiedTabByIndex = vi.fn().mockReturnValue({
+					session: mockSession,
+				});
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToTab1',
 					navigateToUnifiedTabByIndex: mockNavigateToUnifiedTabByIndex,
 					setSessions: mockSetSessions,
-					showUnreadOnly: true, // Filter is active - disables Cmd+1-9
+					activeSession: mockSession,
+					showUnreadOnly: true,
 				});
 
 				act(() => {
@@ -1411,8 +1440,7 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				// Should NOT be called when showUnreadOnly is active
-				expect(mockNavigateToUnifiedTabByIndex).not.toHaveBeenCalled();
+				expect(mockNavigateToUnifiedTabByIndex).toHaveBeenCalledWith(mockSession, 0, true);
 			});
 		});
 
@@ -1971,7 +1999,7 @@ describe('useMainKeyboardHandler', () => {
 				const mockClearActiveTerminal = vi.fn();
 
 				result.current.keyboardHandlerRef.current = createTerminalTabContext({
-					isShortcut: () => false,
+					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'clearTerminal',
 					sessions: [{ id: 'session-1' }],
 					mainPanelRef: { current: { clearActiveTerminal: mockClearActiveTerminal } },
 					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
@@ -2585,6 +2613,79 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('terminal search shortcut routing', () => {
+		it('should open terminal search on Ctrl+F in terminal mode when event is not from xterm', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
+		});
+
+		it('should open terminal search on Ctrl+F even when xterm has focus', () => {
+			// xterm's attachCustomKeyEventHandler intercepts Cmd/Ctrl+F and re-dispatches
+			// a synthetic event on window so the app-level shortcut still fires while the
+			// terminal textarea retains focus. The handler must open search in this case.
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockOpenTerminalSearch = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { openTerminalSearch: mockOpenTerminalSearch } },
+				activeFocus: 'main',
+			});
+
+			const xtermInput = document.createElement('textarea');
+			xtermInput.className = 'xterm-helper-textarea';
+			document.body.appendChild(xtermInput);
+			xtermInput.focus();
+
+			act(() => {
+				xtermInput.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'f',
+						ctrlKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
+			xtermInput.remove();
+		});
+	});
+
 	describe('terminal focus recovery does not intercept group chat input', () => {
 		it('should not preventDefault on regular keystrokes in group chat even when session is in terminal mode', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
@@ -2671,6 +2772,179 @@ describe('useMainKeyboardHandler', () => {
 
 			// Ctrl handler should NOT fire when group chat is active
 			expect(mockFocusActiveTerminal).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('terminal focus recovery forwards lost terminal keys', () => {
+		it('should refocus and consume ArrowUp without synthesizing PTY sequences', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockFocusActiveTerminal = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { focusActiveTerminal: mockFocusActiveTerminal } },
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(mockFocusActiveTerminal).toHaveBeenCalled();
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect((window as any).maestro.process.write).not.toHaveBeenCalled();
+		});
+
+		it('should not forward keys when typing in an editable input', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockFocusActiveTerminal = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				activeGroupChatId: null,
+				mainPanelRef: { current: { focusActiveTerminal: mockFocusActiveTerminal } },
+			});
+
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+			input.focus();
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				bubbles: true,
+				cancelable: true,
+			});
+
+			act(() => {
+				input.dispatchEvent(event);
+			});
+
+			expect(mockFocusActiveTerminal).not.toHaveBeenCalled();
+			expect((window as any).maestro.process.write).not.toHaveBeenCalled();
+			input.remove();
+		});
+	});
+
+	describe('browser tab shortcut IPC forwarding', () => {
+		it('dispatches a keydown event on the window when IPC shortcut arrives', () => {
+			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
+			(window as any).maestro = {
+				...(window as any).maestro,
+				app: {
+					...((window as any).maestro?.app ?? {}),
+					onBrowserTabShortcutKey: (cb: (input: Record<string, unknown>) => void) => {
+						ipcCallback = cb;
+						return () => {
+							ipcCallback = null;
+						};
+					},
+				},
+			};
+
+			renderHook(() => useMainKeyboardHandler());
+			expect(ipcCallback).not.toBeNull();
+
+			const dispatched: KeyboardEvent[] = [];
+			const listener = (e: Event) => dispatched.push(e as KeyboardEvent);
+			originalAddEventListener.call(window, 'keydown', listener);
+
+			act(() => {
+				ipcCallback!({
+					key: ']',
+					code: 'BracketRight',
+					meta: true,
+					control: false,
+					alt: false,
+					shift: true,
+				});
+			});
+
+			originalRemoveEventListener.call(window, 'keydown', listener);
+
+			const match = dispatched.find((e) => e.key === ']' && e.metaKey && e.shiftKey);
+			expect(match).toBeDefined();
+		});
+
+		it('blurs the active webview element before dispatching', () => {
+			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
+			(window as any).maestro = {
+				...(window as any).maestro,
+				app: {
+					...((window as any).maestro?.app ?? {}),
+					onBrowserTabShortcutKey: (cb: (input: Record<string, unknown>) => void) => {
+						ipcCallback = cb;
+						return () => {
+							ipcCallback = null;
+						};
+					},
+				},
+			};
+
+			renderHook(() => useMainKeyboardHandler());
+
+			// Create a fake WEBVIEW element and focus it.
+			// jsdom needs tabIndex to make non-standard elements focusable.
+			const fakeWebview = document.createElement('webview');
+			fakeWebview.tabIndex = 0;
+			const blurSpy = vi.spyOn(fakeWebview, 'blur');
+			document.body.appendChild(fakeWebview);
+			fakeWebview.focus();
+			// Verify jsdom actually focused it
+			expect(document.activeElement).toBe(fakeWebview);
+
+			act(() => {
+				ipcCallback!({
+					key: '[',
+					code: 'BracketLeft',
+					meta: true,
+					control: false,
+					alt: false,
+					shift: true,
+				});
+			});
+
+			expect(blurSpy).toHaveBeenCalled();
+			fakeWebview.remove();
+		});
+
+		it('unsubscribes from IPC on unmount', () => {
+			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
+			(window as any).maestro = {
+				...(window as any).maestro,
+				app: {
+					...((window as any).maestro?.app ?? {}),
+					onBrowserTabShortcutKey: (cb: (input: Record<string, unknown>) => void) => {
+						ipcCallback = cb;
+						return () => {
+							ipcCallback = null;
+						};
+					},
+				},
+			};
+
+			const { unmount } = renderHook(() => useMainKeyboardHandler());
+			expect(ipcCallback).not.toBeNull();
+
+			unmount();
+			expect(ipcCallback).toBeNull();
 		});
 	});
 });

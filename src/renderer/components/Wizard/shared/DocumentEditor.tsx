@@ -18,7 +18,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeSlug from 'rehype-slug';
-import { Eye, Edit, ChevronDown, ChevronRight, X, Loader2 } from 'lucide-react';
+import { Eye, Edit, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Spinner } from '../../ui/Spinner';
 import type { Theme } from '../../../types';
 import { MermaidRenderer } from '../../MermaidRenderer';
 import type { GeneratedDocument } from '../WizardContext';
@@ -29,6 +30,8 @@ import {
 	createMarkdownComponents,
 } from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { openUrl } from '../../../utils/openUrl';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 // Memoize plugin arrays - they never change
 const REHYPE_PLUGINS = [rehypeSlug];
@@ -136,7 +139,7 @@ export function MarkdownImage({
 				className="inline-flex items-center gap-2 px-3 py-2 rounded"
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
-				<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.textDim }} />
+				<Spinner size={16} color={theme.colors.textDim} />
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Loading...
 				</span>
@@ -245,6 +248,7 @@ export function DocumentEditor({
 	onDropdownOpenChange,
 }: DocumentEditorProps): JSX.Element {
 	const [attachmentsExpanded, setAttachmentsExpanded] = useState(true);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 
 	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
@@ -477,17 +481,14 @@ export function DocumentEditor({
 		() =>
 			createMarkdownComponents({
 				theme,
+				enableBionifyReadingMode: bionifyReadingMode,
 				imageRenderer: WizardImageRenderer,
 				customLanguageRenderers: {
 					mermaid: MermaidWrapper,
 				},
-				onExternalLinkClick: (href) => {
-					if (/^https?:\/\/|^mailto:/.test(href)) {
-						void window.maestro.shell.openExternal(href);
-					}
-				},
+				onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			}),
-		[theme, WizardImageRenderer, MermaidWrapper]
+		[bionifyReadingMode, theme, WizardImageRenderer, MermaidWrapper]
 	);
 
 	return (

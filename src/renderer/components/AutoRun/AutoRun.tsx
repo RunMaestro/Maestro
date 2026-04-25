@@ -30,6 +30,8 @@ import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
 import { Maximize2, Edit as EditIcon, Eye, Search } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { logger } from '../../utils/logger';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -155,6 +157,11 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
 
+	// Bionify reading mode (global setting; disabled while search highlights are active)
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+
 	// Search state and effects
 	const {
 		searchOpen,
@@ -260,7 +267,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				onShowFlash(`${resetCount} task${resetCount !== 1 ? 's' : ''} reverted to incomplete`);
 			}
 		} catch (err) {
-			console.error('Failed to save after reset:', err);
+			logger.error('Failed to save after reset:', undefined, err);
 		}
 	}, [
 		folderPath,
@@ -457,6 +464,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		handleAutocompleteKeyDown,
 	});
 
+	// Disable Bionify while search is active so search highlights remain visible
+	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
+	const effectivePreviewBionifyReadingMode = bionifyReadingMode && !hasActivePreviewSearch;
+
 	// Markdown rendering: prose styles, task counts, token count, remark plugins, components
 	const { proseStyles, taskCounts, tokenCount, remarkPlugins, markdownComponents } =
 		useAutoRunMarkdown({
@@ -473,7 +484,18 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			handleMatchRendered,
 			openLightboxByFilename,
 			previewRef,
+			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 		});
+
+	// Keep the document selector badge in sync with the bottom-panel counter.
+	// The file watcher's refresh path can be stale (debounced/missed events, SSH poll lag),
+	// but savedContent for the selected doc is always authoritative — mirror it into the store.
+	useEffect(() => {
+		if (!selectedFile || !savedContent) return;
+		useBatchStore.getState().updateTaskCount(selectedFile, taskCounts.completed, taskCounts.total);
+	}, [selectedFile, savedContent, taskCounts.completed, taskCounts.total]);
 
 	return (
 		<div

@@ -6,7 +6,8 @@
  * while the wizard is active. Shows a spinner when thinking.
  */
 
-import { Wand2, Loader2 } from 'lucide-react';
+import { Wand2 } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 
 interface WizardPillProps {
@@ -40,7 +41,7 @@ export function WizardPill({ theme, onClick, isThinking = false }: WizardPillPro
 			}}
 			title={isThinking ? 'Wizard is thinking...' : 'Wizard mode active - click to exit'}
 		>
-			{isThinking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+			{isThinking ? <Spinner size={16} /> : <Wand2 className="w-4 h-4" />}
 			<span>{isThinking ? 'Thinking...' : 'Wizard'}</span>
 
 			{/* Pulse animation styles */}

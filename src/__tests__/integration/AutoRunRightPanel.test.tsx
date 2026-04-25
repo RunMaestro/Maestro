@@ -13,8 +13,12 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import React, { createRef, useState } from 'react';
 import { RightPanel, RightPanelHandle } from '../../renderer/components/RightPanel';
 import { AutoRun, AutoRunHandle } from '../../renderer/components/AutoRun';
-import type { Session, Theme, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import type { Session, Shortcut, BatchRunState, RightPanelTab } from '../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../helpers/mockSession';
 import { LayerStackProvider } from '../../renderer/contexts/LayerStackContext';
+
+import { createMockTheme } from '../helpers/mockTheme';
 
 // Mock external dependencies
 vi.mock('react-markdown', () => ({
@@ -123,28 +127,6 @@ vi.mock('../../renderer/utils/shortcutFormatter', () => ({
 	isMacOS: vi.fn(() => false),
 }));
 
-// Create a mock theme for testing
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgPanel: '#252525',
-		bgActivity: '#2d2d2d',
-		bgSidebar: '#1e1e1e',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
-
 // Setup window.maestro mock
 const setupMaestroMock = () => {
 	const mockMaestro = {
@@ -168,40 +150,28 @@ const setupMaestroMock = () => {
 	return mockMaestro;
 };
 
-// Create mock session
-const createMockSession = (overrides: Partial<Session> = {}): Session => ({
-	id: 'test-session-1',
-	name: 'Test Session',
-	cwd: '/test/path',
-	projectRoot: '/test/path',
-	fullPath: '/test/path',
-	toolType: 'claude-code',
-	state: 'idle',
-	inputMode: 'ai',
-	isGitRepo: true,
-	aiPid: 1234,
-	terminalPid: 5678,
-	port: 3000,
-	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
-	activeTabId: 'tab-1',
-	closedTabHistory: [],
-	shellLogs: [],
-	fileTree: [],
-	fileExplorerExpanded: [],
-	fileExplorerScrollPos: 0,
-	executionQueue: [],
-	changedFiles: [],
-	isLive: false,
-	contextUsage: 0,
-	workLog: [],
-	autoRunFolderPath: '/test/autorun',
-	autoRunSelectedFile: 'Phase 1',
-	autoRunMode: 'edit',
-	autoRunCursorPosition: 0,
-	autoRunEditScrollPos: 0,
-	autoRunPreviewScrollPos: 0,
-	...overrides,
-});
+// Thin wrapper: seeds auto run state so the right panel shows the auto
+// run tab with content.
+const createMockSession = (overrides: Partial<Session> = {}): Session =>
+	baseCreateMockSession({
+		id: 'test-session-1',
+		cwd: '/test/path',
+		fullPath: '/test/path',
+		projectRoot: '/test/path',
+		isGitRepo: true,
+		aiPid: 1234,
+		terminalPid: 5678,
+		port: 3000,
+		aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }] as any,
+		activeTabId: 'tab-1',
+		autoRunFolderPath: '/test/autorun',
+		autoRunSelectedFile: 'Phase 1',
+		autoRunMode: 'edit',
+		autoRunCursorPosition: 0,
+		autoRunEditScrollPos: 0,
+		autoRunPreviewScrollPos: 0,
+		...overrides,
+	});
 
 // Create mock shortcuts
 const createMockShortcuts = (): Record<string, Shortcut> => ({
@@ -240,7 +210,7 @@ const RightPanelTestWrapper = ({
 	const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>(initialTab);
 	const [rightPanelWidth, setRightPanelWidth] = useState(initialWidth);
 	const [autoRunContent, setAutoRunContent] = useState(initialContent);
-	const [session, setSession] = useState(createMockSession());
+	const [session, setSession] = useState(() => createMockSession());
 	const [rightPanelOpen, setRightPanelOpen] = useState(true);
 	const [activeFocus, setActiveFocus] = useState('right');
 
@@ -1174,7 +1144,7 @@ describe('Auto Run + RightPanel Integration', () => {
 		it('handles session change while on different tab', async () => {
 			const TestComponent = () => {
 				const [activeTab, setActiveTab] = useState<RightPanelTab>('autorun');
-				const [session, setSession] = useState(createMockSession({ id: 'session-1' }));
+				const [session, setSession] = useState(() => createMockSession({ id: 'session-1' }));
 				const [content, setContent] = useState('Session 1 content');
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);

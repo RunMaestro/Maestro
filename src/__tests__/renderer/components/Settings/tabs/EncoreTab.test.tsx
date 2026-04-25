@@ -23,8 +23,9 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { EncoreTab } from '../../../../../renderer/components/Settings/tabs/EncoreTab';
-import type { Theme, AgentConfig } from '../../../../../renderer/types';
+import type { AgentConfig } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock AgentConfigPanel to avoid deep rendering
 vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 	AgentConfigPanel: (props: any) => (
@@ -44,13 +45,11 @@ vi.mock('../../../../../renderer/components/shared/AgentConfigPanel', () => ({
 				onClick={() => props.onCustomPathChange('/custom/path')}
 			/>
 			<button data-testid="trigger-custom-path-blur" onClick={() => props.onCustomPathBlur()} />
-			<button data-testid="trigger-custom-path-clear" onClick={() => props.onCustomPathClear()} />
 			<button
 				data-testid="trigger-custom-args-change"
 				onClick={() => props.onCustomArgsChange('--verbose')}
 			/>
 			<button data-testid="trigger-custom-args-blur" onClick={() => props.onCustomArgsBlur()} />
-			<button data-testid="trigger-custom-args-clear" onClick={() => props.onCustomArgsClear()} />
 			<button data-testid="trigger-env-var-add" onClick={() => props.onEnvVarAdd()} />
 			<button
 				data-testid="trigger-env-var-key-change"
@@ -126,27 +125,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		...mockUseSettingsOverrides,
 	}),
 }));
-
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 const mockAvailableAgents: AgentConfig[] = [
 	{
@@ -334,7 +312,7 @@ describe('EncoreTab', () => {
 			expect(options[0]).toHaveValue('claude-code');
 			expect(options[0]).toHaveTextContent('Claude Code');
 			expect(options[1]).toHaveValue('codex');
-			expect(options[1]).toHaveTextContent('Codex (Beta)');
+			expect(options[1]).toHaveTextContent('Codex');
 		});
 
 		it('should call setDirectorNotesSettings on provider change', async () => {
@@ -664,34 +642,6 @@ describe('EncoreTab', () => {
 			);
 		});
 
-		it('should clear custom path via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Set then clear
-			fireEvent.click(screen.getByTestId('trigger-custom-path-change'));
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-path-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customPath: undefined,
-				})
-			);
-		});
-
 		it('should update custom args via AgentConfigPanel callback', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 
@@ -712,28 +662,6 @@ describe('EncoreTab', () => {
 			});
 
 			expect(screen.getByTestId('agent-config-custom-args')).toHaveTextContent('--verbose');
-		});
-
-		it('should clear custom args via callback', async () => {
-			render(<EncoreTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTitle('Customize provider settings'));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByTestId('trigger-custom-args-clear'));
-
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith(
-				expect.objectContaining({
-					customArgs: undefined,
-				})
-			);
 		});
 	});
 

@@ -18,7 +18,8 @@ import type { SshRemoteConfig } from '../../../../shared/types';
 import { useWizard } from '../WizardContext';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { ExistingDocsModal } from '../ExistingDocsModal';
-import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
+import { logger } from '../../../utils/logger';
 
 interface DirectorySelectionScreenProps {
 	theme: Theme;
@@ -110,7 +111,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 					setAgentConfig(config);
 				}
 			} catch (error) {
-				console.error('Failed to fetch agent config:', error);
+				logger.error('Failed to fetch agent config:', undefined, error);
 			}
 		}
 
@@ -160,7 +161,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 					}
 				}
 			} catch (error) {
-				console.error('Failed to load SSH remote config:', error);
+				logger.error('Failed to load SSH remote config:', undefined, error);
 			}
 		}
 
@@ -183,7 +184,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 	const checkForExistingDocs = useCallback(
 		async (dirPath: string): Promise<{ exists: boolean; count: number }> => {
 			try {
-				const autoRunPath = `${dirPath}/${AUTO_RUN_FOLDER_NAME}`;
+				const autoRunPath = `${dirPath}/${PLAYBOOKS_DIR}`;
 				const sshRemoteId = getSshRemoteId();
 				const result = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
 				if (result.success && result.files && result.files.length > 0) {
@@ -225,7 +226,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 					await window.maestro.fs.readDir(path, sshRemoteId);
 				} catch (dirError) {
 					// Directory doesn't exist or can't be accessed
-					console.error('Directory does not exist:', dirError);
+					logger.error('Directory does not exist:', undefined, dirError);
 					setDirectoryError('Directory not found. Please check the path exists.');
 					setIsGitRepo(false);
 					setHasExistingAutoRunDocs(false, 0);
@@ -261,7 +262,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 				}
 			} catch (error) {
 				// If git check fails, the directory might not exist or is inaccessible
-				console.error('Directory validation error:', error);
+				logger.error('Directory validation error:', undefined, error);
 				setDirectoryError('Unable to access this directory. Please check the path exists.');
 				setIsGitRepo(false);
 				setHasExistingAutoRunDocs(false, 0);
@@ -347,7 +348,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 				}, 150);
 			}
 		} catch (error) {
-			console.error('Browse failed:', error);
+			logger.error('Browse failed:', undefined, error);
 			setDirectoryError('Failed to open folder picker');
 		}
 
@@ -369,7 +370,7 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 
 		// Check if Auto Run Docs folder exists and has files
 		try {
-			const autoRunPath = `${state.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = `${state.directoryPath}/${PLAYBOOKS_DIR}`;
 			const sshRemoteId = getSshRemoteId();
 			const result = await window.maestro.autorun.listDocs(autoRunPath, sshRemoteId);
 			const docs = result.success ? result.files : [];

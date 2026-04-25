@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useFilePreviewHandlers } from '../../../renderer/hooks/mainPanel/useFilePreviewHandlers';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, FilePreviewTab } from '../../../renderer/types';
 
 const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+const mockSaveFile = vi.fn().mockResolvedValue(null);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	(window as any).maestro = {
 		fs: { writeFile: mockWriteFile },
+		dialog: { saveFile: mockSaveFile },
 	};
 });
 
@@ -309,5 +312,126 @@ describe('useFilePreviewHandlers', () => {
 
 		act(() => result.current.handleFilePreviewClose());
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	describe('save-as for untitled files', () => {
+		it('shows save dialog when path is empty', async () => {
+			mockSaveFile.mockResolvedValue('/test/project/newfile.md');
+			const session = makeSession();
+			// Set up session store so the save-as handler can update tab metadata
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						filePreviewTabs: [
+							makeFileTab({ id: 'file-1', path: '', name: 'Untitled', extension: '', content: '' }),
+						],
+						activeFileTabId: 'file-1',
+					} as Session,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: session,
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab({ id: 'file-1', path: '', name: 'Untitled', extension: '' }),
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave('', 'hello world');
+			});
+
+			expect(mockSaveFile).toHaveBeenCalledWith(expect.objectContaining({ title: 'Save File' }));
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/project/newfile.md',
+				'hello world',
+				undefined
+			);
+		});
+
+		it('returns false and does not write when save dialog is cancelled', async () => {
+			mockSaveFile.mockResolvedValue(null);
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab({ id: 'file-1', path: '', name: 'Untitled', extension: '' }),
+				})
+			);
+
+			let saveResult: boolean | void;
+			await act(async () => {
+				saveResult = await result.current.handleFilePreviewSave('', 'hello world');
+			});
+
+			expect(saveResult!).toBe(false);
+			expect(mockSaveFile).toHaveBeenCalled();
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
+		it('updates tab metadata after save-as', async () => {
+			mockSaveFile.mockResolvedValue('/test/project/src/notes.md');
+			const session = makeSession();
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						filePreviewTabs: [
+							makeFileTab({ id: 'file-1', path: '', name: 'Untitled', extension: '', content: '' }),
+						],
+						activeFileTabId: 'file-1',
+					} as Session,
+				],
+				activeSessionId: 'session-1',
+			});
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: session,
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab({ id: 'file-1', path: '', name: 'Untitled', extension: '' }),
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave('', 'my notes');
+			});
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			const updatedTab = updatedSession.filePreviewTabs.find(
+				(t: FilePreviewTab) => t.id === 'file-1'
+			);
+			expect(updatedTab).toMatchObject({
+				path: '/test/project/src/notes.md',
+				name: 'notes',
+				extension: '.md',
+				content: 'my notes',
+				editContent: undefined,
+			});
+		});
+
+		it('skips save dialog for files with existing path', async () => {
+			const onEditContent = vi.fn();
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+					onFileTabEditContentChange: onEditContent,
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'updated');
+			});
+
+			expect(mockSaveFile).not.toHaveBeenCalled();
+			expect(mockWriteFile).toHaveBeenCalledWith('/test/project/src/test.ts', 'updated', undefined);
+			expect(onEditContent).toHaveBeenCalledWith('file-1', undefined, 'updated');
+		});
 	});
 });

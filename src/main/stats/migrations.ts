@@ -38,7 +38,7 @@ import { logger } from '../utils/logger';
  * Registry of all database migrations.
  * Migrations must be sequential starting from version 1.
  */
-export function getMigrations(): Migration[] {
+function getMigrations(): Migration[] {
 	return [
 		{
 			version: 1,

@@ -15,14 +15,16 @@
  */
 
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { Loader2, Rocket, Compass, X } from 'lucide-react';
+import { Rocket, Compass, X } from 'lucide-react';
+import { Spinner } from '../../ui/Spinner';
 import type { Theme } from '../../../types';
 import { useWizard } from '../WizardContext';
-import { AUTO_RUN_FOLDER_NAME } from '../services/phaseGenerator';
+import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { DocumentEditor } from '../shared/DocumentEditor';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { logger } from '../../../utils/logger';
 
 // Auto-save debounce delay in milliseconds
 const AUTO_SAVE_DELAY = 2000;
@@ -79,7 +81,7 @@ function DocumentReview({
 
 	const { generatedDocuments, directoryPath, currentDocumentIndex } = state;
 	const currentDoc = generatedDocuments[currentDocumentIndex] || generatedDocuments[0];
-	const folderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+	const folderPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 
 	// Local content state for editing - tracks current document
 	const [localContent, setLocalContent] = useState(
@@ -163,7 +165,7 @@ function DocumentReview({
 						setEditedPhase1Content(localContent);
 					}
 				} catch (err) {
-					console.error('Auto-save failed:', err);
+					logger.error('Auto-save failed:', undefined, err);
 				} finally {
 					isSavingRef.current = false;
 
@@ -187,7 +189,7 @@ function DocumentReview({
 								setEditedPhase1Content(pendingContent);
 							}
 						} catch (err) {
-							console.error('Auto-save (pending) failed:', err);
+							logger.error('Auto-save (pending) failed:', undefined, err);
 						} finally {
 							isSavingRef.current = false;
 						}
@@ -535,11 +537,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'ready' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Rocket className="w-5 h-5" />
-						)}
+						{launchingButton === 'ready' ? <Spinner size={20} /> : <Rocket className="w-5 h-5" />}
 						{launchingButton === 'ready' ? 'Launching...' : "I'm Ready to Go"}
 					</button>
 
@@ -559,11 +557,7 @@ function DocumentReview({
 							['--tw-ring-offset-color' as any]: theme.colors.bgSidebar,
 						}}
 					>
-						{launchingButton === 'tour' ? (
-							<Loader2 className="w-5 h-5 animate-spin" />
-						) : (
-							<Compass className="w-5 h-5" />
-						)}
+						{launchingButton === 'tour' ? <Spinner size={20} /> : <Compass className="w-5 h-5" />}
 						{launchingButton === 'tour' ? 'Launching...' : 'Walk Me Through the Interface'}
 					</button>
 				</div>

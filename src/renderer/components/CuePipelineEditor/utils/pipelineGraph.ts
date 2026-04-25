@@ -10,11 +10,27 @@ import type {
 	CuePipelineState,
 	TriggerNodeData,
 	AgentNodeData,
+	CommandNodeData,
+	ErrorNodeData,
 } from '../../../../shared/cue-pipeline-types';
 import type { Theme } from '../../../../shared/theme-types';
 import type { TriggerNodeDataProps } from '../nodes/TriggerNode';
 import type { AgentNodeDataProps } from '../nodes/AgentNode';
+import type { CommandNodeDataProps } from '../nodes/CommandNode';
+import type { ErrorNodeDataProps } from '../nodes/ErrorNode';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
+
+/** Build the one-line summary shown under the command node's name. */
+function summarizeCommandNode(data: CommandNodeData): string {
+	if (data.mode === 'shell') {
+		const text = data.shell?.trim() ?? '';
+		if (!text) return '(no command)';
+		const firstLine = text.split('\n')[0];
+		return '$ ' + (firstLine.length > 36 ? firstLine.slice(0, 33) + '…' : firstLine);
+	}
+	const target = data.cliTarget?.trim() || '(no target)';
+	return `cli send → ${target}`;
+}
 
 // ─── Trigger config summary ──────────────────────────────────────────────────
 
@@ -41,6 +57,8 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			return config.watch ?? 'tasks';
 		case 'agent.completed':
 			return 'agent done';
+		case 'cli.trigger':
+			return 'cli';
 		default:
 			return '';
 	}
@@ -104,7 +122,17 @@ export function convertToReactFlowNodes(
 	triggerOptions?: {
 		onTriggerPipeline?: (pipelineName: string) => void;
 		isSaved?: boolean;
+		/** Pipeline-wide running state — kept for components (e.g. the
+		 *  NodeConfigPanel on the right rail) that only need a yes/no per
+		 *  pipeline. Trigger-node animation should prefer
+		 *  `runningSubscriptionsByPipeline` for per-sub precision. */
 		runningPipelineIds?: Set<string>;
+		/** Per-pipeline set of exact subscription names with active runs.
+		 *  A trigger node animates iff its own `subscriptionName` is in the
+		 *  set for its owning pipeline. Falls back to `runningPipelineIds`
+		 *  when the trigger has no `subscriptionName` stamped (legacy
+		 *  never-saved pipelines) so the spinner still surfaces something. */
+		runningSubscriptionsByPipeline?: Map<string, Set<string>>;
 	},
 	theme?: Theme,
 	/** Pre-computed Y-offsets to use instead of recomputing from bounding boxes.
@@ -177,6 +205,22 @@ export function convertToReactFlowNodes(
 			if (pNode.type === 'trigger') {
 				const triggerData = pNode.data as TriggerNodeData;
 				const fanOutCount = pipeline.edges.filter((e) => e.source === pNode.id).length;
+
+				// Per-trigger running state: a trigger node only shows the
+				// spinner when its OWN subscription has an active run. In a
+				// multi-trigger pipeline (e.g. startup + scheduled + GitHub PR
+				// all under "Pipeline 1") this prevents every trigger icon from
+				// spinning just because one sub fired.
+				//
+				// Fallback: when the trigger has no `subscriptionName` (legacy
+				// never-saved pipelines), fall back to the pipeline-wide flag
+				// so the spinner still surfaces something rather than going
+				// silent entirely.
+				const runningSubs = triggerOptions?.runningSubscriptionsByPipeline?.get(pipeline.id);
+				const isRunning = triggerData.subscriptionName
+					? !!runningSubs?.has(triggerData.subscriptionName)
+					: (triggerOptions?.runningPipelineIds?.has(pipeline.id) ?? false);
+
 				const nodeData: TriggerNodeDataProps = {
 					compositeId,
 					eventType: triggerData.eventType,
@@ -185,8 +229,12 @@ export function convertToReactFlowNodes(
 					onConfigure: onConfigureNode,
 					onTriggerPipeline: triggerOptions?.onTriggerPipeline,
 					pipelineName: pipeline.name,
+					// Thread the trigger's owning subscription name through to the
+					// Play button. Populated by yamlToPipeline on load; absent on
+					// never-saved pipelines (Play button is hidden in that case).
+					subscriptionName: triggerData.subscriptionName,
 					isSaved: triggerOptions?.isSaved,
-					isRunning: triggerOptions?.runningPipelineIds?.has(pipeline.id),
+					isRunning,
 					fanOutCount: fanOutCount > 1 ? fanOutCount : undefined,
 					theme,
 				};
@@ -197,7 +245,7 @@ export function convertToReactFlowNodes(
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
-			} else {
+			} else if (pNode.type === 'agent') {
 				const agentData = pNode.data as AgentNodeData;
 				const pipelineColors = agentPipelineMap.get(agentData.sessionId) ?? [pipeline.color];
 				const hasOutgoingEdge = pipeline.edges.some((e) => e.source === pNode.id);
@@ -235,6 +283,45 @@ export function convertToReactFlowNodes(
 					data: nodeData,
 					dragHandle: '.drag-handle',
 				});
+			} else if (pNode.type === 'command') {
+				const cmdData = pNode.data as CommandNodeData;
+				const nodeData: CommandNodeDataProps = {
+					compositeId,
+					name: cmdData.name,
+					mode: cmdData.mode,
+					summary: summarizeCommandNode(cmdData),
+					owningSessionName: cmdData.owningSessionName,
+					pipelineColor: pipeline.color,
+					pipelineCount: 1,
+					pipelineColors: [pipeline.color],
+					onConfigure: onConfigureNode,
+					theme,
+				};
+				nodes.push({
+					id: compositeId,
+					type: 'command',
+					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					data: nodeData,
+					dragHandle: '.drag-handle',
+				});
+			} else if (pNode.type === 'error') {
+				const errData = pNode.data as ErrorNodeData;
+				const nodeData: ErrorNodeDataProps = {
+					compositeId,
+					message: errData.message,
+					unresolvedId: errData.unresolvedId,
+					unresolvedName: errData.unresolvedName,
+					subscriptionName: errData.subscriptionName,
+					theme,
+				};
+				nodes.push({
+					id: compositeId,
+					type: 'error',
+					position: { x: pNode.position.x, y: pNode.position.y + yOffset },
+					data: nodeData,
+					dragHandle: '.drag-handle',
+					selectable: false,
+				});
 			}
 		}
 	}
@@ -249,13 +336,24 @@ export function convertToReactFlowNodes(
  *
  * Edges from non-active pipelines are rendered with `isActivePipeline: false`
  * so the PipelineEdge component can dim them appropriately.
+ *
+ * Edge animation rule: an edge is flagged `isRunning` iff its TARGET is an
+ * agent node whose `sessionName` appears in this pipeline's active-agents
+ * set (`runningAgentsByPipeline`). This makes only the edges feeding into
+ * the currently-executing agent(s) animate — rather than every edge in a
+ * pipeline where any run is active. Works identically for linear chains
+ * (one target per hop), fan-out (multiple targets concurrently), and
+ * fan-in (multiple incoming edges to one running target).
+ *
+ * Non-agent targets (cli_output, error nodes) never animate — they don't
+ * correspond to a dispatchable run.
  */
 export function convertToReactFlowEdges(
 	pipelines: CuePipelineState['pipelines'],
 	selectedPipelineId: string | null,
-	runningPipelineIds?: Set<string>,
 	selectedEdgeId?: string | null,
-	theme?: Theme
+	theme?: Theme,
+	runningAgentsByPipeline?: Map<string, Set<string>>
 ): Edge[] {
 	const edges: Edge[] = [];
 
@@ -268,10 +366,19 @@ export function convertToReactFlowEdges(
 		// causing them to not re-appear when switching back to All Pipelines view.
 		if (!isActive) continue;
 
-		const isRunning = runningPipelineIds?.has(pipeline.id) ?? false;
+		const runningAgents = runningAgentsByPipeline?.get(pipeline.id);
+		// Build node lookup once per pipeline so the per-edge target lookup is O(1).
+		const nodeById = new Map<string, (typeof pipeline.nodes)[number]>();
+		for (const n of pipeline.nodes) nodeById.set(n.id, n);
 
 		for (const pEdge of pipeline.edges) {
 			const compositeId = `${pipeline.id}:${pEdge.id}`;
+			const targetNode = nodeById.get(pEdge.target);
+			const targetSessionName =
+				targetNode?.type === 'agent' ? (targetNode.data as AgentNodeData).sessionName : undefined;
+			const isRunning =
+				!!targetSessionName && !!runningAgents && runningAgents.has(targetSessionName);
+
 			const edgeData: PipelineEdgeData = {
 				pipelineColor: pipeline.color,
 				mode: pEdge.mode,

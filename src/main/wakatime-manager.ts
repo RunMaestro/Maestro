@@ -20,6 +20,7 @@ import https from 'https';
 import type Store from 'electron-store';
 import type { MaestroSettings } from './stores/types';
 import { isWindows } from '../shared/platformDetection';
+import { captureException } from './utils/sentry';
 
 const LOG_CONTEXT = '[WakaTime]';
 const HEARTBEAT_DEBOUNCE_MS = 120_000; // 2 minutes - WakaTime deduplicates within this window
@@ -228,6 +229,7 @@ function fetchJson(url: string, maxRedirects = 5): Promise<unknown> {
 					try {
 						resolve(JSON.parse(data));
 					} catch (err) {
+						void captureException(err);
 						reject(err);
 					}
 				});

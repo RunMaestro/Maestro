@@ -8,9 +8,11 @@ import type {
 	ToolType,
 } from '../../types';
 import { getActiveTab } from '../../utils/tabHelpers';
-import { getStdinFlags } from '../../utils/spawnHelpers';
+import { getStdinFlags, prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { estimateContextUsage } from '../../utils/contextUsage';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { logger } from '../../utils/logger';
 
 /**
  * Result from agent spawn operations.
@@ -22,7 +24,20 @@ export interface AgentSpawnResult {
 	usageStats?: UsageStats;
 	/** Context usage percentage estimated from the last usage event (not accumulated) */
 	contextUsage?: number;
+	/** Optional error detail when the run fails */
+	error?: string;
+	/** Structured error category for downstream handling */
+	errorKind?: AgentSpawnErrorKind;
 }
+
+export type AgentSpawnErrorKind =
+	| 'watchdog-stalled'
+	| 'watchdog-timeout'
+	| 'process-exit'
+	| 'process-exit-unknown'
+	| 'spawn-failed';
+
+const BATCH_WATCHDOG_CHECK_MS = 15 * 1000; // Check every 15 seconds
 
 /**
  * Dependencies for the useAgentExecution hook.
@@ -52,7 +67,10 @@ export interface UseAgentExecutionReturn {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			isAutoRun?: boolean;
+		}
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -170,7 +188,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
 	 */
 	const spawnAgentForSession = useCallback(
-		async (sessionId: string, prompt: string, cwdOverride?: string): Promise<AgentSpawnResult> => {
+		async (
+			sessionId: string,
+			prompt: string,
+			cwdOverride?: string,
+			options?: {
+				isAutoRun?: boolean;
+			}
+		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return { success: false };
@@ -183,13 +208,25 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			try {
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
-					console.error(`[spawnAgentForSession] Agent not found for toolType: ${session.toolType}`);
+					logger.error(`[spawnAgentForSession] Agent not found for toolType: ${session.toolType}`);
 					return { success: false };
+				}
+
+				// Validate command before registering listeners to avoid leaked subscriptions
+				const commandToUse = agent.path || agent.command;
+				if (!commandToUse) {
+					throw new Error(`${session.toolType} agent has no command configured`);
 				}
 
 				// For batch processing, use a unique session ID per task run to avoid contaminating the main AI terminal
 				// This prevents batch output from appearing in the interactive AI terminal
 				const targetSessionId = `${sessionId}-batch-${Date.now()}`;
+
+				// Batch tasks always spawn fresh sessions — prepare Maestro system prompt
+				const appendSystemPrompt = await prepareMaestroSystemPrompt({
+					session,
+					activeTabId: getActiveTab(session)?.id,
+				});
 
 				// Note: We intentionally do NOT set the session or tab state to 'busy' here.
 				// Batch operations run in isolation and should not affect the main UI state.
@@ -202,18 +239,34 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let taskUsageStats: UsageStats | undefined;
 					let lastUsageEvent: UsageStats | undefined; // Last (non-accumulated) event for context estimation
 					const queryStartTime = Date.now(); // Track start time for stats
+					const isBatchProcess = options?.isAutoRun ?? false;
+					let lastOutputAt = Date.now();
+					let settled = false;
+					let inactivityTimer: ReturnType<typeof setInterval> | null = null;
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
 
 					const cleanup = () => {
 						cleanupFns.forEach((fn) => fn());
+						if (inactivityTimer) {
+							clearInterval(inactivityTimer);
+							inactivityTimer = null;
+						}
+					};
+
+					const resolveOnce = (result: AgentSpawnResult) => {
+						if (settled) return;
+						settled = true;
+						cleanup();
+						resolve(result);
 					};
 
 					// Set up listeners for this specific agent run
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
 							if (sid === targetSessionId) {
+								lastOutputAt = Date.now();
 								responseText += data;
 							}
 						})
@@ -240,11 +293,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					);
 
 					cleanupFns.push(
-						window.maestro.process.onExit((sid: string) => {
+						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
-								// Clean up listeners
-								cleanup();
-
 								// Record query stats for Auto Run queries
 								const queryDuration = Date.now() - queryStartTime;
 								const activeTab = getActiveTab(session);
@@ -261,8 +311,24 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									})
 									.catch((err) => {
 										// Don't fail the batch flow if stats recording fails
-										console.warn('[spawnAgentForSession] Failed to record query stats:', err);
+										logger.warn(
+											'[spawnAgentForSession] Failed to record query stats:',
+											undefined,
+											err
+										);
 									});
+
+								const didExitCleanly = code === 0;
+								const exitErrorKind = didExitCleanly
+									? undefined
+									: code == null
+										? ('process-exit-unknown' as const)
+										: ('process-exit' as const);
+								const exitError = didExitCleanly
+									? undefined
+									: code == null
+										? 'Agent task exited without a status code'
+										: `Agent task exited with code ${code}`;
 
 								// Estimate context usage from the last single-turn event (not accumulated totals)
 								const taskContextUsage = lastUsageEvent
@@ -375,6 +441,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									// Wait for queue to drain by polling session state
 									// The queue is processed sequentially, so we wait until session becomes idle
 									const waitForQueueDrain = () => {
+										if (settled) return;
 										const checkSession = sessionsRef.current.find((s) => s.id === sessionId);
 										if (
 											!checkSession ||
@@ -382,12 +449,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											checkSession.executionQueue.length === 0
 										) {
 											// Queue drained or session idle - safe to continue batch
-											resolve({
-												success: true,
+											resolveOnce({
+												success: didExitCleanly,
 												response: responseText,
 												agentSessionId,
 												usageStats: taskUsageStats,
 												contextUsage: taskContextUsage,
+												error: exitError,
+												errorKind: exitErrorKind,
 											});
 										} else {
 											// Queue still processing - check again
@@ -398,26 +467,51 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									setTimeout(waitForQueueDrain, 50);
 								} else {
 									// No queued items or worktree mode - resolve immediately
-									resolve({
-										success: true,
+									resolveOnce({
+										success: didExitCleanly,
 										response: responseText,
 										agentSessionId,
 										usageStats: taskUsageStats,
 										contextUsage: taskContextUsage,
+										error: exitError,
+										errorKind: exitErrorKind,
 									});
 								}
 							}
 						})
 					);
 
+					// Watchdog for hung Auto Run batch tasks: detect long silence and force-kill.
+					// A value of 0 means "unlimited" — skip the watchdog entirely.
+					if (isBatchProcess) {
+						const inactivityTimeoutMin = useSettingsStore.getState().autoRunInactivityTimeoutMin;
+						if (inactivityTimeoutMin > 0) {
+							const inactivityTimeoutMs = inactivityTimeoutMin * 60 * 1000;
+
+							inactivityTimer = setInterval(() => {
+								if (settled) return;
+								if (Date.now() - lastOutputAt <= inactivityTimeoutMs) return;
+								window.maestro.process.kill(targetSessionId).catch(() => {});
+								resolveOnce({
+									success: false,
+									error: `Agent task stalled: no output for ${inactivityTimeoutMin} minutes`,
+									errorKind: 'watchdog-stalled',
+									response: responseText,
+									agentSessionId,
+									usageStats: taskUsageStats,
+								});
+							}, BATCH_WATCHDOG_CHECK_MS);
+						}
+					}
+
 					// Spawn the agent for batch processing
 					// Use effectiveCwd which may be a worktree path for parallel execution
-					const commandToUse = agent.path || agent.command;
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 						hasImages: false, // Batch/Auto Run does not send images
 					});
+
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -427,6 +521,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							command: commandToUse,
 							args: agent.args || [],
 							prompt,
+							appendSystemPrompt,
 							readOnlyMode: false, // Auto Run needs to make changes, not plan
 							// Per-session config overrides (if set)
 							sessionCustomPath: session.customPath,
@@ -439,14 +534,17 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sendPromptViaStdin,
 							sendPromptViaStdinRaw,
 						})
-						.catch(() => {
-							cleanup();
-							resolve({ success: false });
+						.catch((err: unknown) => {
+							resolveOnce({
+								success: false,
+								error: err instanceof Error ? err.message : String(err),
+								errorKind: 'spawn-failed',
+							});
 						});
 				});
 			} catch (error) {
-				console.error('Error spawning agent:', error);
-				return { success: false };
+				logger.error('Error spawning agent:', undefined, error);
+				return { success: false, error: error instanceof Error ? error.message : String(error) };
 			}
 		},
 		[accumulateUsageStats, processQueuedItemRef, sessionsRef, setSessions]
@@ -459,7 +557,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	const spawnAgentWithPrompt = useCallback(
 		async (prompt: string): Promise<AgentSpawnResult> => {
 			if (!activeSession) return { success: false };
-			return spawnAgentForSession(activeSession.id, prompt);
+			return spawnAgentForSession(activeSession.id, prompt, undefined, { isAutoRun: false });
 		},
 		[activeSession, spawnAgentForSession]
 	);
@@ -497,8 +595,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			try {
 				const agent = await window.maestro.agents.get(toolType);
 				if (!agent) {
-					console.error(`[spawnBackgroundSynopsis] Agent not found for toolType: ${toolType}`);
+					logger.error(`[spawnBackgroundSynopsis] Agent not found for toolType: ${toolType}`);
 					return { success: false };
+				}
+
+				// Validate command before registering listeners to avoid leaked subscriptions
+				const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
+				if (!commandToUse) {
+					throw new Error(`${toolType} agent has no command configured`);
 				}
 
 				// Use a unique target ID for background synopsis
@@ -581,7 +685,6 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							effectiveSessionSshRemoteConfig = mainSession.sessionSshRemoteConfig;
 						}
 					}
-					const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
 					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
 						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
@@ -613,7 +716,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						});
 				});
 			} catch (error) {
-				console.error('Error spawning background synopsis:', error);
+				logger.error('Error spawning background synopsis:', undefined, error);
 				return { success: false };
 			}
 		},
@@ -630,23 +733,29 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			return;
 		}
 
-		console.log('[cancelPendingSynopsis] Cancelling synopsis sessions for', maestroSessionId, {
-			count: synopsisSessions.size,
-			sessionIds: Array.from(synopsisSessions),
-		});
+		logger.info('[cancelPendingSynopsis] Cancelling synopsis sessions for', undefined, [
+			maestroSessionId,
+			{
+				count: synopsisSessions.size,
+				sessionIds: Array.from(synopsisSessions),
+			},
+		]);
 
 		// Kill all active synopsis processes for this session
 		const killPromises = Array.from(synopsisSessions).map(async (synopsisSessionId) => {
 			try {
 				await window.maestro.process.kill(synopsisSessionId);
-				console.log('[cancelPendingSynopsis] Killed synopsis session:', synopsisSessionId);
+				logger.info(
+					'[cancelPendingSynopsis] Killed synopsis session:',
+					undefined,
+					synopsisSessionId
+				);
 			} catch (error) {
 				// Process may have already exited
-				console.warn(
-					'[cancelPendingSynopsis] Failed to kill synopsis session:',
+				logger.warn('[cancelPendingSynopsis] Failed to kill synopsis session:', undefined, [
 					synopsisSessionId,
-					error
-				);
+					error,
+				]);
 			}
 		});
 

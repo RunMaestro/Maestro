@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../shared/theme-types';
+import type { UsageStats as BaseUsageStats } from '../../shared/types';
 import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/config';
 import { webLogger } from '../utils/logger';
 
@@ -24,17 +25,9 @@ export type WebSocketState =
 	| 'authenticated';
 
 /**
- * Usage stats for session cost/token tracking
+ * Usage stats for session cost/token tracking (all fields optional in web context)
  */
-export interface UsageStats {
-	inputTokens?: number;
-	outputTokens?: number;
-	cacheReadInputTokens?: number;
-	cacheCreationInputTokens?: number;
-	totalCostUsd?: number;
-	contextWindow?: number;
-	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
-}
+export type UsageStats = Partial<BaseUsageStats>;
 
 /**
  * AI Tab data for multi-tab support within a Maestro session
@@ -123,6 +116,7 @@ export type ServerMessageType =
 	| 'session_offline'
 	| 'user_input'
 	| 'theme'
+	| 'bionify_reading_mode'
 	| 'custom_commands'
 	| 'autorun_state'
 	| 'autorun_docs_changed'
@@ -275,6 +269,14 @@ export interface ThemeMessage extends ServerMessage {
 }
 
 /**
+ * Bionify reading-mode message from server
+ */
+export interface BionifyReadingModeMessage extends ServerMessage {
+	type: 'bionify_reading_mode';
+	enabled: boolean;
+}
+
+/**
  * Custom AI command definition
  */
 export interface CustomCommand {
@@ -352,6 +354,8 @@ export interface SettingsChangedMessage extends ServerMessage {
 		audioFeedbackEnabled: boolean;
 		colorBlindMode: string;
 		conductorProfile: string;
+		/** User-customized keyboard shortcut overrides (sparse; unset = use default). */
+		shortcuts: Record<string, import('../../shared/shortcut-types').Shortcut>;
 	};
 }
 
@@ -474,6 +478,7 @@ export type TypedServerMessage =
 	| SessionExitMessage
 	| UserInputMessage
 	| ThemeMessage
+	| BionifyReadingModeMessage
 	| CustomCommandsMessage
 	| AutoRunStateMessage
 	| AutoRunDocsChangedMessage
@@ -520,6 +525,8 @@ export interface WebSocketEventHandlers {
 	onUserInput?: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
 	/** Called when theme is received or updated */
 	onThemeUpdate?: (theme: Theme) => void;
+	/** Called when the global Bionify reading-mode setting is received or updated */
+	onBionifyReadingModeUpdate?: (enabled: boolean) => void;
 	/** Called when custom commands are received */
 	onCustomCommands?: (commands: CustomCommand[]) => void;
 	/** Called when AutoRun state changes (batch processing on desktop) */
@@ -894,6 +901,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 					case 'theme': {
 						const themeMsg = message as ThemeMessage;
 						handlersRef.current?.onThemeUpdate?.(themeMsg.theme);
+						break;
+					}
+
+					case 'bionify_reading_mode': {
+						const bionifyMsg = message as BionifyReadingModeMessage;
+						handlersRef.current?.onBionifyReadingModeUpdate?.(bionifyMsg.enabled);
 						break;
 					}
 

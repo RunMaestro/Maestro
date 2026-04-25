@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { GitDiffViewer } from '../../../renderer/components/GitDiffViewer';
 import type { ParsedFileDiff } from '../../../renderer/utils/gitDiffParser';
 
+import { mockTheme } from '../../helpers/mockTheme';
 // Create mock parsed files for testing
 const createMockParsedFile = (overrides: Partial<ParsedFileDiff> = {}): ParsedFileDiff => ({
 	oldPath: 'src/test.ts',
@@ -120,26 +121,6 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 vi.mock('react-diff-view/style/index.css', () => ({}));
 
 // Sample theme for testing
-const mockTheme = {
-	id: 'test-theme' as const,
-	name: 'Test Theme',
-	mode: 'dark' as const,
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16162a',
-		bgActivity: '#22223a',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0088ff',
-		border: '#333355',
-		success: '#22c55e',
-		warning: '#f59e0b',
-		error: '#ef4444',
-		vibe: '#8855ff',
-		statusBar: '#0d0d1a',
-		scrollbarThumb: '#444466',
-	},
-};
 
 describe('GitDiffViewer', () => {
 	beforeEach(() => {

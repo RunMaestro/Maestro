@@ -26,6 +26,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useClickOutside } from '../ui';
 import type { Playbook, BatchDocumentEntry } from '../../types';
 import { DEFAULT_BATCH_PROMPT } from './batchUtils';
+import { logger } from '../../utils/logger';
 
 /**
  * Configuration passed to the hook for modification detection
@@ -119,7 +120,7 @@ export function usePlaybookManagement(
 					setPlaybooks(result.playbooks);
 				}
 			} catch (error) {
-				console.error('Failed to load playbooks:', error);
+				logger.error('Failed to load playbooks:', undefined, error);
 			}
 			setLoadingPlaybooks(false);
 		};
@@ -222,7 +223,7 @@ export function usePlaybookManagement(
 				}
 			}
 		} catch (error) {
-			console.error('Failed to delete playbook:', error);
+			logger.error('Failed to delete playbook:', undefined, error);
 		}
 
 		setShowDeleteConfirmModal(false);
@@ -241,10 +242,10 @@ export function usePlaybookManagement(
 			try {
 				const result = await window.maestro.playbooks.export(sessionId, playbook.id, folderPath);
 				if (!result.success && result.error !== 'Export cancelled') {
-					console.error('Failed to export playbook:', result.error);
+					logger.error('Failed to export playbook:', undefined, result.error);
 				}
 			} catch (error) {
-				console.error('Failed to export playbook:', error);
+				logger.error('Failed to export playbook:', undefined, error);
 			}
 		},
 		[sessionId, folderPath]
@@ -260,10 +261,10 @@ export function usePlaybookManagement(
 				// Load the imported playbook
 				handleLoadPlaybook(result.playbook);
 			} else if (result.error && result.error !== 'Import cancelled') {
-				console.error('Failed to import playbook:', result.error);
+				logger.error('Failed to import playbook:', undefined, result.error);
 			}
 		} catch (error) {
-			console.error('Failed to import playbook:', error);
+			logger.error('Failed to import playbook:', undefined, error);
 		}
 	}, [sessionId, folderPath, handleLoadPlaybook]);
 
@@ -297,7 +298,7 @@ export function usePlaybookManagement(
 					setShowSavePlaybookModal(false);
 				}
 			} catch (error) {
-				console.error('Failed to save playbook:', error);
+				logger.error('Failed to save playbook:', undefined, error);
 			}
 			setSavingPlaybook(false);
 		},
@@ -338,7 +339,7 @@ export function usePlaybookManagement(
 				);
 			}
 		} catch (error) {
-			console.error('Failed to update playbook:', error);
+			logger.error('Failed to update playbook:', undefined, error);
 		}
 		setSavingPlaybook(false);
 	}, [sessionId, loadedPlaybook, config, savingPlaybook]);

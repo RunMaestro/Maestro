@@ -51,6 +51,7 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
 		registerLayer: vi.fn(() => 'mock-layer-id'),
 		unregisterLayer: vi.fn(),
+		updateLayerHandler: vi.fn(),
 	}),
 	LayerStackProvider: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));

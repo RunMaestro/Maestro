@@ -115,6 +115,8 @@ class MockChildProcess extends EventEmitter {
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
+	exitCode: number | null = null;
+	signalCode: string | null = null;
 
 	kill(signal?: string) {
 		this.killed = true;
@@ -215,7 +217,10 @@ function createExecutionConfig(overrides: Partial<CueExecutionConfig> = {}): Cue
 		session: createMockSession(),
 		subscription: createMockSubscription(),
 		event: createMockEvent(),
-		promptPath: 'prompts/on-config-change.md',
+		// Inline prompt content — as of the Phase 2 cleanup, the executor no longer
+		// reads prompt files. The cue-config-normalizer resolves prompt_file at config
+		// load time and stores the resolved content here.
+		promptPath: 'Default test prompt body',
 		toolType: 'claude-code',
 		projectRoot: '/projects/test',
 		templateContext: createMockTemplateContext(),
@@ -247,8 +252,10 @@ describe('cue-executor', () => {
 		vi.useFakeTimers();
 		getActiveProcesses().clear();
 
-		// Default mock implementations
-		mockReadFileSync.mockReturnValue('Prompt content: check {{CUE_FILE_PATH}}');
+		// Default mock implementations.
+		// mockReadFileSync remains wired up so we can assert the executor never
+		// touches the filesystem for prompt resolution (that's the normalizer's job).
+		mockReadFileSync.mockReturnValue('SHOULD-NEVER-BE-READ');
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
 		mockSubstitute.mockImplementation((template: string) => `substituted: ${template}`);
 	});
@@ -258,48 +265,38 @@ describe('cue-executor', () => {
 	});
 
 	describe('executeCuePrompt', () => {
-		it('should resolve relative prompt paths against projectRoot', async () => {
+		// As of the Phase 2 cleanup, the executor no longer resolves prompt files —
+		// the cue-config-normalizer reads prompt_file at config-load time and stores
+		// the resolved content in `prompt`. The executor's `promptPath` parameter is
+		// now always inline prompt content.
+		it('uses promptPath as inline prompt content (no filesystem read)', async () => {
 			const config = createExecutionConfig({
-				promptPath: 'prompts/check.md',
+				promptPath: 'Inline prompt body that came from the normalizer',
 				projectRoot: '/projects/test',
 			});
 
 			const resultPromise = executeCuePrompt(config);
-			// Let spawn happen
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(mockReadFileSync).toHaveBeenCalledWith('/projects/test/prompts/check.md', 'utf-8');
+			// The executor must NOT touch the filesystem for prompt resolution.
+			expect(mockReadFileSync).not.toHaveBeenCalled();
 
-			// Close the process to resolve
-			mockChild.emit('close', 0);
-			await resultPromise;
-		});
-
-		it('should use absolute prompt paths directly', async () => {
-			const config = createExecutionConfig({
-				promptPath: '/absolute/path/prompt.md',
-			});
-
-			const resultPromise = executeCuePrompt(config);
-			await vi.advanceTimersByTimeAsync(0);
-
-			expect(mockReadFileSync).toHaveBeenCalledWith('/absolute/path/prompt.md', 'utf-8');
+			// The prompt content should flow through unchanged to the template substitution.
+			expect(mockSubstitute).toHaveBeenCalledWith(
+				'Inline prompt body that came from the normalizer',
+				expect.anything()
+			);
 
 			mockChild.emit('close', 0);
 			await resultPromise;
 		});
 
-		it('should return failed result when prompt file cannot be read', async () => {
-			mockReadFileSync.mockImplementation(() => {
-				throw new Error('ENOENT: no such file');
-			});
-
-			const config = createExecutionConfig();
+		it('returns failed result when prompt content is empty', async () => {
+			const config = createExecutionConfig({ promptPath: '' });
 			const result = await executeCuePrompt(config);
 
 			expect(result.status).toBe('failed');
-			expect(result.stderr).toContain('Failed to read prompt file');
-			expect(result.stderr).toContain('ENOENT');
+			expect(result.stderr).toContain('no prompt content');
 			expect(result.exitCode).toBeNull();
 		});
 
@@ -315,7 +312,12 @@ describe('cue-executor', () => {
 			});
 
 			const templateContext = createMockTemplateContext();
-			const config = createExecutionConfig({ event, templateContext });
+			const config = createExecutionConfig({
+				event,
+				templateContext,
+				// Inline prompt content (the normalizer would have resolved any prompt_file by now)
+				promptPath: 'Prompt content: check {{CUE_FILE_PATH}}',
+			});
 
 			const resultPromise = executeCuePrompt(config);
 			await vi.advanceTimersByTimeAsync(0);
@@ -337,9 +339,10 @@ describe('cue-executor', () => {
 				sourceExitCode: '',
 				sourceDuration: '',
 				sourceTriggeredBy: '',
+				fromAgent: '',
 			});
 
-			// Verify substituteTemplateVariables was called
+			// Verify substituteTemplateVariables was called with the inline prompt content
 			expect(mockSubstitute).toHaveBeenCalledWith(
 				'Prompt content: check {{CUE_FILE_PATH}}',
 				templateContext
@@ -397,7 +400,10 @@ describe('cue-executor', () => {
 				expect.any(Array),
 				expect.objectContaining({
 					cwd: '/projects/test',
-					stdio: ['pipe', 'pipe', 'pipe'],
+					// Local mode uses 'ignore' for stdin so agents like Codex don't
+					// emit "Reading additional input from stdin..." into the run
+					// output before observing EOF.
+					stdio: ['ignore', 'pipe', 'pipe'],
 				})
 			);
 
@@ -1304,6 +1310,125 @@ describe('cue-executor', () => {
 			const result = await resultPromise;
 
 			expect(result.stdout).toBe(rawOutput);
+		});
+
+		it('should fall back to assistant text when result event has empty text', async () => {
+			// Simulates Claude Code output where the result event has an empty
+			// string but assistant messages contain the actual response text.
+			const msgId = 'msg_test123';
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant' && msg.message?.content) {
+							const textBlock = msg.message.content.find((b: any) => b.type === 'text');
+							return {
+								type: 'text',
+								text: textBlock?.text || '',
+								sessionId: msg.session_id,
+								isPartial: true,
+								raw: msg,
+							};
+						}
+						if (msg.type === 'result') {
+							return { type: 'result', text: msg.result || '', raw: msg };
+						}
+						return { type: 'system', raw: msg };
+					} catch {
+						return { type: 'system', raw: {} };
+					}
+				},
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						role: 'assistant',
+						content: [{ type: 'text', text: 'Here is the summary of your data.' }],
+					},
+					session_id: 'sess-1',
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'tool_1', name: 'Bash', input: {} }],
+					},
+					session_id: 'sess-1',
+				}),
+				JSON.stringify({
+					type: 'result',
+					result: '',
+					session_id: 'sess-1',
+				}),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Here is the summary of your data.');
+		});
+
+		it('should deduplicate streaming assistant chunks by message ID', async () => {
+			// Claude Code streams assistant messages as chunks with increasing
+			// content. The same message ID appears multiple times. We should
+			// keep only the longest (latest) version per message ID.
+			const msgId = 'msg_dedup';
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'assistant' && msg.message?.content) {
+							const textBlock = msg.message.content.find((b: any) => b.type === 'text');
+							return {
+								type: 'text',
+								text: textBlock?.text || '',
+								isPartial: true,
+								raw: msg,
+							};
+						}
+						if (msg.type === 'result') {
+							return { type: 'result', text: msg.result || '', raw: msg };
+						}
+						return { type: 'system', raw: msg };
+					} catch {
+						return { type: 'system', raw: {} };
+					}
+				},
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({
+					type: 'assistant',
+					message: { id: msgId, content: [{ type: 'text', text: 'Hello' }] },
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					message: {
+						id: msgId,
+						content: [{ type: 'text', text: 'Hello, here is a longer response.' }],
+					},
+				}),
+				JSON.stringify({ type: 'result', result: '' }),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			expect(result.stdout).toBe('Hello, here is a longer response.');
 		});
 	});
 

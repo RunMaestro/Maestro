@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, RefObject } from 'react';
 import { useClickOutside } from '../ui';
+import { logger } from '../../utils/logger';
 
 /**
  * Tunnel status states for remote access via Cloudflare tunnel
@@ -119,6 +120,56 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		}
 	}, [isLiveMode]);
 
+	// Keep tunnel UI aligned with the actual cloudflared process state.
+	useEffect(() => {
+		if (!isLiveMode || (tunnelStatus !== 'starting' && tunnelStatus !== 'connected')) {
+			return;
+		}
+
+		let cancelled = false;
+		const syncStatus = async () => {
+			try {
+				const status = await window.maestro.tunnel.getStatus();
+				if (cancelled) return;
+
+				if (status.isRunning && status.url) {
+					setTunnelStatus('connected');
+					setTunnelUrl(status.url);
+					setTunnelError(null);
+					return;
+				}
+
+				if (status.error) {
+					setTunnelStatus('error');
+					setTunnelError(status.error);
+				} else {
+					setTunnelStatus('off');
+				}
+				setTunnelUrl(null);
+				setActiveUrlTab('local');
+			} catch (error) {
+				if (cancelled) return;
+				setTunnelStatus('error');
+				setTunnelError(error instanceof Error ? error.message : 'Failed to read tunnel status');
+				setTunnelUrl(null);
+				setActiveUrlTab('local');
+			}
+		};
+
+		void syncStatus();
+		const intervalId = window.setInterval(
+			() => {
+				void syncStatus();
+			},
+			tunnelStatus === 'starting' ? 500 : 2000
+		);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(intervalId);
+		};
+	}, [isLiveMode, tunnelStatus]);
+
 	// Handle tunnel toggle (start/stop remote access)
 	const handleTunnelToggle = useCallback(async () => {
 		if (tunnelStatus === 'connected') {
@@ -126,7 +177,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 			try {
 				await window.maestro.tunnel.stop();
 			} catch (error) {
-				console.error('[handleTunnelToggle] Failed to stop tunnel:', error);
+				logger.error('[handleTunnelToggle] Failed to stop tunnel:', undefined, error);
 				// Continue anyway - we still want to update UI state
 			}
 			setTunnelStatus('off');
@@ -149,7 +200,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 					setTunnelError(result.error || 'Failed to start tunnel');
 				}
 			} catch (error) {
-				console.error('[handleTunnelToggle] Failed to start tunnel:', error);
+				logger.error('[handleTunnelToggle] Failed to start tunnel:', undefined, error);
 				setTunnelStatus('error');
 				setTunnelError(error instanceof Error ? error.message : 'Failed to start tunnel');
 			}
@@ -166,7 +217,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		try {
 			await window.maestro.tunnel.stop();
 		} catch (error) {
-			console.error('[restartTunnel] Failed to stop tunnel:', error);
+			logger.error('[restartTunnel] Failed to stop tunnel:', undefined, error);
 		}
 
 		try {
@@ -179,7 +230,7 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 				setTunnelError(result.error || 'Failed to restart tunnel');
 			}
 		} catch (error) {
-			console.error('[restartTunnel] Failed to restart tunnel:', error);
+			logger.error('[restartTunnel] Failed to restart tunnel:', undefined, error);
 			setTunnelStatus('error');
 			setTunnelError(error instanceof Error ? error.message : 'Failed to restart tunnel');
 		}

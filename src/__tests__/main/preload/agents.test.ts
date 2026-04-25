@@ -358,6 +358,7 @@ describe('Agents Preload API', () => {
 				'agents:discoverSlashCommands',
 				'claude-code',
 				'/home/user/project',
+				undefined,
 				undefined
 			);
 			expect(result).toEqual(commands);
@@ -372,7 +373,22 @@ describe('Agents Preload API', () => {
 				'agents:discoverSlashCommands',
 				'claude-code',
 				'/home/user/project',
-				'/custom/claude'
+				'/custom/claude',
+				undefined
+			);
+		});
+
+		it('should invoke agents:discoverSlashCommands with sshRemoteId', async () => {
+			mockInvoke.mockResolvedValue(['review']);
+
+			await api.discoverSlashCommands('opencode', '/home/user/project', undefined, 'remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'agents:discoverSlashCommands',
+				'opencode',
+				'/home/user/project',
+				undefined,
+				'remote-1'
 			);
 		});
 

@@ -75,6 +75,7 @@ describe('persistence IPC handlers', () => {
 	let mockWebServer: {
 		getWebClientCount: ReturnType<typeof vi.fn>;
 		broadcastThemeChange: ReturnType<typeof vi.fn>;
+		broadcastBionifyReadingModeChange: ReturnType<typeof vi.fn>;
 		broadcastCustomCommands: ReturnType<typeof vi.fn>;
 		broadcastSessionStateChange: ReturnType<typeof vi.fn>;
 		broadcastSessionAdded: ReturnType<typeof vi.fn>;
@@ -106,6 +107,7 @@ describe('persistence IPC handlers', () => {
 		mockWebServer = {
 			getWebClientCount: vi.fn().mockReturnValue(0),
 			broadcastThemeChange: vi.fn(),
+			broadcastBionifyReadingModeChange: vi.fn(),
 			broadcastCustomCommands: vi.fn(),
 			broadcastSessionStateChange: vi.fn(),
 			broadcastSessionAdded: vi.fn(),
@@ -253,6 +255,25 @@ describe('persistence IPC handlers', () => {
 			await handler!({} as any, 'activeThemeId', 'light');
 
 			expect(mockWebServer.broadcastThemeChange).not.toHaveBeenCalled();
+		});
+
+		it('should broadcast bionify reading mode changes to connected web clients', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(2);
+
+			const handler = handlers.get('settings:set');
+			await handler!({} as any, 'bionifyReadingMode', true);
+
+			expect(mockSettingsStore.set).toHaveBeenCalledWith('bionifyReadingMode', true);
+			expect(mockWebServer.broadcastBionifyReadingModeChange).toHaveBeenCalledWith(true);
+		});
+
+		it('should not broadcast bionify reading mode changes when no web clients connected', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(0);
+
+			const handler = handlers.get('settings:set');
+			await handler!({} as any, 'bionifyReadingMode', true);
+
+			expect(mockWebServer.broadcastBionifyReadingModeChange).not.toHaveBeenCalled();
 		});
 
 		it('should broadcast custom commands changes to connected web clients', async () => {

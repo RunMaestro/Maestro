@@ -23,12 +23,17 @@ import type { Theme } from '../../../renderer/types';
 const mockRefresh = vi.fn();
 const mockFocus = vi.fn();
 const mockWrite = vi.fn();
+const mockXtermClear = vi.fn();
+// Captures the most recent props passed to each mounted XTerminal instance, keyed by
+// sessionId (the `${sessionId}-terminal-${tabId}` string). Used by tests to invoke the
+// forwarded selection callbacks without needing a real xterm context menu.
+const xtermPropsBySessionId = new Map<string, Record<string, unknown>>();
 
 vi.mock('../../../renderer/components/XTerminal', () => {
 	const React = require('react');
 	const XTerminal = React.forwardRef(
 		(
-			_props: Record<string, unknown>,
+			props: Record<string, unknown>,
 			ref: React.Ref<{
 				refresh(): void;
 				focus(): void;
@@ -42,11 +47,12 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				resize(): void;
 			}>
 		) => {
+			xtermPropsBySessionId.set(String(props.sessionId), props);
 			React.useImperativeHandle(ref, () => ({
 				refresh: mockRefresh,
 				focus: mockFocus,
 				write: mockWrite,
-				clear: vi.fn(),
+				clear: mockXtermClear,
 				scrollToBottom: vi.fn(),
 				search: vi.fn().mockReturnValue(false),
 				searchNext: vi.fn().mockReturnValue(false),
@@ -156,6 +162,7 @@ const maestro = () => (window as any).maestro;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	xtermPropsBySessionId.clear();
 	// spawnTerminalTab and onData are not in the global setup mock — add them here
 	maestro().process.spawnTerminalTab = vi.fn().mockResolvedValue({ success: true, pid: 9999 });
 	maestro().process.onData = vi.fn().mockReturnValue(() => {});
@@ -402,6 +409,222 @@ describe('TerminalView — auto-close on shell exit', () => {
 			})
 		);
 		vi.useRealTimers();
+	});
+});
+
+describe('TerminalView — SSH terminal working directory (regression)', () => {
+	// Regression test suite: SSH terminals must cd to the correct remote directory.
+	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:
+	//   1. sessionSshRemoteConfig.workingDirOverride (explicit)
+	//   2. session.remoteCwd (tracked remote cwd from agent)
+	//   3. session.cwd (the working directory from session creation — a remote path for SSH sessions)
+	// Without this chain, SSH terminals silently drop into the remote home directory.
+
+	it('uses sessionSshRemoteConfig.workingDirOverride when set', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+		const session = {
+			...makeSession([tab]),
+			cwd: '/home/user/project',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/explicit/remote/path',
+			},
+		} as unknown as Session;
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionSshRemoteConfig: expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/remote/path',
+				}),
+			})
+		);
+	});
+
+	it('falls back to session.remoteCwd when workingDirOverride is not set', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+		const session = {
+			...makeSession([tab]),
+			cwd: '/home/user/project',
+			remoteCwd: '/remote/tracked/cwd',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				// No workingDirOverride
+			},
+		} as unknown as Session;
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionSshRemoteConfig: expect.objectContaining({
+					enabled: true,
+					workingDirOverride: '/remote/tracked/cwd',
+				}),
+			})
+		);
+	});
+
+	it('falls back to session.cwd when both workingDirOverride and remoteCwd are absent', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+		const session = {
+			...makeSession([tab]),
+			cwd: '/home/user/project',
+			// No remoteCwd
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				// No workingDirOverride
+			},
+		} as unknown as Session;
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		// session.cwd is the last-resort fallback — for SSH sessions this IS a remote path
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionSshRemoteConfig: expect.objectContaining({
+					enabled: true,
+					workingDirOverride: '/home/user/project',
+				}),
+			})
+		);
+	});
+
+	it('uses sshRemoteId fallback path with correct cwd chain', async () => {
+		// When sessionSshRemoteConfig is not enabled but sshRemoteId is set
+		// (agent connected via SSH), the fallback path should still resolve a working dir.
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+		const session = {
+			...makeSession([tab]),
+			cwd: '/home/user/project',
+			sshRemoteId: 'remote-1',
+			// No sessionSshRemoteConfig.enabled
+		} as unknown as Session;
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionSshRemoteConfig: expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/user/project',
+				}),
+			})
+		);
+	});
+});
+
+describe('TerminalView — selection context menu wiring', () => {
+	it('forwards onCopySelection to XTerminal unchanged', () => {
+		const onCopySelection = vi.fn();
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(
+			<TerminalView
+				{...defaultProps}
+				session={session}
+				isVisible={true}
+				onCopySelection={onCopySelection}
+			/>
+		);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-1');
+		expect(props).toBeTruthy();
+		expect(props!.onCopySelection).toBe(onCopySelection);
+	});
+
+	it('wraps onSendSelectionToAgent so XTerminal receives a tab-scoped callback', () => {
+		// The parent passes (tabId, text) but XTerminal doesn't know its own tabId,
+		// so TerminalView wraps the callback and injects the tab ID. Verify the wrapper
+		// calls the parent handler with the correct tab ID.
+		const onSendSelectionToAgent = vi.fn();
+		const tab = makeTab({ id: 'tab-xyz', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(
+			<TerminalView
+				{...defaultProps}
+				session={session}
+				isVisible={true}
+				onSendSelectionToAgent={onSendSelectionToAgent}
+			/>
+		);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-xyz');
+		expect(props).toBeTruthy();
+		const forwarded = props!.onSendSelectionToAgent as (text: string) => void;
+		expect(typeof forwarded).toBe('function');
+		forwarded('ls -la output');
+		expect(onSendSelectionToAgent).toHaveBeenCalledWith('tab-xyz', 'ls -la output');
+	});
+
+	it('omits onSendSelectionToAgent on the XTerminal when the parent handler is absent', () => {
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		const props = xtermPropsBySessionId.get('session-1-terminal-tab-1');
+		expect(props).toBeTruthy();
+		expect(props!.onSendSelectionToAgent).toBeUndefined();
+	});
+});
+
+describe('TerminalView — clearActiveTerminal sends Ctrl+L to the PTY', () => {
+	// xterm.clear() only removes scrollback above the current prompt line, which feels
+	// like a no-op when the prompt was already at the top. Sending \x0c (Ctrl+L) to the
+	// PTY makes the shell redraw the prompt on a fresh screen, matching iTerm/VSCode
+	// clear-terminal behavior.
+	it('calls XTerminal.clear and writes \\x0c to the tab PTY when invoked', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 1234, state: 'idle' });
+		const session = makeSession([tab]);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+
+		const ref =
+			React.createRef<import('../../../renderer/components/TerminalView').TerminalViewHandle>();
+		render(<TerminalView ref={ref} {...defaultProps} session={session} isVisible={true} />);
+
+		await act(async () => {
+			ref.current?.clearActiveTerminal();
+			await Promise.resolve();
+		});
+
+		expect(mockXtermClear).toHaveBeenCalledTimes(1);
+		expect(maestro().process.write).toHaveBeenCalledWith('session-1-terminal-tab-1', '\x0c');
+	});
+
+	it('is a no-op when there is no active terminal tab', () => {
+		const session = makeSession([]);
+		maestro().process.write = vi.fn().mockResolvedValue(undefined);
+
+		const ref =
+			React.createRef<import('../../../renderer/components/TerminalView').TerminalViewHandle>();
+		render(<TerminalView ref={ref} {...defaultProps} session={session} isVisible={true} />);
+
+		ref.current?.clearActiveTerminal();
+
+		expect(mockXtermClear).not.toHaveBeenCalled();
+		expect(maestro().process.write).not.toHaveBeenCalled();
 	});
 });
 

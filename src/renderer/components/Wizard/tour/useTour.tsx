@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { tourSteps } from './tourSteps';
+import { logger } from '../../../utils/logger';
 
 /**
  * UI action to perform before showing a tour step
@@ -19,7 +20,8 @@ export interface TourUIAction {
 		| 'closeRightPanel'
 		| 'openHamburgerMenu'
 		| 'closeHamburgerMenu'
-		| 'setInputMode';
+		| 'setInputMode'
+		| 'ensureAiTab';
 	value?: string;
 }
 
@@ -132,7 +134,7 @@ function getElementRect(selector: string | null): DOMRect | null {
 	}
 
 	if (rects.length === 0) {
-		console.warn(`[Tour] No elements found for selector(s): ${selector}`);
+		logger.warn(`[Tour] No elements found for selector(s): ${selector}`);
 		return null;
 	}
 

@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
 import { createRef } from 'react';
-import type { Session, Theme, Shortcut, BatchRunState } from '../../../renderer/types';
+import type { Session, Shortcut, BatchRunState } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { mockTheme } from '../../helpers/mockTheme';
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -87,27 +88,6 @@ vi.mock('lucide-react', () => ({
 }));
 
 describe('RightPanel', () => {
-	const mockTheme: Theme = {
-		id: 'dracula',
-		name: 'Dracula',
-		mode: 'dark',
-		colors: {
-			bgMain: '#282a36',
-			bgSidebar: '#21222c',
-			bgActivity: '#1e1f29',
-			border: '#44475a',
-			textMain: '#f8f8f2',
-			textDim: '#6272a4',
-			accent: '#bd93f9',
-			accentDim: 'rgba(189, 147, 249, 0.2)',
-			accentText: '#bd93f9',
-			accentForeground: '#f8f8f2',
-			success: '#50fa7b',
-			warning: '#f1fa8c',
-			error: '#ff5555',
-		},
-	};
-
 	const mockSession: Session = {
 		id: 'session-1',
 		name: 'Test Session',
@@ -155,6 +135,7 @@ describe('RightPanel', () => {
 		collapseAllFolders: vi.fn(),
 		updateSessionWorkingDirectory: vi.fn(),
 		refreshFileTree: vi.fn(),
+		cancelFileTreeLoad: vi.fn(),
 		onAutoRefreshChange: vi.fn(),
 		onShowFlash: vi.fn(),
 		onAutoRunContentChange: vi.fn(),
@@ -191,6 +172,7 @@ describe('RightPanel', () => {
 			rightPanelWidth: 400,
 			shortcuts: mockShortcuts,
 			showHiddenFiles: false,
+			autoRunDisabled: false,
 		});
 		useFileExplorerStore.setState({
 			fileTreeFilter: '',
@@ -325,6 +307,16 @@ describe('RightPanel', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Files' }));
 			expect(setActiveRightTab).toHaveBeenCalledWith('files');
+		});
+
+		it('should hide Auto Run tab when autoRunDisabled is true', () => {
+			useSettingsStore.setState({ autoRunDisabled: true });
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Auto Run' })).not.toBeInTheDocument();
 		});
 	});
 
@@ -578,7 +570,7 @@ describe('RightPanel', () => {
 			expect(screen.getByText('Auto Run Active')).toBeInTheDocument();
 		});
 
-		it('should show "Stopping..." when isStopping is true', () => {
+		it('should show "Stopping" when isStopping is true', () => {
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,
 				isStopping: true,
@@ -596,7 +588,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.getByText('Stopping...')).toBeInTheDocument();
+			expect(screen.getByText('Stopping')).toBeInTheDocument();
 			expect(screen.getByText(/waiting for current task/i)).toBeInTheDocument();
 		});
 
@@ -1486,7 +1478,7 @@ describe('RightPanel', () => {
 
 			// Find the progress bar inner div with warning color (browser normalizes hex to rgb)
 			const progressInner = container.querySelector('.h-1\\.5 > div') as HTMLElement;
-			expect(progressInner?.style.backgroundColor).toBe('rgb(241, 250, 140)');
+			expect(progressInner?.style.backgroundColor).toBe('rgb(255, 184, 108)');
 		});
 	});
 

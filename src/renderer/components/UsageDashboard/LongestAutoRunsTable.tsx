@@ -16,23 +16,9 @@
 import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
 import { captureException } from '../../utils/sentry';
-
-/**
- * Auto Run session data shape from the API
- */
-interface AutoRunSession {
-	id: string;
-	sessionId: string;
-	agentType: string;
-	documentPath?: string;
-	startTime: number;
-	duration: number;
-	tasksTotal?: number;
-	tasksCompleted?: number;
-	projectPath?: string;
-}
+import { formatDurationHuman as formatDuration, formatTimestamp } from '../../../shared/formatters';
 
 interface LongestAutoRunsTableProps {
 	/** Current time range for filtering */
@@ -42,26 +28,6 @@ interface LongestAutoRunsTableProps {
 }
 
 const MAX_ROWS = 25;
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
 
 /**
  * Format agent type to display name
@@ -75,6 +41,7 @@ function formatAgentName(agentType: string): string {
 		'gemini-cli': 'Gemini CLI',
 		'qwen3-coder': 'Qwen3 Coder',
 		'factory-droid': 'Factory Droid',
+		copilot: 'GitHub Copilot',
 		terminal: 'Terminal',
 	};
 	return names[agentType] || agentType;
@@ -109,15 +76,7 @@ function formatDate(timestamp: number): string {
 	});
 }
 
-/**
- * Format time for table display
- */
-function formatTime(timestamp: number): string {
-	return new Date(timestamp).toLocaleTimeString('en-US', {
-		hour: 'numeric',
-		minute: '2-digit',
-	});
-}
+const formatTime = (timestamp: number) => formatTimestamp(timestamp, 'time');
 
 export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	timeRange,

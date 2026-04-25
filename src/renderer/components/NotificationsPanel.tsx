@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2, Coffee } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
+import { logger } from '../utils/logger';
 
 interface NotificationsPanelProps {
 	osNotificationsEnabled: boolean;
@@ -13,6 +15,10 @@ interface NotificationsPanelProps {
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
 	setToastDuration: (value: number) => void;
+	idleNotificationEnabled: boolean;
+	setIdleNotificationEnabled: (value: boolean) => void;
+	idleNotificationCommand: string;
+	setIdleNotificationCommand: (value: string) => void;
 	theme: Theme;
 }
 
@@ -27,12 +33,21 @@ export function NotificationsPanel({
 	setAudioFeedbackCommand,
 	toastDuration,
 	setToastDuration,
+	idleNotificationEnabled,
+	setIdleNotificationEnabled,
+	idleNotificationCommand,
+	setIdleNotificationCommand,
 	theme,
 }: NotificationsPanelProps) {
-	// Notification command test state
+	// Custom notification test state
 	const [testNotificationId, setTestNotificationId] = useState<number | null>(null);
 	const [testStatus, setTestStatus] = useState<TestStatus>('idle');
 	const [testError, setTestError] = useState<string | null>(null);
+
+	// Idle notification test state
+	const [idleTestNotificationId, setIdleTestNotificationId] = useState<number | null>(null);
+	const [idleTestStatus, setIdleTestStatus] = useState<TestStatus>('idle');
+	const [idleTestError, setIdleTestError] = useState<string | null>(null);
 
 	// Clear success/error status after a delay
 	useEffect(() => {
@@ -51,7 +66,7 @@ export function NotificationsPanel({
 
 		const cleanup = window.maestro.notification.onCommandCompleted((completedId) => {
 			if (completedId === testNotificationId) {
-				console.log('[Notification] Command completed, id:', completedId);
+				logger.info('[Notification] Command completed, id:', undefined, completedId);
 				setTestNotificationId(null);
 				setTestStatus('success');
 			}
@@ -59,6 +74,31 @@ export function NotificationsPanel({
 
 		return cleanup;
 	}, [testNotificationId]);
+
+	// Idle notification: clear success/error status after a delay
+	useEffect(() => {
+		if (idleTestStatus === 'success' || idleTestStatus === 'error') {
+			const timer = setTimeout(() => {
+				setIdleTestStatus('idle');
+				setIdleTestError(null);
+			}, 3000);
+			return () => clearTimeout(timer);
+		}
+	}, [idleTestStatus]);
+
+	// Idle notification: listen for command completion
+	useEffect(() => {
+		if (idleTestNotificationId === null) return;
+
+		const cleanup = window.maestro.notification.onCommandCompleted((completedId) => {
+			if (completedId === idleTestNotificationId) {
+				setIdleTestNotificationId(null);
+				setIdleTestStatus('success');
+			}
+		});
+
+		return cleanup;
+	}, [idleTestNotificationId]);
 
 	return (
 		<div className="space-y-6">
@@ -118,11 +158,15 @@ export function NotificationsPanel({
 						{testNotificationId !== null ? (
 							<button
 								onClick={async () => {
-									console.log('[Notification] Stop test button clicked, id:', testNotificationId);
+									logger.info(
+										'[Notification] Stop test button clicked, id:',
+										undefined,
+										testNotificationId
+									);
 									try {
 										await window.maestro.notification.stopSpeak(testNotificationId);
 									} catch (err) {
-										console.error('[Notification] Stop error:', err);
+										logger.error('[Notification] Stop error:', undefined, err);
 									}
 									setTestNotificationId(null);
 									setTestStatus('idle');
@@ -140,7 +184,11 @@ export function NotificationsPanel({
 						) : (
 							<button
 								onClick={async () => {
-									console.log('[Notification] Test button clicked, command:', audioFeedbackCommand);
+									logger.info(
+										'[Notification] Test button clicked, command:',
+										undefined,
+										audioFeedbackCommand
+									);
 									setTestStatus('running');
 									setTestError(null);
 									try {
@@ -148,7 +196,7 @@ export function NotificationsPanel({
 											"Howdy, I'm Maestro, here to conduct your agentic tools into a well-tuned symphony.",
 											audioFeedbackCommand
 										);
-										console.log('[Notification] Speak result:', result);
+										logger.info('[Notification] Speak result:', undefined, result);
 										if (result.success && result.notificationId) {
 											setTestNotificationId(result.notificationId);
 											// Don't change status to 'success' yet - stay in 'running'
@@ -160,7 +208,7 @@ export function NotificationsPanel({
 											setTestError(result.error || 'Command failed');
 										}
 									} catch (err) {
-										console.error('[Notification] Speak error:', err);
+										logger.error('[Notification] Speak error:', undefined, err);
 										setTestStatus('error');
 										setTestError(String(err));
 									}
@@ -192,7 +240,7 @@ export function NotificationsPanel({
 							>
 								{testStatus === 'running' ? (
 									<>
-										<Loader2 className="w-3 h-3 animate-spin" />
+										<Spinner size={12} />
 										Running
 									</>
 								) : testStatus === 'success' ? (
@@ -264,6 +312,136 @@ export function NotificationsPanel({
 				</div>
 			</div>
 
+			{/* Idle Notification */}
+			<div data-setting-id="notifications-idle">
+				<SettingCheckbox
+					icon={Coffee}
+					sectionLabel="Idle Notification"
+					title="Enable Idle Notification"
+					description="Execute a custom command when all agents and Auto Runs finish and Maestro becomes idle"
+					checked={idleNotificationEnabled}
+					onChange={setIdleNotificationEnabled}
+					theme={theme}
+				/>
+
+				{/* Command Configuration */}
+				<div className="mt-3">
+					<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
+					<div className="flex gap-2">
+						<input
+							type="text"
+							value={idleNotificationCommand}
+							onChange={(e) => setIdleNotificationCommand(e.target.value)}
+							placeholder="say Maestro is idle"
+							className="flex-1 p-2 rounded border bg-transparent outline-none text-sm font-mono"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+						/>
+						{idleTestNotificationId !== null ? (
+							<button
+								onClick={async () => {
+									try {
+										await window.maestro.notification.stopSpeak(idleTestNotificationId);
+									} catch (err) {
+										console.error('[IdleNotification] Stop error:', err);
+									}
+									setIdleTestNotificationId(null);
+									setIdleTestStatus('idle');
+								}}
+								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
+								style={{
+									backgroundColor: theme.colors.error,
+									color: '#fff',
+									border: `1px solid ${theme.colors.error}`,
+								}}
+							>
+								<Square className="w-3 h-3" fill="currentColor" />
+								Stop
+							</button>
+						) : (
+							<button
+								onClick={async () => {
+									setIdleTestStatus('running');
+									setIdleTestError(null);
+									try {
+										const result = await window.maestro.notification.speak(
+											'Maestro is idle',
+											idleNotificationCommand
+										);
+										if (result.success && result.notificationId) {
+											setIdleTestNotificationId(result.notificationId);
+										} else {
+											setIdleTestStatus('error');
+											setIdleTestError(result.error || 'Command failed');
+										}
+									} catch (err) {
+										setIdleTestStatus('error');
+										setIdleTestError(String(err));
+									}
+								}}
+								disabled={idleTestStatus === 'running'}
+								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1.5 min-w-[70px] justify-center"
+								style={{
+									backgroundColor:
+										idleTestStatus === 'success'
+											? theme.colors.success + '20'
+											: idleTestStatus === 'error'
+												? theme.colors.error + '20'
+												: theme.colors.bgActivity,
+									color:
+										idleTestStatus === 'success'
+											? theme.colors.success
+											: idleTestStatus === 'error'
+												? theme.colors.error
+												: theme.colors.textMain,
+									border: `1px solid ${
+										idleTestStatus === 'success'
+											? theme.colors.success
+											: idleTestStatus === 'error'
+												? theme.colors.error
+												: theme.colors.border
+									}`,
+									opacity: idleTestStatus === 'running' ? 0.7 : 1,
+								}}
+							>
+								{idleTestStatus === 'running' ? (
+									<>
+										<Loader2 className="w-3 h-3 animate-spin" />
+										Running
+									</>
+								) : idleTestStatus === 'success' ? (
+									<>
+										<Check className="w-3 h-3" />
+										Success
+									</>
+								) : idleTestStatus === 'error' ? (
+									<>
+										<AlertCircle className="w-3 h-3" />
+										Failed
+									</>
+								) : (
+									'Test'
+								)}
+							</button>
+						)}
+					</div>
+					{idleTestError && (
+						<p
+							className="text-xs mt-2 px-2 py-1 rounded"
+							style={{
+								color: theme.colors.error,
+								backgroundColor: theme.colors.error + '10',
+							}}
+						>
+							{idleTestError}
+						</p>
+					)}
+					<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
+						Runs when all agents finish and no Auto Run is active. Cue tasks don&apos;t count as
+						activity. The command receives &quot;Maestro is idle&quot; via stdin.
+					</p>
+				</div>
+			</div>
+
 			{/* Toast Duration */}
 			<div data-setting-id="notifications-toast">
 				<label className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
@@ -301,8 +479,8 @@ export function NotificationsPanel({
 					When are notifications triggered?
 				</div>
 				<ul className="text-xs opacity-70 space-y-1" style={{ color: theme.colors.textDim }}>
-					<li>• When an AI task completes</li>
-					<li>• When a long-running command finishes</li>
+					<li>• When an AI task completes (Custom Notification)</li>
+					<li>• When all agents and Auto Runs finish (Idle Notification)</li>
 				</ul>
 				<div
 					className="text-xs opacity-60 mt-3 pt-3"

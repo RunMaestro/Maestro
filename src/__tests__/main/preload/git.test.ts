@@ -326,4 +326,36 @@ describe('Git Preload API', () => {
 			expect(callback).toHaveBeenCalledWith(data);
 		});
 	});
+
+	describe('onWorktreeRemoved', () => {
+		it('should register event listener and return cleanup function', () => {
+			const callback = vi.fn();
+
+			const cleanup = api.onWorktreeRemoved(callback);
+
+			expect(mockOn).toHaveBeenCalledWith('worktree:removed', expect.any(Function));
+			expect(typeof cleanup).toBe('function');
+		});
+
+		it('should call callback with removal data', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, data: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'worktree:removed') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onWorktreeRemoved(callback);
+
+			const data = {
+				sessionId: 'session-123',
+				worktreePath: '/home/user/worktrees/feature',
+			};
+			registeredHandler!({}, data);
+
+			expect(callback).toHaveBeenCalledWith(data);
+		});
+	});
 });

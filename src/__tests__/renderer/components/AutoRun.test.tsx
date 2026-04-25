@@ -11,6 +11,9 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Theme, BatchRunState, SessionState } from '../../../renderer/types';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+const createMarkdownComponentsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 // Helper to seed the Zustand batch store so the component's direct store reads
 // (isErrorPaused, batchError) see the expected state for a given session.
@@ -47,6 +50,11 @@ const getByNormalizedText = (text: RegExp) => {
 	};
 };
 
+beforeEach(() => {
+	useSettingsStore.setState({ bionifyReadingMode: false });
+	createMarkdownComponentsCalls.length = 0;
+});
+
 // Mock the external dependencies
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -57,6 +65,17 @@ vi.mock('react-markdown', () => ({
 vi.mock('remark-gfm', () => ({
 	default: {},
 }));
+
+vi.mock('../../../renderer/utils/markdownConfig', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/markdownConfig')>();
+	return {
+		...actual,
+		createMarkdownComponents: (options: Record<string, unknown>) => {
+			createMarkdownComponentsCalls.push(options);
+			return actual.createMarkdownComponents(options as any);
+		},
+	};
+});
 
 vi.mock('react-syntax-highlighter', () => ({
 	Prism: ({ children }: { children: string }) => (
@@ -85,13 +104,11 @@ vi.mock('../../../renderer/components/MermaidRenderer', () => ({
 
 vi.mock('../../../renderer/components/AutoRun/AutoRunDocumentSelector', () => ({
 	AutoRunDocumentSelector: ({
-		theme,
 		documents,
 		selectedDocument,
 		onSelectDocument,
 		onRefresh,
 		onChangeFolder,
-		onCreateDocument,
 		isLoading,
 	}: any) => (
 		<div data-testid="document-selector">
@@ -264,6 +281,16 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
+		});
+
+		it('reflects global bionifyReadingMode in preview markdown components', () => {
+			useSettingsStore.setState({ bionifyReadingMode: true });
+			const props = createDefaultProps({ mode: 'preview', content: 'hello world' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(
+				createMarkdownComponentsCalls.some((call) => call.enableBionifyReadingMode === true)
+			).toBe(true);
 		});
 
 		it('shows "Select Auto Run Folder" button when no folder is configured', () => {
@@ -801,12 +828,12 @@ describe('AutoRun', () => {
 			expect(onStopBatchRun).toHaveBeenCalled();
 		});
 
-		it('shows Stopping... when isStopping is true', () => {
+		it('shows Stopping when isStopping is true', () => {
 			const batchRunState = createBatchRunState({ isStopping: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByText('Stopping...')).toBeInTheDocument();
+			expect(screen.getByText('Stopping')).toBeInTheDocument();
 		});
 	});
 
@@ -2266,6 +2293,31 @@ describe('Preview Mode with Search', () => {
 		});
 	});
 
+	it('passes bionify=false to preview markdown components while search is active', async () => {
+		useSettingsStore.setState({ bionifyReadingMode: true });
+		const props = createDefaultProps({ mode: 'preview', content: 'information information' });
+		renderWithProvider(<AutoRun {...props} />);
+
+		const preview = screen.getByTestId('react-markdown').parentElement!;
+		fireEvent.keyDown(preview, { key: 'f', metaKey: true });
+
+		const searchInput = await screen.findByPlaceholderText(/Search/);
+		fireEvent.change(searchInput, { target: { value: 'information' } });
+
+		await waitFor(() => {
+			expect(screen.getByText('1/2')).toBeInTheDocument();
+		});
+
+		expect(
+			createMarkdownComponentsCalls.some(
+				(call) =>
+					call.searchHighlight &&
+					call.enableBionifyReadingMode === false &&
+					(call.searchHighlight as { query?: string }).query === 'information'
+			)
+		).toBe(true);
+	});
+
 	it('toggles mode with Cmd+E from preview', async () => {
 		const props = createDefaultProps({ mode: 'preview' });
 		renderWithProvider(<AutoRun {...props} />);
@@ -3532,5 +3584,81 @@ describe('Reset Tasks Flash Notification', () => {
 			fireEvent.click(screen.getByTitle('Retry and resume Auto Run'));
 			expect(onResumeAfterError).toHaveBeenCalledTimes(1);
 		});
+	});
+});
+
+describe('Document Selector Task Count Sync', () => {
+	beforeEach(() => {
+		setupMaestroMock();
+		useBatchStore.setState({ documentTaskCounts: new Map() });
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+		useBatchStore.setState({ documentTaskCounts: new Map() });
+	});
+
+	it('pushes savedContent-derived task counts into batchStore for the selected document', async () => {
+		const content = ['# Tasks', '- [x] Done one', '- [x] Done two', '- [ ] Still pending'].join(
+			'\n'
+		);
+		const props = createDefaultProps({ selectedFile: 'my-doc', content });
+		renderWithProvider(<AutoRun {...props} />);
+
+		await waitFor(() => {
+			const entry = useBatchStore.getState().documentTaskCounts.get('my-doc');
+			expect(entry).toEqual({ completed: 2, total: 3 });
+		});
+	});
+
+	it('refreshes the store entry when savedContent changes via contentVersion bump', async () => {
+		const initial = '- [ ] one\n- [ ] two';
+		const props = createDefaultProps({
+			selectedFile: 'my-doc',
+			content: initial,
+			contentVersion: 1,
+		});
+		const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+		await waitFor(() => {
+			expect(useBatchStore.getState().documentTaskCounts.get('my-doc')).toEqual({
+				completed: 0,
+				total: 2,
+			});
+		});
+
+		const updated = '- [x] one\n- [x] two';
+		rerender(
+			<AutoRun
+				{...createDefaultProps({
+					selectedFile: 'my-doc',
+					content: updated,
+					contentVersion: 2,
+				})}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(useBatchStore.getState().documentTaskCounts.get('my-doc')).toEqual({
+				completed: 2,
+				total: 2,
+			});
+		});
+	});
+
+	it('does not write a stale zero entry while savedContent is empty', async () => {
+		vi.useFakeTimers();
+		try {
+			const props = createDefaultProps({ selectedFile: 'my-doc', content: '' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			expect(useBatchStore.getState().documentTaskCounts.has('my-doc')).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

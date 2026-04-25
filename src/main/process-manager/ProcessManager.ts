@@ -1,7 +1,7 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import type {
 	ProcessConfig,
 	ManagedProcess,
@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getDefaultShell } from '../stores/defaults';
+import { captureException } from '../utils/sentry';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -108,6 +109,7 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to write to process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -127,6 +129,7 @@ export class ProcessManager extends EventEmitter {
 			process.ptyProcess.resize(cols, rows);
 			return true;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to resize terminal', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -202,6 +205,7 @@ export class ProcessManager extends EventEmitter {
 			}
 			return false;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to interrupt process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -218,7 +222,7 @@ export class ProcessManager extends EventEmitter {
 	 * the tracking map immediately so that a replacement can be spawned, but the
 	 * escalation timer keeps a reference to ensure the OS-level process dies.
 	 */
-	kill(sessionId: string): boolean {
+	kill(sessionId: string, { sync = false }: { sync?: boolean } = {}): boolean {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return false;
 
@@ -233,7 +237,7 @@ export class ProcessManager extends EventEmitter {
 					// On Windows, node-pty's kill() only terminates the direct ConPTY
 					// child (the shell), not grandchild processes it spawned (e.g., dev
 					// servers, watchers). Use taskkill /t /f to kill the entire tree.
-					this.killWindowsProcessTree(proc.pid, sessionId);
+					this.killWindowsProcessTree(proc.pid, sessionId, sync);
 				} else {
 					const ptyProc = proc.ptyProcess;
 					const pid = proc.pid;
@@ -267,7 +271,7 @@ export class ProcessManager extends EventEmitter {
 			} else if (proc.childProcess) {
 				const pid = proc.childProcess.pid;
 				if (isWindows() && pid) {
-					this.killWindowsProcessTree(pid, sessionId);
+					this.killWindowsProcessTree(pid, sessionId, sync);
 				} else if (isWindows()) {
 					logger.warn(
 						'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
@@ -282,6 +286,7 @@ export class ProcessManager extends EventEmitter {
 			this.processes.delete(sessionId);
 			return true;
 		} catch (error) {
+			void captureException(error);
 			logger.error('[ProcessManager] Failed to kill process', 'ProcessManager', {
 				sessionId,
 				error: String(error),
@@ -295,22 +300,34 @@ export class ProcessManager extends EventEmitter {
 	 * This is necessary because POSIX signals (SIGINT/SIGTERM) don't reliably
 	 * terminate shell-spawned processes on Windows.
 	 */
-	private killWindowsProcessTree(pid: number, sessionId: string): void {
+	private killWindowsProcessTree(pid: number, sessionId: string, sync = false): void {
 		logger.info(
 			'[ProcessManager] Using taskkill to terminate process tree on Windows',
 			'ProcessManager',
-			{ sessionId, pid }
+			{ sessionId, pid, sync }
 		);
-		execFile('taskkill', ['/pid', String(pid), '/t', '/f'], (error) => {
-			if (error) {
+		if (sync) {
+			// During shutdown, block until taskkill completes so the process tree
+			// is actually dead before Electron exits.
+			try {
+				execFileSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
+					timeout: 5000,
+				});
+			} catch {
 				// taskkill returns non-zero if the process is already dead, which is fine
-				logger.debug(
-					'[ProcessManager] taskkill exited with error (process may already be terminated)',
-					'ProcessManager',
-					{ sessionId, pid, error: String(error) }
-				);
 			}
-		});
+		} else {
+			execFile('taskkill', ['/pid', String(pid), '/t', '/f'], (error) => {
+				if (error) {
+					// taskkill returns non-zero if the process is already dead, which is fine
+					logger.debug(
+						'[ProcessManager] taskkill exited with error (process may already be terminated)',
+						'ProcessManager',
+						{ sessionId, pid, error: String(error) }
+					);
+				}
+			});
+		}
 	}
 
 	/**
@@ -320,7 +337,10 @@ export class ProcessManager extends EventEmitter {
 	killAll(): void {
 		const sessionIds = [...this.processes.keys()];
 		for (const sessionId of sessionIds) {
-			this.kill(sessionId);
+			// Use sync kills so process trees are dead before the app exits.
+			// On Windows this blocks briefly per process (taskkill is fast),
+			// on POSIX this has no effect (SIGTERM is already non-blocking).
+			this.kill(sessionId, { sync: true });
 		}
 	}
 

@@ -17,7 +17,8 @@ import {
 	NoFolderState,
 	EmptyFolderState,
 } from '../../../../renderer/components/AutoRun/AutoRunEmptyStates';
-import type { Theme } from '../../../../renderer/types';
+
+import { createMockTheme } from '../../../helpers/mockTheme';
 
 // Mock Lucide icons, preserving className for assertion
 vi.mock('lucide-react', () => ({
@@ -37,27 +38,6 @@ vi.mock('lucide-react', () => ({
 		<svg data-testid="refresh-icon" className={className} style={style} />
 	),
 }));
-
-const createMockTheme = (): Theme => ({
-	id: 'test-theme',
-	name: 'Test Theme',
-	mode: 'dark',
-	colors: {
-		bgMain: '#1a1a1a',
-		bgSidebar: '#252525',
-		bgPanel: '#2d2d2d',
-		bgActivity: '#333333',
-		textMain: '#ffffff',
-		textDim: '#888888',
-		accent: '#0066ff',
-		accentForeground: '#ffffff',
-		border: '#333333',
-		highlight: '#0066ff33',
-		success: '#00aa00',
-		warning: '#ffaa00',
-		error: '#ff0000',
-	},
-});
 
 describe('NoFolderState', () => {
 	const theme = createMockTheme();

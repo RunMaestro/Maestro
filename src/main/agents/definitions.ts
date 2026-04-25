@@ -5,8 +5,9 @@
  * This includes CLI arguments, configuration options, and default settings.
  */
 
-import type { AgentCapabilities } from './capabilities';
+import type { AgentCapabilities, AgentConfig as BaseAgentConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+export type { AgentCapabilities } from '../../shared/types';
 
 // ============ Configuration Types ============
 
@@ -73,23 +74,20 @@ export type AgentConfigOption =
 	| SelectConfigOption;
 
 /**
- * Full agent configuration including runtime detection state
+ * Full agent configuration including runtime detection state.
+ * Extends the serializable BaseAgentConfig (from shared/types) with
+ * function-typed fields for CLI argument building (main process only).
  */
-export interface AgentConfig {
-	id: string;
-	name: string;
+export interface AgentConfig extends BaseAgentConfig {
+	// Narrow optionals to required for the main process full config
 	binaryName: string;
 	command: string;
-	args: string[]; // Base args always included (excludes batch mode prefix)
-	available: boolean;
-	path?: string;
-	customPath?: string; // User-specified custom path (shown in UI even if not available)
-	requiresPty?: boolean; // Whether this agent needs a pseudo-terminal
-	configOptions?: AgentConfigOption[]; // Agent-specific configuration
-	hidden?: boolean; // If true, agent is hidden from UI (internal use only)
-	capabilities: AgentCapabilities; // Agent feature capabilities
+	args: string[];
+	capabilities: AgentCapabilities;
+	// Override configOptions with the richer local type that includes argBuilder
+	configOptions?: AgentConfigOption[];
 
-	// Argument builders for dynamic CLI construction
+	// Argument builders for dynamic CLI construction (function-typed, not serializable)
 	// These are optional - agents that don't have them use hardcoded behavior
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
@@ -97,14 +95,14 @@ export interface AgentConfig {
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
-	yoloModeArgs?: string[]; // Args for YOLO/full-access mode (e.g., ['--dangerously-bypass-approvals-and-sandbox'])
 	workingDirArgs?: (dir: string) => string[]; // Function to build working directory args (e.g., ['-C', dir])
 	imageArgs?: (imagePath: string) => string[]; // Function to build image attachment args (e.g., ['-i', imagePath] for Codex)
+	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
-	readOnlyCliEnforced?: boolean; // Whether the agent's CLI enforces read-only mode (false = prompt-only enforcement)
+	batchModeEnvVars?: Record<string, string>; // Env vars applied ONLY to CLI batch spawns (maestro-cli send). Not applied to desktop UI or --live path. Use for settings that only make sense in short-lived non-interactive sessions (e.g., disabling background tasks).
 }
 
 /**
@@ -146,6 +144,11 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet
+		// Batch-mode env vars (CLI `maestro-cli send` default path only — not --live, not desktop UI).
+		// Background tasks cannot complete before a short-lived batch session exits, so results are lost (#861).
+		batchModeEnvVars: {
+			CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+		},
 		configOptions: [
 			{
 				key: 'model',
@@ -438,11 +441,79 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 	},
 	{
-		id: 'aider',
-		name: 'Aider',
-		binaryName: 'aider',
-		command: 'aider',
-		args: [], // Base args (placeholder - to be configured when implemented)
+		id: 'copilot-cli',
+		name: 'Copilot-CLI',
+		binaryName: 'copilot',
+		command: 'copilot',
+		args: [], // Base args for interactive mode (default copilot)
+		requiresPty: true, // Interactive Copilot exits immediately when launched over plain pipes without a TTY
+		// GitHub Copilot CLI argument builders
+		// Interactive mode: copilot (default)
+		// Batch mode: copilot -p "prompt" --output-format json --allow-all
+		// `--allow-all` is the documented equivalent of
+		// --allow-all-tools + --allow-all-paths + --allow-all-urls; required
+		// for non-interactive runs so Copilot never stops to confirm.
+		batchModePrefix: [], // No exec subcommand needed
+		batchModeArgs: ['--allow-all'], // Unattended: full permissions (tools + paths + urls)
+		jsonOutputArgs: ['--output-format', 'json'], // JSONL output
+		resumeArgs: (sessionId: string) => [`--resume=${sessionId}`], // Resume with session ID (--continue or --resume=sessionId)
+		readOnlyArgs: [
+			'--allow-tool=read,url',
+			'--deny-tool=write,shell,memory,github',
+			'--no-ask-user',
+		], // Enforce read-only by denying write/shell/memory/github actions at the Copilot CLI layer
+		readOnlyCliEnforced: true, // CLI-enforced via explicit tool permission rules
+		modelArgs: (modelId: string) => ['--model', modelId], // Model selection
+		yoloModeArgs: ['--allow-all'], // Full permissions (same as batchModeArgs; Copilot treats --yolo as an alias)
+		imagePromptBuilder: (imagePaths: string[]) =>
+			imagePaths.length > 0
+				? `Use these attached images as context:\n${imagePaths.map((imagePath) => `@${imagePath}`).join('\n')}\n\n`
+				: '',
+		promptArgs: (prompt: string) => ['-p', prompt], // Batch mode prompt arg
+		// Agent-specific configuration options
+		//
+		// Deliberately omitted: --autopilot, --allow-all-paths, --allow-all-urls,
+		// --experimental, --screen-reader. The batch path always runs with
+		// --allow-all so path/url toggles are moot, and --autopilot is an
+		// interactive-mode follow-up behavior that has no effect on -p runs.
+		// Experimental/screen-reader are user preferences rather than agent
+		// config and can be set via Custom CLI Args if needed.
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model to use. Pickable from models.dev catalog or type a custom model name. Leave empty for default.',
+				default: '', // Empty = use Copilot's default model
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Required for context usage display. Varies by model.',
+				default: 200000, // Default for Claude/GPT-5 models
+			},
+			{
+				key: 'reasoningEffort',
+				type: 'select',
+				label: 'Reasoning Effort',
+				description:
+					'Reasoning budget for models that support it (GPT-5 Codex, o-series). ' +
+					'Leave empty to use the model default. Non-reasoning models ignore this flag.',
+				options: ['', 'low', 'medium', 'high', 'xhigh'],
+				default: '',
+				argBuilder: (value: string) =>
+					value && value.trim() ? ['--reasoning-effort', value.trim()] : [],
+			},
+		],
 	},
 ];
 

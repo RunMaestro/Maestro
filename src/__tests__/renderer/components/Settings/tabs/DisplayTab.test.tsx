@@ -20,15 +20,20 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { logger } from '../../../../../renderer/utils/logger';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import { DisplayTab } from '../../../../../renderer/components/Settings/tabs/DisplayTab';
 import type { Theme } from '../../../../../renderer/types';
 
+import { mockTheme } from '../../../../helpers/mockTheme';
 // --- Mock setters (module-level for assertion access) ---
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
+const mockSetBionifyReadingMode = vi.fn();
+const mockSetBionifyIntensity = vi.fn();
+const mockSetBionifyAlgorithm = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
 const mockSetFileExplorerIconTheme = vi.fn();
 const mockSetUseNativeTitleBar = vi.fn();
@@ -38,6 +43,10 @@ const mockSetDocumentGraphMaxNodes = vi.fn();
 const mockUpdateContextManagementSettings = vi.fn();
 const mockSetLocalIgnorePatterns = vi.fn();
 const mockSetLocalHonorGitignore = vi.fn();
+const mockSetFileExplorerMaxDepth = vi.fn();
+const mockSetFileExplorerMaxEntries = vi.fn();
+const mockSetSshReduceEntryCapEnabled = vi.fn();
+const mockSetSshReduceEntryCapFraction = vi.fn();
 const mockSetShowStarredInUnreadFilter = vi.fn();
 const mockSetShowFilePreviewsInUnreadFilter = vi.fn();
 
@@ -54,6 +63,12 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setMaxLogBuffer: mockSetMaxLogBuffer,
 		maxOutputLines: 25,
 		setMaxOutputLines: mockSetMaxOutputLines,
+		bionifyReadingMode: false,
+		setBionifyReadingMode: mockSetBionifyReadingMode,
+		bionifyIntensity: 1,
+		setBionifyIntensity: mockSetBionifyIntensity,
+		bionifyAlgorithm: '- 0 1 1 2 0.4',
+		setBionifyAlgorithm: mockSetBionifyAlgorithm,
 		userMessageAlignment: 'right',
 		setUserMessageAlignment: mockSetUserMessageAlignment,
 		fileExplorerIconTheme: 'default',
@@ -81,6 +96,14 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setLocalIgnorePatterns: mockSetLocalIgnorePatterns,
 		localHonorGitignore: true,
 		setLocalHonorGitignore: mockSetLocalHonorGitignore,
+		fileExplorerMaxDepth: 5,
+		setFileExplorerMaxDepth: mockSetFileExplorerMaxDepth,
+		fileExplorerMaxEntries: 100_000,
+		setFileExplorerMaxEntries: mockSetFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled: false,
+		setSshReduceEntryCapEnabled: mockSetSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction: 0.1,
+		setSshReduceEntryCapFraction: mockSetSshReduceEntryCapFraction,
 		showStarredInUnreadFilter: false,
 		setShowStarredInUnreadFilter: mockSetShowStarredInUnreadFilter,
 		showFilePreviewsInUnreadFilter: false,
@@ -131,27 +154,15 @@ vi.mock('../../../../../renderer/components/Settings/IgnorePatternsSection', () 
 	),
 }));
 
+vi.mock('../../../../../renderer/components/ui/Modal', () => ({
+	Modal: ({ title, children }: { title: string; children: React.ReactNode }) => (
+		<div role="dialog" aria-label={title}>
+			{children}
+		</div>
+	),
+}));
+
 // Sample theme for testing
-const mockTheme: Theme = {
-	id: 'dracula',
-	name: 'Dracula',
-	mode: 'dark',
-	colors: {
-		bgMain: '#282a36',
-		bgSidebar: '#21222c',
-		bgActivity: '#343746',
-		border: '#44475a',
-		textMain: '#f8f8f2',
-		textDim: '#6272a4',
-		accent: '#bd93f9',
-		accentDim: '#bd93f920',
-		accentText: '#ff79c6',
-		accentForeground: '#ffffff',
-		success: '#50fa7b',
-		warning: '#ffb86c',
-		error: '#ff5555',
-	},
-};
 
 describe('DisplayTab', () => {
 	beforeEach(() => {
@@ -187,6 +198,86 @@ describe('DisplayTab', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Rich' }));
 
 			expect(mockSetFileExplorerIconTheme).toHaveBeenCalledWith('rich');
+		});
+	});
+
+	describe('Bionify Display Settings', () => {
+		it('renders the Reading Mode toggle and sub-options (ghosted when off)', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByText('Reading Mode')).toBeInTheDocument();
+			const toggle = screen.getByRole('switch', { name: 'Bionify reading mode' });
+			expect(toggle).toHaveAttribute('aria-checked', 'false');
+			// Sub-options remain in the DOM but are ghosted via opacity/pointer-events
+			expect(screen.getByText('Intensity')).toBeInTheDocument();
+			expect(screen.getByLabelText('Bionify algorithm')).toBeInTheDocument();
+			const ghosted = screen.getByText('Intensity').closest('.space-y-4') as HTMLElement;
+			expect(ghosted.style.opacity).toBe('0.4');
+			expect(ghosted.style.pointerEvents).toBe('none');
+		});
+
+		it('enables Bionify when the toggle is clicked', () => {
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Bionify reading mode' }));
+
+			expect(mockSetBionifyReadingMode).toHaveBeenCalledWith(true);
+		});
+
+		it('un-ghosts sub-options when enabled', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			expect(screen.getByLabelText('Bionify algorithm')).toHaveValue('- 0 1 1 2 0.4');
+			expect(screen.getByRole('button', { name: 'Info' })).toBeInTheDocument();
+			const panel = screen.getByText('Intensity').closest('.space-y-4') as HTMLElement;
+			expect(panel.style.opacity).toBe('1');
+			expect(panel.style.pointerEvents).toBe('auto');
+		});
+
+		it('updates Bionify intensity when a new value is chosen', async () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Strong' }));
+
+			expect(mockSetBionifyIntensity).toHaveBeenCalledWith(1.35);
+		});
+
+		it('updates the algorithm string when edited', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.change(input, { target: { value: '+ 1 1 2 2 0.55' } });
+			fireEvent.blur(input);
+
+			expect(mockSetBionifyAlgorithm).toHaveBeenLastCalledWith('+ 1 1 2 2 0.55');
+		});
+
+		it('shows validation feedback and avoids persisting invalid algorithm input', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			const input = screen.getByLabelText('Bionify algorithm');
+			fireEvent.change(input, { target: { value: '- 0 1 1' } });
+			fireEvent.blur(input);
+
+			expect(screen.getByText(/Enter `\+\|-/)).toBeInTheDocument();
+			expect(mockSetBionifyAlgorithm).not.toHaveBeenCalled();
+		});
+
+		it('opens an info modal with the upstream algorithm breakdown', () => {
+			mockUseSettingsOverrides = { bionifyReadingMode: true };
+			render(<DisplayTab theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Info' }));
+
+			const dialog = screen.getByRole('dialog', { name: 'Bionify Algorithm Reference' });
+			expect(dialog).toBeInTheDocument();
+			expect(within(dialog).getAllByText(/- 0 1 1 2 0.4/).length).toBeGreaterThan(0);
+			expect(within(dialog).getByText(/common english words/i)).toBeInTheDocument();
+			expect(within(dialog).getByText(/fraction of each word/i)).toBeInTheDocument();
 		});
 	});
 
@@ -1499,7 +1590,7 @@ describe('DisplayTab', () => {
 				.fn()
 				.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<DisplayTab theme={mockTheme} />);
 
@@ -1518,7 +1609,11 @@ describe('DisplayTab', () => {
 			// After the rejection resolves, the select should reappear (fontLoading goes false)
 			const fontSelectAfter = screen.getByRole('combobox');
 			expect(fontSelectAfter).toBeInTheDocument();
-			expect(consoleSpy).toHaveBeenCalledWith('Failed to load fonts:', expect.any(Error));
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Failed to load fonts:',
+				undefined,
+				expect.any(Error)
+			);
 
 			consoleSpy.mockRestore();
 		});
@@ -1528,7 +1623,7 @@ describe('DisplayTab', () => {
 				.fn()
 				.mockRejectedValue(new Error('Font detection failed'));
 
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 
 			render(<DisplayTab theme={mockTheme} />);
 

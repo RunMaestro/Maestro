@@ -16,6 +16,7 @@ import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
+import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 
 interface AgentEfficiencyChartProps {
 	/** Aggregated stats data from the API */
@@ -24,26 +25,6 @@ interface AgentEfficiencyChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Format duration in milliseconds to human-readable string
- */
-function formatDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
 }
 
 /**
@@ -58,6 +39,7 @@ function formatAgentName(agent: string): string {
 		'gemini-cli': 'Gemini CLI',
 		'qwen3-coder': 'Qwen3 Coder',
 		'factory-droid': 'Factory Droid',
+		copilot: 'GitHub Copilot',
 		terminal: 'Terminal',
 	};
 	return names[agent] || agent;

@@ -8,119 +8,10 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
-import { useAutoRun, type AutoRunDocument } from '../hooks/useAutoRun';
+import { useAutoRun } from '../hooks/useAutoRun';
+import { DocumentCard } from './AutoRunDocumentCard';
 import type { AutoRunState, UseWebSocketReturn } from '../hooks/useWebSocket';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-
-/**
- * Document card component for the Auto Run panel
- */
-interface DocumentCardProps {
-	document: AutoRunDocument;
-	onTap: (filename: string) => void;
-}
-
-function DocumentCard({ document, onTap }: DocumentCardProps) {
-	const colors = useThemeColors();
-	const progress =
-		document.taskCount > 0 ? Math.round((document.completedCount / document.taskCount) * 100) : 0;
-
-	const handleTap = useCallback(() => {
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-		onTap(document.filename);
-	}, [document.filename, onTap]);
-
-	return (
-		<button
-			onClick={handleTap}
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				gap: '8px',
-				padding: '14px 16px',
-				borderRadius: '12px',
-				border: `1px solid ${colors.border}`,
-				backgroundColor: colors.bgSidebar,
-				color: colors.textMain,
-				width: '100%',
-				textAlign: 'left',
-				cursor: 'pointer',
-				transition: 'all 0.15s ease',
-				touchAction: 'manipulation',
-				WebkitTapHighlightColor: 'transparent',
-				outline: 'none',
-				userSelect: 'none',
-				WebkitUserSelect: 'none',
-			}}
-			aria-label={`${document.filename}, ${document.completedCount} of ${document.taskCount} tasks completed`}
-		>
-			{/* Filename */}
-			<div
-				style={{
-					fontSize: '15px',
-					fontWeight: 600,
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-					whiteSpace: 'nowrap',
-					width: '100%',
-				}}
-			>
-				{document.filename}
-			</div>
-
-			{/* Progress row */}
-			<div
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '10px',
-					width: '100%',
-				}}
-			>
-				<span
-					style={{
-						fontSize: '12px',
-						color: colors.textDim,
-						flexShrink: 0,
-					}}
-				>
-					{document.completedCount}/{document.taskCount} tasks
-				</span>
-
-				{/* Mini progress bar */}
-				<div
-					style={{
-						flex: 1,
-						height: '4px',
-						backgroundColor: `${colors.textDim}20`,
-						borderRadius: '2px',
-						overflow: 'hidden',
-					}}
-				>
-					<div
-						style={{
-							width: `${progress}%`,
-							height: '100%',
-							backgroundColor: progress === 100 ? colors.success : colors.accent,
-							borderRadius: '2px',
-							transition: 'width 0.3s ease-out',
-						}}
-					/>
-				</div>
-
-				<span
-					style={{
-						fontSize: '11px',
-						color: colors.textDim,
-						flexShrink: 0,
-					}}
-				>
-					{progress}%
-				</span>
-			</div>
-		</button>
-	);
-}
 
 /**
  * Props for AutoRunPanel component
@@ -520,7 +411,7 @@ export function AutoRunPanel({
 									borderRadius: '3px',
 								}}
 							>
-								.maestro/auto-run/
+								.maestro/playbooks/
 							</code>{' '}
 							directory to get started
 						</p>

@@ -31,6 +31,8 @@ import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
+import { estimateTokensFromLogs } from '../../../shared/formatters';
+import { logger } from '../../utils/logger';
 
 // Re-export types from the canonical store location
 export type { MergeState, TabMergeState } from '../../stores/operationStore';
@@ -40,15 +42,6 @@ export type { MergeState, TabMergeState } from '../../stores/operationStore';
  * Default: 100,000 tokens (safe for most models)
  */
 const MAX_CONTEXT_TOKENS_WARNING = 100000;
-
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokensFromLogs(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
 
 /**
  * Request to merge two sessions/tabs
@@ -314,7 +307,7 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 			const estimatedMergedTokens = sourceTokens + targetTokens;
 
 			if (estimatedMergedTokens > MAX_CONTEXT_TOKENS_WARNING) {
-				console.warn(
+				logger.warn(
 					`Large context merge: ~${estimatedMergedTokens.toLocaleString()} tokens. ` +
 						`This may exceed some agents' context windows.`
 				);
@@ -695,7 +688,7 @@ export function useMergeSessionWithSessions(
 							});
 						} catch (historyError) {
 							// Non-critical: log but don't fail the merge operation
-							console.warn('Failed to log merge operation to history:', historyError);
+							logger.warn('Failed to log merge operation to history:', undefined, historyError);
 						}
 
 						// Notify caller with session info for notification purposes
@@ -787,10 +780,10 @@ export function useMergeSessionWithSessions(
 							sessionName: getSessionDisplayName(targetSession),
 						});
 					} catch (historyError) {
-						console.warn('Failed to log merge operation to history:', historyError);
+						logger.warn('Failed to log merge operation to history:', undefined, historyError);
 					}
 
-					console.log('[MergeSession] Injected context into target tab:', {
+					logger.info('[MergeSession] Injected context into target tab:', undefined, {
 						targetSessionId: result.targetSessionId,
 						targetTabId: result.targetTabId,
 						sourceSession: getSessionDisplayName(sourceSession),

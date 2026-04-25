@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
-import { useLayerStack } from '../../contexts/LayerStackContext';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 export interface AutoRunSearchBarProps {
@@ -37,22 +38,12 @@ export function AutoRunSearchBar({
 	onClose,
 }: AutoRunSearchBarProps) {
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const { registerLayer, unregisterLayer } = useLayerStack();
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
 
 	// Register with layer stack so Escape closes search before modal
-	useEffect(() => {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.AUTORUN_SEARCH,
-			blocksLowerLayers: false,
-			capturesFocus: true,
-			focusTrap: 'lenient',
-			onEscape: () => onCloseRef.current(),
-		});
-		return () => unregisterLayer(id);
-	}, [registerLayer, unregisterLayer]);
+	useModalLayer(MODAL_PRIORITIES.AUTORUN_SEARCH, undefined, onClose, {
+		blocksLowerLayers: false,
+		focusTrap: 'lenient',
+	});
 
 	// Auto-focus the search input when the component mounts
 	useEffect(() => {
@@ -119,14 +110,9 @@ export function AutoRunSearchBar({
 					</button>
 				</>
 			)}
-			<button
-				onClick={onClose}
-				className="p-1 rounded hover:bg-white/10 transition-colors"
-				style={{ color: theme.colors.textDim }}
-				title="Close search (Esc)"
-			>
+			<GhostIconButton onClick={onClose} title="Close search (Esc)" color={theme.colors.textDim}>
 				<X className="w-4 h-4" />
-			</button>
+			</GhostIconButton>
 		</div>
 	);
 }

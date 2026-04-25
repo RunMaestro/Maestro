@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shellEscape, shellEscapeArgs, buildShellCommand } from '../../../main/utils/shell-escape';
+import { shellEscape, buildShellCommand } from '../../../main/utils/shell-escape';
 
 describe('shell-escape', () => {
 	describe('shellEscape', () => {
@@ -44,17 +44,6 @@ describe('shell-escape', () => {
 		it('handles unicode characters', () => {
 			expect(shellEscape('hello')).toBe("'hello'");
 			expect(shellEscape('')).toBe("''");
-		});
-	});
-
-	describe('shellEscapeArgs', () => {
-		it('escapes an array of arguments', () => {
-			const result = shellEscapeArgs(['hello', 'world', "it's"]);
-			expect(result).toEqual(["'hello'", "'world'", "'it'\\''s'"]);
-		});
-
-		it('handles empty array', () => {
-			expect(shellEscapeArgs([])).toEqual([]);
 		});
 	});
 

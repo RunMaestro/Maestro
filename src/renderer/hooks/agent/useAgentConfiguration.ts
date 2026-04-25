@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { AgentConfig } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
+import { logger } from '../../utils/logger';
 
 declare const window: Window & {
 	maestro: {
@@ -191,7 +192,7 @@ export function useAgentConfiguration(
 				setSelectedAgent(filtered[0].id);
 			}
 		} catch (error) {
-			console.error('Failed to detect agents:', error);
+			logger.error('Failed to detect agents:', undefined, error);
 		} finally {
 			setIsDetecting(false);
 		}
@@ -216,7 +217,7 @@ export function useAgentConfiguration(
 					if (latestLoadRequestRef.current !== requestId) return; // stale
 					setAvailableModels(models);
 				} catch (err) {
-					console.error('Failed to load models:', err);
+					logger.error('Failed to load models:', undefined, err);
 				} finally {
 					if (latestLoadRequestRef.current === requestId) {
 						setLoadingModels(false);
@@ -269,7 +270,7 @@ export function useAgentConfiguration(
 			const models = await window.maestro.agents.getModels(selectedAgent, true);
 			setAvailableModels(models);
 		} catch (err) {
-			console.error('Failed to refresh models:', err);
+			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
 			setLoadingModels(false);
 		}
@@ -285,7 +286,7 @@ export function useAgentConfiguration(
 				: agents.filter((a: AgentConfig) => a.available && !a.hidden);
 			setDetectedAgents(filtered);
 		} catch (error) {
-			console.error('Failed to refresh agents:', error);
+			logger.error('Failed to refresh agents:', undefined, error);
 		} finally {
 			setRefreshingAgent(false);
 		}
@@ -336,7 +337,7 @@ export function useAgentConfiguration(
 						setSshRemotes(configsResult.configs);
 					}
 				} catch (error) {
-					console.error('Failed to load SSH remotes:', error);
+					logger.error('Failed to load SSH remotes:', undefined, error);
 				}
 			})();
 		}

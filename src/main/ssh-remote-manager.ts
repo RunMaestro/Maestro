@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import { SshRemoteConfig, SshRemoteTestResult } from '../shared/types';
 import { execFileNoThrow, ExecResult } from './utils/execFile';
 import { expandTilde } from '../shared/pathUtils';
+import { captureException } from './utils/sentry';
 
 /**
  * Validation result for SSH remote configuration.
@@ -205,6 +206,7 @@ export class SshRemoteManager {
 				},
 			};
 		} catch (err) {
+			void captureException(err);
 			return {
 				success: false,
 				error: `Connection test failed: ${String(err)}`,

@@ -838,6 +838,22 @@ describe('substituteTemplateVariables', () => {
 			expect(result).toBe('completed exit=0 dur=15000 by=lint-on-save');
 		});
 
+		it('should replace {{CUE_SOURCE_AGENT_ID}} when sourceAgentId is set', () => {
+			const context = createTestContext({
+				cue: {
+					sourceAgentId: 'agent-abc-123',
+				},
+			});
+			const result = substituteTemplateVariables('Target: {{CUE_SOURCE_AGENT_ID}}', context);
+			expect(result).toBe('Target: agent-abc-123');
+		});
+
+		it('should replace {{CUE_SOURCE_AGENT_ID}} with empty string when not set', () => {
+			const context = createTestContext({ cue: {} });
+			const result = substituteTemplateVariables('Target: {{CUE_SOURCE_AGENT_ID}}', context);
+			expect(result).toBe('Target: ');
+		});
+
 		it('should default missing cue variables to empty string', () => {
 			const context = createTestContext({ cue: {} });
 			const result = substituteTemplateVariables(

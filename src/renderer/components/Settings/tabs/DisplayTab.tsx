@@ -7,13 +7,34 @@
  */
 
 import { useState } from 'react';
-import { Sparkles, AlertTriangle, AppWindow, ListFilter } from 'lucide-react';
+import {
+	ALargeSmall,
+	AlignHorizontalJustifyCenter,
+	AlertTriangle,
+	AppWindow,
+	BookOpen,
+	Database,
+	FolderSearch,
+	HelpCircle,
+	WrapText,
+	ListFilter,
+	Palette,
+	Sparkles,
+} from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme } from '../../../types';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { FontConfigurationPanel } from '../../FontConfigurationPanel';
 import { IgnorePatternsSection } from '../IgnorePatternsSection';
+import { FilePanelSettingsSection } from '../FilePanelSettingsSection';
+import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../../../stores/settingsStore';
+import { logger } from '../../../utils/logger';
+import { Modal } from '../../ui/Modal';
+import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { DEFAULT_BIONIFY_ALGORITHM } from '../../../utils/bionifyReadingMode';
+
+const BIONIFY_ALGORITHM_PATTERN = /^[+-](\s+\d+){4}\s+(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
 
 export interface DisplayTabProps {
 	theme: Theme;
@@ -29,6 +50,12 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setMaxLogBuffer,
 		maxOutputLines,
 		setMaxOutputLines,
+		bionifyReadingMode,
+		setBionifyReadingMode,
+		bionifyIntensity,
+		setBionifyIntensity,
+		bionifyAlgorithm,
+		setBionifyAlgorithm,
 		userMessageAlignment,
 		setUserMessageAlignment,
 		fileExplorerIconTheme,
@@ -51,12 +78,35 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setLocalIgnorePatterns,
 		localHonorGitignore,
 		setLocalHonorGitignore,
+		fileExplorerMaxDepth,
+		setFileExplorerMaxDepth,
+		fileExplorerMaxEntries,
+		setFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled,
+		setSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction,
+		setSshReduceEntryCapFraction,
 	} = useSettings();
 
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
 	const [fontLoading, setFontLoading] = useState(false);
 	const [fontsLoaded, setFontsLoaded] = useState(false);
+	const [showBionifyInfoModal, setShowBionifyInfoModal] = useState(false);
+	const [bionifyAlgorithmDraft, setBionifyAlgorithmDraft] = useState(
+		bionifyAlgorithm ?? DEFAULT_BIONIFY_ALGORITHM
+	);
+
+	const isBionifyAlgorithmValid = BIONIFY_ALGORITHM_PATTERN.test(bionifyAlgorithmDraft.trim());
+
+	const commitBionifyAlgorithmDraft = () => {
+		if (
+			isBionifyAlgorithmValid &&
+			bionifyAlgorithmDraft.trim() !== (bionifyAlgorithm ?? DEFAULT_BIONIFY_ALGORITHM)
+		) {
+			setBionifyAlgorithm(bionifyAlgorithmDraft.trim());
+		}
+	};
 
 	const loadFonts = async () => {
 		if (fontsLoaded) return; // Don't reload if already loaded
@@ -74,7 +124,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			}
 			setFontsLoaded(true);
 		} catch (error) {
-			console.error('Failed to load fonts:', error);
+			logger.error('Failed to load fonts:', undefined, error);
 		} finally {
 			setFontLoading(false);
 		}
@@ -120,7 +170,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Font Size */}
 			<div data-setting-id="display-font-size">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Font Size</div>
+				<SettingsSectionHeading icon={ALargeSmall}>Font Size</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 12, label: 'Small' },
@@ -136,7 +186,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Max Log Buffer */}
 			<div data-setting-id="display-max-log-buffer">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Maximum Log Buffer</div>
+				<SettingsSectionHeading icon={Database}>Maximum Log Buffer</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[1000, 5000, 10000, 25000]}
 					value={maxLogBuffer}
@@ -151,9 +201,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Max Output Lines */}
 			<div data-setting-id="display-max-output-lines">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
+				<SettingsSectionHeading icon={WrapText}>
 					Max Output Lines per Response
-				</div>
+				</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 15 },
@@ -174,9 +224,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Message Alignment */}
 			<div data-setting-id="display-message-alignment">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
+				<SettingsSectionHeading icon={AlignHorizontalJustifyCenter}>
 					User Message Alignment
-				</div>
+				</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 'left', label: 'Left' },
@@ -193,9 +243,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 			</div>
 
 			<div data-setting-id="display-icon-theme">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-					Files Pane Icon Theme
-				</div>
+				<SettingsSectionHeading icon={Palette}>Files Pane Icon Theme</SettingsSectionHeading>
 				<ToggleButtonGroup
 					options={[
 						{ value: 'default', label: 'Default' },
@@ -213,13 +261,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Window Chrome Settings */}
 			<div data-setting-id="display-window-chrome">
-				<label
-					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<AppWindow className="w-3 h-3" />
-					Window Chrome
-				</label>
+				<SettingsSectionHeading icon={AppWindow}>Window Chrome</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{
@@ -292,13 +334,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Starred Tabs in Unread Filter */}
 			<div data-setting-id="display-tab-filtering">
-				<label
-					className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<ListFilter className="w-3 h-3" />
-					Tab Filtering
-				</label>
+				<SettingsSectionHeading icon={ListFilter}>Tab Filtering</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{
@@ -374,10 +410,7 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Document Graph Settings */}
 			<div data-setting-id="display-document-graph">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Sparkles className="w-3 h-3" />
-					Document Graph
-				</div>
+				<SettingsSectionHeading icon={Sparkles}>Document Graph</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -444,10 +477,9 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 
 			{/* Context Window Warnings */}
 			<div data-setting-id="display-context-warnings">
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<AlertTriangle className="w-3 h-3" />
+				<SettingsSectionHeading icon={AlertTriangle}>
 					Context Window Warnings
-				</div>
+				</SettingsSectionHeading>
 				<div
 					className="p-3 rounded border space-y-3"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -611,21 +643,213 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				</div>
 			</div>
 
-			{/* Local File Indexing Ignore Patterns */}
-			<div data-setting-id="display-ignore-patterns">
-				<IgnorePatternsSection
-					theme={theme}
-					title="Local Ignore Patterns"
-					description="Configure glob patterns for folders to exclude when indexing local files in the file explorer. Excluding large directories (like .git) reduces memory usage and speeds up file tree loading."
-					ignorePatterns={localIgnorePatterns}
-					onIgnorePatternsChange={setLocalIgnorePatterns}
-					defaultPatterns={DEFAULT_LOCAL_IGNORE_PATTERNS}
-					showHonorGitignore
-					honorGitignore={localHonorGitignore}
-					onHonorGitignoreChange={setLocalHonorGitignore}
-					onReset={() => setLocalHonorGitignore(true)}
-				/>
+			<div data-setting-id="display-bionify-reading-mode">
+				<SettingsSectionHeading icon={BookOpen}>Reading Mode</SettingsSectionHeading>
+				<p className="text-xs opacity-50 mb-2">
+					Applies Bionify-style emphasis only to opted-in long-form readers like File Preview and
+					Auto Run. Terminals, logs, and chat input stay unchanged.
+				</p>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div
+						className="flex items-center justify-between cursor-pointer"
+						onClick={() => setBionifyReadingMode(!bionifyReadingMode)}
+						role="button"
+						tabIndex={0}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setBionifyReadingMode(!bionifyReadingMode);
+							}
+						}}
+					>
+						<div className="flex-1 pr-3">
+							<div
+								className="font-medium flex items-center gap-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								<span>Bionify Emphasis</span>
+								<button
+									type="button"
+									onClick={(e) => {
+										e.stopPropagation();
+										setShowBionifyInfoModal(true);
+									}}
+									className="inline-flex items-center justify-center rounded transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+									style={{ width: '20px', height: '20px', color: theme.colors.textDim }}
+									aria-label="Info"
+									title="Bionify algorithm info"
+								>
+									<HelpCircle className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						</div>
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setBionifyReadingMode(!bionifyReadingMode);
+							}}
+							className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+							style={{
+								backgroundColor: bionifyReadingMode ? theme.colors.accent : theme.colors.bgActivity,
+							}}
+							role="switch"
+							aria-checked={bionifyReadingMode}
+							aria-label="Bionify reading mode"
+						>
+							<span
+								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+									bionifyReadingMode ? 'translate-x-5' : 'translate-x-0.5'
+								}`}
+							/>
+						</button>
+					</div>
+
+					<div
+						className="space-y-4 pt-3 border-t"
+						style={{
+							borderColor: theme.colors.border,
+							opacity: bionifyReadingMode ? 1 : 0.4,
+							pointerEvents: bionifyReadingMode ? 'auto' : 'none',
+						}}
+					>
+						<div>
+							<div
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+								style={{ color: theme.colors.textDim }}
+							>
+								Intensity
+							</div>
+							<ToggleButtonGroup
+								options={[
+									{ value: 0.85, label: 'Soft' },
+									{ value: 1, label: 'Default' },
+									{ value: 1.35, label: 'Strong' },
+								]}
+								value={bionifyIntensity}
+								onChange={setBionifyIntensity}
+								theme={theme}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								Controls how hard the emphasis hits. Strong increases emphasis weight and fades the
+								remaining characters more aggressively.
+							</p>
+						</div>
+
+						<div>
+							<label
+								htmlFor="bionify-algorithm-input"
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+							>
+								Bionify Algorithm
+							</label>
+							<input
+								id="bionify-algorithm-input"
+								aria-label="Bionify algorithm"
+								type="text"
+								value={bionifyAlgorithmDraft}
+								onChange={(event) => setBionifyAlgorithmDraft(event.target.value)}
+								onBlur={commitBionifyAlgorithmDraft}
+								onKeyDown={(event) => {
+									if (event.key === 'Enter') {
+										event.currentTarget.blur();
+									}
+								}}
+								className="w-full px-3 py-2 rounded text-sm outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									color: theme.colors.textMain,
+									border: `1px solid ${isBionifyAlgorithmValid ? theme.colors.border : theme.colors.warning}`,
+								}}
+								placeholder="- 0 1 1 2 0.4"
+								spellCheck={false}
+							/>
+							<p className="text-xs opacity-50 mt-2">
+								Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0
+								1 1 2 0.4`
+							</p>
+							{!isBionifyAlgorithmValid && (
+								<p className="text-xs mt-2" style={{ color: theme.colors.warning }}>
+									Enter `+|- len1 len2 len3 len4 fraction`, for example `- 0 1 1 2 0.4`.
+								</p>
+							)}
+						</div>
+					</div>
+				</div>
 			</div>
+
+			{/* File Indexing — groups ignore patterns + file panel limits */}
+			<div data-setting-id="display-file-indexing">
+				<SettingsSectionHeading icon={FolderSearch}>File Indexing</SettingsSectionHeading>
+				<div className="space-y-3">
+					<IgnorePatternsSection
+						theme={theme}
+						title="Local Ignore Patterns"
+						description="Configure glob patterns for folders to exclude when indexing local files in the file explorer. Excluding large directories (like .git) reduces memory usage and speeds up file tree loading."
+						ignorePatterns={localIgnorePatterns}
+						onIgnorePatternsChange={setLocalIgnorePatterns}
+						defaultPatterns={DEFAULT_LOCAL_IGNORE_PATTERNS}
+						showHonorGitignore
+						honorGitignore={localHonorGitignore}
+						onHonorGitignoreChange={setLocalHonorGitignore}
+						onReset={() => setLocalHonorGitignore(true)}
+						hideEyebrow
+					/>
+					<FilePanelSettingsSection
+						theme={theme}
+						maxDepth={fileExplorerMaxDepth}
+						onMaxDepthChange={setFileExplorerMaxDepth}
+						maxEntries={fileExplorerMaxEntries}
+						onMaxEntriesChange={setFileExplorerMaxEntries}
+						sshReduceEntryCapEnabled={sshReduceEntryCapEnabled}
+						onSshReduceEntryCapEnabledChange={setSshReduceEntryCapEnabled}
+						sshReduceEntryCapFraction={sshReduceEntryCapFraction}
+						onSshReduceEntryCapFractionChange={setSshReduceEntryCapFraction}
+					/>
+				</div>
+			</div>
+
+			{showBionifyInfoModal && (
+				<Modal
+					theme={theme}
+					title="Bionify Algorithm Reference"
+					priority={MODAL_PRIORITIES.GROUP_CHAT_INFO}
+					onClose={() => setShowBionifyInfoModal(false)}
+					width={520}
+					maxHeight="70vh"
+					closeOnBackdropClick
+				>
+					<div className="space-y-4 text-sm" style={{ color: theme.colors.textMain }}>
+						<div
+							className="rounded border px-3 py-2 font-mono text-sm"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							- 0 1 1 2 0.4
+						</div>
+						<p style={{ color: theme.colors.textDim }}>
+							The first character is `-` or `+`. `-` skips common english words like `a`, `and`, and
+							`the`. `+` highlights every word.
+						</p>
+						<ul className="list-disc pl-5 space-y-2" style={{ color: theme.colors.textDim }}>
+							<li>The next four numbers control highlighted characters for words of length 1-4.</li>
+							<li>
+								The final value is a fraction of each word&apos;s characters to emphasize (for
+								example, `0.4` highlights the first 40% of characters in words longer than 4
+								letters).
+							</li>
+							<li>
+								Current default: `- 0 1 1 2 0.4`, which skips common words and highlights the first
+								40% of longer words.
+							</li>
+						</ul>
+					</div>
+				</Modal>
+			)}
 		</div>
 	);
 }

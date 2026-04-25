@@ -15,6 +15,8 @@ import {
 	stopCueRun,
 	getCueProcessList,
 } from './cue/cue-executor';
+import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
+import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
@@ -65,6 +67,9 @@ import {
 	registerCueHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
+	registerMaestroCliHandlers,
+	registerPromptsHandlers,
+	registerMemoryHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -91,6 +96,8 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
+import { captureException } from './utils/sentry';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -131,6 +138,7 @@ import {
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
 import { WakaTimeManager } from './wakatime-manager';
+import { MaestroCliManager } from './maestro-cli-manager';
 import type { TemplateContext } from '../shared/templateVariables';
 
 // ============================================================================
@@ -191,6 +199,7 @@ if (!installationId) {
 
 // Initialize WakaTime heartbeat manager
 const wakatimeManager = new WakaTimeManager(store);
+const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled
 if (store.get('wakatimeEnabled', false)) {
@@ -317,6 +326,10 @@ const createWebServer = createWebServerFactory({
 	groupsStore,
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
+	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
+		if (!cueEngine) return false;
+		return cueEngine.triggerSubscription(subscriptionName, prompt, sourceAgentId);
+	},
 });
 
 // createWindow is now handled by windowManager (Phase 4 refactoring)
@@ -372,6 +385,64 @@ app.whenReady().then(async () => {
 	// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 	agentDetector = new AgentDetector();
 
+	// Initialize core prompts from disk (must happen before features that use them)
+	try {
+		await initializePrompts();
+	} catch (error) {
+		logger.error(`Critical: Failed to initialize prompts: ${error}`, 'Startup');
+		await captureException(error instanceof Error ? error : new Error(String(error)), {
+			operation: 'startup:initializePrompts',
+		});
+		const { dialog } = await import('electron');
+		dialog.showErrorBox(
+			'Startup Error',
+			'Failed to load system prompts. Please reinstall the application.'
+		);
+		app.quit();
+		return;
+	}
+
+	// One-time migration: bake standing instructions into moderator prompt customization
+	const standingInstructions = (store.get('moderatorStandingInstructions', '') as string) || '';
+	const migratedKey = 'moderatorStandingInstructionsMigrated';
+
+	if (standingInstructions && !store.get(migratedKey, false)) {
+		try {
+			const currentPrompt = getPrompt('group-chat-moderator-system');
+
+			// Only migrate if the exact standing instructions content isn't already in the prompt
+			if (!currentPrompt.includes(standingInstructions)) {
+				const sectionHeader = '## Standing Instructions';
+				const newSection = `${sectionHeader}\n\nThe following instructions apply to ALL group chat sessions. Follow them consistently:\n\n${standingInstructions}`;
+
+				let migratedPrompt: string;
+				if (currentPrompt.includes(sectionHeader)) {
+					migratedPrompt = currentPrompt.replace(
+						/## Standing Instructions[\s\S]*?(?=\n## |\s*$)/,
+						newSection
+					);
+				} else {
+					migratedPrompt = `${currentPrompt}\n\n${newSection}`;
+				}
+				await savePrompt('group-chat-moderator-system', migratedPrompt);
+				logger.info(
+					'Migrated moderator standing instructions into prompt customization',
+					'Startup'
+				);
+			}
+			store.set(migratedKey, true);
+		} catch (err) {
+			await captureException(err instanceof Error ? err : new Error(String(err)), {
+				migratedKey,
+				standingInstructionsSlice: standingInstructions.slice(0, 200),
+			});
+			logger.warn(
+				'Failed to persist migrated moderator standing instructions, will retry next launch',
+				'Startup'
+			);
+		}
+	}
+
 	// Load custom agent paths from settings
 	const allAgentConfigs = agentConfigsStore.get('configs', {});
 	const customPaths: Record<string, string> = {};
@@ -397,7 +468,16 @@ app.whenReady().then(async () => {
 				projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
 			}));
 		},
-		onCueRun: async ({ runId, sessionId, prompt, subscriptionName, event, timeoutMs }) => {
+		onCueRun: async ({
+			runId,
+			sessionId,
+			prompt,
+			subscriptionName,
+			event,
+			timeoutMs,
+			action,
+			command,
+		}) => {
 			const storedSessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
 			const storedSession = storedSessions.find((s) => s.id === sessionId);
 			if (!storedSession) {
@@ -418,6 +498,76 @@ app.whenReady().then(async () => {
 				},
 				conductorProfile: (store.get('conductorProfile', '') as string) || undefined,
 			};
+
+			// `action: command` runs a shell command or maestro-cli call instead of an
+			// AI prompt — skip agent path resolution and SSH wrapping.
+			if (action === 'command') {
+				if (!command) {
+					// Should be unreachable post-validator, but guard anyway so a
+					// misconfigured subscription fails loudly instead of silently
+					// executing `prompt` (a shell/cli sentinel) as an AI prompt.
+					throw new Error(
+						`Cue subscription "${subscriptionName}" has action='command' but no command payload`
+					);
+				}
+				const sessionInfo = {
+					id: storedSession.id,
+					name: storedSession.name,
+					toolType: storedSession.toolType,
+					cwd: projectRoot,
+					projectRoot,
+					autoRunFolderPath: storedSession.autoRunFolderPath,
+				};
+				const subscription = {
+					name: subscriptionName,
+					event: event.type,
+					enabled: true,
+					prompt,
+					action,
+					command,
+				};
+				const cmdLog = (level: string, message: string) => {
+					if (level === 'error') logger.error(message, 'Cue');
+					else if (level === 'warn') logger.warn(message, 'Cue');
+					else if (level === 'debug') logger.debug(message, 'Cue');
+					else logger.cue(message, 'Cue');
+				};
+				const cmdResult =
+					command.mode === 'shell'
+						? await executeCueShell({
+								runId,
+								session: sessionInfo,
+								subscription,
+								event,
+								shellCommand: command.shell,
+								projectRoot,
+								templateContext,
+								timeoutMs,
+								onLog: cmdLog,
+								// Forward SSH config so shell commands run on the remote
+								// host when the owning session is SSH-remote-enabled.
+								sshRemoteConfig: storedSession.sessionSshRemoteConfig,
+								sshStore: createSshRemoteStoreAdapter(store),
+							})
+						: await executeCueCli({
+								runId,
+								session: sessionInfo,
+								subscription,
+								event,
+								cli: command.cli,
+								templateContext,
+								timeoutMs,
+								onLog: cmdLog,
+								// CLI mode intentionally stays local: `maestro-cli send`
+								// targets the local Maestro daemon (routing messages to
+								// sessions managed by this app), so SSH wrapping would
+								// point at the wrong daemon and `maestro-cli.js` may not
+								// exist on the remote host.
+							});
+				const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
+				historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+				return cmdResult;
+			}
 
 			const agentConfigValues = getAgentConfigForAgent(storedSession.toolType);
 
@@ -486,7 +636,7 @@ app.whenReady().then(async () => {
 			historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
 			return result;
 		},
-		onStopCueRun: (runId) => stopCueRun(runId),
+		onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
 		onLog: (_level, message, data) => {
 			logger.cue(message, 'Cue', data);
 			// Push activity updates to renderer
@@ -517,6 +667,7 @@ app.whenReady().then(async () => {
 			}
 		});
 	} catch (error) {
+		void captureException(error);
 		// Migration failed - log error but continue with app startup
 		// History will be unavailable but the app will still function
 		logger.error(`Failed to initialize history manager: ${error}`, 'Startup');
@@ -529,6 +680,7 @@ app.whenReady().then(async () => {
 		initializeStatsDB();
 		logger.info('Stats database initialized', 'Startup');
 	} catch (error) {
+		void captureException(error);
 		// Stats initialization failed - log error but continue with app startup
 		// Stats will be unavailable but the app will still function
 		logger.error(`Failed to initialize stats database: ${error}`, 'Startup');
@@ -548,8 +700,9 @@ app.whenReady().then(async () => {
 	if (encoreFeatures.maestroCue && cueEngine) {
 		logger.info('Maestro Cue Encore Feature enabled — starting Cue engine', 'Startup');
 		try {
-			cueEngine.start(true);
+			cueEngine.start('system-boot');
 		} catch (err) {
+			void captureException(err);
 			logger.error(
 				`Cue engine failed to start at boot — will remain available for retry via Settings: ${err}`,
 				'Startup'
@@ -570,7 +723,22 @@ app.whenReady().then(async () => {
 	// hides) so the native Close menu item is unnecessary.
 	if (isMacOS()) {
 		const template: Electron.MenuItemConstructorOptions[] = [
-			{ role: 'appMenu' },
+			{
+				// Explicit appMenu — omits "Quit and Keep Windows" (Opt+Cmd+Q)
+				// which otherwise immediately kills the app without cleanup.
+				role: 'appMenu',
+				submenu: [
+					{ role: 'about' },
+					{ type: 'separator' },
+					{ role: 'services' },
+					{ type: 'separator' },
+					{ role: 'hide' },
+					{ role: 'hideOthers' },
+					{ role: 'unhide' },
+					{ type: 'separator' },
+					{ role: 'quit' },
+				],
+			},
 			{ role: 'editMenu' },
 			{
 				label: 'Window',
@@ -700,6 +868,12 @@ function setupIpcHandlers() {
 		safeSend,
 		getMaxEntries: () => store.get('maxLogBuffer', 5000) as number,
 		getSshRemoteById,
+		getSessionById: (id: string) => {
+			const sessions = (sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+				(s) => typeof s === 'object' && s !== null
+			);
+			return sessions.find((s) => s.id === id);
+		},
 	});
 
 	// Director's Notes - unified history + synopsis generation
@@ -813,6 +987,12 @@ function setupIpcHandlers() {
 	// Register BMAD handlers (no dependencies needed)
 	registerBmadHandlers();
 
+	// Register Core Prompts handlers (no dependencies needed)
+	registerPromptsHandlers();
+
+	// Register project Memory handlers (Claude Code per-project memory viewer)
+	registerMemoryHandlers();
+
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({
 		getMainWindow: () => mainWindow,
@@ -875,9 +1055,8 @@ function setupIpcHandlers() {
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
 
-	// Set up callback for group chat router to get moderator standing instructions + conductor profile
+	// Set up callback for group chat router to get moderator conductor profile
 	setGetModeratorSettingsCallback(() => ({
-		standingInstructions: (store.get('moderatorStandingInstructions', '') as string) || '',
 		conductorProfile: (store.get('conductorProfile', '') as string) || '',
 	}));
 
@@ -933,6 +1112,9 @@ function setupIpcHandlers() {
 
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
+
+	// Register Maestro CLI handlers (status check + install/update)
+	registerMaestroCliHandlers(maestroCliManager);
 
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({

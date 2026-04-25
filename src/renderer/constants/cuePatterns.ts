@@ -221,4 +221,24 @@ subscriptions:
 #   {{CUE_TASK_CONTENT}}   — Full file content (truncated to 10K chars)
 `,
 	},
+	{
+		id: 'cli-trigger',
+		name: 'CLI Trigger',
+		description: 'On-demand trigger via maestro-cli',
+		explanation:
+			'Fires only when explicitly triggered from the command line with `maestro-cli cue trigger <name>`. Supports an optional `--prompt` flag to override or supply the prompt at invocation time. Ideal for deployment scripts, CI/CD integration, or ad-hoc automation.',
+		yaml: `subscriptions:
+  - name: "deploy"
+    event: cli.trigger
+    prompt: "Run the deployment pipeline for the current branch"
+    enabled: true
+
+# Usage:
+#   maestro-cli cue trigger deploy
+#   maestro-cli cue trigger deploy --prompt "Deploy to staging only"
+#
+# Template variables available in your prompt:
+#   {{CUE_CLI_PROMPT}} — The prompt text passed via --prompt flag (empty if not provided)
+`,
+	},
 ];

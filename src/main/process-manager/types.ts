@@ -19,6 +19,7 @@ export interface ProcessConfig {
 	shellEnvVars?: Record<string, string>;
 	images?: string[];
 	imageArgs?: (imagePath: string) => string[];
+	imagePromptBuilder?: (imagePaths: string[]) => string;
 	promptArgs?: (prompt: string) => string[];
 	contextWindow?: number;
 	customEnvVars?: Record<string, string>;
@@ -56,6 +57,9 @@ export interface ManagedProcess {
 	isBatchMode?: boolean;
 	isStreamJsonMode?: boolean;
 	jsonBuffer?: string;
+	/** When true, the JSON buffer was force-cleared after exceeding size limits.
+	 *  Subsequent chunks are discarded until a clean top-level `{` resync point. */
+	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
 	resultEmitted?: boolean;
@@ -71,6 +75,7 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
@@ -88,15 +93,9 @@ export interface UsageTotals {
 	reasoningTokens: number;
 }
 
-export interface UsageStats {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	totalCostUsd: number;
-	contextWindow: number;
-	reasoningTokens?: number;
-}
+// Import and re-export UsageStats from canonical location
+import type { UsageStats } from '../../shared/types';
+export type { UsageStats } from '../../shared/types';
 
 export interface SpawnResult {
 	pid: number;

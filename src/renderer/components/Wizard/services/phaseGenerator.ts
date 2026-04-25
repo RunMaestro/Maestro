@@ -8,12 +8,32 @@
 
 import type { ToolType } from '../../../types';
 import type { WizardMessage, GeneratedDocument } from '../WizardContext';
-import { wizardDocumentGenerationPrompt } from '../../../../prompts';
 import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { getStdinFlags } from '../../../utils/spawnHelpers';
+
+let cachedPhaseGenDocPrompt: string | null = null;
+let phaseGeneratorPromptsLoaded = false;
+
+export async function loadPhaseGeneratorPrompts(force = false): Promise<void> {
+	if (phaseGeneratorPromptsLoaded && !force) return;
+
+	const result = await window.maestro.prompts.get('wizard-document-generation');
+	if (!result.success) {
+		throw new Error(`Failed to load wizard-document-generation prompt: ${result.error}`);
+	}
+	cachedPhaseGenDocPrompt = result.content!;
+	phaseGeneratorPromptsLoaded = true;
+}
+
+function getWizardDocumentGenerationPrompt(): string {
+	if (!phaseGeneratorPromptsLoaded || cachedPhaseGenDocPrompt === null) {
+		return '';
+	}
+	return cachedPhaseGenDocPrompt;
+}
 
 /**
  * Configuration for document generation
@@ -146,12 +166,7 @@ interface ParsedDocument {
 }
 
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
-
-/**
- * Default Auto Run folder name.
- * @deprecated Import PLAYBOOKS_DIR from shared/maestro-paths instead.
- */
-export const AUTO_RUN_FOLDER_NAME = PLAYBOOKS_DIR;
+import { logger } from '../../../utils/logger';
 
 /**
  * Sanitize a filename to prevent path traversal attacks.
@@ -343,14 +358,12 @@ export function generateDocumentGenerationPrompt(config: GenerationConfig): stri
 		.join('\n\n');
 
 	// Build the full Auto Run folder path (including subfolder if specified)
-	const autoRunFolderPath = subfolder
-		? `${AUTO_RUN_FOLDER_NAME}/${subfolder}`
-		: AUTO_RUN_FOLDER_NAME;
+	const autoRunFolderPath = subfolder ? `${PLAYBOOKS_DIR}/${subfolder}` : PLAYBOOKS_DIR;
 
 	// First, handle wizard-specific variables that have different semantics
 	// from the central template system. We do this BEFORE the central function
 	// so they take precedence over central defaults.
-	let prompt = wizardDocumentGenerationPrompt
+	let prompt = getWizardDocumentGenerationPrompt()
 		.replace(/\{\{PROJECT_NAME\}\}/gi, projectDisplay)
 		.replace(/\{\{DIRECTORY_PATH\}\}/gi, directoryPath)
 		.replace(/\{\{AUTO_RUN_FOLDER_NAME\}\}/gi, autoRunFolderPath)
@@ -724,11 +737,11 @@ class PhaseGenerator {
 				wizardDebugLogger.log('info', 'Checking for documents on disk (parsed docs invalid)');
 				// Build the correct path including subfolder if specified
 				const autoRunPath = config.subfolder
-					? `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}/${config.subfolder}`
-					: `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+					? `${config.directoryPath}/${PLAYBOOKS_DIR}/${config.subfolder}`
+					: `${config.directoryPath}/${PLAYBOOKS_DIR}`;
 				const diskDocs = await this.readDocumentsFromDisk(autoRunPath, sshRemoteId);
 				if (diskDocs.length > 0) {
-					console.log('[PhaseGenerator] Found documents on disk:', diskDocs.length);
+					logger.info('[PhaseGenerator] Found documents on disk:', undefined, diskDocs.length);
 					wizardDebugLogger.log('info', 'Found documents on disk', {
 						count: diskDocs.length,
 						documentNames: diskDocs.map((d) => d.filename),
@@ -772,7 +785,7 @@ class PhaseGenerator {
 
 			// Convert to GeneratedDocument format
 			// If read from disk, set savedPath since they're already saved
-			const autoRunPath = `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+			const autoRunPath = `${config.directoryPath}/${PLAYBOOKS_DIR}`;
 			const generatedDocs: GeneratedDocument[] = documents.map((doc) => ({
 				filename: doc.filename,
 				content: doc.content,
@@ -828,7 +841,7 @@ class PhaseGenerator {
 		const sessionId = `wizard-gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		const startTime = Date.now();
 
-		console.log('[PhaseGenerator] Starting agent run:', {
+		logger.info('[PhaseGenerator] Starting agent run:', undefined, {
 			sessionId,
 			agentType: config.agentType,
 			cwd: config.directoryPath,
@@ -863,11 +876,18 @@ class PhaseGenerator {
 				timeoutId = setTimeout(() => {
 					const elapsed = Date.now() - startTime;
 					const timeSinceLastActivity = Date.now() - lastDataTime;
-					console.error('[PhaseGenerator] TIMEOUT after', elapsed, 'ms total');
-					console.error('[PhaseGenerator] Time since last activity:', timeSinceLastActivity, 'ms');
-					console.error('[PhaseGenerator] Total chunks received:', dataChunks);
-					console.error('[PhaseGenerator] Buffer size:', this.outputBuffer.length);
-					console.error('[PhaseGenerator] Buffer preview:', this.outputBuffer.slice(-500));
+					logger.error('[PhaseGenerator] TIMEOUT after', undefined, [elapsed, 'ms total']);
+					logger.error('[PhaseGenerator] Time since last activity:', undefined, [
+						timeSinceLastActivity,
+						'ms',
+					]);
+					logger.error('[PhaseGenerator] Total chunks received:', undefined, dataChunks);
+					logger.error('[PhaseGenerator] Buffer size:', undefined, this.outputBuffer.length);
+					logger.error(
+						'[PhaseGenerator] Buffer preview:',
+						undefined,
+						this.outputBuffer.slice(-500)
+					);
 
 					wizardDebugLogger.log('timeout', 'Generation timed out after 20 minutes of inactivity', {
 						elapsedMs: elapsed,
@@ -883,7 +903,9 @@ class PhaseGenerator {
 					}
 					window.maestro.process
 						.kill(sessionId)
-						.catch((err) => console.warn('[PhaseGenerator] Failed to kill session:', err));
+						.catch((err) =>
+							logger.warn('[PhaseGenerator] Failed to kill session:', undefined, err)
+						);
 					resolve({
 						success: false,
 						error: 'Generation timed out after 20 minutes of inactivity. Please try again.',
@@ -913,7 +935,7 @@ class PhaseGenerator {
 
 					// Log progress every 10 chunks
 					if (dataChunks % 10 === 0) {
-						console.log('[PhaseGenerator] Progress:', {
+						logger.info('[PhaseGenerator] Progress:', undefined, {
 							chunks: dataChunks,
 							bufferSize: this.outputBuffer.length,
 							elapsedMs: Date.now() - startTime,
@@ -933,7 +955,7 @@ class PhaseGenerator {
 					}
 
 					const elapsed = Date.now() - startTime;
-					console.log('[PhaseGenerator] Agent exited:', {
+					logger.info('[PhaseGenerator] Agent exited:', undefined, {
 						sessionId,
 						exitCode: code,
 						elapsedMs: elapsed,
@@ -953,7 +975,7 @@ class PhaseGenerator {
 						const extracted = extractResultFromStreamJson(this.outputBuffer);
 						const output = extracted || this.outputBuffer;
 
-						console.log('[PhaseGenerator] Extraction result:', {
+						logger.info('[PhaseGenerator] Extraction result:', undefined, {
 							hadExtraction: !!extracted,
 							outputLength: output.length,
 						});
@@ -968,9 +990,10 @@ class PhaseGenerator {
 							rawOutput: output,
 						});
 					} else {
-						console.error('[PhaseGenerator] Agent failed with code:', code);
-						console.error(
+						logger.error('[PhaseGenerator] Agent failed with code:', undefined, code);
+						logger.error(
 							'[PhaseGenerator] Output buffer preview:',
+							undefined,
 							this.outputBuffer.slice(0, 500)
 						);
 
@@ -991,8 +1014,8 @@ class PhaseGenerator {
 			// Set up file system watcher for Auto Run Docs folder (including subfolder if specified)
 			// This detects when the agent creates files and resets the timeout
 			const autoRunPath = config.subfolder
-				? `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}/${config.subfolder}`
-				: `${config.directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+				? `${config.directoryPath}/${PLAYBOOKS_DIR}/${config.subfolder}`
+				: `${config.directoryPath}/${PLAYBOOKS_DIR}`;
 			wizardDebugLogger.log('info', 'Setting up file watcher', {
 				autoRunPath,
 				subfolder: config.subfolder,
@@ -1006,18 +1029,17 @@ class PhaseGenerator {
 				.watchFolder(autoRunPath, sshRemoteId)
 				.then((result) => {
 					if (result.success) {
-						console.log('[PhaseGenerator] Started watching folder:', autoRunPath);
+						logger.info('[PhaseGenerator] Started watching folder:', undefined, autoRunPath);
 						wizardDebugLogger.log('info', 'File watcher started successfully', { autoRunPath });
 						this.currentWatchPath = autoRunPath;
 
 						// Set up file change listener
 						fileWatcherCleanup = window.maestro.autorun.onFileChanged((data) => {
 							if (data.folderPath === autoRunPath) {
-								console.log(
-									'[PhaseGenerator] File system activity:',
+								logger.info('[PhaseGenerator] File system activity:', undefined, [
 									data.filename,
-									data.eventType
-								);
+									data.eventType,
+								]);
 								wizardDebugLogger.log('file', `File activity: ${data.eventType}`, {
 									filename: data.filename,
 									eventType: data.eventType,
@@ -1044,12 +1066,11 @@ class PhaseGenerator {
 											try {
 												const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
 												if (content && typeof content === 'string' && content.length > 0) {
-													console.log(
-														'[PhaseGenerator] File read successful:',
+													logger.info('[PhaseGenerator] File read successful:', undefined, [
 														filenameWithExt,
 														'size:',
-														content.length
-													);
+														content.length,
+													]);
 													callbacks?.onFileCreated?.({
 														filename: filenameWithExt,
 														size: new Blob([content]).size,
@@ -1061,8 +1082,9 @@ class PhaseGenerator {
 													return;
 												}
 											} catch (err) {
-												console.log(
+												logger.info(
 													`[PhaseGenerator] File read attempt ${attempt}/${retries} failed for ${filenameWithExt}:`,
+													undefined,
 													err
 												);
 											}
@@ -1073,8 +1095,9 @@ class PhaseGenerator {
 
 										// Even if we couldn't read content, still notify that file exists
 										// This provides feedback to user that files are being created
-										console.log(
+										logger.info(
 											'[PhaseGenerator] Notifying file creation (without size):',
+											undefined,
 											filenameWithExt
 										);
 										callbacks?.onFileCreated?.({
@@ -1090,12 +1113,12 @@ class PhaseGenerator {
 							}
 						});
 					} else {
-						console.warn('[PhaseGenerator] Could not watch folder:', result.error);
+						logger.warn('[PhaseGenerator] Could not watch folder:', undefined, result.error);
 						wizardDebugLogger.log('warn', 'Could not watch folder', { error: result.error });
 					}
 				})
 				.catch((err) => {
-					console.warn('[PhaseGenerator] Error setting up folder watcher:', err);
+					logger.warn('[PhaseGenerator] Error setting up folder watcher:', undefined, err);
 					wizardDebugLogger.log('warn', 'Error setting up folder watcher', { error: String(err) });
 				});
 
@@ -1104,7 +1127,7 @@ class PhaseGenerator {
 			wizardDebugLogger.log('info', 'Timeout initialized', { timeoutMs: GENERATION_TIMEOUT });
 
 			// Spawn the agent using the secure IPC channel
-			console.log('[PhaseGenerator] Spawning agent...');
+			logger.info('[PhaseGenerator] Spawning agent...');
 
 			// Build args for document generation
 			// The agent can write files ONLY to the Auto Run folder (enforced via prompt)
@@ -1159,11 +1182,11 @@ class PhaseGenerator {
 					sessionSshRemoteConfig: config.sshRemoteConfig,
 				})
 				.then(() => {
-					console.log('[PhaseGenerator] Agent spawned successfully');
+					logger.info('[PhaseGenerator] Agent spawned successfully');
 					wizardDebugLogger.log('spawn', 'Agent spawned successfully', { sessionId });
 				})
 				.catch((error: Error) => {
-					console.error('[PhaseGenerator] Spawn failed:', error.message);
+					logger.error('[PhaseGenerator] Spawn failed:', undefined, error.message);
 					wizardDebugLogger.log('error', 'Spawn failed', {
 						errorMessage: error.message,
 						errorStack: error.stack,
@@ -1233,7 +1256,7 @@ class PhaseGenerator {
 
 			return documents;
 		} catch (error) {
-			console.error('[PhaseGenerator] Error reading documents from disk:', error);
+			logger.error('[PhaseGenerator] Error reading documents from disk:', undefined, error);
 			return [];
 		}
 	}
@@ -1254,7 +1277,7 @@ class PhaseGenerator {
 		if (this.currentWatchPath) {
 			window.maestro.autorun
 				.unwatchFolder(this.currentWatchPath)
-				.catch((err) => console.warn('[PhaseGenerator] Failed to unwatch folder:', err));
+				.catch((err) => logger.warn('[PhaseGenerator] Failed to unwatch folder:', undefined, err));
 			this.currentWatchPath = undefined;
 		}
 	}
@@ -1275,7 +1298,7 @@ class PhaseGenerator {
 		subfolder?: string,
 		sshRemoteId?: string
 	): Promise<{ success: boolean; savedPaths: string[]; error?: string; subfolderPath?: string }> {
-		const baseAutoRunPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+		const baseAutoRunPath = `${directoryPath}/${PLAYBOOKS_DIR}`;
 		const autoRunPath = subfolder ? `${baseAutoRunPath}/${subfolder}` : baseAutoRunPath;
 		const savedPaths: string[] = [];
 
@@ -1287,7 +1310,7 @@ class PhaseGenerator {
 				// Ensure filename has .md extension
 				const filename = sanitized.endsWith('.md') ? sanitized : `${sanitized}.md`;
 
-				console.log('[PhaseGenerator] Saving document:', filename);
+				logger.info('[PhaseGenerator] Saving document:', undefined, filename);
 
 				// Write the document (autorun:writeDoc creates the folder if needed)
 				const result = await window.maestro.autorun.writeDoc(
@@ -1316,7 +1339,11 @@ class PhaseGenerator {
 						});
 					}
 
-					console.log('[PhaseGenerator] Saved:', fullPath, 'size:', doc.content.length);
+					logger.info('[PhaseGenerator] Saved:', undefined, [
+						fullPath,
+						'size:',
+						doc.content.length,
+					]);
 				} else {
 					throw new Error(result.error || `Failed to save ${filename}`);
 				}
@@ -1325,7 +1352,7 @@ class PhaseGenerator {
 			return { success: true, savedPaths, subfolderPath: subfolder ? autoRunPath : undefined };
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Failed to save documents';
-			console.error('[PhaseGenerator] Save error:', errorMessage);
+			logger.error('[PhaseGenerator] Save error:', undefined, errorMessage);
 			return { success: false, savedPaths, error: errorMessage };
 		}
 	}
@@ -1334,7 +1361,7 @@ class PhaseGenerator {
 	 * Get the Auto Run folder path for a directory
 	 */
 	getAutoRunPath(directoryPath: string): string {
-		return `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
+		return `${directoryPath}/${PLAYBOOKS_DIR}`;
 	}
 
 	/**
@@ -1364,5 +1391,4 @@ export const phaseGeneratorUtils = {
 	countTasks,
 	validateDocuments,
 	splitIntoPhases,
-	AUTO_RUN_FOLDER_NAME,
 };

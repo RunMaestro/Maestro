@@ -15,15 +15,19 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Search, ArrowRight, X, Loader2, Circle } from 'lucide-react';
+import { GhostIconButton } from './ui/GhostIconButton';
+import { Spinner } from './ui/Spinner';
 import type { Theme, Session, ToolType } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatTokensCompact } from '../utils/formatters';
+import { estimateTokensFromLogs } from '../../shared/formatters';
 import { getAgentIcon } from '../constants/agentIcons';
 import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReaderAnnouncement';
 import { getTabDisplayName } from '../utils/tabHelpers';
+import { logger } from '../utils/logger';
 
 /**
  * Session availability status for display in the selection list
@@ -107,14 +111,7 @@ function getSessionDisplayName(session: Session): string {
 	return session.name || session.projectRoot.split('/').pop() || 'Unnamed Session';
 }
 
-/**
- * Estimate token count from log entries
- * Uses a simple heuristic: ~4 characters per token (average for English text)
- */
-function estimateTokens(logs: { text: string }[]): number {
-	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-	return Math.round(totalChars / 4);
-}
+const estimateTokens = estimateTokensFromLogs;
 
 /**
  * SendToAgentModal Component
@@ -148,7 +145,6 @@ export function SendToAgentModal({
 
 	// Refs
 	const inputRef = useRef<HTMLInputElement>(null);
-	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 
@@ -162,35 +158,13 @@ export function SendToAgentModal({
 		setSelectedIndex(0);
 	}, []);
 
-	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-
 	// Register layer on mount
-	useEffect(() => {
-		if (!isOpen) return;
-
-		layerIdRef.current = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.SEND_TO_AGENT,
-			blocksLowerLayers: true,
-			capturesFocus: true,
-			focusTrap: 'strict',
-			ariaLabel: 'Send Context to Agent',
-			onEscape: () => onCloseRef.current(),
-		});
-
-		return () => {
-			if (layerIdRef.current) {
-				unregisterLayer(layerIdRef.current);
-			}
-		};
-	}, [isOpen, registerLayer, unregisterLayer]);
-
-	// Update handler when onClose changes
-	useEffect(() => {
-		if (layerIdRef.current) {
-			updateLayerHandler(layerIdRef.current, () => onCloseRef.current());
-		}
-	}, [updateLayerHandler]);
+	useModalLayer(
+		MODAL_PRIORITIES.SEND_TO_AGENT,
+		'Send Context to Agent',
+		() => onCloseRef.current(),
+		{ enabled: isOpen }
+	);
 
 	// Focus input on mount
 	useEffect(() => {
@@ -332,7 +306,7 @@ export function SendToAgentModal({
 			});
 			onClose();
 		} catch (error) {
-			console.error('Send to session failed:', error);
+			logger.error('Send to session failed:', undefined, error);
 		} finally {
 			setIsSending(false);
 		}
@@ -460,15 +434,9 @@ export function SendToAgentModal({
 							Send Context to Agent
 						</h2>
 					</div>
-					<button
-						type="button"
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						aria-label="Close dialog"
-					>
+					<GhostIconButton onClick={onClose} ariaLabel="Close dialog" color={theme.colors.textDim}>
 						<X className="w-4 h-4" aria-hidden="true" />
-					</button>
+					</GhostIconButton>
 				</div>
 
 				{/* Description for screen readers */}
@@ -602,7 +570,7 @@ export function SendToAgentModal({
 												aria-hidden="true"
 											>
 												{session.status === 'idle' && <Circle className="w-2 h-2 fill-current" />}
-												{session.status === 'busy' && <Loader2 className="w-3 h-3 animate-spin" />}
+												{session.status === 'busy' && <Spinner size={12} />}
 												{getStatusLabel(session.status)}
 											</div>
 

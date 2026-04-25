@@ -3,25 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { CollapsedSessionPill } from '../../../../renderer/components/SessionList/CollapsedSessionPill';
 import type { Session, Theme } from '../../../../renderer/types';
 
+import { mockTheme } from '../../../helpers/mockTheme';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const mockTheme: Theme = {
-	name: 'test',
-	colors: {
-		bgMain: '#1a1a2e',
-		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
-		textMain: '#e0e0e0',
-		textDim: '#888888',
-		accent: '#e94560',
-		border: '#333333',
-		error: '#ff4444',
-		success: '#00cc66',
-		warning: '#ffaa00',
-	},
-} as Theme;
 
 let idCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {

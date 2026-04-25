@@ -60,6 +60,9 @@ vi.mock('lucide-react', () => ({
 	Zap: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="zap-icon" className={className} style={style} />
 	),
+	ExternalLink: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="external-link-icon" className={className} style={style} />
+	),
 }));
 
 // Create a mock theme

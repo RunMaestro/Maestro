@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, CustomAICommand } from '../../../renderer/types';
+import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -66,13 +67,14 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 // Helpers
 // ============================================================================
 
+// Thin wrapper: populates an AI tab and terminal draft so remote command
+// dispatching code has state to operate on.
 function createMockSession(overrides: Partial<Session> = {}): Session {
-	return {
-		id: 'session-1',
+	return baseCreateMockSession({
 		name: 'Test Agent',
-		state: 'idle',
-		busySource: undefined,
-		toolType: 'claude-code',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test',
 		aiTabs: [
 			{
 				id: 'tab-1',
@@ -82,19 +84,12 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 				logs: [],
 				stagedImages: [],
 			},
-		],
+		] as any,
 		activeTabId: 'tab-1',
-		inputMode: 'ai',
-		isGitRepo: false,
-		cwd: '/test',
-		projectRoot: '/test',
-		shellLogs: [],
 		shellCwd: '/test',
 		terminalDraftInput: '',
-		terminalTabs: [],
-		activeTerminalTabId: null,
 		...overrides,
-	} as Session;
+	});
 }
 
 function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemoteHandlersDeps {
@@ -143,6 +138,12 @@ beforeEach(() => {
 				command: 'claude',
 				path: '/usr/local/bin/claude',
 				args: [],
+			}),
+		},
+		prompts: {
+			get: vi.fn().mockResolvedValue({
+				success: true,
+				content: 'Maestro System Context: {{AGENT_NAME}}',
 			}),
 		},
 	};
@@ -431,6 +432,83 @@ describe('useRemoteHandlers', () => {
 			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					prompt: 'explain this code',
+				})
+			);
+		});
+
+		it('includes appendSystemPrompt for new sessions (no agentSessionId)', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.prompts.get).toHaveBeenCalledWith('maestro-system-prompt');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: expect.any(String),
+				})
+			);
+		});
+
+		it('still passes appendSystemPrompt for resumed sessions (Claude Code does not persist --append-system-prompt across resume)', async () => {
+			const session = createMockSession({
+				inputMode: 'ai',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						name: 'Tab 1',
+						inputValue: '',
+						logs: [],
+						stagedImages: [],
+						agentSessionId: 'existing-session-123',
+					} as any,
+				],
+			});
+			const deps = createMockDeps({
+				sessionsRef: { current: [session] },
+			});
+
+			renderHook(() => useRemoteHandlers(deps));
+
+			const addListenerCall = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			);
+			const handler = addListenerCall[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'hello',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					appendSystemPrompt: expect.any(String),
 				})
 			);
 		});

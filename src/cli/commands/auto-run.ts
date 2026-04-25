@@ -14,6 +14,11 @@ interface AutoRunOptions {
 	saveAs?: string;
 	launch?: boolean;
 	resetOnCompletion?: boolean;
+	worktree?: boolean;
+	branch?: string;
+	worktreePath?: string;
+	createPr?: boolean;
+	prTargetBranch?: string;
 }
 
 export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
@@ -75,6 +80,44 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 		process.exit(1);
 	}
 
+	// Worktree configuration: requires --launch and --branch.
+	// The desktop app handles worktree creation, branch checkout, and (optionally)
+	// PR creation on completion via the same code path used by the Auto Run UI.
+	let worktree:
+		| {
+				enabled: boolean;
+				path: string;
+				branchName: string;
+				createPROnCompletion: boolean;
+				prTargetBranch: string;
+		  }
+		| undefined;
+	if (options.worktree) {
+		if (!options.launch) {
+			console.error('Error: --worktree requires --launch');
+			process.exit(1);
+		} else if (!options.branch || options.branch.trim() === '') {
+			console.error('Error: --worktree requires --branch <name>');
+			process.exit(1);
+		} else if (!options.worktreePath || options.worktreePath.trim() === '') {
+			console.error('Error: --worktree requires --worktree-path <path>');
+			process.exit(1);
+		} else {
+			worktree = {
+				enabled: true,
+				path: path.resolve(options.worktreePath),
+				branchName: options.branch.trim(),
+				createPROnCompletion: options.createPr || false,
+				prTargetBranch: options.prTargetBranch?.trim() || '',
+			};
+		}
+	} else if (options.branch || options.worktreePath || options.createPr || options.prTargetBranch) {
+		console.error(
+			'Error: --branch, --worktree-path, --create-pr, and --pr-target-branch require --worktree'
+		);
+		process.exit(1);
+	}
+
 	try {
 		const result = await withMaestroClient(async (client) => {
 			return client.sendCommand<{
@@ -92,6 +135,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 					maxLoops,
 					saveAsPlaybook: options.saveAs,
 					launch: options.launch,
+					worktree,
 				},
 				'configure_auto_run_result'
 			);

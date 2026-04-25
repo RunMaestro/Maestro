@@ -10,6 +10,7 @@
 import { useCallback } from 'react';
 import type { BatchDocumentEntry } from '../../types';
 import { captureException } from '../../utils/sentry';
+import { logger } from '../../utils/logger';
 
 /**
  * Configuration for worktree operations
@@ -213,12 +214,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				return defaultResult;
 			}
 
-			console.log(
-				'[WorktreeManager] Setting up worktree at',
+			logger.info('[WorktreeManager] Setting up worktree at', undefined, [
 				worktree.path,
 				'with branch',
-				worktree.branchName
-			);
+				worktree.branchName,
+			]);
 			window.maestro.logger.log('info', 'Setting up worktree', 'WorktreeManager', {
 				worktreePath: worktree.path,
 				branchName: worktree.branchName,
@@ -241,7 +241,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				});
 
 				if (!setupResult.success) {
-					console.error('[WorktreeManager] Failed to set up worktree:', setupResult.error);
+					logger.error(
+						'[WorktreeManager] Failed to set up worktree:',
+						undefined,
+						setupResult.error
+					);
 					window.maestro.logger.log('error', 'Failed to set up worktree', 'WorktreeManager', {
 						error: setupResult.error,
 					});
@@ -255,8 +259,9 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 
 				// If worktree exists but on different branch, checkout the requested branch
 				if (setupResult.branchMismatch) {
-					console.log(
+					logger.info(
 						'[WorktreeManager] Worktree exists with different branch, checking out',
+						undefined,
 						worktree.branchName
 					);
 					window.maestro.logger.log(
@@ -281,7 +286,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 
 					if (!checkoutResult.success) {
 						if (checkoutResult.hasUncommittedChanges) {
-							console.error('[WorktreeManager] Cannot checkout: worktree has uncommitted changes');
+							logger.error('[WorktreeManager] Cannot checkout: worktree has uncommitted changes');
 							window.maestro.logger.log(
 								'error',
 								'Cannot checkout: worktree has uncommitted changes',
@@ -295,7 +300,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 								error: 'Worktree has uncommitted changes - cannot checkout branch',
 							};
 						} else {
-							console.error('[WorktreeManager] Failed to checkout branch:', checkoutResult.error);
+							logger.error(
+								'[WorktreeManager] Failed to checkout branch:',
+								undefined,
+								checkoutResult.error
+							);
 							window.maestro.logger.log('error', 'Failed to checkout branch', 'WorktreeManager', {
 								error: checkoutResult.error,
 							});
@@ -310,7 +319,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				}
 
 				// Worktree is ready - return the worktree path as effective CWD
-				console.log('[WorktreeManager] Worktree ready at', worktree.path);
+				logger.info('[WorktreeManager] Worktree ready at', undefined, worktree.path);
 				window.maestro.logger.log('info', 'Worktree ready', 'WorktreeManager', {
 					effectiveCwd: worktree.path,
 					worktreeBranch: worktree.branchName,
@@ -324,7 +333,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					worktreeBranch: worktree.branchName,
 				};
 			} catch (error) {
-				console.error('[WorktreeManager] Error setting up worktree:', error);
+				logger.error('[WorktreeManager] Error setting up worktree:', undefined, error);
 				window.maestro.logger.log('error', 'Exception setting up worktree', 'WorktreeManager', {
 					error: String(error),
 				});
@@ -351,7 +360,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 		async (options: CreatePROptions): Promise<PRCreationResult> => {
 			const { worktreePath, mainRepoCwd, worktree, documents, totalCompletedTasks } = options;
 
-			console.log('[WorktreeManager] Creating PR from worktree branch', worktree.branchName);
+			logger.info(
+				'[WorktreeManager] Creating PR from worktree branch',
+				undefined,
+				worktree.branchName
+			);
 
 			let baseBranch: string | undefined = worktree.prTargetBranch;
 			try {
@@ -390,14 +403,14 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				);
 
 				if (prResult.success) {
-					console.log('[WorktreeManager] PR created successfully:', prResult.prUrl);
+					logger.info('[WorktreeManager] PR created successfully:', undefined, prResult.prUrl);
 					return {
 						success: true,
 						prUrl: prResult.prUrl,
 						targetBranch: baseBranch,
 					};
 				} else {
-					console.warn('[WorktreeManager] PR creation failed:', prResult.error);
+					logger.warn('[WorktreeManager] PR creation failed:', undefined, prResult.error);
 					return {
 						success: false,
 						error: prResult.error,
@@ -405,7 +418,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					};
 				}
 			} catch (error) {
-				console.error('[WorktreeManager] Error creating PR:', error);
+				logger.error('[WorktreeManager] Error creating PR:', undefined, error);
 				return {
 					success: false,
 					error: error instanceof Error ? error.message : 'Unknown error',

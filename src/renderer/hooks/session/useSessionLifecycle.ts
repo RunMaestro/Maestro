@@ -56,6 +56,7 @@ export interface SessionLifecycleReturn {
 		name: string,
 		toolType?: ToolType,
 		nudgeMessage?: string,
+		newSessionMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
@@ -65,6 +66,8 @@ export interface SessionLifecycleReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
+			syncHistory?: boolean;
+			shareHistoryToProjectDir?: boolean;
 		}
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
@@ -118,6 +121,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			name: string,
 			toolType?: ToolType,
 			nudgeMessage?: string,
+			newSessionMessage?: string,
 			customPath?: string,
 			customArgs?: string,
 			customEnvVars?: Record<string, string>,
@@ -127,6 +131,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
+				syncHistory?: boolean;
+				shareHistoryToProjectDir?: boolean;
 			}
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
@@ -136,6 +142,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					const updatedFields: Partial<Session> = {
 						name,
 						nudgeMessage,
+						newSessionMessage,
 						customPath,
 						customArgs,
 						customEnvVars,
@@ -208,6 +215,22 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 							s.id === activeSession.id ? renameTerminalTabHelper(s, renameTabId, newName) : s
 						)
 					);
+				return;
+			}
+
+			// If this is a browser tab, update its title directly
+			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						return {
+							...s,
+							browserTabs: (s.browserTabs || []).map((t) =>
+								t.id === renameTabId ? { ...t, title: newName || t.url } : t
+							),
+						};
+					})
+				);
 				return;
 			}
 

@@ -176,13 +176,20 @@ async function spawnClaudeAgent(
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv();
+		const def = getAgentDefinition('claude-code');
+
+		// Apply batch-mode-only env vars (shell env wins, matching defaultEnvVars precedence)
+		if (def?.batchModeEnvVars) {
+			for (const k of Object.keys(def.batchModeEnvVars)) {
+				if (!env[k]) env[k] = def.batchModeEnvVars[k];
+			}
+		}
 
 		// Build args: base args + session handling + read-only + prompt
 		const args = [...CLAUDE_ARGS];
 
 		// Apply read-only mode args from centralized agent definitions
 		if (readOnlyMode) {
-			const def = getAgentDefinition('claude-code');
 			if (def?.readOnlyArgs) {
 				args.push(...def.readOnlyArgs);
 			}
@@ -400,6 +407,13 @@ async function spawnJsonLineAgent(
 		if (def?.defaultEnvVars) {
 			for (const k of Object.keys(def.defaultEnvVars)) {
 				if (!env[k]) env[k] = def.defaultEnvVars[k];
+			}
+		}
+
+		// Apply batch-mode-only env vars (shell env wins, matching defaultEnvVars precedence)
+		if (def?.batchModeEnvVars) {
+			for (const k of Object.keys(def.batchModeEnvVars)) {
+				if (!env[k]) env[k] = def.batchModeEnvVars[k];
 			}
 		}
 

@@ -19,3 +19,11 @@ Examples:
 "fix issue #42 memory leak" = Issue 42 Memory Leak
 "implement JIRA-1234 feature" = JIRA-1234 Feature
 "help with my code" = 2024-01-15 Code Help
+
+---
+
+## Do Not Prompt The User
+
+Do NOT call any tool that waits for user input (e.g. `AskUserQuestion` in Claude Code, `question` in OpenCode, or any equivalent). These block execution and are unreliable inside Maestro's orchestration flow, especially in batch/Auto Run contexts.
+
+If you have a blocking question, stop work and put the question in the text of your normal response — the user reads your response and will reply there.

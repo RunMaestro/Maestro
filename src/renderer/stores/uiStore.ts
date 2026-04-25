@@ -42,6 +42,7 @@ export interface UIStoreState {
 	// Output search
 	outputSearchOpen: boolean;
 	outputSearchQuery: string;
+	outputSearchRegex: boolean;
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
@@ -100,6 +101,8 @@ export interface UIStoreActions {
 	// Output search
 	setOutputSearchOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setOutputSearchQuery: (query: string | ((prev: string) => string)) => void;
+	setOutputSearchRegex: (regex: boolean | ((prev: boolean) => boolean)) => void;
+	toggleOutputSearchRegex: () => void;
 
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -147,6 +150,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	successFlashNotification: null,
 	outputSearchOpen: false,
 	outputSearchQuery: '',
+	outputSearchRegex: false,
 	sessionFilterOpen: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
@@ -188,6 +192,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setOutputSearchOpen: (v) => set((s) => ({ outputSearchOpen: resolve(v, s.outputSearchOpen) })),
 	setOutputSearchQuery: (v) => set((s) => ({ outputSearchQuery: resolve(v, s.outputSearchQuery) })),
+	setOutputSearchRegex: (v) => set((s) => ({ outputSearchRegex: resolve(v, s.outputSearchRegex) })),
+	toggleOutputSearchRegex: () => set((s) => ({ outputSearchRegex: !s.outputSearchRegex })),
 
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
 	setHistorySearchFilterOpen: (v) =>

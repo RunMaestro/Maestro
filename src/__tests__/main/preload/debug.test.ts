@@ -83,6 +83,24 @@ describe('Debug Preload API', () => {
 				expect(result).toEqual(preview);
 			});
 		});
+
+		describe('getAppStats', () => {
+			it('should invoke debug:getAppStats and pass through the snapshot', async () => {
+				const snapshot = {
+					timestamp: 1234,
+					platform: 'darwin' as NodeJS.Platform,
+					main: { rss: 1, heapTotal: 2, heapUsed: 3, external: 4, arrayBuffers: 5 },
+					electronProcesses: [],
+					managedProcesses: [],
+				};
+				mockInvoke.mockResolvedValue(snapshot);
+
+				const result = await api.getAppStats();
+
+				expect(mockInvoke).toHaveBeenCalledWith('debug:getAppStats');
+				expect(result).toEqual(snapshot);
+			});
+		});
 	});
 
 	describe('createDocumentGraphApi', () => {

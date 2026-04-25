@@ -148,7 +148,7 @@ export {
 
 export type {
 	MobileKeyboardSession,
-	MobileInputMode,
+	MobileShortcutActions,
 	UseMobileKeyboardHandlerDeps,
 } from './useMobileKeyboardHandler';
 

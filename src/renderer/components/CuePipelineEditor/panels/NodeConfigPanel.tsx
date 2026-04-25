@@ -5,19 +5,24 @@
  * node type, and provides header chrome (expand/collapse, delete).
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type {
 	PipelineNode,
+	PipelineEdge,
 	TriggerNodeData,
 	AgentNodeData,
+	CommandNodeData,
 	CuePipeline,
+	CuePipelineSessionInfo as SessionInfo,
 	IncomingTriggerEdgeInfo,
+	IncomingAgentEdgeInfo,
 } from '../../../../shared/cue-pipeline-types';
 import { EVENT_ICONS, EVENT_LABELS } from '../cueEventConstants';
 import { TriggerConfig } from './triggers';
 import { AgentConfigPanel } from './AgentConfigPanel';
+import { CommandConfigPanel } from './CommandConfigPanel';
 
 export type { IncomingTriggerEdgeInfo } from '../../../../shared/cue-pipeline-types';
 
@@ -25,14 +30,23 @@ interface NodeConfigPanelProps {
 	selectedNode: PipelineNode | null;
 	theme: Theme;
 	pipelines: CuePipeline[];
+	/** Available sessions — used by CommandConfigPanel's owning-session picker when
+	 *  the command node was dropped without a pre-bound session. */
+	sessions?: SessionInfo[];
 	hasOutgoingEdge?: boolean;
 	/** Whether the selected agent has incoming edges from other agents (not triggers) */
 	hasIncomingAgentEdges?: boolean;
 	/** Count of incoming agent edges (for fan-in configuration) */
 	incomingAgentEdgeCount?: number;
+	/** Incoming agent edges with source info (for per-edge upstream output toggles) */
+	incomingAgentEdges?: IncomingAgentEdgeInfo[];
 	/** Incoming trigger edges for the selected agent node (for per-edge prompts) */
 	incomingTriggerEdges?: IncomingTriggerEdgeInfo[];
-	onUpdateNode: (nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => void;
+	onUpdateNode: (
+		nodeId: string,
+		data: Partial<TriggerNodeData | AgentNodeData | CommandNodeData>
+	) => void;
+	onUpdateEdge?: (edgeId: string, updates: Partial<PipelineEdge>) => void;
 	onUpdateEdgePrompt?: (edgeId: string, prompt: string) => void;
 	onDeleteNode: (nodeId: string) => void;
 	onSwitchToAgent?: (sessionId: string) => void;
@@ -48,15 +62,18 @@ interface NodeConfigPanelProps {
 	isRunning?: boolean;
 }
 
-export function NodeConfigPanel({
+function NodeConfigPanelInner({
 	selectedNode,
 	theme,
 	pipelines,
+	sessions,
 	hasOutgoingEdge,
 	hasIncomingAgentEdges,
 	incomingAgentEdgeCount,
+	incomingAgentEdges,
 	incomingTriggerEdges,
 	onUpdateNode,
+	onUpdateEdge,
 	onUpdateEdgePrompt,
 	onDeleteNode,
 	onSwitchToAgent,
@@ -73,8 +90,11 @@ export function NodeConfigPanel({
 	if (!isVisible) return null;
 
 	const isTrigger = selectedNode.type === 'trigger';
+	const isCommand = selectedNode.type === 'command';
+	const isAgent = selectedNode.type === 'agent';
 	const triggerData = isTrigger ? (selectedNode.data as TriggerNodeData) : null;
-	const agentData = !isTrigger ? (selectedNode.data as AgentNodeData) : null;
+	const agentData = isAgent ? (selectedNode.data as AgentNodeData) : null;
+	const commandData = isCommand ? (selectedNode.data as CommandNodeData) : null;
 
 	const Icon = triggerData ? (EVENT_ICONS[triggerData.eventType] ?? Zap) : null;
 	const ExpandIcon = expanded ? ChevronsDown : ChevronsUp;
@@ -98,11 +118,12 @@ export function NodeConfigPanel({
 	// single-trigger collapsed mode.
 	const collapsedHeight = (() => {
 		if (isTrigger) return 'auto' as const;
+		// Collapsed mode stays compact — the content wrapper scrolls when
+		// upstream-sources / fan-in cards don't fit. Expanded mode (80%) is
+		// where the user gets full breathing room.
+		if (isCommand) return commandData?.mode === 'cli' ? 320 : 280;
 		const base = hasUpstreamAgents ? 300 : 280;
-		const fanInBoost = hasFanIn ? 130 : 0;
-		// Multi-trigger needs more vertical room so the left rail can show two
-		// rows comfortably before scrolling. We cap the bonus so the panel
-		// can't eat the entire canvas.
+		const fanInBoost = hasFanIn ? 60 : 0;
 		const triggerBoost = hasMultipleTriggers ? Math.min(120, (triggerEdgeCount - 1) * 60) : 0;
 		return base + fanInBoost + triggerBoost;
 	})();
@@ -166,7 +187,25 @@ export function NodeConfigPanel({
 							</span>
 						</>
 					)}
-					{!isTrigger && agentData && (
+					{isCommand && (
+						<>
+							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
+								{commandData?.name || 'command'}
+							</span>
+							<span
+								style={{
+									fontSize: 10,
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
+									padding: '1px 6px',
+									borderRadius: 4,
+								}}
+							>
+								{commandData?.mode === 'cli' ? 'cli send' : 'shell'}
+							</span>
+						</>
+					)}
+					{isAgent && agentData && (
 						<>
 							<span style={{ color: theme.colors.textMain, fontSize: 13, fontWeight: 600 }}>
 								{agentData.sessionName}
@@ -252,17 +291,13 @@ export function NodeConfigPanel({
 				</div>
 			</div>
 
-			{/* Content
-			 *
-			 * For triggers we let height be intrinsic and allow scroll. For
-			 * agents the inner AgentConfigPanel manages its own scroll regions
-			 * (left rail when multi-trigger, fan-in card overflow), so we use
-			 * `overflow: hidden` here to prevent a redundant outer scrollbar
-			 * fighting with the inner one. */}
+			{/* Content — scrollable for both triggers and agents. Agents need
+			 *  `overflow: auto` so upstream-sources and fan-in cards below the
+			 *  prompts row are reachable even when the panel is collapsed. */}
 			<div
 				style={{
 					flex: isTrigger ? undefined : 1,
-					overflow: isTrigger ? 'auto' : 'hidden',
+					overflow: 'auto',
 					padding: '12px 16px',
 					display: 'flex',
 					flexDirection: 'column',
@@ -272,16 +307,29 @@ export function NodeConfigPanel({
 				{isTrigger && (
 					<TriggerConfig node={selectedNode} theme={theme} onUpdateNode={onUpdateNode} />
 				)}
-				{!isTrigger && (
+				{isCommand && (
+					<CommandConfigPanel
+						key={selectedNode.id}
+						node={selectedNode}
+						theme={theme}
+						sessions={sessions}
+						onUpdateNode={onUpdateNode}
+						onSwitchToAgent={onSwitchToAgent}
+					/>
+				)}
+				{isAgent && (
 					<AgentConfigPanel
+						key={selectedNode.id}
 						node={selectedNode}
 						theme={theme}
 						pipelines={pipelines}
 						hasOutgoingEdge={hasOutgoingEdge}
 						hasIncomingAgentEdges={hasIncomingAgentEdges}
 						incomingAgentEdgeCount={incomingAgentEdgeCount}
+						incomingAgentEdges={incomingAgentEdges}
 						incomingTriggerEdges={incomingTriggerEdges}
 						onUpdateNode={onUpdateNode}
+						onUpdateEdge={onUpdateEdge}
 						onUpdateEdgePrompt={onUpdateEdgePrompt}
 						onSwitchToAgent={onSwitchToAgent}
 						expanded={expanded}
@@ -291,3 +339,6 @@ export function NodeConfigPanel({
 		</div>
 	);
 }
+
+// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+export const NodeConfigPanel = React.memo(NodeConfigPanelInner);
