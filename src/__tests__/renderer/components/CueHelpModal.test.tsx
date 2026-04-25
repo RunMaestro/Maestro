@@ -58,9 +58,9 @@ describe('CueHelpContent', () => {
 		});
 
 		it('should render event type codes', () => {
-			expect(screen.getByText('time.heartbeat')).toBeInTheDocument();
-			expect(screen.getByText('file.changed')).toBeInTheDocument();
-			expect(screen.getByText('agent.completed')).toBeInTheDocument();
+			expect(screen.getAllByText('time.heartbeat').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('file.changed').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('agent.completed').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('should render Template Variables section', () => {
@@ -88,15 +88,6 @@ describe('CueHelpContent', () => {
 			expect(screen.getByText('{{DATE}}')).toBeInTheDocument();
 		});
 
-		it('should render Multi-Agent Orchestration section', () => {
-			expect(screen.getByText('Multi-Agent Orchestration')).toBeInTheDocument();
-		});
-
-		it('should render fan-out and fan-in patterns', () => {
-			expect(screen.getByText(/Fan-Out:/)).toBeInTheDocument();
-			expect(screen.getByText(/Fan-In:/)).toBeInTheDocument();
-		});
-
 		it('should render Timeouts & Failure Handling section', () => {
 			expect(screen.getByText('Timeouts & Failure Handling')).toBeInTheDocument();
 			expect(screen.getByText(/Default timeout is 30 minutes/)).toBeInTheDocument();
@@ -111,12 +102,12 @@ describe('CueHelpContent', () => {
 		});
 
 		it('should render all coordination pattern names', () => {
-			expect(screen.getAllByText('Heartbeat').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getAllByText('Scheduled').length).toBeGreaterThanOrEqual(1);
-			expect(screen.getByText('File Enrichment')).toBeInTheDocument();
-			expect(screen.getByText('Research Swarm')).toBeInTheDocument();
-			expect(screen.getByText('Sequential Chain')).toBeInTheDocument();
-			expect(screen.getByText('Debate')).toBeInTheDocument();
+			expect(screen.getByText('Sequential Pipeline')).toBeInTheDocument();
+			expect(screen.getByText('Fan-Out')).toBeInTheDocument();
+			expect(screen.getByText('Fan-In (Gather)')).toBeInTheDocument();
+			expect(screen.getByText('Swarm (Fan-Out + Fan-In)')).toBeInTheDocument();
+			expect(screen.getByText('Command Action')).toBeInTheDocument();
+			expect(screen.getByText('Task Queue')).toBeInTheDocument();
 		});
 
 		it('should render Event Filtering section', () => {

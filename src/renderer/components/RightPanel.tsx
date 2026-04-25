@@ -59,6 +59,11 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -164,6 +169,7 @@ export const RightPanel = memo(
 			fileTreeContainerRef,
 			fileTreeFilterInputRef,
 			toggleFolder,
+			toggleFolderRecursive,
 			handleFileClick,
 			expandAllFolders,
 			collapseAllFolders,
@@ -514,6 +520,7 @@ export const RightPanel = memo(
 							setActiveFocus={setActiveFocus}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={toggleFolder}
+							toggleFolderRecursive={toggleFolderRecursive}
 							handleFileClick={handleFileClick}
 							expandAllFolders={expandAllFolders}
 							collapseAllFolders={collapseAllFolders}

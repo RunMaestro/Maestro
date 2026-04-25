@@ -267,6 +267,7 @@ const RightPanelTestWrapper = ({
 				fileTreeContainerRef={fileTreeContainerRef}
 				fileTreeFilterInputRef={fileTreeFilterInputRef}
 				toggleFolder={() => {}}
+				toggleFolderRecursive={() => {}}
 				handleFileClick={async () => {}}
 				expandAllFolders={() => {}}
 				collapseAllFolders={() => {}}
@@ -384,6 +385,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -723,6 +725,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}
@@ -835,6 +838,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -905,6 +909,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -988,6 +993,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -1095,6 +1101,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1183,6 +1190,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1256,6 +1264,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1364,6 +1373,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1444,6 +1454,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}

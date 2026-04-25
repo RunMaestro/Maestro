@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MessageSquare, Command, Trash2, Clock, Folder, FolderOpen } from 'lucide-react';
+import {
+	X,
+	MessageSquare,
+	Command,
+	Trash2,
+	Clock,
+	Folder,
+	FolderOpen,
+	Copy,
+	Check,
+} from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface ExecutionQueueBrowserProps {
 	isOpen: boolean;
@@ -331,7 +342,9 @@ function QueueItemRow({
 }: QueueItemRowProps) {
 	const [isPressed, setIsPressed] = useState(false);
 	const [isHovered, setIsHovered] = useState(false);
+	const [copied, setCopied] = useState(false);
 	const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const isDraggingRef = useRef(false);
 	const rowRef = useRef<HTMLDivElement>(null);
 
@@ -404,6 +417,9 @@ function QueueItemRow({
 		return () => {
 			if (pressTimerRef.current) {
 				clearTimeout(pressTimerRef.current);
+			}
+			if (copyResetTimerRef.current) {
+				clearTimeout(copyResetTimerRef.current);
 			}
 		};
 	}, []);
@@ -585,18 +601,41 @@ function QueueItemRow({
 					)}
 				</div>
 
-				{/* Remove button */}
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						onRemove();
-					}}
-					className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all"
-					style={{ color: theme.colors.error }}
-					title="Remove from queue"
-				>
-					<Trash2 className="w-4 h-4" />
-				</button>
+				{/* Action buttons */}
+				<div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all">
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							onRemove();
+						}}
+						className="p-1.5 rounded hover:bg-red-500/20 transition-all"
+						style={{ color: theme.colors.error }}
+						title="Remove from queue"
+					>
+						<Trash2 className="w-4 h-4" />
+					</button>
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							const text =
+								item.type === 'command'
+									? [item.command, item.commandArgs].filter(Boolean).join(' ')
+									: (item.text ?? '');
+							safeClipboardWrite(text).then((ok) => {
+								if (ok) {
+									setCopied(true);
+									if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+									copyResetTimerRef.current = setTimeout(() => setCopied(false), 1500);
+								}
+							});
+						}}
+						className="p-1.5 rounded hover:bg-black/20 transition-all"
+						style={{ color: copied ? theme.colors.success : theme.colors.textDim }}
+						title="Copy to clipboard"
+					>
+						{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+					</button>
+				</div>
 			</div>
 
 			{/* Shimmer effect when grabbed */}

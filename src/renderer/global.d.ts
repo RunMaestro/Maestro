@@ -868,7 +868,7 @@ interface MaestroAPI {
 			cwd: string,
 			customPath?: string,
 			sshRemoteId?: string
-		) => Promise<{ name: string; prompt?: string }[] | null>;
+		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

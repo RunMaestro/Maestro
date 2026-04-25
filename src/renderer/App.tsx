@@ -988,6 +988,7 @@ function MaestroConsoleInner() {
 		handleFileClick,
 		updateSessionWorkingDirectory,
 		toggleFolder,
+		toggleFolderRecursive,
 		expandAllFolders,
 		collapseAllFolders,
 	} = useAppHandlers({
@@ -2506,6 +2507,7 @@ function MaestroConsoleInner() {
 
 		// File explorer handlers
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,

@@ -271,7 +271,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				const agentCommandObjects = (agentSlashCommands ?? []).map((cmd) => ({
 					command: cmd.name.startsWith('/') ? cmd.name : `/${cmd.name}`,
-					description: getSlashCommandDescription(cmd.name, currentSession.toolType),
+					description:
+						cmd.description ?? getSlashCommandDescription(cmd.name, currentSession.toolType),
 					prompt: cmd.prompt,
 				}));
 
@@ -746,7 +747,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			let skillsMessage: string;
 			if (skills.length === 0) {
 				skillsMessage =
-					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/skill.md` files in your project.';
+					'## Skills\n\nNo Claude Code skills were found in this project.\n\nTo add skills, create `.claude/skills/<skill-name>/SKILL.md` files in your project.';
 			} else {
 				const formatTokenCount = (tokens: number): string => {
 					if (tokens >= 1000) {

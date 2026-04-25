@@ -30,6 +30,7 @@ export type ThemeId =
 	| 'maestros-choice'
 	| 'dre-synth'
 	| 'inquest'
+	| 'winamp'
 	| 'custom';
 
 /**
@@ -129,6 +130,7 @@ export function isValidThemeId(id: string): id is ThemeId {
 		'maestros-choice',
 		'dre-synth',
 		'inquest',
+		'winamp',
 		'custom',
 	];
 	return validIds.includes(id as ThemeId);

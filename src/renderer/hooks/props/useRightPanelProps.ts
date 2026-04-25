@@ -40,6 +40,11 @@ export interface UseRightPanelPropsDeps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -122,6 +127,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 
 			// File explorer handlers
 			toggleFolder: deps.toggleFolder,
+			toggleFolderRecursive: deps.toggleFolderRecursive,
 			handleFileClick: deps.handleFileClick,
 			expandAllFolders: deps.expandAllFolders,
 			collapseAllFolders: deps.collapseAllFolders,
@@ -177,6 +183,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			// Stable callbacks
 			deps.handleSetActiveRightTab,
 			deps.toggleFolder,
+			deps.toggleFolderRecursive,
 			deps.handleFileClick,
 			deps.expandAllFolders,
 			deps.collapseAllFolders,

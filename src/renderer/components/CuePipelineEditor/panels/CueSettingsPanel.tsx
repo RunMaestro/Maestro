@@ -4,11 +4,71 @@
  * Configures: timeout, failure behavior, concurrency, queue size.
  */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useId, useState } from 'react';
+import { HelpCircle } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { CueSettings } from '../../../../shared/cue';
 import { useClickOutside } from '../../../hooks/ui';
 import { CueSelect } from './CueSelect';
+
+interface InfoTooltipProps {
+	text: string;
+	theme: Theme;
+	placement?: 'above' | 'below';
+}
+
+function InfoTooltip({ text, theme, placement = 'above' }: InfoTooltipProps) {
+	const [visible, setVisible] = useState(false);
+	const tooltipId = useId();
+
+	const verticalStyle: React.CSSProperties =
+		placement === 'below' ? { top: 'calc(100% + 6px)' } : { bottom: 'calc(100% + 6px)' };
+
+	return (
+		<span
+			style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+			tabIndex={0}
+			aria-describedby={visible ? tooltipId : undefined}
+			aria-label={text}
+			onMouseEnter={() => setVisible(true)}
+			onMouseLeave={() => setVisible(false)}
+			onFocus={() => setVisible(true)}
+			onBlur={() => setVisible(false)}
+		>
+			<HelpCircle
+				size={11}
+				style={{ color: theme.colors.textDim, cursor: 'default', opacity: 0.55, flexShrink: 0 }}
+				aria-hidden="true"
+			/>
+			{visible && (
+				<div
+					id={tooltipId}
+					role="tooltip"
+					style={{
+						position: 'absolute',
+						...verticalStyle,
+						left: '50%',
+						transform: 'translateX(-50%)',
+						zIndex: 200,
+						width: 220,
+						backgroundColor: theme.colors.bgSidebar,
+						border: `1px solid ${theme.colors.border}`,
+						borderRadius: 6,
+						padding: '7px 9px',
+						color: theme.colors.textDim,
+						fontSize: 11,
+						lineHeight: 1.5,
+						boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+						pointerEvents: 'none',
+						whiteSpace: 'normal',
+					}}
+				>
+					{text}
+				</div>
+			)}
+		</span>
+	);
+}
 
 interface CueSettingsPanelProps {
 	settings: CueSettings;
@@ -94,7 +154,14 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 			<div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 				{/* Timeout */}
 				<div>
-					<div style={labelStyle}>Timeout (minutes)</div>
+					<div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+						<span>Timeout (minutes)</span>
+						<InfoTooltip
+							text="Maximum time a triggered run can execute before it's automatically stopped. Increase if your tasks regularly need more time."
+							theme={theme}
+							placement="below"
+						/>
+					</div>
 					<input
 						type="number"
 						min={1}
@@ -112,7 +179,13 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 
 				{/* Timeout on fail */}
 				<div>
-					<div style={labelStyle}>On Source Failure</div>
+					<div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+						<span>On Source Failure</span>
+						<InfoTooltip
+							text="What to do when a pipeline stage times out or errors. 'Break' stops the entire chain; 'Continue' skips the failed stage and proceeds to the next."
+							theme={theme}
+						/>
+					</div>
 					<CueSelect
 						value={settings.timeout_on_fail}
 						options={[
@@ -131,7 +204,13 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 
 				{/* Max concurrent */}
 				<div>
-					<div style={labelStyle}>Max Concurrent Runs</div>
+					<div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+						<span>Max Concurrent Runs</span>
+						<InfoTooltip
+							text="How many Cue-triggered runs can execute in parallel. Higher values increase throughput but agents may conflict on shared files. Default: 1."
+							theme={theme}
+						/>
+					</div>
 					<input
 						type="number"
 						min={1}
@@ -149,7 +228,13 @@ function CueSettingsPanelInner({ settings, theme, onChange, onClose }: CueSettin
 
 				{/* Queue size */}
 				<div>
-					<div style={labelStyle}>Event Queue Size</div>
+					<div style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+						<span>Event Queue Size</span>
+						<InfoTooltip
+							text="Events that arrive while the concurrent limit is reached are buffered here. When the queue is full, the oldest event is dropped. Set to 0 to disable buffering. Default: 10."
+							theme={theme}
+						/>
+					</div>
 					<input
 						type="number"
 						min={0}

@@ -310,6 +310,23 @@ export function hasActiveWizard(tab: AITab): boolean {
 }
 
 /**
+ * Check if a tab's active wizard has any user interaction.
+ * Returns true if the user has sent messages, typed input, or staged images.
+ * Used to decide whether closing the wizard should show a confirmation dialog.
+ *
+ * @param tab - The AI tab to check
+ * @returns True if the wizard has user interaction worth confirming loss of
+ */
+export function hasWizardInteraction(tab: AITab): boolean {
+	if (!tab.wizardState?.isActive) return false;
+	const hasUserMessages =
+		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
+	const hasInput = (tab.inputValue ?? '').trim() !== '';
+	const hasImages = tab.stagedImages?.length > 0;
+	return hasUserMessages || hasInput || hasImages;
+}
+
+/**
  * Filter a unified tab order down to the refs that TabBar actually displays when the
  * "unread only" tab filter is active. Matches TabBar.tsx's displayedUnifiedTabs logic so
  * keyboard jump shortcuts (Cmd+1..9, Cmd+0) stay aligned with the rendered tab strip.

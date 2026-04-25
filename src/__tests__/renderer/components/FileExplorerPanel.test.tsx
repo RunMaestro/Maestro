@@ -287,6 +287,7 @@ describe('FileExplorerPanel', () => {
 			fileTreeContainerRef: React.createRef<HTMLDivElement>(),
 			fileTreeFilterInputRef: React.createRef<HTMLInputElement>(),
 			toggleFolder: vi.fn(),
+			toggleFolderRecursive: vi.fn(),
 			handleFileClick: vi.fn().mockResolvedValue(undefined),
 			expandAllFolders: vi.fn(),
 			collapseAllFolders: vi.fn(),
@@ -988,6 +989,20 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+			expect(defaultProps.toggleFolderRecursive).not.toHaveBeenCalled();
+		});
+
+		it('calls toggleFolderRecursive on Alt+click of a folder', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const srcFolder = screen.getByText('src');
+			fireEvent.click(srcFolder, { altKey: true });
+
+			expect(defaultProps.toggleFolderRecursive).toHaveBeenCalledWith(
+				'src',
+				'session-1',
+				expect.any(Function)
+			);
+			expect(defaultProps.toggleFolder).not.toHaveBeenCalled();
 		});
 
 		it('sets selectedFileIndex and activeFocus when clicking a file', () => {

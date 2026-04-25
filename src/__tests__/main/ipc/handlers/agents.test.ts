@@ -1142,6 +1142,130 @@ describe('agents IPC handlers', () => {
 			expect(result).toEqual([{ name: '/help' }, { name: '/compact' }, { name: '/clear' }]);
 		});
 
+		it('enriches Claude skill commands with descriptions from SKILL.md frontmatter', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			const initMessage = JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				slash_commands: ['/Research', '/help'],
+			});
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout: initMessage + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			// Project-level skill directory lists Research; user-level has nothing.
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Canonical uppercase SKILL.md is what Claude Code actually writes.
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\ndescription: Deep literature review\n---\n\nBody';
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+
+			expect(result).toEqual([
+				{ name: '/Research', description: 'Deep literature review' },
+				{ name: '/help' }, // built-in, no skill file → no description
+			]);
+		});
+
+		it('ignores a "description:" line that appears in the body (not the frontmatter)', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout:
+					JSON.stringify({
+						type: 'system',
+						subtype: 'init',
+						slash_commands: ['/Research'],
+					}) + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === '/test/project/.claude/skills') {
+					return [{ name: 'Research', isDirectory: () => true }] as any;
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				const p = String(filePath);
+				// Frontmatter has no description; body contains a misleading
+				// "description:" line that must NOT be picked up.
+				if (p === '/test/project/.claude/skills/Research/SKILL.md') {
+					return '---\nname: Research\n---\n\nSee description: this is body text.';
+				}
+				const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				throw enoent;
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+
+			expect(result).toEqual([{ name: '/Research' }]);
+		});
+
+		it('falls back to names-only when skill enrichment fails, preserving slash commands', async () => {
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+				command: 'claude',
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				stdout:
+					JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/x', '/y'] }) + '\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			// An unexpected failure on the skills dir (e.g. EACCES) should
+			// NOT tear down the slash-command list — enrichment is
+			// best-effort. The error is still captured by Sentry inside
+			// discoverSlashCommands; the list itself survives.
+			vi.mocked(fs.promises.readdir).mockImplementation(async () => {
+				throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'claude-code', '/test/project');
+			expect(result).toEqual([{ name: '/x' }, { name: '/y' }]);
+		});
+
 		it('should use custom path if provided', async () => {
 			const mockAgent = {
 				id: 'claude-code',

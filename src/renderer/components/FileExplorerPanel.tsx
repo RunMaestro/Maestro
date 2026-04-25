@@ -435,6 +435,11 @@ interface FileExplorerPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
+	toggleFolderRecursive: (
+		path: string,
+		activeSessionId: string,
+		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
+	) => void;
 	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
@@ -481,6 +486,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		setActiveFocus,
 		fileTreeFilterInputRef,
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,
@@ -1075,6 +1081,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			return (
 				<div
 					data-file-index={globalIndex}
+					title={isFolder ? 'Alt/Option+click to expand or collapse all subfolders' : undefined}
 					className={`absolute top-0 left-0 w-full flex items-center gap-2 py-1 text-xs cursor-pointer hover:bg-white/5 px-2 rounded transition-colors border-l-2 select-none min-w-0 ${isSelected ? 'bg-white/10' : ''}`}
 					style={{
 						height: `${virtualRow.size}px`,
@@ -1094,9 +1101,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							e.preventDefault();
 						}
 					}}
-					onClick={() => {
+					onClick={(e) => {
 						if (isFolder) {
-							toggleFolder(fullPath, session.id, setSessions);
+							if (e.altKey) {
+								toggleFolderRecursive(fullPath, session.id, setSessions);
+							} else {
+								toggleFolder(fullPath, session.id, setSessions);
+							}
 						} else {
 							setSelectedFileIndex(globalIndex);
 							// Only change focus if not filtering
@@ -1166,6 +1177,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			selectedFileIndex,
 			theme,
 			toggleFolder,
+			toggleFolderRecursive,
 			setSessions,
 			setSelectedFileIndex,
 			setActiveFocus,

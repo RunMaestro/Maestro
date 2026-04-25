@@ -136,33 +136,39 @@ export function usePipelinePersistence({
 		});
 		const currentPipelines = pipelinesRef.current;
 
-		// Block save when any pipeline contains an unresolved-agent error node.
-		// These are emitted by yamlToPipeline when `agent_id` / `source_session_ids`
-		// reference deleted sessions. Persisting a pipeline in that state would
-		// let the heuristic fallback silently pick a wrong agent (the "two
-		// agents swapped" failure mode). Surface a toast and refuse to write.
+		// Filter out pipelines with unresolved-agent error nodes rather than
+		// aborting the entire save. Error nodes are emitted by yamlToPipeline when
+		// `agent_id` / `source_session_ids` reference deleted sessions; we must not
+		// write them to YAML (the heuristic fallback would silently pick a wrong
+		// agent). But blocking the whole save was wrong: other valid changes —
+		// including deletions of unrelated pipelines — were silently discarded,
+		// making it impossible to clean up a workspace without first fixing every
+		// error pipeline.
 		const pipelinesWithErrors = currentPipelines.filter((p) =>
 			p.nodes.some((n) => n.type === 'error')
 		);
+		const validPipelines =
+			pipelinesWithErrors.length > 0
+				? currentPipelines.filter((p) => !p.nodes.some((n) => n.type === 'error'))
+				: currentPipelines;
+
 		if (pipelinesWithErrors.length > 0) {
-			// Clear any stale validation errors from a previous save attempt so
-			// the banner doesn't keep showing rules the user has already fixed
-			// while the unresolved-agent toast is the actionable blocker.
+			// Clear any stale validation errors so the banner doesn't keep showing
+			// rules the user has already fixed while the skip-warning is active.
 			setValidationErrors([]);
 			notifyToast({
 				type: 'warning',
-				title: 'Resolve unresolved agents before saving',
+				title: 'Some pipelines skipped',
 				message: `Pipeline${pipelinesWithErrors.length > 1 ? 's' : ''} ${pipelinesWithErrors
 					.map((p) => `"${p.name}"`)
 					.join(
 						', '
-					)} contain${pipelinesWithErrors.length > 1 ? '' : 's'} an unresolved agent reference. Reassign or remove the affected subscription and try again.`,
+					)} contain${pipelinesWithErrors.length > 1 ? '' : 's'} unresolved agents and ${pipelinesWithErrors.length > 1 ? 'were' : 'was'} skipped. Other changes were saved.`,
 			});
-			return;
 		}
 
 		// Validate graph shape first
-		const errors = validatePipelines(currentPipelines);
+		const errors = validatePipelines(validPipelines);
 
 		// Build session lookup maps. Prefer sessionId since agents can be
 		// renamed, but fall back to sessionName for pipelines loaded from older
@@ -189,7 +195,7 @@ export function usePipelinePersistence({
 		const pipelinesByRoot = new Map<string, CuePipeline[]>();
 		const unresolvedPipelines: string[] = [];
 
-		for (const pipeline of currentPipelines) {
+		for (const pipeline of validPipelines) {
 			const agents = pipeline.nodes.filter((n) => n.type === 'agent');
 			if (agents.length === 0) continue; // validatePipelines already flagged this
 
@@ -245,10 +251,24 @@ export function usePipelinePersistence({
 			);
 		}
 
+		// Compute roots that are still referenced by error-node pipelines. These
+		// roots must NOT be deleted during orphaned-root cleanup — the pipeline
+		// still exists in the editor; it just can't be written until the user
+		// fixes the unresolved agent references.
+		const errorPipelineRoots = new Set<string>();
+		for (const p of pipelinesWithErrors) {
+			for (const node of p.nodes) {
+				if (node.type === 'agent') {
+					const root = resolveRoot(node.data as AgentNodeData);
+					if (root) errorPipelineRoots.add(root);
+				}
+			}
+		}
+
 		// Safety net: if the editor has pipelines but nothing will be written and
 		// no previously-saved root needs clearing, the save would silently succeed
 		// with no effect. Surface that rather than masking it as "Saved".
-		if (currentPipelines.length > 0 && pipelinesByRoot.size === 0 && errors.length === 0) {
+		if (validPipelines.length > 0 && pipelinesByRoot.size === 0 && errors.length === 0) {
 			errors.push(
 				'Nothing to save — pipelines are empty. Add a trigger and an agent, then try again.'
 			);
@@ -272,7 +292,12 @@ export function usePipelinePersistence({
 			let rootsCleared = 0;
 
 			// Write each root's YAML with only that root's pipelines.
+			// Skip roots that are also referenced by error-node pipelines: those
+			// pipelines exist on disk with valid YAML that we cannot reproduce
+			// without their missing agents. Writing the root here would silently
+			// strip those pipelines from disk (data loss).
 			for (const root of currentRoots) {
+				if (errorPipelineRoots.has(root)) continue;
 				const rootPipelines = pipelinesByRoot.get(root)!;
 				const { yaml: yamlContent, promptFiles } = pipelinesToYaml(rootPipelines, cueSettings);
 				const promptFilesObj: Record<string, string> = {};
@@ -303,6 +328,10 @@ export function usePipelinePersistence({
 			// .maestro/cue.yaml on disk that confused users and the engine.
 			for (const root of previousRoots) {
 				if (currentRoots.has(root)) continue;
+				// Don't delete roots still referenced by error-node pipelines — the
+				// pipeline exists in the editor and will be writable once the user
+				// fixes the unresolved agent references.
+				if (errorPipelineRoots.has(root)) continue;
 				await cueService.deleteYaml(root);
 				// Verify the file is gone so a silent IPC failure surfaces as an
 				// error instead of a ghost pipeline reappearing on next launch.
@@ -332,9 +361,22 @@ export function usePipelinePersistence({
 			// Refs MUST update before setIsDirty(false) — the dirty-tracking
 			// effect compares against savedStateRef.current, so flipping dirty
 			// false before the ref is fresh would immediately flip it back true.
-			savedStateRef.current = JSON.stringify(currentPipelines);
-			lastWrittenRootsRef.current = new Set(currentRoots);
+			savedStateRef.current = JSON.stringify(validPipelines);
+			// Preserve error-pipeline roots alongside current roots so the NEXT
+			// save's previousRoots still covers them. Without this, deleting an
+			// error-node pipeline after a partial save orphans its YAML: the root
+			// drops out of previousRoots and the cleanup loop never deletes it.
+			lastWrittenRootsRef.current = new Set([...currentRoots, ...errorPipelineRoots]);
 			setIsDirty(false);
+
+			// Nothing was written and nothing was cleared — happens when all
+			// pipelines have error nodes and there are no previous roots to clean
+			// up. Avoid a misleading "Saved 0 pipelines to 0 projects" toast.
+			if (totalPipelinesWritten === 0 && rootsCleared === 0) {
+				setSaveStatus('idle');
+				return;
+			}
+
 			setSaveStatus('success');
 			persistLayout();
 			// Fix #3: notify parent (CueModal) so graph data can refresh.

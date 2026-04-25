@@ -130,6 +130,7 @@ describe('RightPanel', () => {
 		fileTreeContainerRef: { current: null } as React.RefObject<HTMLDivElement>,
 		fileTreeFilterInputRef: { current: null } as React.RefObject<HTMLInputElement>,
 		toggleFolder: vi.fn(),
+		toggleFolderRecursive: vi.fn(),
 		handleFileClick: vi.fn(),
 		expandAllFolders: vi.fn(),
 		collapseAllFolders: vi.fn(),

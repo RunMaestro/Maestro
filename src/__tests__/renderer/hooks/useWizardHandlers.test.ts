@@ -328,6 +328,29 @@ describe('useWizardHandlers', () => {
 			);
 		});
 
+		it('preserves skill description returned from discoverSlashCommands', async () => {
+			const session = createMockSession({ agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([
+				{ name: 'Research', description: 'Deep literature review' },
+			]);
+
+			const deps = createMockDeps();
+			renderHook(() => useWizardHandlers(deps));
+
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			const updatedSession = useSessionStore.getState().sessions[0];
+			expect(updatedSession.agentCommands).toEqual(
+				expect.arrayContaining([
+					{ command: '/Research', description: 'Deep literature review', prompt: undefined },
+				])
+			);
+		});
+
 		it('skips discovery if agentCommands already populated', async () => {
 			const session = createMockSession({
 				agentCommands: [{ command: '/existing', description: 'Existing' }],

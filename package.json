@@ -37,6 +37,7 @@
 		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
+		"preinstall": "node scripts/check-python.mjs",
 		"prepare": "node scripts/setup-git-hooks.mjs",
 		"postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
 		"lint": "tsc -p tsconfig.lint.json && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.cli.json --noEmit",

@@ -227,9 +227,9 @@ describe('usePipelinePersistence', () => {
 	});
 
 	describe('handleSave - error-node gate', () => {
-		it('blocks save with a warning toast when a pipeline contains an unresolved-agent error node', async () => {
-			const errorNode: PipelineNode = {
-				id: 'error-target-sub',
+		function makeErrorNode(id = 'error-node'): PipelineNode {
+			return {
+				id,
 				type: 'error',
 				position: { x: 0, y: 0 },
 				data: {
@@ -239,19 +239,147 @@ describe('usePipelinePersistence', () => {
 					message: 'Target agent no longer exists.',
 				},
 			};
+		}
+
+		it('skips error-node pipeline with a warning toast (does not abort entire save)', async () => {
+			// Single error pipeline, no valid pipelines, no previous roots
 			const h = setup({
-				pipelines: [pipeline('p1', 'Broken Pipeline', [triggerNode('t1'), errorNode])],
+				pipelines: [pipeline('p1', 'Broken', [triggerNode('t1'), makeErrorNode()])],
 				sessions: [{ id: 'session-x', name: 'X', toolType: 'x', projectRoot: '/r' }],
 			});
 			await act(async () => {
 				await h.result.current.handleSave();
 			});
-			expect(mockWriteYaml).not.toHaveBeenCalled();
+			// Warning toast shown with new "skipped" title
 			expect(mockNotifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'warning',
-					title: expect.stringContaining('unresolved'),
+					title: 'Some pipelines skipped',
 				})
+			);
+			// No YAML written — nothing valid to write
+			expect(mockWriteYaml).not.toHaveBeenCalled();
+		});
+
+		it('persists deletion of valid pipeline even when a different pipeline has error nodes (#847)', async () => {
+			// Valid pipeline A (has proper agent) + Broken pipeline B (error node)
+			// User deletes A → A is no longer in currentPipelines
+			// Save should: skip B (error), write nothing (A deleted), and NOT block
+			const pipelineB = pipeline('p-b', 'Broken B', [triggerNode('t2'), makeErrorNode('e-b')]);
+
+			// Previous save had A at /proj-a
+			const h = setup({
+				pipelines: [pipelineB], // A was deleted — only B remains
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/proj-a' }],
+				previousRoots: new Set(['/proj-a']),
+			});
+
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+
+			// A's root should be cleaned up (it was in previousRoots, now empty of valid pipelines)
+			expect(mockDeleteYaml).toHaveBeenCalledWith('/proj-a');
+			// Warning about B being skipped
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'warning', title: 'Some pipelines skipped' })
+			);
+		});
+
+		it('does not delete root of an error-node pipeline during orphaned-root cleanup', async () => {
+			// A is valid (at /proj-a), B has errors (at /proj-b — still on disk from prev save)
+			// Previous save included both roots. User saves WITHOUT deleting B.
+			// B's root should NOT be deleted — B still exists in the editor.
+			const pipelineA = pipeline(
+				'p-a',
+				'Pipeline A',
+				[triggerNode('t1'), agentNode('a1', 'Alpha')],
+				[{ id: 'e1', source: 't1', target: 'a1' }]
+			);
+			const pipelineB = pipeline('p-b', 'Broken B', [
+				triggerNode('t2'),
+				{ ...agentNode('a2', 'Beta'), id: 'a2' },
+				makeErrorNode('e-b'),
+			]);
+
+			const h = setup({
+				pipelines: [pipelineA, pipelineB],
+				sessions: [
+					{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/proj-a' },
+					{ id: 'session-Beta', name: 'Beta', toolType: 'x', projectRoot: '/proj-b' },
+				],
+				previousRoots: new Set(['/proj-a', '/proj-b']),
+			});
+
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+
+			// A is written
+			expect(mockWriteYaml).toHaveBeenCalledWith('/proj-a', expect.any(String), expect.any(Object));
+			// B's root is protected — NOT deleted
+			expect(mockDeleteYaml).not.toHaveBeenCalledWith('/proj-b');
+			// Warning for B being skipped
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'warning', title: 'Some pipelines skipped' })
+			);
+		});
+
+		it('savedStateRef reflects only valid pipelines after partial save', async () => {
+			const pipelineA = pipeline(
+				'p-a',
+				'A',
+				[triggerNode('t1'), agentNode('a1', 'Alpha')],
+				[{ id: 'e1', source: 't1', target: 'a1' }]
+			);
+			const pipelineB = pipeline('p-b', 'Broken B', [triggerNode('t2'), makeErrorNode()]);
+
+			const h = setup({
+				pipelines: [pipelineA, pipelineB],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/r' }],
+			});
+
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+
+			// savedStateRef should only contain valid pipeline A (not broken B)
+			const saved = JSON.parse(h.savedStateRef.current) as CuePipeline[];
+			expect(saved).toHaveLength(1);
+			expect(saved[0].id).toBe('p-a');
+		});
+
+		it('does not overwrite a root that has both a valid and an error-node pipeline (mixed root)', async () => {
+			// Both pipelineA (valid) and pipelineB (error node) resolve to the
+			// SAME root /proj-ab. Writing pipelineA's YAML would silently drop
+			// pipelineB from disk. The save must skip the write for that root.
+			const pipelineA = pipeline(
+				'p-a',
+				'Pipeline A',
+				[triggerNode('t1'), agentNode('a1', 'Alpha')],
+				[{ id: 'e1', source: 't1', target: 'a1' }]
+			);
+			const pipelineB = pipeline('p-b', 'Broken B', [
+				triggerNode('t2'),
+				{ ...agentNode('a2', 'Alpha'), id: 'a2' }, // valid agent node in the same root
+				makeErrorNode('e-b'),
+			]);
+			const h = setup({
+				pipelines: [pipelineA, pipelineB],
+				sessions: [{ id: 'session-Alpha', name: 'Alpha', toolType: 'x', projectRoot: '/proj-ab' }],
+			});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			// The root is shared — skip writing to avoid stripping pipelineB from disk
+			expect(mockWriteYaml).not.toHaveBeenCalledWith(
+				'/proj-ab',
+				expect.anything(),
+				expect.anything()
+			);
+			// Warning toast for pipelineB
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'warning', title: 'Some pipelines skipped' })
 			);
 		});
 
