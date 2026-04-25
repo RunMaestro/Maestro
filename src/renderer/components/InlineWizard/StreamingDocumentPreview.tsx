@@ -21,6 +21,7 @@ import {
 	createMarkdownComponents,
 	generateInlineWizardPreviewProseStyles,
 } from '../../utils/markdownConfig';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
  * Props for StreamingDocumentPreview
@@ -93,6 +94,7 @@ export function StreamingDocumentPreview({
 	totalPhases,
 }: StreamingDocumentPreviewProps): JSX.Element {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const [viewMode, setViewMode] = useState<ViewMode>('raw');
 	const userScrolledRef = useRef(false);
 	const lastFilenameRef = useRef(filename ?? '');
@@ -147,6 +149,7 @@ export function StreamingDocumentPreview({
 		() =>
 			createMarkdownComponents({
 				theme,
+				enableBionifyReadingMode: bionifyReadingMode,
 				onExternalLinkClick: (href) => {
 					if (/^https?:\/\/|^mailto:/.test(href)) {
 						void window.maestro.shell.openExternal(href);
@@ -157,7 +160,7 @@ export function StreamingDocumentPreview({
 					fontSize: '0.85em',
 				},
 			}),
-		[theme]
+		[bionifyReadingMode, theme]
 	);
 
 	return (

@@ -29,6 +29,7 @@ import {
 	createMarkdownComponents,
 } from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { useSettingsStore } from '../../../stores/settingsStore';
 
 // Memoize plugin arrays - they never change
 const REHYPE_PLUGINS = [rehypeSlug];
@@ -245,6 +246,7 @@ export function DocumentEditor({
 	onDropdownOpenChange,
 }: DocumentEditorProps): JSX.Element {
 	const [attachmentsExpanded, setAttachmentsExpanded] = useState(true);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 
 	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
@@ -477,6 +479,7 @@ export function DocumentEditor({
 		() =>
 			createMarkdownComponents({
 				theme,
+				enableBionifyReadingMode: bionifyReadingMode,
 				imageRenderer: WizardImageRenderer,
 				customLanguageRenderers: {
 					mermaid: MermaidWrapper,
@@ -487,7 +490,7 @@ export function DocumentEditor({
 					}
 				},
 			}),
-		[theme, WizardImageRenderer, MermaidWrapper]
+		[bionifyReadingMode, theme, WizardImageRenderer, MermaidWrapper]
 	);
 
 	return (

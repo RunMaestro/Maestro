@@ -197,6 +197,18 @@ export class BroadcastService {
 	}
 
 	/**
+	 * Broadcast Bionify reading-mode changes to all connected web clients
+	 * Called when the user toggles the global reading-mode setting in the desktop app
+	 */
+	broadcastBionifyReadingModeChange(enabled: boolean): void {
+		this.broadcastToAll({
+			type: 'bionify_reading_mode',
+			enabled,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
 	 * Broadcast custom commands update to all connected web clients
 	 * Called when the user modifies custom AI commands in the desktop app
 	 */

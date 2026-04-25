@@ -209,6 +209,19 @@ describe('BroadcastService', () => {
 		});
 	});
 
+	describe('Bionify Reading Mode Sync (Desktop → Web)', () => {
+		it('should broadcast bionify reading mode changes with the correct payload', () => {
+			const client = createMockClient('client-1');
+			clients.set('client-1', client);
+
+			service.broadcastBionifyReadingModeChange(true);
+
+			const sentData = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(sentData.type).toBe('bionify_reading_mode');
+			expect(sentData.enabled).toBe(true);
+		});
+	});
+
 	describe('Session State Sync (Desktop → Web)', () => {
 		it('should broadcast session state change', () => {
 			const client = createMockClient('client-1');

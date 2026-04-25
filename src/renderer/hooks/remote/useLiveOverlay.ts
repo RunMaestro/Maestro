@@ -117,6 +117,56 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		}
 	}, [isLiveMode]);
 
+	// Keep tunnel UI aligned with the actual cloudflared process state.
+	useEffect(() => {
+		if (!isLiveMode || (tunnelStatus !== 'starting' && tunnelStatus !== 'connected')) {
+			return;
+		}
+
+		let cancelled = false;
+		const syncStatus = async () => {
+			try {
+				const status = await window.maestro.tunnel.getStatus();
+				if (cancelled) return;
+
+				if (status.isRunning && status.url) {
+					setTunnelStatus('connected');
+					setTunnelUrl(status.url);
+					setTunnelError(null);
+					return;
+				}
+
+				if (status.error) {
+					setTunnelStatus('error');
+					setTunnelError(status.error);
+				} else {
+					setTunnelStatus('off');
+				}
+				setTunnelUrl(null);
+				setActiveUrlTab('local');
+			} catch (error) {
+				if (cancelled) return;
+				setTunnelStatus('error');
+				setTunnelError(error instanceof Error ? error.message : 'Failed to read tunnel status');
+				setTunnelUrl(null);
+				setActiveUrlTab('local');
+			}
+		};
+
+		void syncStatus();
+		const intervalId = window.setInterval(
+			() => {
+				void syncStatus();
+			},
+			tunnelStatus === 'starting' ? 500 : 2000
+		);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(intervalId);
+		};
+	}, [isLiveMode, tunnelStatus]);
+
 	// Handle tunnel toggle (start/stop remote access)
 	const handleTunnelToggle = useCallback(async () => {
 		if (tunnelStatus === 'connected') {

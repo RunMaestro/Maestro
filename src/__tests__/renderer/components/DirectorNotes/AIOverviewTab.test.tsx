@@ -14,13 +14,22 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 			provider: 'claude-code',
 			defaultLookbackDays: 7,
 		},
+		bionifyReadingMode: false,
 	}),
 }));
 
 // Mock MarkdownRenderer
 vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
-	MarkdownRenderer: ({ content }: { content: string }) => (
-		<div data-testid="markdown-renderer">{content}</div>
+	MarkdownRenderer: ({
+		content,
+		enableBionifyReadingMode,
+	}: {
+		content: string;
+		enableBionifyReadingMode?: boolean;
+	}) => (
+		<div data-testid="markdown-renderer" data-bionify={enableBionifyReadingMode ? 'on' : 'off'}>
+			{content}
+		</div>
 	),
 }));
 
@@ -137,6 +146,7 @@ describe('AIOverviewTab', () => {
 				provider: 'claude-code',
 			})
 		);
+		expect(screen.getByTestId('markdown-renderer')).toHaveAttribute('data-bionify', 'off');
 	});
 
 	it('calls onSynopsisReady when synopsis is generated', async () => {

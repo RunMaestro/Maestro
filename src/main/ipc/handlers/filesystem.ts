@@ -32,6 +32,7 @@ import {
 	deleteRemote,
 	countItemsRemote,
 } from '../../utils/remote-fs';
+import { resolveDirentType } from '../../utils/dirent-utils';
 import { getSshRemoteById } from '../../stores';
 
 /**
@@ -102,13 +103,14 @@ export function registerFilesystemHandlers(): void {
 			if (!result.success) {
 				throw new Error(result.error || 'Failed to read remote directory');
 			}
-			// Map remote entries to match local format (isFile derived from !isDirectory && !isSymlink)
+			// Map remote entries to match local format
 			// Include full path for recursive directory scanning (e.g., document graph)
 			// Use POSIX path joining for remote paths (always forward slashes)
+			// Symlinks with isDirectory=true have already been resolved by readDirRemote
 			return result.data!.map((entry) => ({
 				name: entry.name.normalize('NFC'),
 				isDirectory: entry.isDirectory,
-				isFile: !entry.isDirectory && !entry.isSymlink,
+				isFile: !entry.isDirectory,
 				// Preserve raw filesystem name in path for correct remote operations
 				path: dirPath.endsWith('/') ? `${dirPath}${entry.name}` : `${dirPath}/${entry.name}`,
 			}));
@@ -118,13 +120,20 @@ export function registerFilesystemHandlers(): void {
 		const entries = await fs.readdir(dirPath, { withFileTypes: true });
 		// Convert Dirent objects to plain objects for IPC serialization
 		// Include full path for recursive directory scanning (e.g., document graph)
-		return entries.map((entry: any) => ({
-			name: entry.name.normalize('NFC'),
-			isDirectory: entry.isDirectory(),
-			isFile: entry.isFile(),
-			// Preserve raw filesystem name in path for correct local operations
-			path: path.join(dirPath, entry.name),
-		}));
+		// Resolve symlinks via fs.stat() so symlinked dirs/files are properly classified
+		return Promise.all(
+			entries.map(async (entry) => {
+				const fullPath = path.join(dirPath, entry.name);
+				const resolved = await resolveDirentType(entry, fullPath);
+				return {
+					name: entry.name.normalize('NFC'),
+					isDirectory: resolved.isDirectory,
+					// Broken symlinks are shown as files so they still appear in the browser
+					isFile: resolved.isFile || resolved.isBrokenSymlink,
+					path: fullPath,
+				};
+			})
+		);
 	});
 
 	// Read file contents (supports SSH remote, with image base64 encoding)
@@ -398,10 +407,13 @@ export function registerFilesystemHandlers(): void {
 			const countRecursive = async (dir: string) => {
 				const entries = await fs.readdir(dir, { withFileTypes: true });
 				for (const entry of entries) {
-					if (entry.isDirectory()) {
+					const fullPath = path.join(dir, entry.name);
+					const resolved = await resolveDirentType(entry, fullPath);
+					if (resolved.isDirectory) {
 						folderCount++;
-						await countRecursive(path.join(dir, entry.name));
+						await countRecursive(fullPath);
 					} else {
+						// Files, symlinks-to-files, and broken symlinks all count as files
 						fileCount++;
 					}
 				}

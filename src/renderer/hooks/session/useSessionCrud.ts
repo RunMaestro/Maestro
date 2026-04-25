@@ -211,6 +211,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					cwd: workingDir,
 					fullPath: workingDir,
 					projectRoot: workingDir,
+					createdAt: Date.now(),
 					isGitRepo,
 					gitBranches,
 					gitTags,

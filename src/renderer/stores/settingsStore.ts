@@ -199,6 +199,9 @@ export interface SettingsStoreState {
 	rightPanelWidth: number;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
+	bionifyReadingMode: boolean;
+	bionifyIntensity: number;
+	bionifyAlgorithm: string;
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
 	terminalWidth: number;
@@ -283,6 +286,9 @@ export interface SettingsStoreActions {
 	setRightPanelWidth: (value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
+	setBionifyReadingMode: (value: boolean) => void;
+	setBionifyIntensity: (value: number) => void;
+	setBionifyAlgorithm: (value: string) => void;
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
 	setTerminalWidth: (value: number) => void;
@@ -429,6 +435,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		rightPanelWidth: 384,
 		markdownEditMode: false,
 		chatRawTextMode: false,
+		bionifyReadingMode: false,
+		bionifyIntensity: 1,
+		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'default',
 		terminalWidth: 100,
@@ -602,6 +611,25 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setChatRawTextMode: (value) => {
 			set({ chatRawTextMode: value });
 			window.maestro.settings.set('chatRawTextMode', value);
+		},
+
+		setBionifyReadingMode: (value) => {
+			set({ bionifyReadingMode: value });
+			window.maestro.settings.set('bionifyReadingMode', value);
+		},
+
+		setBionifyIntensity: (value) => {
+			const numericValue = Number(value);
+			const clamped = Number.isFinite(numericValue)
+				? Math.max(0.6, Math.min(1.5, numericValue))
+				: 1;
+			set({ bionifyIntensity: clamped });
+			window.maestro.settings.set('bionifyIntensity', clamped);
+		},
+
+		setBionifyAlgorithm: (value) => {
+			set({ bionifyAlgorithm: value });
+			window.maestro.settings.set('bionifyAlgorithm', value);
 		},
 
 		setShowHiddenFiles: (value) => {
@@ -1498,6 +1526,19 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['chatRawTextMode'] !== undefined)
 			patch.chatRawTextMode = allSettings['chatRawTextMode'] as boolean;
 
+		if (allSettings['bionifyReadingMode'] !== undefined)
+			patch.bionifyReadingMode = allSettings['bionifyReadingMode'] as boolean;
+
+		if (allSettings['bionifyIntensity'] !== undefined) {
+			const savedIntensity = allSettings['bionifyIntensity'];
+			if (typeof savedIntensity === 'number' && Number.isFinite(savedIntensity)) {
+				patch.bionifyIntensity = Math.max(0.6, Math.min(1.5, savedIntensity));
+			}
+		}
+
+		if (allSettings['bionifyAlgorithm'] !== undefined)
+			patch.bionifyAlgorithm = allSettings['bionifyAlgorithm'] as string;
+
 		if (allSettings['showHiddenFiles'] !== undefined)
 			patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
@@ -1879,6 +1920,9 @@ export function getSettingsActions() {
 		setRightPanelWidth: state.setRightPanelWidth,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
+		setBionifyReadingMode: state.setBionifyReadingMode,
+		setBionifyIntensity: state.setBionifyIntensity,
+		setBionifyAlgorithm: state.setBionifyAlgorithm,
 		setShowHiddenFiles: state.setShowHiddenFiles,
 		setFileExplorerIconTheme: state.setFileExplorerIconTheme,
 		setTerminalWidth: state.setTerminalWidth,

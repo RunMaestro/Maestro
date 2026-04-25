@@ -59,6 +59,7 @@ import {
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 import { useBatchStore } from '../stores/batchStore';
+import { useSettingsStore } from '../stores/settingsStore';
 
 interface AutoRunProps {
 	theme: Theme;
@@ -522,6 +523,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const batchError = useBatchStore(
 		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
 	);
+	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
+	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+	const [previewBionifyOverride, setPreviewBionifyOverride] = useState<boolean | null>(null);
 	const errorDocumentName =
 		batchRunState?.errorDocumentIndex !== undefined
 			? batchRunState.documents[batchRunState.errorDocumentIndex]
@@ -1373,6 +1378,13 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		const total = completed + uncheckedMatches.length;
 		return { completed, total };
 	}, [savedContent]);
+	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
+	const previewBionifyReadingMode = previewBionifyOverride ?? bionifyReadingMode;
+	const effectivePreviewBionifyReadingMode = previewBionifyReadingMode && !hasActivePreviewSearch;
+
+	useEffect(() => {
+		setPreviewBionifyOverride(null);
+	}, [sessionId, folderPath, selectedFile]);
 
 	// Token counting based on saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes
@@ -1455,6 +1467,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			customLanguageRenderers: {
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
+			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
@@ -1483,7 +1498,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				/>
 			),
 		};
-	}, [theme, folderPath, sshRemoteId, openLightboxByFilename, handleFileClick]);
+	}, [
+		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
+		theme,
+		folderPath,
+		sshRemoteId,
+		openLightboxByFilename,
+		handleFileClick,
+	]);
 
 	// Search-highlighted components - only used in preview mode with active search
 	// This allows the base components to remain stable during editing
@@ -1498,6 +1522,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			customLanguageRenderers: {
 				mermaid: ({ code, theme: t }) => <MermaidRenderer chart={code} theme={t} />,
 			},
+			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
+			bionifyIntensity,
+			bionifyAlgorithm,
 			onFileClick: handleFileClick,
 			onExternalLinkClick: (href) => {
 				if (/^https?:\/\/|^mailto:/.test(href)) {
@@ -1528,6 +1555,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		};
 	}, [
 		theme,
+		effectivePreviewBionifyReadingMode,
+		bionifyIntensity,
+		bionifyAlgorithm,
 		folderPath,
 		sshRemoteId,
 		openLightboxByFilename,
@@ -1761,7 +1791,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							Run
 						</button>
 					)}
-					{/* Playbook Exchange button */}
+					{/* PlayBooks button */}
 					{onOpenMarketplace && (
 						<button
 							onClick={onOpenMarketplace}
@@ -1771,10 +1801,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Browse Playbook Exchange - discover and share community playbooks"
+							title="Browse PlayBooks - discover and share community playbooks"
 						>
 							<LayoutGrid className="w-3.5 h-3.5" />
-							<span className="text-xs font-medium">Exchange</span>
+							<span className="text-xs font-medium">PlayBooks</span>
 						</button>
 					)}
 					{/* Launch Wizard button */}
@@ -1820,6 +1850,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						onRefresh={onRefresh}
 						onChangeFolder={onOpenSetup}
 						onCreateDocument={onCreateDocument}
+						bionifyEnabled={previewBionifyReadingMode}
+						onToggleBionify={() =>
+							setPreviewBionifyOverride((current) => !(current ?? bionifyReadingMode))
+						}
 						isLoading={isLoadingDocuments}
 						documentTaskCounts={documentTaskCounts}
 					/>

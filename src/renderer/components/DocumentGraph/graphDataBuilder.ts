@@ -318,6 +318,13 @@ interface LinkIndexEntry {
 }
 
 /**
+ * Maximum directory-scan depth. Matches `loadFileTree` in fileExplorer.ts and
+ * guards against infinite recursion through symlink cycles (e.g. `a/link → a`),
+ * which can occur once `fs:readDir` resolves symlinked dirs as directories.
+ */
+const SCAN_MAX_DEPTH = 10;
+
+/**
  * Recursively scan a directory for all markdown files.
  * @param rootPath - Root directory to scan
  * @param onProgress - Optional callback for progress updates (reports number of directories scanned)
@@ -333,9 +340,17 @@ async function scanMarkdownFiles(
 	let directoriesScanned = 0;
 	let isRootDirectory = true;
 
-	async function scanDir(currentPath: string, relativePath: string): Promise<void> {
+	async function scanDir(currentPath: string, relativePath: string, depth: number): Promise<void> {
 		const isRoot = isRootDirectory;
 		isRootDirectory = false;
+
+		if (depth >= SCAN_MAX_DEPTH) {
+			// Bail out rather than risk an infinite loop through a symlink cycle.
+			console.warn(
+				`scanMarkdownFiles: reached max depth ${SCAN_MAX_DEPTH} at ${currentPath}; stopping recursion`
+			);
+			return;
+		}
 
 		try {
 			const entries = await window.maestro.fs.readDir(currentPath, sshRemoteId);
@@ -363,7 +378,7 @@ async function scanMarkdownFiles(
 				const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
 				if (entry.isDirectory) {
-					await scanDir(fullPath, entryRelativePath);
+					await scanDir(fullPath, entryRelativePath, depth + 1);
 				} else if (entry.name.toLowerCase().endsWith('.md')) {
 					markdownFiles.push(entryRelativePath);
 				}
@@ -380,7 +395,7 @@ async function scanMarkdownFiles(
 		}
 	}
 
-	await scanDir(rootPath, '');
+	await scanDir(rootPath, '', 0);
 	return markdownFiles;
 }
 

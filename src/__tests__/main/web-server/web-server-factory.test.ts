@@ -23,6 +23,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetSessionsCallback = vi.fn();
 			setGetSessionDetailCallback = vi.fn();
 			setGetThemeCallback = vi.fn();
+			setGetBionifyReadingModeCallback = vi.fn();
 			setGetCustomCommandsCallback = vi.fn();
 			setGetHistoryCallback = vi.fn();
 			setWriteToSessionCallback = vi.fn();
@@ -175,6 +176,21 @@ describe('web-server/web-server-factory', () => {
 
 			expect(server).toBeDefined();
 			expect(server).toBeInstanceOf(WebServer);
+		});
+
+		it('should register a bionify reading mode callback sourced from settings', () => {
+			vi.mocked(mockSettingsStore.get).mockImplementation((key: string, defaultValue?: any) => {
+				if (key === 'bionifyReadingMode') return true;
+				return defaultValue;
+			});
+
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+
+			expect(server.setGetBionifyReadingModeCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setGetBionifyReadingModeCallback.mock.calls[0][0];
+			expect(callback()).toBe(true);
+			expect(mockSettingsStore.get).toHaveBeenCalledWith('bionifyReadingMode', false);
 		});
 
 		it('should use random port (0) when custom port is disabled', () => {

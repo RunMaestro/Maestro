@@ -1,4 +1,6 @@
+import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
 
 // Mock react-syntax-highlighter before importing the module under test
 vi.mock('react-syntax-highlighter', () => ({
@@ -670,6 +672,12 @@ describe('generateInlineWizardPreviewProseStyles', () => {
 		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
 	});
 
+	it('should scope Bionify selectors to descendant prose blocks only', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view .prose .bionify-word');
+		expect(css).not.toContain('.doc-gen-view.prose, .doc-gen-view .prose .bionify-word');
+	});
+
 	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
 		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
 		expect(css).toContain(
@@ -801,5 +809,44 @@ describe('createMarkdownComponents link handling', () => {
 		element.props.onClick(clickEvent);
 		expect(onFileClick).toHaveBeenCalledWith('LICENSE', { openInNewTab: false });
 		expect(onExternalLinkClick).not.toHaveBeenCalled();
+	});
+});
+
+describe('createMarkdownComponents reading mode', () => {
+	it('wraps paragraph prose in Bionify spans when enabled', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Paragraph = components.p as any;
+
+		const { container } = render(Paragraph({ children: 'Readable prose only' }));
+
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+		expect(container.textContent).toBe('Readable prose only');
+	});
+
+	it('leaves inline code untouched while transforming surrounding emphasis content', () => {
+		const components = createMarkdownComponents({
+			theme: mockTheme,
+			enableBionifyReadingMode: true,
+		});
+		const Strong = components.strong as any;
+
+		render(
+			Strong({
+				children: React.createElement(
+					React.Fragment,
+					null,
+					'Before ',
+					React.createElement('code', null, 'const value = 1'),
+					' after'
+				),
+			})
+		);
+
+		expect(screen.getByText('const value = 1')).toBeInTheDocument();
+		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
+		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
 	});
 });

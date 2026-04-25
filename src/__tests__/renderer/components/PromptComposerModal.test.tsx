@@ -134,6 +134,24 @@ describe('PromptComposerModal', () => {
 			expect(screen.getByText('Prompt Composer')).toBeInTheDocument();
 		});
 
+		it('keeps the live textarea out of bionify reading mode', () => {
+			renderWithProvider(
+				<PromptComposerModal
+					isOpen={true}
+					onClose={onClose}
+					theme={mockTheme}
+					initialValue="Reading-mode exclusions stay in the editor."
+					onSubmit={onSubmit}
+					onSend={onSend}
+				/>
+			);
+
+			expect(screen.getByRole('textbox')).toHaveValue(
+				'Reading-mode exclusions stay in the editor.'
+			);
+			expect(document.querySelector('.bionify-word')).not.toBeInTheDocument();
+		});
+
 		it('should render header with PenLine icon', () => {
 			renderWithProvider(
 				<PromptComposerModal

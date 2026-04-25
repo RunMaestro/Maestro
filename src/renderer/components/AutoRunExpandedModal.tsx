@@ -401,7 +401,7 @@ export function AutoRunExpandedModal({
 								Run
 							</button>
 						)}
-						{/* Exchange button */}
+						{/* PlayBooks button */}
 						{onOpenMarketplace && (
 							<button
 								onClick={onOpenMarketplace}
@@ -411,10 +411,10 @@ export function AutoRunExpandedModal({
 									border: `1px solid ${theme.colors.accent}`,
 									backgroundColor: `${theme.colors.accent}15`,
 								}}
-								title="Browse Playbook Exchange - discover and share community playbooks"
+								title="Browse PlayBooks - discover and share community playbooks"
 							>
 								<LayoutGrid className="w-3.5 h-3.5" />
-								Exchange
+								PlayBooks
 							</button>
 						)}
 					</div>
