@@ -704,12 +704,29 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					<h3 className="font-bold">Coordination Patterns</h3>
 				</div>
 				<div className="text-sm space-y-4 pl-7" style={{ color: theme.colors.textDim }}>
-					<p>Maestro Cue supports several coordination patterns for multi-agent workflows.</p>
+					<p>
+						Multi-subscription patterns for orchestrating agents. Any trigger (heartbeat, file
+						watch, schedule, startup) can serve as the entry point.
+					</p>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Heartbeat</strong> &mdash; Single
-							agent running on a recurring timer (every N minutes).
+							<strong style={{ color: theme.colors.textMain }}>Sequential Pipeline</strong> &mdash;
+							Each agent triggers the next via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								agent.completed
+							</code>
+							. Use{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								source_sub
+							</code>{' '}
+							to ensure each step only fires on the intended upstream subscription.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -718,14 +735,21 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Heartbeat] &rarr; [Agent]
+							[Trigger] &rarr; [Agent A] &rarr; [Agent B] &rarr; [Agent C]
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Scheduled</strong> &mdash; Single
-							agent at specific times and days of the week.
+							<strong style={{ color: theme.colors.textMain }}>Fan-Out</strong> &mdash; Dispatch a
+							single event to multiple agents in parallel using{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								fan_out
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -734,14 +758,25 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Schedule] &rarr; [Agent]
+							{'          '}┌&rarr; [Agent A]
+							<br />
+							[Trigger] ──┼&rarr; [Agent B]
+							<br />
+							{'          '}└&rarr; [Agent C]
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>File Enrichment</strong> &mdash;
-							React to file system changes.
+							<strong style={{ color: theme.colors.textMain }}>Fan-In (Gather)</strong> &mdash; Wait
+							for multiple agents to complete before triggering a synthesizer. Set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								source_session
+							</code>{' '}
+							to an array of session names.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -750,14 +785,18 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[File Change] &rarr; [Agent]
+							[Agent A] ─┐
+							<br />
+							[Agent B] ─┼─&rarr; [Synthesizer]
+							<br />
+							[Agent C] ─┘
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Research Swarm</strong> &mdash;
-							Fan-out to multiple agents, fan-in to synthesize.
+							<strong style={{ color: theme.colors.textMain }}>Swarm (Fan-Out + Fan-In)</strong>{' '}
+							&mdash; Dispatch parallel workers then gather all results into a synthesizer.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -766,14 +805,25 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Timer] &rarr; [Agent 1, Agent 2, Agent 3] &rarr; [Synthesizer]
+							{'            '}┌&rarr; [Worker A] ─┐
+							<br />
+							[Trigger] ───┼&rarr; [Worker B] ─┼─&rarr; [Synthesizer]
+							<br />
+							{'            '}└&rarr; [Worker C] ─┘
 						</div>
 					</div>
 
 					<div>
 						<p>
-							<strong style={{ color: theme.colors.textMain }}>Sequential Chain</strong> &mdash;
-							Pipeline where each agent triggers the next.
+							<strong style={{ color: theme.colors.textMain }}>Command Action</strong> &mdash; Run a
+							shell command or relay output to another session via CLI instead of an AI prompt. Set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								action: command
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -782,30 +832,23 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[Agent A] &rarr; [Agent B] &rarr; [Agent C]
-						</div>
-					</div>
-
-					<div>
-						<p>
-							<strong style={{ color: theme.colors.textMain }}>Debate</strong> &mdash; Multiple
-							perspectives, then moderator synthesizes.
-						</p>
-						<div
-							className="font-mono text-xs p-2 rounded border mt-1"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								borderColor: theme.colors.border,
-							}}
-						>
-							[Moderator] &rarr; [Pro, Con] &rarr; [Moderator]
+							[Trigger] &rarr; [action: shell "npm test"]
+							<br />
+							[Agent A] &rarr; [action: cli send &rarr; Agent B]
 						</div>
 					</div>
 
 					<div>
 						<p>
 							<strong style={{ color: theme.colors.textMain }}>Task Queue</strong> &mdash; Watch
-							markdown files for unchecked tasks and process them.
+							markdown files for unchecked tasks and process them automatically via{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								task.pending
+							</code>
+							.
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border mt-1"
@@ -814,7 +857,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								borderColor: theme.colors.border,
 							}}
 						>
-							[tasks/*.md] &rarr; [Agent] (per file with pending tasks)
+							[tasks/*.md has ─[ ]] &rarr; [Agent] (fires per file)
 						</div>
 					</div>
 
