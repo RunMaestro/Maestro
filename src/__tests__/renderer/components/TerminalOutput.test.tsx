@@ -2148,6 +2148,35 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('/history:')).toBeInTheDocument();
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
 		});
+
+		it('renders URLs in the AI command body as clickable links', () => {
+			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: `Review the open PR comments and respond.\n${url}`,
+					source: 'user',
+					aiCommand: {
+						command: '/pr-review',
+						description: 'Review PR Comments w/ Action',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			const link = screen.getByText(url);
+			expect(link.tagName).toBe('A');
+			expect(link).toHaveAttribute('href', url);
+
+			fireEvent.click(link);
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(url);
+		});
 	});
 
 	describe('auto-scroll when at bottom', () => {

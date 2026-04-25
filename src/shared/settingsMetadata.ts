@@ -582,7 +582,8 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'document-graph',
 	},
 	documentGraphLayoutType: {
-		description: 'Layout algorithm for the document graph. Values: mindmap, radial, force.',
+		description:
+			'Layout algorithm for the document graph. Values: mindmap, radial, hierarchical, force.',
 		type: 'string',
 		default: 'mindmap',
 		category: 'document-graph',

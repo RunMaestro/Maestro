@@ -105,6 +105,10 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 		keys: formatShortcutKeys(['Meta', 'f']),
 		description: 'Focus search',
 	},
+	{
+		keys: '+ / -',
+		description: 'Increase / decrease node spacing',
+	},
 ];
 
 /**

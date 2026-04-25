@@ -98,8 +98,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = ['mindmap', 'radial', 'force'];
+export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
+const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
+	'mindmap',
+	'radial',
+	'hierarchical',
+	'force',
+];
 
 // ============================================================================
 // Default Constants

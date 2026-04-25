@@ -1,9 +1,10 @@
 /**
  * Layout algorithms for the canvas-based Document Graph MindMap.
  *
- * Three algorithms are available:
+ * Four algorithms are available:
  * - **Mind Map**: Deterministic left/right columns branching from center by depth
  * - **Radial**: Concentric rings radiating from center, evenly distributed
+ * - **Hierarchical**: Top-down tree, BFS depth as horizontal rows below the center
  * - **Force-Directed**: Physics simulation using d3-force for organic clustering
  *
  * All algorithms accept the same input signature and produce a LayoutResult,
@@ -28,12 +29,13 @@ import type { MindMapNode, MindMapLink } from './MindMap';
 // ============================================================================
 
 /** Available layout algorithm types */
-export type MindMapLayoutType = 'mindmap' | 'radial' | 'force';
+export type MindMapLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
 
 /** Display labels for layout types */
 export const LAYOUT_LABELS: Record<MindMapLayoutType, { name: string; description: string }> = {
 	mindmap: { name: 'Mind Map', description: 'Tree columns' },
 	radial: { name: 'Radial', description: 'Concentric rings' },
+	hierarchical: { name: 'Hierarchical', description: 'Top-down rows' },
 	force: { name: 'Force', description: 'Physics simulation' },
 };
 
@@ -44,7 +46,7 @@ export interface LayoutResult {
 	bounds: { minX: number; maxX: number; minY: number; maxY: number };
 }
 
-/** Common layout function signature */
+/** Common layout function signature. `spacingScale` is optional and defaults to 1. */
 type LayoutFunction = (
 	allNodes: MindMapNode[],
 	allLinks: MindMapLink[],
@@ -54,8 +56,15 @@ type LayoutFunction = (
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number
+	previewCharLimit: number,
+	spacingScale?: number
 ) => LayoutResult;
+
+/** Clamp range and step for the user-adjustable node spacing multiplier. */
+export const SPACING_SCALE_MIN = 0.4;
+export const SPACING_SCALE_MAX = 3.0;
+export const SPACING_SCALE_STEP = 0.1;
+export const SPACING_SCALE_DEFAULT = 1.0;
 
 // ============================================================================
 // Shared Constants
@@ -94,6 +103,11 @@ const RADIAL_RING_SPACING = 340;
 const RADIAL_EXTERNAL_OFFSET = 260;
 /** Minimum arc-length (px) between node centers on a ring to avoid overlap */
 const RADIAL_MIN_ARC_LENGTH = NODE_WIDTH + 60;
+
+// Hierarchical specific constants
+const HIERARCHICAL_LEVEL_HEIGHT = 220;
+const HIERARCHICAL_NODE_SPACING = 80;
+const HIERARCHICAL_EXTERNAL_GAP = 120;
 
 // Force specific constants
 const FORCE_LINK_DISTANCE = 300;
@@ -391,7 +405,8 @@ export const calculateMindMapLayout: LayoutFunction = (
 	canvasWidth,
 	canvasHeight,
 	showExternalLinks,
-	previewCharLimit
+	previewCharLimit,
+	spacingScale
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -424,6 +439,10 @@ export const calculateMindMapLayout: LayoutFunction = (
 		centerWidth,
 		centerHeight,
 	} = input;
+
+	const scale = spacingScale ?? 1;
+	const horizontalSpacing = HORIZONTAL_SPACING * scale;
+	const verticalGap = VERTICAL_GAP * scale;
 
 	const positionedNodes: MindMapNode[] = [];
 
@@ -460,14 +479,14 @@ export const calculateMindMapLayout: LayoutFunction = (
 		const rightNodes = nodesAtDepth.slice(midpoint);
 
 		// Left column
-		const leftX = centerX - HORIZONTAL_SPACING * depth;
+		const leftX = centerX - horizontalSpacing * depth;
 		const leftNodeHeights = leftNodes.map((node) => {
 			const previewText = node.description || node.contentPreview;
 			return calculateNodeHeight(previewText, previewCharLimit);
 		});
 		const leftTotalHeight =
 			leftNodeHeights.reduce((sum, h) => sum + h, 0) +
-			Math.max(0, leftNodes.length - 1) * VERTICAL_GAP;
+			Math.max(0, leftNodes.length - 1) * verticalGap;
 		let leftCurrentY = centerY - leftTotalHeight / 2;
 
 		leftNodes.forEach((node, index) => {
@@ -482,18 +501,18 @@ export const calculateMindMapLayout: LayoutFunction = (
 				depth,
 				side: 'left',
 			});
-			leftCurrentY += height + VERTICAL_GAP;
+			leftCurrentY += height + verticalGap;
 		});
 
 		// Right column
-		const rightX = centerX + HORIZONTAL_SPACING * depth;
+		const rightX = centerX + horizontalSpacing * depth;
 		const rightNodeHeights = rightNodes.map((node) => {
 			const previewText = node.description || node.contentPreview;
 			return calculateNodeHeight(previewText, previewCharLimit);
 		});
 		const rightTotalHeight =
 			rightNodeHeights.reduce((sum, h) => sum + h, 0) +
-			Math.max(0, rightNodes.length - 1) * VERTICAL_GAP;
+			Math.max(0, rightNodes.length - 1) * verticalGap;
 		let rightCurrentY = centerY - rightTotalHeight / 2;
 
 		rightNodes.forEach((node, index) => {
@@ -508,7 +527,7 @@ export const calculateMindMapLayout: LayoutFunction = (
 				depth,
 				side: 'right',
 			});
-			rightCurrentY += height + VERTICAL_GAP;
+			rightCurrentY += height + verticalGap;
 		});
 	}
 
@@ -540,7 +559,8 @@ export const calculateRadialLayout: LayoutFunction = (
 	canvasWidth,
 	canvasHeight,
 	showExternalLinks,
-	previewCharLimit
+	previewCharLimit,
+	spacingScale
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -574,6 +594,10 @@ export const calculateRadialLayout: LayoutFunction = (
 		centerHeight,
 	} = input;
 
+	const scale = spacingScale ?? 1;
+	const radialBaseRadius = RADIAL_BASE_RADIUS * scale;
+	const radialRingSpacing = RADIAL_RING_SPACING * scale;
+
 	const positionedNodes: MindMapNode[] = [];
 
 	// Center node
@@ -606,9 +630,9 @@ export const calculateRadialLayout: LayoutFunction = (
 		// Sort alphabetically for deterministic positioning
 		nodesAtDepth.sort((a, b) => a.label.localeCompare(b.label));
 
-		// Ensure the ring is large enough so nodes don't overlap
-		const baseRadius = RADIAL_BASE_RADIUS + (depth - 1) * RADIAL_RING_SPACING;
-		const minRadiusForCount = (nodesAtDepth.length * RADIAL_MIN_ARC_LENGTH) / (2 * Math.PI);
+		// Ensure the ring is large enough so nodes don't overlap, and scale with zoom
+		const baseRadius = radialBaseRadius + (depth - 1) * radialRingSpacing;
+		const minRadiusForCount = (nodesAtDepth.length * RADIAL_MIN_ARC_LENGTH * scale) / (2 * Math.PI);
 		const radius = Math.max(baseRadius, minRadiusForCount);
 		maxRadius = Math.max(maxRadius, radius);
 
@@ -644,7 +668,7 @@ export const calculateRadialLayout: LayoutFunction = (
 	if (showExternalLinks && externalNodes.length > 0) {
 		externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
 
-		const externalRadius = Math.max(maxRadius, RADIAL_BASE_RADIUS) + RADIAL_EXTERNAL_OFFSET;
+		const externalRadius = Math.max(maxRadius, radialBaseRadius) + RADIAL_EXTERNAL_OFFSET;
 		const count = externalNodes.length;
 		const angleStep = (2 * Math.PI) / count;
 		const startAngle = -Math.PI / 2;
@@ -664,6 +688,144 @@ export const calculateRadialLayout: LayoutFunction = (
 	}
 
 	// Radial uses adjacent-depth link filtering like mind map
+	const usedLinks = filterLinks(allLinks, positionedNodes, true);
+	const bounds = calculateBounds(positionedNodes, previewCharLimit);
+	return { nodes: positionedNodes, links: usedLinks, bounds };
+};
+
+// ============================================================================
+// Hierarchical Layout (Top-Down Tree)
+// ============================================================================
+
+/**
+ * Calculate a top-down hierarchical layout: the center node sits at the top
+ * and each BFS depth level becomes a horizontal row underneath. Nodes within
+ * a row are alphabetized and evenly spaced. External link nodes (when shown)
+ * are placed in a final row below the deepest document row.
+ */
+export const calculateHierarchicalLayout: LayoutFunction = (
+	allNodes,
+	allLinks,
+	adjacency,
+	centerFilePath,
+	maxDepth,
+	canvasWidth,
+	canvasHeight,
+	showExternalLinks,
+	previewCharLimit,
+	spacingScale
+) => {
+	const input = prepareLayoutInput(
+		allNodes,
+		allLinks,
+		adjacency,
+		centerFilePath,
+		maxDepth,
+		canvasWidth,
+		canvasHeight,
+		showExternalLinks,
+		previewCharLimit
+	);
+
+	if (!input) {
+		return {
+			nodes: [],
+			links: [],
+			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
+		};
+	}
+
+	const {
+		centerNode,
+		actualCenterNodeId,
+		visited,
+		visibleDocumentNodes,
+		externalNodes,
+		centerX,
+		centerY,
+		centerWidth,
+		centerHeight,
+	} = input;
+
+	const scale = spacingScale ?? 1;
+	const levelHeight = HIERARCHICAL_LEVEL_HEIGHT * scale;
+	const nodeSpacing = HIERARCHICAL_NODE_SPACING * scale;
+
+	const positionedNodes: MindMapNode[] = [];
+
+	// Center node anchors the top of the tree.
+	positionedNodes.push({
+		...centerNode,
+		x: centerX,
+		y: centerY,
+		width: centerWidth,
+		height: centerHeight,
+		depth: 0,
+		side: 'center',
+		isFocused: true,
+	});
+
+	// Bucket non-center nodes by BFS depth.
+	const nodesByDepth = new Map<number, MindMapNode[]>();
+	visibleDocumentNodes.forEach((node) => {
+		if (node.id === actualCenterNodeId) return;
+		const depth = visited.get(node.id) || 1;
+		if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
+		nodesByDepth.get(depth)!.push(node);
+	});
+
+	let lastDocRowY = centerY;
+	for (let depth = 1; depth <= maxDepth; depth++) {
+		const nodesAtDepth = nodesByDepth.get(depth) || [];
+		if (nodesAtDepth.length === 0) continue;
+
+		nodesAtDepth.sort((a, b) => a.label.localeCompare(b.label));
+
+		const rowY = centerY + depth * levelHeight;
+		const stride = NODE_WIDTH + nodeSpacing;
+		const rowWidth = Math.max(0, nodesAtDepth.length - 1) * stride;
+		const startX = centerX - rowWidth / 2;
+
+		nodesAtDepth.forEach((node, index) => {
+			const previewText = node.description || node.contentPreview;
+			const height = calculateNodeHeight(previewText, previewCharLimit);
+			const x = startX + index * stride;
+			const side: MindMapNode['side'] =
+				x < centerX - 10 ? 'left' : x > centerX + 10 ? 'right' : 'right';
+			positionedNodes.push({
+				...node,
+				x,
+				y: rowY,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side,
+			});
+		});
+
+		lastDocRowY = rowY;
+	}
+
+	// External nodes go in a final row below the deepest document row.
+	if (showExternalLinks && externalNodes.length > 0) {
+		externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
+		const externalY = lastDocRowY + HIERARCHICAL_EXTERNAL_GAP * scale;
+		const stride = EXTERNAL_NODE_WIDTH + 20;
+		const rowWidth = Math.max(0, externalNodes.length - 1) * stride;
+		const startX = centerX - rowWidth / 2;
+		externalNodes.forEach((node, index) => {
+			positionedNodes.push({
+				...node,
+				x: startX + index * stride,
+				y: externalY,
+				width: EXTERNAL_NODE_WIDTH,
+				height: EXTERNAL_NODE_HEIGHT,
+				depth: 1,
+				side: 'external',
+			});
+		});
+	}
+
 	const usedLinks = filterLinks(allLinks, positionedNodes, true);
 	const bounds = calculateBounds(positionedNodes, previewCharLimit);
 	return { nodes: positionedNodes, links: usedLinks, bounds };
@@ -699,8 +861,10 @@ export const calculateForceLayout: LayoutFunction = (
 	canvasWidth,
 	canvasHeight,
 	showExternalLinks,
-	previewCharLimit
+	previewCharLimit,
+	spacingScale
 ) => {
+	const forceLinkDistance = FORCE_LINK_DISTANCE * (spacingScale ?? 1);
 	const input = prepareLayoutInput(
 		allNodes,
 		allLinks,
@@ -782,7 +946,7 @@ export const calculateForceLayout: LayoutFunction = (
 			'link',
 			forceLink<ForceNode, ForceLinkDatum>(simLinks)
 				.id((d) => d.id)
-				.distance(FORCE_LINK_DISTANCE)
+				.distance(forceLinkDistance)
 				.strength(0.5)
 		)
 		.force('charge', forceManyBody<ForceNode>().strength(FORCE_CHARGE_STRENGTH).distanceMax(800))
@@ -929,6 +1093,7 @@ function positionExternalNodesBottom(
 const LAYOUT_ALGORITHMS: Record<MindMapLayoutType, LayoutFunction> = {
 	mindmap: calculateMindMapLayout,
 	radial: calculateRadialLayout,
+	hierarchical: calculateHierarchicalLayout,
 	force: calculateForceLayout,
 };
 
@@ -945,7 +1110,8 @@ export function calculateLayout(
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number
+	previewCharLimit: number,
+	spacingScale: number = SPACING_SCALE_DEFAULT
 ): LayoutResult {
 	const algorithm = LAYOUT_ALGORITHMS[layoutType] || calculateMindMapLayout;
 	return algorithm(
@@ -957,6 +1123,7 @@ export function calculateLayout(
 		canvasWidth,
 		canvasHeight,
 		showExternalLinks,
-		previewCharLimit
+		previewCharLimit,
+		spacingScale
 	);
 }

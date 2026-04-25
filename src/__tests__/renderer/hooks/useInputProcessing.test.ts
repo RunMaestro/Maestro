@@ -1232,7 +1232,10 @@ describe('useInputProcessing', () => {
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
 		});
 
-		it('does not trigger tab naming for existing session (has agentSessionId)', async () => {
+		it('retries tab naming for existing session that still has no name', async () => {
+			// An existing session whose first naming attempt failed/timed out: agentSessionId is
+			// set but name is still null. Subsequent sends should keep retrying so the tab
+			// isn't permanently stuck unnamed.
 			const existingTab = createMockTab({
 				agentSessionId: 'existing-session-123',
 				name: null,
@@ -1253,7 +1256,31 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			// Should NOT call generateTabName for existing sessions
+			expect(mockGenerateTabName).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not trigger tab naming when a previous attempt is still in flight', async () => {
+			const inFlightTab = createMockTab({
+				agentSessionId: 'session-456',
+				name: null,
+				isGeneratingName: true,
+			});
+			const session = createMockSession({
+				aiTabs: [inFlightTab],
+				activeTabId: inFlightTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'Another message',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
 		});
 

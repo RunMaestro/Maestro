@@ -738,18 +738,52 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				})
 			);
 
-			// Trigger automatic tab naming for new AI sessions immediately after sending the first message
-			// This runs in parallel with the agent request (no need to wait for session ID)
+			// Trigger automatic tab naming. Retries on every send until the tab has a name,
+			// so a failed/timed-out first attempt doesn't leave the tab permanently unnamed.
+			// Skip while a previous attempt is still in flight to avoid duplicate spawns.
 			const activeTabForNaming = getActiveTab(activeSession);
-			const isNewAiSession =
-				currentMode === 'ai' && activeTabForNaming && !activeTabForNaming.agentSessionId;
+			const isAiTab = currentMode === 'ai' && !!activeTabForNaming;
 			const hasTextMessage = effectiveInputValue.trim().length > 0;
 			const hasNoCustomName = !activeTabForNaming?.name;
+			const namingNotInFlight = !activeTabForNaming?.isGeneratingName;
 
-			if (automaticTabNamingEnabled && isNewAiSession && hasTextMessage && hasNoCustomName) {
+			if (
+				automaticTabNamingEnabled &&
+				isAiTab &&
+				hasTextMessage &&
+				hasNoCustomName &&
+				namingNotInFlight
+			) {
+				// Build the naming prompt from accumulated user messages plus the current one,
+				// capped at 2000 chars. Mirrors the manual Auto handler — richer context produces
+				// more reliable LLM output that survives extractTabName's filters.
+				const MAX_PROMPT_CHARS = 2000;
+				const priorUserMessages: string[] = [];
+				let totalLength = 0;
+				for (const entry of activeTabForNaming.logs) {
+					if (entry.source !== 'user') continue;
+					const text = entry.text.trim();
+					if (!text) continue;
+					if (totalLength + text.length > MAX_PROMPT_CHARS) {
+						priorUserMessages.push(text.substring(0, MAX_PROMPT_CHARS - totalLength));
+						totalLength = MAX_PROMPT_CHARS;
+						break;
+					}
+					priorUserMessages.push(text);
+					totalLength += text.length;
+				}
+				let namingPrompt = effectiveInputValue;
+				if (priorUserMessages.length > 0 && totalLength < MAX_PROMPT_CHARS) {
+					const remaining = MAX_PROMPT_CHARS - totalLength;
+					const currentTrimmed = effectiveInputValue.trim().substring(0, remaining);
+					namingPrompt = [...priorUserMessages, currentTrimmed].join('\n\n');
+				} else if (priorUserMessages.length > 0) {
+					namingPrompt = priorUserMessages.join('\n\n');
+				}
+
 				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
 				// This avoids spawning an ephemeral agent for messages with obvious identifiers
-				const quickName = extractQuickTabName(effectiveInputValue);
+				const quickName = extractQuickTabName(namingPrompt);
 				if (quickName) {
 					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
 						tabId: activeTabForNaming.id,
@@ -785,13 +819,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						tabId: activeTabForNaming.id,
 						sessionId: activeSessionId,
 						agentType: activeSession.toolType,
-						messageLength: effectiveInputValue.length,
+						messageLength: namingPrompt.length,
+						priorMessageCount: priorUserMessages.length,
 					});
 
 					// Call the tab naming API (async, fire and forget)
 					window.maestro.tabNaming
 						.generateTabName({
-							userMessage: effectiveInputValue,
+							userMessage: namingPrompt,
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,

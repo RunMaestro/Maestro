@@ -33,6 +33,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
@@ -751,7 +752,7 @@ const LogItemComponent = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{filteredText}</div>
+											<div>{linkifyNode(filteredText, theme)}</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -828,7 +829,7 @@ const LogItemComponent = memo(
 											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
-											{filteredText}
+											{linkifyNode(filteredText, theme)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
