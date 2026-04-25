@@ -223,7 +223,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 						0,
 						Math.min(selectedSlashCommandIndex, filteredCommands.length - 1)
 					);
-					setInputValue(filteredCommands[clampedIndex].command);
+					setInputValue(filteredCommands[clampedIndex].command + ' ');
 					setSlashCommandOpen(false);
 					inputRef.current?.focus();
 				} else if (e.key === 'Escape') {
