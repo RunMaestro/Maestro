@@ -489,6 +489,7 @@ export interface FilePreviewTab {
 	// SSH remote support
 	sshRemoteId?: string; // SSH remote ID for re-fetching content if needed
 	isLoading?: boolean; // True while content is being loaded (for SSH remote files)
+	loadRequestId?: string; // While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load
 	// Navigation history for breadcrumb navigation (per-tab)
 	navigationHistory?: FilePreviewHistoryEntry[]; // Stack of visited files
 	navigationIndex?: number; // Current position in history (-1 or undefined = at end)

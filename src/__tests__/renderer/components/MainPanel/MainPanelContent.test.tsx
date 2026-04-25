@@ -105,7 +105,6 @@ function makeDefaultProps() {
 		activeSession: makeSession(),
 		activeTab: { id: 'tab-1' } as AITab,
 		theme: mockTheme,
-		filePreviewLoading: null,
 		activeFileTabId: null as string | null | undefined,
 		activeFileTab: null as FilePreviewTab | null | undefined,
 		activeBrowserTabId: null as string | null | undefined,
@@ -212,9 +211,19 @@ describe('MainPanelContent', () => {
 		expect(screen.getByTestId('file-preview')).toBeInTheDocument();
 	});
 
-	it('renders loading spinner when file is loading', () => {
+	it('renders loading spinner when active file tab is in loading state', () => {
 		const props = makeDefaultProps();
-		props.filePreviewLoading = { name: 'test.ts', path: '/test/test.ts' };
+		props.activeFileTabId = 'file-1';
+		props.activeFileTab = {
+			id: 'file-1',
+			name: 'test',
+			extension: '.ts',
+			content: '',
+			path: '/test/test.ts',
+			editMode: false,
+			isLoading: true,
+			loadRequestId: 'req-1',
+		} as FilePreviewTab;
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByText(/Loading/)).toBeInTheDocument();
 	});

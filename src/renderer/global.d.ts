@@ -758,7 +758,12 @@ interface MaestroAPI {
 	fs: {
 		homeDir: () => Promise<string>;
 		readDir: (dirPath: string, sshRemoteId?: string) => Promise<DirectoryEntry[]>;
-		readFile: (filePath: string, sshRemoteId?: string) => Promise<string | null>;
+		readFile: (
+			filePath: string,
+			sshRemoteId?: string,
+			requestId?: string
+		) => Promise<string | null>;
+		cancelReadFile: (requestId: string) => Promise<void>;
 		writeFile: (
 			filePath: string,
 			content: string,

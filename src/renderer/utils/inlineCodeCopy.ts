@@ -1,0 +1,61 @@
+/**
+ * Shared click-to-copy behavior for inline code (markdown backticks).
+ *
+ * Used across every markdown renderer (MarkdownRenderer, AutoRun, wizard
+ * bubbles, release notes, etc.) so a single click on `code` content copies
+ * its text and shows the standard "Copied to Clipboard" toast.
+ */
+
+import React from 'react';
+import { safeClipboardWrite } from './clipboard';
+import { notifyToast } from '../stores/notificationStore';
+
+/** Recursively extract the plain text from arbitrary React children. */
+export function extractInlineCodeText(children: React.ReactNode): string {
+	if (children == null || children === false) return '';
+	if (typeof children === 'string' || typeof children === 'number') return String(children);
+	if (Array.isArray(children)) return children.map(extractInlineCodeText).join('');
+	if (React.isValidElement(children)) {
+		return extractInlineCodeText((children.props as { children?: React.ReactNode }).children);
+	}
+	return '';
+}
+
+/** Copy inline code text and surface the standard toast. */
+export async function copyInlineCode(children: React.ReactNode): Promise<void> {
+	const text = extractInlineCodeText(children).trim();
+	if (!text) return;
+	const ok = await safeClipboardWrite(text);
+	if (ok) {
+		notifyToast({ type: 'success', title: 'Copied to Clipboard', message: text, duration: 2000 });
+	}
+}
+
+/** Visual + a11y props applied to every clickable inline-code element. */
+export const INLINE_CODE_CLICK_PROPS = {
+	role: 'button' as const,
+	tabIndex: 0,
+	title: 'Click to copy',
+};
+
+/** Cursor style applied to every clickable inline-code element. */
+export const INLINE_CODE_CLICK_STYLE: React.CSSProperties = {
+	cursor: 'pointer',
+};
+
+/** Build the onClick / onKeyDown handlers for an inline-code element. */
+export function buildInlineCodeHandlers(children: React.ReactNode) {
+	return {
+		onClick: (e: React.MouseEvent) => {
+			e.stopPropagation();
+			void copyInlineCode(children);
+		},
+		onKeyDown: (e: React.KeyboardEvent) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				e.stopPropagation();
+				void copyInlineCode(children);
+			}
+		},
+	};
+}

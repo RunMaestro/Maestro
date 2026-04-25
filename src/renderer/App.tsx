@@ -644,7 +644,6 @@ function MaestroConsoleInner() {
 	} = useInputContext();
 
 	// File Explorer State (reads from fileExplorerStore)
-	const filePreviewLoading = useFileExplorerStore((s) => s.filePreviewLoading);
 	// isGraphViewOpen, graphFocusFilePath — now self-sourced in AppStandaloneModals
 	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
@@ -2234,7 +2233,6 @@ function MaestroConsoleInner() {
 		slashCommandOpen,
 		slashCommands: allSlashCommands,
 		selectedSlashCommandIndex,
-		filePreviewLoading,
 
 		// Tab completion state
 		tabCompletionOpen,

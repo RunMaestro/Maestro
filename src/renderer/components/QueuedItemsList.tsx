@@ -214,6 +214,10 @@ export const QueuedItemsList = memo(
 							onDragLeave={handleDragLeave}
 							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all"
 							style={{
+								// Reserve enough vertical room for the top-right Remove (X) and
+								// bottom-right Copy buttons to coexist on single-line items
+								// without overlapping. 8px (top) + 24px (X) + 4px gap + 22px (Copy) + 8px (bottom).
+								minHeight: '4.25rem',
 								backgroundColor:
 									item.type === 'command'
 										? theme.colors.success + '20'

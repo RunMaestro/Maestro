@@ -97,7 +97,9 @@ export class ChildProcessSpawner {
 		let tempImageFiles: string[] = [];
 		// effectivePrompt may be modified (e.g., image path prefix prepended for resume mode)
 		let effectivePrompt = prompt;
-		let promptAddedToArgs = false;
+		// If the caller pre-embedded the prompt in args (e.g., SSH tab naming wraps it
+		// inside bash -c), skip the appending paths below and treat it as already-added.
+		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
 		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
@@ -174,9 +176,10 @@ export class ChildProcessSpawner {
 					promptViaStdin,
 				});
 			}
-		} else if (prompt && !promptViaStdin) {
+		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
 			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues
+			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
+			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
 			if (promptArgs) {
 				finalArgs = [...args, ...promptArgs(prompt)];
 			} else if (noPromptSeparator) {

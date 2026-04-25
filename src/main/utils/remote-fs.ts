@@ -9,6 +9,7 @@
  * Unix commands (ls, cat, stat, du) via SSH, parsing their output.
  */
 
+import { spawn } from 'child_process';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
 import { shellEscape, shellEscapeForDoubleQuotes } from './shell-escape';
@@ -607,6 +608,99 @@ export async function readFileRemote(
 		success: true,
 		data: result.stdout,
 	};
+}
+
+/**
+ * Read a remote file with abort support — used for user-initiated file previews
+ * where the user may close the tab mid-load to cancel the SSH read.
+ *
+ * Unlike readFileRemote (which buffers via execFile), this spawns ssh+cat
+ * directly so we can SIGTERM the child process when the AbortSignal fires.
+ * No retries: a user-driven open that fails should surface the error, not
+ * silently retry while the user waits.
+ */
+export async function readFileRemoteAbortable(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	signal: AbortSignal
+): Promise<RemoteFsResult<string>> {
+	if (signal.aborted) {
+		return { success: false, error: 'Aborted' };
+	}
+
+	const escapedPath = shellEscapeRemotePath(filePath);
+	const remoteCommand = `cat ${escapedPath}`;
+
+	const sshPath = await resolveSshPath();
+	const sshArgs = sshRemoteManager.buildSshArgs(sshRemote);
+	sshArgs.push(remoteCommand);
+
+	const limiter = getHostLimiter(sshRemote);
+	await limiter.acquire();
+
+	try {
+		return await new Promise<RemoteFsResult<string>>((resolve) => {
+			const child = spawn(sshPath, sshArgs, {
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+
+			let stdout = '';
+			let stderr = '';
+			let aborted = false;
+
+			const onAbort = () => {
+				aborted = true;
+				// SIGTERM lets ssh tear down its connection cleanly; if the child
+				// hasn't exited within a grace period, escalate to SIGKILL.
+				child.kill('SIGTERM');
+				setTimeout(() => {
+					if (!child.killed) child.kill('SIGKILL');
+				}, 1000).unref();
+			};
+
+			signal.addEventListener('abort', onAbort, { once: true });
+
+			child.stdout?.setEncoding('utf-8');
+			child.stdout?.on('data', (chunk: string) => {
+				stdout += chunk;
+			});
+
+			child.stderr?.setEncoding('utf-8');
+			child.stderr?.on('data', (chunk: string) => {
+				stderr += chunk;
+			});
+
+			child.on('error', (err) => {
+				signal.removeEventListener('abort', onAbort);
+				resolve({ success: false, error: err.message });
+			});
+
+			child.on('close', (code) => {
+				signal.removeEventListener('abort', onAbort);
+				if (aborted) {
+					resolve({ success: false, error: 'Aborted' });
+					return;
+				}
+				if (code !== 0) {
+					const err = stderr || `Failed to read file: ${filePath}`;
+					resolve({
+						success: false,
+						error: err.includes('No such file')
+							? `File not found: ${filePath}`
+							: err.includes('Is a directory')
+								? `Path is a directory: ${filePath}`
+								: err.includes('Permission denied')
+									? `Permission denied: ${filePath}`
+									: err,
+					});
+					return;
+				}
+				resolve({ success: true, data: stdout });
+			});
+		});
+	} finally {
+		limiter.release();
+	}
 }
 
 /**

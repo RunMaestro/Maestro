@@ -7,13 +7,35 @@ import {
 } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
 import { useModalStore } from '../../stores/modalStore';
-import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { generateId } from '../../utils/ids';
+import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
 
-/** Loading state for file preview (shown while fetching remote files) */
-export interface FilePreviewLoading {
-	name: string;
-	path: string;
+/**
+ * If a remote-file loading tab is still in flight in the target session,
+ * close it. Used when the SSH read failed or returned null without the user
+ * having closed the tab themselves. Tabs that are no longer loading (or no
+ * longer present at all) are left alone — the user may have already closed
+ * them, or the path may have been replaced by a different file.
+ */
+function closeLoadingTabIfStillLoading(
+	targetSessionId: string,
+	path: string,
+	loadRequestId: string
+): void {
+	const { setSessions } = useSessionStore.getState();
+	setSessions((prev) =>
+		prev.map((s) => {
+			if (s.id !== targetSessionId) return s;
+			const tab = s.filePreviewTabs.find(
+				(t) => t.path === path && t.isLoading && t.loadRequestId === loadRequestId
+			);
+			if (!tab) return s;
+			const result = closeFileTabHelper(s, tab.id);
+			return result ? result.session : s;
+		})
+	);
 }
 
 /**
@@ -25,6 +47,19 @@ export interface FileTabInfo {
 	content: string;
 	sshRemoteId?: string;
 	lastModified?: number;
+	/** Open the tab in loading state (no content yet). Used for slow remote reads. */
+	isLoading?: boolean;
+	/** While isLoading, the in-flight fs:readFile requestId — cancelled if the tab is closed mid-load. */
+	loadRequestId?: string;
+}
+
+/**
+ * Options for opening a file tab.
+ */
+export interface FileTabOpenOptions {
+	openInNewTab?: boolean;
+	/** Override which session the tab is created in (defaults to current active session). */
+	targetSessionId?: string;
 }
 
 export interface UseAppHandlersDeps {
@@ -46,7 +81,7 @@ export interface UseAppHandlersDeps {
 	 * Callback to open a file in a tab (new tab-based file preview).
 	 * When provided, file clicks will open tabs instead of the overlay.
 	 */
-	onOpenFileTab?: (file: FileTabInfo) => void;
+	onOpenFileTab?: (file: FileTabInfo, options?: FileTabOpenOptions) => void;
 }
 
 /**
@@ -233,60 +268,96 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	const handleFileClick = useCallback(
 		async (node: FileNode, path: string) => {
 			if (!activeSession) return; // Guard against null session
-			if (node.type === 'file') {
-				// Construct full file path using projectRoot (not fullPath which can diverge from file tree root)
-				// The file tree is rooted at projectRoot, so paths are relative to it
-				const treeRoot = activeSession.projectRoot || activeSession.fullPath;
-				const fullPath = `${treeRoot}/${path}`;
+			if (node.type !== 'file') return;
 
-				// Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
-				// (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
-				const sshRemoteId =
-					activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+			// Construct full file path using projectRoot (not fullPath which can diverge from file tree root)
+			// The file tree is rooted at projectRoot, so paths are relative to it
+			const treeRoot = activeSession.projectRoot || activeSession.fullPath;
+			const fullPath = `${treeRoot}/${path}`;
 
-				// Check if file should be opened externally (only for local files)
-				if (!sshRemoteId && shouldOpenExternally(node.name)) {
-					// Show confirmation modal before opening externally (use openModal atomically)
-					useModalStore.getState().openModal('confirm', {
-						message: `Open "${node.name}" in external application?`,
-						onConfirm: async () => {
-							await window.maestro.shell.openPath(fullPath);
-						},
-					});
+			// Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
+			// (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
+			const sshRemoteId =
+				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+
+			// Check if file should be opened externally (only for local files)
+			if (!sshRemoteId && shouldOpenExternally(node.name)) {
+				// Show confirmation modal before opening externally (use openModal atomically)
+				useModalStore.getState().openModal('confirm', {
+					message: `Open "${node.name}" in external application?`,
+					onConfirm: async () => {
+						await window.maestro.shell.openPath(fullPath);
+					},
+				});
+				return;
+			}
+
+			// Pin the originating session so the loading tab and final content
+			// land in the agent the user clicked from, even if they switch agents
+			// while the SSH read is in flight.
+			const targetSessionId = activeSession.id;
+
+			// For SSH remote files, eagerly create a tab in loading state so the
+			// loading UI is anchored to a real per-session tab (and stays put if
+			// the user switches agents). The tab also carries the requestId we
+			// use to cancel the SSH read if the user closes it mid-load.
+			let loadRequestId: string | undefined;
+			if (sshRemoteId) {
+				loadRequestId = generateId();
+				onOpenFileTab?.(
+					{
+						path: fullPath,
+						name: node.name,
+						content: '',
+						sshRemoteId,
+						isLoading: true,
+						loadRequestId,
+					},
+					{ targetSessionId }
+				);
+				setActiveFocus('main');
+			}
+
+			try {
+				// Pass SSH remote ID for remote sessions
+				// Fetch both content and stat for lastModified timestamp
+				const [content, stat] = await Promise.all([
+					window.maestro.fs.readFile(fullPath, sshRemoteId, loadRequestId),
+					window.maestro.fs.stat(fullPath, sshRemoteId),
+				]);
+
+				// content === null means either the file is missing or the SSH read
+				// was cancelled (user closed the loading tab). In both cases the tab
+				// has either been closed by the user or never existed; surface a
+				// closure for the loading tab if it's still hanging around.
+				if (content === null) {
+					if (loadRequestId) {
+						closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
+					}
 					return;
 				}
 
-				// Show loading state for remote files (SSH sessions may be slow)
-				if (sshRemoteId) {
-					useFileExplorerStore
-						.getState()
-						.setFilePreviewLoading({ name: node.name, path: fullPath });
-				}
+				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
-				try {
-					// Pass SSH remote ID for remote sessions
-					// Fetch both content and stat for lastModified timestamp
-					const [content, stat] = await Promise.all([
-						window.maestro.fs.readFile(fullPath, sshRemoteId),
-						window.maestro.fs.stat(fullPath, sshRemoteId),
-					]);
-					if (content === null) return;
-					const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
-
-					// Open file in tab-based file preview
-					onOpenFileTab?.({
+				// Fill the per-session tab with content. For SSH this hits the
+				// existing-tab branch in handleOpenFileTab (matching by path) and
+				// flips isLoading off; for local files it opens the tab fresh.
+				onOpenFileTab?.(
+					{
 						path: fullPath,
 						name: node.name,
 						content,
 						sshRemoteId,
 						lastModified,
-					});
-					setActiveFocus('main');
-				} catch (error) {
-					logger.error('Failed to read file:', undefined, error);
-				} finally {
-					// Clear loading state
-					useFileExplorerStore.getState().setFilePreviewLoading(null);
+					},
+					{ targetSessionId }
+				);
+				setActiveFocus('main');
+			} catch (error) {
+				logger.error('Failed to read file:', undefined, error);
+				// Don't strand a loading tab if the SSH read errored out.
+				if (loadRequestId) {
+					closeLoadingTabIfStillLoading(targetSessionId, fullPath, loadRequestId);
 				}
 			}
 		},

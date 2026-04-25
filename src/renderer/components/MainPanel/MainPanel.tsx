@@ -69,7 +69,6 @@ export const MainPanel = React.memo(
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
-			filePreviewLoading,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -792,7 +791,6 @@ export const MainPanel = React.memo(
 							activeSession={activeSession}
 							activeTab={activeTab}
 							theme={theme}
-							filePreviewLoading={filePreviewLoading}
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
 							activeBrowserTabId={activeBrowserTabId}

@@ -57,10 +57,24 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:readDir', dirPath, sshRemoteId),
 
 		/**
-		 * Read file contents
+		 * Read file contents.
+		 *
+		 * For SSH remote files, pass `requestId` to make the read cancellable —
+		 * call `cancelReadFile(requestId)` to abort the underlying ssh+cat process.
+		 * Cancelled reads resolve to null.
 		 */
-		readFile: (filePath: string, sshRemoteId?: string): Promise<string | null> =>
-			ipcRenderer.invoke('fs:readFile', filePath, sshRemoteId),
+		readFile: (
+			filePath: string,
+			sshRemoteId?: string,
+			requestId?: string
+		): Promise<string | null> =>
+			ipcRenderer.invoke('fs:readFile', filePath, sshRemoteId, requestId),
+
+		/**
+		 * Cancel an in-flight remote `readFile` by requestId. No-op if unknown.
+		 */
+		cancelReadFile: (requestId: string): Promise<void> =>
+			ipcRenderer.invoke('fs:cancelReadFile', requestId),
 
 		/**
 		 * Write file contents
