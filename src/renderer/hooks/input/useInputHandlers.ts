@@ -29,6 +29,12 @@ import type { TabCompletionSuggestion } from './useTabCompletion';
 import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
+
+function isImagePath(path: string): boolean {
+	const ext = path.toLowerCase().split('.').pop();
+	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
+}
 
 /**
  * Convert an absolute filesystem path into the form used inside an `@` mention:
@@ -616,6 +622,29 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const internalPath = e.dataTransfer.getData('application/x-maestro-file-path');
 			if (internalPath) {
 				if (isGroupChatActive || !isDirectAIMode) return;
+
+				if (isImagePath(internalPath)) {
+					const treeRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
+					if (!treeRoot) return;
+					const absolutePath = `${treeRoot}/${internalPath}`;
+					const sshRemoteId =
+						activeSession?.sshRemoteId ??
+						activeSession?.sessionSshRemoteConfig?.remoteId ??
+						undefined;
+					void window.maestro.fs.readFile(absolutePath, sshRemoteId).then((content) => {
+						if (typeof content !== 'string' || !content.startsWith('data:image/')) return;
+						setStagedImages((prev) => {
+							if (prev.includes(content)) {
+								setSuccessFlashNotification('Duplicate image ignored');
+								setTimeout(() => setSuccessFlashNotification(null), 2000);
+								return prev;
+							}
+							return [...prev, content];
+						});
+					});
+					return;
+				}
+
 				appendMentionsToAiInput([internalPath]);
 				inputRef.current?.focus();
 				return;

@@ -1859,6 +1859,84 @@ describe('useInputHandlers', () => {
 			expect(result.current.inputValue).toBe('');
 		});
 
+		it('stages an image when an image path is dragged from the Files panel', async () => {
+			const dataUrl = 'data:image/png;base64,FAKEPNG';
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce(dataUrl);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'assets/logo.png' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			await act(async () => {
+				result.current.handleDrop(dropEvent);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/test/assets/logo.png', undefined);
+			const sessions = useSessionStore.getState().sessions;
+			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages).toEqual([dataUrl]);
+			// Image staging path must NOT also insert an @-mention.
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('does not stage anything when the IPC returns a non-data-url string for an image path', async () => {
+			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('not a data url');
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'assets/logo.png' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			await act(async () => {
+				result.current.handleDrop(dropEvent);
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
+			expect(tab?.stagedImages ?? []).toEqual([]);
+			expect(result.current.inputValue).toBe('');
+		});
+
+		it('still inserts @<path> for non-image extensions dragged from the Files panel', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-file-path' ? 'src/util.ts' : '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(result.current.inputValue).toBe('@src/util.ts ');
+			expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		});
+
 		it('relativizes a Windows-style backslash path inside a Windows-style project root', () => {
 			useSessionStore.setState({
 				sessions: [
