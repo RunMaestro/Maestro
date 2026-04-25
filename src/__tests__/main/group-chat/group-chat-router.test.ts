@@ -46,6 +46,18 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// Mock stores/getters: router reads global shellEnvVars via getSettingsStore().
+// The mock is driven by `mockedShellEnvVars` so individual tests can assert the
+// value actually flows through to processManager.spawn() and (for SSH) into
+// wrapSpawnWithSsh's customEnvVars input.
+let mockedShellEnvVars: Record<string, string> = {};
+vi.mock('../../../main/stores/getters', () => ({
+	getSettingsStore: () => ({
+		get: (key: string, defaultValue: unknown) =>
+			key === 'shellEnvVars' ? mockedShellEnvVars : defaultValue,
+	}),
+}));
+
 import {
 	extractMentions,
 	extractAllMentions,
@@ -93,6 +105,9 @@ describe('group-chat-router', () => {
 
 		// Set the mock userData path to our test directory
 		mockUserDataPath = testDir;
+
+		// Reset the global-settings shell env mock between tests
+		mockedShellEnvVars = {};
 
 		// Create a fresh mock for each test
 		mockProcessManager = {
@@ -1047,6 +1062,132 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===========================================================================
+	// Global shell env vars from Settings → Shell Configuration must flow into
+	// moderator / participant spawns for the local path, and must be merged into
+	// customEnvVars (per-agent takes precedence) for the SSH path so they reach
+	// the remote agent via the SSH stdin script.
+	// ===========================================================================
+	describe('global shell env vars forwarded to spawns', () => {
+		it('moderator spawn receives globally-configured shellEnvVars', async () => {
+			mockedShellEnvVars = { ANTHROPIC_API_KEY: 'sentinel-moderator-key' };
+			const chat = await createTestChatWithModerator('Moderator ShellEnv Test');
+
+			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					shellEnvVars: { ANTHROPIC_API_KEY: 'sentinel-moderator-key' },
+				})
+			);
+		});
+
+		it('participant spawn receives globally-configured shellEnvVars', async () => {
+			mockedShellEnvVars = { ANTHROPIC_API_KEY: 'sentinel-participant-key' };
+			const chat = await createTestChatWithModerator('Participant ShellEnv Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0].prompt?.includes('please help')
+			);
+			expect(participantSpawn).toBeDefined();
+			expect(participantSpawn![0]).toEqual(
+				expect.objectContaining({
+					shellEnvVars: { ANTHROPIC_API_KEY: 'sentinel-participant-key' },
+				})
+			);
+		});
+
+		it('SSH participant spawn merges shellEnvVars into customEnvVars with per-agent precedence', async () => {
+			// SSH wrapper strips customEnvVars after embedding them into the remote script,
+			// so assertions target the INPUT to wrapSpawnWithSsh — that's where globals must land.
+			mockedShellEnvVars = {
+				ANTHROPIC_API_KEY: 'sentinel-global-key',
+				GLOBAL_ONLY: 'global-value',
+			};
+
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@pedtome.local', 'claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'test prompt',
+				customEnvVars: undefined,
+				sshRemoteUsed: { name: 'PedTome' },
+			});
+			const mockSshStore = {
+				getSshRemotes: vi
+					.fn()
+					.mockReturnValue([
+						{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
+					]),
+			};
+			const sshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/home/user/project',
+			};
+
+			const chat = await createTestChatWithModerator('SSH Participant ShellEnv Test');
+
+			// Session-level override: should win over the global sentinel for the same key.
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-shellenv',
+				name: 'SSHWorker',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+				customEnvVars: { ANTHROPIC_API_KEY: 'per-agent-override' },
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+
+			await addParticipant(
+				chat.id,
+				'SSHWorker',
+				'claude-code',
+				mockProcessManager,
+				'/home/user/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+
+			mockWrapSpawnWithSsh.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@SSHWorker implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: {
+						GLOBAL_ONLY: 'global-value',
+						ANTHROPIC_API_KEY: 'per-agent-override',
+					},
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+
+			mockWrapSpawnWithSsh.mockReset();
 		});
 	});
 });
