@@ -147,6 +147,12 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 
 	// --- Editor / UI Behavior ---
+	spellCheck: {
+		description: 'Enable spell checking in input areas (prompt input, group chat, file editor).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	conductorProfile: {
 		description: 'Custom persona/instructions for the conductor (system prompt context).',
 		type: 'string',

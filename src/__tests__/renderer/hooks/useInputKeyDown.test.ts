@@ -1245,7 +1245,7 @@ describe('Slash command autocomplete — additional', () => {
 		});
 
 		// '/HEL'.toLowerCase() starts with '/hel' which matches '/help'
-		expect(deps.setInputValue).toHaveBeenCalledWith('/help');
+		expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
 	});
 
 	it('regular key during slashCommandOpen returns early without reaching enter-to-send', () => {

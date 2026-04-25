@@ -293,6 +293,7 @@ export const FilePreview = React.memo(
 		const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+		const spellCheckEnabled = useSettingsStore((s) => s.spellCheck);
 		const hasActiveSearch = searchQuery.trim().length > 0;
 		const effectiveBionifyReadingMode = bionifyReadingMode && !hasActiveSearch;
 
@@ -1285,7 +1286,7 @@ export const FilePreview = React.memo(
 							onChange={setEditContent}
 							language={language}
 							theme={theme}
-							spellCheck={false}
+							spellCheck={spellCheckEnabled}
 							onKeyDown={(e) => {
 								// Handle Cmd+S for save
 								if (e.key === 's' && (e.metaKey || e.ctrlKey)) {

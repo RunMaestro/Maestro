@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	Bell,
 	Keyboard,
@@ -275,6 +276,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const [effortMenuOpen, setEffortMenuOpen] = useState(false);
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const effortMenuRef = useRef<HTMLDivElement>(null);
+
+	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -931,6 +934,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 								}
 								value={inputValue}
+								spellCheck={spellCheckEnabled}
 								onFocus={onInputFocus}
 								onBlur={onInputBlur}
 								onChange={(e) => {

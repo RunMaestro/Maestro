@@ -356,6 +356,10 @@ export interface UseSettingsReturn {
 	setAutoRunDisabled: (value: boolean) => void;
 	autoRunInactivityTimeoutMin: number;
 	setAutoRunInactivityTimeoutMin: (value: number) => void;
+
+	// Spell check
+	spellCheck: boolean;
+	setSpellCheck: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {

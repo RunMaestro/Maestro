@@ -65,9 +65,16 @@ export async function* runPlaybook(
 		writeHistory?: boolean;
 		debug?: boolean;
 		verbose?: boolean;
+		skipSynopsis?: boolean;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
-	const { dryRun = false, writeHistory = true, debug = false, verbose = false } = options;
+	const {
+		dryRun = false,
+		writeHistory = true,
+		debug = false,
+		verbose = false,
+		skipSynopsis = false,
+	} = options;
 	const batchStartTime = Date.now();
 
 	// Get git branch and group name for template variable substitution
@@ -472,7 +479,7 @@ export async function* runPlaybook(
 					let shortSummary = `[${docEntry.filename}] Task completed`;
 					let fullSynopsis = shortSummary;
 
-					if (result.success && result.agentSessionId) {
+					if (result.success && result.agentSessionId && !skipSynopsis) {
 						// Request synopsis from the agent
 						const synopsisResult = await spawnAgent(
 							session.toolType,

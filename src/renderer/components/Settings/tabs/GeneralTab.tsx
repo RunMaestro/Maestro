@@ -26,6 +26,7 @@ import {
 	PartyPopper,
 	Tag,
 	User,
+	SpellCheck,
 	ExternalLink,
 	Keyboard,
 	AlertTriangle,
@@ -79,6 +80,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
+		// Spell check
+		spellCheck,
+		setSpellCheck,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -905,6 +909,17 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					theme={theme}
 				/>
 			</div>
+
+			{/* Spell Check */}
+			<SettingCheckbox
+				icon={SpellCheck}
+				sectionLabel="Spell Check"
+				title="Enable spell checking"
+				description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+				checked={spellCheck}
+				onChange={setSpellCheck}
+				theme={theme}
+			/>
 
 			{/* Sleep Prevention */}
 			<div data-setting-id="general-power">
