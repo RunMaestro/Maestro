@@ -409,6 +409,11 @@ function validateSettings(rawSettings: unknown): string[] {
 			errors.push('"settings.queue_size" must be a non-negative integer between 0 and 50');
 		}
 	}
+	if (settings.owner_agent_id !== undefined) {
+		if (typeof settings.owner_agent_id !== 'string' || settings.owner_agent_id.trim() === '') {
+			errors.push('"settings.owner_agent_id" must be a non-empty string (agent id or name)');
+		}
+	}
 	return errors;
 }
 

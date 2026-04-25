@@ -54,7 +54,20 @@ settings:
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
   queue_size: number # Default: 10. Max queued events (0-50)
+  owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
+
+## Sharing a workspace across agents
+
+When two or more agents are registered against the same project directory (for example, one agent using Opus and another using Sonnet, both pointing at the same vault), every _unowned_ subscription (one without an explicit `agent_id`) would otherwise fire once per agent. Maestro resolves this as follows:
+
+- **`settings.owner_agent_id` set and matched by some agent in the root** — that agent is the owner; other agents in the same root skip unowned subscriptions.
+- **`settings.owner_agent_id` set but matched by nobody** — the config is dead. Every agent in that project root skips unowned subscriptions, and each row in the Cue dashboard is flagged with a red warning linking to this setting.
+- **`settings.owner_agent_id` unset and multiple agents share the root** — the first agent in the session list wins. Non-winner rows in the Cue dashboard are flagged with a red warning naming the winner and pointing to `owner_agent_id` as the override.
+
+Accepted values for `owner_agent_id`: the agent's internal id (UUID) **or** its display name (e.g. `Obsidian`).
+
+Subscriptions with an explicit `agent_id` continue to fan out independently of ownership — useful when a single shared config intentionally targets multiple agents in the same workspace.
 
 ## Subscriptions
 
