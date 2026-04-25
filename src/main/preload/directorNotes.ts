@@ -105,6 +105,22 @@ export interface SynopsisResult {
 }
 
 /**
+ * All-time activity graph data aggregated across every session.
+ */
+export interface UnifiedGraphData {
+	buckets: GraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	cached: boolean;
+	stats: UnifiedHistoryStats;
+}
+
+/**
  * Creates the Director's Notes API object for preload exposure
  */
 export function createDirectorNotesApi() {
@@ -112,6 +128,21 @@ export function createDirectorNotesApi() {
 		// Get unified history across all sessions with pagination
 		getUnifiedHistory: (options: UnifiedHistoryOptions): Promise<PaginatedUnifiedHistoryResult> =>
 			ipcRenderer.invoke('director-notes:getUnifiedHistory', options),
+
+		// Cached, all-time graph buckets aggregated across every session.
+		// Used by the unified history activity graph so it stays consistent
+		// regardless of how the entry list paginates beneath it.
+		getGraphData: (bucketCount: number): Promise<UnifiedGraphData> =>
+			ipcRenderer.invoke('director-notes:getGraphData', bucketCount),
+
+		// Resolve the offset (newest-first sorted across all sessions) of
+		// the first entry whose timestamp is <= the given timestamp. Powers
+		// the activity graph's click-to-jump behavior in the unified view.
+		getOffsetForTimestamp: (
+			timestamp: number,
+			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+		): Promise<number> =>
+			ipcRenderer.invoke('director-notes:getOffsetForTimestamp', timestamp, options),
 
 		// Generate AI synopsis
 		generateSynopsis: (options: SynopsisOptions): Promise<SynopsisResult> =>

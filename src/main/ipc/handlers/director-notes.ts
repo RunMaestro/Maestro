@@ -28,6 +28,13 @@ import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
+import {
+	getHistoryBucketCache,
+	multiFileFingerprint,
+	HISTORY_BUCKET_CACHE_VERSION,
+} from '../../utils/history-bucket-cache';
+import { buildBucketAggregate } from '../../utils/history-bucket-builder';
+import type { HistoryGraphData } from './history';
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
@@ -52,6 +59,28 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 	context: LOG_CONTEXT,
 	operation,
 });
+
+/**
+ * Re-walk session entries to count distinct agents and provider sessions.
+ * Cheap (no bucketing) but unavoidable on cache hit because the bucket
+ * cache schema only stores per-type counts.
+ */
+function countAgentsAndSessions(
+	historyManager: ReturnType<typeof getHistoryManager>,
+	sessionIds: string[]
+): { agentCount: number; sessionCount: number } {
+	const agentSet = new Set<string>();
+	const providerSessionSet = new Set<string>();
+	for (const sid of sessionIds) {
+		const entries = historyManager.getEntries(sid);
+		if (entries.length === 0) continue;
+		agentSet.add(sid);
+		for (const e of entries) {
+			if (e.agentSessionId) providerSessionSet.add(e.agentSessionId);
+		}
+	}
+	return { agentCount: agentSet.size, sessionCount: providerSessionSet.size };
+}
 
 /**
  * Build a map of Maestro session ID -> session name from the sessions store.
@@ -273,6 +302,142 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				);
 
 				return { ...result, stats, graphBuckets };
+			}
+		)
+	);
+
+	// All-time graph data aggregated across every session with history.
+	// Cached on disk keyed by composite fingerprint (mtime+size of all source
+	// files) so a fresh load on a project with hundreds of session files
+	// doesn't re-bucket tens of thousands of entries on every interaction.
+	ipcMain.handle(
+		'director-notes:getGraphData',
+		withIpcErrorLogging(
+			handlerOpts('getGraphData'),
+			async (bucketCount: number): Promise<HistoryGraphData & { stats: UnifiedHistoryStats }> => {
+				const safeBucketCount = Math.max(1, bucketCount | 0);
+				const sessionIds = historyManager.listSessionsWithHistory();
+				const filePaths = sessionIds
+					.map((sid) => historyManager.getHistoryFilePath(sid))
+					.filter((p): p is string => Boolean(p));
+
+				const cache = getHistoryBucketCache();
+				const cacheKey = `unified:bc=${safeBucketCount}`;
+				const fp = multiFileFingerprint(filePaths);
+
+				// Stats need session/agent counts that aren't part of the bucket
+				// aggregate. Compute them once per cache miss; on hit, derive
+				// what we can from the cached aggregate and re-walk only when
+				// stats are stale (rare — they invalidate with the buckets).
+				const hit = cache.get(cacheKey, fp);
+				if (hit) {
+					// agent/session counts aren't in the cache schema — re-walk
+					// once. Cheap relative to bucketing.
+					const { agentCount, sessionCount } = countAgentsAndSessions(historyManager, sessionIds);
+					return {
+						buckets: hit.buckets,
+						bucketCount: hit.bucketCount,
+						earliestTimestamp: hit.earliestTimestamp,
+						latestTimestamp: hit.latestTimestamp,
+						totalCount: hit.totalCount,
+						autoCount: hit.autoCount,
+						userCount: hit.userCount,
+						cueCount: hit.cueCount,
+						cached: true,
+						stats: {
+							agentCount,
+							sessionCount,
+							autoCount: hit.autoCount,
+							userCount: hit.userCount,
+							totalCount: hit.autoCount + hit.userCount,
+						},
+					};
+				}
+
+				const allEntries: HistoryEntry[] = [];
+				const agentSet = new Set<string>();
+				const providerSessionSet = new Set<string>();
+				for (const sid of sessionIds) {
+					const entries = historyManager.getEntries(sid);
+					if (entries.length === 0) continue;
+					agentSet.add(sid);
+					for (const e of entries) {
+						allEntries.push(e);
+						if (e.agentSessionId) providerSessionSet.add(e.agentSessionId);
+					}
+				}
+
+				const agg = buildBucketAggregate(allEntries, safeBucketCount);
+				cache.set({
+					version: HISTORY_BUCKET_CACHE_VERSION,
+					cacheKey,
+					sourceFingerprint: fp,
+					bucketCount: safeBucketCount,
+					buckets: agg.buckets,
+					earliestTimestamp: agg.earliestTimestamp,
+					latestTimestamp: agg.latestTimestamp,
+					totalCount: agg.totalCount,
+					autoCount: agg.autoCount,
+					userCount: agg.userCount,
+					cueCount: agg.cueCount,
+					computedAt: Date.now(),
+				});
+
+				return {
+					buckets: agg.buckets,
+					bucketCount: safeBucketCount,
+					earliestTimestamp: agg.earliestTimestamp,
+					latestTimestamp: agg.latestTimestamp,
+					totalCount: agg.totalCount,
+					autoCount: agg.autoCount,
+					userCount: agg.userCount,
+					cueCount: agg.cueCount,
+					cached: false,
+					stats: {
+						agentCount: agentSet.size,
+						sessionCount: providerSessionSet.size,
+						autoCount: agg.autoCount,
+						userCount: agg.userCount,
+						totalCount: agg.autoCount + agg.userCount,
+					},
+				};
+			}
+		)
+	);
+
+	// Find the offset (in newest-first sorted order) of the first unified
+	// entry whose timestamp is <= the given timestamp. Used by the activity
+	// graph's click handler to jump the paginated list to a bucket the user
+	// hasn't scrolled into yet.
+	ipcMain.handle(
+		'director-notes:getOffsetForTimestamp',
+		withIpcErrorLogging(
+			handlerOpts('getOffsetForTimestamp'),
+			async (
+				timestamp: number,
+				options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+			): Promise<number> => {
+				const sessionIds = historyManager.listSessionsWithHistory();
+				const lookback = options?.lookbackDays ?? 0;
+				const filter = options?.filter ?? null;
+				const cutoff = lookback > 0 ? Date.now() - lookback * 24 * 60 * 60 * 1000 : 0;
+
+				const all: HistoryEntry[] = [];
+				for (const sid of sessionIds) {
+					for (const e of historyManager.getEntries(sid)) {
+						if (cutoff > 0 && e.timestamp < cutoff) continue;
+						if (filter && e.type !== filter) continue;
+						all.push(e);
+					}
+				}
+				all.sort((a, b) => b.timestamp - a.timestamp);
+
+				let offset = 0;
+				for (const entry of all) {
+					if (entry.timestamp <= timestamp) return offset;
+					offset++;
+				}
+				return Math.max(0, all.length - 1);
 			}
 		)
 	);

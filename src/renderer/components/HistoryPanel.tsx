@@ -18,10 +18,11 @@ import {
 	ActivityGraph,
 	HistoryEntryItem,
 	HistoryFilterToggle,
-	MAX_HISTORY_IN_MEMORY,
 	ESTIMATED_ROW_HEIGHT,
 	ESTIMATED_ROW_HEIGHT_SIMPLE,
+	LOOKBACK_OPTIONS,
 } from './History';
+import type { GraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -47,6 +48,14 @@ export interface HistoryPanelHandle {
 
 // Module-level storage for scroll positions (persists across session switches)
 const scrollPositionCache = new Map<string, number>();
+
+/**
+ * Bucket count for the always-all-time activity graph. The graph view is
+ * decoupled from the entry-list lookback: it always covers the full
+ * session history at a fixed resolution, with the server-side bucket
+ * cache keyed off the source-file fingerprint.
+ */
+const GRAPH_BUCKET_COUNT = LOOKBACK_OPTIONS.find((o) => o.hours === null)?.bucketCount ?? 24;
 
 export const HistoryPanel = React.memo(
 	forwardRef<HistoryPanelHandle, HistoryPanelProps>(function HistoryPanel(
@@ -81,7 +90,17 @@ export const HistoryPanel = React.memo(
 			{ start: number; end: number } | undefined
 		>(undefined);
 		const [helpModalOpen, setHelpModalOpen] = useState(false);
-		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null); // default to "All time"
+		// Lookback selector still filters the entry list, but no longer
+		// drives the graph window — the graph is always all-time.
+		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
+		// Server-cached buckets covering the full session history. The
+		// activity graph renders these regardless of any lookback applied
+		// to the entry list below it.
+		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
+			undefined
+		);
+		const graphRefreshScheduled = useRef(false);
 
 		const listRef = useRef<HTMLDivElement>(null);
 		const searchInputRef = useRef<HTMLInputElement>(null);
@@ -104,15 +123,17 @@ export const HistoryPanel = React.memo(
 				}
 
 				try {
-					// Only show entries from this session or legacy entries without sessionId
+					// Only show entries from this session or legacy entries without sessionId.
+					// No client-side cap — the per-session disk file already caps at
+					// MAX_ENTRIES_PER_SESSION (5000), and the activity graph data comes
+					// from a separate cached endpoint covering all entries.
 					const entries = await window.maestro.history.getAll(
 						session.cwd,
 						session.id,
 						buildSharedHistoryContext(session)
 					);
-					// Ensure entries is an array, limit to MAX_HISTORY_IN_MEMORY
 					const validEntries = Array.isArray(entries) ? entries : [];
-					setHistoryEntries(validEntries.slice(0, MAX_HISTORY_IN_MEMORY));
+					setHistoryEntries(validEntries);
 
 					if (isRefresh) {
 						// On refresh, restore scroll position
@@ -141,6 +162,29 @@ export const HistoryPanel = React.memo(
 			loadHistory();
 		}, [loadHistory]);
 
+		// Fetch the all-time graph aggregate. Cached server-side keyed by
+		// the session file's mtime+size, so repeat calls are cheap until
+		// the file actually changes.
+		const refreshGraphData = useCallback(async () => {
+			try {
+				const data = await window.maestro.history.getGraphData(
+					session.id,
+					GRAPH_BUCKET_COUNT,
+					buildSharedHistoryContext(session)
+				);
+				setGraphBuckets(data.buckets);
+				setGraphRange({ start: data.earliestTimestamp, end: data.latestTimestamp });
+			} catch (error) {
+				logger.error('Failed to load history graph data:', undefined, error);
+				setGraphBuckets(undefined);
+				setGraphRange(undefined);
+			}
+		}, [session.id, session]);
+
+		useEffect(() => {
+			refreshGraphData();
+		}, [refreshGraphData]);
+
 		// Subscribe to real-time history entry additions
 		useEffect(() => {
 			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded((entry, sourceSessionId) => {
@@ -150,13 +194,26 @@ export const HistoryPanel = React.memo(
 				setHistoryEntries((prev) => {
 					// Deduplicate
 					if (prev.some((e) => e.id === entry.id)) return prev;
-					// Prepend (newest first), cap at MAX_HISTORY_IN_MEMORY
-					return [entry, ...prev].slice(0, MAX_HISTORY_IN_MEMORY);
+					// Prepend (newest first); the per-session disk file caps the
+					// underlying dataset, so no in-memory cap is needed.
+					return [entry, ...prev];
 				});
+
+				// Coalesce graph refreshes — a burst of streamed entries
+				// shouldn't trigger a refetch per entry. The next animation
+				// frame is a cheap debounce that keeps the graph fresh
+				// without thrashing IPC.
+				if (!graphRefreshScheduled.current) {
+					graphRefreshScheduled.current = true;
+					requestAnimationFrame(() => {
+						graphRefreshScheduled.current = false;
+						refreshGraphData();
+					});
+				}
 			});
 
 			return cleanup;
-		}, [session.id]);
+		}, [session.id, refreshGraphData]);
 
 		// Load persisted graph lookback preference for this session
 		useEffect(() => {
@@ -603,8 +660,11 @@ export const HistoryPanel = React.memo(
 							theme={theme}
 							viewportRange={graphViewportRange}
 							onBarClick={handleGraphBarClickVirtualized}
-							lookbackHours={graphLookbackHours}
+							lookbackHours={null}
 							onLookbackChange={handleLookbackChange}
+							precomputedBuckets={graphBuckets}
+							precomputedRange={graphRange}
+							alwaysShowViewportLabel
 						/>
 					)}
 				</div>

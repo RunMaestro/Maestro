@@ -30,6 +30,13 @@ import {
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { captureException } from '../../utils/sentry';
+import {
+	getHistoryBucketCache,
+	fileFingerprint,
+	HISTORY_BUCKET_CACHE_VERSION,
+	type CachedGraphBucket,
+} from '../../utils/history-bucket-cache';
+import { buildBucketAggregate } from '../../utils/history-bucket-builder';
 
 const LOG_CONTEXT = '[History]';
 
@@ -37,6 +44,80 @@ const LOG_CONTEXT = '[History]';
 export interface SharedHistoryContext {
 	sshRemoteId: string;
 	remoteCwd: string;
+}
+
+/**
+ * Aggregated graph data returned by `history:getGraphData` and
+ * `director-notes:getGraphData`. Buckets are computed over the full source
+ * history (not the renderer's lookback window) so the graph view stays
+ * "all-encompassing" while the entry list paginates beneath it.
+ */
+export interface HistoryGraphData {
+	buckets: CachedGraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	/** True when served from the disk cache (diagnostics only). */
+	cached: boolean;
+}
+
+/** Internal: shape returned by `buildBucketAggregate`. */
+interface BucketAggregateLike {
+	buckets: CachedGraphBucket[];
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+}
+
+function aggregateToGraphData(
+	agg: BucketAggregateLike,
+	bucketCount: number,
+	cached: boolean
+): HistoryGraphData {
+	return {
+		buckets: agg.buckets,
+		bucketCount,
+		earliestTimestamp: agg.earliestTimestamp,
+		latestTimestamp: agg.latestTimestamp,
+		totalCount: agg.totalCount,
+		autoCount: agg.autoCount,
+		userCount: agg.userCount,
+		cueCount: agg.cueCount,
+		cached,
+	};
+}
+
+function cachedToGraphData(
+	cached: {
+		buckets: CachedGraphBucket[];
+		bucketCount: number;
+		earliestTimestamp: number;
+		latestTimestamp: number;
+		totalCount: number;
+		autoCount: number;
+		userCount: number;
+		cueCount: number;
+	},
+	fromCache: boolean
+): HistoryGraphData {
+	return {
+		buckets: cached.buckets,
+		bucketCount: cached.bucketCount,
+		earliestTimestamp: cached.earliestTimestamp,
+		latestTimestamp: cached.latestTimestamp,
+		totalCount: cached.totalCount,
+		autoCount: cached.autoCount,
+		userCount: cached.userCount,
+		cueCount: cached.cueCount,
+		cached: fromCache,
+	};
 }
 
 export interface HistoryHandlerDependencies {
@@ -163,6 +244,105 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 
 				// Return paginated entries (for global view)
 				return historyManager.getAllEntriesPaginated(pagination);
+			}
+		)
+	);
+
+	// Get all-time graph data (buckets + counts) for a single session.
+	// Cached on disk keyed by file mtime+size; recomputed on miss.
+	// Always covers the *full* session history regardless of any lookback the
+	// renderer applies to the entry list.
+	ipcMain.handle(
+		'history:getGraphData',
+		withIpcErrorLogging(
+			handlerOpts('getGraphData'),
+			async (
+				sessionId: string,
+				bucketCount: number,
+				sharedContext?: SharedHistoryContext
+			): Promise<HistoryGraphData> => {
+				const safeBucketCount = Math.max(1, bucketCount | 0);
+				const filePath = historyManager.getHistoryFilePath(sessionId);
+				const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
+
+				// Cache only when there is no shared history overlay — shared
+				// entries come from arbitrary remote/local files we don't
+				// fingerprint. Bypassing the cache keeps the simple path simple.
+				if (filePath && !hasShared) {
+					const cache = getHistoryBucketCache();
+					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}`;
+					const fp = fileFingerprint(filePath);
+					const hit = cache.get(cacheKey, fp);
+					if (hit) {
+						return cachedToGraphData(hit, true);
+					}
+
+					const entries = historyManager.getEntries(sessionId);
+					const agg = buildBucketAggregate(entries, safeBucketCount);
+					cache.set({
+						version: HISTORY_BUCKET_CACHE_VERSION,
+						cacheKey,
+						sourceFingerprint: fp,
+						bucketCount: safeBucketCount,
+						buckets: agg.buckets,
+						earliestTimestamp: agg.earliestTimestamp,
+						latestTimestamp: agg.latestTimestamp,
+						totalCount: agg.totalCount,
+						autoCount: agg.autoCount,
+						userCount: agg.userCount,
+						cueCount: agg.cueCount,
+						computedAt: Date.now(),
+					});
+					return aggregateToGraphData(agg, safeBucketCount, false);
+				}
+
+				// Shared-history or missing-file path: compute inline, no cache.
+				const entries: HistoryEntry[] = filePath ? historyManager.getEntries(sessionId) : [];
+				const maxEntries = deps.getMaxEntries?.();
+				if (hasShared) {
+					try {
+						const sshRemote = deps.getSshRemoteById?.(sharedContext!.sshRemoteId);
+						if (sshRemote) {
+							const sharedEntries = await readRemoteEntriesSsh(
+								sharedContext!.remoteCwd,
+								sshRemote,
+								maxEntries
+							);
+							const seen = new Set(entries.map((e) => e.id));
+							for (const e of sharedEntries) {
+								if (!seen.has(e.id)) {
+									entries.push(e);
+									seen.add(e.id);
+								}
+							}
+						}
+					} catch (err) {
+						logger.warn(`Failed to read shared history for graph: ${err}`, LOG_CONTEXT);
+					}
+				}
+				const agg = buildBucketAggregate(entries, safeBucketCount);
+				return aggregateToGraphData(agg, safeBucketCount, false);
+			}
+		)
+	);
+
+	// Find the offset of the first entry whose timestamp is <= the given
+	// timestamp, in the newest-first sorted order. Used by the activity-graph
+	// click handler to jump the paginated list to a specific bucket.
+	ipcMain.handle(
+		'history:getOffsetForTimestamp',
+		withIpcErrorLogging(
+			handlerOpts('getOffsetForTimestamp'),
+			async (sessionId: string, timestamp: number): Promise<number> => {
+				const entries = historyManager.getEntries(sessionId);
+				if (entries.length === 0) return 0;
+				const sorted = sortEntriesByTimestamp(entries);
+				let offset = 0;
+				for (const entry of sorted) {
+					if (entry.timestamp <= timestamp) return offset;
+					offset++;
+				}
+				return Math.max(0, sorted.length - 1);
 			}
 		)
 	);

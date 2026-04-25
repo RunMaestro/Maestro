@@ -1494,6 +1494,22 @@ interface MaestroAPI {
 		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
 		getFilePath: (sessionId: string) => Promise<string | null>;
 		listSessions: () => Promise<string[]>;
+		getGraphData: (
+			sessionId: string,
+			bucketCount: number,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		) => Promise<{
+			buckets: Array<{ auto: number; user: number; cue: number }>;
+			bucketCount: number;
+			earliestTimestamp: number;
+			latestTimestamp: number;
+			totalCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			cached: boolean;
+		}>;
+		getOffsetForTimestamp: (sessionId: string, timestamp: number) => Promise<number>;
 		onExternalChange: (handler: () => void) => () => void;
 		reload: () => Promise<boolean>;
 	};
@@ -2965,6 +2981,28 @@ interface MaestroAPI {
 			};
 			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
 		}>;
+		getGraphData: (bucketCount: number) => Promise<{
+			buckets: Array<{ auto: number; user: number; cue: number }>;
+			bucketCount: number;
+			earliestTimestamp: number;
+			latestTimestamp: number;
+			totalCount: number;
+			autoCount: number;
+			userCount: number;
+			cueCount: number;
+			cached: boolean;
+			stats: {
+				agentCount: number;
+				sessionCount: number;
+				autoCount: number;
+				userCount: number;
+				totalCount: number;
+			};
+		}>;
+		getOffsetForTimestamp: (
+			timestamp: number,
+			options?: { lookbackDays?: number; filter?: 'AUTO' | 'USER' | 'CUE' | null }
+		) => Promise<number>;
 		generateSynopsis: (options: {
 			lookbackDays: number;
 			provider: string;

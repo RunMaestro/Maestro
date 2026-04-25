@@ -36,6 +36,20 @@ const PAGE_SIZE = 100;
 /** Distance from bottom (in px) at which to trigger loading the next page */
 const SCROLL_LOAD_THRESHOLD = 500;
 
+/**
+ * Bucket count for the always-all-time activity graph in the unified view.
+ * Decoupled from the entry-list lookback so the graph stays consistent
+ * regardless of how the list filters/scrolls below it.
+ */
+const GRAPH_BUCKET_COUNT = LOOKBACK_OPTIONS.find((o) => o.hours === null)?.bucketCount ?? 24;
+
+/**
+ * Cap on the number of pages we'll fetch in one click-to-jump operation,
+ * to avoid runaway IPC if the user clicks a bucket far from the loaded
+ * window. Worst case = JUMP_MAX_PAGES * PAGE_SIZE entries appended.
+ */
+const JUMP_MAX_PAGES = 50;
+
 interface UnifiedHistoryEntry extends HistoryEntry {
 	agentName?: string;
 	sourceSessionId: string;
@@ -89,14 +103,19 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [searchExpanded, setSearchExpanded] = useState(false);
 		const [searchQuery, setSearchQuery] = useState('');
 
-		// Stable snapshot of entries for the graph — only updated on fresh loads, not scroll-appends
-		const [graphEntries, setGraphEntries] = useState<UnifiedHistoryEntry[]>([]);
-		// Pre-computed graph buckets from backend (covers ALL entries, not just first page)
+		// Pre-computed graph buckets from backend (covers ALL entries across
+		// every session, not just the loaded pages). Always all-time —
+		// independent of the lookback selector that filters the entry list.
 		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
+			undefined
+		);
 		// Viewport range for the red scroll indicator on the activity graph
 		const [graphViewportRange, setGraphViewportRange] = useState<
 			{ start: number; end: number } | undefined
 		>(undefined);
+		const [isJumping, setIsJumping] = useState(false);
+		const graphRefreshScheduled = useRef(false);
 
 		const listRef = useRef<HTMLDivElement>(null);
 		const loadingMoreRef = useRef(false); // Guard against concurrent loads
@@ -179,46 +198,18 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					return merged;
 				});
 
-				// Update graph entries for ActivityGraph (fallback path)
-				setGraphEntries((prev) => {
-					const existingIds = new Set(prev.map((e) => e.id));
-					const newEntries = uniqueBatch.filter((e) => !existingIds.has(e.id));
-					if (newEntries.length === 0) return prev;
-					const merged = [...newEntries, ...prev];
-					merged.sort((a, b) => b.timestamp - a.timestamp);
-					return merged;
-				});
-
-				// Incrementally update pre-computed graph buckets for new entries
-				setGraphBuckets((prev) => {
-					if (!prev || prev.length === 0) return prev;
-					const lookbackConfig =
-						LOOKBACK_OPTIONS.find((o) => o.hours === lookbackHours) || LOOKBACK_OPTIONS[0];
-					if (prev.length !== lookbackConfig.bucketCount) return prev;
-
-					const bucketEnd = Date.now();
-					const bucketStart =
-						lookbackHours !== null ? bucketEnd - lookbackHours * 60 * 60 * 1000 : 0; // "all time" — skip incremental update
-					if (bucketStart === 0) return prev; // can't incrementally bucket "all time"
-
-					const msPer = (bucketEnd - bucketStart) / prev.length;
-					if (msPer <= 0) return prev;
-
-					const updated = prev.map((b) => ({ ...b }));
-					for (const entry of uniqueBatch) {
-						if (entry.timestamp < bucketStart) continue;
-						const idx = Math.min(
-							updated.length - 1,
-							Math.floor((entry.timestamp - bucketStart) / msPer)
-						);
-						if (idx >= 0 && idx < updated.length) {
-							if (entry.type === 'AUTO') updated[idx].auto++;
-							else if (entry.type === 'USER') updated[idx].user++;
-							else if (entry.type === 'CUE') updated[idx].cue++;
-						}
-					}
-					return updated;
-				});
+				// Schedule a graph refetch instead of updating buckets
+				// in-place. The server cache is keyed by file mtime+size so
+				// any append invalidates it; one coalesced refresh per
+				// animation frame keeps the graph fresh without per-entry
+				// IPC churn.
+				if (!graphRefreshScheduled.current) {
+					graphRefreshScheduled.current = true;
+					requestAnimationFrame(() => {
+						graphRefreshScheduled.current = false;
+						void refreshGraphData();
+					});
+				}
 			};
 
 			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded(
@@ -270,6 +261,21 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[searchExpanded]
 		);
 
+		// Fetch the all-time graph aggregate (cached server-side keyed by
+		// the composite mtime+size of every session history file). Decoupled
+		// from `loadPage` so the graph refreshes independently of pagination.
+		const refreshGraphData = useCallback(async () => {
+			try {
+				const data = await window.maestro.directorNotes.getGraphData(GRAPH_BUCKET_COUNT);
+				setGraphBuckets(data.buckets);
+				setGraphRange({ start: data.earliestTimestamp, end: data.latestTimestamp });
+			} catch (error) {
+				logger.error('Failed to load unified graph data:', undefined, error);
+				setGraphBuckets(undefined);
+				setGraphRange(undefined);
+			}
+		}, []);
+
 		// Load a page of unified history
 		const loadPage = useCallback(
 			async (offset: number, append: boolean, lookback: number | null) => {
@@ -279,25 +285,17 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					setIsLoading(true);
 				}
 				try {
-					// On fresh loads, request graph bucket data from backend
-					const lookbackConfig =
-						LOOKBACK_OPTIONS.find((o) => o.hours === lookback) || LOOKBACK_OPTIONS[0];
 					const result = await window.maestro.directorNotes.getUnifiedHistory({
 						lookbackDays: lookbackHoursToDays(lookback),
 						filter: null,
 						limit: PAGE_SIZE,
 						offset,
-						graphBucketCount: append ? undefined : lookbackConfig.bucketCount,
 					});
 					const newEntries = result.entries as UnifiedHistoryEntry[];
 					if (append) {
 						setEntries((prev) => [...prev, ...newEntries]);
 					} else {
 						setEntries(newEntries);
-						// Update graph snapshot only on fresh loads
-						setGraphEntries(newEntries);
-						// Use backend-computed buckets (covers all entries)
-						setGraphBuckets(result.graphBuckets);
 					}
 					setHasMore(result.hasMore);
 					setTotalEntries(result.total);
@@ -309,8 +307,6 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					logger.error('Failed to load unified history:', undefined, error);
 					if (!append) {
 						setEntries([]);
-						setGraphEntries([]);
-						setGraphBuckets(undefined);
 					}
 					setHasMore(false);
 				} finally {
@@ -322,10 +318,15 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[]
 		);
 
-		// Initial load
+		// Initial load (and reload on lookback change). Graph data fetches
+		// once and stays valid until the cache invalidates via mtime.
 		useEffect(() => {
 			loadPage(0, false, lookbackHours);
 		}, [loadPage, lookbackHours]);
+
+		useEffect(() => {
+			refreshGraphData();
+		}, [refreshGraphData]);
 
 		// Auto-focus the list after initial loading completes
 		useEffect(() => {
@@ -334,13 +335,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			}
 		}, [isLoading]);
 
-		// Handle lookback change from graph right-click menu
+		// Handle lookback change from graph right-click menu. Only resets
+		// the entry list — the graph stays all-time.
 		const handleLookbackChange = useCallback((hours: number | null) => {
 			setLookbackHours(hours);
-			// Reset scroll position and entries — useEffect will trigger a fresh load
 			setEntries([]);
-			setGraphEntries([]);
-			setGraphBuckets(undefined);
 			setHasMore(true);
 			setTotalEntries(0);
 			setHistoryStats(null);
@@ -490,6 +489,90 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			setGraphViewportRange(undefined);
 		}, [activeFilters, searchQuery, lookbackHours]);
 
+		/**
+		 * Click-to-jump on the activity graph. When the target bucket isn't
+		 * yet in the loaded window, fetch additional pages until either the
+		 * matching entry is loaded, `hasMore` runs out, or we hit the
+		 * `JUMP_MAX_PAGES` safety cap. Then scroll the virtualizer to the
+		 * matching entry.
+		 */
+		const handleGraphBarClick = useCallback(
+			async (bucketStart: number, bucketEnd: number) => {
+				const findIdx = (list: UnifiedHistoryEntry[]) =>
+					list.findIndex((e) => e.timestamp >= bucketStart && e.timestamp < bucketEnd);
+
+				// Fast path: already loaded.
+				let idx = findIdx(filteredEntries);
+				if (idx >= 0) {
+					setSelectedIndex(idx);
+					virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+					return;
+				}
+
+				// Slow path: ask the server which page contains an entry at
+				// (or just before) bucketEnd, then load pages until we reach it.
+				setIsJumping(true);
+				try {
+					const targetOffset = await window.maestro.directorNotes.getOffsetForTimestamp(
+						bucketEnd - 1,
+						{ lookbackDays: lookbackHoursToDays(lookbackHours), filter: null }
+					);
+
+					let currentEntries = entries;
+					let currentHasMore = hasMore;
+					let pagesLoaded = 0;
+					while (
+						currentHasMore &&
+						currentEntries.length <= targetOffset &&
+						pagesLoaded < JUMP_MAX_PAGES
+					) {
+						const result = await window.maestro.directorNotes.getUnifiedHistory({
+							lookbackDays: lookbackHoursToDays(lookbackHours),
+							filter: null,
+							limit: PAGE_SIZE,
+							offset: currentEntries.length,
+						});
+						const page = result.entries as UnifiedHistoryEntry[];
+						if (page.length === 0) {
+							currentHasMore = false;
+							break;
+						}
+						currentEntries = [...currentEntries, ...page];
+						currentHasMore = result.hasMore;
+						pagesLoaded++;
+					}
+
+					setEntries(currentEntries);
+					setHasMore(currentHasMore);
+
+					// Re-find against the freshly-extended list. Filtering may
+					// drop the exact target, so fall back to the closest entry.
+					const visible = currentEntries.filter((entry) => activeFilters.has(entry.type));
+					idx = findIdx(visible);
+					if (idx < 0) {
+						idx = visible.findIndex((e) => e.timestamp <= bucketEnd);
+					}
+					if (idx >= 0) {
+						setSelectedIndex(idx);
+						virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+					}
+				} catch (error) {
+					logger.error('Failed to jump to graph bucket:', undefined, error);
+				} finally {
+					setIsJumping(false);
+				}
+			},
+			[
+				filteredEntries,
+				entries,
+				hasMore,
+				lookbackHours,
+				activeFilters,
+				setSelectedIndex,
+				virtualizer,
+			]
+		);
+
 		// Search toggle
 		const openSearch = useCallback(() => {
 			setSearchExpanded(true);
@@ -637,23 +720,15 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						visibleTypes={visibleTypes}
 					/>
 					<ActivityGraph
-						entries={graphEntries}
+						entries={[]}
 						theme={theme}
-						lookbackHours={lookbackHours}
+						lookbackHours={null}
 						onLookbackChange={handleLookbackChange}
 						precomputedBuckets={graphBuckets}
+						precomputedRange={graphRange}
 						viewportRange={graphViewportRange}
 						alwaysShowViewportLabel
-						onBarClick={(start, end) => {
-							// Find first entry in range and select it
-							const idx = filteredEntries.findIndex(
-								(e) => e.timestamp >= start && e.timestamp < end
-							);
-							if (idx >= 0) {
-								setSelectedIndex(idx);
-								virtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
-							}
-						}}
+						onBarClick={handleGraphBarClick}
 					/>
 					{/* Entry count badge */}
 					{!isLoading && totalEntries > 0 && (
@@ -735,12 +810,12 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						</div>
 					)}
 
-					{/* Loading more indicator */}
-					{isLoadingMore && (
+					{/* Loading more / jump-in-flight indicator */}
+					{(isLoadingMore || isJumping) && (
 						<div className="flex items-center justify-center py-4 gap-2">
 							<Spinner size={14} color={theme.colors.accent} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								Loading more...
+								{isJumping ? 'Jumping to selected period...' : 'Loading more...'}
 							</span>
 						</div>
 					)}

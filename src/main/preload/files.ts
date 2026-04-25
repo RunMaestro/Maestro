@@ -10,6 +10,33 @@
 import { ipcRenderer } from 'electron';
 
 /**
+ * Single bucket in the activity-graph aggregate.
+ */
+export interface GraphBucket {
+	auto: number;
+	user: number;
+	cue: number;
+}
+
+/**
+ * All-time graph data returned by `history:getGraphData` and
+ * `director-notes:getGraphData`. Buckets always span the full source
+ * history so the activity graph stays "all-encompassing" even when the
+ * entry list paginates a smaller window underneath.
+ */
+export interface HistoryGraphData {
+	buckets: GraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	cached: boolean;
+}
+
+/**
  * History entry
  */
 export interface HistoryEntry {
@@ -83,6 +110,23 @@ export function createHistoryApi() {
 		getFilePath: (sessionId: string) => ipcRenderer.invoke('history:getFilePath', sessionId),
 
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
+
+		// Cached, all-time graph buckets for a single session. The renderer
+		// uses this for the activity graph so the graph view always covers
+		// the full session history, decoupled from any lookback applied to
+		// the entry list.
+		getGraphData: (
+			sessionId: string,
+			bucketCount: number,
+			sharedContext?: { sshRemoteId: string; remoteCwd: string }
+		): Promise<HistoryGraphData> =>
+			ipcRenderer.invoke('history:getGraphData', sessionId, bucketCount, sharedContext),
+
+		// Resolve the offset (newest-first sorted) of the first entry whose
+		// timestamp is <= the given timestamp. Used to jump the paginated
+		// entry list to a specific bucket the user clicked on the graph.
+		getOffsetForTimestamp: (sessionId: string, timestamp: number): Promise<number> =>
+			ipcRenderer.invoke('history:getOffsetForTimestamp', sessionId, timestamp),
 
 		onExternalChange: (handler: () => void) => {
 			const wrappedHandler = () => handler();

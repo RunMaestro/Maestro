@@ -167,6 +167,8 @@ describe('HistoryPanel', () => {
 						getAll: typeof mockHistoryGetAll;
 						delete: typeof mockHistoryDelete;
 						update: typeof mockHistoryUpdate;
+						getGraphData: ReturnType<typeof vi.fn>;
+						getOffsetForTimestamp: ReturnType<typeof vi.fn>;
 					};
 					settings: {
 						get: ReturnType<typeof vi.fn>;
@@ -182,6 +184,18 @@ describe('HistoryPanel', () => {
 				getAll: mockHistoryGetAll,
 				delete: mockHistoryDelete,
 				update: mockHistoryUpdate,
+				getGraphData: vi.fn().mockResolvedValue({
+					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+					bucketCount: 24,
+					earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+					latestTimestamp: Date.now(),
+					totalCount: 0,
+					autoCount: 0,
+					userCount: 0,
+					cueCount: 0,
+					cached: false,
+				}),
+				getOffsetForTimestamp: vi.fn().mockResolvedValue(0),
 			},
 			settings: {
 				get: vi.fn().mockResolvedValue(undefined),
@@ -1486,8 +1500,11 @@ describe('HistoryPanel', () => {
 			});
 		});
 
-		it('should limit entries to MAX_HISTORY_IN_MEMORY', async () => {
-			// Create 600 entries (more than 500 limit)
+		it('should render all entries returned by getAll without an in-memory cap', async () => {
+			// The renderer no longer caps entries — the per-session disk file
+			// already bounds the dataset (MAX_ENTRIES_PER_SESSION=5000), and
+			// the activity graph data is fetched separately from a cached
+			// server endpoint that covers the full history.
 			const entries = Array.from({ length: 600 }, (_, i) =>
 				createMockEntry({ id: `entry-${i}`, summary: `Entry ${i}` })
 			);
@@ -1495,8 +1512,6 @@ describe('HistoryPanel', () => {
 
 			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
 
-			// Should display entries (virtualized) with the first one visible
-			// The MAX_HISTORY_IN_MEMORY limit (500) is applied when storing entries
 			await waitFor(() => {
 				expect(screen.getByText('Entry 0')).toBeInTheDocument();
 			});

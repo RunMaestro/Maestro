@@ -161,7 +161,29 @@ vi.mock('../../../../renderer/components/History', () => ({
 }));
 
 const mockGetUnifiedHistory = vi.fn();
+const mockGetGraphData = vi.fn();
+const mockGetOffsetForTimestamp = vi.fn();
 const mockHistoryUpdate = vi.fn();
+
+/** Default graph response — all-time aggregate, decoupled from the entry list. */
+const createGraphDataResponse = () => ({
+	buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+	bucketCount: 24,
+	earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+	latestTimestamp: Date.now(),
+	totalCount: 0,
+	autoCount: 0,
+	userCount: 0,
+	cueCount: 0,
+	cached: false,
+	stats: {
+		agentCount: 0,
+		sessionCount: 0,
+		autoCount: 0,
+		userCount: 0,
+		totalCount: 0,
+	},
+});
 
 const createMockEntries = () => [
 	{
@@ -216,6 +238,8 @@ beforeEach(() => {
 	(window as any).maestro = {
 		directorNotes: {
 			getUnifiedHistory: mockGetUnifiedHistory,
+			getGraphData: mockGetGraphData,
+			getOffsetForTimestamp: mockGetOffsetForTimestamp,
 			onHistoryEntryAdded: vi.fn().mockReturnValue(() => {}),
 		},
 		history: {
@@ -224,6 +248,8 @@ beforeEach(() => {
 	};
 	mockHistoryUpdate.mockResolvedValue(true);
 	mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(createMockEntries()));
+	mockGetGraphData.mockResolvedValue(createGraphDataResponse());
+	mockGetOffsetForTimestamp.mockResolvedValue(0);
 
 	// Default: maestroCue disabled
 	useSettingsStore.setState({
@@ -254,9 +280,21 @@ describe('UnifiedHistoryTab', () => {
 					filter: null,
 					limit: 100,
 					offset: 0,
-					graphBucketCount: 28,
 				});
 			});
+		});
+
+		it('fetches the all-time graph aggregate independently of the entry list', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			// Graph data is fetched once for the always-all-time aggregate;
+			// the bucket count comes from the "All time" lookback config.
+			await waitFor(() => {
+				expect(mockGetGraphData).toHaveBeenCalledWith(24);
+			});
+			// And the activity graph itself is rendered with `lookbackHours=null`
+			// regardless of the lookback used for the entry list.
+			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 		});
 
 		it('fetches all-time history when defaultLookbackDays is 0', async () => {
@@ -269,7 +307,6 @@ describe('UnifiedHistoryTab', () => {
 					filter: null,
 					limit: 100,
 					offset: 0,
-					graphBucketCount: 24,
 				});
 			});
 			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
@@ -441,20 +478,21 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('passes correct entry count to activity graph', async () => {
+		it('does not pass loaded entries to activity graph (graph is server-aggregated)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('0');
 			});
 		});
 
-		it('passes default lookback from settings to activity graph', async () => {
+		it('renders the activity graph with lookbackHours=null regardless of entry-list lookback', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				// 7 days → 168 hours (1 week)
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
+				// Graph is always all-time; the entry-list lookback (7 days
+				// from default settings) does not bleed into the graph.
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});
 		});
 
@@ -484,12 +522,11 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('updates graph lookbackHours when lookback changes', async () => {
+		it('keeps graph lookbackHours=null when the entry-list lookback changes', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				// Default: 7 days → 168 hours
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});
 
 			mockGetUnifiedHistory.mockResolvedValue(
@@ -500,12 +537,13 @@ describe('UnifiedHistoryTab', () => {
 				fireEvent.click(screen.getByTestId('lookback-change-168'));
 			});
 
+			// Graph stays all-time even after the entry-list lookback changes.
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});
 		});
 
-		it('does not update graph entries on scroll-append loads', async () => {
+		it('does not pass loaded entries to the activity graph (server buckets are authoritative)', async () => {
 			// Initial load returns 3 entries with hasMore=true
 			mockGetUnifiedHistory.mockResolvedValueOnce(
 				createPaginatedResponse(createMockEntries(), true, 6)
@@ -513,46 +551,12 @@ describe('UnifiedHistoryTab', () => {
 
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
+			// Graph never sees the entry array — its buckets come from the
+			// cached server-side aggregate via getGraphData().
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+				expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('0');
 			});
-
-			// Simulate scroll-triggered load returning 3 more entries
-			mockGetUnifiedHistory.mockResolvedValueOnce(
-				createPaginatedResponse(
-					[
-						{
-							id: 'entry-4',
-							type: 'AUTO',
-							timestamp: Date.now() - 4000,
-							summary: 'Action D',
-							sourceSessionId: 's1',
-							projectPath: '/test',
-						},
-						{
-							id: 'entry-5',
-							type: 'USER',
-							timestamp: Date.now() - 5000,
-							summary: 'Action E',
-							sourceSessionId: 's2',
-							projectPath: '/test',
-						},
-						{
-							id: 'entry-6',
-							type: 'AUTO',
-							timestamp: Date.now() - 6000,
-							summary: 'Action F',
-							sourceSessionId: 's1',
-							projectPath: '/test',
-						},
-					],
-					false,
-					6
-				)
-			);
-
-			// Graph should still show 3 (the initial snapshot), not 6
-			expect(screen.getByTestId('activity-entry-count')).toHaveTextContent('3');
+			expect(mockGetGraphData).toHaveBeenCalled();
 		});
 	});
 
