@@ -511,6 +511,7 @@ export interface CreateSessionConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	autoRunFolderPath?: string;
 }
 
 export type CreateSessionCallback = (

@@ -89,6 +89,7 @@ import type {
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
+	CreateSessionConfig,
 	DeleteSessionCallback,
 	RenameSessionCallback,
 	GetGitStatusCallback,
@@ -781,8 +782,13 @@ export class WebServer {
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
-			createSession: async (name: string, toolType: string, cwd: string, groupId?: string) =>
-				this.callbackRegistry.createSession(name, toolType, cwd, groupId),
+			createSession: async (
+				name: string,
+				toolType: string,
+				cwd: string,
+				groupId?: string,
+				config?: CreateSessionConfig
+			) => this.callbackRegistry.createSession(name, toolType, cwd, groupId, config),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			renameSession: async (sessionId: string, newName: string) =>
 				this.callbackRegistry.renameSession(sessionId, newName),

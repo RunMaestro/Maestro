@@ -289,6 +289,10 @@ program
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
 	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--auto-run-folder <path>',
+		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 

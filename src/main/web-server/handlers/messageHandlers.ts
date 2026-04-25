@@ -2007,6 +2007,8 @@ export class WebSocketMessageHandler {
 			config.sessionSshRemoteConfig =
 				message.sessionSshRemoteConfig as CreateSessionConfig['sessionSshRemoteConfig'];
 		}
+		// autoRunFolderPath can be set outside of the agent's cwd (no confinement needed)
+		if (message.autoRunFolderPath) config.autoRunFolderPath = message.autoRunFolderPath as string;
 		const hasConfig = Object.keys(config).length > 0;
 
 		this.callbacks

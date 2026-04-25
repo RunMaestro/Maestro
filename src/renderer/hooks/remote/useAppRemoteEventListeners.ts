@@ -555,6 +555,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					sessionSshRemoteConfig:
 						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
 				}),
+				...(config?.autoRunFolderPath && {
+					autoRunFolderPath: config.autoRunFolderPath as string,
+				}),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);

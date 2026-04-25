@@ -181,7 +181,8 @@ Lifecycle management of Maestro agents and remote-execution targets.
 {{MAESTRO_CLI_PATH}} create-agent <name> --cwd <path> [-t, --type <agent-type>] [-g, --group <id>] \
     [--nudge <message>] [--new-session-message <message>] [--custom-path <path>] \
     [--custom-args <args>] [--env KEY=VALUE]... [--model <model>] [--effort <level>] \
-    [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] [--json]
+    [--context-window <size>] [--ssh-remote <id>] [--ssh-cwd <path>] \
+    [--auto-run-folder <path>] [--json]
 {{MAESTRO_CLI_PATH}} remove-agent <agent-id> [--json]
 
 # SSH remotes (used by agents that execute on a remote host)
