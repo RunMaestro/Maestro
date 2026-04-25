@@ -77,6 +77,8 @@ export interface MaestroSettings {
 	wakatimeDetailedTracking: boolean;
 	// Standalone hands-on time tracker (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;
+	// Spell check in input areas
+	spellCheck: boolean;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

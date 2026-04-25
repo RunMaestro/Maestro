@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useSettingsStore } from '../stores/settingsStore';
 import { ArrowUp, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
 import type {
 	Theme,
@@ -113,6 +114,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	showFlashNotification,
 	shortcuts,
 }: GroupChatInputProps): JSX.Element {
+	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const [message, setMessage] = useState(draftMessage || '');
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
@@ -565,6 +567,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						placeholder={
 							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
 						}
+						spellCheck={spellCheckEnabled}
 						rows={1}
 						className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
 						style={{
