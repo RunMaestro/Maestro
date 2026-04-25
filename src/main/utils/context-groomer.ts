@@ -117,6 +117,8 @@ export interface GroomContextOptions {
 	agentSessionId?: string;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
+	/** Optional model ID override (e.g., when using a utility agent) */
+	modelId?: string;
 	/** Custom timeout in ms (default: 5 minutes) */
 	timeoutMs?: number;
 	/** SSH remote config for running grooming on a remote host */
@@ -165,6 +167,7 @@ export async function groomContext(
 		prompt,
 		agentSessionId,
 		readOnlyMode = false,
+		modelId,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
 		sessionSshRemoteConfig,
 		sessionCustomPath,
@@ -198,7 +201,7 @@ export async function groomContext(
 		prompt: prompt,
 		cwd: projectRoot,
 		readOnlyMode,
-		modelId: undefined,
+		modelId,
 		yoloMode: false,
 		agentSessionId,
 	});

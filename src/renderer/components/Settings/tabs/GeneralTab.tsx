@@ -34,6 +34,7 @@ import {
 	ExternalLink,
 	Keyboard,
 	Trash2,
+	Bot,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
@@ -81,6 +82,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// Utility agent
+		utilityAgentId,
+		setUtilityAgentId,
+		utilityModelId,
+		setUtilityModelId,
 		// Power management
 		preventSleepEnabled,
 		setPreventSleepEnabled,
@@ -115,6 +121,10 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [shellsLoading, setShellsLoading] = useState(false);
 	const [shellsLoaded, setShellsLoaded] = useState(false);
 	const [shellConfigExpanded, setShellConfigExpanded] = useState(false);
+
+	// Utility agent state
+	const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([]);
+	const [agentsLoaded, setAgentsLoaded] = useState(false);
 
 	// Sync/storage location state
 	const [defaultStoragePath, setDefaultStoragePath] = useState<string>('');
@@ -151,6 +161,29 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		},
 		[setWakatimeApiKey]
 	);
+
+	// Detect available agents for utility agent dropdown
+	useEffect(() => {
+		if (!isOpen || agentsLoaded) return;
+		let cancelled = false;
+		window.maestro.agents
+			.detect()
+			.then((agents: { id: string; name: string; available: boolean }[]) => {
+				if (cancelled) return;
+				setAvailableAgents(
+					agents
+						.filter((a: { id: string; available: boolean }) => a.available && a.id !== 'terminal')
+						.map((a: { id: string; name: string }) => ({ id: a.id, name: a.name }))
+				);
+				setAgentsLoaded(true);
+			})
+			.catch(() => {
+				// Silently fail - dropdown will just be empty
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [isOpen, agentsLoaded]);
 
 	// Check WakaTime CLI availability when section renders or toggle is enabled
 	useEffect(() => {
@@ -748,6 +781,55 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				onChange={setAutomaticTabNamingEnabled}
 				theme={theme}
 			/>
+
+			{/* Utility Agent */}
+			<div
+				className="p-4 rounded-lg border"
+				style={{
+					borderColor: theme.colors.border,
+					background: theme.colors.bgMain,
+				}}
+			>
+				<div className="flex items-center gap-2 mb-3">
+					<Bot size={16} style={{ color: theme.colors.accent }} />
+					<span className="font-semibold">Utility Agent</span>
+				</div>
+				<p className="text-sm mb-3 opacity-70">
+					Route auxiliary tasks (tab naming, context grooming) to a cheaper or faster agent instead
+					of the session agent.
+				</p>
+				<div className="space-y-3">
+					<div>
+						<label className="text-sm block mb-1 opacity-80">Agent</label>
+						<select
+							value={utilityAgentId || ''}
+							onChange={(e) => setUtilityAgentId(e.target.value || null)}
+							className="w-full p-2 rounded border bg-transparent outline-none"
+							style={{ borderColor: theme.colors.border }}
+						>
+							<option value="">Default (same as session)</option>
+							{availableAgents.map((agent) => (
+								<option key={agent.id} value={agent.id}>
+									{agent.name}
+								</option>
+							))}
+						</select>
+					</div>
+					{utilityAgentId && (
+						<div>
+							<label className="text-sm block mb-1 opacity-80">Model override</label>
+							<input
+								type="text"
+								value={utilityModelId || ''}
+								onChange={(e) => setUtilityModelId(e.target.value || null)}
+								placeholder="e.g., haiku, gpt-4o-mini (leave empty for agent default)"
+								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+								style={{ borderColor: theme.colors.border }}
+							/>
+						</div>
+					)}
+				</div>
+			</div>
 
 			{/* Auto-scroll AI Output */}
 			<SettingCheckbox

@@ -72,6 +72,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	wakatimeApiKey: '',
 	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
+	// Utility agent for auxiliary tasks (tab naming, context grooming)
+	utilityAgentId: null,
+	utilityModelId: null,
 };
 
 export const SESSIONS_DEFAULTS: SessionsData = {

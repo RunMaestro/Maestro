@@ -611,6 +611,21 @@ export const SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'integrations',
 	},
 
+	// --- Utility Agent ---
+	utilityAgentId: {
+		description:
+			'Agent to use for auxiliary tasks (tab naming, context grooming). When null, uses the session agent.',
+		type: 'string',
+		default: null,
+		category: 'advanced',
+	},
+	utilityModelId: {
+		description: 'Model override for the utility agent. When null, uses the agent default model.',
+		type: 'string',
+		default: null,
+		category: 'advanced',
+	},
+
 	// --- Encore Features (experimental) ---
 	encoreFeatures: {
 		description: 'Feature flags for experimental/encore features. Object with boolean flags.',

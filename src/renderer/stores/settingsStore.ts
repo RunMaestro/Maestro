@@ -251,6 +251,8 @@ export interface SettingsStoreState {
 	suppressWindowsWarning: boolean;
 	autoScrollAiMode: boolean;
 	userMessageAlignment: 'left' | 'right';
+	utilityAgentId: string | null;
+	utilityModelId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
@@ -328,6 +330,8 @@ export interface SettingsStoreActions {
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setAutoScrollAiMode: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
+	setUtilityAgentId: (value: string | null) => void;
+	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
@@ -485,6 +489,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		suppressWindowsWarning: false,
 		autoScrollAiMode: false,
 		userMessageAlignment: 'right',
+		utilityAgentId: null,
+		utilityModelId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		wakatimeApiKey: '',
@@ -892,6 +898,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setUserMessageAlignment: (value) => {
 			set({ userMessageAlignment: value });
 			window.maestro.settings.set('userMessageAlignment', value);
+		},
+
+		setUtilityAgentId: (value) => {
+			set({ utilityAgentId: value });
+			window.maestro.settings.set('utilityAgentId', value);
+		},
+
+		setUtilityModelId: (value) => {
+			set({ utilityModelId: value });
+			window.maestro.settings.set('utilityModelId', value);
 		},
 
 		setEncoreFeatures: (value) => {
@@ -1832,6 +1848,12 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['userMessageAlignment'] !== undefined)
 			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
 
+		if (allSettings['utilityAgentId'] !== undefined)
+			patch.utilityAgentId = allSettings['utilityAgentId'] as string | null;
+
+		if (allSettings['utilityModelId'] !== undefined)
+			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
+
 		// Encore Features (merge with defaults to preserve new flags)
 		if (allSettings['encoreFeatures'] !== undefined) {
 			patch.encoreFeatures = {
@@ -1978,6 +2000,8 @@ export function getSettingsActions() {
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
 		setAutoScrollAiMode: state.setAutoScrollAiMode,
+		setUtilityAgentId: state.setUtilityAgentId,
+		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,

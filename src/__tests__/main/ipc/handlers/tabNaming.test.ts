@@ -134,7 +134,11 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			get: vi.fn().mockImplementation((key: string, defaultValue?: unknown) => {
+				// Return defaults for utility agent settings
+				if (key === 'utilityAgentId' || key === 'utilityModelId') return defaultValue ?? null;
+				return defaultValue ?? {};
+			}),
 			set: vi.fn(),
 		};
 

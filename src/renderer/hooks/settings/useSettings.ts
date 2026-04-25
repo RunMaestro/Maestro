@@ -280,6 +280,12 @@ export interface UseSettingsReturn {
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 
+	// Utility agent settings
+	utilityAgentId: string | null;
+	setUtilityAgentId: (value: string | null) => void;
+	utilityModelId: string | null;
+	setUtilityModelId: (value: string | null) => void;
+
 	// File tab auto-refresh settings
 	fileTabAutoRefreshEnabled: boolean;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;

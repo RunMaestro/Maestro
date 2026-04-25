@@ -103,11 +103,17 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				});
 
 				try {
+					// Resolve the agent: use utility agent if configured, otherwise session agent
+					const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+					const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+					const effectiveAgentType = utilityAgentId || config.agentType;
+
 					// Get the agent configuration
-					const agent = await agentDetector.getAgent(config.agentType);
+					const agent = await agentDetector.getAgent(effectiveAgentType);
 					if (!agent) {
 						logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
-							agentType: config.agentType,
+							agentType: effectiveAgentType,
+							isUtilityAgent: !!utilityAgentId,
 						});
 						return null;
 					}
@@ -127,11 +133,12 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						prompt: fullPrompt,
 						cwd: config.cwd,
 						readOnlyMode: true, // Always read-only since we're not modifying anything
+						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 					});
 
 					// Apply config overrides from store
 					const allConfigs = agentConfigsStore.get('configs', {});
-					const agentConfigValues = allConfigs[config.agentType] || {};
+					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
 					});
@@ -249,7 +256,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						// sends the prompt via stdin instead of command line args
 						processManager.spawn({
 							sessionId,
-							toolType: config.agentType,
+							toolType: effectiveAgentType,
 							cwd,
 							command,
 							args: finalArgs,
