@@ -306,23 +306,29 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 		)
 	);
 
-	// All-time graph data aggregated across every session with history.
-	// Cached on disk keyed by composite fingerprint (mtime+size of all source
-	// files) so a fresh load on a project with hundreds of session files
-	// doesn't re-bucket tens of thousands of entries on every interaction.
+	// Graph data aggregated across every session with history. Cached on
+	// disk keyed by (bucketCount, lookbackHours, composite mtime+size of
+	// all source files). Each lookback window the user picks gets its own
+	// cached aggregate; any source-file change invalidates them all.
 	ipcMain.handle(
 		'director-notes:getGraphData',
 		withIpcErrorLogging(
 			handlerOpts('getGraphData'),
-			async (bucketCount: number): Promise<HistoryGraphData & { stats: UnifiedHistoryStats }> => {
+			async (
+				bucketCount: number,
+				lookbackHours: number | null
+			): Promise<HistoryGraphData & { stats: UnifiedHistoryStats }> => {
 				const safeBucketCount = Math.max(1, bucketCount | 0);
+				const lookbackMs =
+					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
 				const sessionIds = historyManager.listSessionsWithHistory();
 				const filePaths = sessionIds
 					.map((sid) => historyManager.getHistoryFilePath(sid))
 					.filter((p): p is string => Boolean(p));
 
 				const cache = getHistoryBucketCache();
-				const cacheKey = `unified:bc=${safeBucketCount}`;
+				const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
+				const cacheKey = `unified:bc=${safeBucketCount}:lb=${lookbackKey}`;
 				const fp = multiFileFingerprint(filePaths);
 
 				// Stats need session/agent counts that aren't part of the bucket
@@ -367,7 +373,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					}
 				}
 
-				const agg = buildBucketAggregate(allEntries, safeBucketCount);
+				const agg = buildBucketAggregate(allEntries, safeBucketCount, { lookbackMs });
 				cache.set({
 					version: HISTORY_BUCKET_CACHE_VERSION,
 					cacheKey,

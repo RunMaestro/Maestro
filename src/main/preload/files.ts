@@ -111,16 +111,23 @@ export function createHistoryApi() {
 
 		listSessions: () => ipcRenderer.invoke('history:listSessions'),
 
-		// Cached, all-time graph buckets for a single session. The renderer
-		// uses this for the activity graph so the graph view always covers
-		// the full session history, decoupled from any lookback applied to
-		// the entry list.
+		// Cached graph buckets for a single session. The lookback parameter
+		// controls the window — `null` for "all time", or hours back from
+		// "now". Each (bucketCount, lookback) pair gets its own cached
+		// aggregate keyed by source-file fingerprint.
 		getGraphData: (
 			sessionId: string,
 			bucketCount: number,
+			lookbackHours: number | null,
 			sharedContext?: { sshRemoteId: string; remoteCwd: string }
 		): Promise<HistoryGraphData> =>
-			ipcRenderer.invoke('history:getGraphData', sessionId, bucketCount, sharedContext),
+			ipcRenderer.invoke(
+				'history:getGraphData',
+				sessionId,
+				bucketCount,
+				lookbackHours,
+				sharedContext
+			),
 
 		// Resolve the offset (newest-first sorted) of the first entry whose
 		// timestamp is <= the given timestamp. Used to jump the paginated

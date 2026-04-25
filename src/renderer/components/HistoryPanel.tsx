@@ -50,12 +50,15 @@ export interface HistoryPanelHandle {
 const scrollPositionCache = new Map<string, number>();
 
 /**
- * Bucket count for the always-all-time activity graph. The graph view is
- * decoupled from the entry-list lookback: it always covers the full
- * session history at a fixed resolution, with the server-side bucket
- * cache keyed off the source-file fingerprint.
+ * Resolve the bucket count for a given lookback selection. The bucket
+ * counts come from `LOOKBACK_OPTIONS` so each window gets an appropriate
+ * resolution (e.g. 24 buckets for "24 hours" and "All time", 28 for "1
+ * week", etc.).
  */
-const GRAPH_BUCKET_COUNT = LOOKBACK_OPTIONS.find((o) => o.hours === null)?.bucketCount ?? 24;
+function bucketCountForLookback(hours: number | null): number {
+	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
+	return config?.bucketCount ?? 24;
+}
 
 export const HistoryPanel = React.memo(
 	forwardRef<HistoryPanelHandle, HistoryPanelProps>(function HistoryPanel(
@@ -90,12 +93,14 @@ export const HistoryPanel = React.memo(
 			{ start: number; end: number } | undefined
 		>(undefined);
 		const [helpModalOpen, setHelpModalOpen] = useState(false);
-		// Lookback selector still filters the entry list, but no longer
-		// drives the graph window — the graph is always all-time.
+		// Lookback selector — drives both the entry-list filter and the
+		// graph window. The graph data is server-cached per lookback, so
+		// flipping between windows is cheap once each has been computed.
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
-		// Server-cached buckets covering the full session history. The
-		// activity graph renders these regardless of any lookback applied
-		// to the entry list below it.
+		// Server-cached buckets for the current lookback. Each lookback
+		// gets its own cached aggregate keyed by the source file's
+		// mtime+size, so re-selecting a previously-viewed window is a
+		// cache hit.
 		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
@@ -162,14 +167,14 @@ export const HistoryPanel = React.memo(
 			loadHistory();
 		}, [loadHistory]);
 
-		// Fetch the all-time graph aggregate. Cached server-side keyed by
-		// the session file's mtime+size, so repeat calls are cheap until
-		// the file actually changes.
+		// Fetch graph aggregate for the current lookback. Cached server-side
+		// per (sessionId, bucketCount, lookback, source mtime+size).
 		const refreshGraphData = useCallback(async () => {
 			try {
 				const data = await window.maestro.history.getGraphData(
 					session.id,
-					GRAPH_BUCKET_COUNT,
+					bucketCountForLookback(graphLookbackHours),
+					graphLookbackHours,
 					buildSharedHistoryContext(session)
 				);
 				setGraphBuckets(data.buckets);
@@ -179,7 +184,7 @@ export const HistoryPanel = React.memo(
 				setGraphBuckets(undefined);
 				setGraphRange(undefined);
 			}
-		}, [session.id, session]);
+		}, [session.id, session, graphLookbackHours]);
 
 		useEffect(() => {
 			refreshGraphData();
@@ -660,7 +665,7 @@ export const HistoryPanel = React.memo(
 							theme={theme}
 							viewportRange={graphViewportRange}
 							onBarClick={handleGraphBarClickVirtualized}
-							lookbackHours={null}
+							lookbackHours={graphLookbackHours}
 							onLookbackChange={handleLookbackChange}
 							precomputedBuckets={graphBuckets}
 							precomputedRange={graphRange}

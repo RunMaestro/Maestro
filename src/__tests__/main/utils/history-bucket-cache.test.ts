@@ -98,6 +98,36 @@ describe('buildBucketAggregate', () => {
 		const total = result.buckets.reduce((acc, b) => acc + b.user, 0);
 		expect(total).toBe(1);
 	});
+
+	describe('with lookback window', () => {
+		it('drops entries outside the lookback window', () => {
+			const now = 10_000_000;
+			const lookbackMs = 1_000; // 1 second
+			const entries: HistoryEntry[] = [
+				makeEntry({ id: 'old', type: 'USER', timestamp: now - 5_000 }), // outside
+				makeEntry({ id: 'in', type: 'USER', timestamp: now - 500 }), // inside
+				makeEntry({ id: 'edge', type: 'AUTO', timestamp: now }), // inside
+			];
+			const result = buildBucketAggregate(entries, 4, { lookbackMs, endTime: now });
+			expect(result.totalCount).toBe(2);
+			expect(result.userCount).toBe(1);
+			expect(result.autoCount).toBe(1);
+			// Range matches the window, not the observed entries.
+			expect(result.earliestTimestamp).toBe(now - lookbackMs);
+			expect(result.latestTimestamp).toBe(now);
+		});
+
+		it('returns the window range even when no entries fall inside it', () => {
+			const now = 10_000_000;
+			const lookbackMs = 1_000;
+			const entries = [makeEntry({ id: 'old', type: 'USER', timestamp: now - 100_000 })];
+			const result = buildBucketAggregate(entries, 6, { lookbackMs, endTime: now });
+			expect(result.totalCount).toBe(0);
+			expect(result.buckets).toHaveLength(6);
+			expect(result.earliestTimestamp).toBe(now - lookbackMs);
+			expect(result.latestTimestamp).toBe(now);
+		});
+	});
 });
 
 describe('fileFingerprint', () => {

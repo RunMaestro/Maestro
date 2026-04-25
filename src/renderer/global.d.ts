@@ -1497,6 +1497,7 @@ interface MaestroAPI {
 		getGraphData: (
 			sessionId: string,
 			bucketCount: number,
+			lookbackHours: number | null,
 			sharedContext?: { sshRemoteId: string; remoteCwd: string }
 		) => Promise<{
 			buckets: Array<{ auto: number; user: number; cue: number }>;
@@ -2981,7 +2982,10 @@ interface MaestroAPI {
 			};
 			graphBuckets?: Array<{ auto: number; user: number; cue: number }>;
 		}>;
-		getGraphData: (bucketCount: number) => Promise<{
+		getGraphData: (
+			bucketCount: number,
+			lookbackHours: number | null
+		) => Promise<{
 			buckets: Array<{ auto: number; user: number; cue: number }>;
 			bucketCount: number;
 			earliestTimestamp: number;

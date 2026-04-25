@@ -284,17 +284,15 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('fetches the all-time graph aggregate independently of the entry list', async () => {
+		it('fetches graph data for the current lookback (1 week → bucketCount 28)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
-			// Graph data is fetched once for the always-all-time aggregate;
-			// the bucket count comes from the "All time" lookback config.
+			// Default lookback is 7 days → 168h → "1 week" → bucketCount 28.
+			// The lookback hours are passed through so the server caches a
+			// distinct aggregate per window.
 			await waitFor(() => {
-				expect(mockGetGraphData).toHaveBeenCalledWith(24);
+				expect(mockGetGraphData).toHaveBeenCalledWith(28, 168);
 			});
-			// And the activity graph itself is rendered with `lookbackHours=null`
-			// regardless of the lookback used for the entry list.
-			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 		});
 
 		it('fetches all-time history when defaultLookbackDays is 0', async () => {
@@ -486,13 +484,12 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('renders the activity graph with lookbackHours=null regardless of entry-list lookback', async () => {
+		it('renders the activity graph with the current lookback (drives both graph window and entry list)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				// Graph is always all-time; the entry-list lookback (7 days
-				// from default settings) does not bleed into the graph.
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
+				// Default lookback: 7 days → 168 hours.
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
 			});
 		});
 
@@ -522,22 +519,29 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('keeps graph lookbackHours=null when the entry-list lookback changes', async () => {
+		it('refetches graph data when the lookback changes (cache miss → fresh aggregate)', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
+				expect(mockGetGraphData).toHaveBeenCalledWith(28, 168);
 			});
 
 			mockGetUnifiedHistory.mockResolvedValue(
 				createPaginatedResponse(createMockEntries().slice(0, 1))
 			);
+			mockGetGraphData.mockClear();
 
+			// Switch to "All Time" (null hours).
 			await act(async () => {
-				fireEvent.click(screen.getByTestId('lookback-change-168'));
+				fireEvent.click(screen.getByTestId('lookback-change-null'));
 			});
 
-			// Graph stays all-time even after the entry-list lookback changes.
+			// New lookback fires a fresh getGraphData call so the server
+			// returns the corresponding cached (or freshly-built) aggregate.
+			await waitFor(() => {
+				expect(mockGetGraphData).toHaveBeenCalledWith(24, null);
+			});
+			// And the graph display reflects the new selection.
 			await waitFor(() => {
 				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});

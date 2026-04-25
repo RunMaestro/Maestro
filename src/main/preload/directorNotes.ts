@@ -129,11 +129,12 @@ export function createDirectorNotesApi() {
 		getUnifiedHistory: (options: UnifiedHistoryOptions): Promise<PaginatedUnifiedHistoryResult> =>
 			ipcRenderer.invoke('director-notes:getUnifiedHistory', options),
 
-		// Cached, all-time graph buckets aggregated across every session.
-		// Used by the unified history activity graph so it stays consistent
-		// regardless of how the entry list paginates beneath it.
-		getGraphData: (bucketCount: number): Promise<UnifiedGraphData> =>
-			ipcRenderer.invoke('director-notes:getGraphData', bucketCount),
+		// Cached graph buckets aggregated across every session. The
+		// lookback parameter controls the window — `null` for "all time",
+		// or hours back from "now". Each (bucketCount, lookback) pair gets
+		// its own cached aggregate keyed by composite source fingerprint.
+		getGraphData: (bucketCount: number, lookbackHours: number | null): Promise<UnifiedGraphData> =>
+			ipcRenderer.invoke('director-notes:getGraphData', bucketCount, lookbackHours),
 
 		// Resolve the offset (newest-first sorted across all sessions) of
 		// the first entry whose timestamp is <= the given timestamp. Powers

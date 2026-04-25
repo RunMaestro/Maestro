@@ -184,6 +184,8 @@ describe('HistoryPanel', () => {
 				getAll: mockHistoryGetAll,
 				delete: mockHistoryDelete,
 				update: mockHistoryUpdate,
+				// Accepts (sessionId, bucketCount, lookbackHours, sharedContext)
+				// — the lookback is keyed into the cache server-side.
 				getGraphData: vi.fn().mockResolvedValue({
 					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
 					bucketCount: 24,

@@ -248,10 +248,11 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		)
 	);
 
-	// Get all-time graph data (buckets + counts) for a single session.
-	// Cached on disk keyed by file mtime+size; recomputed on miss.
-	// Always covers the *full* session history regardless of any lookback the
-	// renderer applies to the entry list.
+	// Get graph data (buckets + counts) for a single session.
+	// Cached on disk keyed by (sessionId, bucketCount, lookbackHours,
+	// file mtime+size). The lookback is part of the cache key so each
+	// window the user picks gets its own cached aggregate; mtime
+	// invalidates them all at once when the file changes.
 	ipcMain.handle(
 		'history:getGraphData',
 		withIpcErrorLogging(
@@ -259,9 +260,12 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 			async (
 				sessionId: string,
 				bucketCount: number,
+				lookbackHours: number | null,
 				sharedContext?: SharedHistoryContext
 			): Promise<HistoryGraphData> => {
 				const safeBucketCount = Math.max(1, bucketCount | 0);
+				const lookbackMs =
+					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
 				const filePath = historyManager.getHistoryFilePath(sessionId);
 				const hasShared = Boolean(sharedContext?.sshRemoteId && sharedContext?.remoteCwd);
 
@@ -270,7 +274,8 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 				// fingerprint. Bypassing the cache keeps the simple path simple.
 				if (filePath && !hasShared) {
 					const cache = getHistoryBucketCache();
-					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}`;
+					const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
+					const cacheKey = `single:${sessionId}:bc=${safeBucketCount}:lb=${lookbackKey}`;
 					const fp = fileFingerprint(filePath);
 					const hit = cache.get(cacheKey, fp);
 					if (hit) {
@@ -278,7 +283,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 					}
 
 					const entries = historyManager.getEntries(sessionId);
-					const agg = buildBucketAggregate(entries, safeBucketCount);
+					const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
 					cache.set({
 						version: HISTORY_BUCKET_CACHE_VERSION,
 						cacheKey,
@@ -320,7 +325,7 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 						logger.warn(`Failed to read shared history for graph: ${err}`, LOG_CONTEXT);
 					}
 				}
-				const agg = buildBucketAggregate(entries, safeBucketCount);
+				const agg = buildBucketAggregate(entries, safeBucketCount, { lookbackMs });
 				return aggregateToGraphData(agg, safeBucketCount, false);
 			}
 		)

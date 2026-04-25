@@ -37,11 +37,14 @@ const PAGE_SIZE = 100;
 const SCROLL_LOAD_THRESHOLD = 500;
 
 /**
- * Bucket count for the always-all-time activity graph in the unified view.
- * Decoupled from the entry-list lookback so the graph stays consistent
- * regardless of how the list filters/scrolls below it.
+ * Resolve the bucket count for a given lookback selection. Each lookback
+ * option carries its own preferred resolution (24 for short windows, 28
+ * for "1 week", 30 for "1 month", etc.).
  */
-const GRAPH_BUCKET_COUNT = LOOKBACK_OPTIONS.find((o) => o.hours === null)?.bucketCount ?? 24;
+function bucketCountForLookback(hours: number | null): number {
+	const config = LOOKBACK_OPTIONS.find((o) => o.hours === hours);
+	return config?.bucketCount ?? 24;
+}
 
 /**
  * Cap on the number of pages we'll fetch in one click-to-jump operation,
@@ -261,12 +264,16 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			[searchExpanded]
 		);
 
-		// Fetch the all-time graph aggregate (cached server-side keyed by
-		// the composite mtime+size of every session history file). Decoupled
-		// from `loadPage` so the graph refreshes independently of pagination.
+		// Fetch the graph aggregate for the current lookback. Cached
+		// server-side keyed by (bucketCount, lookback, composite mtime+size
+		// of every session history file). Decoupled from `loadPage` so the
+		// graph refreshes independently of pagination.
 		const refreshGraphData = useCallback(async () => {
 			try {
-				const data = await window.maestro.directorNotes.getGraphData(GRAPH_BUCKET_COUNT);
+				const data = await window.maestro.directorNotes.getGraphData(
+					bucketCountForLookback(lookbackHours),
+					lookbackHours
+				);
 				setGraphBuckets(data.buckets);
 				setGraphRange({ start: data.earliestTimestamp, end: data.latestTimestamp });
 			} catch (error) {
@@ -274,7 +281,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 				setGraphBuckets(undefined);
 				setGraphRange(undefined);
 			}
-		}, []);
+		}, [lookbackHours]);
 
 		// Load a page of unified history
 		const loadPage = useCallback(
@@ -722,7 +729,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					<ActivityGraph
 						entries={[]}
 						theme={theme}
-						lookbackHours={null}
+						lookbackHours={lookbackHours}
 						onLookbackChange={handleLookbackChange}
 						precomputedBuckets={graphBuckets}
 						precomputedRange={graphRange}
