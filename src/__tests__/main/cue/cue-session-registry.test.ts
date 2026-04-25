@@ -27,11 +27,9 @@ function makeState(overrides: Partial<SessionState> = {}): SessionState {
 	};
 	return {
 		config,
-		timers: [],
-		watchers: [],
+		triggerSources: [],
 		yamlWatcher: null,
 		sleepPrevented: false,
-		nextTriggers: new Map(),
 		...overrides,
 	};
 }

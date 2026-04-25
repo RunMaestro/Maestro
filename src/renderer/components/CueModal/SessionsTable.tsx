@@ -134,7 +134,18 @@ export function SessionsTable({
 										return (
 											<button
 												onClick={() => {
+													// Deduplicate by pipeline_name: the engine fires all
+													// sibling subs in a group when any one is triggered
+													// (anchor-group logic). Firing every sub individually
+													// would re-fire the whole group N times. Fire one
+													// representative per group; ungrouped subs (no
+													// pipeline_name) fire individually.
+													const seenPipelineNames = new Set<string>();
 													for (const sub of subs) {
+														if (sub.pipeline_name) {
+															if (seenPipelineNames.has(sub.pipeline_name)) continue;
+															seenPipelineNames.add(sub.pipeline_name);
+														}
 														onTriggerSubscription(sub.name);
 													}
 												}}

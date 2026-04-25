@@ -566,7 +566,10 @@ describe('CueEngine', () => {
 			engine.start();
 
 			engine.removeSession('session-1');
-			expect(engine.getStatus()).toHaveLength(0);
+			// Session still appears in getSessions() + config still on disk → shows as dormant
+			const status = engine.getStatus();
+			expect(status).toHaveLength(1);
+			expect(status[0].enabled).toBe(false);
 			expect(yamlWatcherCleanup).toHaveBeenCalled();
 		});
 
@@ -767,9 +770,10 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			// First: initial config, second: null (deleted), third: new config (re-created)
+			// 1st: initial init, 2nd: refreshSession (delete), 3rd: getStatus dormant check (still no file), 4th+: re-created
 			mockLoadCueConfig
 				.mockReturnValueOnce(config1)
+				.mockReturnValueOnce(null)
 				.mockReturnValueOnce(null)
 				.mockReturnValue(config2);
 			const deps = createMockDeps();

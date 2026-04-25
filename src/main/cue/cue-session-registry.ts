@@ -75,12 +75,34 @@ export interface CueSessionRegistry {
 	 * Intended for periodic cleanup to prevent unbounded growth of the dedup set.
 	 */
 	sweepStaleScheduledKeys(currentTime: string): number;
+
+	// ── shared-trigger ownership (unowned subs, multi-session roots) ─────────
+	/**
+	 * Atomically claim ownership of an unowned subscription for a given
+	 * projectRoot. Returns `true` when this session is now the owner (either
+	 * newly claimed or it was already the owner). Returns `false` when a
+	 * DIFFERENT session already owns the trigger — caller should skip creating
+	 * a trigger source for this sub (first-registered-wins).
+	 */
+	claimSharedTriggerOwner(projectRoot: string, subName: string, sessionId: string): boolean;
+
+	/** Returns the sessionId that currently owns this trigger, or `null` if unclaimed. */
+	getSharedTriggerOwner(projectRoot: string, subName: string): string | null;
+
+	/**
+	 * Release all shared trigger claims held by `sessionId` (called on session
+	 * teardown). Sibling sessions at the same root can re-claim on their next
+	 * `initSession` / refresh cycle.
+	 */
+	releaseSharedTriggersForSession(sessionId: string): void;
 }
 
 export function createCueSessionRegistry(): CueSessionRegistry {
 	const sessions = new Map<string, SessionState>();
 	const scheduledFiredKeys = new Set<string>();
 	const startupFiredKeys = new Set<string>();
+	// key: `${projectRoot}::${subName}`, value: owning sessionId
+	const sharedTriggerOwners = new Map<string, string>();
 
 	function scheduledKey(sessionId: string, subName: string, time: string): string {
 		return `${sessionId}:${subName}:${time}`;
@@ -88,6 +110,10 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 
 	function startupKey(sessionId: string, subName: string): string {
 		return `${sessionId}:${subName}`;
+	}
+
+	function sharedTriggerKey(projectRoot: string, subName: string): string {
+		return `${projectRoot}::${subName}`;
 	}
 
 	return {
@@ -161,9 +187,32 @@ export function createCueSessionRegistry(): CueSessionRegistry {
 			startupFiredKeys.clear();
 		},
 
+		claimSharedTriggerOwner(projectRoot, subName, sessionId) {
+			const key = sharedTriggerKey(projectRoot, subName);
+			const existing = sharedTriggerOwners.get(key);
+			if (existing === undefined) {
+				sharedTriggerOwners.set(key, sessionId);
+				return true;
+			}
+			return existing === sessionId;
+		},
+
+		getSharedTriggerOwner(projectRoot, subName) {
+			return sharedTriggerOwners.get(sharedTriggerKey(projectRoot, subName)) ?? null;
+		},
+
+		releaseSharedTriggersForSession(sessionId) {
+			for (const [key, owner] of sharedTriggerOwners) {
+				if (owner === sessionId) {
+					sharedTriggerOwners.delete(key);
+				}
+			}
+		},
+
 		clear() {
 			sessions.clear();
 			scheduledFiredKeys.clear();
+			sharedTriggerOwners.clear();
 		},
 
 		sweepStaleScheduledKeys(currentTime: string): number {

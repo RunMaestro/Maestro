@@ -233,6 +233,16 @@ export function createCueSessionRuntimeService(
 			if (sub.enabled === false) continue;
 			if (sub.agent_id && sub.agent_id !== session.id) continue;
 
+			// For unowned subs (no agent_id), enforce first-registered-wins across
+			// sessions that share the same projectRoot. Without this, each session at
+			// the same root independently registers a trigger source for the shared
+			// sub, causing the trigger to fire N times per tick (once per session).
+			if (!sub.agent_id) {
+				if (!registry.claimSharedTriggerOwner(session.projectRoot, sub.name, session.id)) {
+					continue;
+				}
+			}
+
 			const source: CueTriggerSource | null = createTriggerSource(sub.event, {
 				session,
 				subscription: sub,
@@ -313,6 +323,10 @@ export function createCueSessionRuntimeService(
 		// the session is initialized. Startup keys are NOT cleared here so that a
 		// refresh inside the same process lifecycle does not re-fire app.startup.
 		registry.clearScheduledForSession(sessionId);
+
+		// Release shared trigger ownership so sibling sessions at the same
+		// projectRoot can re-claim on their next initSession / refresh cycle.
+		registry.releaseSharedTriggersForSession(sessionId);
 	}
 
 	/**

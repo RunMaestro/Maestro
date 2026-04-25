@@ -310,7 +310,6 @@ export class CueEngine {
 			maxChainDepth: MAX_CHAIN_DEPTH,
 		});
 		this.queryService = createCueQueryService({
-			enabled: () => this.enabled,
 			getAllSessions: () =>
 				deps.getSessions().map((session) => ({
 					id: session.id,
