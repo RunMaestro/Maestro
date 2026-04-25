@@ -31,6 +31,7 @@ import { SessionContextMenu } from './SessionContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
+import { ClaudeUsageWidget } from './ClaudeUsageWidget';
 import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionCategories } from '../../hooks/session/useSessionCategories';
@@ -1177,6 +1178,9 @@ function SessionListInner(props: SessionListProps) {
 					handleContextMenu={handleContextMenu}
 				/>
 			)}
+
+			{/* CLAUDE USAGE WIDGET — only shown when sidebar is expanded */}
+			{leftSidebarOpen && <ClaudeUsageWidget theme={theme} />}
 
 			{/* SIDEBAR BOTTOM ACTIONS */}
 			<SidebarActions

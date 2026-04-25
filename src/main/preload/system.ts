@@ -206,6 +206,42 @@ export function createAppApi() {
 	};
 }
 
+/**
+ * Claude usage data shape from the Anthropic OAuth usage API
+ */
+export interface ClaudeUsagePeriod {
+	utilization: number;
+	resets_at: string;
+}
+
+export interface ClaudeUsageData {
+	five_hour?: ClaudeUsagePeriod | null;
+	seven_day?: ClaudeUsagePeriod | null;
+	seven_day_sonnet?: ClaudeUsagePeriod | null;
+	extra_usage?: {
+		is_enabled: boolean;
+		monthly_limit: number;
+		used_credits: number;
+		utilization: number;
+	} | null;
+}
+
+export interface ClaudeUsageResult {
+	success: boolean;
+	data?: ClaudeUsageData;
+	error?: string;
+}
+
+/**
+ * Creates the usage API object for preload exposure
+ */
+export function createUsageApi() {
+	return {
+		getClaudeUsage: (): Promise<ClaudeUsageResult> =>
+			ipcRenderer.invoke('usage:getClaudeUsage'),
+	};
+}
+
 export type DialogApi = ReturnType<typeof createDialogApi>;
 export type FontsApi = ReturnType<typeof createFontsApi>;
 export type ShellsApi = ReturnType<typeof createShellsApi>;
