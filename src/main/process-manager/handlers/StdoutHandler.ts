@@ -603,16 +603,66 @@ export class StdoutHandler {
 			}
 		}
 
+		// Copilot CLI subagent delegation: an `assistant.message` with content but
+		// no explicit phase is structurally identified as a final answer by the
+		// parser, but in practice it may be an intermediate narration emitted
+		// before the agent delegates to a subagent (e.g. "I'll delegate this to
+		// the coding agent..."). Treating that as the turn's result prematurely
+		// flushes and suppresses the real final answer that follows. Mirror the
+		// Codex pattern: capture the latest such message as streamedText and
+		// flush on `assistant.turn_end`. Legacy `phase: 'final_answer'` messages
+		// are an explicit signal and still flush immediately via the path below.
+		if (
+			managedProcess.toolType === 'copilot-cli' &&
+			outputParser.isResultMessage(event) &&
+			event.text
+		) {
+			const raw = event.raw as { type?: string; data?: { phase?: string } } | undefined;
+			if (raw?.type === 'assistant.message' && raw.data?.phase === undefined) {
+				managedProcess.streamedText = event.text;
+			}
+		}
+
+		// Flush captured Copilot result on assistant.turn_end. The parser surfaces
+		// this as a `system` event whose raw payload identifies the turn boundary.
+		if (
+			managedProcess.toolType === 'copilot-cli' &&
+			event.type === 'system' &&
+			!managedProcess.resultEmitted
+		) {
+			const raw = event.raw as { type?: string } | undefined;
+			if (raw?.type === 'assistant.turn_end' && managedProcess.streamedText) {
+				managedProcess.resultEmitted = true;
+				logger.debug(
+					'[ProcessManager] Emitting final Copilot result at turn end',
+					'ProcessManager',
+					{
+						sessionId,
+						resultLength: managedProcess.streamedText.length,
+					}
+				);
+				this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			}
+		}
+
 		// Skip processing error events further - they're handled by agent-error emission
 		if (event.type === 'error') {
 			return;
 		}
 
 		// Handle result
+		const copilotIntermediate =
+			managedProcess.toolType === 'copilot-cli' &&
+			(() => {
+				const raw = event.raw as { type?: string; data?: { phase?: string } } | undefined;
+				return raw?.type === 'assistant.message' && raw.data?.phase === undefined;
+			})();
+
 		if (
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
-			!managedProcess.resultEmitted
+			!managedProcess.resultEmitted &&
+			!copilotIntermediate
 		) {
 			managedProcess.resultEmitted = true;
 			// For most agents, prefer the result event's text. Fall back to

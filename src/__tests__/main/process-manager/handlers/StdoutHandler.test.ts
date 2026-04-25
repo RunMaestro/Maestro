@@ -399,6 +399,66 @@ describe('StdoutHandler', () => {
 			expect(proc.jsonBuffer).toBe('');
 		});
 
+		it('should defer Copilot subagent narration and flush the final answer at turn_end', () => {
+			// Regression: when Copilot CLI delegates to a subagent, it emits an
+			// `assistant.message` with narration content (e.g. "Delegating...") and
+			// no explicit phase. The structural final-answer heuristic in the parser
+			// flags it as a result, but emitting it immediately closes the turn
+			// before the subagent's real final answer arrives. StdoutHandler must
+			// capture the latest content-bearing no-phase message as streamedText
+			// and only flush on `assistant.turn_end`.
+			const parser = new CopilotOutputParser();
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'copilot-cli',
+				outputParser: parser,
+			});
+
+			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_start' }));
+
+			// First (intermediate) assistant.message — narration before delegation.
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: "I'll delegate this to the coding agent.",
+						toolRequests: [],
+					},
+				})
+			);
+
+			// Should NOT have flushed yet — turn is still in progress.
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe("I'll delegate this to the coding agent.");
+			expect(proc.resultEmitted).toBe(false);
+
+			// Subagent does its work — second assistant.message with the real answer.
+			handler.handleData(
+				sessionId,
+				JSON.stringify({
+					type: 'assistant.message',
+					data: {
+						content: 'Subagent finished. Here is the final answer.',
+						toolRequests: [],
+					},
+				})
+			);
+
+			// Still deferred — latest content-bearing message wins.
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe('Subagent finished. Here is the final answer.');
+
+			// Turn end — flush the captured final answer.
+			handler.handleData(sessionId, JSON.stringify({ type: 'assistant.turn_end' }));
+
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'Subagent finished. Here is the final answer.'
+			);
+			expect(proc.resultEmitted).toBe(true);
+		});
+
 		it('should still emit Copilot session IDs from result events with non-zero exit codes', () => {
 			const parser = new CopilotOutputParser();
 			const { handler, emitter, sessionId } = createTestContext({
