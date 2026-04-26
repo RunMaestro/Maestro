@@ -310,6 +310,22 @@ function normalizeSubscription(
 			typeof sub.pipeline_name === 'string' && sub.pipeline_name.length > 0
 				? sub.pipeline_name
 				: undefined,
+		// Passthrough the visual-node identifiers so the renderer can
+		// distinguish "two visual nodes pointing at the same agent" from
+		// "one shared node with multiple inputs" on round-trip. Without
+		// this passthrough the normalizer silently strips them and the
+		// loader falls back to dedup-by-sessionName, re-merging visually
+		// distinct nodes into one — the exact bug `target_node_key` was
+		// added to fix.
+		target_node_key:
+			typeof sub.target_node_key === 'string' && sub.target_node_key.length > 0
+				? sub.target_node_key
+				: undefined,
+		fan_out_node_keys:
+			Array.isArray(sub.fan_out_node_keys) &&
+			sub.fan_out_node_keys.every((value: unknown) => typeof value === 'string')
+				? (sub.fan_out_node_keys as string[])
+				: undefined,
 	};
 }
 

@@ -361,6 +361,39 @@ subscriptions:
 			const result = loadCueConfig('/projects/test');
 			expect(result!.subscriptions[0].source_session).toEqual(['agent-1', 'agent-2']);
 		});
+
+		it('preserves target_node_key on subscriptions through normalization', () => {
+			// Regression: the normalizer's allowlist used to drop these
+			// renderer-only fields, which silently re-merged distinct visual
+			// nodes by sessionName on every reload. The renderer needs the
+			// keys intact to round-trip "two visual nodes pointing at the
+			// same agent" as two separate nodes instead of one.
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: morning
+    event: time.scheduled
+    agent_id: 8ba583cc-5ae7-4e66-b52e-4b6511e68548
+    prompt: Run
+    schedule_times:
+      - '07:00'
+    target_node_key: 7b1e9c84-4f3a-4d2b-8e95-6c7a2b1f3d8a
+  - name: fan-out
+    event: time.heartbeat
+    interval_minutes: 10
+    prompt: Go
+    fan_out:
+      - worker-a
+      - worker-b
+    fan_out_node_keys:
+      - key-a
+      - key-b
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result!.subscriptions[0].target_node_key).toBe('7b1e9c84-4f3a-4d2b-8e95-6c7a2b1f3d8a');
+			expect(result!.subscriptions[1].fan_out_node_keys).toEqual(['key-a', 'key-b']);
+		});
 	});
 
 	describe('loadCueConfigDetailed', () => {
