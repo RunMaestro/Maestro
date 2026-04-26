@@ -39,15 +39,16 @@ import {
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
 
-// Injected at build time by scripts/build-cli.mjs via esbuild `define`
+// Injected at build time by scripts/build-cli.mjs via esbuild `define`.
+// The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
+// throwing a ReferenceError; in those paths the constant is never substituted.
 declare const __MAESTRO_CLI_VERSION__: string;
+const cliVersion: string =
+	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
 
 const program = new Command();
 
-program
-	.name('maestro-cli')
-	.description('Command-line interface for Maestro')
-	.version(__MAESTRO_CLI_VERSION__);
+program.name('maestro-cli').description('Command-line interface for Maestro').version(cliVersion);
 
 // List commands
 const list = program.command('list').description('List resources');

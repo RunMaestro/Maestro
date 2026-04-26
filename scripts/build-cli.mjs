@@ -19,6 +19,9 @@ const outfile = path.join(rootDir, 'dist/cli/maestro-cli.js');
 
 const pkgJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
 const cliVersion = pkgJson.version;
+if (typeof cliVersion !== 'string' || cliVersion.length === 0) {
+	throw new Error('Cannot build CLI: package.json is missing a valid "version" field');
+}
 
 /**
  * esbuild plugin to handle .md?raw imports (Vite-style raw imports)
