@@ -80,7 +80,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue(true),
 		openTerminalTab: vi.fn().mockResolvedValue(true),
-		newAITabWithPrompt: vi.fn().mockResolvedValue(true),
+		newAITabWithPrompt: vi.fn().mockResolvedValue({ success: true, tabId: 'tab-mock-123' }),
 		refreshAutoRunDocs: vi.fn().mockResolvedValue(true),
 		configureAutoRun: vi.fn().mockResolvedValue({ success: true }),
 		getSessions: vi.fn().mockReturnValue([
@@ -185,7 +185,12 @@ describe('WebSocketMessageHandler', () => {
 
 			// Wait for async callback
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'Hello Claude!', 'ai');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello Claude!',
+					'ai',
+					undefined
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -202,7 +207,12 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'ls -la', 'terminal');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'ls -la',
+					'terminal',
+					undefined
+				);
 			});
 		});
 
@@ -221,6 +231,57 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.executeCommand).not.toHaveBeenCalled();
 		});
 
+		it('surfaces the active tabId in command_result so `dispatch` can chain to the same tab', async () => {
+			// `getSessionDetail` is the source of truth for activeTabId. The
+			// handler echoes it back in command_result whenever no explicit
+			// tabId was supplied — that's what `dispatch <agent> <prompt>`
+			// (no --session) relies on to surface an addressable id.
+			(callbacks.getSessionDetail as any).mockReturnValue({
+				state: 'idle',
+				inputMode: 'ai',
+				activeTabId: 'tab-active-77',
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalled();
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(true);
+			expect(response.tabId).toBe('tab-active-77');
+		});
+
+		it('forwards an explicit tabId to the executeCommand callback and echoes it in command_result', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'Hello',
+				inputMode: 'ai',
+				tabId: 'tab-explicit',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello',
+					'ai',
+					'tab-explicit'
+				);
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('command_result');
+			expect(response.tabId).toBe('tab-explicit');
+		});
+
 		it('should bypass busy guard and forward command when force=true', async () => {
 			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
 
@@ -236,7 +297,8 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.executeCommand).toHaveBeenCalledWith(
 					'session-1',
 					'concurrent write',
-					'ai'
+					'ai',
+					undefined
 				);
 			});
 
@@ -1006,6 +1068,9 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('new_ai_tab_with_prompt_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+			// PR1: surface the freshly-created tabId so `dispatch --new-tab`
+			// can return an addressable id without owning a persistent channel.
+			expect(response.tabId).toBe('tab-mock-123');
 		});
 
 		it('should reject missing sessionId', () => {

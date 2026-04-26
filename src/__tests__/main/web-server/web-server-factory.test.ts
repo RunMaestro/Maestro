@@ -479,7 +479,7 @@ describe('web-server/web-server-factory', () => {
 			expect(logger.warn).toHaveBeenCalled();
 		});
 
-		it('should send command to renderer', async () => {
+		it('should send command to renderer (omitting tabId routes to active tab)', async () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer();
 
@@ -493,7 +493,27 @@ describe('web-server/web-server-factory', () => {
 				'remote:executeCommand',
 				'session-1',
 				'test command',
-				'ai'
+				'ai',
+				undefined
+			);
+		});
+
+		it('forwards tabId to the renderer so `dispatch --session <tabId>` writes into the requested tab', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setExecuteCallback = server.setExecuteCommandCallback as ReturnType<typeof vi.fn>;
+			const callback = setExecuteCallback.mock.calls[0][0];
+
+			const result = await callback('session-1', 'follow up', 'ai', 'tab-7');
+
+			expect(result).toBe(true);
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:executeCommand',
+				'session-1',
+				'follow up',
+				'ai',
+				'tab-7'
 			);
 		});
 	});

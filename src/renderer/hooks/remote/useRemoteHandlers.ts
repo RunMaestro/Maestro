@@ -119,13 +119,22 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				sessionId: string;
 				command: string;
 				inputMode?: 'ai' | 'terminal';
+				/** Optional explicit tab target (from `maestro-cli dispatch --session
+				 *  <tabId>`). When unset or unknown, falls back to the active tab. */
+				tabId?: string;
 			}>;
-			const { sessionId, command, inputMode: webInputMode } = customEvent.detail;
+			const {
+				sessionId,
+				command,
+				inputMode: webInputMode,
+				tabId: requestedTabId,
+			} = customEvent.detail;
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
 				sessionId,
 				command: command.substring(0, 50),
 				webInputMode,
+				requestedTabId,
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
@@ -328,6 +337,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				}
 			}
 
+			// Resolve the target tab outside the try/catch so the error path can
+			// write its log entry to the same tab we tried to write into.
+			const requestedTab = requestedTabId
+				? session.aiTabs?.find((t) => t.id === requestedTabId)
+				: undefined;
+			const targetTab = requestedTab ?? getActiveTab(session);
+			const writeTabId = targetTab?.id;
+
 			try {
 				// Get agent configuration for this session's tool type
 				const agent = await window.maestro.agents.get(session.toolType);
@@ -336,22 +353,20 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					return;
 				}
 
-				// Get the ACTIVE TAB's agentSessionId for session continuity
-				const activeTab = getActiveTab(session);
-				const tabAgentSessionId = activeTab?.agentSessionId;
-				const isReadOnly = activeTab?.readOnlyMode;
+				const tabAgentSessionId = targetTab?.agentSessionId;
+				const isReadOnly = targetTab?.readOnlyMode;
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
 				const spawnArgs = isReadOnly ? filterYoloArgs(agentArgs, agent) : [...agentArgs];
 
 				// Include tab ID in targetSessionId for proper output routing
-				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
+				const targetSessionId = `${sessionId}-ai-${targetTab?.id || 'default'}`;
 				const commandToUse = agent.path ?? agent.command ?? '';
 
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
-					activeTabId: activeTab?.id,
+					activeTabId: targetTab?.id,
 				});
 
 				// Determine whether to send the prompt via stdin on Windows to avoid
@@ -367,7 +382,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				logger.info('[Remote] Spawning agent:', undefined, {
 					maestroSessionId: sessionId,
 					targetSessionId,
-					activeTabId: activeTab?.id,
+					targetTabId: targetTab?.id,
 					tabAgentSessionId: tabAgentSessionId || 'NEW SESSION',
 					isResume: !!tabAgentSessionId,
 					hasAppendSystemPrompt: !!appendSystemPrompt,
@@ -376,7 +391,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prompt: promptToSend.substring(0, 100),
 				});
 
-				// Add user message to active tab's logs and set state to busy
+				// Add user message to target tab's logs and set state to busy
 				const userLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
@@ -389,11 +404,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						const activeTab = getActiveTab(s);
+						// Pin the target tab id so we don't accidentally write into a
+						// different active tab if the user switched while we awaited
+						// the agent config above.
+						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
 								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
+										tab.id === resolvedWriteTabId
 											? {
 													...tab,
 													state: 'busy' as const,
@@ -403,10 +421,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									)
 								: s.aiTabs;
 
-						if (!activeTab) {
-							logger.error(
-								'[runAICommand] No active tab found - session has no aiTabs, this should not happen'
-							);
+						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
+							logger.error('[runAICommand] Target tab not found in session — dropping user log');
 							return s;
 						}
 
@@ -465,11 +481,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						const activeTab = getActiveTab(s);
+						// Mirror the success path: route the error log to the same tab
+						// we tried to write into, falling back to active when unset.
+						const resolvedWriteTabId = writeTabId ?? s.activeTabId;
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
 								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
+										tab.id === resolvedWriteTabId
 											? {
 													...tab,
 													state: 'idle' as const,
@@ -480,9 +498,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									)
 								: s.aiTabs;
 
-						if (!activeTab) {
+						if (!s.aiTabs?.some((t) => t.id === resolvedWriteTabId)) {
 							logger.error(
-								'[runAICommand error] No active tab found - session has no aiTabs, this should not happen'
+								'[runAICommand error] Target tab not found in session — dropping error log'
 							);
 							return s;
 						}

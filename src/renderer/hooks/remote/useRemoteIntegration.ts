@@ -78,11 +78,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		logger.info('[useRemoteIntegration] Setting up onRemoteCommand listener');
 		const unsubscribeRemote = window.maestro.process.onRemoteCommand(
-			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal', tabId?: string) => {
 				logger.info('[useRemoteIntegration] onRemoteCommand callback invoked:', undefined, {
 					sessionId,
 					command: command?.substring(0, 50),
 					inputMode,
+					tabId,
 				});
 
 				// Verify the session exists
@@ -140,10 +141,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					sessionId,
 					command: command?.substring(0, 50),
 					inputMode,
+					tabId,
 				});
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode },
+						detail: { sessionId, command, inputMode, tabId },
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -359,7 +361,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
 					return;
 				}
-				let tabCreated = false;
+				let createdTabId: string | undefined;
 				flushSync(() => {
 					setSessions((prev) =>
 						prev.map((s) => {
@@ -369,27 +371,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								showThinking: defaultShowThinking,
 							});
 							if (!result) return s;
-							tabCreated = true;
+							createdTabId = result.tab.id;
 							return result.session;
 						})
 					);
-					if (tabCreated) {
+					if (createdTabId) {
 						setActiveSessionId(sessionId);
 					}
 				});
-				if (!tabCreated) {
+				if (!createdTabId) {
 					logger.warn(
 						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
 					);
 					window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, false);
 					return;
 				}
+				// Pass the new tab id explicitly so the renderer writes into the tab
+				// we just created — without it, useRemoteHandlers would fall back to
+				// activeTabId, which is correct here but would race in any future
+				// caller that doesn't atomically setActiveSessionId.
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command: prompt, inputMode: 'ai' },
+						detail: { sessionId, command: prompt, inputMode: 'ai', tabId: createdTabId },
 					})
 				);
-				window.maestro.process.sendRemoteNewAITabWithPromptResponse(responseChannel, true);
+				window.maestro.process.sendRemoteNewAITabWithPromptResponse(
+					responseChannel,
+					true,
+					createdTabId
+				);
 			}
 		);
 

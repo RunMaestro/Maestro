@@ -296,22 +296,29 @@ export function createProcessApi() {
 		 * inputMode is optional - if provided, renderer should use it instead of session state
 		 */
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string
+			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				command: string,
-				inputMode?: 'ai' | 'terminal'
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
 					inputMode,
+					tabId,
 				});
 				try {
-					callback(sessionId, command, inputMode);
+					callback(sessionId, command, inputMode, tabId);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -559,10 +566,17 @@ export function createProcessApi() {
 		},
 
 		/**
-		 * Send response for remote "new AI tab with prompt"
+		 * Send response for remote "new AI tab with prompt".
+		 * `tabId` is the id of the freshly-created tab — surfaced so
+		 * `maestro-cli dispatch --new-tab` can return an addressable id to its
+		 * caller without owning a persistent channel.
 		 */
-		sendRemoteNewAITabWithPromptResponse: (responseChannel: string, success: boolean): void => {
-			ipcRenderer.send(responseChannel, success);
+		sendRemoteNewAITabWithPromptResponse: (
+			responseChannel: string,
+			success: boolean,
+			tabId?: string
+		): void => {
+			ipcRenderer.send(responseChannel, { success, tabId });
 		},
 
 		/**

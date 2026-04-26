@@ -367,7 +367,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'npm test');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', undefined);
+			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', undefined, undefined);
 		});
 
 		it('passes inputMode argument to the callback', async () => {
@@ -376,7 +376,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'npm test', 'terminal');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', 'terminal');
+			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', 'terminal', undefined);
 		});
 
 		it('passes ai inputMode argument to the callback', async () => {
@@ -385,7 +385,16 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'explain this code', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'explain this code', 'ai');
+			expect(callback).toHaveBeenCalledWith('session-5', 'explain this code', 'ai', undefined);
+		});
+
+		it('passes tabId argument to the callback so callers (`dispatch --session`) can target a specific tab', async () => {
+			const callback = vi.fn().mockResolvedValue(true);
+			registry.setExecuteCommandCallback(callback);
+
+			await registry.executeCommand('session-5', 'follow up', 'ai', 'tab-xyz');
+
+			expect(callback).toHaveBeenCalledWith('session-5', 'follow up', 'ai', 'tab-xyz');
 		});
 	});
 

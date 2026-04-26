@@ -231,10 +231,11 @@ export class CallbackRegistry {
 	async executeCommand(
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		tabId?: string
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode);
+		return this.callbacks.executeCommand(sessionId, command, inputMode, tabId);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {
@@ -306,8 +307,11 @@ export class CallbackRegistry {
 		return this.callbacks.openTerminalTab(sessionId, config);
 	}
 
-	async newAITabWithPrompt(sessionId: string, prompt: string): Promise<boolean> {
-		if (!this.callbacks.newAITabWithPrompt) return false;
+	async newAITabWithPrompt(
+		sessionId: string,
+		prompt: string
+	): Promise<{ success: boolean; tabId?: string }> {
+		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt);
 	}
 
