@@ -825,6 +825,49 @@ describe('subscriptionsToPipelines — target_node_key dedup', () => {
 		expect(keys).toEqual(['k-A', 'k-B']);
 	});
 
+	it('positions two distinct trigger-target agents at distinct Y coords (no pixel-perfect stacking)', () => {
+		// Regression: when two separate triggers each had a single target,
+		// the loader computed `pos.y = baseY + branchRow * spacing` with
+		// `branchRow=0` for both, landing both targets at the same y.
+		// They rendered as one node visually even though the model held
+		// two — only the "(2)" instance label hinted otherwise. The fix
+		// anchors target Y to the owning trigger's Y instead of a constant
+		// baseY, so distinct triggers produce distinct target rows.
+		const subs: CueSubscription[] = [
+			{
+				name: 'overlap-test',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Daily',
+				schedule_times: ['06:00'],
+				agent_id: 'session-0',
+				target_node_key: 'k-daily',
+				pipeline_name: 'overlap-test',
+			},
+			{
+				name: 'overlap-test-chain-1',
+				event: 'time.scheduled',
+				enabled: true,
+				prompt: 'Weekly',
+				schedule_times: ['08:00'],
+				schedule_days: ['sun'],
+				agent_id: 'session-0',
+				target_node_key: 'k-weekly',
+				pipeline_name: 'overlap-test',
+			},
+		];
+		const sessions = makeSessions('Polymarket');
+
+		const pipelines = subscriptionsToPipelines(subs, sessions);
+		const agents = pipelines[0].nodes.filter((n) => n.type === 'agent');
+		expect(agents).toHaveLength(2);
+		// The two agents must not occupy identical positions, otherwise
+		// the canvas paints them on top of each other and the user sees
+		// one node where the model has two.
+		const positions = agents.map((a) => `${a.position.x},${a.position.y}`);
+		expect(new Set(positions).size).toBe(2);
+	});
+
 	it('merges two trigger subs targeting one command node via shared target_node_key', () => {
 		// Explicit fan-in onto a command node — same shape as agent
 		// fan-in but for a `action: command` target. Both trigger subs

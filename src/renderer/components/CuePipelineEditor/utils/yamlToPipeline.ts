@@ -619,6 +619,17 @@ export function subscriptionsToPipelines(
 				branchCountForTrigger.set(triggerId, branchRow + 1);
 				columnIndex = 1;
 
+				// Anchor the trigger's downstream agent positions to the
+				// trigger's own Y rather than to a constant baseY. Two
+				// distinct triggers each producing a single-target agent
+				// would otherwise both compute y = baseY + 0*spacing and
+				// the agents would stack pixel-perfect on top of each
+				// other (rendering as a single node visually even though
+				// the model has two distinct nodes — the "(2)" instance
+				// label is the only hint).
+				const ownerTriggerNode = nodeMap.get(triggerId);
+				const triggerY = ownerTriggerNode?.position.y ?? LAYOUT.baseY;
+
 				if (sub.fan_out && sub.fan_out.length > 0) {
 					// Fan-out: trigger connects to multiple agents.
 					// Prefer `fan_out_ids[i]` over `fan_out[i]` when present so
@@ -633,7 +644,7 @@ export function subscriptionsToPipelines(
 						const sessionName = sessionFromId?.name ?? sub.fan_out[i];
 						const pos = {
 							x: LAYOUT.firstAgentX,
-							y: LAYOUT.baseY + i * LAYOUT.verticalSpacing,
+							y: triggerY + i * LAYOUT.verticalSpacing,
 						};
 
 						const agentNode = getOrCreateAgentNode(
@@ -679,7 +690,7 @@ export function subscriptionsToPipelines(
 					// than stacking on top of each other.
 					const pos = {
 						x: LAYOUT.firstAgentX,
-						y: LAYOUT.baseY + branchRow * LAYOUT.verticalSpacing,
+						y: triggerY + branchRow * LAYOUT.verticalSpacing,
 					};
 					const commandNode = createCommandNode(
 						sub,
@@ -715,7 +726,7 @@ export function subscriptionsToPipelines(
 
 					const pos = {
 						x: LAYOUT.firstAgentX,
-						y: LAYOUT.baseY + branchRow * LAYOUT.verticalSpacing,
+						y: triggerY + branchRow * LAYOUT.verticalSpacing,
 					};
 
 					if (!targetSessionName) {
