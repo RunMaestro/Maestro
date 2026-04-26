@@ -91,40 +91,54 @@ describe('ResponsiveModalFooter', () => {
 	});
 
 	describe('Enter key behaviour', () => {
-		it('invokes onCancel and stops propagation on Enter on the cancel button', () => {
-			const onCancel = vi.fn();
+		// Enter on `<button type="button">` is delivered to the browser as a
+		// keydown AND a synthesized click. The component only stops keydown
+		// propagation; the synthesized click drives the onClick handler, so
+		// the action fires exactly once in real browsers. jsdom does not
+		// auto-synthesize the click, so these tests assert only the
+		// stopPropagation guard, not the click side.
+		it('stops Enter propagation on the cancel button (parent <form>/key handler is shielded)', () => {
 			const parentHandler = vi.fn();
 			render(
 				<div onKeyDown={parentHandler}>
-					<ResponsiveModalFooter onCancel={onCancel} onConfirm={vi.fn()} />
+					<ResponsiveModalFooter onCancel={vi.fn()} onConfirm={vi.fn()} />
 				</div>
 			);
 			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Enter' });
-			expect(onCancel).toHaveBeenCalledTimes(1);
 			expect(parentHandler).not.toHaveBeenCalled();
 		});
 
-		it('invokes onConfirm and stops propagation on Enter on the confirm button', () => {
-			const onConfirm = vi.fn();
+		it('stops Enter propagation on the confirm button (parent <form>/key handler is shielded)', () => {
 			const parentHandler = vi.fn();
 			render(
 				<div onKeyDown={parentHandler}>
-					<ResponsiveModalFooter onCancel={vi.fn()} onConfirm={onConfirm} />
+					<ResponsiveModalFooter onCancel={vi.fn()} onConfirm={vi.fn()} />
 				</div>
 			);
 			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), { key: 'Enter' });
-			expect(onConfirm).toHaveBeenCalledTimes(1);
 			expect(parentHandler).not.toHaveBeenCalled();
 		});
 
-		it('ignores non-Enter keys', () => {
+		it('does not invoke handlers on raw keyDown (browser-synthesized click drives onClick)', () => {
 			const onCancel = vi.fn();
 			const onConfirm = vi.fn();
 			render(<ResponsiveModalFooter onCancel={onCancel} onConfirm={onConfirm} />);
-			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Space' });
-			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), { key: 'ArrowDown' });
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Enter' });
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), { key: 'Enter' });
 			expect(onCancel).not.toHaveBeenCalled();
 			expect(onConfirm).not.toHaveBeenCalled();
+		});
+
+		it('lets non-Enter keys bubble (no stopPropagation)', () => {
+			const parentHandler = vi.fn();
+			render(
+				<div onKeyDown={parentHandler}>
+					<ResponsiveModalFooter onCancel={vi.fn()} onConfirm={vi.fn()} />
+				</div>
+			);
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), { key: 'Space' });
+			fireEvent.keyDown(screen.getByRole('button', { name: 'Confirm' }), { key: 'ArrowDown' });
+			expect(parentHandler).toHaveBeenCalledTimes(2);
 		});
 	});
 

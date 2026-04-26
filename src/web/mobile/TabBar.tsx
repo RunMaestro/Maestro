@@ -594,7 +594,7 @@ export function TabBar({
 										onSelectTerminal();
 										setShowNewTabMenu(false);
 									}}
-									className="flex items-center gap-2 w-full px-3 py-2.5 border-none border-t border-t-border bg-transparent text-text-main text-[13px] cursor-pointer text-left"
+									className="flex items-center gap-2 w-full px-3 py-2.5 border-t border-t-border bg-transparent text-text-main text-[13px] cursor-pointer text-left"
 								>
 									<svg
 										width="14"

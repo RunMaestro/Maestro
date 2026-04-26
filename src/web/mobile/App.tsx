@@ -418,9 +418,7 @@ function MobileHeader({
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
 						{isDesktop && (
-							<span className="text-[13px] font-medium leading-none whitespace-nowrap">
-								Search
-							</span>
+							<span className="text-[13px] font-medium leading-none whitespace-nowrap">Search</span>
 						)}
 					</button>
 				)}
@@ -1154,12 +1152,15 @@ export default function MobileApp() {
 
 	// Derive each panel's rendering mode from tier + open state, then apply the
 	// min-width guard so the main column never drops below `MAIN_MIN_WIDTH`.
+	// Closed panels contribute zero width to the guard, so a single open panel
+	// isn't demoted to overlay just because the hidden side has a non-zero
+	// resize width on file.
 	const panelModes = useMemo(
 		() =>
 			applyMainMinWidthGuard(getPanelMode(tier, showLeftPanel, showRightDrawer), {
 				viewportWidth,
-				leftInlineWidth: leftPanelResize.width,
-				rightInlineWidth: rightPanelResize.width,
+				leftInlineWidth: showLeftPanel ? leftPanelResize.width : 0,
+				rightInlineWidth: showRightDrawer ? rightPanelResize.width : 0,
 				mostRecentlyOpened,
 			}),
 		[

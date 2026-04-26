@@ -120,7 +120,7 @@ function getSelectedClasses(variant: CardVariant): string {
  * and covers the same four properties (background, border, shadow, transform).
  */
 const baseClasses =
-	'transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+	'transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1';
 
 /**
  * Card component for the Maestro web interface
@@ -252,9 +252,7 @@ export const CardHeader = forwardRef<HTMLDivElement, CardHeaderProps>(function C
 	return (
 		<div ref={ref} className={containerClassName} style={style} {...props}>
 			<div className="flex flex-col gap-0.5 min-w-0 flex-1">
-				{title && (
-					<div className="font-medium text-sm truncate text-text-main">{title}</div>
-				)}
+				{title && <div className="font-medium text-sm truncate text-text-main">{title}</div>}
 				{subtitle && <div className="text-xs truncate text-text-dim">{subtitle}</div>}
 			</div>
 			{action && <div className="flex-shrink-0 ml-2">{action}</div>}

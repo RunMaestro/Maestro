@@ -711,8 +711,14 @@ export function LeftPanel({
 		(sessionId: string) => {
 			triggerHaptic(HAPTIC_PATTERNS.tap);
 			onSelectSession(sessionId);
+			// In overlay mode the panel sits on top of the main column, so the
+			// newly-selected agent would otherwise stay hidden behind the sheet
+			// until the user dismisses it manually.
+			if (isOverlay) {
+				handleClose();
+			}
 		},
-		[onSelectSession]
+		[onSelectSession, isOverlay, handleClose]
 	);
 
 	// --- Group management state ---

@@ -371,7 +371,12 @@ describe('ResponsiveModal', () => {
 		it('keeps the footer pinned (shrink-0) at short viewport', () => {
 			setIsShortViewport(true);
 			render(
-				<ResponsiveModal isOpen onClose={vi.fn()} title="Pinned footer" footer={<button>OK</button>}>
+				<ResponsiveModal
+					isOpen
+					onClose={vi.fn()}
+					title="Pinned footer"
+					footer={<button>OK</button>}
+				>
 					Body
 				</ResponsiveModal>
 			);
@@ -414,8 +419,8 @@ describe('ResponsiveModal', () => {
 					Body
 				</ResponsiveModal>
 			);
-			const header = screen.getByRole('heading', { name: 'Pinned phone header' })
-				.parentElement!.parentElement!;
+			const header = screen.getByRole('heading', { name: 'Pinned phone header' }).parentElement!
+				.parentElement!;
 			expect(header.tagName).toBe('HEADER');
 			expect(header.className).toContain('shrink-0');
 		});

@@ -85,7 +85,11 @@ describe('Badge Component', () => {
 		});
 
 		it('applies success tokens for success variant (subtle default)', () => {
-			render(<Badge variant="success" data-testid="b">Ready</Badge>);
+			render(
+				<Badge variant="success" data-testid="b">
+					Ready
+				</Badge>
+			);
 			const badge = screen.getByTestId('b');
 			// subtle style uses color-mix for bg and text-<variant> for text
 			expect(badge.className).toContain('text-success');
@@ -93,7 +97,11 @@ describe('Badge Component', () => {
 		});
 
 		it('applies connecting tokens for connecting variant', () => {
-			render(<Badge variant="connecting" data-testid="b">Connecting</Badge>);
+			render(
+				<Badge variant="connecting" data-testid="b">
+					Connecting
+				</Badge>
+			);
 			const badge = screen.getByTestId('b');
 			expect(badge.className).toContain('text-connecting');
 		});
@@ -162,7 +170,11 @@ describe('Badge Component', () => {
 		});
 
 		it('applies correct size class for sm (non-dot)', () => {
-			render(<Badge size="sm" data-testid="b">X</Badge>);
+			render(
+				<Badge size="sm" data-testid="b">
+					X
+				</Badge>
+			);
 			const badge = screen.getByTestId('b');
 			expect(badge.className).toContain('px-1.5');
 			expect(badge.className).toContain('text-xs');
@@ -170,7 +182,11 @@ describe('Badge Component', () => {
 		});
 
 		it('applies correct size class for md (non-dot)', () => {
-			render(<Badge size="md" data-testid="b">X</Badge>);
+			render(
+				<Badge size="md" data-testid="b">
+					X
+				</Badge>
+			);
 			const badge = screen.getByTestId('b');
 			expect(badge.className).toContain('px-2');
 			expect(badge.className).toContain('text-sm');
@@ -178,7 +194,11 @@ describe('Badge Component', () => {
 		});
 
 		it('applies correct size class for lg (non-dot)', () => {
-			render(<Badge size="lg" data-testid="b">X</Badge>);
+			render(
+				<Badge size="lg" data-testid="b">
+					X
+				</Badge>
+			);
 			const badge = screen.getByTestId('b');
 			expect(badge.className).toContain('px-2.5');
 			expect(badge.className).toContain('text-base');
@@ -255,14 +275,7 @@ describe('Badge Component', () => {
 		});
 
 		it('user aria-label wins over implicit variant label on dot badge', () => {
-			render(
-				<Badge
-					variant="success"
-					badgeStyle="dot"
-					aria-label="Custom"
-					data-testid="b"
-				/>
-			);
+			render(<Badge variant="success" badgeStyle="dot" aria-label="Custom" data-testid="b" />);
 			const badge = screen.getByTestId('b');
 			expect(badge).toHaveAttribute('aria-label', 'Custom');
 		});

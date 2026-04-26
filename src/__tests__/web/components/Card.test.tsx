@@ -320,7 +320,12 @@ describe('Card Component', () => {
 		it('does not add accent ring classes when not selected', () => {
 			const { container } = render(<Card>Not Selected</Card>);
 			const card = container.firstChild as HTMLElement;
-			expect(card.className).not.toContain('ring-accent');
+			// `ring-1` is the selected-state width; the focus-visible ring uses
+			// `focus-visible:ring-2 focus-visible:ring-accent`, so check for the
+			// selected token specifically rather than a bare 'ring-accent'
+			// substring (which the focus-visible class would also satisfy).
+			expect(card.className).not.toContain('ring-1');
+			expect(card.className).not.toMatch(/(^|\s)ring-accent(\s|$)/);
 		});
 
 		it('sets aria-selected when interactive and selected', () => {

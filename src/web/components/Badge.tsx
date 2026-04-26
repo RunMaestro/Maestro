@@ -145,8 +145,7 @@ function getStyleClasses(variant: BadgeVariant, badgeStyle: BadgeStyle): string 
 	}
 }
 
-const baseNonDotClasses =
-	'inline-flex items-center font-medium whitespace-nowrap leading-none';
+const baseNonDotClasses = 'inline-flex items-center font-medium whitespace-nowrap leading-none';
 
 const baseDotClasses = 'inline-block rounded-full';
 

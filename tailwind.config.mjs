@@ -40,8 +40,7 @@ export default {
 			// stock `shadow-md` is close but differs in the second layer offset
 			// (-2px vs -1px) and opacity (0.1 vs 0.06).
 			boxShadow: {
-				'card-elevated':
-					'0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+				'card-elevated': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
 			},
 		},
 	},

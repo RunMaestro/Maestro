@@ -137,8 +137,13 @@ export function TabSearchModal({
 	// requestAnimationFrame to focus its dialog container; a nested rAF here
 	// runs after that and re-claims focus for the search field — the command
 	// palette pattern where typing should work immediately on open.
+	// On close, also clear the search query so reopening doesn't land users
+	// in a stale-filtered list (the component now stays mounted behind isOpen).
 	useEffect(() => {
-		if (!isOpen) return;
+		if (!isOpen) {
+			setSearchQuery('');
+			return;
+		}
 		let innerHandle: number | null = null;
 		const outerHandle = requestAnimationFrame(() => {
 			innerHandle = requestAnimationFrame(() => {

@@ -577,6 +577,44 @@ describe('TabSearchModal', () => {
 			});
 		});
 
+		describe('Search reset on close', () => {
+			it('clears searchQuery when isOpen flips to false (no stale filter on reopen)', async () => {
+				const { rerender } = render(
+					<TabSearchModal
+						isOpen={true}
+						tabs={defaultTabs}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onClose={mockOnClose}
+					/>
+				);
+				const input = screen.getByPlaceholderText(/Search.*tabs/) as HTMLInputElement;
+				fireEvent.change(input, { target: { value: 'main' } });
+				expect(input.value).toBe('main');
+
+				rerender(
+					<TabSearchModal
+						isOpen={false}
+						tabs={defaultTabs}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onClose={mockOnClose}
+					/>
+				);
+				rerender(
+					<TabSearchModal
+						isOpen={true}
+						tabs={defaultTabs}
+						activeTabId="tab-1"
+						onSelectTab={mockOnSelectTab}
+						onClose={mockOnClose}
+					/>
+				);
+				const reopenedInput = screen.getByPlaceholderText(/Search.*tabs/) as HTMLInputElement;
+				expect(reopenedInput.value).toBe('');
+			});
+		});
+
 		describe('Close button', () => {
 			it('renders close button with X icon', () => {
 				render(

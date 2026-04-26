@@ -16,9 +16,11 @@
  *   established in `src/web/index.css`.
  *
  * Desktop parity notes:
- * - Enter on either button stops propagation before invoking the handler, so an
- *   outer `<form>` / parent key handler doesn't also fire after the modal
- *   closes. Same defense as desktop `ModalFooter`.
+ * - Enter on either button stops propagation so an outer `<form>` / parent key
+ *   handler doesn't also fire when the modal closes. The browser still
+ *   synthesizes a click on Enter for `type="button"`, which drives `onClick`,
+ *   so the handler is invoked exactly once. Same defense as desktop
+ *   `ModalFooter`.
  * - `destructive` swaps the confirm variant to `danger` (error-red background).
  * - `confirmButtonRef` is forwarded to the confirm button so consumers can
  *   point `initialFocusRef` at it from the `ConfirmModal`-style composition.
@@ -53,10 +55,13 @@ export function ResponsiveModalFooter({
 }: ResponsiveModalFooterProps) {
 	const { isPhone } = useBreakpoint();
 
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, action: () => void) => {
+	// Stop Enter from bubbling to a parent <form>/key handler. The browser
+	// still synthesizes a click on Enter for `type="button"`, which drives
+	// onClick, so we don't invoke the handler here (doing so would
+	// double-fire in real browsers).
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
 		if (e.key === 'Enter') {
 			e.stopPropagation();
-			action();
 		}
 	};
 
@@ -66,7 +71,7 @@ export function ResponsiveModalFooter({
 				type="button"
 				variant="secondary"
 				onClick={onCancel}
-				onKeyDown={(e) => handleKeyDown(e, onCancel)}
+				onKeyDown={handleKeyDown}
 				fullWidth={isPhone}
 			>
 				{cancelLabel}
@@ -76,7 +81,7 @@ export function ResponsiveModalFooter({
 				type="button"
 				variant={destructive ? 'danger' : 'primary'}
 				onClick={onConfirm}
-				onKeyDown={(e) => handleKeyDown(e, onConfirm)}
+				onKeyDown={handleKeyDown}
 				fullWidth={isPhone}
 			>
 				{confirmLabel}
