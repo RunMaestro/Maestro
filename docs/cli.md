@@ -533,6 +533,35 @@ Refresh the Auto Run document list after creating or modifying auto-run document
 maestro-cli refresh-auto-run [--session <id>]
 ```
 
+#### Notifications
+
+Surface notifications in the running desktop app from any script, hook, or agent. Two delivery modes are available:
+
+- **Toast** — persistent, dismissable notification that lands in the toast queue (top-right). Use this when you want the user to see a result they may want to act on later, when an OS notification should also fire, or when the message benefits from being clickable to jump to a specific agent.
+- **Center Flash** — momentary, single-slot center-screen confirmation that auto-dismisses (default 1.5s). Use this for "I did the thing" feedback for a user-initiated action — clipboard acks, quick status nudges, brief success notes. Only one flash is visible at a time; firing a new one replaces the active one.
+
+```bash
+# Toast: title + message, optional type, optional duration in seconds
+maestro-cli notify toast "Build complete" "Compiled in 3.2s with 0 errors"
+maestro-cli notify toast "Tests failing" "12 failures in auth.test.ts" --type error
+maestro-cli notify toast "PR opened" "https://github.com/.../pull/42" --type success --duration 30
+
+# Toast linked to an agent (clicking the toast jumps to the agent)
+maestro-cli notify toast "Auto Run done" "All tasks completed" --agent <agent-id>
+
+# Center flash: single message, optional detail, optional variant
+maestro-cli notify flash "Deployed"
+maestro-cli notify flash "Saved" --variant success
+maestro-cli notify flash "Cache cleared" --detail "1.2 GB freed" --duration 2000
+```
+
+| Command                          | Flags                                                                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notify toast <title> <message>` | `-t, --type <success\|info\|warning\|error>` (default `info`), `-d, --duration <seconds>` (0 = never dismiss), `-a, --agent <id>` (click-to-jump target)  |
+| `notify flash <message>`         | `-v, --variant <success\|info\|warning\|error>` (default `success`), `-D, --detail <text>` (second line), `-d, --duration <ms>` (default 1500, 0 = never) |
+
+Both commands support `--json` for scripting. Toasts respect the user's notification settings (audio feedback, OS desktop notifications) configured in the app.
+
 ### Configuring Auto-Run
 
 Set up and optionally launch an auto-run session with one or more markdown documents. Documents must be `.md` files containing `- [ ]` checkbox tasks.

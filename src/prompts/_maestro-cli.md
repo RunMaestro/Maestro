@@ -129,7 +129,10 @@ Configure and optionally launch an auto-run using documents you've created:
 {{MAESTRO_CLI_PATH}} auto-run doc1.md doc2.md [--agent <id>] [--prompt "Custom instructions"] [--loop] [--max-loops <n>] [--launch] [--save-as "My Playbook"] [--reset-on-completion]
 ```
 
-**Important:** Always pass `--agent {{AGENT_ID}}` when launching. Without it, the CLI selects the first available agent, which may not be the one you intended.
+**Important:**
+
+- Always pass `--agent {{AGENT_ID}}` when launching. Without it, the CLI selects the first available agent, which may not be the one you intended.
+- **When the user asks you to _run_ or _kick off_ an auto-run, you must launch it via this command with `--launch`.** Do not read the document and execute its tasks yourself in chat — that bypasses the Auto Run engine, leaves no record in the UI, and loses the per-task fresh-context isolation. The whole point of an auto-run is that it shows up in the Auto Run panel and the engine drives it.
 
 ```bash
 # Run a saved playbook by id (find ids with `list playbooks`)
@@ -165,6 +168,27 @@ Use these after filesystem changes so the user sees updates immediately:
 # Refresh Auto Run documents after creating or modifying them
 {{MAESTRO_CLI_PATH}} refresh-auto-run [--session <id>]
 ```
+
+### Notifications
+
+You can surface two distinct kinds of notifications inside the desktop app. Pick the one that matches the message intent — they are not interchangeable.
+
+| Kind             | When to use                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Toast**        | Persistent, queued, dismissable. Top-right of screen. Use for results the user may want to act on later (build done, tests failed, PR opened, long task finished), errors, or anything where the click-to-jump behavior is valuable. Also fires audio/OS notifications when the user has those configured. Fine to attach to a specific agent for context. |
+| **Center Flash** | Momentary, single-slot, center-screen overlay (≈1.5s). Use for "I did the thing" confirmation of a user-initiated action — quick acks, status nudges, brief success notes. Only one is visible at a time; a new flash replaces the active one. **Not** for errors, long-form messages, or anything the user might miss if they blinked.                    |
+
+```bash
+# Toast: title + message, optional type/duration, optional agent association
+{{MAESTRO_CLI_PATH}} notify toast "<title>" "<message>" [-t success|info|warning|error] [-d <seconds>] [-a <agent-id>] [--json]
+
+# Center flash: short message, optional detail line, optional variant
+{{MAESTRO_CLI_PATH}} notify flash "<message>" [-v success|info|warning|error] [-D "<detail>"] [-d <ms>] [--json]
+```
+
+Defaults: toast type = `info`, flash variant = `success`, flash duration = 1500ms. `-d 0` disables auto-dismiss in both cases (use sparingly — only for messages that genuinely require dismissal). When attaching a toast to an agent with `-a`, clicking the toast switches focus to that agent's tab.
+
+Prefer toast for anything the user should be able to act on after the fact; prefer flash for fire-and-forget acknowledgement of an action they just took. Do not fire a flash from a long-running background task — by the time it appears the user is no longer looking at the screen.
 
 ### Status
 

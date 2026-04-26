@@ -114,6 +114,8 @@ import type {
 	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
+	NotifyToastCallback,
+	NotifyCenterFlashCallback,
 } from './types';
 
 // Logger context for all web server logs
@@ -582,6 +584,14 @@ export class WebServer {
 		this.callbackRegistry.setGenerateDirectorNotesSynopsisCallback(callback);
 	}
 
+	setNotifyToastCallback(callback: NotifyToastCallback): void {
+		this.callbackRegistry.setNotifyToastCallback(callback);
+	}
+
+	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
+		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
+	}
+
 	broadcastGroupsChanged(groups: GroupData[]): void {
 		this.broadcastService.broadcastGroupsChanged(groups);
 	}
@@ -834,6 +844,8 @@ export class WebServer {
 				Promise.resolve({ success: false, pid: 0 }),
 			killTerminalForWeb: (sessionId: string) =>
 				this.killTerminalForWebCallback?.(sessionId) ?? false,
+			notifyToast: async (params) => this.callbackRegistry.notifyToast(params),
+			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
 		});
 	}
 

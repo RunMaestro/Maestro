@@ -49,7 +49,19 @@ import type {
 	AchievementData,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
+	NotifyToastParams,
+	NotifyCenterFlashParams,
+	NotifyToastKind,
+	NotifyCenterFlashVariant,
 } from '../types';
+
+const NOTIFY_TOAST_KINDS: readonly NotifyToastKind[] = ['success', 'info', 'warning', 'error'];
+const NOTIFY_FLASH_VARIANTS: readonly NotifyCenterFlashVariant[] = [
+	'success',
+	'info',
+	'warning',
+	'error',
+];
 import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
@@ -210,6 +222,8 @@ export interface MessageHandlerCallbacks {
 		config: { cwd: string; cols?: number; rows?: number }
 	) => Promise<{ success: boolean; pid: number }>;
 	killTerminalForWeb: (sessionId: string) => boolean;
+	notifyToast: (params: NotifyToastParams) => Promise<boolean>;
+	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
 }
 
 /**
@@ -474,6 +488,14 @@ export class WebSocketMessageHandler {
 
 			case 'terminal_resize':
 				this.handleTerminalResize(client, message);
+				break;
+
+			case 'notify_toast':
+				this.handleNotifyToast(client, message);
+				break;
+
+			case 'notify_center_flash':
+				this.handleNotifyCenterFlash(client, message);
 				break;
 
 			default:
@@ -2881,6 +2903,102 @@ export class WebSocketMessageHandler {
 		}
 		const success = this.callbacks.resizeTerminal(sessionId, cols, rows);
 		this.send(client, { type: 'terminal_resize_result', success, sessionId });
+	}
+
+	/**
+	 * Handle notify_toast - show a toast notification in the desktop app.
+	 */
+	private handleNotifyToast(client: WebClient, message: WebClientMessage): void {
+		const title = typeof message.title === 'string' ? message.title : '';
+		const body = typeof message.message === 'string' ? message.message : '';
+		const rawType = typeof message.toastType === 'string' ? message.toastType : 'info';
+		const duration = typeof message.duration === 'number' ? message.duration : undefined;
+		const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: 'notify_toast_result',
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!title) {
+			sendResult(false, 'Missing title');
+			return;
+		}
+		if (!NOTIFY_TOAST_KINDS.includes(rawType as NotifyToastKind)) {
+			sendResult(false, `Invalid toast type: ${rawType}`);
+			return;
+		}
+		if (duration !== undefined && (!Number.isFinite(duration) || duration < 0)) {
+			sendResult(false, 'duration must be a non-negative number of seconds');
+			return;
+		}
+
+		if (!this.callbacks.notifyToast) {
+			sendResult(false, 'Toast notifications not configured');
+			return;
+		}
+
+		this.callbacks
+			.notifyToast({
+				title,
+				message: body,
+				toastType: rawType as NotifyToastKind,
+				duration,
+				sessionId,
+			})
+			.then((success) => sendResult(success, success ? undefined : 'Failed to show toast'))
+			.catch((error) => sendResult(false, `Failed to show toast: ${error.message}`));
+	}
+
+	/**
+	 * Handle notify_center_flash - show a center-screen flash in the desktop app.
+	 */
+	private handleNotifyCenterFlash(client: WebClient, message: WebClientMessage): void {
+		const body = typeof message.message === 'string' ? message.message : '';
+		const detail = typeof message.detail === 'string' ? message.detail : undefined;
+		const rawVariant = typeof message.variant === 'string' ? message.variant : 'success';
+		const duration = typeof message.duration === 'number' ? message.duration : undefined;
+
+		const sendResult = (success: boolean, error?: string) => {
+			this.send(client, {
+				type: 'notify_center_flash_result',
+				success,
+				error,
+				requestId: message.requestId,
+			});
+		};
+
+		if (!body) {
+			sendResult(false, 'Missing message');
+			return;
+		}
+		if (!NOTIFY_FLASH_VARIANTS.includes(rawVariant as NotifyCenterFlashVariant)) {
+			sendResult(false, `Invalid flash variant: ${rawVariant}`);
+			return;
+		}
+		if (duration !== undefined && (!Number.isFinite(duration) || duration < 0)) {
+			sendResult(false, 'duration must be a non-negative number of milliseconds');
+			return;
+		}
+
+		if (!this.callbacks.notifyCenterFlash) {
+			sendResult(false, 'Center flash not configured');
+			return;
+		}
+
+		this.callbacks
+			.notifyCenterFlash({
+				message: body,
+				detail,
+				variant: rawVariant as NotifyCenterFlashVariant,
+				duration,
+			})
+			.then((success) => sendResult(success, success ? undefined : 'Failed to show flash'))
+			.catch((error) => sendResult(false, `Failed to show flash: ${error.message}`));
 	}
 
 	/**

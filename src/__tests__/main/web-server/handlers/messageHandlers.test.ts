@@ -129,6 +129,8 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		resizeTerminal: vi.fn().mockReturnValue(true),
 		spawnTerminalForWeb: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
 		killTerminalForWeb: vi.fn().mockReturnValue(true),
+		notifyToast: vi.fn().mockResolvedValue(true),
+		notifyCenterFlash: vi.fn().mockResolvedValue(true),
 	};
 }
 

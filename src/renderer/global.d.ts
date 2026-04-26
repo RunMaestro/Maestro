@@ -297,6 +297,23 @@ interface MaestroAPI {
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onRemoteOpenFileTab: (callback: (sessionId: string, filePath: string) => void) => () => void;
 		onRemoteRefreshFileTree: (callback: (sessionId: string) => void) => () => void;
+		onRemoteNotifyToast: (
+			callback: (params: {
+				title: string;
+				message: string;
+				toastType: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+				sessionId?: string;
+			}) => void
+		) => () => void;
+		onRemoteNotifyCenterFlash: (
+			callback: (params: {
+				message: string;
+				detail?: string;
+				variant: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+			}) => void
+		) => () => void;
 		onRemoteOpenBrowserTab: (
 			callback: (sessionId: string, url: string, responseChannel: string) => void
 		) => () => void;

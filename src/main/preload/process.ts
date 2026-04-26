@@ -473,6 +473,39 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote toast notifications from CLI/web interface
+		 */
+		onRemoteNotifyToast: (
+			callback: (params: {
+				title: string;
+				message: string;
+				toastType: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+				sessionId?: string;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyToast', handler);
+			return () => ipcRenderer.removeListener('remote:notifyToast', handler);
+		},
+
+		/**
+		 * Subscribe to remote center-flash notifications from CLI/web interface
+		 */
+		onRemoteNotifyCenterFlash: (
+			callback: (params: {
+				message: string;
+				detail?: string;
+				variant: 'success' | 'info' | 'warning' | 'error';
+				duration?: number;
+			}) => void
+		): (() => void) => {
+			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);
+			ipcRenderer.on('remote:notifyCenterFlash', handler);
+			return () => ipcRenderer.removeListener('remote:notifyCenterFlash', handler);
+		},
+
+		/**
 		 * Subscribe to remote open browser tab from CLI/web interface.
 		 * Renderer must ack success via sendRemoteOpenBrowserTabResponse.
 		 * If the callback throws synchronously, ack false first so the CLI

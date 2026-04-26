@@ -40,6 +40,8 @@ import {
 	settingsAgentReset,
 } from './commands/settings-agent';
 import { promptsGet, promptsList } from './commands/prompts-get';
+import { notifyToast } from './commands/notify-toast';
+import { notifyFlash } from './commands/notify-flash';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -416,6 +418,32 @@ prompts
 	.description('Print a prompt by id (honors user customizations from Settings → Maestro Prompts)')
 	.option('--json', 'Output as JSON object with metadata + content')
 	.action(promptsGet);
+
+// Notify commands — surface notifications in the Maestro desktop app
+const notify = program
+	.command('notify')
+	.description('Show notifications in the Maestro desktop app');
+
+notify
+	.command('toast <title> <message>')
+	.description('Show a toast notification (queued, persistent until dismissed)')
+	.option('-t, --type <type>', 'success | info | warning | error (default: info)')
+	.option(
+		'-d, --duration <seconds>',
+		'Auto-dismiss after N seconds (0 = never dismiss; omitted = use app default)'
+	)
+	.option('-a, --agent <id>', 'Associate with an agent so clicking jumps to it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyToast);
+
+notify
+	.command('flash <message>')
+	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
+	.option('-v, --variant <variant>', 'success | info | warning | error (default: success)')
+	.option('-D, --detail <text>', 'Optional second line shown beneath the message')
+	.option('-d, --duration <ms>', 'Auto-dismiss after N ms (default: 1500; 0 = never)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(notifyFlash);
 
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
