@@ -384,6 +384,102 @@ Rendered as a portal to `document.body`, positioned fixed at bottom-right. Each 
 
 ---
 
+## Center Flash System (rapid temporary notifications)
+
+**Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system — they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.
+
+### Decision: Center Flash vs Toast
+
+| You want to...                                                                 | Use                                              |
+| ------------------------------------------------------------------------------ | ------------------------------------------------ |
+| Confirm a _user-initiated_ action they just took ("Copied", "Saved", "Pinned") | **Center Flash**                                 |
+| Surface an _async_ result tied to context (PR posted, export complete, etc.)   | Toast                                            |
+| Report an error or failure                                                     | Toast (persistent, dismissable, has icon + body) |
+| Show a brief mode-switch indicator ("Bionify: ON")                             | Center Flash (`success` variant)                 |
+| Warn the user about something they should read ("Commands disabled")           | Center Flash (`warning` variant)                 |
+| Anything that the user might want to click, navigate from, or dismiss manually | Toast                                            |
+
+**Litmus test:** if the message would still be useful 10 seconds from now, it is a Toast. If the user only needs to see "yep, that happened" before getting on with their work, it is a Center Flash.
+
+### Architecture
+
+```text
+src/renderer/stores/centerFlashStore.ts  - Zustand store + notifyCenterFlash() / dismissCenterFlash()
+src/renderer/components/CenterFlash/     - <CenterFlash /> component (mounted once in App.tsx via portal)
+src/renderer/utils/flashCopiedToClipboard.ts - clipboard-ack helper
+```
+
+Center Flash is **exclusive** — only one is visible at a time. A new flash replaces the previous one (no queue). The component is mounted once in `App.tsx` next to `<ToastContainer />`; do not mount it locally inside features.
+
+### Firing a flash
+
+```typescript
+import { notifyCenterFlash } from '../stores/centerFlashStore';
+
+notifyCenterFlash({
+	message: 'File Saved', // required, primary line
+	detail: '/path/to/file.md', // optional second line, mono font, truncates with title attr
+	variant: 'success', // 'success' (default) | 'info' | 'warning' | 'error'
+	duration: 1500, // optional ms; default 1500; 0 = no auto-dismiss
+});
+```
+
+Convenience helper for the most common case (clipboard acks):
+
+```typescript
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+
+flashCopiedToClipboard(value); // "Copied to Clipboard" + value as detail
+flashCopiedToClipboard(value, 'Session ID Copied'); // custom title
+```
+
+**Always** prefer `flashCopiedToClipboard` for clipboard-success acks so wording, variant, and duration stay consistent across the app.
+
+### Design language
+
+The Center Flash component implements a single, consistent visual treatment that should look identical in every feature. Do not attempt to override its styling:
+
+- **Frosted glass card** centered on screen via fixed-position portal, `pointer-events: none` (never blocks input).
+- **Variant-tinted accent** drives the icon color, the icon's tinted circle background, the card's border, and the card's outer glow.
+- **Variant icons** (lucide): `success → Check`, `info → Info`, `warning → AlertTriangle`, `error → AlertCircle`. The icon sits in a 36 px tinted circle.
+- **Two-line layout when `detail` is provided:** semibold title (`textMain`) on top, mono `textDim` detail below (truncated, full value on hover via `title=`).
+- **Bottom progress bar** animates from full width to zero over `duration`, using the variant accent color at low opacity.
+- **Entrance:** 180 ms scale (0.94 → 1) + fade. **Exit:** 160 ms reverse. No bounce, no spring, no drop-and-fade — keep it crisp.
+- **Z-index:** sits above toasts (`100001`), below modal-stack overlays.
+- **Theme tokens:** colors are pulled from `theme.colors.{success,warning,error,accent,bgSidebar,textMain,textDim,border}`. Do not introduce new color tokens for flash usage.
+- **A11y:** `role="status"`, `aria-live="polite"`, `aria-atomic="true"`. Do not add a close button — flashes are not interactive.
+
+### Variant guidance
+
+| Variant   | Use for                                              | Examples                                                  |
+| --------- | ---------------------------------------------------- | --------------------------------------------------------- |
+| `success` | Action succeeded (default)                           | "Copied to Clipboard", "File Saved", "Bionify: ON"        |
+| `info`    | Neutral feedback, mode change with no value judgment | "Read-only mode"                                          |
+| `warning` | Soft warning the user should read before proceeding  | "Commands disabled", "No unread or draft tabs"            |
+| `error`   | A user-initiated action did _not_ succeed silently   | (Rare — most failures should be Toasts so user can read.) |
+
+**Do not add new variants.** If a use case does not fit the four above, the use case is probably wrong (it should be a Toast, an inline banner, or a modal).
+
+### Duration guidance
+
+- **Default 1500 ms** is correct for almost everything. Do not pass `duration` unless you have a specific reason.
+- Use a longer duration (`2500`–`3000`) only for a `warning` flash with a longer message the user must read.
+- Use `duration: 0` (no auto-dismiss) only for the rarest cases — it requires you to call `dismissCenterFlash()` explicitly later, and Center Flash is exclusive, so a non-dismissed flash blocks every subsequent one.
+
+### Anti-patterns (do not do these)
+
+- ❌ **Do not** create a new center-screen overlay component. Use `notifyCenterFlash`.
+- ❌ **Do not** roll your own `useState` + `setTimeout` for clipboard acks. Use `flashCopiedToClipboard`.
+- ❌ **Do not** use `notifyToast` for clipboard-success acks. Use `flashCopiedToClipboard`.
+- ❌ **Do not** add `flashNotification` / `successFlashNotification` state to a store. The legacy `setFlashNotification` and `setSuccessFlashNotification` setters in `uiStore` are compatibility shims that delegate to `notifyCenterFlash`; do not extend them — call `notifyCenterFlash` directly in new code.
+- ❌ **Do not** stack flashes (queue them). The system is intentionally exclusive; the latest flash wins.
+
+### Migration note
+
+Pre-existing call sites that use `setFlashNotification` / `setSuccessFlashNotification` (via `uiStore` or via `showFlashNotification` / `showSuccessFlash` in `useAgentExecution`) continue to work — they fire `notifyCenterFlash` under the hood. New code should call `notifyCenterFlash` (or `flashCopiedToClipboard`) directly.
+
+---
+
 ## Shared Components
 
 ### `<Modal>` (`src/renderer/components/ui/Modal.tsx`)

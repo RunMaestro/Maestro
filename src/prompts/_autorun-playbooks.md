@@ -10,6 +10,21 @@ Write all Auto Run documents to: `{{AUTORUN_FOLDER}}`
 
 This folder may be outside your working directory (e.g., in a parent repository when you're in a worktree). That is intentional — always use this exact path.
 
+### Authoring vs. Launching
+
+These are two distinct actions and the user's phrasing tells you which (or both) they want:
+
+- **Authoring only** ("create a playbook for…", "draft an auto-run doc"): write the Markdown file(s) to `{{AUTORUN_FOLDER}}` and stop. Then run `maestro-cli refresh-auto-run` so the document appears in the Auto Run panel.
+- **Launching** ("…and run it", "kick it off", "start the auto run", "create and run X"): after writing the doc, **launch it via the CLI** so the Auto Run engine drives execution and the user can watch progress in the UI:
+
+  ```bash
+  {{MAESTRO_CLI_PATH}} auto-run <doc-path...> --launch --agent {{AGENT_ID}}
+  ```
+
+  Useful flags: `--save-as "<name>"` to register it as a reusable playbook, `--loop` / `--max-loops <n>` for iterative runs, `--prompt "<extra instructions>"` to prepend per-task guidance, `--reset-on-completion` to uncheck boxes when finished.
+
+**Critical:** When the user asks you to _run_ an auto-run, do NOT execute the tasks yourself by reading the document and doing the work in this chat. That bypasses the Auto Run engine, leaves nothing in the UI, produces no playbook record, and loses the per-task fresh-context isolation that makes auto-runs reliable. Launching via `maestro-cli auto-run --launch` is the only correct path. Always pass `--agent {{AGENT_ID}}` so the run targets you (without it the CLI picks the first available agent).
+
 ### File Naming
 
 Use the format `PREFIX-XX.md` where `XX` is a zero-padded two-digit phase number (01, 02, ...). Zero-padding ensures correct lexicographic sorting.

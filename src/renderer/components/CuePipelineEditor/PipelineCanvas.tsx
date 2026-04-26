@@ -245,6 +245,8 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 					}}
 				/>
 				<MiniMap
+					pannable
+					zoomable
 					style={{
 						backgroundColor: theme.colors.bgActivity,
 						border: `1px solid ${theme.colors.border}`,

@@ -60,7 +60,8 @@ Grep-verified 2026-04-10. Import from these canonical locations:
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
-- **Toast notifications:** `notifyToast()` in `src/renderer/stores/notificationStore.ts`
+- **Toast notifications:** `notifyToast()` in `src/renderer/stores/notificationStore.ts` (use for async results, errors, persistent/dismissable messages)
+- **Center flash (rapid acks):** `notifyCenterFlash()` in `src/renderer/stores/centerFlashStore.ts`; clipboard helper `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts`. Use for momentary "I did the thing" confirmations of user-initiated actions. Do NOT roll your own center-screen overlay, useState+setTimeout flash, or use a Toast for clipboard acks. Single visible flash at a time, fresh-look frosted-glass card mounted once in `App.tsx`. Decision rules and design language: [UI-PATTERNS.md → Center Flash System](docs/agent-guides/UI-PATTERNS.md#center-flash-system-rapid-temporary-notifications).
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith(sessionId, updater)` in `src/renderer/stores/sessionStore.ts` (do NOT hand-roll `setSessions(prev => prev.map(...))`)
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)

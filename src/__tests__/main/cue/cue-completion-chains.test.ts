@@ -919,9 +919,22 @@ describe('CueEngine completion chains', () => {
 					queue_size: 10,
 				},
 			});
-			mockLoadCueConfig.mockImplementation((root: string) =>
-				root === '/projects/orch' ? config : null
-			);
+			// Target agent needs its own cue config so getSessionSettings() finds
+			// max_concurrent: 2 for agent-a — otherwise the queue_size=0 default
+			// drops the second dispatch instead of running it concurrently.
+			const targetConfig = createMockConfig({
+				settings: {
+					timeout_minutes: 30,
+					timeout_on_fail: 'break',
+					max_concurrent: 2,
+					queue_size: 10,
+				},
+			});
+			mockLoadCueConfig.mockImplementation((root: string) => {
+				if (root === '/projects/orch') return config;
+				if (root === '/projects/a') return targetConfig;
+				return null;
+			});
 			const deps = createMockDeps({ getSessions: vi.fn(() => sessions) });
 			const engine = new CueEngine(deps);
 			engine.start();
