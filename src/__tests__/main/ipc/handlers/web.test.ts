@@ -352,6 +352,27 @@ describe('web handlers', () => {
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
+		it('should bail out and keep the existing server if stop() fails during rotation', async () => {
+			// If stop() throws, the old server may still be bound to its port —
+			// dropping the reference would leak it and the next start() would either
+			// collide on a custom port or run a second server in parallel. The
+			// handler must preserve the handle and surface the error.
+			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
+				key === 'persistentWebLink' ? false : def
+			);
+			mockWebServer.stop.mockRejectedValueOnce(new Error('stop boom'));
+
+			const handler = registeredHandlers.get('live:startServer');
+			const result = await handler!({});
+
+			expect(mockWebServer.stop).toHaveBeenCalled();
+			expect(webServerRef.current).toBe(mockWebServer); // reference preserved
+			expect(mockCreateWebServer).not.toHaveBeenCalled();
+			expect(mockWebServer.start).not.toHaveBeenCalled();
+			expect(writeCliServerInfo).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: false, error: 'stop boom' });
+		});
+
 		it('should reuse the server (no rotation) on Live ON when persistentWebLink is on', async () => {
 			mockSettingsStore.get.mockImplementation((key: string, def: unknown) =>
 				key === 'persistentWebLink' ? true : def

@@ -282,10 +282,15 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				try {
 					await webServer.stop();
 				} catch (err: any) {
+					// Don't drop the reference — the old server may still be bound
+					// to its port. Nulling it would leak a live server and the next
+					// start() would either collide on a custom port or run a second
+					// server in parallel on a random one.
 					logger.error(
 						`Failed to stop existing server before token rotation: ${err?.message ?? err}`,
 						'WebServer'
 					);
+					return { success: false, error: err?.message ?? String(err) };
 				}
 				setWebServer(null);
 				webServer = null;
