@@ -154,7 +154,6 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Power')).toBeInTheDocument();
 			expect(screen.getByText('Rendering Options')).toBeInTheDocument();
 			expect(screen.getByText('Updates')).toBeInTheDocument();
-			expect(screen.getByText('Pre-release Channel')).toBeInTheDocument();
 			expect(screen.getByText('Privacy')).toBeInTheDocument();
 			expect(screen.getByText('Storage Location')).toBeInTheDocument();
 		});
@@ -1151,7 +1150,7 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Check for updates on startup')).toBeInTheDocument();
+			expect(screen.getByText('Check for updates automatically')).toBeInTheDocument();
 		});
 
 		it('should call setCheckForUpdatesOnStartup when toggle is clicked', async () => {
@@ -1161,7 +1160,7 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			const titleElement = screen.getByText('Check for updates on startup');
+			const titleElement = screen.getByText('Check for updates automatically');
 			const toggleContainer = titleElement.closest('[role="button"]');
 			const toggleSwitch = toggleContainer?.querySelector('button[role="switch"]');
 
