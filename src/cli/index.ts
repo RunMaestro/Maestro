@@ -119,6 +119,7 @@ program
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
+	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
@@ -144,6 +145,10 @@ program
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option('-l, --live', 'Send message through Maestro desktop (appears in tab)')
 	.option('--new-tab', 'Create a new AI tab instead of writing to the active one (requires --live)')
+	.option(
+		'-f, --force',
+		'Bypass the busy-state guard when writing to the active tab (requires --live); enables concurrent writes to a single agent'
+	)
 	.action(send);
 
 // Open file command - open a file in the Maestro desktop app
@@ -265,7 +270,7 @@ program
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
 	.option(
 		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, gemini-cli, qwen3-coder, aider)',
+		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, gemini-cli, qwen3-coder)',
 		'claude-code'
 	)
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
@@ -285,6 +290,10 @@ program
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
 	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--auto-run-folder <path>',
+		'Path to the agent Auto Run / playbooks folder (overrides the default <cwd>/.maestro/playbooks)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createAgent);
 

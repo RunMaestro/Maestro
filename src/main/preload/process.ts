@@ -128,6 +128,10 @@ export interface ToolExecutionEvent {
 	toolName: string;
 	state?: unknown;
 	timestamp: number;
+	/** Stable correlation id from the agent. When present, the renderer
+	 *  merges `running` and `completed`/`failed` events into a single log
+	 *  entry instead of appending two bubbles. */
+	toolCallId?: string;
 }
 
 /**

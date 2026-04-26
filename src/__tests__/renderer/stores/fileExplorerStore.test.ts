@@ -1,9 +1,9 @@
 /**
  * Tests for fileExplorerStore — File explorer UI state management
  *
- * Tests file tree UI state, file preview loading, flat file list,
- * and document graph view state. Covers functional updaters,
- * atomic graph actions, and non-React access helpers.
+ * Tests file tree UI state, flat file list, and document graph view state.
+ * Covers functional updaters, atomic graph actions, and non-React access
+ * helpers.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -29,7 +29,6 @@ function resetStore() {
 		selectedFileIndex: 0,
 		fileTreeFilter: '',
 		fileTreeFilterOpen: false,
-		filePreviewLoading: null,
 		flatFileList: [],
 		isGraphViewOpen: false,
 		graphFocusFilePath: undefined,
@@ -56,7 +55,6 @@ describe('fileExplorerStore', () => {
 			expect(state.selectedFileIndex).toBe(0);
 			expect(state.fileTreeFilter).toBe('');
 			expect(state.fileTreeFilterOpen).toBe(false);
-			expect(state.filePreviewLoading).toBeNull();
 			expect(state.flatFileList).toEqual([]);
 			expect(state.isGraphViewOpen).toBe(false);
 			expect(state.graphFocusFilePath).toBeUndefined();
@@ -96,28 +94,6 @@ describe('fileExplorerStore', () => {
 			useFileExplorerStore.getState().setFileTreeFilterOpen(false);
 			useFileExplorerStore.getState().setFileTreeFilterOpen((prev) => !prev);
 			expect(useFileExplorerStore.getState().fileTreeFilterOpen).toBe(true);
-		});
-	});
-
-	describe('file preview loading', () => {
-		it('sets loading state with name and path', () => {
-			useFileExplorerStore.getState().setFilePreviewLoading({
-				name: 'index.ts',
-				path: '/project/src/index.ts',
-			});
-			expect(useFileExplorerStore.getState().filePreviewLoading).toEqual({
-				name: 'index.ts',
-				path: '/project/src/index.ts',
-			});
-		});
-
-		it('clears loading state with null', () => {
-			useFileExplorerStore.getState().setFilePreviewLoading({
-				name: 'file.ts',
-				path: '/path/file.ts',
-			});
-			useFileExplorerStore.getState().setFilePreviewLoading(null);
-			expect(useFileExplorerStore.getState().filePreviewLoading).toBeNull();
 		});
 	});
 
@@ -251,7 +227,6 @@ describe('fileExplorerStore', () => {
 			expect(typeof state.setSelectedFileIndex).toBe('function');
 			expect(typeof state.setFileTreeFilter).toBe('function');
 			expect(typeof state.setFileTreeFilterOpen).toBe('function');
-			expect(typeof state.setFilePreviewLoading).toBe('function');
 			expect(typeof state.setFlatFileList).toBe('function');
 			expect(typeof state.focusFileInGraph).toBe('function');
 			expect(typeof state.openLastDocumentGraph).toBe('function');
@@ -280,7 +255,6 @@ describe('fileExplorerStore', () => {
 			store.setSelectedFileIndex(99);
 			store.setFileTreeFilter('search');
 			store.setFileTreeFilterOpen(true);
-			store.setFilePreviewLoading({ name: 'f', path: '/f' });
 			store.setFlatFileList([createFlatTreeNode()]);
 			store.focusFileInGraph('some/path.ts');
 
@@ -291,7 +265,6 @@ describe('fileExplorerStore', () => {
 			expect(state.selectedFileIndex).toBe(0);
 			expect(state.fileTreeFilter).toBe('');
 			expect(state.fileTreeFilterOpen).toBe(false);
-			expect(state.filePreviewLoading).toBeNull();
 			expect(state.flatFileList).toEqual([]);
 			expect(state.isGraphViewOpen).toBe(false);
 			expect(state.graphFocusFilePath).toBeUndefined();

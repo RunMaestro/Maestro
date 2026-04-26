@@ -69,7 +69,6 @@ export const MainPanel = React.memo(
 			setAtMentionFilter,
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
-			filePreviewLoading,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
@@ -284,12 +283,19 @@ export const MainPanel = React.memo(
 				.catch(() => {
 					if (!stale) setPillModels([]);
 				});
-			// Fetch effort options — use the effort-related config key for this agent
-			const effortKey = agentId === 'codex' ? 'reasoningEffort' : 'effort';
-			window.maestro.agents
-				.getConfigOptions(agentId, effortKey)
-				.then((efforts) => {
-					if (!stale) setPillEfforts(efforts);
+			// Fetch effort options. Agents use either `effort` (Claude Code) or
+			// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) — probe both
+			// and use whichever the agent defines, so this stays correct as new
+			// agents are added without touching this file.
+			Promise.all([
+				window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
+				window.maestro.agents
+					.getConfigOptions(agentId, 'reasoningEffort')
+					.catch(() => [] as string[]),
+			])
+				.then(([effortOpts, reasoningOpts]) => {
+					if (stale) return;
+					setPillEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
 				})
 				.catch(() => {
 					if (!stale) setPillEfforts([]);
@@ -712,6 +718,7 @@ export const MainPanel = React.memo(
 									activeTabId={activeSession.activeTabId}
 									theme={theme}
 									sessionId={activeSession.id}
+									sessionAgentSessionId={activeSession.agentSessionId}
 									onTabSelect={onTabSelect}
 									onTabClose={onTabClose}
 									onNewTab={onNewTab}
@@ -785,7 +792,6 @@ export const MainPanel = React.memo(
 							activeSession={activeSession}
 							activeTab={activeTab}
 							theme={theme}
-							filePreviewLoading={filePreviewLoading}
 							activeFileTabId={activeFileTabId}
 							activeFileTab={activeFileTab}
 							activeBrowserTabId={activeBrowserTabId}

@@ -103,9 +103,17 @@
 }
 
 .dual-pane-list-item-name {
+	flex: 1;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.dual-pane-list-item-meta {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
 }
 
 .dual-pane-modified-indicator {
@@ -151,6 +159,16 @@
 	margin: 0 0 4px 0;
 	font-size: 14px;
 	font-weight: 600;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.dual-pane-editor-token-count {
+	font-size: 11px;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
 }
 
 .dual-pane-editor-description {

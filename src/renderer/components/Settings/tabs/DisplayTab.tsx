@@ -82,6 +82,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setFileExplorerMaxDepth,
 		fileExplorerMaxEntries,
 		setFileExplorerMaxEntries,
+		sshReduceEntryCapEnabled,
+		setSshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction,
+		setSshReduceEntryCapFraction,
 	} = useSettings();
 
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -799,6 +803,10 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 						onMaxDepthChange={setFileExplorerMaxDepth}
 						maxEntries={fileExplorerMaxEntries}
 						onMaxEntriesChange={setFileExplorerMaxEntries}
+						sshReduceEntryCapEnabled={sshReduceEntryCapEnabled}
+						onSshReduceEntryCapEnabledChange={setSshReduceEntryCapEnabled}
+						sshReduceEntryCapFraction={sshReduceEntryCapFraction}
+						onSshReduceEntryCapFractionChange={setSshReduceEntryCapFraction}
 					/>
 				</div>
 			</div>

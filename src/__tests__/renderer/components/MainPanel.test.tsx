@@ -1887,7 +1887,12 @@ describe('MainPanel', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
-				expect(screen.getByText('1,500')).toBeInTheDocument();
+				// Claude reports inputTokens as the uncached delta only, so the
+				// displayed "Input Tokens" value is inputTokens + cacheRead + cacheCreation
+				// = 1500 + 200 + 100 = 1800. See issue #844 / calculateDisplayInputTokens.
+				// Same number also appears in the "Context Tokens" row (which sums the
+				// same three fields), so we expect two matches.
+				expect(screen.getAllByText('1,800')).toHaveLength(2);
 				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
 				expect(screen.getByText('750')).toBeInTheDocument();
 				expect(screen.getByText('Cache Read')).toBeInTheDocument();

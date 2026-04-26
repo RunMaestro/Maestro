@@ -256,6 +256,10 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setFileExplorerMaxDepth: vi.fn(),
 		fileExplorerMaxEntries: 100_000,
 		setFileExplorerMaxEntries: vi.fn(),
+		sshReduceEntryCapEnabled: false,
+		setSshReduceEntryCapEnabled: vi.fn(),
+		sshReduceEntryCapFraction: 0.1,
+		setSshReduceEntryCapFraction: vi.fn(),
 		// Automatic tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: vi.fn(),

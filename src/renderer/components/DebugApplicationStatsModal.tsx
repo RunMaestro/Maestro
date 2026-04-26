@@ -40,7 +40,7 @@ interface SessionFootprint {
 	processPid?: number;
 }
 
-type SortKey = 'name' | 'state' | 'data' | 'rss' | 'tabs';
+type SortKey = 'name' | 'state' | 'tabs' | 'logs' | 'fileTree' | 'data' | 'rss';
 
 // Cheap estimator — summing `.length` of strings roughly approximates the
 // JS engine's byte footprint for text-heavy data without the perf cost of
@@ -223,16 +223,24 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 		const arr = [...footprints];
 		const dir = sortAsc ? 1 : -1;
 		const stateOrder: Record<LoadState, number> = { active: 2, warm: 1, cold: 0 };
+		const totalTabs = (f: SessionFootprint) =>
+			f.aiTabCount + f.terminalTabCount + f.filePreviewTabCount + f.browserTabCount;
 		arr.sort((a, b) => {
 			switch (sortKey) {
 				case 'name':
 					return a.session.name.localeCompare(b.session.name) * dir;
 				case 'state':
 					return (stateOrder[a.loadState] - stateOrder[b.loadState]) * dir;
+				case 'tabs':
+					return (totalTabs(a) - totalTabs(b)) * dir;
+				case 'logs':
+					return (a.logCount - b.logCount) * dir || (a.logBytes - b.logBytes) * dir;
+				case 'fileTree':
+					return (
+						(a.fileTreeNodes - b.fileTreeNodes) * dir || (a.fileTreeBytes - b.fileTreeBytes) * dir
+					);
 				case 'rss':
 					return ((a.processRssBytes ?? -1) - (b.processRssBytes ?? -1)) * dir;
-				case 'tabs':
-					return (a.aiTabCount - b.aiTabCount) * dir;
 				case 'data':
 				default:
 					return (a.dataBytes - b.dataBytes) * dir;
@@ -351,8 +359,12 @@ export function DebugApplicationStatsModal({ theme, onClose }: DebugApplicationS
 							<HeaderCell onClick={() => setSort('tabs')} indicator={sortIndicator('tabs')}>
 								Tabs
 							</HeaderCell>
-							<HeaderCell>Logs</HeaderCell>
-							<HeaderCell>File Tree</HeaderCell>
+							<HeaderCell onClick={() => setSort('logs')} indicator={sortIndicator('logs')}>
+								Logs
+							</HeaderCell>
+							<HeaderCell onClick={() => setSort('fileTree')} indicator={sortIndicator('fileTree')}>
+								File Tree
+							</HeaderCell>
 							<HeaderCell onClick={() => setSort('data')} indicator={sortIndicator('data')}>
 								Data
 							</HeaderCell>

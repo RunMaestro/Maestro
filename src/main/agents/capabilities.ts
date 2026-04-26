@@ -269,38 +269,38 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Aider - Open source AI pair programming tool
-	 * https://github.com/paul-gauthier/aider
+	 * GitHub Copilot CLI - AI coding assistant from GitHub
+	 * https://github.com/github/copilot-cli
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Aider integration is
-	 * implemented and tested. Update this configuration when integrating.
+	 * Capabilities based on verified CLI help output (copilot --help).
+	 * Conservative approach: only mark capabilities as true if explicitly verified.
 	 */
-	aider: {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: false,
-		supportsImageInputOnResume: false,
-		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false,
-		supportsStreaming: true, // Likely streams
-		supportsResultMessages: false,
-		supportsModelSelection: false,
-		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false,
-		supportsContextMerge: false,
-		supportsContextExport: false,
-		supportsWizard: false, // PLACEHOLDER
-		supportsGroupChatModeration: false, // PLACEHOLDER
-		usesJsonLineOutput: false, // PLACEHOLDER
-		usesCombinedContextWindow: false, // PLACEHOLDER
-		supportsAppendSystemPrompt: false,
-		supportsProjectMemory: false,
+	'copilot-cli': {
+		supportsResume: true, // --continue, --resume[=sessionId]
+		supportsReadOnlyMode: true, // Maestro enforces read-only via Copilot's CLI tool permission rules
+		supportsJsonOutput: true, // --output-format json (JSONL)
+		supportsSessionId: true, // result event includes sessionId
+		supportsImageInput: true, // Copilot supports @file/@image mentions; Maestro maps uploads to temp-file mentions
+		supportsImageInputOnResume: true, // Prompt-based @image mentions work for resumed sessions as well
+		supportsSlashCommands: true, // Interactive mode supports slash commands
+		supportsSessionStorage: true, // ~/.copilot/session-state/<session-id>/
+		supportsCostTracking: false, // Not verified
+		supportsUsageStats: true, // session.shutdown event includes modelMetrics with per-model token counts
+		supportsBatchMode: true, // -p, --prompt <text> for batch mode
+		requiresPromptToStart: false, // Default interactive mode works without prompt, -i flag allows initial prompt
+		supportsStreaming: true, // Streams assistant/tool execution events as JSONL
+		supportsResultMessages: true, // assistant.message with phase=final_answer
+		supportsModelSelection: true, // --model <model>
+		supportsStreamJsonInput: false, // Not verified
+		supportsThinkingDisplay: true, // assistant.reasoning events are rendered through Maestro's thinking-chunk pipeline
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Wizard structured output works with Copilot JSON final_answer events
+		supportsGroupChatModeration: true, // Group chat moderation uses the standard batch-mode orchestration path
+		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
+		supportsProjectMemory: false, // No project memory mechanism
+		usesJsonLineOutput: true, // --output-format json produces JSONL
+		usesCombinedContextWindow: false, // Default Copilot model is Claude Sonnet; model-specific behavior varies
 	},
 };
 

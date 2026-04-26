@@ -26,6 +26,7 @@ import { useUIStore } from '../../stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab } from '../../types';
 import type { AgentCapabilities } from '../../hooks/agent/useAgentCapabilities';
 import { openUrl } from '../../utils/openUrl';
+import { calculateDisplayInputTokens } from '../../utils/contextUsage';
 
 export interface MainPanelHeaderProps {
 	activeSession: Session;
@@ -511,7 +512,10 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														className="text-xs font-mono"
 														style={{ color: theme.colors.textMain }}
 													>
-														{(activeTab?.usageStats?.inputTokens ?? 0).toLocaleString('en-US')}
+														{calculateDisplayInputTokens(
+															activeTab?.usageStats ?? {},
+															activeSession.toolType
+														).toLocaleString('en-US')}
 													</span>
 												</div>
 												<div className="flex justify-between items-center">

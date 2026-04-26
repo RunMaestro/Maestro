@@ -9,6 +9,40 @@ import { execFile as cpExecFile } from 'child_process';
 import { createCueEvent, type CueEvent } from './cue-types';
 import { isGitHubItemSeen, markGitHubItemSeen, hasAnyGitHubSeen, pruneGitHubSeen } from './cue-db';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
+import { captureException } from '../utils/sentry';
+import type { CueLogPayload } from '../../shared/cue-log-types';
+
+/** Max backoff for GitHub rate-limit recovery. One hour is the standard
+ * window for primary rate limits on personal tokens; secondary limits expire
+ * sooner but we don't get reliable signals to distinguish them. */
+export const GITHUB_RATE_LIMIT_MAX_BACKOFF_MS = 60 * 60 * 1000;
+
+/**
+ * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
+ * limits in stderr text rather than a structured error code, so we pattern
+ * match the user-visible strings. Exported for tests.
+ */
+export function isGitHubRateLimitError(err: unknown): boolean {
+	const msg = (
+		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
+			? err.message
+			: String(err ?? '')
+	).toLowerCase();
+	const stderr =
+		err &&
+		typeof err === 'object' &&
+		'stderr' in err &&
+		typeof (err as { stderr: unknown }).stderr === 'string'
+			? (err as { stderr: string }).stderr.toLowerCase()
+			: '';
+	const haystack = `${msg}\n${stderr}`;
+	return (
+		haystack.includes('api rate limit exceeded') ||
+		haystack.includes('secondary rate limit') ||
+		haystack.includes('rate limit has been reached') ||
+		/\bhttp\s+(403|429)\b/.test(haystack)
+	);
+}
 
 /** Expanded env so packaged Electron can find gh in /opt/homebrew/bin, /usr/local/bin, etc. */
 const ghEnv = getExpandedEnv();
@@ -35,7 +69,7 @@ export interface CueGitHubPollerConfig {
 	pollMinutes: number;
 	projectRoot: string;
 	onEvent: (event: CueEvent) => void;
-	onLog: (level: string, message: string) => void;
+	onLog: (level: string, message: string, data?: unknown) => void;
 	triggerName: string;
 	subscriptionId: string;
 	/** GitHub state filter: "open" (default), "closed", "merged" (PRs only), or "all" */
@@ -61,7 +95,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 	let stopped = false;
 	let initialTimeout: ReturnType<typeof setTimeout> | null = null;
-	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let pruneInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Cached state
@@ -70,14 +104,26 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 	/** Tracks whether a poll has been attempted (success or failure) to prevent event flooding on recovery */
 	let firstPollAttempted = false;
 
+	// Phase 12C — rate-limit backoff state
+	const basePollMs = pollMinutes * 60 * 1000;
+	let currentPollMs = basePollMs;
+
 	async function resolveGh(): Promise<string | null> {
 		if (ghCommand !== null) return ghCommand;
 		try {
 			const cmd = await resolveGhPath();
 			await execFileAsync(cmd, ['--version']);
 			ghCommand = cmd;
-		} catch {
+		} catch (err) {
+			// `gh` not being installed is expected in some environments, so the
+			// Sentry report fires for every shape EXCEPT ENOENT. Errors without
+			// a `code` (e.g. unexpected throws from `resolveGhPath`) used to slip
+			// through the old `code && code !== 'ENOENT'` guard silently.
+			const code = (err as { code?: string } | undefined)?.code;
 			onLog('warn', `[CUE] GitHub CLI (gh) not found — skipping "${triggerName}"`);
+			if (code !== 'ENOENT') {
+				void captureException(err, { operation: 'cue:github:resolveGh', triggerName });
+			}
 			return null;
 		}
 		return ghCommand;
@@ -93,8 +139,16 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			);
 			resolvedRepo = stdout.trim();
 			return resolvedRepo;
-		} catch {
+		} catch (err) {
+			// Rate-limited repo detection must bubble up so doPoll's outer
+			// catch can apply exponential backoff — swallowing + returning null
+			// here would make every poll immediately short-circuit while the
+			// limit lasts, without ever bumping currentPollMs.
+			if (isGitHubRateLimitError(err)) {
+				throw err;
+			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" — skipping poll`);
+			void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			return null;
 		}
 	}
@@ -248,9 +302,34 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			} else {
 				await pollIssues(repo);
 			}
+			// Success — reset backoff to baseline.
+			currentPollMs = basePollMs;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			onLog('error', `[CUE] GitHub poll error for "${triggerName}": ${message}`);
+
+			if (isGitHubRateLimitError(err)) {
+				// Exponential backoff capped at the max. Sentry is NOT called for
+				// rate limits — they are expected operational conditions.
+				currentPollMs = Math.min(currentPollMs * 2, GITHUB_RATE_LIMIT_MAX_BACKOFF_MS);
+				const backoffMin = Math.round(currentPollMs / 60000);
+				const payload: CueLogPayload = {
+					type: 'rateLimitBackoff',
+					triggerName,
+					backoffMs: currentPollMs,
+				};
+				onLog(
+					'warn',
+					`[CUE] "${triggerName}" rate-limited by GitHub — backing off to ${backoffMin}m`,
+					payload
+				);
+			} else {
+				// Emit typed payload so the metric interceptor bumps the
+				// githubPollErrors counter; the engine narrows on `type` rather
+				// than log level.
+				const payload: CueLogPayload = { type: 'githubPollError', triggerName };
+				onLog('error', `[CUE] GitHub poll error for "${triggerName}": ${message}`, payload);
+				void captureException(err, { operation: 'cue:github:doPoll', triggerName });
+			}
 
 			// If the first poll ever fails, place a seed marker so the next successful
 			// poll doesn't treat ALL existing items as new (which would swallow items
@@ -262,8 +341,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 						'info',
 						`[CUE] First poll for "${triggerName}" failed — seed marker set to prevent silent event loss on recovery`
 					);
-				} catch {
-					// Non-fatal: DB may not be available
+				} catch (seedErr) {
+					// Non-fatal: DB may not be available. Surface to Sentry so we see
+					// when the "loss prevention" itself fails — previously silent.
+					void captureException(seedErr, {
+						operation: 'cue:github:seedMarker',
+						triggerName,
+						subscriptionId,
+					});
 				}
 			}
 		} finally {
@@ -271,19 +356,47 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
-	// Initial poll after 2-second delay
+	/**
+	 * Self-rescheduling poll loop. Reads `currentPollMs` fresh at each tick so
+	 * exponential backoff updates take effect immediately. Replaces the prior
+	 * setInterval-based loop, which could not honor a growing delay.
+	 */
+	function scheduleNextPoll(): void {
+		if (stopped) return;
+		pollTimer = setTimeout(async () => {
+			// Guard the loop: if doPoll throws (it shouldn't — it has its own
+			// try/catch — but an unexpected rethrow would silently end the
+			// schedule). try/finally here keeps the loop alive regardless.
+			try {
+				await doPoll();
+			} catch (err) {
+				onLog(
+					'error',
+					`[CUE] Unexpected error in poll loop for "${triggerName}": ${err instanceof Error ? err.message : String(err)}`
+				);
+				void captureException(err, { operation: 'cue:github:pollLoop', triggerName });
+			} finally {
+				scheduleNextPoll();
+			}
+		}, currentPollMs);
+	}
+
+	// Initial poll after 2-second delay, then enter the rescheduling loop.
 	initialTimeout = setTimeout(() => {
 		if (stopped) return;
-		doPoll().then(() => {
-			if (stopped) return;
-			// Start recurring poll
-			pollInterval = setInterval(
-				() => {
-					doPoll();
-				},
-				pollMinutes * 60 * 1000
-			);
-		});
+		doPoll()
+			.then(() => {
+				if (stopped) return;
+				scheduleNextPoll();
+			})
+			.catch((err) => {
+				onLog(
+					'error',
+					`[CUE] Unexpected error in initial poll for "${triggerName}": ${err instanceof Error ? err.message : String(err)}`
+				);
+				void captureException(err, { operation: 'cue:github:initialPoll', triggerName });
+				if (!stopped) scheduleNextPoll();
+			});
 	}, 2000);
 
 	// Periodic prune every 24 hours (30-day retention)
@@ -301,9 +414,9 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			clearTimeout(initialTimeout);
 			initialTimeout = null;
 		}
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
+		if (pollTimer) {
+			clearTimeout(pollTimer);
+			pollTimer = null;
 		}
 		if (pruneInterval) {
 			clearInterval(pruneInterval);

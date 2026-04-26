@@ -16,7 +16,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
-import { calculateContextDisplay } from '../utils/contextUsage';
+import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
@@ -775,7 +775,8 @@ export function TabSwitcherModal({
 												<>
 													<span>
 														{formatTokensCompact(
-															tab.usageStats.inputTokens + tab.usageStats.outputTokens
+															calculateDisplayInputTokens(tab.usageStats, agentId) +
+																tab.usageStats.outputTokens
 														)}{' '}
 														tokens
 													</span>

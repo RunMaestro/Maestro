@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import type { AgentConfigsData } from '../../stores/types';
 import {
@@ -38,6 +39,35 @@ const handlerOpts = (
 	operation,
 });
 
+// Copilot CLI built-in slash commands (always available in interactive mode)
+const COPILOT_BUILTIN_COMMANDS = [
+	'help',
+	'clear',
+	'compact',
+	'context',
+	'model',
+	'usage',
+	'session',
+	'share',
+	'mcp',
+	'fleet',
+	'tasks',
+	'delegate',
+	'review',
+];
+
+/**
+ * Discover GitHub Copilot CLI slash commands.
+ *
+ * Unlike Claude Code (which emits commands via its init JSON event), Copilot
+ * commands are interactive-only and cannot be discovered by spawning the CLI
+ * in batch mode.  We return a static list of well-documented built-in commands.
+ */
+function discoverCopilotSlashCommands(): { name: string; description: string }[] {
+	logger.info(`Discovered ${COPILOT_BUILTIN_COMMANDS.length} Copilot slash commands`, LOG_CONTEXT);
+	return COPILOT_BUILTIN_COMMANDS.map((cmd) => ({ name: cmd, description: '' }));
+}
+
 /**
  * Discover OpenCode slash commands by reading from disk.
  *
@@ -60,6 +90,79 @@ const handlerOpts = (
 interface DiscoveredCommand {
 	name: string;
 	prompt?: string; // .md file content for custom commands; absent for built-ins
+	description?: string; // frontmatter description for Claude Code skills; absent otherwise
+}
+
+/**
+ * Read descriptions for Claude Code skills from disk.
+ *
+ * Claude Code emits skill names via its init message but without descriptions,
+ * so we read the frontmatter from each skill's SKILL.md (with skill.md fallback
+ * for legacy layouts). Project-local skills take precedence over user-level skills.
+ *
+ * Returns a map of skill directory name → description. Names with no description
+ * frontmatter are omitted rather than returned as empty strings, so the renderer
+ * can fall back to its built-in description table.
+ */
+async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, string>> {
+	const descriptions = new Map<string, string>();
+	const homeDir = os.homedir();
+	const skillDirs = [
+		path.join(cwd, '.claude', 'skills'), // project-local (wins)
+		path.join(homeDir, '.claude', 'skills'), // user-level
+	];
+
+	// Extract the YAML frontmatter block from a file so we don't pick up a
+	// body line that happens to start with "description:". Matches the
+	// bounded parser used by scanSkillsDir in claude.ts.
+	const extractFrontmatter = (content: string): string | null => {
+		const trimmed = content.trimStart();
+		if (!trimmed.startsWith('---')) return null;
+		const endIndex = trimmed.indexOf('\n---', 3);
+		if (endIndex === -1) return null;
+		return trimmed.slice(3, endIndex);
+	};
+
+	for (const dir of skillDirs) {
+		let entries: fs.Dirent[];
+		try {
+			entries = await fs.promises.readdir(dir, { withFileTypes: true });
+		} catch (error) {
+			// Missing skills directory is the norm — skip. Anything else
+			// (permission errors, IO errors) should surface to Sentry.
+			if (isMissingEntryError(error)) continue;
+			throw error;
+		}
+		if (!Array.isArray(entries)) continue;
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			if (descriptions.has(entry.name)) continue; // project-local already set
+			for (const candidate of ['SKILL.md', 'skill.md']) {
+				let content: string;
+				try {
+					content = await fs.promises.readFile(path.join(dir, entry.name, candidate), 'utf-8');
+				} catch (error) {
+					if (isMissingEntryError(error)) continue;
+					throw error;
+				}
+				const frontmatter = extractFrontmatter(content);
+				if (frontmatter) {
+					const match = frontmatter.match(/^description:\s*(.+)$/m);
+					if (match) {
+						descriptions.set(entry.name, match[1].trim().replace(/^["']|["']$/g, ''));
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	return descriptions;
+}
+
+function isMissingEntryError(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
@@ -185,7 +288,7 @@ function getSshRemoteById(
  * Helper to strip non-serializable functions from agent configs.
  * Agent configs can have function properties that cannot be sent over IPC:
  * - argBuilder in configOptions
- * - resumeArgs, modelArgs, workingDirArgs, imageArgs, promptArgs on the agent config
+ * - resumeArgs, modelArgs, workingDirArgs, imageArgs, imagePromptBuilder, promptArgs on the agent config
  */
 function stripAgentFunctions(agent: any) {
 	if (!agent) return null;
@@ -196,6 +299,7 @@ function stripAgentFunctions(agent: any) {
 		modelArgs: _modelArgs,
 		workingDirArgs: _workingDirArgs,
 		imageArgs: _imageArgs,
+		imagePromptBuilder: _imagePromptBuilder,
 		promptArgs: _promptArgs,
 		...serializableAgent
 	} = agent;
@@ -1237,6 +1341,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return discoverOpenCodeSlashCommands(cwd);
 				}
 
+				if (agentId === 'copilot-cli') {
+					return discoverCopilotSlashCommands();
+				}
+
+				// Only Claude Code supports slash command discovery via init message
 				if (agentId !== 'claude-code') {
 					logger.debug(`Agent ${agentId} does not support slash command discovery`, LOG_CONTEXT);
 					return null;
@@ -1296,7 +1405,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
 									LOG_CONTEXT
 								);
-								return (msg.slash_commands as string[]).map((name: string) => ({ name }));
+								// Description enrichment is best-effort: a permission/IO
+								// error on the skills dir shouldn't lose the user's
+								// entire slash-command list. Capture the exception for
+								// Sentry and fall back to names-only.
+								let skillDescriptions = new Map<string, string>();
+								try {
+									skillDescriptions = await readClaudeSkillDescriptions(cwd);
+								} catch (err) {
+									void captureException(err);
+									logger.warn(
+										`Skill description enrichment failed; returning slash commands without descriptions`,
+										LOG_CONTEXT,
+										{ error: String(err) }
+									);
+								}
+								return (msg.slash_commands as string[]).map((name: string) => {
+									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+									const description = skillDescriptions.get(lookupKey);
+									return description ? { name, description } : { name };
+								});
 							}
 						} catch {
 							// Not valid JSON, skip

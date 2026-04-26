@@ -152,14 +152,15 @@ export function createAgentsApi() {
 
 		/**
 		 * Discover available slash commands for an agent.
-		 * Returns objects with name and optional prompt for all agents.
+		 * Returns objects with name, optional prompt (OpenCode custom commands),
+		 * and optional description (Claude Code skill frontmatter).
 		 */
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
 			customPath?: string,
 			sshRemoteId?: string
-		): Promise<{ name: string; prompt?: string }[] | null> =>
+		): Promise<{ name: string; prompt?: string; description?: string }[] | null> =>
 			ipcRenderer.invoke('agents:discoverSlashCommands', agentId, cwd, customPath, sshRemoteId),
 	};
 }

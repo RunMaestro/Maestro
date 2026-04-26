@@ -72,7 +72,6 @@ export interface MainPanelProps {
 		fullPath: string;
 	}>;
 	selectedAtMentionIndex?: number;
-	filePreviewLoading?: { name: string; path: string } | null;
 
 	// Setters
 	setGitDiffPreview: (preview: string | null) => void;
@@ -290,7 +289,7 @@ export interface MainPanelProps {
 	/** Whether the current preview file has been published as a gist */
 	hasGist?: boolean;
 	/** Publish a single AI message as a GitHub Gist */
-	onPublishMessageGist?: (text: string) => void;
+	onPublishMessageGist?: (text: string, messageId?: string) => void;
 
 	// Document Graph
 	onOpenInGraph?: () => void;

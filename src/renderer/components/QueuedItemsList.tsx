@@ -1,6 +1,9 @@
 import React, { useState, useCallback, useRef, memo } from 'react';
-import { X, ChevronDown, ChevronUp, GripVertical, Hammer } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, GripVertical, Copy, Check, Hammer } from 'lucide-react';
 import type { Theme, QueuedItem } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
+import { Modal, ModalFooter } from './ui/Modal';
+import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
@@ -69,8 +72,30 @@ export const QueuedItemsList = memo(
 		const [dropIndex, setDropIndex] = useState<number | null>(null);
 		const dragItemRef = useRef<number | null>(null);
 
+		// Refs for confirm-button focus management in confirmation modals
+		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
+		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;
+
+		// Copy feedback state
+		const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+		const copyResetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+		const handleCopy = useCallback((item: QueuedItem) => {
+			const text =
+				item.type === 'command'
+					? [item.command, item.commandArgs].filter(Boolean).join(' ')
+					: (item.text ?? '');
+			safeClipboardWrite(text).then((ok) => {
+				if (ok) {
+					setCopiedItemId(item.id);
+					if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+					copyResetTimerRef.current = setTimeout(() => setCopiedItemId(null), 1500);
+				}
+			});
+		}, []);
 
 		// Toggle expanded state for a queued message
 		const toggleExpanded = useCallback((itemId: string) => {
@@ -85,23 +110,6 @@ export const QueuedItemsList = memo(
 			});
 		}, []);
 
-		// Handle keyboard events on removal confirmation modal
-		const handleRemoveModalKeyDown = useCallback(
-			(e: React.KeyboardEvent) => {
-				if (e.key === 'Enter') {
-					e.preventDefault();
-					if (onRemoveQueuedItem && queueRemoveConfirmId) {
-						onRemoveQueuedItem(queueRemoveConfirmId);
-					}
-					setQueueRemoveConfirmId(null);
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
-					setQueueRemoveConfirmId(null);
-				}
-			},
-			[onRemoveQueuedItem, queueRemoveConfirmId]
-		);
-
 		// Handle confirm removal
 		const handleConfirmRemove = useCallback(() => {
 			if (onRemoveQueuedItem && queueRemoveConfirmId) {
@@ -109,23 +117,6 @@ export const QueuedItemsList = memo(
 			}
 			setQueueRemoveConfirmId(null);
 		}, [onRemoveQueuedItem, queueRemoveConfirmId]);
-
-		// Handle keyboard events on Force Send confirmation modal
-		const handleForceSendModalKeyDown = useCallback(
-			(e: React.KeyboardEvent) => {
-				if (e.key === 'Enter') {
-					e.preventDefault();
-					if (onForceSendQueuedItem && forceSendConfirmId) {
-						onForceSendQueuedItem(forceSendConfirmId);
-					}
-					setForceSendConfirmId(null);
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
-					setForceSendConfirmId(null);
-				}
-			},
-			[onForceSendQueuedItem, forceSendConfirmId]
-		);
 
 		const handleConfirmForceSend = useCallback(() => {
 			if (onForceSendQueuedItem && forceSendConfirmId) {
@@ -223,6 +214,12 @@ export const QueuedItemsList = memo(
 							onDragLeave={handleDragLeave}
 							className="mx-6 mb-2 p-3 rounded-lg relative group transition-all"
 							style={{
+								// Reserve enough vertical room for the stacked top-right
+								// Remove (X) and Copy buttons, plus the bottom-right Force
+								// Send button when shown, without overlap.
+								// X+Copy stack: 8 + 24 + 4 + 22 = 58px from top.
+								// Force Send (in flow at bottom): 8 mt + 28 button = 36px.
+								minHeight: showForceSendButton ? '7rem' : '4.25rem',
 								backgroundColor:
 									item.type === 'command'
 										? theme.colors.success + '20'
@@ -247,11 +244,27 @@ export const QueuedItemsList = memo(
 							{/* Top-right: Remove button */}
 							<button
 								onClick={() => setQueueRemoveConfirmId(item.id)}
-								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors"
+								className="absolute top-2 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
 								style={{ color: theme.colors.textDim }}
 								title="Remove from queue"
 							>
 								<X className="w-4 h-4" />
+							</button>
+
+							{/* Copy button - directly under the Remove (X) button */}
+							<button
+								onClick={() => handleCopy(item)}
+								className="absolute top-9 right-2 p-1 rounded hover:bg-black/20 transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+								style={{
+									color: copiedItemId === item.id ? theme.colors.success : theme.colors.textDim,
+								}}
+								title="Copy to clipboard"
+							>
+								{copiedItemId === item.id ? (
+									<Check className="w-3.5 h-3.5" />
+								) : (
+									<Copy className="w-3.5 h-3.5" />
+								)}
 							</button>
 
 							{/* Item content */}
@@ -260,8 +273,21 @@ export const QueuedItemsList = memo(
 								style={{ color: theme.colors.textMain }}
 							>
 								{item.type === 'command' && (
-									<span style={{ color: theme.colors.success, fontWeight: 600 }}>
-										{item.command}
+									<span className="flex items-baseline gap-1 overflow-hidden">
+										<span
+											className="shrink-0"
+											style={{ color: theme.colors.success, fontWeight: 600 }}
+										>
+											{item.command}
+										</span>
+										<span
+											className="truncate min-w-0"
+											style={{
+												color: item.commandArgs ? theme.colors.textMain : theme.colors.textDim,
+											}}
+										>
+											{item.commandArgs || item.commandDescription}
+										</span>
 									</span>
 								)}
 								{item.type === 'message' &&
@@ -324,120 +350,80 @@ export const QueuedItemsList = memo(
 
 				{/* Queue removal confirmation modal */}
 				{queueRemoveConfirmId && (
-					<div
-						className="fixed inset-0 flex items-center justify-center z-50"
-						style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-						onClick={() => setQueueRemoveConfirmId(null)}
-						onKeyDown={handleRemoveModalKeyDown}
+					<Modal
+						theme={theme}
+						title="Remove Queued Message?"
+						priority={MODAL_PRIORITIES.CONFIRM}
+						onClose={() => setQueueRemoveConfirmId(null)}
+						width={448}
+						initialFocusRef={removeConfirmButtonRef}
+						footer={
+							<ModalFooter
+								theme={theme}
+								onCancel={() => setQueueRemoveConfirmId(null)}
+								onConfirm={handleConfirmRemove}
+								confirmLabel="Remove"
+								destructive
+								confirmButtonRef={removeConfirmButtonRef}
+							/>
+						}
 					>
-						<div
-							className="p-4 rounded-lg shadow-xl max-w-md mx-4"
-							style={{ backgroundColor: theme.colors.bgMain }}
-							onClick={(e) => e.stopPropagation()}
-							tabIndex={-1}
-							ref={(el) => el?.focus()}
-						>
-							<h3 className="text-lg font-semibold mb-2" style={{ color: theme.colors.textMain }}>
-								Remove Queued Message?
-							</h3>
-							<p className="text-sm mb-4" style={{ color: theme.colors.textDim }}>
-								This message will be removed from the queue and will not be sent.
-							</p>
-							<div className="flex gap-2 justify-end">
-								<button
-									onClick={() => setQueueRemoveConfirmId(null)}
-									className="px-3 py-1.5 rounded text-sm"
-									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-								>
-									Cancel
-								</button>
-								<button
-									onClick={handleConfirmRemove}
-									className="px-3 py-1.5 rounded text-sm"
-									style={{ backgroundColor: theme.colors.error, color: 'white' }}
-									autoFocus
-								>
-									Remove
-								</button>
-							</div>
-						</div>
-					</div>
+						<p className="text-sm" style={{ color: theme.colors.textDim }}>
+							This message will be removed from the queue and will not be sent.
+						</p>
+					</Modal>
 				)}
 
 				{/* Force Send confirmation modal */}
 				{forceSendConfirmId && forceSendConfirmItem && (
-					<div
-						className="fixed inset-0 flex items-center justify-center z-50"
-						style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-						onClick={() => setForceSendConfirmId(null)}
-						onKeyDown={handleForceSendModalKeyDown}
+					<Modal
+						theme={theme}
+						title="Force Send Message?"
+						headerIcon={<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />}
+						priority={MODAL_PRIORITIES.CONFIRM}
+						onClose={() => setForceSendConfirmId(null)}
+						width={448}
+						initialFocusRef={forceSendConfirmButtonRef}
+						footer={
+							<ModalFooter
+								theme={theme}
+								onCancel={() => setForceSendConfirmId(null)}
+								onConfirm={handleConfirmForceSend}
+								confirmLabel="Force Send"
+								confirmButtonRef={forceSendConfirmButtonRef}
+							/>
+						}
 					>
-						<div
-							className="p-5 rounded-lg shadow-xl max-w-md mx-4 w-full"
-							style={{ backgroundColor: theme.colors.bgMain }}
-							onClick={(e) => e.stopPropagation()}
-							tabIndex={-1}
-							ref={(el) => el?.focus()}
-						>
-							<div className="flex items-center gap-2 mb-2">
-								<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />
-								<h3 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-									Force Send Message?
-								</h3>
-							</div>
-							<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
-								This will send the queued message immediately, running in parallel with the other
-								tab
-								{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length === 1
-									? ''
-									: 's'}{' '}
-								currently working in this agent.
-							</p>
-							{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length > 0 && (
+						<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
+							This will send the queued message immediately, running in parallel with the other tab
+							{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length === 1
+								? ''
+								: 's'}{' '}
+							currently working in this agent.
+						</p>
+						{forceSendConfirmContext && forceSendConfirmContext.otherBusyTabs.length > 0 && (
+							<div className="p-3 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
 								<div
-									className="mb-4 p-3 rounded"
-									style={{ backgroundColor: theme.colors.bgActivity }}
+									className="text-xs font-bold tracking-wider mb-2"
+									style={{ color: theme.colors.warning }}
 								>
-									<div
-										className="text-xs font-bold tracking-wider mb-2"
-										style={{ color: theme.colors.warning }}
-									>
-										{forceSendConfirmContext.otherBusyTabs.length} OTHER TAB
-										{forceSendConfirmContext.otherBusyTabs.length === 1 ? '' : 'S'} WORKING
-									</div>
-									<ul className="text-sm space-y-1" style={{ color: theme.colors.textMain }}>
-										{forceSendConfirmContext.otherBusyTabs.map((tab) => (
-											<li key={tab.id} className="flex items-center gap-2">
-												<span
-													className="inline-block w-2 h-2 rounded-full"
-													style={{ backgroundColor: theme.colors.warning }}
-												/>
-												<span className="font-mono">{tab.displayName}</span>
-											</li>
-										))}
-									</ul>
+									{forceSendConfirmContext.otherBusyTabs.length} OTHER TAB
+									{forceSendConfirmContext.otherBusyTabs.length === 1 ? '' : 'S'} WORKING
 								</div>
-							)}
-							<div className="flex gap-2 justify-end">
-								<button
-									onClick={() => setForceSendConfirmId(null)}
-									className="px-3 py-1.5 rounded text-sm"
-									style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-								>
-									Cancel
-								</button>
-								<button
-									onClick={handleConfirmForceSend}
-									className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium"
-									style={{ backgroundColor: theme.colors.warning, color: theme.colors.bgMain }}
-									autoFocus
-								>
-									<Hammer className="w-4 h-4" />
-									Force Send
-								</button>
+								<ul className="text-sm space-y-1" style={{ color: theme.colors.textMain }}>
+									{forceSendConfirmContext.otherBusyTabs.map((tab) => (
+										<li key={tab.id} className="flex items-center gap-2">
+											<span
+												className="inline-block w-2 h-2 rounded-full"
+												style={{ backgroundColor: theme.colors.warning }}
+											/>
+											<span className="font-mono">{tab.displayName}</span>
+										</li>
+									))}
+								</ul>
 							</div>
-						</div>
-					</div>
+						)}
+					</Modal>
 				)}
 			</>
 		);

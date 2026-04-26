@@ -16,6 +16,9 @@ import type {
 	CueSessionStatus,
 	CueSettings,
 } from '../../shared/cue';
+import type { CueLogPayload } from '../../shared/cue-log-types';
+import type { CueMetrics } from '../cue/cue-metrics';
+import type { FanInHealthEntry } from '../cue/cue-fan-in-tracker';
 export type {
 	CueEvent,
 	CueEventType,
@@ -25,6 +28,16 @@ export type {
 	CueSessionStatus,
 	CueSettings,
 } from '../../shared/cue';
+export type { CueLogPayload } from '../../shared/cue-log-types';
+
+/**
+ * Payload shape received by `onActivityUpdate` listeners. The main process
+ * forwards the `data` argument of every `onLog(level, message, data)` call
+ * verbatim on `cue:activityUpdate`, and every data-bearing call passes a
+ * typed `CueLogPayload` (queueOverflow, runFinished, rateLimitBackoff, …).
+ * Renderer code narrows via `payload.type`.
+ */
+export type CueActivityPayload = CueLogPayload;
 
 /**
  * Creates the Cue API object for preload exposure
@@ -70,6 +83,12 @@ export function createCueApi() {
 		// Get queue status per session
 		getQueueStatus: (): Promise<Record<string, number>> => ipcRenderer.invoke('cue:getQueueStatus'),
 
+		// Get engine metrics snapshot (runsStarted, eventsDropped, etc.)
+		getMetrics: (): Promise<CueMetrics | null> => ipcRenderer.invoke('cue:getMetrics'),
+
+		// Get stalled fan-in subscriptions (> 50% timeout). Empty = healthy.
+		getFanInHealth: (): Promise<FanInHealthEntry[]> => ipcRenderer.invoke('cue:getFanInHealth'),
+
 		// Refresh a session's Cue configuration
 		refreshSession: (sessionId: string, projectRoot: string): Promise<void> =>
 			ipcRenderer.invoke('cue:refreshSession', { sessionId, projectRoot }),
@@ -105,9 +124,11 @@ export function createCueApi() {
 		loadPipelineLayout: (): Promise<Record<string, unknown> | null> =>
 			ipcRenderer.invoke('cue:loadPipelineLayout'),
 
-		// Listen for real-time activity updates from the main process
-		onActivityUpdate: (callback: (data: CueRunResult) => void): (() => void) => {
-			const handler = (_e: unknown, data: CueRunResult) => callback(data);
+		// Listen for real-time activity updates from the main process. Payload
+		// is a typed CueLogPayload discriminated union — narrow on `data.type`
+		// to handle specific events (queueOverflow, runFinished, ...).
+		onActivityUpdate: (callback: (data: CueActivityPayload) => void): (() => void) => {
+			const handler = (_e: unknown, data: CueActivityPayload) => callback(data);
 			ipcRenderer.on('cue:activityUpdate', handler);
 			return () => {
 				ipcRenderer.removeListener('cue:activityUpdate', handler);

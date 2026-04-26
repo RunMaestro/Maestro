@@ -19,6 +19,7 @@ export interface ProcessConfig {
 	shellEnvVars?: Record<string, string>;
 	images?: string[];
 	imageArgs?: (imagePath: string) => string[];
+	imagePromptBuilder?: (imagePaths: string[]) => string;
 	promptArgs?: (prompt: string) => string[];
 	contextWindow?: number;
 	customEnvVars?: Record<string, string>;
@@ -34,6 +35,11 @@ export interface ProcessConfig {
 	sendPromptViaStdin?: boolean;
 	/** If true, send the prompt via stdin as raw text instead of command line */
 	sendPromptViaStdinRaw?: boolean;
+	/** If true, the prompt is already embedded in `args` by the caller. The spawner
+	 *  must not append it again. Used by SSH tab naming for non-stream-json agents:
+	 *  the prompt has to live inside the `bash -c '<cmd>'` wrapper, otherwise it
+	 *  ends up as a positional arg to the remote bash and never reaches the agent. */
+	promptAlreadyInArgs?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
 	/** PTY terminal width in columns (default 80) */
@@ -56,6 +62,9 @@ export interface ManagedProcess {
 	isBatchMode?: boolean;
 	isStreamJsonMode?: boolean;
 	jsonBuffer?: string;
+	/** When true, the JSON buffer was force-cleared after exceeding size limits.
+	 *  Subsequent chunks are discarded until a clean top-level `{` resync point. */
+	jsonBufferCorrupted?: boolean;
 	lastCommand?: string;
 	sessionIdEmitted?: boolean;
 	resultEmitted?: boolean;
@@ -71,6 +80,7 @@ export interface ManagedProcess {
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
 	usageIsCumulative?: boolean;
+	emittedToolCallIds?: Set<string>;
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
@@ -122,6 +132,10 @@ export interface ToolExecution {
 	toolName: string;
 	state: unknown;
 	timestamp: number;
+	/** Stable correlation id from the agent. When present, renderers
+	 *  merge `running` and `completed`/`failed` events into a single
+	 *  log entry keyed by this id instead of appending two bubbles. */
+	toolCallId?: string;
 }
 
 export interface QueryCompleteData {

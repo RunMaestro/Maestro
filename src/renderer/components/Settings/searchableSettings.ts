@@ -456,7 +456,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'File Indexing & File Panel Settings',
 		description:
-			'Local ignore patterns, gitignore handling, max recursion depth, and max file entries for the Files panel',
+			'Local ignore patterns, gitignore handling, max recursion depth, max file entries, and SSH cap reduction for the Files panel',
 		keywords: [
 			'ignore',
 			'patterns',
@@ -486,6 +486,14 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'250k',
 			'500k',
 			'preset',
+			'ssh',
+			'remote',
+			'reduce',
+			'fraction',
+			'percent',
+			'percentage',
+			'cap',
+			'budget',
 		],
 	},
 ];

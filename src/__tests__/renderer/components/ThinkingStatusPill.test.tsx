@@ -401,6 +401,11 @@ describe('ThinkingStatusPill', () => {
 			expect(screen.getByText('All Thinking Sessions')).toBeInTheDocument();
 
 			fireEvent.mouseLeave(indicator);
+			// Hover-leave is debounced 150ms via setTimeout to keep the dropdown
+			// open as the cursor crosses the gap between badge and panel.
+			act(() => {
+				vi.advanceTimersByTime(150);
+			});
 			expect(screen.queryByText('All Thinking Sessions')).not.toBeInTheDocument();
 		});
 
@@ -826,7 +831,10 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			const badge = screen.getByText('+1');
-			fireEvent.mouseEnter(badge.closest('.relative')!);
+			// Hover handlers live on the badge's parent <div>, not on the
+			// outer `.relative` pill (the dropdown is anchored to the pill,
+			// but only the badge fires expand/collapse).
+			fireEvent.mouseEnter(badge.parentElement!);
 
 			expect(screen.getByText('Running Processes')).toBeInTheDocument();
 			// AutoRun appears as its own entry in the dropdown
@@ -858,11 +866,15 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			const badge = screen.getByText('+1');
-			const hoverTarget = badge.closest('.relative')!;
+			const hoverTarget = badge.parentElement!;
 			fireEvent.mouseEnter(hoverTarget);
 			expect(screen.getByText('Running Processes')).toBeInTheDocument();
 
 			fireEvent.mouseLeave(hoverTarget);
+			// Hover-leave is debounced 150ms.
+			act(() => {
+				vi.advanceTimersByTime(150);
+			});
 			expect(screen.queryByText('Running Processes')).not.toBeInTheDocument();
 		});
 
@@ -894,7 +906,7 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			const badge = screen.getByText('+1');
-			fireEvent.mouseEnter(badge.closest('.relative')!);
+			fireEvent.mouseEnter(badge.parentElement!);
 
 			// Click the concurrent item row in the dropdown
 			const rows = screen.getAllByRole('button');

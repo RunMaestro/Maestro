@@ -255,7 +255,7 @@ describe('useFileTreeManagement', () => {
 		renderHook(() => useFileTreeManagement(deps));
 
 		await waitFor(() => {
-			// loadFileTree is now called with (path, maxDepth, currentDepth, sshContext, onProgress, localOptions, maxEntries)
+			// loadFileTree is called with (path, maxDepth, currentDepth, sshContext, onProgress, localOptions, maxEntries, signal)
 			expect(loadFileTree).toHaveBeenCalledWith(
 				'/test/project',
 				5,
@@ -263,7 +263,8 @@ describe('useFileTreeManagement', () => {
 				undefined,
 				undefined,
 				undefined,
-				100_000
+				100_000,
+				expect.any(AbortSignal)
 			);
 			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
 		});
@@ -365,7 +366,9 @@ describe('useFileTreeManagement', () => {
 				0,
 				expect.objectContaining({ sshRemoteId: 'my-ssh-remote' }),
 				undefined,
-				undefined
+				undefined,
+				Number.POSITIVE_INFINITY,
+				expect.any(AbortSignal)
 			);
 			// Full load should be called with the configured maxDepth (default 5) + entry cap
 			expect(loadFileTree).toHaveBeenCalledWith(
@@ -375,7 +378,8 @@ describe('useFileTreeManagement', () => {
 				expect.objectContaining({ sshRemoteId: 'my-ssh-remote' }),
 				expect.any(Function),
 				undefined,
-				100_000
+				100_000,
+				expect.any(AbortSignal)
 			);
 		});
 
@@ -412,8 +416,46 @@ describe('useFileTreeManagement', () => {
 			undefined,
 			undefined,
 			undefined,
-			100_000
+			100_000,
+			expect.any(AbortSignal)
 		);
+	});
+
+	it('cancelFileTreeLoad aborts the in-flight load signal and clears loading state', async () => {
+		// Hold the load open so we can cancel while it's pending.
+		let resolveLoad: (value: ReturnType<typeof asResult>) => void = () => {};
+		const pending = new Promise<ReturnType<typeof asResult>>((resolve) => {
+			resolveLoad = resolve;
+		});
+		vi.mocked(loadFileTree).mockReturnValue(pending);
+
+		const state = createSessionsState([createMockSession({ fileTree: [] })]);
+		const deps = createDeps(state);
+		const { result } = renderHook(() => useFileTreeManagement(deps));
+
+		// Wait until the auto-load effect has kicked off and marked the session as loading.
+		await waitFor(() => {
+			expect(state.getSessions()[0].fileTreeLoading).toBe(true);
+			expect(loadFileTree).toHaveBeenCalled();
+		});
+
+		// Grab the AbortSignal passed into loadFileTree and confirm it starts unaborted.
+		const callArgs = vi.mocked(loadFileTree).mock.calls[0];
+		const signal = callArgs[callArgs.length - 1] as AbortSignal;
+		expect(signal).toBeInstanceOf(AbortSignal);
+		expect(signal.aborted).toBe(false);
+
+		// Cancel and verify the signal aborted and the UI state was cleared.
+		await act(async () => {
+			result.current.cancelFileTreeLoad(state.getSessions()[0].id);
+		});
+
+		expect(signal.aborted).toBe(true);
+		expect(state.getSessions()[0].fileTreeLoading).toBe(false);
+		expect(state.getSessions()[0].fileTreeLoadingProgress).toBeUndefined();
+
+		// Resolve the pending load so the promise machinery settles cleanly.
+		resolveLoad(asResult([]));
 	});
 
 	it('decouples stats from tree display in initial load', async () => {

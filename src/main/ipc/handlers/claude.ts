@@ -1596,6 +1596,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					source: 'project' | 'user';
 				}> = [];
 
+				// Only treat "missing entry" filesystem errors as "no skill here";
+				// propagate permission/IO errors to the outer IPC handler so
+				// Sentry captures them instead of silently dropping skills.
+				const isMissingEntryError = (error: unknown): boolean => {
+					const code = (error as NodeJS.ErrnoException | undefined)?.code;
+					return code === 'ENOENT' || code === 'ENOTDIR';
+				};
+
 				/**
 				 * Parses a skill.md file to extract name, description, and token count.
 				 * Skills use YAML frontmatter with 'name' and 'description' fields.
@@ -1651,28 +1659,37 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 						const tokenCount = Math.round(content.length / 4);
 
 						return { name, description, tokenCount, source };
-					} catch {
-						return null;
+					} catch (error) {
+						if (isMissingEntryError(error)) return null;
+						throw error;
 					}
 				};
 
 				/**
-				 * Scans a skills directory for skill.md files
+				 * Scans a skills directory for SKILL.md files. Claude Code writes the
+				 * canonical uppercase name; on case-insensitive filesystems
+				 * (Windows NTFS, default macOS APFS) `skill.md` happens to match,
+				 * but on case-sensitive filesystems (Linux, WSL) it does not — so
+				 * try the canonical name first and fall back to lowercase.
 				 */
 				const scanSkillsDir = async (dir: string, source: 'project' | 'user') => {
+					let entries;
 					try {
-						const entries = await fs.readdir(dir, { withFileTypes: true });
-						for (const entry of entries) {
-							if (entry.isDirectory()) {
-								const skillPath = path.join(dir, entry.name, 'skill.md');
-								const skill = await parseSkillFile(skillPath, entry.name, source);
-								if (skill) {
-									skills.push(skill);
-								}
+						entries = await fs.readdir(dir, { withFileTypes: true });
+					} catch (error) {
+						if (isMissingEntryError(error)) return;
+						throw error;
+					}
+					for (const entry of entries) {
+						if (!entry.isDirectory()) continue;
+						for (const candidate of ['SKILL.md', 'skill.md']) {
+							const skillPath = path.join(dir, entry.name, candidate);
+							const skill = await parseSkillFile(skillPath, entry.name, source);
+							if (skill) {
+								skills.push(skill);
+								break;
 							}
 						}
-					} catch {
-						// Directory doesn't exist or isn't readable
 					}
 				};
 

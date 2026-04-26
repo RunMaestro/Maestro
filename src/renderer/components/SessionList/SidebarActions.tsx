@@ -1,7 +1,8 @@
 import { memo } from 'react';
-import { PanelLeftClose, PanelLeftOpen, Bell, Bot, MessageSquarePlus } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Bell, Bot, MessageSquarePlus, Pencil } from 'lucide-react';
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 
 interface SidebarActionsProps {
 	theme: Theme;
@@ -31,6 +32,7 @@ export const SidebarActions = memo(function SidebarActions({
 	toggleShowUnreadAgentsOnly,
 }: SidebarActionsProps) {
 	const compact = sidebarWidth < 320;
+	const feedbackMinimized = useFeedbackDraftStore((s) => s.isMinimized);
 	const toggleSidebarShortcutLabel = shortcuts.toggleSidebar?.keys?.length
 		? ` (${formatShortcutKeys(shortcuts.toggleSidebar.keys)})`
 		: '';
@@ -79,11 +81,25 @@ export const SidebarActions = memo(function SidebarActions({
 						type="button"
 						onClick={openFeedback}
 						disabled={!openFeedback}
-						className="flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden"
+						data-feedback-button="true"
+						className="relative flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-						title="Send product feedback"
+						title={feedbackMinimized ? 'Resume feedback draft' : 'Send product feedback'}
 					>
 						{!compact && <MessageSquarePlus className="w-3 h-3 shrink-0" />} Feedback
+						{feedbackMinimized && (
+							<span
+								className="absolute -top-1 -right-1 flex items-center justify-center w-4 h-4 rounded-full shadow"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									color: theme.colors.accent,
+									border: `1px solid ${theme.colors.accent}`,
+								}}
+								aria-label="Feedback draft in progress"
+							>
+								<Pencil className="w-2.5 h-2.5" />
+							</span>
+						)}
 					</button>
 				</div>
 			)}

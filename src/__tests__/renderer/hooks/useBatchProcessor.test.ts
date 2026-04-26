@@ -1273,6 +1273,80 @@ describe('useBatchProcessor hook', () => {
 			// Let the held agent promise resolve so the hung batch loop can unwind
 			resolveAgent!({ success: true, agentSessionId: 'test-session' });
 		});
+
+		it('should stop the processing loop after kill instead of dispatching another task', async () => {
+			// Regression: killBatchRun used to set stopRequestedRefs[sessionId] = true and
+			// then synchronously delete it before the async loop's next iteration could
+			// observe it. The loop's in-flight processTask would resolve (or reject from
+			// the killed agent), the catch/continue would fall through to the next inner
+			// while iteration, see the stop flag as undefined (falsy), and dispatch a
+			// fresh spawnAgent for the next task — keeping notifications and the agent
+			// process alive after the user clicked Kill.
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			// Doc with two unchecked tasks so the inner while loop has more work queued
+			// after the first task completes.
+			mockReadDoc.mockResolvedValue({
+				success: true,
+				content: '# Tasks\n- [ ] Task 1\n- [ ] Task 2',
+			});
+
+			// Hold the first agent spawn so the batch is mid-task when we kill.
+			let resolveAgent: (value: { success: boolean; agentSessionId?: string }) => void;
+			const agentPromise = new Promise<{ success: boolean; agentSessionId?: string }>((resolve) => {
+				resolveAgent = resolve;
+			});
+			mockOnSpawnAgent.mockReturnValue(agentPromise);
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			act(() => {
+				void result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			// Wait until the loop has spawned the first task.
+			await waitFor(() => {
+				expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			});
+
+			// User clicks Kill.
+			await act(async () => {
+				await result.current.killBatchRun('test-session-id');
+			});
+
+			// Simulate the killed agent's processTask completing (the held promise
+			// resolves once the process exits or the IPC kill succeeds). The loop
+			// must NOT dispatch another spawn for the second unchecked task.
+			await act(async () => {
+				resolveAgent!({ success: true, agentSessionId: 'test-session' });
+				// Yield twice so any queued microtasks/state updates inside the loop
+				// have a chance to run before we assert.
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			// Give the loop additional ticks to (incorrectly) re-enter the inner while.
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('worktree handling', () => {

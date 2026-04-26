@@ -9,9 +9,10 @@
  * Unix commands (ls, cat, stat, du) via SSH, parsing their output.
  */
 
+import { spawn } from 'child_process';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
-import { shellEscape } from './shell-escape';
+import { shellEscape, shellEscapeForDoubleQuotes } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -121,6 +122,76 @@ const DEFAULT_RETRY_CONFIG = {
 const SSH_COMMAND_TIMEOUT_MS = 30000;
 
 /**
+ * Maximum concurrent SSH commands per remote host.
+ *
+ * SSH-via-cloudflared (and similar tunneled transports) rate-limit aggressive
+ * connection bursts. A naive recursive file walk over a large tree can spawn
+ * hundreds of fresh SSH connections in seconds, saturating the tunnel and
+ * starving unrelated SSH traffic — agent spawn, terminal start, git ops.
+ *
+ * 4 in-flight per host steady-state is well below cloudflared's burst threshold
+ * while still keeping a multi-thousand-directory walk progressing acceptably
+ * (each ls call is short). Excess calls queue rather than spawn new processes.
+ */
+const MAX_CONCURRENT_SSH_PER_HOST = 4;
+
+/**
+ * Per-host async semaphore. Caps in-flight SSH commands so a runaway scan on
+ * one host can't exhaust the SSH transport for unrelated callers (agents,
+ * terminals, git).
+ */
+class HostLimiter {
+	private inFlight = 0;
+	private readonly waiters: Array<() => void> = [];
+
+	constructor(private readonly max: number) {}
+
+	async acquire(): Promise<void> {
+		if (this.inFlight < this.max) {
+			this.inFlight++;
+			return;
+		}
+		await new Promise<void>((resolve) => {
+			this.waiters.push(resolve);
+		});
+		this.inFlight++;
+	}
+
+	release(): void {
+		this.inFlight--;
+		const next = this.waiters.shift();
+		if (next) next();
+	}
+}
+
+/** Limiters keyed by stable host identifier — see {@link sshHostKey}. */
+const hostLimiters = new Map<string, HostLimiter>();
+
+/** Stable key for per-host limiting. Different users/ports on the same host get separate limiters. */
+function sshHostKey(config: SshRemoteConfig): string {
+	const user = config.username?.trim() || '';
+	return `${user}@${config.host}:${config.port}`;
+}
+
+function getHostLimiter(config: SshRemoteConfig): HostLimiter {
+	const key = sshHostKey(config);
+	let limiter = hostLimiters.get(key);
+	if (!limiter) {
+		limiter = new HostLimiter(MAX_CONCURRENT_SSH_PER_HOST);
+		hostLimiters.set(key, limiter);
+	}
+	return limiter;
+}
+
+/**
+ * Test-only: reset the per-host limiter map. Avoids cross-test state leakage
+ * when tests exercise the limiter behavior with custom hosts.
+ */
+export function __resetHostLimitersForTest(): void {
+	hostLimiters.clear();
+}
+
+/**
  * Sleep for a specified duration with jitter.
  */
 function sleep(ms: number): Promise<void> {
@@ -159,36 +230,68 @@ async function execRemoteCommand(
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
 	const sshPath = await resolveSshPath();
 
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		const sshArgs = deps.buildSshArgs(config);
-		sshArgs.push(remoteCommand);
+	// Cap concurrent SSH commands per host. Tunneled transports (e.g.,
+	// cloudflared) drop connections under burst load; throttling here prevents
+	// a recursive file scan from starving unrelated SSH consumers (agent spawn,
+	// terminal, git). Acquired once for the whole retry loop so retries don't
+	// double-count against the cap.
+	const limiter = getHostLimiter(config);
+	await limiter.acquire();
 
-		const result = await deps.execSsh(sshPath, sshArgs);
-		lastResult = result;
+	try {
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			const sshArgs = deps.buildSshArgs(config);
+			sshArgs.push(remoteCommand);
 
-		// Success - return immediately
-		if (result.exitCode === 0) {
+			const result = await deps.execSsh(sshPath, sshArgs);
+			lastResult = result;
+
+			// Success - return immediately
+			if (result.exitCode === 0) {
+				return result;
+			}
+
+			// Check if this is a recoverable error
+			const combinedOutput = `${result.stderr} ${result.stdout}`;
+			const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
+			if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
+				const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+				logger.debug(
+					`[remote-fs] SSH transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`
+				);
+				await sleep(delay);
+				continue;
+			}
+
+			// Non-recoverable error or max retries reached - return the result
 			return result;
 		}
 
-		// Check if this is a recoverable error
-		const combinedOutput = `${result.stderr} ${result.stdout}`;
-		const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
-		if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
-			const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-			logger.debug(
-				`[remote-fs] SSH transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`
-			);
-			await sleep(delay);
-			continue;
-		}
+		// Should never reach here, but return last result as fallback
+		return lastResult!;
+	} finally {
+		limiter.release();
+	}
+}
 
-		// Non-recoverable error or max retries reached - return the result
-		return result;
+function shellEscapeRemotePath(filePath: string): string {
+	if (filePath === '~') {
+		return '"$HOME"';
 	}
 
-	// Should never reach here, but return last result as fallback
-	return lastResult!;
+	if (filePath.startsWith('~/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice(2))}"`;
+	}
+
+	if (filePath === '$HOME') {
+		return '"$HOME"';
+	}
+
+	if (filePath.startsWith('$HOME/')) {
+		return `"$HOME/${shellEscapeForDoubleQuotes(filePath.slice('$HOME/'.length))}"`;
+	}
+
+	return shellEscape(filePath);
 }
 
 /**
@@ -222,17 +325,29 @@ export async function readDirRemote(
 	// that consumers can recurse into them.  The marker line __SYMDIR__
 	// separates the two outputs.
 	//
-	// Glob patterns used for the symlink scan:
-	//   /*          — non-dotfiles
-	//   /.[!.]*     — dotfiles (one leading dot), excluding the "." entry
-	//   /..?*       — names starting with ".." followed by more chars, excluding ".."
-	// We avoid a plain "/.*" because it matches "." and ".." on most shells.
-	// Unmatched globs are passed literally, but [ -L ] fails on them so nothing
-	// spurious is printed. Errors are redirected to /dev/null regardless.
-	const escapedPath = shellEscape(dirPath);
+	// Implementation choices (both matter — each guards against a real failure
+	// we hit in production):
+	//
+	// 1. `find -mindepth 1 -maxdepth 1 -type l` rather than shell globs,
+	//    because zsh (default shell on modern macOS) errors on unmatched
+	//    globs (NOMATCH), which would fail the whole SSH command for any
+	//    directory missing dotfiles. `find` has no such failure mode.
+	//
+	// 2. `-exec test -d {} \; -exec basename {} \;` rather than a
+	//    `| while read` pipeline, because the while loop's exit status is
+	//    the exit status of its last body command. If `find` returns any
+	//    symlink whose target is NOT a directory (e.g. a symlink to a file),
+	//    `test -d` fails for that iteration and the pipeline leaks exit 1,
+	//    which `readDirRemote`'s caller would then report as a failure even
+	//    though `ls` succeeded. `find -exec` always reports success when
+	//    find itself completed, regardless of -exec outcomes.
+	//
+	// Both `-mindepth`/`-maxdepth` and the POSIX `-exec … {} \;` form are
+	// supported by GNU and BSD (macOS) find.
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const symlinkScan =
-		`for f in ${escapedPath}/* ${escapedPath}/.[!.]* ${escapedPath}/..?*; ` +
-		`do [ -L "$f" ] && [ -d "$f" ] && basename "$f"; done 2>/dev/null`;
+		`find ${escapedPath} -mindepth 1 -maxdepth 1 -type l ` +
+		`-exec test -d {} \\; -exec basename {} \\; 2>/dev/null`;
 	const remoteCommand =
 		`ls -1AF --color=never ${escapedPath} 2>/dev/null || echo "__LS_ERROR__"; ` +
 		`echo "__SYMDIR__"; ` +
@@ -382,6 +497,74 @@ export async function listDirWithStatsRemote(
 }
 
 /**
+ * Bulk-stat a fixed file name within every immediate subdirectory of
+ * `parentDir`, in a single SSH round-trip.
+ *
+ * Why this exists: agents like Copilot store sessions as
+ * `parentDir/<sessionId>/events.jsonl`. Listing N sessions naively means
+ * one stat (or `du`) call per session, which fans out past sshd's
+ * `MaxStartups` once N grows. This collapses the fan-out to one
+ * shell-glob `stat` invocation.
+ *
+ * Returned entries use the parent subdirectory name (the session id, in
+ * Copilot's case) as `name`. Subdirectories that lack the file are silently
+ * omitted — the caller decides how to treat them.
+ */
+export async function bulkStatFileInSubdirsRemote(
+	parentDir: string,
+	fileName: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteDirEntryWithStats[]>> {
+	// `fileName` is interpolated raw into a shell glob; reject any
+	// metacharacters so a malicious caller can't inject extra commands.
+	if (/[^\w.-]/.test(fileName)) {
+		return { success: false, error: `Refusing unsafe fileName: ${fileName}` };
+	}
+	const escapedParent = shellEscape(parentDir);
+	// Output one line per matching file: `<size>|<mtime-seconds>|<subdir>/<fileName>`.
+	// Same GNU-then-BSD probe used by `listDirWithStatsRemote`. The leading
+	// `cd` scopes the glob so file names come back as relative paths.
+	const remoteCommand =
+		`cd ${escapedParent} 2>/dev/null || exit 0; ` +
+		`if stat --version >/dev/null 2>&1; then ` +
+		`stat --printf='%s|%Y|%n\\n' */${fileName} 2>/dev/null || true; ` +
+		`else ` +
+		`stat -f '%z|%m|%N' */${fileName} 2>/dev/null || true; ` +
+		`fi`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to bulk-stat ${fileName} under: ${parentDir}`,
+		};
+	}
+
+	const entries: RemoteDirEntryWithStats[] = [];
+	const lines = result.stdout.split('\n');
+	const suffix = `/${fileName}`;
+	for (const line of lines) {
+		if (!line) continue;
+		const firstPipe = line.indexOf('|');
+		const secondPipe = firstPipe >= 0 ? line.indexOf('|', firstPipe + 1) : -1;
+		if (firstPipe < 0 || secondPipe < 0) continue;
+		const size = parseInt(line.slice(0, firstPipe), 10);
+		const mtimeSeconds = parseInt(line.slice(firstPipe + 1, secondPipe), 10);
+		const fullName = line.slice(secondPipe + 1);
+		if (!fullName || isNaN(size) || isNaN(mtimeSeconds)) continue;
+		// Strip the trailing `/<fileName>` to recover the subdirectory name.
+		if (!fullName.endsWith(suffix)) continue;
+		const name = fullName.slice(0, -suffix.length);
+		if (!name) continue;
+		entries.push({ name, size, mtime: mtimeSeconds * 1000 });
+	}
+
+	return { success: true, data: entries };
+}
+
+/**
  * Read file contents from a remote host via SSH.
  *
  * Executes `cat` on the remote to read the file contents.
@@ -401,7 +584,7 @@ export async function readFileRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<string>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 	// Use cat with explicit error handling
 	const remoteCommand = `cat ${escapedPath}`;
 
@@ -428,6 +611,99 @@ export async function readFileRemote(
 }
 
 /**
+ * Read a remote file with abort support — used for user-initiated file previews
+ * where the user may close the tab mid-load to cancel the SSH read.
+ *
+ * Unlike readFileRemote (which buffers via execFile), this spawns ssh+cat
+ * directly so we can SIGTERM the child process when the AbortSignal fires.
+ * No retries: a user-driven open that fails should surface the error, not
+ * silently retry while the user waits.
+ */
+export async function readFileRemoteAbortable(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	signal: AbortSignal
+): Promise<RemoteFsResult<string>> {
+	if (signal.aborted) {
+		return { success: false, error: 'Aborted' };
+	}
+
+	const escapedPath = shellEscapeRemotePath(filePath);
+	const remoteCommand = `cat ${escapedPath}`;
+
+	const sshPath = await resolveSshPath();
+	const sshArgs = sshRemoteManager.buildSshArgs(sshRemote);
+	sshArgs.push(remoteCommand);
+
+	const limiter = getHostLimiter(sshRemote);
+	await limiter.acquire();
+
+	try {
+		return await new Promise<RemoteFsResult<string>>((resolve) => {
+			const child = spawn(sshPath, sshArgs, {
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+
+			let stdout = '';
+			let stderr = '';
+			let aborted = false;
+
+			const onAbort = () => {
+				aborted = true;
+				// SIGTERM lets ssh tear down its connection cleanly; if the child
+				// hasn't exited within a grace period, escalate to SIGKILL.
+				child.kill('SIGTERM');
+				setTimeout(() => {
+					if (!child.killed) child.kill('SIGKILL');
+				}, 1000).unref();
+			};
+
+			signal.addEventListener('abort', onAbort, { once: true });
+
+			child.stdout?.setEncoding('utf-8');
+			child.stdout?.on('data', (chunk: string) => {
+				stdout += chunk;
+			});
+
+			child.stderr?.setEncoding('utf-8');
+			child.stderr?.on('data', (chunk: string) => {
+				stderr += chunk;
+			});
+
+			child.on('error', (err) => {
+				signal.removeEventListener('abort', onAbort);
+				resolve({ success: false, error: err.message });
+			});
+
+			child.on('close', (code) => {
+				signal.removeEventListener('abort', onAbort);
+				if (aborted) {
+					resolve({ success: false, error: 'Aborted' });
+					return;
+				}
+				if (code !== 0) {
+					const err = stderr || `Failed to read file: ${filePath}`;
+					resolve({
+						success: false,
+						error: err.includes('No such file')
+							? `File not found: ${filePath}`
+							: err.includes('Is a directory')
+								? `Path is a directory: ${filePath}`
+								: err.includes('Permission denied')
+									? `Permission denied: ${filePath}`
+									: err,
+					});
+					return;
+				}
+				resolve({ success: true, data: stdout });
+			});
+		});
+	} finally {
+		limiter.release();
+	}
+}
+
+/**
  * Get file/directory stat information from a remote host via SSH.
  *
  * Executes `stat` on the remote with a specific format string to get
@@ -447,7 +723,7 @@ export async function statRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<RemoteStatResult>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 	// Use stat with format string:
 	// %s = size in bytes
 	// %F = file type (regular file, directory, symbolic link, etc.)
@@ -525,7 +801,7 @@ export async function directorySizeRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<number>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	// Use du with:
 	// -s: summarize (total only)
 	// -b: apparent size in bytes (GNU)
@@ -594,7 +870,7 @@ export async function writeFileRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(filePath);
+	const escapedPath = shellEscapeRemotePath(filePath);
 
 	// Use base64 encoding to safely transfer the content
 	// This avoids issues with special characters, quotes, and newlines
@@ -636,7 +912,7 @@ export async function existsRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<boolean>> {
-	const escapedPath = shellEscape(remotePath);
+	const escapedPath = shellEscapeRemotePath(remotePath);
 	const remoteCommand = `test -e ${escapedPath} && echo "EXISTS" || echo "NOT_EXISTS"`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -669,7 +945,7 @@ export async function mkdirRemote(
 	recursive: boolean = true,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const mkdirFlag = recursive ? '-p' : '';
 	const remoteCommand = `mkdir ${mkdirFlag} ${escapedPath}`;
 
@@ -705,8 +981,8 @@ export async function renameRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedOldPath = shellEscape(oldPath);
-	const escapedNewPath = shellEscape(newPath);
+	const escapedOldPath = shellEscapeRemotePath(oldPath);
+	const escapedNewPath = shellEscapeRemotePath(newPath);
 	const remoteCommand = `mv ${escapedOldPath} ${escapedNewPath}`;
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -741,7 +1017,7 @@ export async function deleteRemote(
 	recursive: boolean = true,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<void>> {
-	const escapedPath = shellEscape(targetPath);
+	const escapedPath = shellEscapeRemotePath(targetPath);
 	// Use rm -rf for recursive delete (directories), rm -f for files
 	// The -f flag prevents errors if file doesn't exist
 	const rmFlags = recursive ? '-rf' : '-f';
@@ -777,7 +1053,7 @@ export async function countItemsRemote(
 	sshRemote: SshRemoteConfig,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<{ fileCount: number; folderCount: number }>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	// Use find to count files and directories separately
 	// -type f for files, -type d for directories (excluding the root dir itself)
 	const remoteCommand = `echo "FILES:$(find ${escapedPath} -type f 2>/dev/null | wc -l)" && echo "DIRS:$(find ${escapedPath} -mindepth 1 -type d 2>/dev/null | wc -l)"`;
@@ -849,7 +1125,7 @@ export async function incrementalScanRemote(
 	sinceTimestamp: number,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<IncrementalScanResult>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 	const scanTime = Math.floor(Date.now() / 1000);
 
 	// Use find with -newermt to find files modified after the given timestamp
@@ -909,7 +1185,7 @@ export async function listAllFilesRemote(
 	maxDepth: number = 10,
 	deps: RemoteFsDeps = defaultDeps
 ): Promise<RemoteFsResult<string[]>> {
-	const escapedPath = shellEscape(dirPath);
+	const escapedPath = shellEscapeRemotePath(dirPath);
 
 	// Use find with -maxdepth to list all files
 	// Exclude node_modules and __pycache__

@@ -17,7 +17,7 @@ import {
 	AlertTriangle,
 	Server,
 } from 'lucide-react';
-import type { Theme, HistoryEntry } from '../types';
+import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -26,7 +26,7 @@ import { formatTimestamp } from '../../shared/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
-import { calculateContextDisplay } from '../utils/contextUsage';
+import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -49,6 +49,12 @@ interface HistoryDetailModalProps {
 	cwd?: string;
 	projectRoot?: string;
 	onFileClick?: (path: string) => void;
+	/**
+	 * Agent identifier (session.toolType) used to display input tokens correctly.
+	 * Claude reports `inputTokens` as the uncached delta only, so we add the cache
+	 * partitions to show the real input size — see calculateDisplayInputTokens.
+	 */
+	agentId?: ToolType;
 }
 
 export function HistoryDetailModal({
@@ -66,6 +72,7 @@ export function HistoryDetailModal({
 	cwd,
 	projectRoot,
 	onFileClick,
+	agentId,
 }: HistoryDetailModalProps) {
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const onCloseRef = useRef(onClose);
@@ -485,7 +492,9 @@ export function HistoryDetailModal({
 									<div className="flex items-center gap-3 text-xs font-mono">
 										<span style={{ color: theme.colors.accent }}>
 											<span style={{ color: theme.colors.textDim }}>In:</span>{' '}
-											{(entry.usageStats.inputTokens ?? 0).toLocaleString('en-US')}
+											{calculateDisplayInputTokens(entry.usageStats, agentId).toLocaleString(
+												'en-US'
+											)}
 										</span>
 										<span style={{ color: theme.colors.success }}>
 											<span style={{ color: theme.colors.textDim }}>Out:</span>{' '}

@@ -27,6 +27,56 @@ import { isWindows } from '../../shared/platformDetection';
 
 const LOG_CONTEXT = 'AgentDetector';
 
+const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+const MODELS_DEV_FETCH_TIMEOUT_MS = 3000;
+
+/** Read the user's configured Copilot CLI model from ~/.copilot/config.json (if present). */
+function readCopilotConfiguredModel(): string | null {
+	try {
+		const configPath = path.join(os.homedir(), '.copilot', 'config.json');
+		const configContent = fs.readFileSync(configPath, 'utf8');
+		const config = JSON.parse(configContent);
+		if (typeof config?.model === 'string' && config.model.length > 0) {
+			return config.model;
+		}
+	} catch {
+		// Config may not exist or be malformed — fall through to null.
+	}
+	return null;
+}
+
+/**
+ * Fetch the list of Copilot CLI models from the models.dev catalog.
+ * Returns null when the request fails or the schema doesn't match; callers
+ * should fall back to the user-configured model in that case.
+ */
+async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
+	try {
+		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		if (!response.ok) {
+			return null;
+		}
+		const data = (await response.json()) as Record<string, unknown>;
+		const copilotProvider = data?.['github-copilot'] as
+			| { models?: Record<string, unknown> }
+			| undefined;
+		const models = copilotProvider?.models;
+		if (models && typeof models === 'object') {
+			return Object.keys(models).sort();
+		}
+		return null;
+	} catch (err) {
+		logger.warn('Failed to fetch models from models.dev for copilot-cli', LOG_CONTEXT, {
+			error: String(err),
+		});
+		return null;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
 // ============ Agent Detector Class ============
 
 /** Default cache TTL: 5 minutes (model lists don't change frequently) */
@@ -362,6 +412,29 @@ export class AgentDetector {
 					return models;
 				}
 
+				case 'copilot-cli': {
+					// Copilot CLI: fetch available models from models.dev API (github-copilot
+					// provider) and merge with the user's configured model from
+					// ~/.copilot/config.json. Falls back to just the configured model if the
+					// API is unavailable.
+					const userModel = readCopilotConfiguredModel();
+					const apiModels = await fetchCopilotModelsFromApi();
+
+					if (apiModels !== null) {
+						const models = [...apiModels];
+						if (userModel && !models.includes(userModel)) {
+							models.unshift(userModel);
+						}
+						logger.info(
+							`Discovered ${models.length} models for ${agentId} from models.dev`,
+							LOG_CONTEXT
+						);
+						return models;
+					}
+
+					return userModel ? [userModel] : [];
+				}
+
 				default:
 					// For agents without model discovery implemented, return empty array
 					logger.debug(`No model discovery implemented for ${agentId}`, LOG_CONTEXT);
@@ -484,6 +557,15 @@ export class AgentDetector {
 			logger.debug(`Config option discovery failed for ${agentId}:${optionKey}`, LOG_CONTEXT, {
 				error,
 			});
+		}
+
+		// Fallback: return the static options declared on the agent's select config option.
+		// This handles agents whose options are hardcoded in the definition (e.g. Copilot-CLI,
+		// Factory Droid reasoning effort) rather than discovered at runtime.
+		const definition = AGENT_DEFINITIONS.find((d) => d.id === agentId);
+		const option = definition?.configOptions?.find((o) => o.key === optionKey);
+		if (option && option.type === 'select' && option.options && option.options.length > 0) {
+			return option.options;
 		}
 
 		return [];

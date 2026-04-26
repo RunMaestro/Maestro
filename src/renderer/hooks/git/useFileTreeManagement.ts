@@ -5,6 +5,7 @@ import type { FileNode } from '../../types/fileTree';
 import {
 	loadFileTree,
 	compareFileTrees,
+	FileTreeAbortError,
 	type FileTreeChanges,
 	type SshContext,
 	type FileTreeProgress,
@@ -15,6 +16,10 @@ import { gitService } from '../../services/git';
 import { logger } from '../../utils/logger';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import {
+	DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
+	FILE_EXPLORER_MIN_ENTRIES,
+} from '../../stores/settingsStore';
 
 /**
  * Retry delay for file tree errors (20 seconds).
@@ -110,6 +115,13 @@ export interface UseFileTreeManagementDeps {
 	fileExplorerMaxDepth?: number;
 	/** Max file entries per scan before truncating (applies to local + remote) */
 	fileExplorerMaxEntries?: number;
+	/**
+	 * When true, SSH-backed sessions use a fraction of {@link fileExplorerMaxEntries}
+	 * as their cap. Disabled by default — local and remote share the same cap.
+	 */
+	sshReduceEntryCapEnabled?: boolean;
+	/** Fraction (0–1) applied to the entry cap for SSH sessions when scaling is enabled. */
+	sshReduceEntryCapFraction?: number;
 }
 
 /**
@@ -123,6 +135,12 @@ export interface UseFileTreeManagementReturn {
 	) => Promise<FileTreeChanges | undefined>;
 	/** Refresh both file tree and git state for a session */
 	refreshGitFileState: (sessionId: string) => Promise<void>;
+	/**
+	 * Cancel the in-flight file tree load for a session. Aborts the underlying
+	 * recursion so no further readDir calls (including SSH round-trips) are
+	 * issued. Safe to call when no load is in flight.
+	 */
+	cancelFileTreeLoad: (sessionId: string) => void;
 	/** Filtered file tree based on current filter */
 	filteredFileTree: FileNode[];
 }
@@ -155,12 +173,29 @@ export function useFileTreeManagement(
 		localHonorGitignore,
 		fileExplorerMaxDepth,
 		fileExplorerMaxEntries,
+		sshReduceEntryCapEnabled,
+		sshReduceEntryCapFraction,
 	} = deps;
 
 	// Fall back to the canonical defaults from settingsStore when deps omit these values
 	// (e.g. in tests that don't wire the full settings state through).
 	const effectiveMaxDepth = fileExplorerMaxDepth ?? 5;
 	const effectiveMaxEntries = fileExplorerMaxEntries ?? 100_000;
+	const effectiveSshReduceEnabled = sshReduceEntryCapEnabled ?? false;
+	const effectiveSshFraction = sshReduceEntryCapFraction ?? DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION;
+
+	/**
+	 * Resolve the entry cap for a load. SSH sessions get a smaller cap when
+	 * "Reduce entry cap on SSH remotes" is enabled — each remote dir is its own
+	 * SSH round-trip, so a tighter cap returns sooner on large remote trees.
+	 */
+	const resolveMaxEntries = useCallback(
+		(isSsh: boolean, baseCap: number): number => {
+			if (!isSsh || !effectiveSshReduceEnabled) return baseCap;
+			return Math.max(FILE_EXPLORER_MIN_ENTRIES, Math.floor(baseCap * effectiveSshFraction));
+		},
+		[effectiveSshReduceEnabled, effectiveSshFraction]
+	);
 
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 
@@ -206,6 +241,46 @@ export function useFileTreeManagement(
 	// When a newer load starts for the same session, any in-flight load with an
 	// older sequence number will discard its result instead of calling setSessions.
 	const loadSeqMapRef = useRef<Map<string, number>>(new Map());
+
+	// Per-session AbortControllers for the active file tree load. Used by
+	// cancelFileTreeLoad to halt the recursive walk so no further readDir
+	// calls (including SSH round-trips) are issued. Replaced on each new load.
+	const loadAbortMapRef = useRef<Map<string, AbortController>>(new Map());
+
+	/**
+	 * Start a new abort-controlled load for a session. Aborts any prior
+	 * in-flight load for the same session and returns a fresh signal.
+	 */
+	const beginAbortableLoad = useCallback((sessionId: string): AbortSignal => {
+		const prior = loadAbortMapRef.current.get(sessionId);
+		if (prior) prior.abort();
+		const controller = new AbortController();
+		loadAbortMapRef.current.set(sessionId, controller);
+		return controller.signal;
+	}, []);
+
+	const cancelFileTreeLoad = useCallback(
+		(sessionId: string) => {
+			const controller = loadAbortMapRef.current.get(sessionId);
+			if (!controller) return;
+			controller.abort();
+			loadAbortMapRef.current.delete(sessionId);
+			// Clear the loading UI immediately so the user sees the cancel take effect
+			// even if the in-flight readDir hasn't resolved yet.
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? {
+								...s,
+								fileTreeLoading: false,
+								fileTreeLoadingProgress: undefined,
+							}
+						: s
+				)
+			);
+		},
+		[setSessions]
+	);
 
 	/** Increment and return the next sequence number for a session. */
 	const nextSeq = useCallback((sessionId: string): number => {
@@ -259,7 +334,10 @@ export function useFileTreeManagement(
 			// This ensures the file tree always shows the agent's working directory, not wherever cd'd to
 			const treeRoot = session.projectRoot || session.cwd;
 
-			const maxEntriesForRefresh = options?.maxEntriesOverride ?? effectiveMaxEntries;
+			// An explicit override (e.g. "Load all") bypasses SSH scaling — the user
+			// has opted into a larger scan and we shouldn't second-guess them.
+			const maxEntriesForRefresh =
+				options?.maxEntriesOverride ?? resolveMaxEntries(!!sshContext, effectiveMaxEntries);
 
 			try {
 				// Fire stats independently — update asynchronously without blocking tree refresh.
@@ -327,9 +405,25 @@ export function useFileTreeManagement(
 			} catch (error) {
 				// Refresh failed — log it but preserve the existing file tree.
 				// A transient SSH failure shouldn't wipe out a working tree.
-				logger.error('File tree refresh error', 'FileTreeManagement', {
-					error: (error as Error)?.message || 'Unknown error',
-				});
+				const errorMsg = (error as Error)?.message || 'Unknown error';
+				logger.error('File tree refresh error', 'FileTreeManagement', { error: errorMsg });
+				// Surface the current failure instead of leaving whatever stale
+				// error message was sitting in state (which may be from an
+				// outdated code path and mislead the user about the real cause).
+				const sessionNow = sessionsRef.current.find((s) => s.id === sessionId);
+				const hasUsableTree = !!sessionNow?.fileTree?.length;
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? {
+									...s,
+									fileTreeError: hasUsableTree
+										? undefined
+										: `Cannot access directory: ${treeRoot}\n${errorMsg}`,
+								}
+							: s
+					)
+				);
 				return undefined;
 			}
 		},
@@ -342,6 +436,7 @@ export function useFileTreeManagement(
 			isStale,
 			effectiveMaxDepth,
 			effectiveMaxEntries,
+			resolveMaxEntries,
 		]
 	);
 
@@ -401,6 +496,8 @@ export function useFileTreeManagement(
 						);
 					});
 
+				const maxEntriesForRefresh = resolveMaxEntries(!!sshContext, effectiveMaxEntries);
+
 				// Refresh file tree and git repo status in parallel
 				const [loadResult, isGitRepo] = await Promise.all([
 					loadFileTree(
@@ -410,7 +507,7 @@ export function useFileTreeManagement(
 						sshContext,
 						undefined,
 						localOptions,
-						effectiveMaxEntries
+						maxEntriesForRefresh
 					),
 					gitService.isRepo(gitRoot, sshContext?.sshRemoteId),
 				]);
@@ -441,7 +538,7 @@ export function useFileTreeManagement(
 									fileTree: loadResult.tree,
 									fileTreeError: undefined,
 									fileTreeTruncated: loadResult.truncated,
-									fileTreeLoadedCap: effectiveMaxEntries,
+									fileTreeLoadedCap: maxEntriesForRefresh,
 									isGitRepo,
 									gitBranches,
 									gitTags,
@@ -472,6 +569,7 @@ export function useFileTreeManagement(
 			isStale,
 			effectiveMaxDepth,
 			effectiveMaxEntries,
+			resolveMaxEntries,
 		]
 	);
 
@@ -488,10 +586,13 @@ export function useFileTreeManagement(
 		const session = activeSession;
 		if (!session) return;
 
-		// Only load if file tree is empty, not already loading, and hasn't been loaded yet
-		// fileTreeStats is set after successful load, so we use it to detect "loaded but empty"
-		const hasLoadedOnce =
-			session.fileTreeStats !== undefined || session.fileTreeError !== undefined;
+		// Only load if file tree is empty, not already loading, and hasn't been loaded yet.
+		// fileTreeStats is set after successful load, so we use it to detect "loaded but empty".
+		// We intentionally do NOT gate on a residual `fileTreeError` here: if an old error was
+		// restored from persistence or left over from a previous failed load, the auto-loader
+		// should get a fresh attempt so the current code path can try (and either clear or
+		// update the error). Otherwise a stale error permanently blocks the panel.
+		const hasLoadedOnce = session.fileTreeStats !== undefined;
 		if (
 			(!session.fileTree || session.fileTree.length === 0) &&
 			!session.fileTreeLoading &&
@@ -559,6 +660,9 @@ export function useFileTreeManagement(
 			// Increment per-session load sequence so concurrent loads can detect staleness
 			const seq = nextSeq(sessionId);
 
+			// Begin a fresh abort-controlled load (cancels any prior in-flight load).
+			const abortSignal = beginAbortableLoad(sessionId);
+
 			// For SSH sessions, fire a shallow load (depth 1) first so the root-level
 			// tree renders almost instantly (single round-trip), then backfill with
 			// the full recursive walk. Local sessions skip the shallow pass since
@@ -566,7 +670,16 @@ export function useFileTreeManagement(
 			if (sshContext) {
 				// Shallow pass ignores the entry cap — the whole point is to render
 				// the top-level dir fast. The full pass below honors the cap.
-				loadFileTree(treeRoot, 1, 0, sshContext, undefined, localOptions)
+				loadFileTree(
+					treeRoot,
+					1,
+					0,
+					sshContext,
+					undefined,
+					localOptions,
+					Number.POSITIVE_INFINITY,
+					abortSignal
+				)
 					.then((shallowResult) => {
 						if (isStale(sessionId, seq)) return;
 						setSessions((prev) =>
@@ -584,9 +697,11 @@ export function useFileTreeManagement(
 						signalInitialFileTreeReady();
 					})
 					.catch(() => {
-						// Shallow load failed — full load will handle the error below
+						// Shallow load failed or was aborted — full load handles below
 					});
 			}
+
+			const maxEntriesForLoad = resolveMaxEntries(!!sshContext, effectiveMaxEntries);
 
 			// Full recursive tree load (with progress callback for SSH)
 			const treePromise = sshContext
@@ -597,7 +712,8 @@ export function useFileTreeManagement(
 						sshContext,
 						onProgress,
 						localOptions,
-						effectiveMaxEntries
+						maxEntriesForLoad,
+						abortSignal
 					)
 				: loadFileTree(
 						treeRoot,
@@ -606,7 +722,8 @@ export function useFileTreeManagement(
 						sshContext,
 						undefined,
 						localOptions,
-						effectiveMaxEntries
+						maxEntriesForLoad,
+						abortSignal
 					);
 
 			// Fetch stats independently — a directorySize failure (e.g., `du` timeout
@@ -664,7 +781,7 @@ export function useFileTreeManagement(
 										...s,
 										fileTree: loadResult.tree,
 										fileTreeTruncated: loadResult.truncated,
-										fileTreeLoadedCap: effectiveMaxEntries,
+										fileTreeLoadedCap: maxEntriesForLoad,
 										fileTreeError: undefined,
 										fileTreeRetryAt: undefined,
 										fileTreeLoading: false,
@@ -686,6 +803,21 @@ export function useFileTreeManagement(
 									: s
 							)
 						);
+						return;
+					}
+
+					// User cancelled — clear loading state but don't surface an error.
+					// cancelFileTreeLoad already cleared loading UI; this just guards against
+					// the race where the load completes before the cancel state-write lands.
+					if (error instanceof FileTreeAbortError) {
+						setSessions((prev) =>
+							prev.map((s) =>
+								s.id === sessionId
+									? { ...s, fileTreeLoading: false, fileTreeLoadingProgress: undefined }
+									: s
+							)
+						);
+						signalInitialFileTreeReady();
 						return;
 					}
 
@@ -721,6 +853,7 @@ export function useFileTreeManagement(
 		isStale,
 		effectiveMaxDepth,
 		effectiveMaxEntries,
+		resolveMaxEntries,
 		signalInitialFileTreeReady,
 	]);
 
@@ -841,6 +974,7 @@ export function useFileTreeManagement(
 	return {
 		refreshFileTree,
 		refreshGitFileState,
+		cancelFileTreeLoad,
 		filteredFileTree,
 	};
 }

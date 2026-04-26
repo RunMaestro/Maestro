@@ -21,6 +21,17 @@ import type { CueSubscription, CueSettings } from '../../../../shared/cue';
 import { cuePromptFilePath } from '../../../../shared/maestro-paths';
 
 /**
+ * Pad single-digit hours to `HH:MM` so the on-disk YAML is canonical. The
+ * scheduled trigger source compares times as zero-padded strings against the
+ * wall clock; an unpadded `6:30` would silently never fire.
+ */
+function padScheduleTime(time: string): string {
+	const match = time.match(/^(\d{1,2}):(\d{2})$/);
+	if (!match) return time;
+	return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
+/**
  * Returns the chain identity for a node — the value downstream subscriptions
  * will use as `source_session`. For agents that's the agent's session name; for
  * command nodes we use the owning session's name (the engine emits
@@ -118,7 +129,7 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 			break;
 		case 'time.scheduled':
 			if (triggerData.config.schedule_times?.length) {
-				sub.schedule_times = triggerData.config.schedule_times;
+				sub.schedule_times = triggerData.config.schedule_times.map(padScheduleTime);
 			}
 			if (triggerData.config.schedule_days?.length) {
 				sub.schedule_days = triggerData.config.schedule_days as CueSubscription['schedule_days'];
@@ -185,15 +196,24 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 
 	// Track visited nodes to avoid duplicates.
 	const visited = new Set<string>();
-	// Track the subscription name that runs each work node. Used by buildChain
-	// to populate `source_sub` on downstream chain subs so completion-time
-	// filtering can distinguish "this node's upstream completed" from "an
-	// unrelated run in the same session completed." Without this map, a chain
-	// sub waiting on session S fires for ANY run in S — re-triggering itself
-	// when it shares a session with its upstream (the pre-existing
-	// `Cmd(owner=S) → Agent(S)` self-loop), or cross-firing a fan-in on an
-	// upstream command's completion before the intended agent has run.
-	const subNameForNode = new Map<string, string>();
+	// Track ALL subscription names that run each work node. A Set per node
+	// because multiple triggers can target the same agent (e.g. app.startup +
+	// scheduled + PR triggers all pointing at Agent A). Each trigger generates
+	// its OWN subscription name; the post-pass uses this Set to populate
+	// `source_sub` on downstream chain subs with ALL upstream names so the
+	// chain fires regardless of which trigger originally kicked off Agent A.
+	// Using a Map<string,string> (overwriting) was the pre-existing bug: only
+	// the LAST trigger's name survived, so completions from earlier triggers
+	// failed the source_sub filter and the pipeline silently stalled.
+	const subNamesForNode = new Map<string, Set<string>>();
+	const addSubNameForNode = (nodeId: string, name: string): void => {
+		const set = subNamesForNode.get(nodeId);
+		if (set) {
+			set.add(name);
+		} else {
+			subNamesForNode.set(nodeId, new Set([name]));
+		}
+	};
 	let chainIndex = 0;
 
 	for (const trigger of triggers) {
@@ -243,7 +263,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 
 			subscriptions.push(sub);
 			visited.add(target.id);
-			subNameForNode.set(target.id, sub.name);
+			addSubNameForNode(target.id, sub.name);
 
 			buildChain(
 				target,
@@ -253,7 +273,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 				incoming,
 				nodeMap,
 				visited,
-				subNameForNode
+				subNamesForNode
 			);
 			chainIndex = subscriptions.length;
 		} else if (allAgents) {
@@ -327,7 +347,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 
 			for (const agent of fanOutAgents) {
 				visited.add(agent.id);
-				subNameForNode.set(agent.id, sub.name);
+				addSubNameForNode(agent.id, sub.name);
 			}
 
 			// Follow chains from each fan-out target
@@ -340,7 +360,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 					incoming,
 					nodeMap,
 					visited,
-					subNameForNode
+					subNamesForNode
 				);
 			}
 			chainIndex = subscriptions.length;
@@ -368,7 +388,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 
 				subscriptions.push(branchSub);
 				visited.add(target.id);
-				subNameForNode.set(target.id, branchSub.name);
+				addSubNameForNode(target.id, branchSub.name);
 
 				buildChain(
 					target,
@@ -378,7 +398,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 					incoming,
 					nodeMap,
 					visited,
-					subNameForNode
+					subNamesForNode
 				);
 				chainIndex = subscriptions.length;
 			}
@@ -386,7 +406,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 	}
 
 	// Post-pass: populate `source_sub` on every chain subscription now that
-	// `subNameForNode` holds entries for every work node in the pipeline.
+	// `subNamesForNode` holds entries for every work node in the pipeline.
 	// Doing this inline during buildChain's recursion is unsafe — a fan-in
 	// target reached through the first branch has upstream work nodes from
 	// OTHER branches whose subs haven't been emitted yet. Deferring the
@@ -398,18 +418,20 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 	// failure mode — see `CueSubscription.source_sub` docs for the full
 	// rationale).
 	const targetNodeBySubName = new Map<string, string>();
-	for (const [nodeId, name] of subNameForNode) {
-		// A second node owning the same sub name silently overwrites the
-		// first entry here, which would drop the first sub's `source_sub`
-		// population. Sub names are expected to be unique within a pipeline,
-		// but pathological YAML or a future refactor could break that — log
-		// loudly so the failure mode is visible instead of silent.
-		if (targetNodeBySubName.has(name)) {
-			console.warn(
-				`[CUE] Duplicate sub name "${name}" while building source_sub map — earlier owner may not get its source_sub populated`
-			);
+	for (const [nodeId, names] of subNamesForNode) {
+		for (const name of names) {
+			// A second node owning the same sub name silently overwrites the
+			// first entry here, which would drop the first sub's `source_sub`
+			// population. Sub names are expected to be unique within a pipeline,
+			// but pathological YAML or a future refactor could break that — log
+			// loudly so the failure mode is visible instead of silent.
+			if (targetNodeBySubName.has(name)) {
+				console.warn(
+					`[CUE] Duplicate sub name "${name}" while building source_sub map — earlier owner may not get its source_sub populated`
+				);
+			}
+			targetNodeBySubName.set(name, nodeId);
 		}
-		targetNodeBySubName.set(name, nodeId);
 	}
 	for (const sub of subscriptions) {
 		if (sub.event !== 'agent.completed') continue;
@@ -421,7 +443,7 @@ export function pipelineToYamlSubscriptions(pipeline: CuePipeline): CueSubscript
 			return src?.type === 'agent' || src?.type === 'command';
 		});
 		const sourceSubNames = incomingWorkEdges
-			.map((e) => subNameForNode.get(e.source))
+			.flatMap((e) => Array.from(subNamesForNode.get(e.source) ?? []))
 			.filter((name): name is string => !!name);
 		if (sourceSubNames.length > 0) {
 			// Dedupe and preserve insertion order so YAML round-trips stably
@@ -443,7 +465,7 @@ function buildChain(
 	incoming: Map<string, PipelineEdge[]>,
 	nodeMap: Map<string, PipelineNode>,
 	visited: Set<string>,
-	subNameForNode: Map<string, string>
+	subNamesForNode: Map<string, Set<string>>
 ): void {
 	const fromOutgoing = outgoing.get(fromNode.id) ?? [];
 	if (fromOutgoing.length === 0) return;
@@ -581,7 +603,7 @@ function buildChain(
 		// `source_sub` list membership.
 
 		subscriptions.push(sub);
-		subNameForNode.set(target.id, sub.name);
+		subNamesForNode.set(target.id, new Set([sub.name]));
 
 		// Continue the chain
 		buildChain(
@@ -592,7 +614,7 @@ function buildChain(
 			incoming,
 			nodeMap,
 			visited,
-			subNameForNode
+			subNamesForNode
 		);
 	}
 }

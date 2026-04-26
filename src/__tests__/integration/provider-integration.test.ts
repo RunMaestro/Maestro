@@ -759,6 +759,150 @@ const PROVIDERS: ProviderConfig[] = [
 			return executions;
 		},
 	},
+	{
+		name: 'Copilot-CLI',
+		agentId: 'copilot-cli',
+		command: 'copilot',
+		checkCommand: 'copilot --version',
+		/**
+		 * Mirrors the copilot-cli definition in src/main/agents/definitions.ts:
+		 *   args: []                       (no base args; interactive default)
+		 *   batchModeArgs: ['--allow-all'] (full permissions for unattended runs)
+		 *   jsonOutputArgs: ['--output-format', 'json']
+		 *   promptArgs: (prompt) => ['-p', prompt]
+		 *
+		 * Final assembly (process.ts IPC handler):
+		 *   copilot --allow-all --output-format json -p "<prompt>"
+		 *
+		 * Copilot does not support --input-format stream-json
+		 * (supportsStreamJsonInput: false). Images are embedded into the prompt
+		 * as @file mentions via imagePromptBuilder, not via a CLI flag.
+		 */
+		buildInitialArgs: (prompt: string, options?: { images?: string[] }) => {
+			const capabilities = getAgentCapabilities('copilot-cli');
+			if (options?.images && options.images.length > 0 && capabilities.supportsStreamJsonInput) {
+				throw new Error(
+					'Copilot-CLI should not support stream-json input — capability misconfigured'
+				);
+			}
+			return ['--allow-all', '--output-format', 'json', '-p', prompt];
+		},
+		buildResumeArgs: (sessionId: string, prompt: string) => [
+			'--allow-all',
+			'--output-format',
+			'json',
+			`--resume=${sessionId}`,
+			'-p',
+			prompt,
+		],
+		buildSshArgs: () => ['--allow-all', '--output-format', 'json'],
+		buildSshResumeArgs: (sessionId: string) => [
+			'--allow-all',
+			'--output-format',
+			'json',
+			`--resume=${sessionId}`,
+		],
+		parseSessionId: (output: string) => {
+			// Copilot emits the session ID on the top-level `result` event at
+			// completion: {"type":"result","sessionId":"...","exitCode":0,"usage":{...}}
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type === 'result' && typeof json.sessionId === 'string') {
+						return json.sessionId;
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return null;
+		},
+		parseResponse: (output: string) => {
+			// Modern Copilot's final answer lives in an `assistant.message` event
+			// with non-empty content and empty toolRequests, no `phase` field.
+			// Legacy `phase: 'final_answer'` is also accepted.
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type !== 'assistant.message') continue;
+					const data = json.data || {};
+					const content = typeof data.content === 'string' ? data.content : '';
+					const toolRequests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
+					const phase = data.phase;
+					const isFinal =
+						phase === 'final_answer' ||
+						(phase === undefined && content.length > 0 && toolRequests.length === 0);
+					if (isFinal) return content;
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return null;
+		},
+		isSuccessful: (output: string, exitCode: number) => {
+			if (exitCode !== 0) return false;
+			// Require a final result event — bare exit 0 with no result means
+			// the session was interrupted before completion.
+			return output.includes('"type":"result"');
+		},
+		parseTools: (output: string) => {
+			// Copilot emits session.tools_updated with model metadata; tool list
+			// is not directly exposed in JSONL (it's an interactive-mode concept).
+			// Surface tool names actually used in toolRequests on assistant.messages.
+			const toolNames = new Set<string>();
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					const toolRequests = json?.data?.toolRequests;
+					if (Array.isArray(toolRequests)) {
+						for (const tool of toolRequests) {
+							if (tool?.name) toolNames.add(tool.name);
+						}
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return toolNames.size > 0 ? [...toolNames] : null;
+		},
+		parseToolExecutions: (output: string) => {
+			const executions: Array<{
+				name: string;
+				status?: string;
+				input?: unknown;
+				output?: unknown;
+			}> = [];
+			const byCallId = new Map<string, { name: string; input?: unknown }>();
+
+			for (const line of output.split('\n')) {
+				try {
+					const json = JSON.parse(line);
+					if (json.type === 'tool.execution_start' && json.data?.toolCallId) {
+						byCallId.set(json.data.toolCallId, {
+							name: json.data.toolName || 'unknown',
+							input: json.data.arguments,
+						});
+						executions.push({
+							name: json.data.toolName || 'unknown',
+							status: 'running',
+							input: json.data.arguments,
+						});
+					} else if (json.type === 'tool.execution_complete' && json.data?.toolCallId) {
+						const start = byCallId.get(json.data.toolCallId);
+						executions.push({
+							name: start?.name || 'unknown',
+							status: json.data.success === false ? 'failed' : 'completed',
+							input: start?.input,
+							output: json.data.result?.content ?? json.data.result,
+						});
+					}
+				} catch {
+					/* ignore non-JSON lines */
+				}
+			}
+			return executions;
+		},
+	},
 ];
 
 /**

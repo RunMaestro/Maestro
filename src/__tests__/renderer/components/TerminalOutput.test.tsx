@@ -736,7 +736,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('dismisses confirmation modal when Escape key is pressed', async () => {
+		it('dismisses confirmation modal when layer stack onEscape fires', async () => {
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 			});
@@ -750,22 +750,23 @@ describe('TerminalOutput', () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
+			// Modal should be open and registered with the layer stack
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
+			expect(mockRegisterLayer).toHaveBeenCalled();
 
-			// Press Escape key on the modal overlay
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
+			// Pull the most recent registerLayer call's onEscape — this is what the
+			// layer stack fires when Escape is pressed on the topmost layer.
+			const layerConfig = mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
+			expect(typeof layerConfig.onEscape).toBe('function');
+
 			await act(async () => {
-				fireEvent.keyDown(modalOverlay!, { key: 'Escape' });
+				layerConfig.onEscape();
 			});
 
-			// Modal should be closed
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('confirms removal when Enter key is pressed on modal', async () => {
+		it('confirms removal when Enter key is pressed on the focused confirm button', async () => {
 			const onRemoveQueuedItem = vi.fn();
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
@@ -780,24 +781,23 @@ describe('TerminalOutput', () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
+			// Modal should be open. The shared ModalFooter handles Enter directly on the
+			// confirm button via its onKeyDown handler, so we dispatch keyDown there.
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
+			const confirmButton = screen.getByRole('button', { name: 'Remove' });
 
-			// Press Enter key on the modal overlay
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
 			await act(async () => {
-				fireEvent.keyDown(modalOverlay!, { key: 'Enter' });
+				fireEvent.keyDown(confirmButton, { key: 'Enter' });
 			});
 
-			// onRemoveQueuedItem should be called
 			expect(onRemoveQueuedItem).toHaveBeenCalledWith('q1');
-			// Modal should be closed
 			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
 		});
 
-		it('dismisses confirmation modal when clicking overlay background', async () => {
+		it('keeps confirmation modal open when clicking the backdrop', async () => {
+			// Confirmation modals intentionally do not close on backdrop click — users
+			// must explicitly choose Cancel/Confirm or press Escape. This guards against
+			// accidental dismissal of destructive prompts.
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 			});
@@ -805,25 +805,20 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Click remove button to open modal
 			const removeButton = screen.getByTitle('Remove from queue');
 			await act(async () => {
 				fireEvent.click(removeButton);
 			});
 
-			// Modal should be open
 			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 
-			// Click the overlay background (not the modal content)
-			const modalOverlay = screen
-				.getByText('Remove Queued Message?')
-				.closest('[class*="fixed inset-0"]');
+			// Click the modal overlay
+			const modalOverlay = screen.getByText('Remove Queued Message?').closest('[role="dialog"]');
 			await act(async () => {
 				fireEvent.click(modalOverlay!);
 			});
 
-			// Modal should be closed
-			expect(screen.queryByText('Remove Queued Message?')).not.toBeInTheDocument();
+			expect(screen.getByText('Remove Queued Message?')).toBeInTheDocument();
 		});
 
 		describe('force send button', () => {
@@ -954,7 +949,7 @@ describe('TerminalOutput', () => {
 				expect(onForceSendQueuedItem).toHaveBeenCalledWith('q1');
 			});
 
-			it('dismisses Force Send modal on Escape without calling handler', async () => {
+			it('dismisses Force Send modal via layer stack onEscape without calling handler', async () => {
 				const onForceSendQueuedItem = vi.fn();
 				const props = createDefaultProps({
 					session: forceSendSession(),
@@ -970,10 +965,14 @@ describe('TerminalOutput', () => {
 				await act(async () => {
 					fireEvent.click(triggers[0]);
 				});
-				const overlay = screen.getByText('Force Send Message?').closest('[class*="fixed inset-0"]');
+				expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
+
+				const layerConfig =
+					mockRegisterLayer.mock.calls[mockRegisterLayer.mock.calls.length - 1][0];
 				await act(async () => {
-					fireEvent.keyDown(overlay!, { key: 'Escape' });
+					layerConfig.onEscape();
 				});
+
 				expect(screen.queryByText('Force Send Message?')).not.toBeInTheDocument();
 				expect(onForceSendQueuedItem).not.toHaveBeenCalled();
 			});
@@ -1933,6 +1932,68 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('someWeirdField=true')).toBeInTheDocument();
 		});
 
+		describe('hidden progress rendering', () => {
+			it('renders hidden tool progress with the polished activity treatment', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Reading src/renderer/App.tsx',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'running',
+								input: { path: 'src/renderer/App.tsx' },
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'view',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('view')).toBeInTheDocument();
+				expect(screen.getByText('Reading src/renderer/App.tsx')).toBeInTheDocument();
+				expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			});
+
+			it('uses the standard failed icon treatment for hidden progress', () => {
+				const logs: LogEntry[] = [
+					createLogEntry({
+						id: 'hidden-progress:tab-1',
+						text: 'Command failed',
+						source: 'system',
+						metadata: {
+							toolState: {
+								status: 'failed',
+							},
+							hiddenProgress: {
+								kind: 'tool',
+								toolName: 'bash',
+							},
+						},
+					}),
+				];
+
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+				expect(screen.getByText('!')).toBeInTheDocument();
+				expect(screen.queryByText('×')).not.toBeInTheDocument();
+			});
+		});
+
 		it('renders any tool with string input fields generically', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2085,6 +2146,35 @@ describe('TerminalOutput', () => {
 
 			expect(screen.getByText('/history:')).toBeInTheDocument();
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
+		});
+
+		it('renders URLs in the AI command body as clickable links', () => {
+			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: `Review the open PR comments and respond.\n${url}`,
+					source: 'user',
+					aiCommand: {
+						command: '/pr-review',
+						description: 'Review PR Comments w/ Action',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			const link = screen.getByText(url);
+			expect(link.tagName).toBe('A');
+			expect(link).toHaveAttribute('href', url);
+
+			fireEvent.click(link);
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(url);
 		});
 	});
 
@@ -2552,7 +2642,7 @@ describe('memoization behavior', () => {
 			const gistButton = screen.getByTitle('Publish as GitHub Gist');
 			fireEvent.click(gistButton);
 
-			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share');
+			expect(onPublishMessageGist).toHaveBeenCalledWith('AI response to share', '1');
 		});
 	});
 });

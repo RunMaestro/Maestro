@@ -653,6 +653,121 @@ describe('fileExplorer utils', () => {
 				expect(result.tree).toHaveLength(2);
 			});
 		});
+
+		// ============================================================================
+		// .maestro prioritization (always-visible directories)
+		// ============================================================================
+		describe('always-visible directory prioritization', () => {
+			it('walks .maestro before sibling directories', async () => {
+				// Root listing returns sibling first to simulate readDir ordering
+				vi.mocked(window.maestro.fs.readDir)
+					.mockResolvedValueOnce([
+						{ name: 'src', isFile: false, isDirectory: true },
+						{ name: '.maestro', isFile: false, isDirectory: true },
+					])
+					.mockResolvedValue([]);
+
+				await loadFileTreeRaw('/project');
+
+				// .maestro should be readDir'd before src (call #2 vs #3)
+				const calls = vi.mocked(window.maestro.fs.readDir).mock.calls;
+				expect(calls[0][0]).toBe('/project');
+				expect(calls[1][0]).toBe('/project/.maestro');
+				expect(calls[2][0]).toBe('/project/src');
+			});
+
+			it('fully loads .maestro contents even when entry cap is exceeded', async () => {
+				// Root: lots of bulk files + .maestro dir. Cap is small.
+				vi.mocked(window.maestro.fs.readDir)
+					.mockResolvedValueOnce([
+						{ name: '.maestro', isFile: false, isDirectory: true },
+						{ name: 'a.txt', isFile: true, isDirectory: false },
+						{ name: 'b.txt', isFile: true, isDirectory: false },
+						{ name: 'c.txt', isFile: true, isDirectory: false },
+						{ name: 'd.txt', isFile: true, isDirectory: false },
+						{ name: 'e.txt', isFile: true, isDirectory: false },
+					])
+					// .maestro contents — 4 files, more than the cap
+					.mockResolvedValueOnce([
+						{ name: 'cue.yaml', isFile: true, isDirectory: false },
+						{ name: 'p1.md', isFile: true, isDirectory: false },
+						{ name: 'p2.md', isFile: true, isDirectory: false },
+						{ name: 'p3.md', isFile: true, isDirectory: false },
+					]);
+
+				const result = await loadFileTreeRaw(
+					'/project',
+					5,
+					0,
+					undefined,
+					undefined,
+					undefined,
+					2 // cap of 2 files
+				);
+
+				// .maestro should be present with all 4 children
+				const maestro = result.tree.find((n) => n.name === '.maestro');
+				expect(maestro).toBeDefined();
+				expect(maestro?.children).toHaveLength(4);
+
+				// Bulk files should be capped at 2 with truncation flag
+				const bulkFiles = result.tree.filter((n) => n.type === 'file');
+				expect(bulkFiles).toHaveLength(2);
+				expect(result.truncated).toBe(true);
+			});
+
+			it('does not let .maestro contents starve sibling directory budget', async () => {
+				// Root has .maestro (with 5 files) + bulk dir + extra files. Cap is 3.
+				// Without separate budget tracking, .maestro's 5 files would eat the cap.
+				vi.mocked(window.maestro.fs.readDir)
+					.mockResolvedValueOnce([
+						{ name: '.maestro', isFile: false, isDirectory: true },
+						{ name: 'src', isFile: false, isDirectory: true },
+					])
+					.mockResolvedValueOnce([
+						// .maestro contents
+						{ name: 'a.md', isFile: true, isDirectory: false },
+						{ name: 'b.md', isFile: true, isDirectory: false },
+						{ name: 'c.md', isFile: true, isDirectory: false },
+						{ name: 'd.md', isFile: true, isDirectory: false },
+						{ name: 'e.md', isFile: true, isDirectory: false },
+					])
+					.mockResolvedValueOnce([
+						// src contents — should still be reachable
+						{ name: 'index.ts', isFile: true, isDirectory: false },
+						{ name: 'app.ts', isFile: true, isDirectory: false },
+					]);
+
+				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 3);
+
+				// src must be walked (readDir called), not folded as empty
+				expect(window.maestro.fs.readDir).toHaveBeenCalledWith('/project/src', undefined);
+				const src = result.tree.find((n) => n.name === 'src');
+				expect(src?.children).toHaveLength(2);
+
+				// .maestro fully loaded
+				const maestro = result.tree.find((n) => n.name === '.maestro');
+				expect(maestro?.children).toHaveLength(5);
+			});
+
+			it('propagates unlimited budget through nested .maestro descendants', async () => {
+				vi.mocked(window.maestro.fs.readDir)
+					.mockResolvedValueOnce([{ name: '.maestro', isFile: false, isDirectory: true }])
+					.mockResolvedValueOnce([{ name: 'playbooks', isFile: false, isDirectory: true }])
+					.mockResolvedValueOnce([
+						{ name: 'one.md', isFile: true, isDirectory: false },
+						{ name: 'two.md', isFile: true, isDirectory: false },
+						{ name: 'three.md', isFile: true, isDirectory: false },
+					]);
+
+				// Cap of 1 — without propagation, only one playbook would survive
+				const result = await loadFileTreeRaw('/project', 5, 0, undefined, undefined, undefined, 1);
+
+				const maestro = result.tree.find((n) => n.name === '.maestro');
+				const playbooks = maestro?.children?.find((n) => n.name === 'playbooks');
+				expect(playbooks?.children).toHaveLength(3);
+			});
+		});
 	});
 
 	// ============================================================================

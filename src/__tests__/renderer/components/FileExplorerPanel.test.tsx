@@ -287,6 +287,7 @@ describe('FileExplorerPanel', () => {
 			fileTreeContainerRef: React.createRef<HTMLDivElement>(),
 			fileTreeFilterInputRef: React.createRef<HTMLInputElement>(),
 			toggleFolder: vi.fn(),
+			toggleFolderRecursive: vi.fn(),
 			handleFileClick: vi.fn().mockResolvedValue(undefined),
 			expandAllFolders: vi.fn(),
 			collapseAllFolders: vi.fn(),
@@ -988,6 +989,20 @@ describe('FileExplorerPanel', () => {
 				'session-1',
 				expect.any(Function)
 			);
+			expect(defaultProps.toggleFolderRecursive).not.toHaveBeenCalled();
+		});
+
+		it('calls toggleFolderRecursive on Alt+click of a folder', () => {
+			render(<FileExplorerPanel {...defaultProps} />);
+			const srcFolder = screen.getByText('src');
+			fireEvent.click(srcFolder, { altKey: true });
+
+			expect(defaultProps.toggleFolderRecursive).toHaveBeenCalledWith(
+				'src',
+				'session-1',
+				expect.any(Function)
+			);
+			expect(defaultProps.toggleFolder).not.toHaveBeenCalled();
 		});
 
 		it('sets selectedFileIndex and activeFocus when clicking a file', () => {
@@ -1233,6 +1248,33 @@ describe('FileExplorerPanel', () => {
 			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
 
 			expect(screen.getByText('Loading files...')).toBeInTheDocument();
+		});
+
+		it('hides Stop loading when cancelFileTreeLoad is not provided', () => {
+			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
+			render(<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={[]} />);
+
+			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
+		});
+
+		it('invokes cancelFileTreeLoad with session id when Stop loading clicked', () => {
+			const session = createMockSession({
+				id: 'session-xyz',
+				fileTree: [],
+				fileTreeLoading: true,
+			});
+			const cancelFileTreeLoad = vi.fn();
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={session}
+					filteredFileTree={[]}
+					cancelFileTreeLoad={cancelFileTreeLoad}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stop loading'));
+			expect(cancelFileTreeLoad).toHaveBeenCalledWith('session-xyz');
 		});
 
 		it('shows no files found when fileTree is empty and not loading', () => {

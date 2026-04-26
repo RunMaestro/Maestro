@@ -45,6 +45,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	persistQueuedEvent: vi.fn(),
+	removeQueuedEvent: vi.fn(),
+	getQueuedEvents: vi.fn(() => []),
+	clearPersistedQueue: vi.fn(),
+	safePersistQueuedEvent: vi.fn(),
+	safeRemoveQueuedEvent: vi.fn(),
 }));
 
 // Mock crypto
@@ -366,7 +372,7 @@ describe('CueEngine Concurrency Control', () => {
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
 				expect.stringContaining('Dropping stale queued event'),
-				expect.objectContaining({ type: 'runFinished', status: 'timeout' })
+				expect.objectContaining({ type: 'queueDropped', reason: 'stale' })
 			);
 
 			engine.stopAll();
@@ -863,7 +869,7 @@ describe('CueEngine Concurrency Control', () => {
 			expect(deps.onLog).toHaveBeenCalledWith(
 				'cue',
 				expect.stringContaining('Dropping stale queued event'),
-				expect.objectContaining({ type: 'runFinished', status: 'timeout' })
+				expect.objectContaining({ type: 'queueDropped', reason: 'stale' })
 			);
 
 			engine.stopAll();

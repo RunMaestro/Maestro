@@ -17,6 +17,7 @@ import type {
 import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipeline-types';
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
 import { mergePipelinesWithSavedLayout } from '../../components/CuePipelineEditor/utils/pipelineLayout';
+import { resolvePipelinesWriteRoots } from '../../components/CuePipelineEditor/utils/pipelineRoots';
 import { captureException } from '../../utils/sentry';
 import { cueService } from '../../services/cue';
 
@@ -327,10 +328,14 @@ export function usePipelineLayout({
 			//      authoritative even when the originating agent has since been
 			//      renamed or deleted (the session lookup below would miss it
 			//      in that case, leaving stale YAML at that root uncleared).
-			//   2. Session-resolved roots from the just-loaded pipelines —
-			//      catches any roots that aren't in writtenRoots yet (e.g.
-			//      first-ever editor open with pre-existing pipelines, or
-			//      writtenRoots was cleared/missing on disk).
+			//   2. Per-pipeline WRITE roots derived from the just-loaded pipelines
+			//      via the same rules handleSave uses to partition pipelines by
+			//      project root. This is the cross-directory fix for #847: when
+			//      a pipeline's agents span subdirectories, its YAML lives at
+			//      their common ancestor — we seed that ancestor here so the
+			//      next delete+save can clear it. Seeding each individual agent
+			//      root (as this loop used to) would both miss the ancestor AND
+			//      create stray empty cue.yaml files at sub-paths on delete.
 			const loadedRoots = new Set<string>();
 			if (savedLayout?.writtenRoots && Array.isArray(savedLayout.writtenRoots)) {
 				for (const root of savedLayout.writtenRoots) {
@@ -339,17 +344,24 @@ export function usePipelineLayout({
 					}
 				}
 			}
-			const sessionsById = new Map(sessions.map((s) => [s.id, s]));
-			const sessionsByName = new Map(sessions.map((s) => [s.name, s]));
-			for (const pipeline of pipelinesForRoots) {
-				for (const node of pipeline.nodes) {
-					if (node.type !== 'agent') continue;
-					const data = node.data as AgentNodeData;
-					const root =
-						sessionsById.get(data.sessionId)?.projectRoot ??
-						sessionsByName.get(data.sessionName)?.projectRoot;
-					if (root) loadedRoots.add(root);
-				}
+			// Build lookup maps with first-wins semantics on duplicate names, matching
+			// handleSave's rule (usePipelinePersistence.ts:120-125). Last-wins via
+			// `new Map(sessions.map(...))` could pick a different projectRoot than
+			// handleSave will actually write to, defeating the parity invariant that
+			// is the whole point of `resolvePipelinesWriteRoots`.
+			const sessionsById = new Map<string, SessionInfo>();
+			const sessionsByName = new Map<string, SessionInfo>();
+			for (const s of sessions) {
+				sessionsById.set(s.id, s);
+				if (!sessionsByName.has(s.name)) sessionsByName.set(s.name, s);
+			}
+			const writeRoots = resolvePipelinesWriteRoots(
+				pipelinesForRoots,
+				sessionsById,
+				sessionsByName
+			);
+			for (const root of writeRoots) {
+				loadedRoots.add(root);
 			}
 			lastWrittenRootsRef.current = loadedRoots;
 

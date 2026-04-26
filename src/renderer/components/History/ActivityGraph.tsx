@@ -20,6 +20,14 @@ export interface ActivityGraphProps {
 	onLookbackChange: (hours: number | null) => void;
 	/** Pre-computed buckets from backend (uses all entries, not just first page) */
 	precomputedBuckets?: GraphBucket[];
+	/**
+	 * Time range that `precomputedBuckets` actually spans. When the buckets
+	 * come from the server's all-time aggregate, the renderer's loaded
+	 * `entries` won't contain the earliest entry — so deriving the axis
+	 * range from `entries` would mismatch the buckets. Pass the server's
+	 * earliest/latest here to keep them aligned.
+	 */
+	precomputedRange?: { start: number; end: number };
 	/** Always show the viewport date label, repositioning near edges instead of hiding */
 	alwaysShowViewportLabel?: boolean;
 }
@@ -32,6 +40,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	lookbackHours,
 	onLookbackChange,
 	precomputedBuckets,
+	precomputedRange,
 	alwaysShowViewportLabel = false,
 }) => {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -44,18 +53,22 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 		[lookbackHours]
 	);
 
-	// Always use current time as the end of the window (graph is static)
-	const endTime = Date.now();
+	// Always use current time as the end of the window (graph is static).
+	// When a precomputed range is provided, prefer its `end` so the axis
+	// stays consistent with the server's snapshot.
+	const endTime = precomputedRange?.end ?? Date.now();
 
 	// Calculate time range based on lookback setting
 	const { startTime, msPerBucket, bucketCount } = useMemo(() => {
 		if (lookbackHours === null) {
-			// All time: find earliest entry
+			// All time: server-side range wins when provided; otherwise fall
+			// back to deriving from currently-loaded entries.
 			const earliest =
-				entries.length > 0
+				precomputedRange?.start ??
+				(entries.length > 0
 					? Math.min(...entries.map((e) => e.timestamp))
-					: endTime - 24 * 60 * 60 * 1000;
-			const totalMs = endTime - earliest;
+					: endTime - 24 * 60 * 60 * 1000);
+			const totalMs = Math.max(endTime - earliest, 1);
 			const count = lookbackConfig.bucketCount;
 			return {
 				startTime: earliest,
@@ -70,7 +83,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				bucketCount: lookbackConfig.bucketCount,
 			};
 		}
-	}, [entries, endTime, lookbackHours, lookbackConfig.bucketCount]);
+	}, [entries, endTime, lookbackHours, lookbackConfig.bucketCount, precomputedRange]);
 
 	// Group entries into buckets — use precomputed data from backend when available
 	const bucketData = useMemo(() => {

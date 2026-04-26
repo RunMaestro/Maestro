@@ -128,7 +128,7 @@ describe('execFile.ts', () => {
 					expect.objectContaining({
 						cwd: '/path/to/repo',
 						encoding: 'utf8',
-						maxBuffer: 10 * 1024 * 1024, // 10MB
+						maxBuffer: 100 * 1024 * 1024, // 100MB
 					}),
 					expect.any(Function)
 				);
@@ -525,7 +525,7 @@ describe('execFile.ts', () => {
 		});
 
 		describe('max buffer configuration', () => {
-			it('should set maxBuffer to 10MB', async () => {
+			it('should set maxBuffer to 100MB', async () => {
 				let capturedOptions: any;
 				mockExecFile.mockImplementation(
 					(_cmd: string, _args: readonly string[], options: any, callback?: any) => {
@@ -540,7 +540,7 @@ describe('execFile.ts', () => {
 				const { execFileNoThrow } = await import('../../../main/utils/execFile');
 				await execFileNoThrow('cmd');
 
-				expect(capturedOptions.maxBuffer).toBe(10 * 1024 * 1024);
+				expect(capturedOptions.maxBuffer).toBe(100 * 1024 * 1024);
 			});
 		});
 

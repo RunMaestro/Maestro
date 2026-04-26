@@ -22,6 +22,7 @@ import { useSessionStore, selectActiveSession, selectSessionById } from '../../s
 import { useTabStore } from '../../stores/tabStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
@@ -468,6 +469,13 @@ export function useModalHandlers(
 	}, []);
 
 	const handleOpenFeedbackModal = useCallback(() => {
+		// If the modal is minimized to the sidebar Feedback button, restore it
+		// instead of opening a fresh one (preserves the in-flight draft).
+		const draft = useFeedbackDraftStore.getState();
+		if (draft.isMinimized) {
+			draft.setMinimized(false);
+			return;
+		}
 		getModalActions().setFeedbackModalOpen(true);
 	}, []);
 

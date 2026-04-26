@@ -644,7 +644,6 @@ function MaestroConsoleInner() {
 	} = useInputContext();
 
 	// File Explorer State (reads from fileExplorerStore)
-	const filePreviewLoading = useFileExplorerStore((s) => s.filePreviewLoading);
 	// isGraphViewOpen, graphFocusFilePath — now self-sourced in AppStandaloneModals
 	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
@@ -988,6 +987,7 @@ function MaestroConsoleInner() {
 		handleFileClick,
 		updateSessionWorkingDirectory,
 		toggleFolder,
+		toggleFolderRecursive,
 		expandAllFolders,
 		collapseAllFolders,
 	} = useAppHandlers({
@@ -1472,16 +1472,16 @@ function MaestroConsoleInner() {
 				executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
 			}));
 
-			// Preserve the item's attached images through the send path.
-			// stagedImages lives on the active tab; processInput reads it below.
-			if (item.images && item.images.length > 0) {
-				setStagedImages(item.images);
-			}
+			// Pass the queued item's images directly through processInput options.
+			// Routing them via setStagedImages would race with processInput's stale
+			// closure of stagedImages (deps include it), causing images to drop on the
+			// floor in both the chat log entry and the agent spawn payload.
+			const images = item.images && item.images.length > 0 ? item.images : undefined;
 
 			// Dispatch with forceParallel — same code path as Cmd+Shift+Enter.
-			processInput(text, { forceParallel: true });
+			processInput(text, { forceParallel: true, images });
 		},
-		[processInput, setStagedImages]
+		[processInput]
 	);
 
 	// Build (tab→busy summary) lookup used by the Force Send button to decide
@@ -1790,20 +1790,23 @@ function MaestroConsoleInner() {
 
 	// --- FILE TREE MANAGEMENT ---
 	// Extracted hook for file tree operations (refresh, git state, filtering)
-	const { refreshFileTree, refreshGitFileState, filteredFileTree } = useFileTreeManagement({
-		sessions,
-		sessionsRef,
-		setSessions,
-		activeSessionId,
-		activeSession,
-		rightPanelRef,
-		sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
-		sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
-		localIgnorePatterns: settings.localIgnorePatterns,
-		localHonorGitignore: settings.localHonorGitignore,
-		fileExplorerMaxDepth: settings.fileExplorerMaxDepth,
-		fileExplorerMaxEntries: settings.fileExplorerMaxEntries,
-	});
+	const { refreshFileTree, refreshGitFileState, cancelFileTreeLoad, filteredFileTree } =
+		useFileTreeManagement({
+			sessions,
+			sessionsRef,
+			setSessions,
+			activeSessionId,
+			activeSession,
+			rightPanelRef,
+			sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
+			sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
+			localIgnorePatterns: settings.localIgnorePatterns,
+			localHonorGitignore: settings.localHonorGitignore,
+			fileExplorerMaxDepth: settings.fileExplorerMaxDepth,
+			fileExplorerMaxEntries: settings.fileExplorerMaxEntries,
+			sshReduceEntryCapEnabled: settings.sshReduceEntryCapEnabled,
+			sshReduceEntryCapFraction: settings.sshReduceEntryCapFraction,
+		});
 
 	// --- FILE EXPLORER EFFECTS ---
 	// Extracted hook for file explorer side effects and keyboard navigation (Phase 2.6)
@@ -2230,7 +2233,6 @@ function MaestroConsoleInner() {
 		slashCommandOpen,
 		slashCommands: allSlashCommands,
 		selectedSlashCommandIndex,
-		filePreviewLoading,
 
 		// Tab completion state
 		tabCompletionOpen,
@@ -2503,11 +2505,13 @@ function MaestroConsoleInner() {
 
 		// File explorer handlers
 		toggleFolder,
+		toggleFolderRecursive,
 		handleFileClick,
 		expandAllFolders,
 		collapseAllFolders,
 		updateSessionWorkingDirectory,
 		refreshFileTree,
+		cancelFileTreeLoad,
 		handleAutoRefreshChange,
 		showSuccessFlash,
 
@@ -3123,10 +3127,12 @@ function MaestroConsoleInner() {
 									participantColors={groupChatParticipantColors}
 									messagesRef={groupChatMessagesRef}
 									ghCliAvailable={ghCliAvailable}
-									onPublishMessageGist={(text: string) => {
+									onPublishMessageGist={(text: string, messageId?: string) => {
 										if (!text.trim()) return;
 										const filename = `group_chat_response_${Date.now()}.md`;
-										useTabStore.getState().setTabGistContent({ filename, content: text });
+										useTabStore
+											.getState()
+											.setTabGistContent({ filename, content: text, messageId });
 										setGistPublishModalOpen(true);
 									}}
 								/>

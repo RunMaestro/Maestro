@@ -148,7 +148,7 @@ describe('MaestroPromptsTab selection precedence', () => {
 	it('defaults to maestro-system-prompt when nothing else is specified', async () => {
 		render(<MaestroPromptsTab theme={mockTheme} />);
 		await waitFor(() => {
-			expect(screen.getByRole('heading', { name: 'maestro-system-prompt' })).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: /^maestro-system-prompt/ })).toBeInTheDocument();
 		});
 	});
 
@@ -156,7 +156,7 @@ describe('MaestroPromptsTab selection precedence', () => {
 		mockLastSelectedPromptId = 'wizard-system';
 		render(<MaestroPromptsTab theme={mockTheme} />);
 		await waitFor(() => {
-			expect(screen.getByRole('heading', { name: 'wizard-system' })).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: /^wizard-system/ })).toBeInTheDocument();
 		});
 	});
 
@@ -164,7 +164,7 @@ describe('MaestroPromptsTab selection precedence', () => {
 		mockLastSelectedPromptId = 'wizard-system';
 		render(<MaestroPromptsTab theme={mockTheme} initialSelectedPromptId="autorun-default" />);
 		await waitFor(() => {
-			expect(screen.getByRole('heading', { name: 'autorun-default' })).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: /^autorun-default/ })).toBeInTheDocument();
 		});
 	});
 
@@ -194,13 +194,13 @@ describe('MaestroPromptsTab selection precedence', () => {
 		render(<MaestroPromptsTab theme={mockTheme} />);
 		await waitFor(() => {
 			// Items are rendered sorted alphabetically by id, so autorun-default is first.
-			expect(screen.getByRole('heading', { name: 'autorun-default' })).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: /^autorun-default/ })).toBeInTheDocument();
 		});
 	});
 
 	it('persists lastSelectedPromptId on selection change', async () => {
 		render(<MaestroPromptsTab theme={mockTheme} />);
-		await waitFor(() => screen.getByRole('heading', { name: 'maestro-system-prompt' }));
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
 		const wizardItem = await screen.findByRole('button', { name: /wizard-system/ });
 		fireEvent.click(wizardItem);
 		expect(mockSetLastSelectedPromptId).toHaveBeenCalledWith('wizard-system');
@@ -208,10 +208,20 @@ describe('MaestroPromptsTab selection precedence', () => {
 
 	it('emits data-item-id on each list item so the shared list is scrollable into view', async () => {
 		const { container } = render(<MaestroPromptsTab theme={mockTheme} />);
-		await waitFor(() => screen.getByRole('heading', { name: 'maestro-system-prompt' }));
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
 		const ids = Array.from(
 			container.querySelectorAll<HTMLElement>('.dual-pane-list-item[data-item-id]')
 		).map((el) => el.dataset.itemId);
 		expect(ids).toEqual(expect.arrayContaining(PROMPTS.map((p) => p.id)));
+	});
+
+	it('renders a live token count next to the editor title', async () => {
+		const { container } = render(<MaestroPromptsTab theme={mockTheme} />);
+		await waitFor(() => screen.getByRole('heading', { name: /^maestro-system-prompt/ }));
+		const badge = container.querySelector<HTMLElement>(
+			'.dual-pane-editor-header h3 .dual-pane-editor-token-count'
+		);
+		expect(badge).not.toBeNull();
+		expect(badge!.textContent).toMatch(/^~\d.*tokens$/);
 	});
 });

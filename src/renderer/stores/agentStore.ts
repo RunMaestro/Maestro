@@ -405,6 +405,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
 					);

@@ -3,7 +3,7 @@
  *
  * Consolidates file explorer state previously scattered across:
  * - uiStore (selectedFileIndex, fileTreeFilter, fileTreeFilterOpen)
- * - App.tsx useState (filePreviewLoading, flatFileList, graph view state)
+ * - App.tsx useState (flatFileList, graph view state)
  *
  * Per-session file tree DATA (fileTree, fileExplorerExpanded, etc.) stays
  * in sessionStore — deeply embedded in the Session type with 200+ call sites.
@@ -19,19 +19,11 @@ import type { FileNode } from '../types/fileTree';
 // Types
 // ============================================================================
 
-export interface FilePreviewLoading {
-	name: string;
-	path: string;
-}
-
 export interface FileExplorerStoreState {
 	// File tree UI (migrated from uiStore)
 	selectedFileIndex: number;
 	fileTreeFilter: string;
 	fileTreeFilterOpen: boolean;
-
-	// File preview loading indicator (migrated from App.tsx)
-	filePreviewLoading: FilePreviewLoading | null;
 
 	// Filtered file tree (tree-structured, for FileExplorerPanel rendering)
 	filteredFileTree: FileNode[];
@@ -50,9 +42,6 @@ export interface FileExplorerStoreActions {
 	setSelectedFileIndex: (index: number | ((prev: number) => number)) => void;
 	setFileTreeFilter: (filter: string | ((prev: string) => string)) => void;
 	setFileTreeFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
-
-	// File preview loading
-	setFilePreviewLoading: (loading: FilePreviewLoading | null) => void;
 
 	// File tree data
 	setFilteredFileTree: (tree: FileNode[]) => void;
@@ -91,7 +80,6 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	selectedFileIndex: 0,
 	fileTreeFilter: '',
 	fileTreeFilterOpen: false,
-	filePreviewLoading: null,
 	filteredFileTree: [],
 	flatFileList: [],
 	isGraphViewOpen: false,
@@ -103,8 +91,6 @@ export const useFileExplorerStore = create<FileExplorerStore>()((set, get) => ({
 	setFileTreeFilter: (v) => set((s) => ({ fileTreeFilter: resolve(v, s.fileTreeFilter) })),
 	setFileTreeFilterOpen: (v) =>
 		set((s) => ({ fileTreeFilterOpen: resolve(v, s.fileTreeFilterOpen) })),
-
-	setFilePreviewLoading: (loading) => set({ filePreviewLoading: loading }),
 
 	setFilteredFileTree: (tree) => set({ filteredFileTree: tree }),
 	setFlatFileList: (list) => set({ flatFileList: list }),

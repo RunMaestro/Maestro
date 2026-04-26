@@ -231,7 +231,11 @@ function validateEventSpecificFields(
 				`${prefix}: "schedule_times" is required and must be a non-empty array of time strings (e.g. ["09:00", "17:00"]) for time.scheduled events`
 			);
 		} else {
-			const timeRegex = /^\d{2}:\d{2}$/;
+			// Accept both `H:MM` and `HH:MM`. The normalizer pads to two-digit
+			// hours so downstream string comparisons (e.g. the scheduled trigger
+			// source's `times.includes(currentTime)` check) match regardless of
+			// what the user typed in the UI.
+			const timeRegex = /^\d{1,2}:\d{2}$/;
 			for (const time of sub.schedule_times as string[]) {
 				if (typeof time !== 'string' || !timeRegex.test(time)) {
 					errors.push(`${prefix}: schedule_times value "${time}" must be in HH:MM format`);
@@ -409,13 +413,23 @@ function validateSettings(rawSettings: unknown): string[] {
 			errors.push('"settings.queue_size" must be a non-negative integer between 0 and 50');
 		}
 	}
+	if (settings.owner_agent_id !== undefined) {
+		if (typeof settings.owner_agent_id !== 'string' || settings.owner_agent_id.trim() === '') {
+			errors.push('"settings.owner_agent_id" must be a non-empty string (agent id or name)');
+		}
+	}
 	return errors;
 }
 
 export function validateCueConfigDocument(config: unknown): { valid: boolean; errors: string[] } {
 	const errors: string[] = [];
 
-	if (!config || typeof config !== 'object') {
+	// null/undefined = comments-only or empty file → treat as valid empty config
+	if (config === null || config === undefined) {
+		return { valid: true, errors: [] };
+	}
+
+	if (typeof config !== 'object') {
 		return { valid: false, errors: ['Config must be a non-null object'] };
 	}
 
@@ -472,7 +486,12 @@ export function partitionValidSubscriptions(config: unknown): PartitionedValidat
 		subscriptionErrors: [],
 	};
 
-	if (!config || typeof config !== 'object') {
+	if (config === null || config === undefined) {
+		// comments-only or empty file — no config errors, no subscriptions
+		return result;
+	}
+
+	if (typeof config !== 'object') {
 		result.configErrors.push('Config must be a non-null object');
 		return result;
 	}

@@ -72,10 +72,19 @@ function getAutorunSynopsisPrompt(): string {
 }
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { logger } from '../../utils/logger';
+import { buildHiddenProgressLogId } from '../../utils/hiddenProgress';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+type ToolProgressState = NonNullable<LogEntry['metadata']>['toolState'];
+
+function removeHiddenProgressLog(logs: LogEntry[], tabId: string): LogEntry[] {
+	const hiddenLogId = buildHiddenProgressLogId(tabId);
+	const updatedLogs = logs.filter((log) => log.id !== hiddenLogId);
+	return updatedLogs.length === logs.length ? logs : updatedLogs;
+}
 
 /** Batched updater interface (subset used by IPC listeners) */
 export interface BatchedUpdater {
@@ -155,6 +164,29 @@ export interface UseAgentListenersDeps {
 // Helpers
 // ============================================================================
 
+function isMatchingAgentErrorLog(log: LogEntry, agentError: AgentError): boolean {
+	if (log.source !== 'error' || !log.agentError) {
+		return false;
+	}
+
+	return (
+		log.agentError.timestamp === agentError.timestamp &&
+		log.agentError.type === agentError.type &&
+		log.agentError.message === agentError.message &&
+		log.agentError.agentId === agentError.agentId
+	);
+}
+
+function removeMatchingAgentErrorLog(logs: LogEntry[], agentError: AgentError): LogEntry[] {
+	for (let index = logs.length - 1; index >= 0; index -= 1) {
+		if (isMatchingAgentErrorLog(logs[index], agentError)) {
+			return [...logs.slice(0, index), ...logs.slice(index + 1)];
+		}
+	}
+
+	return logs;
+}
+
 /**
  * Get a human-readable title for an agent error type.
  * Used for toast notifications and history entries.
@@ -197,10 +229,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// Internal refs — only used by IPC listeners, not needed outside this hook
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
+	const activeHiddenToolRef = useRef<
+		Map<string, { toolName: string; toolState?: ToolProgressState }>
+	>(new Map());
 
 	useEffect(() => {
 		// Copy ref value to local variable for cleanup (React ESLint rule)
 		const thinkingChunkBuffer = thinkingChunkBufferRef.current;
+		const activeHiddenTools = activeHiddenToolRef.current;
 
 		// Stable references from stores (Zustand actions are referentially stable)
 		const setSessions = useSessionStore.getState().setSessions;
@@ -263,6 +299,23 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				return;
 			}
 
+			activeHiddenTools.delete(`${actualSessionId}:${targetTabId}`);
+
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== actualSessionId) return s;
+					let didChange = false;
+					const updatedTabs = s.aiTabs.map((tab) => {
+						if (tab.id !== targetTabId) return tab;
+						const updatedLogs = removeHiddenProgressLog(tab.logs, targetTabId);
+						if (updatedLogs === tab.logs) return tab;
+						didChange = true;
+						return { ...tab, logs: updatedLogs };
+					});
+					return didChange ? { ...s, aiTabs: updatedTabs } : s;
+				})
+			);
+
 			// Batch the log append, delivery mark, unread mark, and byte tracking
 			deps.batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
 			deps.batchedUpdater.markDelivered(actualSessionId, targetTabId);
@@ -271,11 +324,23 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			// Clear error state if session had an error but is now receiving successful data
 			const sessionForErrorCheck = getSessions().find((s) => s.id === actualSessionId);
 			if (sessionForErrorCheck?.agentError) {
+				const activeAgentError = sessionForErrorCheck.agentError;
+				const errorTabId = sessionForErrorCheck.agentErrorTabId ?? targetTabId;
+
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 						const updatedAiTabs = s.aiTabs.map((tab) =>
-							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+							tab.id === targetTabId || tab.id === errorTabId
+								? {
+										...tab,
+										logs:
+											tab.id === errorTabId
+												? removeMatchingAgentErrorLog(tab.logs, activeAgentError)
+												: tab.logs,
+										agentError: undefined,
+									}
+								: tab
 						);
 						return {
 							...s,
@@ -339,6 +404,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				} else {
 					actualSessionId = sessionId;
 					isFromAi = false;
+				}
+
+				if (isFromAi && tabIdFromSession) {
+					activeHiddenTools.delete(`${actualSessionId}:${tabIdFromSession}`);
 				}
 
 				// SAFETY CHECK: Verify the process is actually gone
@@ -558,6 +627,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 													return tab.id === tabIdFromSession
 														? {
 																...tab,
+																logs: removeHiddenProgressLog(tab.logs, tab.id),
 																state: 'idle' as const,
 																thinkingStartTime: undefined,
 																// Preserve agentSessionId — stale IDs are cleared
@@ -570,6 +640,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 													return tab.state === 'busy'
 														? {
 																...tab,
+																logs: removeHiddenProgressLog(tab.logs, tab.id),
 																state: 'idle' as const,
 																thinkingStartTime: undefined,
 															}
@@ -640,6 +711,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									if (tabIdFromSession && tab.id === tabIdFromSession) {
 										return {
 											...tab,
+											logs: removeHiddenProgressLog(tab.logs, tab.id),
 											state: 'idle' as const,
 										};
 									}
@@ -684,6 +756,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 												return tab.id === tabIdFromSession
 													? {
 															...tab,
+															logs: removeHiddenProgressLog(tab.logs, tab.id),
 															state: 'idle' as const,
 															thinkingStartTime: undefined,
 															// Preserve agentSessionId for session resume —
@@ -695,6 +768,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 												return tab.state === 'busy'
 													? {
 															...tab,
+															logs: removeHiddenProgressLog(tab.logs, tab.id),
 															state: 'idle' as const,
 															thinkingStartTime: undefined,
 														}
@@ -1070,7 +1144,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		);
 
 		// ================================================================
-		// onSlashCommands — Handle slash commands from Claude Code init
+		// onSlashCommands — Handle slash commands from agent init/discovery
 		// ================================================================
 		const unsubscribeSlashCommands = window.maestro.process.onSlashCommands(
 			(sessionId: string, slashCommands: string[]) => {
@@ -1079,19 +1153,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
-						const newCommands = slashCommands.map((cmd) => ({
+						const commands = slashCommands.map((cmd) => ({
 							command: cmd.startsWith('/') ? cmd : `/${cmd}`,
 							description: getSlashCommandDescription(cmd, s.toolType),
 						}));
-						// Merge with existing commands, preserving prompt data from
-						// disk-discovered commands (e.g., OpenCode .md files)
-						const existingByName = new Map((s.agentCommands || []).map((c) => [c.command, c]));
-						for (const cmd of newCommands) {
-							if (!existingByName.has(cmd.command)) {
-								existingByName.set(cmd.command, cmd);
-							}
-						}
-						return { ...s, agentCommands: Array.from(existingByName.values()) };
+						return { ...s, agentCommands: commands };
 					})
 				);
 			}
@@ -1309,6 +1375,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					agentError: isSessionNotFound ? undefined : agentError,
 				};
 
+				if (tabIdFromSession) {
+					activeHiddenTools.delete(`${actualSessionId}:${tabIdFromSession}`);
+				}
+
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
@@ -1321,7 +1391,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									tab.id === targetTab.id
 										? {
 												...tab,
-												logs: [...tab.logs, errorLogEntry],
+												logs: [...removeHiddenProgressLog(tab.logs, tab.id), errorLogEntry],
 												agentError: isSessionNotFound ? undefined : agentError,
 												// Clear stale agentSessionId on session_not_found so the next
 												// spawn starts a fresh session instead of retrying --resume
@@ -1620,6 +1690,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					toolName: string;
 					state?: unknown;
 					timestamp: number;
+					toolCallId?: string;
 				}
 			) => {
 				const aiTabMatch = sessionId.match(REGEX_AI_TAB);
@@ -1628,32 +1699,91 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
 
+				// When toolCallId is present, use a deterministic log id so the
+				// `running` and `completed`/`failed` events from the same tool
+				// call collapse into one bubble. Without an id (legacy/agents
+				// that don't emit one) fall back to a per-event timestamp id.
+				const logId = toolEvent.toolCallId
+					? `tool-${toolEvent.toolCallId}`
+					: `tool-${Date.now()}-${toolEvent.toolName}`;
+
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
-						if (!targetTab?.showThinking || targetTab.showThinking === 'off') return s;
+						if (!targetTab) return s;
 
-						const toolLog: LogEntry = {
-							id: `tool-${Date.now()}-${toolEvent.toolName}`,
-							timestamp: toolEvent.timestamp,
-							source: 'tool',
-							text: toolEvent.toolName,
-							metadata: {
-								toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
-							},
-						};
+						if (!targetTab.showThinking || targetTab.showThinking === 'off') return s;
+
+						const newState = toolEvent.state as
+							| NonNullable<LogEntry['metadata']>['toolState']
+							| undefined;
+
+						// Locate an existing log entry to merge this event into:
+						// 1) If we have a toolCallId, match by deterministic log id.
+						// 2) Otherwise (Codex and other agents that don't emit a
+						//    call id), if this event finalizes a tool call, attribute
+						//    it to the most recent still-`running` entry with the
+						//    same toolName. This collapses the otherwise-empty
+						//    completion bubble onto the one that was showing the
+						//    spinner. Common case is sequential tool use — parallel
+						//    same-tool calls are rare and would still produce a
+						//    correct-looking, just-slightly-mis-paired result.
+						const isFinalizing =
+							newState?.status === 'completed' ||
+							newState?.status === 'failed' ||
+							newState?.status === 'error';
+						let existingIdx = -1;
+						if (toolEvent.toolCallId) {
+							existingIdx = targetTab.logs.findIndex((l) => l.id === logId);
+						} else if (isFinalizing) {
+							for (let i = targetTab.logs.length - 1; i >= 0; i--) {
+								const log = targetTab.logs[i];
+								if (
+									log.source === 'tool' &&
+									log.text === toolEvent.toolName &&
+									log.metadata?.toolState?.status === 'running'
+								) {
+									existingIdx = i;
+									break;
+								}
+							}
+						}
+
+						let updatedLogs: LogEntry[];
+						if (existingIdx >= 0) {
+							const existing = targetTab.logs[existingIdx];
+							const existingState = existing.metadata?.toolState;
+							const mergedState: NonNullable<LogEntry['metadata']>['toolState'] = {
+								...existingState,
+								...newState,
+								input: newState?.input ?? existingState?.input,
+							};
+							const mergedLog: LogEntry = {
+								...existing,
+								metadata: { ...existing.metadata, toolState: mergedState },
+							};
+							updatedLogs = [
+								...targetTab.logs.slice(0, existingIdx),
+								mergedLog,
+								...targetTab.logs.slice(existingIdx + 1),
+							];
+						} else {
+							const toolLog: LogEntry = {
+								id: logId,
+								timestamp: toolEvent.timestamp,
+								source: 'tool',
+								text: toolEvent.toolName,
+								metadata: { toolState: newState },
+							};
+							updatedLogs = [...targetTab.logs, toolLog];
+						}
 
 						return {
 							...s,
 							aiTabs: s.aiTabs.map((tab) =>
-								tab.id === tabId
-									? {
-											...tab,
-											logs: [...tab.logs, toolLog],
-										}
-									: tab
+								tab.id === tabId ? { ...tab, logs: updatedLogs } : tab
 							),
 						};
 					})
@@ -1682,6 +1812,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				thinkingChunkRafIdRef.current = null;
 			}
 			thinkingChunkBuffer.clear();
+			activeHiddenTools.clear();
 		};
 	}, []);
 }

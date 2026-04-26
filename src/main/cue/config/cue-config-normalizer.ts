@@ -73,6 +73,19 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	}
 }
 
+/**
+ * Pad single-digit hours to `HH:MM`. The validator accepts `H:MM` for user
+ * convenience, but the scheduled trigger source compares times as zero-padded
+ * strings, so unpadded values would silently never match the wall clock.
+ * Leaves anything that doesn't look like `H:MM` / `HH:MM` untouched (the
+ * validator handles those).
+ */
+function padScheduleTime(time: string): string {
+	const match = time.match(/^(\d{1,2}):(\d{2})$/);
+	if (!match) return time;
+	return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
 function normalizeFilter(
 	filterValue: unknown
 ): Record<string, string | number | boolean> | undefined {
@@ -204,7 +217,7 @@ function normalizeSubscription(
 		schedule_times:
 			Array.isArray(sub.schedule_times) &&
 			sub.schedule_times.every((value: unknown) => typeof value === 'string')
-				? (sub.schedule_times as string[])
+				? (sub.schedule_times as string[]).map(padScheduleTime)
 				: undefined,
 		schedule_days:
 			Array.isArray(sub.schedule_days) &&

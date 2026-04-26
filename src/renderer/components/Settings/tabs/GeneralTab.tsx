@@ -26,6 +26,7 @@ import {
 	PartyPopper,
 	Tag,
 	User,
+	SpellCheck,
 	ExternalLink,
 	Keyboard,
 	AlertTriangle,
@@ -79,6 +80,9 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
+		// Spell check
+		spellCheck,
+		setSpellCheck,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -270,28 +274,25 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					communicate with you. As the conductor, you orchestrate the symphony of AI agents.
 					(Optional, max 5000 characters)
 				</p>
-				<div className="relative">
-					<textarea
-						value={conductorProfile}
-						onChange={(e) => setConductorProfile(e.target.value)}
-						placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
-						className="w-full p-3 pb-8 rounded border bg-transparent outline-none text-sm resize-y"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							minHeight: '100px',
-						}}
-						maxLength={5000}
-					/>
-					<div
-						className="absolute bottom-2 right-2 text-xs px-1 rounded"
-						style={{
-							color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
-							backgroundColor: theme.colors.bgSidebar,
-						}}
-					>
-						{conductorProfile.length}/5000
-					</div>
+				<textarea
+					value={conductorProfile}
+					onChange={(e) => setConductorProfile(e.target.value)}
+					placeholder="e.g., I'm a senior developer working on a React/TypeScript project. I prefer concise explanations and clean code patterns..."
+					className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						minHeight: '100px',
+					}}
+					maxLength={5000}
+				/>
+				<div
+					className="text-xs mt-1 text-right"
+					style={{
+						color: conductorProfile.length > 4500 ? theme.colors.warning : theme.colors.textDim,
+					}}
+				>
+					{conductorProfile.length}/5000
 				</div>
 			</div>
 
@@ -908,6 +909,17 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					theme={theme}
 				/>
 			</div>
+
+			{/* Spell Check */}
+			<SettingCheckbox
+				icon={SpellCheck}
+				sectionLabel="Spell Check"
+				title="Enable spell checking"
+				description="Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default."
+				checked={spellCheck}
+				onChange={setSpellCheck}
+				theme={theme}
+			/>
 
 			{/* Sleep Prevention */}
 			<div data-setting-id="general-power">

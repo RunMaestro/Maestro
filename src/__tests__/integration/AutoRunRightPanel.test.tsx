@@ -210,7 +210,7 @@ const RightPanelTestWrapper = ({
 	const [activeRightTab, setActiveRightTab] = useState<RightPanelTab>(initialTab);
 	const [rightPanelWidth, setRightPanelWidth] = useState(initialWidth);
 	const [autoRunContent, setAutoRunContent] = useState(initialContent);
-	const [session, setSession] = useState(createMockSession());
+	const [session, setSession] = useState(() => createMockSession());
 	const [rightPanelOpen, setRightPanelOpen] = useState(true);
 	const [activeFocus, setActiveFocus] = useState('right');
 
@@ -267,6 +267,7 @@ const RightPanelTestWrapper = ({
 				fileTreeContainerRef={fileTreeContainerRef}
 				fileTreeFilterInputRef={fileTreeFilterInputRef}
 				toggleFolder={() => {}}
+				toggleFolderRecursive={() => {}}
 				handleFileClick={async () => {}}
 				expandAllFolders={() => {}}
 				collapseAllFolders={() => {}}
@@ -384,6 +385,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -723,6 +725,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}
@@ -835,6 +838,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -905,6 +909,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -988,6 +993,7 @@ describe('Auto Run + RightPanel Integration', () => {
 						fileTreeContainerRef={fileTreeContainerRef}
 						fileTreeFilterInputRef={fileTreeFilterInputRef}
 						toggleFolder={() => {}}
+						toggleFolderRecursive={() => {}}
 						handleFileClick={async () => {}}
 						expandAllFolders={() => {}}
 						collapseAllFolders={() => {}}
@@ -1095,6 +1101,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1144,7 +1151,7 @@ describe('Auto Run + RightPanel Integration', () => {
 		it('handles session change while on different tab', async () => {
 			const TestComponent = () => {
 				const [activeTab, setActiveTab] = useState<RightPanelTab>('autorun');
-				const [session, setSession] = useState(createMockSession({ id: 'session-1' }));
+				const [session, setSession] = useState(() => createMockSession({ id: 'session-1' }));
 				const [content, setContent] = useState('Session 1 content');
 				const fileTreeContainerRef = React.useRef<HTMLDivElement>(null);
 				const fileTreeFilterInputRef = React.useRef<HTMLInputElement>(null);
@@ -1183,6 +1190,7 @@ describe('Auto Run + RightPanel Integration', () => {
 								fileTreeContainerRef={fileTreeContainerRef}
 								fileTreeFilterInputRef={fileTreeFilterInputRef}
 								toggleFolder={() => {}}
+								toggleFolderRecursive={() => {}}
 								handleFileClick={async () => {}}
 								expandAllFolders={() => {}}
 								collapseAllFolders={() => {}}
@@ -1256,6 +1264,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1364,6 +1373,7 @@ describe('Auto Run + RightPanel Integration', () => {
 					fileTreeContainerRef={fileTreeContainerRef}
 					fileTreeFilterInputRef={fileTreeFilterInputRef}
 					toggleFolder={() => {}}
+					toggleFolderRecursive={() => {}}
 					handleFileClick={async () => {}}
 					expandAllFolders={() => {}}
 					collapseAllFolders={() => {}}
@@ -1444,6 +1454,7 @@ describe('Auto Run + RightPanel Integration', () => {
 							fileTreeContainerRef={fileTreeContainerRef}
 							fileTreeFilterInputRef={fileTreeFilterInputRef}
 							toggleFolder={() => {}}
+							toggleFolderRecursive={() => {}}
 							handleFileClick={async () => {}}
 							expandAllFolders={() => {}}
 							collapseAllFolders={() => {}}

@@ -186,22 +186,26 @@ export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
  */
 /**
  * Get the display name for a tab.
- * Priority: name > agent session ID marker > "New Session"
+ * Priority: name > tab agent session ID > session-level agent session ID > "New Session"
  *
  * Handles different agent session ID formats:
  * - Claude UUID: "abc123-def456-ghi789" → "ABC123" (first octet)
  * - OpenCode: "SES_4BCDFE8C5FFE4KC1UV9NSMYEDB" → "SES_4BCD" (prefix + 4 chars)
  * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
  *
- * Shows "New Session" until the agent session is established and an
- * agentSessionId is assigned, at which point the formatted ID is shown.
+ * The optional `sessionAgentSessionId` fallback mirrors ThinkingStatusPill,
+ * which uses `tab?.agentSessionId || session.agentSessionId`. Some agents
+ * (notably Copilot-CLI) populate the session-level ID before the tab-level
+ * one is wired up, so without this fallback the pill shows the session-ID
+ * octet while the tab title still reads "New Session".
  */
-export function getTabDisplayName(tab: AITab): string {
+export function getTabDisplayName(tab: AITab, sessionAgentSessionId?: string | null): string {
 	if (tab.name) {
 		return tab.name;
 	}
-	if (tab.agentSessionId) {
-		return formatSessionId(tab.agentSessionId);
+	const fallbackId = tab.agentSessionId || sessionAgentSessionId;
+	if (fallbackId) {
+		return formatSessionId(fallbackId);
 	}
 	return 'New Session';
 }
@@ -307,6 +311,23 @@ export function hasDraft(tab: AITab): boolean {
  */
 export function hasActiveWizard(tab: AITab): boolean {
 	return tab.wizardState?.isActive === true;
+}
+
+/**
+ * Check if a tab's active wizard has any user interaction.
+ * Returns true if the user has sent messages, typed input, or staged images.
+ * Used to decide whether closing the wizard should show a confirmation dialog.
+ *
+ * @param tab - The AI tab to check
+ * @returns True if the wizard has user interaction worth confirming loss of
+ */
+export function hasWizardInteraction(tab: AITab): boolean {
+	if (!tab.wizardState?.isActive) return false;
+	const hasUserMessages =
+		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
+	const hasInput = (tab.inputValue ?? '').trim() !== '';
+	const hasImages = tab.stagedImages?.length > 0;
+	return hasUserMessages || hasInput || hasImages;
 }
 
 /**

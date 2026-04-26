@@ -315,6 +315,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:stopServer', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			// Even with no server, ensure the CLI channel is available so
+			// maestro-cli works after Live Mode toggles.
+			await ensureCliServer(deps);
 			return { success: true };
 		}
 
@@ -322,13 +325,18 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
+			deleteCliServerInfo();
 			logger.info('Web server stopped and cleaned up', 'WebServer');
-			return { success: true };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server: ${error.message}`, 'WebServer');
 			return { success: false, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token. The user
+		// turned off Live Mode (closing the public URL) but the CLI server
+		// must remain reachable for maestro-cli.
+		await ensureCliServer(deps);
+		return { success: true };
 	});
 
 	// Persist the current web server's security token and enable persistent web link.
@@ -388,6 +396,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	ipcMain.handle('live:disableAll', async () => {
 		const webServer = getWebServer();
 		if (!webServer) {
+			await ensureCliServer(deps);
 			return { success: true, count: 0 };
 		}
 
@@ -403,12 +412,16 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
 			setWebServer(null);
-			deleteCliServerInfo(); // Remove discovery file since server is no longer running
-			return { success: true, count };
+			deleteCliServerInfo();
 		} catch (error: any) {
 			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
 			return { success: false, count, error: error.message };
 		}
+
+		// Bring the CLI server back up on a fresh port + token so maestro-cli
+		// continues working after Live Mode is fully disabled.
+		await ensureCliServer(deps);
+		return { success: true, count };
 	});
 
 	// Web server management

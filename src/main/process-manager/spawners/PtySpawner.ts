@@ -2,10 +2,12 @@ import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
 import { stripControlSequences } from '../../utils/terminalFilter';
 import { logger } from '../../utils/logger';
+import { needsWindowsShell } from '../../utils/execFile';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { buildPtyTerminalEnv, buildChildProcessEnv } from '../utils/envBuilder';
 import { resolveShellPath } from '../utils/pathResolver';
+import { escapeArgsForShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
 
 /**
@@ -74,8 +76,18 @@ export class PtySpawner {
 				}
 			} else {
 				// Spawn the AI agent directly with PTY support
-				ptyCommand = command;
-				ptyArgs = args;
+				if (isWindows() && needsWindowsShell(command)) {
+					ptyCommand = process.env.ComSpec || 'cmd.exe';
+					ptyArgs = [
+						'/d',
+						'/s',
+						'/c',
+						escapeArgsForShell([command, ...args], ptyCommand).join(' '),
+					];
+				} else {
+					ptyCommand = command;
+					ptyArgs = args;
+				}
 			}
 
 			// Build environment for PTY process

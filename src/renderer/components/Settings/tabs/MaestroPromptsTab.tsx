@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
 import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
+import { estimateTokenCount } from '../../../../shared/formatters';
 import './MaestroPromptsTab.css';
 
 interface CorePrompt {
@@ -422,7 +423,7 @@ export function MaestroPromptsTab({
 		})();
 	}, []);
 
-	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component)
+	// Build items for the shared editor (sorted by id within category; category order is handled by the shared component).
 	const items = useMemo<DualPaneFileEditorItem[]>(() => {
 		return [...prompts]
 			.sort((a, b) => a.id.localeCompare(b.id))
@@ -434,6 +435,11 @@ export function MaestroPromptsTab({
 				isModified: p.isModified,
 			}));
 	}, [prompts]);
+
+	const editorTokenCount = useMemo(
+		() => (selectedPrompt ? estimateTokenCount(editedContent) : undefined),
+		[selectedPrompt, editedContent]
+	);
 
 	const handleSelectPrompt = useCallback(
 		(id: string) => {
@@ -675,6 +681,7 @@ export function MaestroPromptsTab({
 				emptyStateMessage="Select a prompt to edit"
 				editorTitle={selectedPrompt?.id}
 				editorDescription={selectedPrompt?.description}
+				editorTokenCount={editorTokenCount}
 				editorHeaderActions={editorHeaderActions}
 				showModifiedBadge={selectedPrompt?.isModified}
 				renderEditorBody={renderEditorBody}

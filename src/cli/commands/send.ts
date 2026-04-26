@@ -2,10 +2,11 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
-import { resolveAgentId, getSessionById } from '../services/storage';
+import { resolveAgentId, getSessionById, readSettingValue } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
+import { getSettingDefault } from '../../shared/settingsMetadata';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -14,6 +15,7 @@ interface SendOptions {
 	tab?: boolean;
 	live?: boolean;
 	newTab?: boolean;
+	force?: boolean;
 }
 
 interface SendResponse {
@@ -83,6 +85,28 @@ export async function send(
 		process.exit(1);
 	}
 
+	// --force only applies to --live (non-live spawns fresh processes; --new-tab
+	// creates a fresh tab — neither path has a busy guard to override).
+	if (options.force && !options.live) {
+		emitErrorJson('--force requires --live', 'INVALID_OPTIONS');
+		process.exit(1);
+	}
+
+	// --force is gated by the `allowConcurrentSend` setting. It's off by default
+	// because concurrent writes can interleave responses in the target tab.
+	if (options.force) {
+		const stored = readSettingValue('allowConcurrentSend');
+		const allowConcurrentSend =
+			stored === undefined ? (getSettingDefault('allowConcurrentSend') as boolean) : stored;
+		if (allowConcurrentSend !== true) {
+			emitErrorJson(
+				'--force is disabled. Enable it with: maestro-cli settings set allowConcurrentSend true',
+				'FORCE_NOT_ALLOWED'
+			);
+			process.exit(1);
+		}
+	}
+
 	// --live mode: route message through Maestro desktop tab
 	if (options.live) {
 		if (options.session || options.readOnly) {
@@ -110,7 +134,13 @@ export async function send(
 				} else {
 					// Write into the agent's currently-active AI tab
 					await client.sendCommand(
-						{ type: 'send_command', sessionId: liveAgentId, command: message, inputMode: 'ai' },
+						{
+							type: 'send_command',
+							sessionId: liveAgentId,
+							command: message,
+							inputMode: 'ai',
+							...(options.force ? { force: true } : {}),
+						},
 						'command_result'
 					);
 				}

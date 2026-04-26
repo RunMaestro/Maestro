@@ -5,7 +5,7 @@
  * node type, and provides header chrome (expand/collapse, delete).
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Trash2, Zap, ChevronsUp, ChevronsDown, Play, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type {
@@ -62,7 +62,7 @@ interface NodeConfigPanelProps {
 	isRunning?: boolean;
 }
 
-export function NodeConfigPanel({
+function NodeConfigPanelInner({
 	selectedNode,
 	theme,
 	pipelines,
@@ -339,3 +339,6 @@ export function NodeConfigPanel({
 		</div>
 	);
 }
+
+// Phase 14B — memoized so the panel does not re-render on unrelated canvas ticks.
+export const NodeConfigPanel = React.memo(NodeConfigPanelInner);
