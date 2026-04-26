@@ -496,6 +496,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				let synopsisData: {
 					sessionId: string;
 					cwd: string;
+					projectRoot: string;
 					agentSessionId: string;
 					command: string;
 					groupName: string;
@@ -630,6 +631,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							synopsisData = {
 								sessionId: actualSessionId,
 								cwd: currentSession.cwd,
+								projectRoot: currentSession.projectRoot,
 								agentSessionId: completedTab?.agentSessionId || currentSession.agentSessionId!,
 								command: currentSession.pendingAICommandForSynopsis || 'Save to History',
 								groupName,
@@ -1047,6 +1049,50 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									sessionName: synopsisData!.tabName,
 									elapsedTimeMs: synopsisData!.taskDuration,
 								});
+
+								// Persist the tab name to the agent's session origins store so the
+								// session is searchable in TabSwitcherModal's "All Named" view after
+								// it closes. Without this, only manually-renamed tabs are findable.
+								// Skip UUID-prefix fallback names (8 hex chars) since those aren't
+								// real user-facing names.
+								const persistName = synopsisData!.tabName;
+								const isUuidPrefix = !!persistName && /^[0-9A-F]{8}$/.test(persistName);
+								if (
+									persistName &&
+									!isUuidPrefix &&
+									synopsisData!.agentSessionId &&
+									synopsisData!.projectRoot
+								) {
+									const persistAgentId = synopsisData!.toolType || 'claude-code';
+									const persistProjectRoot = synopsisData!.projectRoot;
+									const persistSessionId = synopsisData!.agentSessionId;
+									if (persistAgentId === 'claude-code') {
+										window.maestro.claude
+											.updateSessionName(persistProjectRoot, persistSessionId, persistName)
+											.catch((err) =>
+												logger.warn(
+													'[onProcessExit] Failed to persist synopsis tab name',
+													undefined,
+													err
+												)
+											);
+									} else {
+										window.maestro.agentSessions
+											.setSessionName(
+												persistAgentId,
+												persistProjectRoot,
+												persistSessionId,
+												persistName
+											)
+											.catch((err) =>
+												logger.warn(
+													'[onProcessExit] Failed to persist synopsis tab name',
+													undefined,
+													err
+												)
+											);
+									}
+								}
 
 								setSessions((prev) =>
 									prev.map((s) => {
