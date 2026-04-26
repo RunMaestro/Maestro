@@ -154,6 +154,12 @@ interface LoadingState {
 	isRemote: boolean;
 	/** Max file entries before we stop walking. Folders do not count. */
 	maxEntries: number;
+	/**
+	 * Files counted toward the entry cap. Files inside an always-visible subtree
+	 * (e.g. `.maestro`) are excluded so prioritized content can never starve
+	 * sibling directories of their budget.
+	 */
+	budgetUsed: number;
 	/** True once we've hit the entry cap and started skipping further files. */
 	truncated: boolean;
 	/** Optional abort signal — when aborted, the recursion stops issuing new readDir calls. */
@@ -201,6 +207,12 @@ export interface LocalFileTreeOptions {
  * - `maxEntries` — soft cap on the number of file entries (folders are not
  *   counted). Once reached, further files are skipped and the returned result
  *   is flagged `truncated`. Pass `Infinity` to disable.
+ *
+ * Entries listed in {@link ALWAYS_VISIBLE_FILES} (e.g. `.maestro`) are
+ * processed before other entries at every level and walked with an unlimited
+ * budget — their files do not count toward `maxEntries`. This guarantees that
+ * project-critical content survives even on SSH remotes where the cap has
+ * been reduced.
  *
  * @param dirPath - The directory path to load
  * @param maxDepth - Maximum recursion depth (default: 5)
@@ -268,6 +280,7 @@ export async function loadFileTree(
 		ignorePatterns,
 		isRemote,
 		maxEntries: maxEntries > 0 ? maxEntries : Number.POSITIVE_INFINITY,
+		budgetUsed: 0,
 		truncated: false,
 		signal,
 	};
@@ -296,13 +309,18 @@ async function fetchRemoteGitignorePatterns(
 
 /**
  * Internal recursive implementation with shared state for progress tracking.
+ *
+ * @param unlimitedBudget When true, the entry cap is bypassed for this subtree
+ *   and its descendants. Used to fully load always-visible directories like
+ *   `.maestro` even when the SSH-reduced cap has been reached elsewhere.
  */
 async function loadFileTreeRecursive(
 	dirPath: string,
 	maxDepth: number,
 	currentDepth: number,
 	sshContext: SshContext | undefined,
-	state: LoadingState
+	state: LoadingState,
+	unlimitedBudget: boolean = false
 ): Promise<FileTreeNode[]> {
 	if (currentDepth >= maxDepth) return [];
 	if (state.signal?.aborted) throw new FileTreeAbortError();
@@ -328,7 +346,16 @@ async function loadFileTreeRecursive(
 		// where the OS or IPC layer returns the same entry more than once).
 		const seen = new Set<string>();
 
-		for (const entry of entries) {
+		// Process always-visible directories (e.g. `.maestro`) first so they're
+		// loaded ahead of bulk content — important on SSH where each dir is its
+		// own round-trip and the entry cap may be reduced.
+		const orderedEntries = [...entries].sort((a, b) => {
+			const aPriority = a.isDirectory && ALWAYS_VISIBLE_FILES.has(a.name) ? 0 : 1;
+			const bPriority = b.isDirectory && ALWAYS_VISIBLE_FILES.has(b.name) ? 0 : 1;
+			return aPriority - bPriority;
+		});
+
+		for (const entry of orderedEntries) {
 			const normalizedName = entry.name.normalize('NFC');
 			if (seen.has(normalizedName)) {
 				logger.warn('[loadFileTree] readDir returned duplicate entry:', undefined, [
@@ -345,20 +372,26 @@ async function loadFileTreeRecursive(
 				continue;
 			}
 
+			// Always-visible directories propagate unlimited-budget to descendants so
+			// e.g. all of `.maestro/playbooks/**` survives the cap.
+			const childUnlimited =
+				unlimitedBudget || (entry.isDirectory && ALWAYS_VISIBLE_FILES.has(entry.name));
+
 			if (entry.isDirectory) {
 				if (state.signal?.aborted) throw new FileTreeAbortError();
 				// Wrap child directory reads in try/catch so a single failing
 				// subdirectory (permissions, spaces in name over SSH, broken
 				// symlinks, etc.) doesn't kill the entire tree walk.
 				let children: FileTreeNode[] = [];
-				if (state.filesFound < state.maxEntries) {
+				if (childUnlimited || state.budgetUsed < state.maxEntries) {
 					try {
 						children = await loadFileTreeRecursive(
 							`${dirPath}/${entry.name}`,
 							maxDepth,
 							currentDepth + 1,
 							sshContext,
-							state
+							state,
+							childUnlimited
 						);
 					} catch (childErr) {
 						// Re-throw aborts so the whole walk stops; skip unreadable child
@@ -376,12 +409,13 @@ async function loadFileTreeRecursive(
 					children,
 				});
 			} else if (entry.isFile) {
-				if (state.filesFound >= state.maxEntries) {
+				if (!unlimitedBudget && state.budgetUsed >= state.maxEntries) {
 					state.truncated = true;
 					// Stop adding files at this level; siblings in deeper dirs
 					// also short-circuit via the directory guard above.
 					continue;
 				}
+				if (!unlimitedBudget) state.budgetUsed++;
 				state.filesFound++;
 				tree.push({
 					name: entry.name,
