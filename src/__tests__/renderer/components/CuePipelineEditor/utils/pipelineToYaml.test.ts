@@ -730,7 +730,10 @@ describe('pipelinesToYaml', () => {
 					data: {
 						eventType: 'time.scheduled',
 						label: 'Scheduled',
-						config: { schedule_times: ['6:30', '17:5'] },
+						// `6:30` exercises the pad path; `17:00` confirms already-canonical
+						// values pass through untouched. Minutes must be `\d{2}` per the
+						// validator, so the function intentionally only pads hours.
+						config: { schedule_times: ['6:30', '17:00'] },
 					},
 				},
 				{
@@ -749,7 +752,7 @@ describe('pipelinesToYaml', () => {
 		});
 
 		const subs = pipelineToYamlSubscriptions(pipeline);
-		expect(subs[0].schedule_times).toEqual(['06:30', '17:05']);
+		expect(subs[0].schedule_times).toEqual(['06:30', '17:00']);
 	});
 
 	it('creates separate subscriptions for multiple triggers targeting same agent with edge prompts', () => {
