@@ -35,6 +35,7 @@ import type {
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
+import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import { logger } from '../utils/logger';
@@ -748,7 +749,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		},
 
 		setRightPanelWidth: (value) => {
-			const clamped = Math.max(384, Math.min(800, value));
+			const clamped = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(RIGHT_PANEL_MAX_WIDTH, value));
 			set({ rightPanelWidth: clamped });
 			window.maestro.settings.set('rightPanelWidth', clamped);
 		},
@@ -1815,8 +1816,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['rightPanelWidth'] !== undefined)
 			patch.rightPanelWidth = Math.max(
-				384,
-				Math.min(800, allSettings['rightPanelWidth'] as number)
+				RIGHT_PANEL_MIN_WIDTH,
+				Math.min(RIGHT_PANEL_MAX_WIDTH, allSettings['rightPanelWidth'] as number)
 			);
 
 		if (allSettings['markdownEditMode'] !== undefined)

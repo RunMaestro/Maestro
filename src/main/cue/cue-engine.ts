@@ -31,7 +31,9 @@ import {
 	type AgentCompletionData,
 	type CueCommand,
 	type CueConfig,
+	type CueEventType,
 	type CueRunResult,
+	type CueRunStatus,
 	type CueEvent,
 	type CueSubscription,
 } from './cue-types';
@@ -57,8 +59,10 @@ import { createCueRecoveryService, type CueRecoveryService } from './cue-recover
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
+import { getRecentCueEvents, type CueEventRecord } from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { cueDebugLog } from '../../shared/cueDebug';
+import { captureException } from '../utils/sentry';
 
 const MAX_CHAIN_DEPTH = 10;
 
@@ -401,6 +405,12 @@ export class CueEngine {
 		if (!initResult.ok) {
 			return;
 		}
+
+		// Rehydrate the activity log from sqlite so the Cue Modal shows recent
+		// runs after an app restart instead of starting blank. Must run after
+		// recoveryService.init() (which opens the DB and prunes 7-day-old rows)
+		// and before live runs start pushing to the in-memory log.
+		this.hydrateActivityLogFromDb();
 
 		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
@@ -816,4 +826,79 @@ export class CueEngine {
 	private pushActivityLog(result: CueRunResult): void {
 		this.activityLog.push(result);
 	}
+
+	/**
+	 * Load recent cue_events from sqlite and seed the in-memory activity log.
+	 * stdout/stderr/exitCode are not persisted, so the rehydrated entries show
+	 * the metadata + status + timing only — sufficient for the activity panel.
+	 * Orphaned `running` rows (from a prior app crash before the run could
+	 * finalize) are surfaced as `failed` so the UI doesn't render them as a
+	 * 0ms success.
+	 */
+	private hydrateActivityLogFromDb(): void {
+		try {
+			const records = getRecentCueEvents(0, 500);
+			if (records.length === 0) return;
+			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
+			// getRecentCueEvents returns newest-first; reverse so the ring buffer
+			// ends up with oldest at the front and newest at the back, matching
+			// the order live push() produces.
+			const results = records
+				.slice()
+				.reverse()
+				.map((record) => recordToRunResult(record, sessionNamesById));
+			this.activityLog.seed(results);
+			this.meteredOnLog('cue', `[CUE] Activity log rehydrated (${results.length} entries)`);
+		} catch (err) {
+			this.meteredOnLog(
+				'warn',
+				`[CUE] Activity log rehydrate failed: ${err instanceof Error ? err.message : String(err)}`
+			);
+			captureException(err, { operation: 'cue:hydrateActivityLogFromDb' });
+		}
+	}
+}
+
+function recordToRunResult(
+	record: CueEventRecord,
+	sessionNamesById: Map<string, string>
+): CueRunResult {
+	let payload: Record<string, unknown> = {};
+	if (record.payload) {
+		try {
+			const parsed = JSON.parse(record.payload);
+			if (parsed && typeof parsed === 'object') {
+				payload = parsed as Record<string, unknown>;
+			}
+		} catch {
+			// Non-JSON or corrupt payload — leave empty rather than crash hydration.
+		}
+	}
+	const startedAt = new Date(record.createdAt).toISOString();
+	const endedAt = record.completedAt ? new Date(record.completedAt).toISOString() : '';
+	const durationMs = record.completedAt ? Math.max(0, record.completedAt - record.createdAt) : 0;
+	// Orphaned `running` rows survived an app crash — surface as failed so the
+	// activity log doesn't paint them as zero-duration successes.
+	const status: CueRunStatus =
+		record.status === 'running' ? 'failed' : (record.status as CueRunStatus);
+	return {
+		runId: record.id,
+		sessionId: record.sessionId,
+		sessionName: sessionNamesById.get(record.sessionId) ?? record.sessionId,
+		subscriptionName: record.subscriptionName,
+		event: {
+			id: record.id,
+			type: record.type as CueEventType,
+			timestamp: startedAt,
+			triggerName: record.triggerName,
+			payload,
+		},
+		status,
+		stdout: '',
+		stderr: '',
+		exitCode: null,
+		durationMs,
+		startedAt,
+		endedAt,
+	};
 }

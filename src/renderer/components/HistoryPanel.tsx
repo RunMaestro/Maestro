@@ -30,6 +30,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { logger } from '../utils/logger';
+import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -84,6 +85,8 @@ export const HistoryPanel = React.memo(
 	) {
 		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
+		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+		const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
 			? ['AUTO', 'USER', 'CUE']
 			: ['AUTO', 'USER'];
@@ -643,6 +646,7 @@ export const HistoryPanel = React.memo(
 							onToggleFilter={toggleFilter}
 							theme={theme}
 							visibleTypes={visibleTypes}
+							compact={compact}
 						/>
 
 						{/* Activity graph inline when only 2 types (no CUE) */}

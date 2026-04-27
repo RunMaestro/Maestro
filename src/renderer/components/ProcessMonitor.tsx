@@ -1182,9 +1182,9 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								style={{ backgroundColor: theme.colors.success }}
 							/>
 							<span className="text-sm truncate min-w-0">{node.label}</span>
-							{/* Metadata cluster: dim mono, takes remaining space, right-aligns at end */}
+							{/* Metadata cluster: dim mono, sits flush after the label */}
 							<div
-								className="flex items-center gap-3 ml-auto flex-shrink-0 text-xs font-mono"
+								className="flex items-center gap-3 flex-shrink-0 text-xs font-mono"
 								style={{ color: theme.colors.textDim }}
 							>
 								{node.agentSessionId && node.sessionId && onNavigateToSession && (
@@ -1225,7 +1225,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								)}
 							</div>
 							{/* Action cluster: type badges + jump/kill */}
-							<div className="flex items-center gap-2 flex-shrink-0">
+							<div className="flex items-center gap-2 ml-auto flex-shrink-0">
 								{node.isAutoRun && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"

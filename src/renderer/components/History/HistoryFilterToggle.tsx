@@ -8,6 +8,8 @@ export interface HistoryFilterToggleProps {
 	theme: Theme;
 	/** Which filter types to display. Defaults to all types when omitted. */
 	visibleTypes?: HistoryEntryType[];
+	/** Hide pill icons to save horizontal space in narrow panels. */
+	compact?: boolean;
 }
 
 const ALL_TYPES: HistoryEntryType[] = ['AUTO', 'USER', 'CUE'];
@@ -17,6 +19,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 	onToggleFilter,
 	theme,
 	visibleTypes = ALL_TYPES,
+	compact = false,
 }: HistoryFilterToggleProps) {
 	return (
 		<div className="flex gap-2 flex-shrink-0">
@@ -29,7 +32,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					<button
 						key={type}
 						onClick={() => onToggleFilter(type)}
-						className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase transition-all ${
+						className={`flex items-center gap-1.5 ${compact ? 'px-2' : 'px-3'} py-1.5 rounded-full text-xs font-bold uppercase transition-all ${
 							isActive ? 'opacity-100' : 'opacity-40'
 						}`}
 						style={{
@@ -38,7 +41,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 							border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
 						}}
 					>
-						<Icon className="w-3 h-3" />
+						{!compact && <Icon className="w-3 h-3" />}
 						{type}
 					</button>
 				);

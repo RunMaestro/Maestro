@@ -638,20 +638,22 @@ textarea::placeholder {
 	animation: search-highlight-glow 2s ease-in-out infinite;
 }
 
-/* Wand sparkle animation - sparkle paths vanish/reappear with subtle movement */
+/* Wand sparkle animation — opacity-only. Earlier versions translated the SVG
+   <path> elements by 0.5px for jitter, but Chrome doesn't composite transforms
+   on SVG sub-elements, so every animated frame triggered a full layout
+   (~720 layouts/sec when any agent was busy). The half-pixel motion was
+   imperceptible at typical retina DPR; opacity-only gives the same vanish/
+   reappear feel without driving the layout pipeline. */
 @keyframes wand-sparkle {
 	0%,
 	100% {
 		opacity: 1;
-		transform: translate(0, 0);
 	}
 	35% {
 		opacity: 0;
-		transform: translate(0.5px, -0.5px);
 	}
 	65% {
 		opacity: 0;
-		transform: translate(-0.5px, 0.5px);
 	}
 }
 
